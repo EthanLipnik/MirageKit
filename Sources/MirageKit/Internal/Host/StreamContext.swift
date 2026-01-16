@@ -121,6 +121,12 @@ actor StreamContext {
     private let backpressureLogInterval: CFAbsoluteTime = 1.0
     private var lastBackpressureLogTime: CFAbsoluteTime = 0
 
+    /// Keyframe request throttling
+    private let keyframeRequestCooldown: CFAbsoluteTime = 0.25
+    private let keyframeInFlightCap: CFAbsoluteTime = 0.75
+    private var lastKeyframeRequestTime: CFAbsoluteTime = 0
+    private var keyframeSendDeadline: CFAbsoluteTime = 0
+
     /// Network feedback-based bitrate cap (client quality feedback)
     private var networkBitrateCap: Int?
     private var lastFeedbackDropTime: CFAbsoluteTime = 0
@@ -240,6 +246,41 @@ actor StreamContext {
         if streamScale > 0 {
             baseCaptureSize = CGSize(width: bufferSize.width / streamScale, height: bufferSize.height / streamScale)
         }
+    }
+
+    private func recordKeyframeSendEstimate(frameSize: Int, bitrate: Int) {
+        guard frameSize > 0, bitrate > 0 else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        let estimatedDuration = Double(frameSize * 8) / Double(bitrate)
+        let clampedDuration = min(estimatedDuration, keyframeInFlightCap)
+        let deadline = now + clampedDuration
+        if deadline > keyframeSendDeadline {
+            keyframeSendDeadline = deadline
+        }
+    }
+
+    private func markKeyframeRequestIssued() {
+        let deadline = CFAbsoluteTimeGetCurrent() + keyframeInFlightCap
+        if deadline > keyframeSendDeadline {
+            keyframeSendDeadline = deadline
+        }
+    }
+
+    private func shouldThrottleKeyframeRequest(requestLabel: String, checkInFlight: Bool) -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if checkInFlight, now < keyframeSendDeadline {
+            let remaining = Int(((keyframeSendDeadline - now) * 1000).rounded())
+            MirageLogger.stream("\(requestLabel) skipped (keyframe in flight, \(remaining)ms remaining)")
+            return true
+        }
+        let elapsed = now - lastKeyframeRequestTime
+        if elapsed < keyframeRequestCooldown {
+            let remaining = Int(((keyframeRequestCooldown - elapsed) * 1000).rounded())
+            MirageLogger.stream("\(requestLabel) skipped (cooldown \(remaining)ms)")
+            return true
+        }
+        lastKeyframeRequestTime = now
+        return false
     }
 
     private func recoveryKeyframeQuality() -> Float {
@@ -657,6 +698,9 @@ actor StreamContext {
             let dimToken = self.dimensionToken
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
+            if isKeyframe {
+                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: targetBitrate) }
+            }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
                 isKeyframe: isKeyframe,
@@ -764,6 +808,9 @@ actor StreamContext {
             let dimToken = self.dimensionToken
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
+            if isKeyframe {
+                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: targetBitrate) }
+            }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
                 isKeyframe: isKeyframe,
@@ -873,6 +920,9 @@ actor StreamContext {
 
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
+            if isKeyframe {
+                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: targetBitrate) }
+            }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
                 isKeyframe: isKeyframe,
@@ -1038,6 +1088,9 @@ actor StreamContext {
             let dimToken = self.dimensionToken
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
+            if isKeyframe {
+                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: targetBitrate) }
+            }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
                 isKeyframe: isKeyframe,
@@ -1196,6 +1249,12 @@ actor StreamContext {
     /// CRITICAL: Uses flush() to clear the encoder pipeline, preventing old P-frames
     /// from being sent after the keyframe (which would cause decode errors)
     func requestKeyframe() async {
+        if shouldThrottleKeyframeRequest(requestLabel: "Keyframe request", checkInFlight: true) {
+            return
+        }
+
+        markKeyframeRequestIssued()
+
         // Temporarily reduce quality for recovery keyframe
         // Recovery happens during motion/errors when quality matters less
         let previousQuality = currentQuality
@@ -1247,6 +1306,12 @@ actor StreamContext {
     /// so the next captured frame is immediately encoded as a keyframe.
     /// Use this when a client registers to ensure they receive a keyframe ASAP.
     func forceImmediateKeyframe() async {
+        if shouldThrottleKeyframeRequest(requestLabel: "Immediate keyframe", checkInFlight: false) {
+            return
+        }
+
+        markKeyframeRequestIssued()
+
         // Temporarily reduce quality for recovery keyframe
         let previousQuality = currentQuality
         let previousBitrate = currentBitrate
