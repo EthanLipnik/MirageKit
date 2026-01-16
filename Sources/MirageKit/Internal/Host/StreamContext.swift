@@ -93,8 +93,10 @@ actor StreamContext {
     private let minQuality: Float = 0.3
 
     /// Bitrate bounds for adaptive motion control
-    private let maxBitrate: Int
-    private let minBitrate: Int
+    private let baseMaxBitrate: Int
+    private let baseMinBitrate: Int
+    private var maxBitrate: Int
+    private var minBitrate: Int
     private var currentBitrate: Int
 
     /// Whether adaptive bitrate is enabled for this stream
@@ -165,15 +167,23 @@ actor StreamContext {
         self.streamID = streamID
         self.windowID = windowID
         self.encoderConfig = encoderConfig
-        self.streamScale = StreamContext.clampStreamScale(streamScale)
+        let clampedScale = StreamContext.clampStreamScale(streamScale)
+        self.streamScale = clampedScale
         self.additionalFrameFlags = additionalFrameFlags
         self.maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
         self.normalQuality = encoderConfig.keyframeQuality
         self.currentQuality = encoderConfig.keyframeQuality
-        self.maxBitrate = encoderConfig.maxBitrate
-        self.minBitrate = encoderConfig.minBitrate
-        self.currentBitrate = encoderConfig.maxBitrate
-        self.bitrateSnapshot = encoderConfig.maxBitrate
+        self.baseMaxBitrate = encoderConfig.maxBitrate
+        self.baseMinBitrate = encoderConfig.minBitrate
+        let bounds = StreamContext.scaledBitrateBounds(
+            maxBitrate: encoderConfig.maxBitrate,
+            minBitrate: encoderConfig.minBitrate,
+            scale: clampedScale
+        )
+        self.maxBitrate = bounds.max
+        self.minBitrate = bounds.min
+        self.currentBitrate = self.maxBitrate
+        self.bitrateSnapshot = self.currentBitrate
         self.enableAdaptiveBitrate = encoderConfig.enableAdaptiveBitrate
         self.currentFrameRate = encoderConfig.targetFrameRate
     }
@@ -181,6 +191,23 @@ actor StreamContext {
     private static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
         guard scale > 0 else { return 1.0 }
         return max(0.1, min(1.0, scale))
+    }
+
+    private static func scaledBitrate(_ bitrate: Int, scale: CGFloat) -> Int {
+        guard bitrate > 0 else { return 0 }
+        let clampedScale = clampStreamScale(scale)
+        let factor = Double(clampedScale * clampedScale)
+        return Int((Double(bitrate) * factor).rounded())
+    }
+
+    private static func scaledBitrateBounds(
+        maxBitrate: Int,
+        minBitrate: Int,
+        scale: CGFloat
+    ) -> (max: Int, min: Int) {
+        let scaledMax = max(1_000_000, scaledBitrate(maxBitrate, scale: scale))
+        let scaledMin = max(500_000, scaledBitrate(minBitrate, scale: scale))
+        return (max: scaledMax, min: min(scaledMax, scaledMin))
     }
 
     private static func alignedEvenPixel(_ value: CGFloat) -> Int {
@@ -1406,6 +1433,32 @@ actor StreamContext {
             try await encoder.updateDimensions(width: Int(outputSize.width), height: Int(outputSize.height))
         }
 
+        let previousMaxBitrate = maxBitrate
+        let previousMinBitrate = minBitrate
+        let bounds = StreamContext.scaledBitrateBounds(
+            maxBitrate: baseMaxBitrate,
+            minBitrate: baseMinBitrate,
+            scale: streamScale
+        )
+        maxBitrate = bounds.max
+        minBitrate = bounds.min
+
+        if previousMaxBitrate != maxBitrate || previousMinBitrate != minBitrate {
+            let scaledCurrent: Int
+            if previousMaxBitrate > 0 {
+                scaledCurrent = Int((Double(currentBitrate) * Double(maxBitrate) / Double(previousMaxBitrate)).rounded())
+            } else {
+                scaledCurrent = maxBitrate
+            }
+            let clampedBitrate = max(minBitrate, min(maxBitrate, scaledCurrent))
+            if clampedBitrate != currentBitrate {
+                currentBitrate = clampedBitrate
+                bitrateSnapshot = currentBitrate
+                await encoder?.updateBitrate(currentBitrate)
+            }
+            MirageLogger.stream("Stream scale bitrate bounds updated: \(maxBitrate / 1_000_000)Mbps max, \(minBitrate / 1_000_000)Mbps min")
+        }
+
         await encoder?.forceKeyframe()
         MirageLogger.stream("Stream scale updated to \(streamScale), encoding at \(Int(outputSize.width))x\(Int(outputSize.height))")
     }
@@ -1521,7 +1574,7 @@ actor StreamContext {
     }
 
     func getEncoderSettings() -> (maxBitrate: Int, keyFrameInterval: Int, keyframeQuality: Float) {
-        (encoderConfig.maxBitrate, encoderConfig.keyFrameInterval, encoderConfig.keyframeQuality)
+        (baseMaxBitrate, encoderConfig.keyFrameInterval, encoderConfig.keyframeQuality)
     }
 }
 
