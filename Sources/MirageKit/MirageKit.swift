@@ -7,6 +7,7 @@
 // Re-export all public types
 public typealias WindowID = UInt32
 public typealias StreamID = UInt16
+public typealias StreamSessionID = UUID
 
 // MARK: - Version
 public enum MirageKit {

@@ -12,9 +12,12 @@ MirageKit is a window and desktop streaming framework for Apple platforms. It pr
 - Adaptive quality presets and encoder configuration helpers
 - Input forwarding (mouse, keyboard, scroll, gestures)
 - SwiftUI stream view for macOS, iOS, and visionOS
+- Session store + streaming content view for UI state
+- Host window + input controllers for macOS integration
 - Virtual display capture for pixel‑perfect rendering
 - Remote session state + unlock support
 - Menu bar passthrough and app‑centric streaming utilities
+- Built-in trust store and app preference helpers
 
 ## Requirements
 
@@ -109,6 +112,21 @@ struct StreamView: View {
 }
 ```
 
+MirageKit also includes a higher-level content view that wires input, focus, and
+resize logic to a `MirageClientSessionStore`:
+
+```swift
+let sessionStore = MirageClientSessionStore()
+let clientService = MirageClientService(sessionStore: sessionStore)
+
+MirageStreamContentView(
+    session: session,
+    sessionStore: sessionStore,
+    clientService: clientService,
+    isDesktopStream: false
+)
+```
+
 ## How It Works
 
 - Hosts advertise via Bonjour using `_mirage._tcp` and accept TCP control connections.
@@ -162,6 +180,7 @@ Each preset can be overridden per stream with `maxBitrate`, `keyFrameInterval`, 
 
 - Input events are forwarded via `MirageInputEvent` types (mouse, key, scroll, magnify, rotate).
 - `MirageStreamViewRepresentable` renders streams with Metal and exposes drawable size callbacks for resolution sync.
+- `MirageStreamContentView` + `MirageClientSessionStore` coordinate input, focus, and resize UI.
 - The host uses `MirageHostDelegate` and the client uses `MirageClientDelegate` for approvals and state changes.
 
 ## Permissions

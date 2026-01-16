@@ -88,6 +88,15 @@ public final class MirageHostService {
     /// Host delegate for events
     public weak var delegate: MirageHostDelegate?
 
+    /// Accessibility permission manager for input injection.
+    public let permissionManager = MirageAccessibilityPermissionManager()
+
+    /// Window controller for host window management.
+    public let windowController = MirageHostWindowController()
+
+    /// Input controller for injecting remote input.
+    public let inputController = MirageHostInputController()
+
     /// Called when host should resize a window before streaming begins.
     /// The callback receives the window and the target size in points.
     /// This allows the app to resize and center the window via Accessibility API.
@@ -221,6 +230,15 @@ public final class MirageHostService {
         )
         self.encoderConfig = encoderConfiguration
         self.networkConfig = networkConfiguration
+
+        windowController.hostService = self
+        inputController.hostService = self
+        inputController.windowController = windowController
+        inputController.permissionManager = permissionManager
+
+        onResizeWindowForStream = { [weak windowController] window, size in
+            windowController?.resizeAndCenterWindowForStream(window, targetSize: size)
+        }
     }
 
     /// Start hosting and advertising
@@ -1448,6 +1466,8 @@ public final class MirageHostService {
             // Pass the cache entry which includes window, contentRect, etc.
             if let handler = _onInputEvent {
                 handler(inputMessage.event, cacheEntry.window, client)
+            } else {
+                inputController.handleInputEvent(inputMessage.event, window: cacheEntry.window)
             }
         } catch {
             MirageLogger.error(.host, "Failed to decode input event: \(error)")

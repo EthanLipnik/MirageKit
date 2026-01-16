@@ -20,7 +20,7 @@ import AppKit
 public extension UIWindow {
     /// Returns the current key window from connected window scenes
     /// More reliable than deprecated UIApplication.shared.keyWindow
-    /// Note: For SwiftUI views, prefer using WindowSceneReader from the app layer
+    /// Note: For SwiftUI views, prefer using WindowSceneReader from MirageKit
     /// for more reliable screen detection through the view hierarchy.
     static var current: UIWindow? {
         for scene in UIApplication.shared.connectedScenes {
@@ -137,6 +137,9 @@ public final class MirageClientService {
     /// Client delegate for events
     public weak var delegate: MirageClientDelegate?
 
+    /// Session store for UI state and stream coordination.
+    public let sessionStore: MirageClientSessionStore
+
     // MARK: - Thread-Safe Frame Storage (for iOS gesture tracking)
 
     /// Thread-safe storage for the latest decoded frame per stream.
@@ -152,7 +155,7 @@ public final class MirageClientService {
         return latestFrameStorage.getFrame(for: streamID)
     }
 
-    private let networkConfig: MirageNetworkConfiguration
+    private var networkConfig: MirageNetworkConfiguration
     private var transport: HybridTransport?
     private var connection: NWConnection?
     private var connectedHost: MirageHost?
@@ -346,13 +349,17 @@ public final class MirageClientService {
 
     public init(
         deviceName: String? = nil,
-        networkConfiguration: MirageNetworkConfiguration = .default
+        networkConfiguration: MirageNetworkConfiguration = .default,
+        sessionStore: MirageClientSessionStore = MirageClientSessionStore()
     ) {
         #if os(macOS)
         self.deviceName = deviceName ?? Host.current().localizedName ?? "Mac"
         #else
         self.deviceName = deviceName ?? UIDevice.current.name
         #endif
+
+        self.networkConfig = networkConfiguration
+        self.sessionStore = sessionStore
 
         // Load existing device ID or generate and persist a new one
         if let savedIDString = UserDefaults.standard.string(forKey: Self.deviceIDKey),
@@ -365,7 +372,7 @@ public final class MirageClientService {
             self.deviceID = newID
             MirageLogger.client("Generated new device ID: \(newID)")
         }
-        self.networkConfig = networkConfiguration
+        self.sessionStore.clientService = self
     }
 
     /// Determine current device type
@@ -546,6 +553,7 @@ public final class MirageClientService {
         stopAllQualityFeedbackTasks()
 
         let sessions = activeStreams
+        let storedSessions = sessionStore.activeSessions
 
         connection?.cancel()
         connection = nil
@@ -567,6 +575,7 @@ public final class MirageClientService {
             latestFrameStorage.clearFrame(for: loginDisplayStreamID)
             MirageFrameCache.shared.clear(for: loginDisplayStreamID)
         }
+        sessionStore.clearLoginDisplayState()
 
         // Clean up video resources
         stopVideoConnection()
@@ -578,6 +587,9 @@ public final class MirageClientService {
         controllersByStream.removeAll()
         registeredStreamIDs.removeAll()
         activeStreams.removeAll()
+        for session in storedSessions {
+            sessionStore.removeSession(session.id)
+        }
         await updateReassemblerSnapshot()
 
         // Clear active stream IDs (thread-safe)
@@ -987,10 +999,9 @@ public final class MirageClientService {
             },
             onFrameDecoded: { [weak self] in
                 guard let self else { return }
-                // Read latest frame from cache (CVPixelBuffer isn't Sendable, so callback can't pass it)
                 guard let (pixelBuffer, contentRect) = MirageFrameCache.shared.get(for: capturedStreamID) else { return }
-                // Notify delegate so AppState can update latestFrames for UI state tracking
-                // This enables hasReceivedFirstFrame and resize blur detection in views
+                self.sessionStore.handleDecodedFrame(streamID: capturedStreamID, pixelBuffer: pixelBuffer, contentRect: contentRect)
+                self.onDecodedFrame?(capturedStreamID, pixelBuffer, .invalid, contentRect)
                 self.delegate?.clientService(self, didDecodeFrame: pixelBuffer, forStream: capturedStreamID, contentRect: contentRect)
             },
             onInputBlockingChanged: { [weak self] isBlocked in
@@ -1489,7 +1500,9 @@ public final class MirageClientService {
                 if let minW = started.minWidth, let minH = started.minHeight {
                     streamMinSizes[streamID] = (minWidth: minW, minHeight: minH)
                     MirageLogger.client("Minimum window size: \(minW)x\(minH) pts")
-                    onStreamMinimumSizeUpdate?(streamID, CGSize(width: minW, height: minH))
+                    let minSize = CGSize(width: minW, height: minH)
+                    sessionStore.updateMinimumSize(for: streamID, minSize: minSize)
+                    onStreamMinimumSizeUpdate?(streamID, minSize)
                 }
 
                 // For app-centric streaming, the decoder needs to be set up here since
@@ -1583,6 +1596,7 @@ public final class MirageClientService {
         case .cursorUpdate:
             if let update = try? message.decode(CursorUpdateMessage.self) {
                 MirageLogger.client("Cursor update received: \(update.cursorType) (visible: \(update.isVisible))")
+                sessionStore.handleCursorUpdate(streamID: update.streamID, cursorType: update.cursorType, isVisible: update.isVisible)
                 onCursorUpdate?(update.streamID, update.cursorType, update.isVisible)
             }
 
@@ -1633,6 +1647,7 @@ public final class MirageClientService {
                 let streamID = StreamID(ready.streamID)
                 loginDisplayStreamID = streamID
                 loginDisplayResolution = CGSize(width: ready.width, height: ready.height)
+                sessionStore.startLoginDisplay(streamID: streamID, resolution: CGSize(width: ready.width, height: ready.height))
 
                 // Capture dimension token from host (if provided)
                 let dimensionToken = ready.dimensionToken
@@ -1686,6 +1701,7 @@ public final class MirageClientService {
                 MirageLogger.client("Login display stopped: stream=\(streamID)")
                 loginDisplayStreamID = nil
                 loginDisplayResolution = nil
+                sessionStore.stopLoginDisplay()
 
                 // Clean up login display stream resources
                 removeActiveStreamID(streamID)
@@ -1756,8 +1772,9 @@ public final class MirageClientService {
                 onDesktopStreamStarted?(streamID, CGSize(width: started.width, height: started.height), started.displayCount)
 
                 // Trigger minimum size update for blur handling
-                // This allows StreamedWindowView to unblur when desktop stream starts/resizes
-                onStreamMinimumSizeUpdate?(streamID, CGSize(width: started.width, height: started.height))
+                let desktopMinSize = CGSize(width: started.width, height: started.height)
+                sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
+                onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
             } catch {
                 MirageLogger.error(.client, "Failed to decode desktop stream started: \(error)")
             }
@@ -2033,7 +2050,7 @@ public final class MirageClientService {
     }
 
     #if os(iOS)
-    /// Cached drawable size from the Metal view (updated by StreamContentView)
+    /// Cached drawable size from the Metal view (updated by MirageStreamContentView)
     /// Used to help determine which screen the window is actually displayed on
     public static var lastKnownDrawableSize: CGSize = .zero
 

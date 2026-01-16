@@ -24,7 +24,10 @@ flowchart LR
 - `MirageHostService` orchestrates host lifecycle, stream creation, and discovery.
 - `MirageClientService` manages discovery, connection, and stream sessions.
 - `MirageStreamViewRepresentable` renders streams and forwards input.
+- `MirageStreamContentView` and `MirageClientSessionStore` handle UI state, focus, and resize flows.
 - `MirageEncoderConfiguration`, `MirageNetworkConfiguration`, `MirageQualityPreset` configure quality and transport.
+- `MirageHostWindowController` + `MirageHostInputController` encapsulate host-side window/input integration.
+- `MirageTrustStore`, `MirageAppPreferences`, and `MirageStreamingSettings` provide opinionated settings helpers.
 
 ### Internal Modules
 
@@ -127,6 +130,7 @@ flowchart LR
 
 - Input events are sent as `MirageInputEvent` over TCP.
 - Host uses a fast input queue and `InputStreamCacheActor` to translate coordinates without blocking UI.
+- `MirageHostInputController` handles injection, batching, and resize routing on macOS.
 - Mouse locations are normalized in client views to preserve precision across dynamic sizes.
 
 ## Rendering Pipeline
@@ -134,6 +138,7 @@ flowchart LR
 - `MetalRenderer` uses a zero-copy texture cache.
 - `contentRect` cropping removes ScreenCaptureKit padding without extra GPU passes.
 - iOS uses direct frame cache access in `MirageMetalView` to avoid MainActor stalls during gestures.
+- `MirageClientSessionStore` and `MirageStreamContentView` keep UI state synchronized with decode output.
 
 ## Contributing Notes
 
