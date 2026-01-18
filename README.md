@@ -2,14 +2,14 @@
 
 MirageKit is a window and desktop streaming framework for Apple platforms. It provides a macOS host service for capturing windows or virtual displays and a client service for discovering hosts, receiving low‑latency video over UDP, and forwarding input back to the host. SwiftUI views are included for rendering streams with Metal on macOS, iOS, and visionOS.
 
-> ⚠️ MirageKit is still in active development and may introduce breaking changes.
+> ⚠️ MirageKit is still in active development and may introduce breaking API updates.
 
 ## Features
 
 - Window, app, and full desktop streaming from macOS hosts
 - Bonjour discovery with TCP control + UDP video transport
 - Peer-to-peer connections over AWDL
-- Adaptive quality presets and encoder configuration helpers
+- Preset-based quality profiles and encoder configuration helpers
 - Input forwarding (mouse, keyboard, scroll, gestures)
 - SwiftUI stream view for macOS, iOS, and visionOS
 - Session store + streaming content view for UI state
@@ -143,23 +143,23 @@ For a deeper dive into modules and data flows, see `Architecture.md`.
 
 ### Quality Presets
 
-`MirageQualityPreset` provides ready-made profiles that map to encoder defaults.
+`MirageQualityPreset` provides ready-made profiles that map to bitrate caps and encoder quality for 60/120Hz targets.
 
-- `.ultra` / `.high`: 120fps with high bitrate caps
-- `.medium`: 60fps balanced profile
-- `.low`: 30fps reduced bandwidth
-- `.adaptive`: 120fps with adaptive bitrate caps
-- `.lowLatency`: tuned for text apps with aggressive frame skipping
+- `.ultra` / `.high`: higher bitrate and quality for 60/120Hz targets
+- `.medium`: balanced preset with higher caps at 120Hz
+- `.low`: low-bandwidth preset with stronger compression at 120Hz
+- `.lowLatency`: text apps with aggressive frame skipping
 
-Each preset can be overridden per stream with `maxBitrate`, `keyFrameInterval`, and `keyframeQuality` when starting a stream.
+Each preset can be overridden per stream with `maxBitrate`, `keyFrameInterval`, and `keyframeQuality` (encoder quality for all frames) when starting a stream.
 
 ### Encoder Settings
 
-`MirageEncoderConfiguration` lets you control codec, bitrate, frame rate, color space, and adaptive bitrate behavior.
+`MirageEncoderConfiguration` lets you control codec, bitrate, frame rate, encoder quality, and color space.
 
 - Use `.highQuality`, `.balanced`, or `.lowLatency` presets.
 - Use `withOverrides` or `withMaxBitrate` to apply client-specific limits.
 - Use `withTargetFrameRate` to request 60/120fps based on display capabilities.
+- `keyframeQuality` sets encoder quality for all frames and maps to QP bounds when supported.
 
 ### Networking
 
@@ -181,7 +181,7 @@ Each preset can be overridden per stream with `maxBitrate`, `keyFrameInterval`, 
 - Input events are forwarded via `MirageInputEvent` types (mouse, key, scroll, magnify, rotate).
 - `MirageStreamViewRepresentable` renders streams with Metal and exposes drawable size callbacks for resolution sync.
 - `MirageStreamContentView` + `MirageClientSessionStore` coordinate input, focus, and resize UI.
-- The host uses `MirageHostDelegate` and the client uses `MirageClientDelegate` for approvals and state changes.
+- The host uses `MirageHostDelegate` and the client uses `MirageClientDelegate` for approvals and state updates.
 
 ## Permissions
 
@@ -189,7 +189,7 @@ The macOS host uses ScreenCaptureKit and may require Screen Recording permission
 
 ## Contributing
 
-Contributions are welcome. Most of this framework was built with agentic coding tools (Claude Code and Codex). Using them is fine as long as you understand and can explain the changes you submit.
+Contributions are welcome. Most of this framework was built with agentic coding tools (Claude Code and Codex). Using them is fine as long as you understand and can explain the updates you submit.
 
 ## Testing
 

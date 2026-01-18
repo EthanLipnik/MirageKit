@@ -55,8 +55,6 @@ actor StreamContext {
     nonisolated(unsafe) private var bitrateSnapshot: Int = 0
     /// Snapshot of current max bitrate for keyframe pacing
     nonisolated(unsafe) private var maxBitrateSnapshot: Int = 0
-    /// Latest dirty percentage from capture (used for motion-adaptive tuning)
-    private var lastDirtyPercentage: Float = 0
 
     // Always-latest-frame tracking: ensures we encode the most recent frame, dropping stale ones
     private var pendingFrame: (wrapper: SampleBufferWrapper, frameInfo: CapturedFrameInfo)?
@@ -84,44 +82,18 @@ actor StreamContext {
     /// Set before dimension updates begin, cleared after completion
     private var isResizing: Bool = false
 
-    // MARK: - Motion-Adaptive Quality
+    // MARK: - Bitrate
 
-    /// Recent frame sizes for motion detection (in bytes)
-    private var recentFrameSizes: [Int] = []
-
-    /// Maximum recent frame sizes to track
-    private let maxRecentFrames = 10
-
-    /// Current quality level (0.1 to 1.0)
-    private var currentQuality: Float
-
-    /// Target quality when not in motion burst
-    private let normalQuality: Float
-
-    /// Minimum quality during extreme motion (prevents unusable quality)
-    private let minQuality: Float = 0.3
-    private var smoothedMotionRatio: Double = 0
-
-    /// Bitrate bounds for adaptive motion control
+    /// Bitrate bounds for current stream scale
     private let baseMaxBitrate: Int
     private let baseMinBitrate: Int
     private var maxBitrate: Int
     private var minBitrate: Int
     private var currentBitrate: Int
 
-    /// Whether adaptive bitrate is enabled for this stream
-    private let enableAdaptiveBitrate: Bool
-
-    /// Cooldown between bitrate changes (seconds)
-    private let bitrateChangeCooldown: CFAbsoluteTime = 0.5
-    private var lastBitrateChangeTime: CFAbsoluteTime = 0
-
     /// Packet queue backpressure thresholds (seconds)
-    private let maxQueueDelay: CFAbsoluteTime = 0.150
-    private let queueDelayHighThreshold: CFAbsoluteTime = 0.120
-    private let queueDelayLowThreshold: CFAbsoluteTime = 0.040
-    private let queueDelayReduceMultiplier: Double = 0.85
-    private let queueDelayIncreaseMultiplier: Double = 1.05
+    private let maxQueueDelay: CFAbsoluteTime = 0.120
+    private let queueDelayHighThreshold: CFAbsoluteTime = 0.090
     private let backpressureLogInterval: CFAbsoluteTime = 1.0
     private var lastBackpressureLogTime: CFAbsoluteTime = 0
 
@@ -131,33 +103,18 @@ actor StreamContext {
     private var lastKeyframeRequestTime: CFAbsoluteTime = 0
     private var keyframeSendDeadline: CFAbsoluteTime = 0
 
-    /// Network feedback-based bitrate cap (client quality feedback)
-    private var networkBitrateCap: Int?
-    private var lastFeedbackDropTime: CFAbsoluteTime = 0
-    private var lastFeedbackAdjustmentTime: CFAbsoluteTime = 0
-    private var lastFrameBudgetLogTime: CFAbsoluteTime = 0
-    private let feedbackDecreaseCooldown: CFAbsoluteTime = 0.25
-    private let feedbackIncreaseCooldown: CFAbsoluteTime = 1.0
-    private let feedbackRecoveryDelay: CFAbsoluteTime = 1.5
-    private let feedbackDecreaseMultiplier: Double = 0.8
-    private let feedbackSevereDecreaseMultiplier: Double = 0.6
-    private let feedbackIncreaseMultiplier: Double = 1.05
-    private let feedbackSmoothingSamples: Int = 5
-    private var feedbackBuffer: [QualityFeedbackMessage] = []
-
-    /// Motion thresholds relative to per-frame bitrate budget
-    private let highMotionMultiplier: Double = 0.9
-    private let extremeMotionMultiplier: Double = 1.5
+    /// Scheduled keyframe cadence derived from keyFrameInterval/currentFrameRate.
+    private var keyframeIntervalSeconds: CFAbsoluteTime = 0
+    private var keyframeMaxIntervalSeconds: CFAbsoluteTime = 0
+    private var lastKeyframeTime: CFAbsoluteTime = 0
 
     /// Frame rate used for bitrate budgeting
     private var currentFrameRate: Int
 
-    /// How many frames of low motion before we start restoring quality
-    private var lowMotionCounter = 0
-
-    /// Frames needed at low motion before restoring quality
-    private let qualityRestoreDelay = 30
-    private let adaptiveWarmupFrames = 90
+    /// Smoothed dirty percentage (0-1) used to avoid keyframes during high motion.
+    private var smoothedDirtyPercentage: Double = 0
+    private let motionSmoothingFactor: Double = 0.2
+    private let keyframeMotionThreshold: Double = 0.25
 
     /// Callback for sending encoded packets
     private var onEncodedPacket: (@Sendable (Data, FrameHeader) -> Void)?
@@ -189,8 +146,6 @@ actor StreamContext {
         self.streamScale = clampedScale
         self.additionalFrameFlags = additionalFrameFlags
         self.maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
-        self.normalQuality = encoderConfig.keyframeQuality
-        self.currentQuality = encoderConfig.keyframeQuality
         self.baseMaxBitrate = encoderConfig.maxBitrate
         self.baseMinBitrate = encoderConfig.minBitrate
         let bounds = StreamContext.scaledBitrateBounds(
@@ -203,9 +158,14 @@ actor StreamContext {
         self.currentBitrate = self.maxBitrate
         self.bitrateSnapshot = self.currentBitrate
         self.maxBitrateSnapshot = self.maxBitrate
-        self.enableAdaptiveBitrate = encoderConfig.enableAdaptiveBitrate
         self.currentFrameRate = encoderConfig.targetFrameRate
         self.shouldEncodeFrames = false
+        let cadence = Self.keyframeCadence(
+            intervalFrames: encoderConfig.keyFrameInterval,
+            frameRate: encoderConfig.targetFrameRate
+        )
+        self.keyframeIntervalSeconds = cadence.interval
+        self.keyframeMaxIntervalSeconds = cadence.maxInterval
     }
 
     private static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
@@ -266,9 +226,12 @@ actor StreamContext {
         let bytesPerPixel = 0.06
         let targetBitsPerSecond = pixelCount * frameRate * bytesPerPixel * 8.0
         let resolutionFloor = Int(targetBitsPerSecond.rounded())
-        let floorBitrate = max(baseMinBitrate, min(baseMaxBitrate, resolutionFloor))
+        let floorBitrate = min(maxBitrate, resolutionFloor)
         if floorBitrate > minBitrate {
             minBitrate = floorBitrate
+        }
+        if minBitrate > maxBitrate {
+            minBitrate = maxBitrate
         }
         if currentBitrate < minBitrate {
             currentBitrate = minBitrate
@@ -277,9 +240,8 @@ actor StreamContext {
             Task { await encoder?.updateBitrate(currentBitrate) }
         }
 
-        let effectiveMax = effectiveMaxBitrate()
-        if currentBitrate > effectiveMax {
-            currentBitrate = effectiveMax
+        if currentBitrate > maxBitrate {
+            currentBitrate = maxBitrate
             bitrateSnapshot = currentBitrate
             maxBitrateSnapshot = maxBitrate
             Task { await encoder?.updateBitrate(currentBitrate) }
@@ -321,15 +283,63 @@ actor StreamContext {
         return false
     }
 
-    private func recoveryKeyframeQuality() -> Float {
-        let pixelCount = currentEncodedSize.width * currentEncodedSize.height
-        if pixelCount >= 12_000_000 || currentBitrate <= 20_000_000 {
-            return 0.2
+    private static func keyframeCadence(
+        intervalFrames: Int,
+        frameRate: Int
+    ) -> (interval: CFAbsoluteTime, maxInterval: CFAbsoluteTime) {
+        let clampedFrames = max(1, intervalFrames)
+        let clampedRate = max(1, frameRate)
+        let intervalSeconds = Double(clampedFrames) / Double(clampedRate)
+        let cadence = max(1.0, intervalSeconds)
+        let maxCadence = max(cadence * 2.0, cadence + 1.0)
+        return (cadence, maxCadence)
+    }
+
+    private func updateKeyframeCadence() {
+        let cadence = Self.keyframeCadence(
+            intervalFrames: encoderConfig.keyFrameInterval,
+            frameRate: currentFrameRate
+        )
+        keyframeIntervalSeconds = cadence.interval
+        keyframeMaxIntervalSeconds = cadence.maxInterval
+    }
+
+    private func updateMotionState(with frameInfo: CapturedFrameInfo) {
+        guard !frameInfo.isKeepalive else { return }
+        let normalized = max(0.0, min(1.0, Double(frameInfo.dirtyPercentage) / 100.0))
+        if smoothedDirtyPercentage == 0 {
+            smoothedDirtyPercentage = normalized
+        } else {
+            smoothedDirtyPercentage = smoothedDirtyPercentage * (1.0 - motionSmoothingFactor)
+                + normalized * motionSmoothingFactor
         }
-        if pixelCount >= 8_000_000 || currentBitrate <= 40_000_000 {
-            return 0.25
+    }
+
+    private func shouldSendScheduledKeyframe(queueDelay: CFAbsoluteTime) -> Bool {
+        guard shouldEncodeFrames else { return false }
+        guard !isResizing else { return false }
+        guard lastKeyframeTime > 0 else { return false }
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsed = now - lastKeyframeTime
+        guard elapsed >= keyframeIntervalSeconds else { return false }
+
+        let highMotion = smoothedDirtyPercentage >= keyframeMotionThreshold
+        let queueBackedUp = queueDelay >= queueDelayHighThreshold
+        let allowDespitePressure = elapsed >= keyframeMaxIntervalSeconds
+
+        if (highMotion || queueBackedUp) && !allowDespitePressure {
+            return false
         }
-        return minQuality
+
+        guard !shouldThrottleKeyframeRequest(requestLabel: "Scheduled keyframe", checkInFlight: true) else {
+            return false
+        }
+        lastKeyframeTime = now
+        return true
+    }
+
+    private func markKeyframeSent() {
+        lastKeyframeTime = CFAbsoluteTimeGetCurrent()
     }
 
     /// Handle a captured frame with always-latest-frame logic
@@ -388,6 +398,7 @@ actor StreamContext {
             )
             updateCaptureSizesIfNeeded(bufferSize)
         }
+        updateMotionState(with: frameInfo)
 
         // Reset encoder if it was stuck on previous frame
         // This invalidates the VTCompressionSession and creates a new one
@@ -398,40 +409,18 @@ actor StreamContext {
             if now - lastEncoderResetTime > encoderResetCooldown {
                 MirageLogger.stream("Resetting stuck encoder before next frame")
 
-                // Reduce quality before reset - the recovery keyframe will be smaller
-                // and more likely to complete successfully during network congestion
-                let previousQuality = currentQuality
-                let recoveryQuality = recoveryKeyframeQuality()
-                var didAdjustQuality = false
-                if previousQuality > recoveryQuality {
-                    currentQuality = recoveryQuality
-                    await encoder?.updateQuality(currentQuality)
-                    didAdjustQuality = true
-                }
- 
                 do {
                     await packetSender?.bumpGeneration(reason: "encoder reset")
                     try await encoder?.reset()
                     didResetEncoder = true
                     lastEncoderResetTime = now
-                    if didAdjustQuality {
-                        MirageLogger.stream("Recovery keyframe: using quality \(currentQuality)")
-                        // Schedule quality restoration after recovery keyframe is likely sent
-                        Task {
-                            try? await Task.sleep(for: .milliseconds(200))
-                            if currentQuality == recoveryQuality, previousQuality > recoveryQuality {
-                                currentQuality = previousQuality
-                                await encoder?.updateQuality(currentQuality)
-                                MirageLogger.stream("Recovery complete, restored quality to \(currentQuality)")
-                            }
-                        }
-                    }
-
                 } catch {
                     MirageLogger.error(.stream, "Encoder reset failed: \(error)")
                 }
             } else {
-                MirageLogger.stream("Encoder reset skipped (cooldown active, \(String(format: "%.1f", encoderResetCooldown - (now - lastEncoderResetTime)))s remaining)")
+                let remainingSeconds = (encoderResetCooldown - (now - lastEncoderResetTime))
+                    .formatted(.number.precision(.fractionLength(1)))
+                MirageLogger.stream("Encoder reset skipped (cooldown active, \(remainingSeconds)s remaining)")
             }
             needsEncoderReset = false  // Clear flag even if we skipped due to cooldown
         }
@@ -447,24 +436,36 @@ actor StreamContext {
             return
         }
 
-        // Encode using HEVC - P-frames automatically encode only what changed
-        // Pass forceKeyframe hint (set when SCK resumes after a fallback period, or after encoder reset)
-        var forceKeyframe = frameInfo.forceKeyframe || didResetEncoder
+        let queueDelay = await packetSender?.estimatedQueueDelay(bitrate: currentBitrate) ?? 0
 
-        if let packetSender {
-            let queueDelay = await packetSender.estimatedQueueDelay(bitrate: currentBitrate)
-            if queueDelay > maxQueueDelay && !forceKeyframe && !frameInfo.isKeepalive {
-                let now = CFAbsoluteTimeGetCurrent()
-                droppedFrameCount += 1
-                if now - lastBackpressureLogTime > backpressureLogInterval {
-                    lastBackpressureLogTime = now
-                    MirageLogger.stream("Backpressure: dropping frame (queue \(Int(queueDelay * 1000))ms)")
-                }
-                if pendingFrame != nil {
-                    Task { await processLatestFrame() }
-                }
-                return
+        // Encode using HEVC - P-frames automatically encode only what changed
+        // Keyframes are handled by scheduled cadence + recovery; don't use capture hints.
+        var forceKeyframe = didResetEncoder
+        var scheduledKeyframe = false
+        if shouldSendScheduledKeyframe(queueDelay: queueDelay) {
+            forceKeyframe = true
+            scheduledKeyframe = true
+        }
+        if !forceKeyframe, let captureEngine {
+            let shouldRequest = await captureEngine.consumePendingKeyframeRequest()
+            if shouldRequest, !shouldThrottleKeyframeRequest(requestLabel: "Fallback keyframe", checkInFlight: true) {
+                markKeyframeSent()
+                forceKeyframe = true
+                scheduledKeyframe = true
             }
+        }
+
+        if queueDelay > maxQueueDelay && !forceKeyframe && !frameInfo.isKeepalive {
+            let now = CFAbsoluteTimeGetCurrent()
+            droppedFrameCount += 1
+            if now - lastBackpressureLogTime > backpressureLogInterval {
+                lastBackpressureLogTime = now
+                MirageLogger.stream("Backpressure: dropping frame (queue \(Int(queueDelay * 1000))ms)")
+            }
+            if pendingFrame != nil {
+                Task { await processLatestFrame() }
+            }
+            return
         }
 
         if frameInfo.isKeepalive {
@@ -474,7 +475,6 @@ actor StreamContext {
         isCurrentlyEncoding = true
         encodeStartTime = CFAbsoluteTimeGetCurrent()
 
-        lastDirtyPercentage = frameInfo.dirtyPercentage
         // Store contentRect for use in frame header
         setContentRect(frameInfo.contentRect)
 
@@ -498,252 +498,18 @@ actor StreamContext {
         return droppedFrameCount
     }
 
-    private func effectiveMaxBitrate() -> Int {
-        if let cap = networkBitrateCap {
-            return min(maxBitrate, cap)
-        }
-        return maxBitrate
-    }
-
-    private func applyBitrateCap(reason: String) async {
-        let cappedMax = effectiveMaxBitrate()
-        if currentBitrate > cappedMax {
-            currentBitrate = max(minBitrate, cappedMax)
-            bitrateSnapshot = currentBitrate
-            maxBitrateSnapshot = maxBitrate
-            await encoder?.updateBitrate(currentBitrate)
-            MirageLogger.stream("Feedback: bitrate capped at \(currentBitrate / 1_000_000)Mbps (\(reason))")
-        }
-    }
-
     func allowEncodingAfterRegistration() async {
         guard !shouldEncodeFrames else { return }
         shouldEncodeFrames = true
-        recentFrameSizes.removeAll()
-        lowMotionCounter = 0
-        smoothedMotionRatio = 0
-        lastFeedbackDropTime = 0
-        lastFeedbackAdjustmentTime = 0
-        feedbackBuffer.removeAll()
-        let previousQuality = currentQuality
-        let initialQuality = recoveryKeyframeQuality()
-        if previousQuality > initialQuality {
-            currentQuality = initialQuality
-            await encoder?.updateQuality(currentQuality)
-        }
+        lastKeyframeTime = 0
+        smoothedDirtyPercentage = 0
 
         if let encoder {
             await encoder.resetFrameNumber()
             await encoder.forceKeyframe()
         }
 
-        if previousQuality > initialQuality {
-            Task {
-                try? await Task.sleep(for: .milliseconds(120))
-                if currentQuality == initialQuality {
-                    currentQuality = previousQuality
-                    await encoder?.updateQuality(currentQuality)
-                }
-            }
-        }
         MirageLogger.stream("UDP registration confirmed, encoding resumed")
-    }
-
-    /// Update quality based on recent frame sizes (motion-adaptive encoding)
-    /// Called after each encoded frame to adjust quality for next frame
-    private func updateQualityForFrameSize(_ frameSize: Int, isKeyframe: Bool) async {
-        guard shouldEncodeFrames else { return }
-        guard frameNumber > adaptiveWarmupFrames else { return }
-
-        // Track recent frame sizes (exclude keyframes from average - they're naturally large)
-        if !isKeyframe {
-            recentFrameSizes.append(frameSize)
-            if recentFrameSizes.count > maxRecentFrames {
-                recentFrameSizes.removeFirst()
-            }
-        }
-
-        // Calculate average recent P-frame size
-        let avgFrameSize = recentFrameSizes.isEmpty ? 0 :
-            recentFrameSizes.reduce(0, +) / recentFrameSizes.count
-        let avgFrameSizeBytes = Double(avgFrameSize)
-
-        let frameRate = max(1, currentFrameRate)
-        let maxAdaptiveBitrate = effectiveMaxBitrate()
-        let frameBudgetBytes = Double(maxAdaptiveBitrate) / 8.0 / Double(frameRate)
-        let highMotionThreshold = frameBudgetBytes * highMotionMultiplier
-        let extremeMotionThreshold = frameBudgetBytes * extremeMotionMultiplier
-
-        let now = CFAbsoluteTimeGetCurrent()
-        if now - lastFrameBudgetLogTime > 2.0 {
-            lastFrameBudgetLogTime = now
-            let resolution = "\(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))"
-            MirageLogger.stream("Motion budget: \(Int(frameBudgetBytes / 1024))KB/frame @ \(currentFrameRate)fps (bitrate \(maxAdaptiveBitrate / 1_000_000)Mbps, res \(resolution))")
-        }
-
-        // Determine target quality + bitrate based on motion level
-        var targetQuality = currentQuality
-        var targetBitrate = currentBitrate
-
-        let sizeMotionRatio: Double
-        if avgFrameSizeBytes <= highMotionThreshold {
-            sizeMotionRatio = 0.0
-        } else if avgFrameSizeBytes >= extremeMotionThreshold {
-            sizeMotionRatio = 1.0
-        } else {
-            let ratioDenominator = max(1.0, extremeMotionThreshold - highMotionThreshold)
-            sizeMotionRatio = max(0.0, min(1.0, (avgFrameSizeBytes - highMotionThreshold) / ratioDenominator))
-        }
-
-        let dirtyMotionRatio: Double
-        if captureMode == .display {
-            dirtyMotionRatio = 0.0
-        } else {
-            let dirtyRatio = max(0.0, min(1.0, Double(lastDirtyPercentage) / 100.0))
-            if dirtyRatio <= 0.2 {
-                dirtyMotionRatio = 0.0
-            } else {
-                dirtyMotionRatio = min(1.0, (dirtyRatio - 0.2) / 0.6)
-            }
-        }
-
-        let motionRatio = max(sizeMotionRatio, dirtyMotionRatio)
-        let smoothedRatio = smoothedMotionRatio * 0.7 + motionRatio * 0.3
-        smoothedMotionRatio = smoothedRatio
-
-        if smoothedRatio > 0 {
-            targetQuality = normalQuality - (normalQuality - minQuality) * Float(smoothedRatio)
-            let bitrateRange = max(0, maxAdaptiveBitrate - minBitrate)
-            let scaledBitrate = Double(maxAdaptiveBitrate) - Double(bitrateRange) * smoothedRatio
-            targetBitrate = max(minBitrate, Int(scaledBitrate.rounded()))
-            lowMotionCounter = 0
-        } else {
-            // Low motion - consider restoring quality
-            lowMotionCounter += 1
-            if lowMotionCounter > qualityRestoreDelay {
-                targetQuality = normalQuality
-                targetBitrate = maxAdaptiveBitrate
-            } else {
-                // Keep current settings during restore delay
-                targetQuality = currentQuality
-                targetBitrate = currentBitrate
-            }
-        }
-
-        if enableAdaptiveBitrate, let packetSender {
-            let queueDelay = await packetSender.estimatedQueueDelay(bitrate: currentBitrate)
-            if queueDelay > queueDelayHighThreshold {
-                let reduced = Int(Double(currentBitrate) * queueDelayReduceMultiplier)
-                targetBitrate = min(targetBitrate, reduced)
-                lowMotionCounter = 0
-            } else if queueDelay < queueDelayLowThreshold, lowMotionCounter > qualityRestoreDelay {
-                let increased = Int(Double(currentBitrate) * queueDelayIncreaseMultiplier)
-                targetBitrate = max(targetBitrate, increased)
-            }
-        }
-
-        // Apply quality change if significant (avoid constant VT API calls)
-        if abs(targetQuality - currentQuality) > 0.05 {
-            currentQuality = targetQuality
-            await encoder?.updateQuality(currentQuality)
-
-            if targetQuality < normalQuality {
-                MirageLogger.stream("Motion-adaptive: quality reduced to \(String(format: "%.1f", currentQuality)) (avg frame: \(avgFrameSize / 1024)KB)")
-            } else {
-                MirageLogger.stream("Motion-adaptive: quality restored to \(String(format: "%.1f", currentQuality))")
-            }
-        }
-
-        if enableAdaptiveBitrate {
-            let delta = abs(targetBitrate - currentBitrate)
-            let now = CFAbsoluteTimeGetCurrent()
-            let changeThreshold = max(1_000_000, maxAdaptiveBitrate / 20)
-            if delta >= changeThreshold, now - lastBitrateChangeTime >= bitrateChangeCooldown {
-                currentBitrate = max(minBitrate, min(maxAdaptiveBitrate, targetBitrate))
-                bitrateSnapshot = currentBitrate
-                maxBitrateSnapshot = maxBitrate
-                lastBitrateChangeTime = now
-                await encoder?.updateBitrate(currentBitrate)
-
-                if currentBitrate < maxAdaptiveBitrate {
-                    MirageLogger.stream("Motion-adaptive: bitrate reduced to \(currentBitrate / 1_000_000)Mbps")
-                } else {
-                    MirageLogger.stream("Motion-adaptive: bitrate restored to \(currentBitrate / 1_000_000)Mbps")
-                }
-            }
-        }
-
-        updateResolutionAwareBitrateFloor()
-    }
-
-    func applyQualityFeedback(_ feedback: QualityFeedbackMessage) async {
-        guard shouldEncodeFrames else { return }
-
-        feedbackBuffer.append(feedback)
-        if feedbackBuffer.count > feedbackSmoothingSamples {
-            feedbackBuffer.removeFirst(feedbackBuffer.count - feedbackSmoothingSamples)
-        }
-
-        let aggregated = feedbackBuffer.reduce(into: (dropped: 0, health: 0.0, decodeMs: 0.0)) { partial, item in
-            partial.dropped += item.droppedFrames
-            partial.health += item.bufferHealth
-            partial.decodeMs += item.averageDecodeTimeMs
-        }
-        let count = Double(max(1, feedbackBuffer.count))
-        let averagedHealth = aggregated.health / count
-        let averagedDropped = aggregated.dropped / max(1, feedbackBuffer.count)
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let dropDetected = averagedDropped > 0 || averagedHealth < 0.9
-        updateResolutionAwareBitrateFloor()
-
-        if dropDetected {
-            lastFeedbackDropTime = now
-            if now - lastFeedbackAdjustmentTime >= feedbackDecreaseCooldown {
-                let severe = averagedHealth < 0.8 || averagedDropped > 5
-                let factor = severe ? feedbackSevereDecreaseMultiplier : feedbackDecreaseMultiplier
-                let reduced = Int(Double(currentBitrate) * factor)
-                let capped = max(minBitrate, min(maxBitrate, reduced))
-                if let existingCap = networkBitrateCap {
-                    networkBitrateCap = min(existingCap, capped)
-                } else {
-                    networkBitrateCap = capped
-                }
-                updateResolutionAwareBitrateFloor()
-                await applyBitrateCap(reason: "quality feedback")
-
-                if currentQuality > minQuality {
-                    let newQuality = max(minQuality, currentQuality - (severe ? 0.2 : 0.1))
-                    if abs(newQuality - currentQuality) > 0.01 {
-                        currentQuality = newQuality
-                        await encoder?.updateQuality(currentQuality)
-                    }
-                }
-
-                lastFeedbackAdjustmentTime = now
-            }
-            return
-        }
-
-        guard let currentCap = networkBitrateCap else { return }
-        guard now - lastFeedbackDropTime >= feedbackRecoveryDelay else { return }
-        guard now - lastFeedbackAdjustmentTime >= feedbackIncreaseCooldown else { return }
-
-        let increased = min(maxBitrate, Int(Double(currentCap) * feedbackIncreaseMultiplier))
-        if increased != currentCap {
-            networkBitrateCap = increased
-            if currentBitrate < increased {
-                let bumped = min(increased, Int(Double(currentBitrate) * feedbackIncreaseMultiplier))
-                currentBitrate = bumped
-                bitrateSnapshot = currentBitrate
-                maxBitrateSnapshot = maxBitrate
-                await encoder?.updateBitrate(currentBitrate)
-                MirageLogger.stream("Feedback: bitrate increased to \(currentBitrate / 1_000_000)Mbps")
-            } else {
-                await applyBitrateCap(reason: "quality feedback recovery")
-            }
-            lastFeedbackAdjustmentTime = now
-        }
     }
 
     func start(
@@ -808,13 +574,19 @@ actor StreamContext {
             localSequenceNumber += UInt32(totalFragments)
             localFrameNumber += 1
 
+            let frameSize = encodedData.count
+
             let flags = self.additionalFrameFlags
             let dimToken = self.dimensionToken
+
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
             let maxBitrate = self.maxBitrateSnapshot
             if isKeyframe {
-                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate) }
+                Task {
+                    await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate)
+                    await self.markKeyframeSent()
+                }
             }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
@@ -923,13 +695,19 @@ actor StreamContext {
             localSequenceNumber += UInt32(totalFragments)
             localFrameNumber += 1
 
+            let frameSize = encodedData.count
+
             let flags = self.additionalFrameFlags
             let dimToken = self.dimensionToken
+
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
             let maxBitrate = self.maxBitrateSnapshot
             if isKeyframe {
-                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate) }
+                Task {
+                    await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate)
+                    await self.markKeyframeSent()
+                }
             }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
@@ -1035,15 +813,14 @@ actor StreamContext {
             let flags = self.additionalFrameFlags
             let dimToken = self.dimensionToken
 
-            Task {
-                await self.updateQualityForFrameSize(frameSize, isKeyframe: isKeyframe)
-            }
-
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
             let maxBitrate = self.maxBitrateSnapshot
             if isKeyframe {
-                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate) }
+                Task {
+                    await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate)
+                    await self.markKeyframeSent()
+                }
             }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
@@ -1122,7 +899,7 @@ actor StreamContext {
             for: streamID,
             clientResolution: clientDisplayResolution,
             windowID: windowID,
-            refreshRate: encoderConfig.targetFrameRate
+            refreshRate: currentFrameRate
         )
         self.virtualDisplayContext = vdContext
 
@@ -1210,13 +987,19 @@ actor StreamContext {
             localSequenceNumber += UInt32(totalFragments)
             localFrameNumber += 1
 
+            let frameSize = encodedData.count
+
             let flags = self.additionalFrameFlags
             let dimToken = self.dimensionToken
+
             let generation = packetSender.currentGenerationSnapshot()
             let targetBitrate = self.bitrateSnapshot
             let maxBitrate = self.maxBitrateSnapshot
             if isKeyframe {
-                Task { await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate) }
+                Task {
+                    await self.recordKeyframeSendEstimate(frameSize: encodedData.count, bitrate: maxBitrate)
+                    await self.markKeyframeSent()
+                }
             }
             let workItem = StreamPacketSender.WorkItem(
                 encodedData: encodedData,
@@ -1284,7 +1067,7 @@ actor StreamContext {
         try await SharedVirtualDisplayManager.shared.updateClientResolution(
             for: streamID,
             newResolution: newResolution,
-            refreshRate: encoderConfig.targetFrameRate
+            refreshRate: currentFrameRate
         )
 
         // Get the updated context
@@ -1373,7 +1156,7 @@ actor StreamContext {
     }
 
     /// Request a keyframe from the encoder
-    /// Uses reduced quality for recovery keyframes since they happen during motion
+    /// Uses reduced bitrate for recovery keyframes during stream recovery.
     /// CRITICAL: Uses flush() to clear the encoder pipeline, preventing old P-frames
     /// from being sent after the keyframe (which would cause decode errors)
     func requestKeyframe() async {
@@ -1383,18 +1166,9 @@ actor StreamContext {
 
         markKeyframeRequestIssued()
 
-        // Temporarily reduce quality for recovery keyframe
-        // Recovery happens during motion/errors when quality matters less
-        let previousQuality = currentQuality
+        // Temporarily reduce bitrate for recovery keyframe
+        // Recovery happens during stream errors when bandwidth matters more
         let previousBitrate = currentBitrate
-        let recoveryQuality = recoveryKeyframeQuality()
-        var didAdjustQuality = false
-        if currentQuality > recoveryQuality {
-            currentQuality = recoveryQuality
-            await encoder?.updateQuality(currentQuality)
-            MirageLogger.stream("Recovery keyframe: temporarily reduced quality to \(currentQuality)")
-            didAdjustQuality = true
-        }
         let reducedBitrate = max(minBitrate, Int(Double(currentBitrate) * 0.6))
         if reducedBitrate < currentBitrate {
             currentBitrate = reducedBitrate
@@ -1411,18 +1185,12 @@ actor StreamContext {
         await packetSender?.bumpGeneration(reason: "keyframe request")
         await encoder?.flush()
 
-        // Schedule quality restoration after the keyframe is likely sent
-        // This gives time for the keyframe to be encoded at lower quality
+        // Schedule bitrate restoration after the keyframe is likely sent
+        // This gives time for the keyframe to be encoded at lower bitrate
         Task {
             try? await Task.sleep(for: .milliseconds(100))
-            if didAdjustQuality, currentQuality == recoveryQuality, previousQuality > recoveryQuality {
-                // Only restore if motion-adaptive hasn't already changed it
-                currentQuality = previousQuality
-                await encoder?.updateQuality(currentQuality)
-                MirageLogger.stream("Recovery keyframe sent, restored quality to \(currentQuality)")
-            }
             if currentBitrate == reducedBitrate {
-                currentBitrate = min(previousBitrate, effectiveMaxBitrate())
+                currentBitrate = min(previousBitrate, maxBitrate)
                 bitrateSnapshot = currentBitrate
                 maxBitrateSnapshot = maxBitrate
                 await encoder?.updateBitrate(currentBitrate)
@@ -1442,17 +1210,8 @@ actor StreamContext {
 
         markKeyframeRequestIssued()
 
-        // Temporarily reduce quality for recovery keyframe
-        let previousQuality = currentQuality
+        // Temporarily reduce bitrate for recovery keyframe
         let previousBitrate = currentBitrate
-        let recoveryQuality = recoveryKeyframeQuality()
-        var didAdjustQuality = false
-        if currentQuality > recoveryQuality {
-            currentQuality = recoveryQuality
-            await encoder?.updateQuality(currentQuality)
-            MirageLogger.stream("Immediate keyframe: temporarily reduced quality to \(currentQuality)")
-            didAdjustQuality = true
-        }
         let reducedBitrate = max(minBitrate, Int(Double(currentBitrate) * 0.6))
         if reducedBitrate < currentBitrate {
             currentBitrate = reducedBitrate
@@ -1466,16 +1225,11 @@ actor StreamContext {
         await encoder?.flush()
         MirageLogger.stream("Forced immediate keyframe for stream \(streamID)")
 
-        // Schedule quality restoration
+        // Schedule bitrate restoration
         Task {
             try? await Task.sleep(for: .milliseconds(100))
-            if didAdjustQuality, currentQuality == recoveryQuality, previousQuality > recoveryQuality {
-                currentQuality = previousQuality
-                await encoder?.updateQuality(currentQuality)
-                MirageLogger.stream("Immediate keyframe sent, restored quality to \(currentQuality)")
-            }
             if currentBitrate == reducedBitrate {
-                currentBitrate = min(previousBitrate, effectiveMaxBitrate())
+                currentBitrate = min(previousBitrate, maxBitrate)
                 bitrateSnapshot = currentBitrate
                 maxBitrateSnapshot = maxBitrate
                 await encoder?.updateBitrate(currentBitrate)
@@ -1489,6 +1243,7 @@ actor StreamContext {
     func updateFrameRate(_ fps: Int) async throws {
         guard isRunning, let captureEngine else { return }
         currentFrameRate = fps
+        updateKeyframeCadence()
         try await captureEngine.updateFrameRate(fps)
         MirageLogger.stream("Stream \(streamID) frame rate updated to \(fps) fps")
     }

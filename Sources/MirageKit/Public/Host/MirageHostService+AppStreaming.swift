@@ -289,16 +289,12 @@ extension MirageHostService {
             let request = try message.decode(SelectAppMessage.self)
             MirageLogger.host("Client \(client.name) selected app: \(request.bundleIdentifier)")
 
-            // Determine target frame rate based on client capability and quality preset
-            // Only high/ultra enable 120fps; other presets cap at 60fps
+            // Determine target frame rate based on client capability
             let clientMaxRefreshRate = request.maxRefreshRate
-            let qualityFrameRate = request.preferredQuality.encoderConfiguration.targetFrameRate
-            let allowsHighRefresh = request.preferredQuality == .high || request.preferredQuality == .ultra
-            let cappedQualityFrameRate = allowsHighRefresh ? qualityFrameRate : min(qualityFrameRate, 60)
-            let targetFrameRate = min(clientMaxRefreshRate, cappedQualityFrameRate)
+            let targetFrameRate = clientMaxRefreshRate >= 120 ? 120 : 60
             MirageLogger.host("Frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
-            let presetConfig = request.preferredQuality.encoderConfiguration
+            let presetConfig = request.preferredQuality.encoderConfiguration(for: targetFrameRate)
             let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
             let keyFrameInterval = request.keyFrameInterval ?? presetConfig.keyFrameInterval
             let keyframeQuality = request.keyframeQuality ?? presetConfig.keyframeQuality

@@ -106,7 +106,8 @@ public final class MirageClientSessionStore {
             id: sessionID,
             streamID: streamID,
             window: window,
-            hostName: hostName
+            hostName: hostName,
+            currentFPS: 0
         )
 
         if let minSize {
@@ -153,7 +154,8 @@ public final class MirageClientSessionStore {
     public func handleDecodedFrame(
         streamID: StreamID,
         pixelBuffer: CVPixelBuffer,
-        contentRect: CGRect
+        contentRect: CGRect,
+        fps: Double
     ) {
         // Check if this is a login display frame.
         if streamID == loginDisplayStreamID {
@@ -166,6 +168,9 @@ public final class MirageClientSessionStore {
         if let sessionEntry = streamSessions.first(where: { $0.value.streamID == streamID }) {
             latestFrames[sessionEntry.key] = pixelBuffer
             contentRects[sessionEntry.key] = contentRect
+            var session = sessionEntry.value
+            session.currentFPS = fps
+            streamSessions[sessionEntry.key] = session
         }
     }
 
@@ -247,6 +252,7 @@ public struct MirageStreamSessionState: Identifiable {
     public let window: MirageWindow
     public let hostName: String
     public var statistics: MirageStreamStatistics?
+    public var currentFPS: Double
     /// Minimum window size in points (from host).
     public var minWidth: CGFloat = 400
     public var minHeight: CGFloat = 300
@@ -257,6 +263,7 @@ public struct MirageStreamSessionState: Identifiable {
         window: MirageWindow,
         hostName: String,
         statistics: MirageStreamStatistics? = nil,
+        currentFPS: Double = 0,
         minWidth: CGFloat = 400,
         minHeight: CGFloat = 300
     ) {
@@ -265,6 +272,7 @@ public struct MirageStreamSessionState: Identifiable {
         self.window = window
         self.hostName = hostName
         self.statistics = statistics
+        self.currentFPS = currentFPS
         self.minWidth = minWidth
         self.minHeight = minHeight
     }

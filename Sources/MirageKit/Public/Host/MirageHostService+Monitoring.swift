@@ -117,9 +117,10 @@ extension MirageHostService {
         if isActive {
             // Window became active - restore full frame rate and request keyframe
             do {
-                try await context.updateFrameRate(encoderConfig.targetFrameRate)
+                let targetFrameRate = await context.getTargetFrameRate()
+                try await context.updateFrameRate(targetFrameRate)
                 await context.requestKeyframe()
-                MirageLogger.host("Window \(windowID) active - restored to \(encoderConfig.targetFrameRate) fps with keyframe")
+                MirageLogger.host("Window \(windowID) active - restored to \(targetFrameRate) fps with keyframe")
             } catch {
                 MirageLogger.error(.host, "Failed to restore frame rate for window \(windowID): \(error)")
             }

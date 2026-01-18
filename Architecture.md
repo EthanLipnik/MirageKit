@@ -54,7 +54,7 @@ sequenceDiagram
     Host-->>Client: streamStarted + dimensionToken
     Client->>Host: UDP registration (streamID)
     Host-->>Client: UDP video packets (FrameHeader + payload)
-    Client-->>Host: qualityFeedback + keyframeRequest (as needed)
+    Client-->>Host: keyframeRequest (as needed)
     Client->>Host: inputEvent messages (mouse/keyboard/scroll)
 ```
 
@@ -110,11 +110,11 @@ flowchart LR
 
 ### Quality Presets
 
-`MirageQualityPreset` configures bitrate and frame rate caps. `.lowLatency` uses aggressive frame skipping and smaller keyframes for responsiveness.
+`MirageQualityPreset` configures bitrate and encoder quality per 60/120Hz target. `.lowLatency` uses aggressive frame skipping and smaller frames for responsiveness.
 
-### Adaptive Bitrate
+### Backpressure
 
-`StreamContext` tracks queue delay, dirty region sizes, and quality feedback from the client to scale bitrate smoothly.
+`StreamContext` drops frames when packet queues exceed thresholds to keep latency low.
 
 ### Keyframe Strategy
 

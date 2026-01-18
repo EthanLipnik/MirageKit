@@ -14,7 +14,8 @@ public protocol MirageClientDelegate: AnyObject, Sendable {
     /// Called when a video frame is decoded and ready to display
     /// - Parameters:
     ///   - contentRect: The region within the pixel buffer containing actual content (handles SCK padding)
-    @MainActor func clientService(_ service: MirageClientService, didDecodeFrame pixelBuffer: CVPixelBuffer, forStream streamID: StreamID, contentRect: CGRect)
+    ///   - fps: Recent client-side decoded FPS estimate
+    @MainActor func clientService(_ service: MirageClientService, didDecodeFrame pixelBuffer: CVPixelBuffer, forStream streamID: StreamID, contentRect: CGRect, fps: Double)
 
     /// Called when disconnected from host
     @MainActor func clientService(_ service: MirageClientService, didDisconnectFromHost reason: String)
@@ -62,7 +63,7 @@ public protocol MirageClientDelegate: AnyObject, Sendable {
 public extension MirageClientDelegate {
     func clientService(_ service: MirageClientService, didUpdateWindowList windows: [MirageWindow]) {}
     func clientService(_ service: MirageClientService, didReceiveVideoPacket data: Data, forStream streamID: StreamID) {}
-    func clientService(_ service: MirageClientService, didDecodeFrame pixelBuffer: CVPixelBuffer, forStream streamID: StreamID, contentRect: CGRect) {}
+    func clientService(_ service: MirageClientService, didDecodeFrame pixelBuffer: CVPixelBuffer, forStream streamID: StreamID, contentRect: CGRect, fps: Double) {}
     func clientService(_ service: MirageClientService, didDisconnectFromHost reason: String) {}
     func clientService(_ service: MirageClientService, didEncounterError error: Error) {}
     func clientService(_ service: MirageClientService, streamQualityChanged streamID: StreamID, newQuality: MirageQualityPreset) {}

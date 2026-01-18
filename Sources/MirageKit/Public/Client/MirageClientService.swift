@@ -72,8 +72,7 @@ public final class MirageClientService {
     /// 1.0 = native resolution, lower values reduce encoded size
     public var resolutionScale: CGFloat = 1.0
 
-    /// Optional override for the maximum refresh rate sent to the host.
-    /// Set to 60 to disable ProMotion/120Hz requests.
+    /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
 
     /// Callback when desktop stream starts
@@ -170,7 +169,6 @@ public final class MirageClientService {
     // Per-stream controllers for lifecycle management
     // StreamController owns decoder, reassembler, and resize state machine
     private var controllersByStream: [StreamID: StreamController] = [:]
-    private var qualityFeedbackTasks: [StreamID: Task<Void, Never>] = [:]
 
     // Track which streams have been registered with the host (prevents duplicate registrations)
     private var registeredStreamIDs: Set<StreamID> = []
@@ -552,7 +550,6 @@ public final class MirageClientService {
         }
 
         stopScreenPolling()
-        stopAllQualityFeedbackTasks()
 
         let sessions = activeStreams
         let storedSessions = sessionStore.activeSessions
@@ -761,7 +758,7 @@ public final class MirageClientService {
     // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ)
     public func selectApp(
         bundleIdentifier: String,
-        quality: MirageQualityPreset = .adaptive,
+        quality: MirageQualityPreset = .medium,
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         maxBitrate: Int? = nil,
@@ -821,7 +818,7 @@ public final class MirageClientService {
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ)
     public func startDesktopStream(
-        quality: MirageQualityPreset = .adaptive,
+        quality: MirageQualityPreset = .medium,
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         maxBitrate: Int? = nil,
@@ -893,10 +890,10 @@ public final class MirageClientService {
     ///     Examples: 150_000_000 (150Mbps), 300_000_000 (300Mbps), 500_000_000 (500Mbps)
     ///   - keyFrameInterval: Optional keyframe interval in frames. Higher = fewer lag spikes.
     ///     Examples: 600 (10 seconds @ 60fps), 300 (5 seconds @ 60fps)
-    ///   - keyframeQuality: Optional keyframe quality (0.0-1.0). Lower = smaller keyframes.
+    ///   - keyframeQuality: Optional encoder quality (0.0-1.0). Lower = smaller frames.
     public func startViewing(
         window: MirageWindow,
-        quality: MirageQualityPreset = .adaptive,
+        quality: MirageQualityPreset = .medium,
         expectedPixelSize: CGSize? = nil,
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
@@ -942,7 +939,7 @@ public final class MirageClientService {
         }
         if let keyframeQuality, keyframeQuality > 0 {
             request.keyframeQuality = keyframeQuality
-            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
+            MirageLogger.client("Requesting encoder quality: \(keyframeQuality)")
         }
 
         request.streamScale = clampedStreamScale()
@@ -1013,12 +1010,12 @@ public final class MirageClientService {
             onResizeEvent: { [weak self] event in
                 self?.handleResizeEvent(event, for: capturedStreamID)
             },
-            onFrameDecoded: { [weak self] in
+            onFrameDecoded: { [weak self] fps in
                 guard let self else { return }
                 guard let (pixelBuffer, contentRect) = MirageFrameCache.shared.get(for: capturedStreamID) else { return }
-                self.sessionStore.handleDecodedFrame(streamID: capturedStreamID, pixelBuffer: pixelBuffer, contentRect: contentRect)
+                self.sessionStore.handleDecodedFrame(streamID: capturedStreamID, pixelBuffer: pixelBuffer, contentRect: contentRect, fps: fps)
                 self.onDecodedFrame?(capturedStreamID, pixelBuffer, .invalid, contentRect)
-                self.delegate?.clientService(self, didDecodeFrame: pixelBuffer, forStream: capturedStreamID, contentRect: contentRect)
+                self.delegate?.clientService(self, didDecodeFrame: pixelBuffer, forStream: capturedStreamID, contentRect: contentRect, fps: fps)
             },
             onInputBlockingChanged: { [weak self] isBlocked in
                 self?.setInputBlocked(isBlocked, for: capturedStreamID)
@@ -1027,8 +1024,6 @@ public final class MirageClientService {
 
         // Start the controller (sets up decoder and reassembler internally)
         await controller.start()
-
-        startQualityFeedbackTask(for: streamID, controller: controller)
 
         // Update thread-safe snapshot for UDP receive loop
         await updateReassemblerSnapshot()
@@ -1317,8 +1312,6 @@ public final class MirageClientService {
         // Stop screen polling for this stream
         stopScreenPolling()
 
-        stopQualityFeedbackTask(for: streamID)
-
         // Clear cached frames for this stream
         latestFrameStorage.clearFrame(for: streamID)
         MirageFrameCache.shared.clear(for: streamID)
@@ -1591,7 +1584,6 @@ public final class MirageClientService {
                 // Clean up per-stream resources
                 removeActiveStreamID(streamID)
                 registeredStreamIDs.remove(streamID)
-                stopQualityFeedbackTask(for: streamID)
 
                 // Clean up controller for this stream
                 Task { [weak self] in
@@ -1731,7 +1723,6 @@ public final class MirageClientService {
                 // Clean up login display stream resources
                 removeActiveStreamID(streamID)
                 registeredStreamIDs.remove(streamID)
-                stopQualityFeedbackTask(for: streamID)
 
                 // Clean up controller for login display
                 Task {
@@ -1817,7 +1808,6 @@ public final class MirageClientService {
                 // Clean up stream resources
                 removeActiveStreamID(streamID)
                 registeredStreamIDs.remove(streamID)
-                stopQualityFeedbackTask(for: streamID)
 
                 // Clean up controller
                 Task {
@@ -1995,61 +1985,6 @@ public final class MirageClientService {
         #endif
     }
 
-    private func startQualityFeedbackTask(for streamID: StreamID, controller: StreamController) {
-        guard qualityFeedbackTasks[streamID] == nil else { return }
-        let task = Task(priority: .utility) { [weak self, weak controller] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                guard let controller else { break }
-                let metrics = await controller.consumeQualityMetrics()
-                self.sendQualityFeedback(for: streamID, metrics: metrics)
-                try? await Task.sleep(for: .milliseconds(500))
-            }
-        }
-        qualityFeedbackTasks[streamID] = task
-    }
-
-    private func stopQualityFeedbackTask(for streamID: StreamID) {
-        if let task = qualityFeedbackTasks.removeValue(forKey: streamID) {
-            task.cancel()
-        }
-    }
-
-    private func stopAllQualityFeedbackTasks() {
-        for task in qualityFeedbackTasks.values {
-            task.cancel()
-        }
-        qualityFeedbackTasks.removeAll()
-    }
-
-    private func sendQualityFeedback(for streamID: StreamID, metrics: StreamController.QualityMetrics) {
-        guard case .connected = connectionState, let connection else { return }
-
-        let totalFrames = metrics.decodedFrames + metrics.droppedFrames
-        var bufferHealth: Double = 1.0
-        if totalFrames > 0 {
-            bufferHealth = Double(metrics.decodedFrames) / Double(totalFrames)
-        }
-
-        if metrics.decodeErrors > 0 {
-            let penalty = min(0.5, Double(metrics.decodeErrors) * 0.05)
-            bufferHealth = max(0.0, bufferHealth - penalty)
-        }
-
-        let droppedFrames = metrics.droppedFrames > UInt64(Int.max) ? Int.max : Int(metrics.droppedFrames)
-        let feedback = QualityFeedbackMessage(
-            streamID: streamID,
-            averageDecodeTimeMs: metrics.averageDecodeTimeMs,
-            droppedFrames: droppedFrames,
-            bufferHealth: max(0.0, min(1.0, bufferHealth)),
-            displayRefreshRate: getScreenMaxRefreshRate()
-        )
-
-        if let message = try? ControlMessage(type: .qualityFeedback, content: feedback) {
-            connection.send(content: message.serialize(), completion: .idempotent)
-        }
-    }
-
     /// Get the maximum refresh rate supported by the current screen
     /// Returns 120 for ProMotion displays, 60 for standard displays
     private func getScreenMaxRefreshRate() -> Int {
@@ -2070,7 +2005,7 @@ public final class MirageClientService {
         #endif
 
         if let override = maxRefreshRateOverride {
-            return min(screenMax, override)
+            return override
         }
         return screenMax
     }

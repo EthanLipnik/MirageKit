@@ -113,12 +113,20 @@ struct MirageKitTests {
 
     @Test("Quality presets")
     func testQualityPresets() {
-        let ultra = MirageQualityPreset.ultra.encoderConfiguration
-        #expect(ultra.targetFrameRate == 120)
-        #expect(ultra.enableAdaptiveBitrate == true)
+        let ultra60 = MirageQualityPreset.ultra.encoderConfiguration(for: 60)
+        let ultra120 = MirageQualityPreset.ultra.encoderConfiguration(for: 120)
+        #expect(ultra60.maxBitrate == 200_000_000)
+        #expect(ultra120.maxBitrate == 200_000_000)
+        #expect(ultra120.keyframeQuality == 1.0)
 
-        let adaptive = MirageQualityPreset.adaptive.encoderConfiguration
-        #expect(adaptive.enableAdaptiveBitrate == true)
+        let medium60 = MirageQualityPreset.medium.encoderConfiguration(for: 60)
+        let medium120 = MirageQualityPreset.medium.encoderConfiguration(for: 120)
+        #expect(medium120.maxBitrate > medium60.maxBitrate)
+        #expect(medium120.keyframeQuality < medium60.keyframeQuality)
+
+        let low60 = MirageQualityPreset.low.encoderConfiguration(for: 60)
+        let low120 = MirageQualityPreset.low.encoderConfiguration(for: 120)
+        #expect(low120.maxBitrate <= low60.maxBitrate)
     }
 
     @Test("Stream statistics formatting")

@@ -26,24 +26,20 @@ public struct MirageEncoderConfiguration: Sendable {
     /// Scale factor for retina displays
     public var scaleFactor: CGFloat
 
-    /// Whether to enable adaptive bitrate
-    public var enableAdaptiveBitrate: Bool
-
-    /// Quality level for keyframes (0.0-1.0, where 1.0 is maximum quality)
-    /// Lower values reduce keyframe size significantly with minimal visual impact
-    /// Default 0.8 reduces keyframe size by ~40-50% for better UDP reliability
+    /// Quality level for encoded frames (0.0-1.0, where 1.0 is maximum quality)
+    /// Lower values reduce frame size significantly with minimal visual impact
+    /// Default 0.8 reduces frame size by ~40-50% for better UDP reliability
     public var keyframeQuality: Float
 
     public init(
         codec: MirageVideoCodec = .hevc,
         maxBitrate: Int = 100_000_000,
         minBitrate: Int = 5_000_000,
-        targetFrameRate: Int = 60,  // 60fps is sufficient for productivity apps
-        keyFrameInterval: Int = 600,  // 10 seconds at 60fps - minimizes periodic lag spikes
+        targetFrameRate: Int = 60,
+        keyFrameInterval: Int = 600,
         colorSpace: MirageColorSpace = .displayP3,
         scaleFactor: CGFloat = 2.0,
-        enableAdaptiveBitrate: Bool = true,
-        keyframeQuality: Float = 0.8  // Lower quality yields smaller keyframes for better UDP reliability
+        keyframeQuality: Float = 0.8  // Lower quality yields smaller frames for better UDP reliability
     ) {
         self.codec = codec
         self.maxBitrate = maxBitrate
@@ -52,7 +48,6 @@ public struct MirageEncoderConfiguration: Sendable {
         self.keyFrameInterval = keyFrameInterval
         self.colorSpace = colorSpace
         self.scaleFactor = scaleFactor
-        self.enableAdaptiveBitrate = enableAdaptiveBitrate
         self.keyframeQuality = keyframeQuality
     }
 
@@ -61,33 +56,32 @@ public struct MirageEncoderConfiguration: Sendable {
         maxBitrate: 200_000_000,
         minBitrate: 50_000_000,
         targetFrameRate: 120,
-        keyFrameInterval: 600  // 10 seconds - minimizes lag spikes
+        keyFrameInterval: 600
     )
 
     /// Default configuration for lower bandwidth
     public static let balanced = MirageEncoderConfiguration(
         maxBitrate: 50_000_000,
         minBitrate: 10_000_000,
-        targetFrameRate: 60,
-        keyFrameInterval: 600  // 10 seconds - minimizes lag spikes
+        targetFrameRate: 120,
+        keyFrameInterval: 600
     )
 
     /// Configuration optimized for low-latency text applications
     /// Achieves NVIDIA GameStream-competitive latency through:
     /// - Longer keyframe interval (fewer large frames to fragment)
-    /// - Lower keyframe quality (30-50% smaller keyframes)
+    /// - Lower quality (30-50% smaller frames)
     /// - Aggressive frame skipping (always-latest-frame strategy)
     /// Best for: IDEs, text editors, terminals - any app where responsiveness matters
     public static let lowLatency = MirageEncoderConfiguration(
         codec: .hevc,
-        maxBitrate: 150_000_000,        // High bitrate for quality
-        minBitrate: 20_000_000,         // Higher floor to maintain sharpness
+        maxBitrate: 150_000_000,
+        minBitrate: 20_000_000,
         targetFrameRate: 120,
-        keyFrameInterval: 600,          // 10 seconds - minimizes lag spikes
-        colorSpace: .displayP3,         // Full P3 color
+        keyFrameInterval: 600,
+        colorSpace: .displayP3,
         scaleFactor: 2.0,
-        enableAdaptiveBitrate: true,
-        keyframeQuality: 0.85           // Reduce keyframe size by ~30-50% (visually lossless)
+        keyframeQuality: 0.85
     )
 
     /// Create a copy with a different max bitrate
@@ -122,7 +116,7 @@ public struct MirageEncoderConfiguration: Sendable {
     }
 
     /// Create a copy with a different target frame rate
-    /// Use this to enable 120fps streaming on P2P connections with capable displays
+    /// Use this to override the default based on client capability
     public func withTargetFrameRate(_ newFrameRate: Int) -> MirageEncoderConfiguration {
         var config = self
         config.targetFrameRate = newFrameRate
@@ -210,60 +204,54 @@ public struct MirageNetworkConfiguration: Sendable {
 // MARK: - Quality Presets
 
 /// Quality preset for quick configuration.
-/// Presets define maximums; streams still adapt down for motion and feedback.
+/// Presets define fixed encoder caps that can be overridden by the client.
 public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
-    case ultra       // 120fps cap, highest bitrate
-    case high        // 120fps cap, high bitrate
-    case medium      // 60fps cap
-    case low         // 30fps cap
-    case adaptive    // Balanced caps with adaptive bitrate
+    case ultra       // Highest bitrate
+    case high        // High bitrate
+    case medium      // Balanced bitrate
+    case low         // Low bitrate
     case lowLatency  // Optimized for text apps - aggressive frame skipping, full quality
 
     public var displayName: String {
         switch self {
-        case .ultra: return "Ultra (120fps)"
-        case .high: return "High (120fps)"
-        case .medium: return "Medium (60fps)"
-        case .low: return "Low (30fps)"
-        case .adaptive: return "Adaptive"
+        case .ultra: return "Ultra"
+        case .high: return "High"
+        case .medium: return "Medium"
+        case .low: return "Low"
         case .lowLatency: return "Low Latency"
         }
     }
 
     public var encoderConfiguration: MirageEncoderConfiguration {
+        encoderConfiguration(for: 60)
+    }
+
+    public func encoderConfiguration(for frameRate: Int) -> MirageEncoderConfiguration {
+        let isHighRefresh = frameRate >= 120
         switch self {
         case .ultra:
             return MirageEncoderConfiguration(
                 maxBitrate: 200_000_000,
-                targetFrameRate: 120,
-                enableAdaptiveBitrate: true
+                keyframeQuality: 1.0
             )
         case .high:
             return MirageEncoderConfiguration(
-                maxBitrate: 100_000_000,
-                targetFrameRate: 120,
-                enableAdaptiveBitrate: true
+                maxBitrate: isHighRefresh ? 130_000_000 : 100_000_000,
+                keyframeQuality: isHighRefresh ? 0.88 : 0.95
             )
         case .medium:
             return MirageEncoderConfiguration(
-                maxBitrate: 50_000_000,
-                targetFrameRate: 60,
-                enableAdaptiveBitrate: true
+                maxBitrate: isHighRefresh ? 85_000_000 : 50_000_000,
+                keyframeQuality: isHighRefresh ? 0.60 : 0.75
             )
         case .low:
             return MirageEncoderConfiguration(
-                maxBitrate: 20_000_000,
-                targetFrameRate: 30,
-                enableAdaptiveBitrate: true
-            )
-        case .adaptive:
-            return MirageEncoderConfiguration(
-                maxBitrate: 150_000_000,
-                targetFrameRate: 120,
-                enableAdaptiveBitrate: true
+                maxBitrate: isHighRefresh ? 8_000_000 : 12_000_000,
+                keyframeQuality: isHighRefresh ? 0.06 : 0.12
             )
         case .lowLatency:
             return .lowLatency
         }
     }
+
 }

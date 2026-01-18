@@ -38,6 +38,12 @@ public struct MirageStreamContentView: View {
     /// Debounce task for resize events - only sends after user stops resizing.
     @State private var resizeDebounceTask: Task<Void, Never>?
 
+    /// Resize holdoff task used during foreground transitions (iOS).
+    @State private var resizeHoldoffTask: Task<Void, Never>?
+
+    /// Whether resize events are currently allowed.
+    @State private var allowsResizeEvents: Bool = true
+
     /// Whether the client is currently waiting for host to complete resize.
     @State private var isResizing: Bool = false
 
@@ -212,6 +218,7 @@ public struct MirageStreamContentView: View {
 
     private func handleDrawableSizeChanged(_ pixelSize: CGSize) {
         guard pixelSize.width > 0, pixelSize.height > 0 else { return }
+        guard allowsResizeEvents else { return }
 
         if hasReceivedFirstFrame {
             isResizing = true
@@ -237,12 +244,14 @@ public struct MirageStreamContentView: View {
 
         resizeDebounceTask?.cancel()
 
-        resizeDebounceTask = Task {
+        resizeDebounceTask = Task { @MainActor in
             do {
                 try await Task.sleep(for: .milliseconds(200))
             } catch {
                 return
             }
+
+            guard allowsResizeEvents else { return }
 
             let aspectRatio = pixelSize.width / pixelSize.height
 
@@ -268,29 +277,22 @@ public struct MirageStreamContentView: View {
             let screenArea = screenBounds.width * screenBounds.height
             let relativeScale = min(1.0, drawableArea / screenArea)
 
-            let (lastAspectRatio, lastRelativeScale, lastPixelSize) = await MainActor.run {
-                (lastSentAspectRatio, lastSentRelativeScale, lastSentPixelSize)
-            }
-            let isInitialLayout = lastAspectRatio == 0 && lastRelativeScale == 0 && lastPixelSize == .zero
+            let isInitialLayout = lastSentAspectRatio == 0 && lastSentRelativeScale == 0 && lastSentPixelSize == .zero
             if isInitialLayout {
-                await MainActor.run {
-                    lastSentAspectRatio = aspectRatio
-                    lastSentRelativeScale = relativeScale
-                    lastSentPixelSize = cappedPixelSize
-                }
-                return
-            }
-
-            let aspectChanged = abs(aspectRatio - lastAspectRatio) > 0.01
-            let scaleChanged = abs(relativeScale - lastRelativeScale) > 0.01
-            let pixelChanged = cappedPixelSize != lastPixelSize
-            guard aspectChanged || scaleChanged || pixelChanged else { return }
-
-            await MainActor.run {
                 lastSentAspectRatio = aspectRatio
                 lastSentRelativeScale = relativeScale
                 lastSentPixelSize = cappedPixelSize
+                return
             }
+
+            let aspectChanged = abs(aspectRatio - lastSentAspectRatio) > 0.01
+            let scaleChanged = abs(relativeScale - lastSentRelativeScale) > 0.01
+            let pixelChanged = cappedPixelSize != lastSentPixelSize
+            guard aspectChanged || scaleChanged || pixelChanged else { return }
+
+            lastSentAspectRatio = aspectRatio
+            lastSentRelativeScale = relativeScale
+            lastSentPixelSize = cappedPixelSize
 
             let event = MirageRelativeResizeEvent(
                 windowID: session.window.id,
@@ -307,17 +309,28 @@ public struct MirageStreamContentView: View {
             }
 
             try? await Task.sleep(for: .seconds(2))
-            await MainActor.run {
-                if isResizing {
-                    displayedFrame = sessionStore.latestFrames[session.id]
-                    displayedContentRect = contentRect
-                    isResizing = false
-                }
+            if isResizing {
+                displayedFrame = sessionStore.latestFrames[session.id]
+                displayedContentRect = contentRect
+                isResizing = false
             }
         }
     }
 
 #if os(iOS)
+    private func scheduleResizeHoldoff() {
+        resizeHoldoffTask?.cancel()
+        allowsResizeEvents = false
+        resizeHoldoffTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: .milliseconds(600))
+            } catch {
+                return
+            }
+            allowsResizeEvents = true
+        }
+    }
+
     private func handleForegroundRecovery() {
         if isResizing {
             displayedFrame = sessionStore.latestFrames[session.id]
@@ -328,6 +341,7 @@ public struct MirageStreamContentView: View {
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
 
+        scheduleResizeHoldoff()
         clientService.requestStreamRecovery(for: session.streamID)
     }
 #endif

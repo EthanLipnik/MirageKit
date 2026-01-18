@@ -219,7 +219,7 @@ public final class MirageHostService {
             maxStreams: 4,
             supportsHEVC: true,
             supportsP3ColorSpace: true,
-            maxFrameRate: encoderConfiguration.targetFrameRate,
+            maxFrameRate: 120,
             protocolVersion: Int(MirageKit.protocolVersion)
         )
 
@@ -466,7 +466,7 @@ public final class MirageHostService {
     ///   - clientDisplayResolution: Client's display resolution for virtual display sizing
     ///   - maxBitrate: Optional client-requested bitrate override (in bits per second)
     ///   - keyFrameInterval: Optional client-requested keyframe interval (in frames)
-    ///   - keyframeQuality: Optional client-requested keyframe quality (0.0-1.0)
+    ///   - keyframeQuality: Optional client-requested encoder quality (0.0-1.0)
     ///   - targetFrameRate: Optional frame rate override (60 or 120fps, based on client capability and quality)
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - hdr: Whether to enable HDR streaming (Rec. 2020 with PQ transfer function)
@@ -534,7 +534,7 @@ public final class MirageHostService {
                 MirageLogger.host("Using client-requested keyframe interval: \(interval) frames")
             }
             if let quality = keyframeQuality {
-                MirageLogger.host("Using client-requested keyframe quality: \(quality)")
+                MirageLogger.host("Using client-requested encoder quality: \(quality)")
             }
         } else {
             effectiveEncoderConfig = encoderConfig
@@ -881,7 +881,7 @@ public final class MirageHostService {
                     windowID: windowID,
                     width: width,
                     height: height,
-                    frameRate: encoderConfig.targetFrameRate,
+                    frameRate: await context.getTargetFrameRate(),
                     codec: encoderConfig.codec,
                     minWidth: minWidth,
                     minHeight: minHeight,
@@ -1531,21 +1531,18 @@ public final class MirageHostService {
                     onResizeWindowForStream?(window, pointSize)
                 }
 
-                let presetConfig = request.preferredQuality.encoderConfiguration
+                // Determine target frame rate based on client capability
+                let clientMaxRefreshRate = request.maxRefreshRate
+                let targetFrameRate = clientMaxRefreshRate >= 120 ? 120 : 60
+
+                let presetConfig = request.preferredQuality.encoderConfiguration(for: targetFrameRate)
                 let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
                 let keyFrameInterval = request.keyFrameInterval ?? presetConfig.keyFrameInterval
                 let keyframeQuality = request.keyframeQuality ?? presetConfig.keyframeQuality
-
-                // Determine target frame rate based on client capability and quality preset
-                let clientMaxRefreshRate = request.maxRefreshRate
-                let qualityFrameRate = presetConfig.targetFrameRate
-                let allowsHighRefresh = request.preferredQuality == .high || request.preferredQuality == .ultra
-                let cappedQualityFrameRate = allowsHighRefresh ? qualityFrameRate : min(qualityFrameRate, 60)
-                let targetFrameRate = min(clientMaxRefreshRate, cappedQualityFrameRate)
+                let requestedScale = request.streamScale ?? 1.0
                 MirageLogger.host("Frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
-                // Start the stream - use virtual display if client provides display resolution
-                _ = try await startStream(
+                try await startStream(
                     for: window,
                     to: client,
                     dataPort: request.dataPort,
@@ -1553,7 +1550,7 @@ public final class MirageHostService {
                     maxBitrate: maxBitrate,
                     keyFrameInterval: keyFrameInterval,
                     keyframeQuality: keyframeQuality,
-                    streamScale: request.streamScale,
+                    streamScale: requestedScale,
                     targetFrameRate: targetFrameRate
                 )
             } catch {
@@ -1592,12 +1589,6 @@ public final class MirageHostService {
             if let request = try? message.decode(KeyframeRequestMessage.self),
                let context = streamsByID[request.streamID] {
                 await context.requestKeyframe()
-            }
-
-        case .qualityFeedback:
-            if let feedback = try? message.decode(QualityFeedbackMessage.self),
-               let context = streamsByID[feedback.streamID] {
-                await context.applyQualityFeedback(feedback)
             }
 
         case .ping:

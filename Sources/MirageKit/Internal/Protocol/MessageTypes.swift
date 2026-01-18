@@ -29,7 +29,6 @@ enum ControlMessageType: UInt8, Codable {
     case inputEvent = 0x30
 
     // Quality control
-    case qualityFeedback = 0x40
     case qualityChange = 0x41
     case keyframeRequest = 0x42
 
@@ -224,15 +223,15 @@ struct StartStreamMessage: Codable {
     /// Higher values (e.g., 600 = 10 seconds @ 60fps) reduce periodic lag spikes
     /// If nil, host uses default from encoder configuration
     var keyFrameInterval: Int? = nil
-    /// Client-requested keyframe quality (0.0-1.0)
-    /// Lower values reduce keyframe size with minimal visual impact
+    /// Client-requested encoder quality (0.0-1.0)
+    /// Lower values reduce frame size with minimal visual impact
     /// If nil, host uses default from encoder configuration
     var keyframeQuality: Float? = nil
     /// Client-requested stream scale (0.1-1.0)
     /// Applies post-capture downscaling without resizing the host window
     var streamScale: CGFloat? = nil
     /// Client's display maximum refresh rate in Hz (60 or 120)
-    /// Used with P2P detection to enable 120fps streaming on capable displays
+    /// Mirrors the client-side ProMotion toggle (60 when disabled).
     var maxRefreshRate: Int = 60
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
@@ -280,14 +279,6 @@ struct InputEventMessage: Codable {
 }
 
 // MARK: - Quality Messages
-
-struct QualityFeedbackMessage: Codable {
-    let streamID: StreamID
-    let averageDecodeTimeMs: Double
-    let droppedFrames: Int
-    let bufferHealth: Double
-    let displayRefreshRate: Int
-}
 
 struct QualityChangeMessage: Codable {
     let streamID: StreamID
@@ -535,7 +526,7 @@ struct SelectAppMessage: Codable {
     let maxBitrate: Int?
     /// Client-requested keyframe interval in frames
     let keyFrameInterval: Int?
-    /// Client-requested keyframe quality (0.0-1.0)
+    /// Client-requested encoder quality (0.0-1.0)
     let keyframeQuality: Float?
     /// Client-requested stream scale (0.1-1.0)
     let streamScale: CGFloat?
@@ -736,7 +727,7 @@ struct StartDesktopStreamMessage: Codable {
     let maxBitrate: Int?
     /// Client-requested keyframe interval in frames
     let keyFrameInterval: Int?
-    /// Client-requested keyframe quality (0.0-1.0)
+    /// Client-requested encoder quality (0.0-1.0)
     let keyframeQuality: Float?
     /// Client-requested stream scale (0.1-1.0)
     let streamScale: CGFloat?

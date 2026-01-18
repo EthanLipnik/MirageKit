@@ -64,11 +64,10 @@ extension MirageHostService {
 
         // Configure encoder with quality preset and optional overrides
         var config = encoderConfig
-        let presetConfig = qualityPreset.encoderConfiguration
+        let presetFrameRate = targetFrameRate ?? 60
+        let presetConfig = qualityPreset.encoderConfiguration(for: presetFrameRate)
         config.maxBitrate = presetConfig.maxBitrate
         config.minBitrate = presetConfig.minBitrate
-        config.targetFrameRate = presetConfig.targetFrameRate
-        config.enableAdaptiveBitrate = presetConfig.enableAdaptiveBitrate
         config.keyFrameInterval = presetConfig.keyFrameInterval
         config.keyframeQuality = presetConfig.keyframeQuality
 
@@ -87,11 +86,13 @@ extension MirageHostService {
         //     MirageLogger.host("Desktop stream HDR enabled (Rec. 2020 + PQ)")
         // }
 
+        let effectiveScale = streamScale ?? 1.0
+
         let streamContext = StreamContext(
             streamID: streamID,
             windowID: 0,
             encoderConfig: config,
-            streamScale: streamScale ?? 1.0,
+            streamScale: effectiveScale,
             maxPacketSize: networkConfig.maxPacketSize,
             additionalFrameFlags: [.desktopStream]
         )

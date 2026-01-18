@@ -67,26 +67,72 @@ actor HEVCEncoder {
         currentHeight = height
     }
 
+    private struct QualitySettings {
+        let quality: Float
+        let minQP: Int?
+        let maxQP: Int?
+    }
+
+    private func qualitySettings(for quality: Float) -> QualitySettings {
+        let clamped = max(0.02, min(1.0, quality))
+        let useQP = clamped < 0.98
+        guard useQP else {
+            return QualitySettings(quality: clamped, minQP: nil, maxQP: nil)
+        }
+        let rawMin = 10.0 + (1.0 - Double(clamped)) * 36.0
+        let clampedMin = max(10, min(46, Int(rawMin.rounded())))
+        let maxQP = min(51, clampedMin + 12)
+        return QualitySettings(quality: clamped, minQP: clampedMin, maxQP: maxQP)
+    }
+
+    private func setProperty(_ session: VTCompressionSession, key: CFString, value: CFTypeRef) {
+        let status = VTSessionSetProperty(session, key: key, value: value)
+        guard status == noErr else {
+            MirageLogger.error(.encoder, "VTSessionSetProperty \(key) failed: \(status)")
+            return
+        }
+    }
+
+    private func applyQualitySettings(_ session: VTCompressionSession, quality: Float, log: Bool) {
+        let settings = qualitySettings(for: quality)
+        setProperty(session, key: kVTCompressionPropertyKey_Quality, value: NSNumber(value: settings.quality))
+
+        if let minQP = settings.minQP {
+            setProperty(session, key: kVTCompressionPropertyKey_MinAllowedFrameQP, value: NSNumber(value: minQP))
+        }
+        if let maxQP = settings.maxQP {
+            setProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: NSNumber(value: maxQP))
+        }
+
+        guard log else { return }
+        let qualityText = settings.quality.formatted(.number.precision(.fractionLength(2)))
+        if let minQP = settings.minQP, let maxQP = settings.maxQP {
+            MirageLogger.encoder("Encoder quality: \(qualityText), QP \(minQP)-\(maxQP)")
+        } else {
+            MirageLogger.encoder("Encoder quality: \(qualityText)")
+        }
+    }
+
     private func configureSession(_ session: VTCompressionSession) throws {
         // Real-time encoding
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
         // Disable B-frames for lowest latency
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
         // Eliminate encoder buffering - critical for low latency streaming
         // Without this, the encoder may queue 1-2 frames before outputting
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
+        setProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
 
         // Frame rate
-        VTSessionSetProperty(
+        setProperty(
             session,
             key: kVTCompressionPropertyKey_ExpectedFrameRate,
             value: configuration.targetFrameRate as CFNumber
         )
 
         // Bitrate
-        VTSessionSetProperty(
+        setProperty(
             session,
             key: kVTCompressionPropertyKey_AverageBitRate,
             value: configuration.maxBitrate as CFNumber
@@ -94,35 +140,29 @@ actor HEVCEncoder {
         applyDataRateLimits(session, bitrate: configuration.maxBitrate)
 
         // Keyframe interval
-        VTSessionSetProperty(
+        setProperty(
             session,
             key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
             value: configuration.keyFrameInterval as CFNumber
         )
 
         // Profile: Main10 for P3 color
-        VTSessionSetProperty(
+        setProperty(
             session,
             key: kVTCompressionPropertyKey_ProfileLevel,
             value: kVTProfileLevel_HEVC_Main10_AutoLevel
         )
 
         // Prioritize encoding speed over quality for lower latency
-        VTSessionSetProperty(
+        setProperty(
             session,
             key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
             value: kCFBooleanTrue
         )
         MirageLogger.encoder("Prioritizing encoding speed over quality")
 
-        // Apply quality setting - 1.0 is maximum quality, lower values reduce size
-        // Always set this to ensure consistent behavior
-        VTSessionSetProperty(
-            session,
-            key: kVTCompressionPropertyKey_Quality,
-            value: configuration.keyframeQuality as CFNumber
-        )
-        MirageLogger.encoder("Encoder quality: \(configuration.keyframeQuality)")
+        // Apply quality setting - lower values reduce size for all frames
+        applyQualitySettings(session, quality: configuration.keyframeQuality, log: true)
 
         // Note: kVTCompressionPropertyKey_ConstantBitRate is not supported by all HEVC encoders
         // The encoder will use its default rate control mode (typically VBR), which is fine
@@ -132,17 +172,17 @@ actor HEVCEncoder {
         switch configuration.colorSpace {
         case .displayP3:
             // P3 uses P3-D65 primaries with sRGB transfer function and 709 YCbCr matrix
-            VTSessionSetProperty(
+            setProperty(
                 session,
                 key: kVTCompressionPropertyKey_ColorPrimaries,
                 value: kCMFormatDescriptionColorPrimaries_P3_D65
             )
-            VTSessionSetProperty(
+            setProperty(
                 session,
                 key: kVTCompressionPropertyKey_TransferFunction,
                 value: kCMFormatDescriptionTransferFunction_sRGB
             )
-            VTSessionSetProperty(
+            setProperty(
                 session,
                 key: kVTCompressionPropertyKey_YCbCrMatrix,
                 value: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
@@ -376,7 +416,7 @@ actor HEVCEncoder {
             // Log timing for every frame (first 10, then every 60th)
             if info.frameNumber < 10 || info.frameNumber % 60 == 0 || isKeyframe {
                 let bytesKB = Double(data.count) / 1024.0
-                MirageLogger.timing("Encoder frame \(info.frameNumber): \(String(format: "%.2f", encodingDuration))ms, \(String(format: "%.1f", bytesKB))KB\(isKeyframe ? " (keyframe)" : "")")
+                MirageLogger.debug(.timing, "Encoder frame \(info.frameNumber): \(String(format: "%.2f", encodingDuration))ms, \(String(format: "%.1f", bytesKB))KB\(isKeyframe ? " (keyframe)" : "")")
             }
 
             info.handler?(data, isKeyframe, pts)
@@ -396,20 +436,21 @@ actor HEVCEncoder {
     }
 
     /// Update quality dynamically (0.0 to 1.0)
-    /// Lower quality = smaller frames = better for high-motion bursts
+    /// Lower quality reduces frame size during throughput pressure.
     func updateQuality(_ quality: Float) {
         guard let session = compressionSession else { return }
-        let clampedQuality = max(0.1, min(1.0, quality))
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_Quality, value: clampedQuality as CFNumber)
+        applyQualitySettings(session, quality: quality, log: false)
     }
 
     private func applyDataRateLimits(_ session: VTCompressionSession, bitrate: Int) {
         let bytesPerSecond = max(1, bitrate / 8)
+        let windowSeconds: Double = configuration.targetFrameRate >= 120 ? 0.25 : 0.5
+        let bytesPerWindow = max(1, Int((Double(bytesPerSecond) * windowSeconds).rounded()))
         let limits = [
-            NSNumber(value: bytesPerSecond),
-            NSNumber(value: 1)
+            NSNumber(value: bytesPerWindow),
+            NSNumber(value: windowSeconds)
         ] as CFArray
-        VTSessionSetProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
+        setProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: limits)
     }
 
     /// Update encoder dimensions (requires session recreation)
@@ -594,67 +635,6 @@ private final class EncodeInfo: @unchecked Sendable {
     /// Returns false if a dimension change occurred since this frame was queued
     var isSessionCurrent: Bool {
         return sessionVersion == getCurrentVersion()
-    }
-}
-
-/// Adaptive bitrate controller
-actor AdaptiveBitrateController {
-    private var currentBitrate: Int
-    private let minBitrate: Int
-    private let maxBitrate: Int
-    private let targetFrameRate: Int
-
-    private var rttHistory: [TimeInterval] = []
-    private var lossHistory: [Double] = []
-
-    init(configuration: MirageEncoderConfiguration) {
-        self.currentBitrate = configuration.maxBitrate
-        self.minBitrate = configuration.minBitrate
-        self.maxBitrate = configuration.maxBitrate
-        self.targetFrameRate = configuration.targetFrameRate
-    }
-
-    /// Update with network metrics
-    func updateMetrics(rtt: TimeInterval, packetLoss: Double) -> Int {
-        rttHistory.append(rtt)
-        lossHistory.append(packetLoss)
-
-        // Keep last 30 samples
-        if rttHistory.count > 30 { rttHistory.removeFirst() }
-        if lossHistory.count > 30 { lossHistory.removeFirst() }
-
-        return calculateOptimalBitrate()
-    }
-
-    private func calculateOptimalBitrate() -> Int {
-        guard rttHistory.count >= 5 else { return currentBitrate }
-
-        let avgRTT = rttHistory.suffix(5).reduce(0, +) / 5.0
-        let avgLoss = lossHistory.suffix(5).reduce(0, +) / 5.0
-
-        var targetBitrate = currentBitrate
-
-        // More aggressive thresholds for low-latency responsiveness
-        // Reduce bitrate quickly when network issues detected
-        if avgRTT > 0.030 || avgLoss > 0.01 {
-            // Aggressive reduction (70% instead of 80%) for faster response
-            targetBitrate = Int(Double(currentBitrate) * 0.7)
-        } else if avgRTT < 0.015 && avgLoss < 0.002 {
-            // Increase bitrate when conditions are excellent
-            targetBitrate = Int(Double(currentBitrate) * 1.15)
-        }
-
-        // Clamp to bounds
-        targetBitrate = max(minBitrate, min(maxBitrate, targetBitrate))
-
-        // Faster transition for more responsive adaptation (1:1 instead of 3:1)
-        currentBitrate = (currentBitrate + targetBitrate) / 2
-
-        return currentBitrate
-    }
-
-    func getCurrentBitrate() -> Int {
-        currentBitrate
     }
 }
 

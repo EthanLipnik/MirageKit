@@ -16,18 +16,14 @@ struct CapturedFrameInfo: Sendable {
     let dirtyRects: [CGRect]
     /// Total area of dirty regions as percentage of frame (0-100)
     let dirtyPercentage: Float
-    /// Hint that this frame should be encoded as a keyframe
-    /// Set when SCK resumes after a fallback period to prevent decode errors
-    let forceKeyframe: Bool
     /// Keepalive frame - must be encoded even if 0% dirty to maintain stream continuity
     /// Set for fallback frames sent during SCK pauses (menus, drags)
     let isKeepalive: Bool
 
-    init(contentRect: CGRect, dirtyRects: [CGRect], dirtyPercentage: Float, forceKeyframe: Bool = false, isKeepalive: Bool = false) {
+    init(contentRect: CGRect, dirtyRects: [CGRect], dirtyPercentage: Float, isKeepalive: Bool = false) {
         self.contentRect = contentRect
         self.dirtyRects = dirtyRects
         self.dirtyPercentage = dirtyPercentage
-        self.forceKeyframe = forceKeyframe
         self.isKeepalive = isKeepalive
     }
 }
@@ -36,7 +32,7 @@ actor WindowCaptureEngine {
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
     private let configuration: MirageEncoderConfiguration
-
+    private var pendingKeyframeRequest = false
     private var isCapturing = false
     private var capturedFrameHandler: (@Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void)?
     private var dimensionChangeHandler: (@Sendable (Int, Int) -> Void)?
@@ -149,7 +145,13 @@ actor WindowCaptureEngine {
         }
 
         // Create output handler with windowID for fallback capture during SCK pauses
-        streamOutput = CaptureStreamOutput(onFrame: onFrame, windowID: window.windowID)
+        streamOutput = CaptureStreamOutput(
+            onFrame: onFrame,
+            onKeyframeRequest: { [weak self] in
+                Task { await self?.markKeyframeRequested() }
+            },
+            windowID: window.windowID
+        )
 
         // Use nil queue (like Ensemble) to avoid blocking encoder during drags/menus
         // The default queue handles frame delivery without stalling the capture pipeline
@@ -438,6 +440,9 @@ actor WindowCaptureEngine {
         // Create output handler (reduced keepalive rate for display capture)
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
+            onKeyframeRequest: { [weak self] in
+                Task { await self?.markKeyframeRequested() }
+            },
             frameGapThreshold: 0.300,
             keepaliveInterval: 1.5,
             cacheInterval: 0.5
@@ -466,11 +471,24 @@ actor WindowCaptureEngine {
     private func handleFrame(_ sampleBuffer: CMSampleBuffer, frameInfo: CapturedFrameInfo) {
         capturedFrameHandler?(sampleBuffer, frameInfo)
     }
+
+    private func markKeyframeRequested() {
+        pendingKeyframeRequest = true
+    }
+
+    func consumePendingKeyframeRequest() async -> Bool {
+        if pendingKeyframeRequest {
+            pendingKeyframeRequest = false
+            return true
+        }
+        return false
+    }
 }
 
 /// Stream output delegate
 private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let onFrame: @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void
+    private let onKeyframeRequest: @Sendable () -> Void
     private var frameCount: UInt64 = 0
     private var skippedIdleFrames: UInt64 = 0
     private var smallChangeFrames: UInt64 = 0  // Track frames with small dirty regions
@@ -516,12 +534,14 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
 
     init(
         onFrame: @escaping @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void,
+        onKeyframeRequest: @escaping @Sendable () -> Void,
         windowID: CGWindowID = 0,
         frameGapThreshold: CFAbsoluteTime = 0.100,
         keepaliveInterval: CFAbsoluteTime = 0.250,
         cacheInterval: CFAbsoluteTime = 0.100
     ) {
         self.onFrame = onFrame
+        self.onKeyframeRequest = onKeyframeRequest
         self.windowID = windowID
         self.frameGapThreshold = frameGapThreshold
         self.keepaliveInterval = keepaliveInterval
@@ -744,7 +764,6 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         // Check if we're resuming from fallback mode
         // Only request keyframe if fallback lasted long enough to cause decode issues
         fallbackLock.lock()
-        var needsKeyframe = false
         if wasInFallbackMode {
             let fallbackDuration = CFAbsoluteTimeGetCurrent() - fallbackStartTime
             wasInFallbackMode = false
@@ -752,8 +771,8 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
             // Only request keyframe for long fallbacks (>200ms)
             // Brief fallbacks don't cause decoder reference frame issues
             if fallbackDuration > keyframeThreshold {
-                needsKeyframe = true
-                MirageLogger.capture("SCK resumed after long fallback (\(Int(fallbackDuration * 1000))ms) - requesting keyframe")
+                onKeyframeRequest()
+                MirageLogger.capture("SCK resumed after long fallback (\(Int(fallbackDuration * 1000))ms) - scheduling keyframe")
             } else {
                 MirageLogger.capture("SCK resumed after brief fallback (\(Int(fallbackDuration * 1000))ms) - no keyframe needed")
             }
@@ -764,12 +783,14 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         if lastFrameTime > 0 {
             let gap = captureTime - lastFrameTime
             if gap > 0.1 {  // Log gaps > 100ms
-                MirageLogger.capture("FRAME GAP: \(String(format: "%.1f", gap * 1000))ms since last frame")
+                let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
+                MirageLogger.capture("FRAME GAP: \(gapMs)ms since last frame")
             }
             if gap > maxFrameGap {
                 maxFrameGap = gap
                 if maxFrameGap > 0.2 {  // Only log significant new records
-                    MirageLogger.capture("NEW MAX FRAME GAP: \(String(format: "%.1f", maxFrameGap * 1000))ms")
+                    let gapMs = (maxFrameGap * 1000).formatted(.number.precision(.fractionLength(1)))
+                    MirageLogger.capture("NEW MAX FRAME GAP: \(gapMs)ms")
                 }
             }
         }
@@ -902,7 +923,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
             return CGRect(x: clippedX, y: clippedY, width: max(0, clippedWidth), height: max(0, clippedHeight))
         }
 
-        // Calculate dirty percentage from SCK's reported dirty rects (for diagnostics/adaptive bitrate)
+        // Calculate dirty percentage from SCK's reported dirty rects (for diagnostics/telemetry)
         // Note: P-frames handle delta compression natively - this is informational only
         let dirtyArea = clippedDirtyRects.reduce(0) { $0 + Int($1.width * $1.height) }
         let dirtyPercentage = totalPixels > 0 ? min(100.0, (Float(dirtyArea) / Float(totalPixels)) * 100) : 0
@@ -935,12 +956,11 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         }
 
         // Create frame info with all capture metadata (using clipped rects)
-        // Pass forceKeyframe if resuming from fallback mode (after drag/menu)
+        // Keyframe requests are now handled by StreamContext cadence, so don't flag here.
         let frameInfo = CapturedFrameInfo(
             contentRect: contentRect,
             dirtyRects: finalDirtyRects,
-            dirtyPercentage: dirtyPercentage,
-            forceKeyframe: needsKeyframe
+            dirtyPercentage: dirtyPercentage
         )
 
         // Cache frame for re-sending during SCK pauses (menus, drags)

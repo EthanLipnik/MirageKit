@@ -82,18 +82,10 @@ actor StreamController {
 
     /// Total decoded frames (lifetime)
     private var decodedFrameCount: UInt64 = 0
-    /// Last reported metrics (for delta calculation)
-    private var lastFeedbackDecodedFrames: UInt64 = 0
-    private var lastFeedbackDroppedFrames: UInt64 = 0
-    private var lastFeedbackDecodeErrors: UInt64 = 0
-
-    /// Aggregated stream quality metrics for feedback
-    struct QualityMetrics: Sendable {
-        let decodedFrames: UInt64
-        let droppedFrames: UInt64
-        let decodeErrors: UInt64
-        let averageDecodeTimeMs: Double
-    }
+    /// Recent decode timestamps for FPS sampling
+    private var fpsSampleTimes: [CFAbsoluteTime] = []
+    /// Latest computed FPS sample
+    private var currentFPS: Double = 0
 
     // MARK: - Callbacks
 
@@ -110,7 +102,7 @@ actor StreamController {
     /// This callback notifies AppState that a frame was decoded for UI state tracking.
     /// Does NOT pass the pixel buffer (CVPixelBuffer isn't Sendable).
     /// The delegate should read from MirageFrameCache if it needs the actual frame.
-    private(set) var onFrameDecoded: (@MainActor @Sendable () -> Void)?
+    private(set) var onFrameDecoded: (@MainActor @Sendable (Double) -> Void)? = nil
 
     /// Called when input blocking state changes (true = block input, false = allow input)
     /// Input should be blocked when decoder is in a bad state (awaiting keyframe, decode errors)
@@ -124,7 +116,7 @@ actor StreamController {
         onKeyframeNeeded: (@MainActor @Sendable () -> Void)?,
         onResizeEvent: (@MainActor @Sendable (ResizeEvent) -> Void)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
-        onFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
+        onFrameDecoded: (@MainActor @Sendable (Double) -> Void)? = nil,
         onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
@@ -208,14 +200,11 @@ actor StreamController {
             MirageFrameCache.shared.store(pixelBuffer, contentRect: contentRect, for: capturedStreamID)
 
             // Mark that we've received a frame and notify delegate
-            Task {
+            Task { [weak self] in
+                guard let self else { return }
                 await self.recordDecodedFrame()
                 await self.markFirstFrameReceived()
-                // Notify delegate on MainActor for UI state updates
-                // Don't pass pixel buffer (not Sendable) - delegate reads from MirageFrameCache
-                Task { @MainActor [weak self] in
-                    await self?.onFrameDecoded?()
-                }
+                await notifyFrameDecoded()
             }
         }
 
@@ -255,38 +244,32 @@ actor StreamController {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
-    /// Record a decoded frame (used for quality feedback).
+    /// Record a decoded frame (used for FPS sampling).
     private func recordDecodedFrame() {
         decodedFrameCount += 1
+        let now = CFAbsoluteTimeGetCurrent()
+        fpsSampleTimes.append(now)
+        let cutoff = now - 1.0
+        if let firstValid = fpsSampleTimes.firstIndex(where: { $0 >= cutoff }) {
+            if firstValid > 0 {
+                fpsSampleTimes.removeFirst(firstValid)
+            }
+        } else {
+            fpsSampleTimes.removeAll()
+        }
+        currentFPS = Double(fpsSampleTimes.count)
     }
 
-    /// Consume quality metrics since the last report.
-    func consumeQualityMetrics() async -> QualityMetrics {
-        let droppedTotal = await reassembler.getDroppedFrameCount()
-        let decodedTotal = decodedFrameCount
-        let errorTotal = await decoder.getTotalDecodeErrors()
-        let averageDecodeTimeMs = await decoder.getAverageDecodeTimeMs()
+    func getCurrentFPS() -> Double {
+        currentFPS
+    }
 
-        let decodedDelta = decodedTotal >= lastFeedbackDecodedFrames
-            ? decodedTotal - lastFeedbackDecodedFrames
-            : 0
-        let droppedDelta = droppedTotal >= lastFeedbackDroppedFrames
-            ? droppedTotal - lastFeedbackDroppedFrames
-            : 0
-        let errorDelta = errorTotal >= lastFeedbackDecodeErrors
-            ? errorTotal - lastFeedbackDecodeErrors
-            : 0
-
-        lastFeedbackDecodedFrames = decodedTotal
-        lastFeedbackDroppedFrames = droppedTotal
-        lastFeedbackDecodeErrors = errorTotal
-
-        return QualityMetrics(
-            decodedFrames: decodedDelta,
-            droppedFrames: droppedDelta,
-            decodeErrors: errorDelta,
-            averageDecodeTimeMs: averageDecodeTimeMs
-        )
+    private func notifyFrameDecoded() async {
+        let fps = currentFPS
+        let callback = onFrameDecoded
+        await MainActor.run {
+            callback?(fps)
+        }
     }
 
     // MARK: - Frame Access
@@ -303,9 +286,6 @@ actor StreamController {
         await decoder.resetForNewSession()
         await reassembler.reset()
         decodedFrameCount = 0
-        lastFeedbackDecodedFrames = 0
-        lastFeedbackDroppedFrames = 0
-        lastFeedbackDecodeErrors = 0
     }
 
     /// Get the reassembler for packet routing

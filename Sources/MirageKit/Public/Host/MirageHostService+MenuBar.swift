@@ -81,13 +81,9 @@ extension MirageHostService {
                 return
             }
 
-            // Determine target frame rate based on client capability and quality preset
-            // Only high/ultra enable 120fps; other presets cap at 60fps
+            // Determine target frame rate based on client capability
             let clientMaxRefreshRate = request.maxRefreshRate
-            let qualityFrameRate = request.preferredQuality.encoderConfiguration.targetFrameRate
-            let allowsHighRefresh = request.preferredQuality == .high || request.preferredQuality == .ultra
-            let cappedQualityFrameRate = allowsHighRefresh ? qualityFrameRate : min(qualityFrameRate, 60)
-            let targetFrameRate = min(clientMaxRefreshRate, cappedQualityFrameRate)
+            let targetFrameRate = clientMaxRefreshRate >= 120 ? 120 : 60
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
             try await startDesktopStream(

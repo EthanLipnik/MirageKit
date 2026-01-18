@@ -125,10 +125,11 @@ extension MirageHostService {
 
                 // 1. Update the virtual display resolution in place (no recreate, no displayID change)
                 //    This uses applySettings: to change the display mode without destroying it
+                let targetFrameRate = await desktopContext.getTargetFrameRate()
                 try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                     for: .desktopStream,
                     newResolution: newResolution,
-                    refreshRate: encoderConfig.targetFrameRate
+                    refreshRate: targetFrameRate
                 )
 
                 // 2. Update the capture/encoder dimensions to match new resolution
@@ -151,7 +152,7 @@ extension MirageHostService {
                     let dimensionToken = await desktopStreamContext?.getDimensionToken() ?? 0
 
                     let encodedDimensions = await desktopStreamContext?.getEncodedDimensions() ?? (width: 0, height: 0)
-                    let targetFrameRate = await desktopStreamContext?.getTargetFrameRate() ?? encoderConfig.targetFrameRate
+                    let targetFrameRate = await desktopStreamContext?.getTargetFrameRate() ?? 120
                     let codec = await desktopStreamContext?.getCodec() ?? encoderConfig.codec
                     let message = DesktopStreamStartedMessage(
                         streamID: streamID,
