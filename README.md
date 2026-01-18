@@ -199,4 +199,4 @@ swift test
 
 ## License
 
-MIT. See `LICENSE`.
+MirageKit is licensed under the PolyForm Shield 1.0.0 license. Use, modification, and distribution are allowed for non-competing products; providing products that compete with Mirage or other dedicated remote window/desktop streaming applications and services is prohibited. See `LICENSE`.
