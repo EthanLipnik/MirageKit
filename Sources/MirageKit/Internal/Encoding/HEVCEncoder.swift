@@ -16,6 +16,7 @@ actor HEVCEncoder {
     private var didLogPixelFormat = false
     private var baseQuality: Float
     private var qualityOverrideActive = false
+    private let performanceTracker = EncodePerformanceTracker()
 
     private var isEncoding = false
     private var frameNumber: UInt64 = 0
@@ -52,7 +53,7 @@ actor HEVCEncoder {
         case .bgr10a2:
             return kCVPixelFormatType_ARGB2101010LEPacked
         case .bgra8:
-            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            return kCVPixelFormatType_32BGRA
         }
     }
 
@@ -142,7 +143,7 @@ actor HEVCEncoder {
         case .bgr10a2:
             formatLabel = "ARGB2101010"
         case .bgra8:
-            formatLabel = "NV12"
+            formatLabel = "BGRA"
         }
         MirageLogger.encoder("Encoder input format: \(formatLabel)")
     }
@@ -563,6 +564,7 @@ actor HEVCEncoder {
             handler: encodedFrameHandler,
             encodeStartTime: encodeStartTime,
             sessionVersion: currentSessionVersion,
+            performanceTracker: performanceTracker,
             completion: frameCompletionHandler,
             getCurrentVersion: { [weak self] in self?.sessionVersion ?? 0 }
         )
@@ -603,6 +605,7 @@ actor HEVCEncoder {
             // Timing: calculate encoding duration
             let encodeEndTime = CFAbsoluteTimeGetCurrent()
             let encodingDuration = (encodeEndTime - info.encodeStartTime) * 1000  // ms
+            info.performanceTracker?.record(durationMs: encodingDuration)
 
             // Check if keyframe
             let isKeyframe = Self.isKeyframe(sampleBuffer)
@@ -726,6 +729,11 @@ actor HEVCEncoder {
         activePixelFormat
     }
 
+    /// Get the current average encode time (ms) from recent samples.
+    func getAverageEncodeTimeMs() -> Double {
+        performanceTracker.averageMs()
+    }
+
     /// Flush all pending frames from the encoder pipeline and force next keyframe.
     /// This ensures the next frame captured will be encoded as a keyframe immediately,
     /// without waiting for any in-flight frames to complete first.
@@ -842,12 +850,38 @@ actor HEVCEncoder {
     }
 }
 
+/// Thread-safe encode timing tracker for recent samples
+private final class EncodePerformanceTracker: @unchecked Sendable {
+    private let lock = NSLock()
+    private var samples: [Double] = []
+    private let maxSamples: Int = 30
+
+    func record(durationMs: Double) {
+        lock.lock()
+        samples.append(durationMs)
+        if samples.count > maxSamples {
+            samples.removeFirst(samples.count - maxSamples)
+        }
+        lock.unlock()
+    }
+
+    func averageMs() -> Double {
+        lock.lock()
+        let snapshot = samples
+        lock.unlock()
+        guard !snapshot.isEmpty else { return 0 }
+        let total = snapshot.reduce(0, +)
+        return total / Double(snapshot.count)
+    }
+}
+
 /// Info passed through the encode callback
 private final class EncodeInfo: @unchecked Sendable {
     let frameNumber: UInt64
     let handler: ((Data, Bool, CMTime) -> Void)?
     let encodeStartTime: CFAbsoluteTime
     let sessionVersion: UInt64
+    let performanceTracker: EncodePerformanceTracker?
     let completion: (() -> Void)?
     /// Closure to check current session version (captures encoder reference)
     let getCurrentVersion: () -> UInt64
@@ -857,6 +891,7 @@ private final class EncodeInfo: @unchecked Sendable {
         handler: ((Data, Bool, CMTime) -> Void)?,
         encodeStartTime: CFAbsoluteTime = 0,
         sessionVersion: UInt64 = 0,
+        performanceTracker: EncodePerformanceTracker?,
         completion: (() -> Void)?,
         getCurrentVersion: @escaping () -> UInt64
     ) {
@@ -864,6 +899,7 @@ private final class EncodeInfo: @unchecked Sendable {
         self.handler = handler
         self.encodeStartTime = encodeStartTime
         self.sessionVersion = sessionVersion
+        self.performanceTracker = performanceTracker
         self.completion = completion
         self.getCurrentVersion = getCurrentVersion
     }

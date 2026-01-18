@@ -110,7 +110,7 @@ actor WindowCaptureEngine {
         case .bgr10a2:
             return kCVPixelFormatType_ARGB2101010LEPacked
         case .bgra8:
-            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+            return kCVPixelFormatType_32BGRA
         }
     }
 
@@ -190,7 +190,7 @@ actor WindowCaptureEngine {
             timescale: CMTimeScale(currentFrameRate)
         )
 
-        // Color and format - 10-bit ARGB2101010 or 8-bit NV12
+        // Color and format - 10-bit ARGB2101010 or 8-bit BGRA
         streamConfig.pixelFormat = pixelFormatType
         switch configuration.colorSpace {
         case .displayP3:
@@ -230,6 +230,7 @@ actor WindowCaptureEngine {
             },
             windowID: window.windowID,
             usesDetailedMetadata: true,
+            tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
             expectedFrameRate: Double(currentFrameRate)
@@ -627,6 +628,7 @@ actor WindowCaptureEngine {
                 Task { await self?.restartCapture(reason: reason) }
             },
             usesDetailedMetadata: false,
+            tracksFrameStatus: false,
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
             expectedFrameRate: Double(currentFrameRate)
@@ -674,6 +676,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
     private let onKeyframeRequest: @Sendable () -> Void
     private let onCaptureStall: @Sendable (String) -> Void
     private let usesDetailedMetadata: Bool
+    private let tracksFrameStatus: Bool
     private var frameCount: UInt64 = 0
     private var skippedIdleFrames: UInt64 = 0
 
@@ -709,7 +712,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
 
     // Only request keyframe if fallback lasted longer than this threshold
     // Brief fallbacks (<200ms) don't need keyframes - they're just normal SCK latency
-    private let keyframeThreshold: CFAbsoluteTime = 0.200
+    private let keyframeThreshold: CFAbsoluteTime = 0.35
 
     init(
         onFrame: @escaping @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void,
@@ -717,6 +720,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         onCaptureStall: @escaping @Sendable (String) -> Void = { _ in },
         windowID: CGWindowID = 0,
         usesDetailedMetadata: Bool = false,
+        tracksFrameStatus: Bool = true,
         frameGapThreshold: CFAbsoluteTime = 0.100,
         stallThreshold: CFAbsoluteTime = 1.0,
         expectedFrameRate: Double = 0
@@ -726,6 +730,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         self.onCaptureStall = onCaptureStall
         self.windowID = windowID
         self.usesDetailedMetadata = usesDetailedMetadata
+        self.tracksFrameStatus = tracksFrameStatus
         self.frameGapThreshold = frameGapThreshold
         self.stallThreshold = stallThreshold
         self.expectedFrameRate = expectedFrameRate
@@ -862,6 +867,41 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
             return
         }
 
+        let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
+
+        if !tracksFrameStatus {
+            lastDeliveredFrameTime = captureTime
+            stallSignaled = false
+            if diagnosticsEnabled {
+                deliveredFrameCount += 1
+                if lastFpsLogTime == 0 {
+                    lastFpsLogTime = captureTime
+                } else if captureTime - lastFpsLogTime > 2.0 {
+                    let elapsed = captureTime - lastFpsLogTime
+                    let fps = Double(deliveredFrameCount) / elapsed
+                    let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
+                    MirageLogger.capture("Capture fps: \(fpsText)")
+                    deliveredFrameCount = 0
+                    lastFpsLogTime = captureTime
+                }
+            }
+
+            let bufferWidth = CVPixelBufferGetWidth(pixelBuffer)
+            let bufferHeight = CVPixelBufferGetHeight(pixelBuffer)
+            frameCount += 1
+            if frameCount == 1 || frameCount % 600 == 0 {
+                MirageLogger.capture("Frame \(frameCount): \(bufferWidth)x\(bufferHeight)")
+            }
+
+            let frameInfo = CapturedFrameInfo(
+                contentRect: CGRect(x: 0, y: 0, width: CGFloat(bufferWidth), height: CGFloat(bufferHeight)),
+                dirtyPercentage: 100,
+                isIdleFrame: false
+            )
+            onFrame(sampleBuffer, frameInfo)
+            return
+        }
+
         // Check SCFrameStatus - track all statuses for diagnostics
         let attachments = (CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first
         var isIdleFrame = false
@@ -870,24 +910,26 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
            let status = SCFrameStatus(rawValue: statusRawValue) {
 
             // DIAGNOSTIC: Track status distribution
-            statusCounts[statusRawValue, default: 0] += 1
-            if captureTime - lastStatusLogTime > 2.0 {
-                lastStatusLogTime = captureTime
-                let statusNames = statusCounts.map { (key, count) in
-                    let name: String
-                    switch SCFrameStatus(rawValue: key) {
-                    case .idle: name = "idle"
-                    case .complete: name = "complete"
-                    case .blank: name = "blank"
-                    case .suspended: name = "suspended"
-                    case .started: name = "started"
-                    case .stopped: name = "stopped"
-                    default: name = "unknown(\(key))"
-                    }
-                    return "\(name):\(count)"
-                }.joined(separator: ", ")
-                MirageLogger.capture("Frame status distribution: [\(statusNames)]")
-                statusCounts.removeAll()
+            if diagnosticsEnabled {
+                statusCounts[statusRawValue, default: 0] += 1
+                if captureTime - lastStatusLogTime > 2.0 {
+                    lastStatusLogTime = captureTime
+                    let statusNames = statusCounts.map { (key, count) in
+                        let name: String
+                        switch SCFrameStatus(rawValue: key) {
+                        case .idle: name = "idle"
+                        case .complete: name = "complete"
+                        case .blank: name = "blank"
+                        case .suspended: name = "suspended"
+                        case .started: name = "started"
+                        case .stopped: name = "stopped"
+                        default: name = "unknown(\(key))"
+                        }
+                        return "\(name):\(count)"
+                    }.joined(separator: ", ")
+                    MirageLogger.capture("Frame status distribution: [\(statusNames)]")
+                    statusCounts.removeAll()
+                }
             }
 
             // FIX A: Allow idle frames through instead of filtering them out
@@ -914,23 +956,25 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
             if status == .complete || status == .idle {
                 lastDeliveredFrameTime = captureTime
                 stallSignaled = false
-                deliveredFrameCount += 1
-                if status == .idle {
-                    deliveredIdleCount += 1
-                } else {
-                    deliveredCompleteCount += 1
-                }
-                if lastFpsLogTime == 0 {
-                    lastFpsLogTime = captureTime
-                } else if captureTime - lastFpsLogTime > 2.0 {
-                    let elapsed = captureTime - lastFpsLogTime
-                    let fps = Double(deliveredFrameCount) / elapsed
-                    let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteCount), idle=\(deliveredIdleCount))")
-                    deliveredFrameCount = 0
-                    deliveredCompleteCount = 0
-                    deliveredIdleCount = 0
-                    lastFpsLogTime = captureTime
+                if diagnosticsEnabled {
+                    deliveredFrameCount += 1
+                    if status == .idle {
+                        deliveredIdleCount += 1
+                    } else {
+                        deliveredCompleteCount += 1
+                    }
+                    if lastFpsLogTime == 0 {
+                        lastFpsLogTime = captureTime
+                    } else if captureTime - lastFpsLogTime > 2.0 {
+                        let elapsed = captureTime - lastFpsLogTime
+                        let fps = Double(deliveredFrameCount) / elapsed
+                        let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
+                        MirageLogger.capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteCount), idle=\(deliveredIdleCount))")
+                        deliveredFrameCount = 0
+                        deliveredCompleteCount = 0
+                        deliveredIdleCount = 0
+                        lastFpsLogTime = captureTime
+                    }
                 }
             }
         }

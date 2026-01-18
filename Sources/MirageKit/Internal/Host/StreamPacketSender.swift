@@ -28,9 +28,11 @@ actor StreamPacketSender {
     nonisolated(unsafe) private var generation: UInt32 = 0
     nonisolated(unsafe) private var queuedBytes: Int = 0
     private let queueLock = NSLock()
-    private let pacingBurstSize = 8
+    private let basePacingBurstSize = 16
     private let pacingThresholdBytes = 512 * 1024
-    private let pacingDelay = Duration.milliseconds(1)
+    private let basePacingDelay = Duration.milliseconds(1)
+    private let largeFrameThresholdBytes = 800 * 1024
+    private let hugeFrameThresholdBytes = 1_500 * 1024
 
     init(maxPayloadSize: Int, onEncodedFrame: @escaping @Sendable (Data, FrameHeader) -> Void) {
         self.maxPayloadSize = maxPayloadSize
@@ -115,7 +117,7 @@ actor StreamPacketSender {
         let totalFragments = (item.encodedData.count + maxPayload - 1) / maxPayload
         let timestamp = UInt64(CMTimeGetSeconds(item.presentationTime) * 1_000_000_000)
 
-        let burstSize = min(pacingBurstSize, totalFragments)
+        let (burstSize, pacingDelay) = pacingConfig(for: item.encodedData.count, totalFragments: totalFragments)
         let burstCount = max(1, (totalFragments + burstSize - 1) / burstSize)
         let shouldPace = item.encodedData.count >= pacingThresholdBytes && burstCount > 1
 
@@ -174,6 +176,16 @@ actor StreamPacketSender {
             let roundedBytes = (bytesKB * 10).rounded() / 10
             MirageLogger.timing("\(item.logPrefix) \(item.frameNumber) keyframe: \(roundedDuration)ms, \(totalFragments) packets, \(roundedBytes)KB")
         }
+    }
+
+    private func pacingConfig(for encodedBytes: Int, totalFragments: Int) -> (burstSize: Int, pacingDelay: Duration) {
+        if encodedBytes >= hugeFrameThresholdBytes {
+            return (burstSize: min(32, totalFragments), pacingDelay: .microseconds(250))
+        }
+        if encodedBytes >= largeFrameThresholdBytes {
+            return (burstSize: min(24, totalFragments), pacingDelay: .microseconds(500))
+        }
+        return (burstSize: min(basePacingBurstSize, totalFragments), pacingDelay: basePacingDelay)
     }
 }
 

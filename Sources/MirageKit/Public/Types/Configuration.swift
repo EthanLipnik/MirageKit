@@ -43,7 +43,7 @@ public struct MirageEncoderConfiguration: Sendable {
         keyFrameInterval: Int = 1_800,
         colorSpace: MirageColorSpace = .displayP3,
         scaleFactor: CGFloat = 2.0,
-        pixelFormat: MiragePixelFormat = .p010,
+        pixelFormat: MiragePixelFormat = .bgr10a2,
         minBitrate: Int? = nil,
         maxBitrate: Int? = nil,
         frameQuality: Float = 0.8,
@@ -65,7 +65,7 @@ public struct MirageEncoderConfiguration: Sendable {
     public static let highQuality = MirageEncoderConfiguration(
         targetFrameRate: 120,
         keyFrameInterval: 3_600,
-        pixelFormat: .p010,
+        pixelFormat: .bgr10a2,
         frameQuality: 1.0,
         keyframeQuality: 0.75
     )
@@ -183,8 +183,8 @@ public enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
     public var displayName: String {
         switch self {
         case .p010: return "10-bit (P010)"
-        case .bgr10a2: return "10-bit"
-        case .bgra8: return "8-bit (NV12)"
+        case .bgr10a2: return "10-bit (ARGB2101010)"
+        case .bgra8: return "8-bit (BGRA)"
         }
     }
 }
@@ -272,7 +272,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
         case .ultra:
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
-                pixelFormat: .p010,
+                pixelFormat: .bgr10a2,
                 minBitrate: bitrateMbps(200),
                 maxBitrate: bitrateMbps(200),
                 frameQuality: 1.0,
@@ -281,7 +281,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
         case .high:
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
-                pixelFormat: .p010,
+                pixelFormat: .bgr10a2,
                 minBitrate: bitrateMbps(isHighRefresh ? 130 : 100),
                 maxBitrate: bitrateMbps(isHighRefresh ? 130 : 100),
                 frameQuality: isHighRefresh ? 0.88 : 0.95,
@@ -291,7 +291,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
                 colorSpace: .displayP3,
-                pixelFormat: .p010,
+                pixelFormat: .bgr10a2,
                 minBitrate: bitrateMbps(isHighRefresh ? 85 : 50),
                 maxBitrate: bitrateMbps(isHighRefresh ? 85 : 50),
                 frameQuality: isHighRefresh ? 0.70 : 0.80,
