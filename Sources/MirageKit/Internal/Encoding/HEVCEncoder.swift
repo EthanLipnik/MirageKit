@@ -54,6 +54,8 @@ actor HEVCEncoder {
             return kCVPixelFormatType_ARGB2101010LEPacked
         case .bgra8:
             return kCVPixelFormatType_32BGRA
+        case .nv12:
+            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         }
     }
 
@@ -61,7 +63,7 @@ actor HEVCEncoder {
         switch activePixelFormat {
         case .p010, .bgr10a2:
             return kVTProfileLevel_HEVC_Main10_AutoLevel
-        case .bgra8:
+        case .bgra8, .nv12:
             return kVTProfileLevel_HEVC_Main_AutoLevel
         }
     }
@@ -97,7 +99,7 @@ actor HEVCEncoder {
         )
 
         if status != noErr, activePixelFormat == .p010 {
-            activePixelFormat = .bgr10a2
+            activePixelFormat = .nv12
             let fallbackAttributes: CFDictionary = [
                 kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
                 kCVPixelBufferWidthKey: width,
@@ -119,7 +121,7 @@ actor HEVCEncoder {
                 compressionSessionOut: &session
             )
             if status == noErr {
-                MirageLogger.encoder("P010 unsupported; using ARGB2101010")
+                MirageLogger.encoder("P010 unsupported; using NV12")
             }
         }
 
@@ -144,6 +146,8 @@ actor HEVCEncoder {
             formatLabel = "ARGB2101010"
         case .bgra8:
             formatLabel = "BGRA"
+        case .nv12:
+            formatLabel = "NV12"
         }
         MirageLogger.encoder("Encoder input format: \(formatLabel)")
     }

@@ -15,6 +15,7 @@ actor StreamPacketSender {
         let sequenceNumberStart: UInt32
         let additionalFlags: FrameFlags
         let dimensionToken: UInt16
+        let epoch: UInt16
         let logPrefix: String
         let generation: UInt32
     }
@@ -153,7 +154,8 @@ actor StreamPacketSender {
                     payloadLength: UInt32(fragmentData.count),
                     checksum: CRC32.calculate(fragmentData),
                     contentRect: item.contentRect,
-                    dimensionToken: item.dimensionToken
+                    dimensionToken: item.dimensionToken,
+                    epoch: item.epoch
                 )
 
                 currentSequence += 1

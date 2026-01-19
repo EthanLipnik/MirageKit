@@ -43,6 +43,7 @@ actor WindowCaptureEngine {
     private var currentScaleFactor: CGFloat = 1.0
     private var outputScale: CGFloat = 1.0
     private var useBestCaptureResolution: Bool = true
+    private var useExplicitCaptureDimensions: Bool = true
     private var contentFilter: SCContentFilter?
     private var lastRestartTime: CFAbsoluteTime = 0
     private let restartCooldown: CFAbsoluteTime = 1.5
@@ -68,6 +69,9 @@ actor WindowCaptureEngine {
     }
 
     private var captureQueueDepth: Int {
+        if let override = configuration.captureQueueDepth, override > 0 {
+            return min(max(1, override), 16)
+        }
         if currentFrameRate >= 120 {
             return 6
         }
@@ -111,6 +115,8 @@ actor WindowCaptureEngine {
             return kCVPixelFormatType_ARGB2101010LEPacked
         case .bgra8:
             return kCVPixelFormatType_32BGRA
+        case .nv12:
+            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         }
     }
 
@@ -159,6 +165,7 @@ actor WindowCaptureEngine {
         currentWidth = Self.alignedEvenPixel(CGFloat(target.width) * clampedScale)
         currentHeight = Self.alignedEvenPixel(CGFloat(target.height) * clampedScale)
         captureMode = .window
+        useExplicitCaptureDimensions = true
         captureSessionConfig = CaptureSessionConfiguration(
             window: window,
             application: application,
@@ -190,7 +197,7 @@ actor WindowCaptureEngine {
             timescale: CMTimeScale(currentFrameRate)
         )
 
-        // Color and format - 10-bit ARGB2101010 or 8-bit BGRA
+        // Color and format - configured pixel format (P010, ARGB2101010, BGRA, NV12)
         streamConfig.pixelFormat = pixelFormatType
         switch configuration.colorSpace {
         case .displayP3:
@@ -203,6 +210,9 @@ actor WindowCaptureEngine {
         // Capture settings
         streamConfig.showsCursor = false  // Don't capture cursor - iPad shows its own
         streamConfig.queueDepth = captureQueueDepth
+        if let override = configuration.captureQueueDepth, override > 0 {
+            MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)")
+        }
 
         // Use window-level capture for precise dimensions (captures just this window)
         // Note: This may not capture modal dialogs/sheets, but avoids black bars from app-level bounding box
@@ -349,8 +359,11 @@ actor WindowCaptureEngine {
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
         }
-        streamConfig.width = newWidth
-        streamConfig.height = newHeight
+        useExplicitCaptureDimensions = true
+        if useExplicitCaptureDimensions {
+            streamConfig.width = newWidth
+            streamConfig.height = newHeight
+        }
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
             timescale: CMTimeScale(currentFrameRate)
@@ -398,6 +411,7 @@ actor WindowCaptureEngine {
 
         // Create new stream configuration with client's exact pixel dimensions
         let streamConfig = SCStreamConfiguration()
+        useExplicitCaptureDimensions = true
         streamConfig.width = width
         streamConfig.height = height
         streamConfig.minimumFrameInterval = CMTime(
@@ -453,6 +467,7 @@ actor WindowCaptureEngine {
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
         }
+        useExplicitCaptureDimensions = true
         streamConfig.width = newWidth
         streamConfig.height = newHeight
         streamConfig.minimumFrameInterval = CMTime(
@@ -486,8 +501,10 @@ actor WindowCaptureEngine {
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
         }
-        streamConfig.width = currentWidth
-        streamConfig.height = currentHeight
+        if useExplicitCaptureDimensions {
+            streamConfig.width = currentWidth
+            streamConfig.height = currentHeight
+        }
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
             timescale: CMTimeScale(fps)
@@ -570,6 +587,7 @@ actor WindowCaptureEngine {
 
         // For explicit resolution overrides (virtual displays), rely on width/height and skip .best
         useBestCaptureResolution = (resolution == nil)
+        useExplicitCaptureDimensions = (resolution != nil)
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
             MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), forcing captureResolution=.best")
@@ -577,8 +595,10 @@ actor WindowCaptureEngine {
             MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), using explicit resolution")
         }
 
-        streamConfig.width = currentWidth
-        streamConfig.height = currentHeight
+        if useExplicitCaptureDimensions {
+            streamConfig.width = currentWidth
+            streamConfig.height = currentHeight
+        }
 
         // Frame rate
         streamConfig.minimumFrameInterval = CMTime(
@@ -601,6 +621,9 @@ actor WindowCaptureEngine {
         // - Desktop streaming: hide cursor (false) - client renders its own
         streamConfig.showsCursor = showsCursor
         streamConfig.queueDepth = captureQueueDepth
+        if let override = configuration.captureQueueDepth, override > 0 {
+            MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)")
+        }
 
         // Capture displayID before creating filter (for logging after)
         let capturedDisplayID = display.displayID
@@ -609,7 +632,11 @@ actor WindowCaptureEngine {
         let filter = SCContentFilter(display: display, excludingWindows: [])
         self.contentFilter = filter
 
-        MirageLogger.capture("Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID)")
+        if useExplicitCaptureDimensions {
+            MirageLogger.capture("Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID)")
+        } else {
+            MirageLogger.capture("Starting display capture with .best (no explicit dimensions) for display \(capturedDisplayID)")
+        }
 
         // Create stream
         stream = SCStream(filter: filter, configuration: streamConfig, delegate: nil)
@@ -628,7 +655,7 @@ actor WindowCaptureEngine {
                 Task { await self?.restartCapture(reason: reason) }
             },
             usesDetailedMetadata: false,
-            tracksFrameStatus: false,
+            tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
             expectedFrameRate: Double(currentFrameRate)
@@ -905,9 +932,11 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         // Check SCFrameStatus - track all statuses for diagnostics
         let attachments = (CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]])?.first
         var isIdleFrame = false
+        var status: SCFrameStatus?
         if let attachments,
            let statusRawValue = attachments[.status] as? Int,
-           let status = SCFrameStatus(rawValue: statusRawValue) {
+           let resolvedStatus = SCFrameStatus(rawValue: statusRawValue) {
+            status = resolvedStatus
 
             // DIAGNOSTIC: Track status distribution
             if diagnosticsEnabled {
@@ -932,50 +961,46 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
                 }
             }
 
-            // FIX A: Allow idle frames through instead of filtering them out
-            // This fixes the drag/menu freeze issue - menus are separate windows,
-            // so the captured window content doesn't change, but we still need
-            // to send frames to maintain visual continuity. HEVC produces tiny
-            // P-frames (~500 bytes) for unchanged content.
-            if status == .idle {
+            // Allow idle frames through instead of filtering them out.
+            if resolvedStatus == .idle {
                 skippedIdleFrames += 1
                 isIdleFrame = true
-                // Don't return - let the frame through
             }
 
-            // Skip blank/suspended frames - these indicate actual capture issues
-            if status == .blank || status == .suspended {
+            // Skip blank/suspended frames - these indicate actual capture issues.
+            if resolvedStatus == .blank || resolvedStatus == .suspended {
                 return
             }
+        }
 
-            // Process both .complete and .idle frames now
-            guard status == .complete || status == .idle else { return }
+        let effectiveStatus = status ?? .complete
+        guard effectiveStatus == .complete || effectiveStatus == .idle else { return }
+        if effectiveStatus == .idle {
+            isIdleFrame = true
+        }
 
-            // Update watchdog timer for any delivered frame so fallback only runs
-            // when SCK stops delivering frames entirely.
-            if status == .complete || status == .idle {
-                lastDeliveredFrameTime = captureTime
-                stallSignaled = false
-                if diagnosticsEnabled {
-                    deliveredFrameCount += 1
-                    if status == .idle {
-                        deliveredIdleCount += 1
-                    } else {
-                        deliveredCompleteCount += 1
-                    }
-                    if lastFpsLogTime == 0 {
-                        lastFpsLogTime = captureTime
-                    } else if captureTime - lastFpsLogTime > 2.0 {
-                        let elapsed = captureTime - lastFpsLogTime
-                        let fps = Double(deliveredFrameCount) / elapsed
-                        let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
-                        MirageLogger.capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteCount), idle=\(deliveredIdleCount))")
-                        deliveredFrameCount = 0
-                        deliveredCompleteCount = 0
-                        deliveredIdleCount = 0
-                        lastFpsLogTime = captureTime
-                    }
-                }
+        // Update watchdog timer for any delivered frame so fallback only runs
+        // when SCK stops delivering frames entirely.
+        lastDeliveredFrameTime = captureTime
+        stallSignaled = false
+        if diagnosticsEnabled {
+            deliveredFrameCount += 1
+            if effectiveStatus == .idle {
+                deliveredIdleCount += 1
+            } else {
+                deliveredCompleteCount += 1
+            }
+            if lastFpsLogTime == 0 {
+                lastFpsLogTime = captureTime
+            } else if captureTime - lastFpsLogTime > 2.0 {
+                let elapsed = captureTime - lastFpsLogTime
+                let fps = Double(deliveredFrameCount) / elapsed
+                let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
+                MirageLogger.capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteCount), idle=\(deliveredIdleCount))")
+                deliveredFrameCount = 0
+                deliveredCompleteCount = 0
+                deliveredIdleCount = 0
+                lastFpsLogTime = captureTime
             }
         }
 

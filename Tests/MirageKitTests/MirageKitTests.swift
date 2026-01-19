@@ -50,7 +50,7 @@ struct MirageKitTests {
             deviceID: UUID(),
             deviceName: "Test Device",
             deviceType: .mac,
-            protocolVersion: 1,
+            protocolVersion: Int(MirageKit.protocolVersion),
             capabilities: MirageHostCapabilities()
         )
 
@@ -96,7 +96,7 @@ struct MirageKitTests {
             supportsHEVC: true,
             supportsP3ColorSpace: true,
             maxFrameRate: 120,
-            protocolVersion: 1
+            protocolVersion: Int(MirageKit.protocolVersion)
         )
 
         let txtRecord = capabilities.toTXTRecord()
@@ -117,18 +117,18 @@ struct MirageKitTests {
         let ultra120 = MirageQualityPreset.ultra.encoderConfiguration(for: 120)
         #expect(ultra120.frameQuality == 1.0)
         #expect(ultra60.frameQuality == 1.0)
-        #expect(ultra120.pixelFormat == .bgr10a2)
+        #expect(ultra120.pixelFormat == .p010)
 
         let medium60 = MirageQualityPreset.medium.encoderConfiguration(for: 60)
         let medium120 = MirageQualityPreset.medium.encoderConfiguration(for: 120)
         #expect(medium120.frameQuality < medium60.frameQuality)
-        #expect(medium120.pixelFormat == .bgr10a2)
+        #expect(medium120.pixelFormat == .p010)
 
         let low60 = MirageQualityPreset.low.encoderConfiguration(for: 60)
         let low120 = MirageQualityPreset.low.encoderConfiguration(for: 120)
         #expect(low120.frameQuality < low60.frameQuality)
         #expect(low120.frameQuality < medium120.frameQuality)
-        #expect(low120.pixelFormat == .bgra8)
+        #expect(low120.pixelFormat == .nv12)
     }
 
     @Test("Stream statistics formatting")

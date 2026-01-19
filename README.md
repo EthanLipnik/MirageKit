@@ -150,8 +150,9 @@ For a deeper dive into modules and data flows, see `Architecture.md`.
 - `.medium`: balanced quality with a lower target at 120Hz
 - `.low`: higher compression with a lower target at 120Hz
 - `.lowLatency`: text apps with aggressive frame skipping
+- `.custom`: user-defined overrides on top of a medium baseline
 
-Each preset can be overridden per stream with `keyFrameInterval` and `keyframeQuality` (encoder quality for all frames) when starting a stream.
+Each preset can be overridden per stream with `MirageEncoderOverrides` (keyframe interval, inter-frame quality, keyframe quality, pixel format, color space, and bitrate). The `keyFrameInterval` and `keyframeQuality` parameters on stream-start APIs provide interval and inter-frame quality overrides.
 
 ### Encoder Settings
 
@@ -160,7 +161,8 @@ Each preset can be overridden per stream with `keyFrameInterval` and `keyframeQu
 - Use `.highQuality`, `.balanced`, or `.lowLatency` presets.
 - Use `withOverrides` to apply client-specific intervals or encoder quality.
 - Use `withTargetFrameRate` to request 60/120fps based on display capabilities.
-- `keyframeQuality` sets encoder quality for all frames and maps to QP bounds when supported.
+- `frameQuality` targets inter-frame quality and maps to QP bounds when supported.
+- `keyframeQuality` targets keyframe quality and should stay below `frameQuality`.
 
 ### Networking
 

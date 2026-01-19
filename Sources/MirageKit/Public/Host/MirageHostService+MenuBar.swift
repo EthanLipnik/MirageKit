@@ -91,9 +91,16 @@ extension MirageHostService {
                 displayResolution: CGSize(width: request.displayWidth, height: request.displayHeight),
                 qualityPreset: request.preferredQuality,
                 keyFrameInterval: request.keyFrameInterval,
+                frameQuality: request.frameQuality,
                 keyframeQuality: request.keyframeQuality,
+                pixelFormat: request.pixelFormat,
+                colorSpace: request.colorSpace,
+                captureQueueDepth: request.captureQueueDepth,
+                minBitrate: request.minBitrate,
+                maxBitrate: request.maxBitrate,
                 streamScale: request.streamScale,
                 dataPort: request.dataPort,
+                captureSource: request.captureSource,
                 targetFrameRate: targetFrameRate
             )
         } catch {

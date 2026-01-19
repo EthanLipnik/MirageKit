@@ -12,7 +12,7 @@ public typealias StreamSessionID = UUID
 // MARK: - Version
 public enum MirageKit {
     public static let version = "1.0.0"
-    public static let protocolVersion: UInt8 = 1
+    public static let protocolVersion: UInt8 = 2
 
     /// The Bonjour service type used for discovery
     public static let serviceType = "_mirage._tcp"

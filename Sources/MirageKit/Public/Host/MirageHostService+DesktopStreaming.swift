@@ -15,9 +15,16 @@ extension MirageHostService {
         displayResolution: CGSize,
         qualityPreset: MirageQualityPreset,
         keyFrameInterval: Int?,
+        frameQuality: Float?,
         keyframeQuality: Float?,
+        pixelFormat: MiragePixelFormat?,
+        colorSpace: MirageColorSpace?,
+        captureQueueDepth: Int?,
+        minBitrate: Int?,
+        maxBitrate: Int?,
         streamScale: CGFloat?,
         dataPort: UInt16?,
+        captureSource: MirageDesktopCaptureSource?,
         targetFrameRate: Int? = nil
     ) async throws {
         // Check session state - must be active
@@ -38,32 +45,6 @@ extension MirageHostService {
         // Stop all active app/window streams (mutual exclusivity)
         await stopAllStreamsForDesktopMode()
 
-        // Acquire virtual display at client's full requested resolution
-        // The 5K cap is applied at the encoding layer, not the virtual display
-        // Pass the target frame rate to enable 120Hz when appropriate
-        let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
-            .desktopStream,
-            resolution: displayResolution,
-            refreshRate: targetFrameRate ?? 60
-        )
-
-        // Find the virtual display in SCShareableContent
-        let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
-        let captureResolution = context.resolution
-
-        guard let bounds = await SharedVirtualDisplayManager.shared.getDisplayBounds() else {
-            throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
-        }
-        desktopDisplayBounds = bounds
-        desktopUsesVirtualDisplay = true
-
-        // Set up display mirroring so main display mirrors virtual display
-        // This makes the main display adopt the virtual display's resolution
-        await setupDisplayMirroring(targetDisplayID: context.displayID)
-
-        let streamID = nextStreamID
-        nextStreamID += 1
-
         // Configure encoder with quality preset and optional overrides
         var config = encoderConfig
         let presetFrameRate = targetFrameRate ?? 60
@@ -78,7 +59,13 @@ extension MirageHostService {
 
         config = config.withOverrides(
             keyFrameInterval: keyFrameInterval,
-            frameQuality: keyframeQuality
+            frameQuality: frameQuality,
+            keyframeQuality: keyframeQuality,
+            pixelFormat: pixelFormat,
+            colorSpace: colorSpace,
+            captureQueueDepth: captureQueueDepth,
+            minBitrate: minBitrate,
+            maxBitrate: maxBitrate
         )
 
         if let targetFrameRate {
@@ -90,6 +77,45 @@ extension MirageHostService {
         //     MirageLogger.host("Desktop stream HDR enabled (Rec. 2020 + PQ)")
         // }
 
+        let selectedCaptureSource = captureSource ?? .virtualDisplay
+
+        // Acquire virtual display at client's full requested resolution
+        // The 5K cap is applied at the encoding layer, not the virtual display
+        // Pass the target frame rate to enable 120Hz when appropriate
+        let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+            .desktopStream,
+            resolution: displayResolution,
+            refreshRate: targetFrameRate ?? 60,
+            colorSpace: config.colorSpace
+        )
+
+        let captureDisplay: SCDisplayWrapper
+        switch selectedCaptureSource {
+        case .mainDisplay:
+            captureDisplay = try await findMainSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
+        case .virtualDisplay:
+            captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
+        }
+        let captureResolution = context.resolution
+
+        guard let bounds = await SharedVirtualDisplayManager.shared.getDisplayBounds() else {
+            throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
+        }
+        desktopDisplayBounds = bounds
+        desktopUsesVirtualDisplay = true
+
+        // Set up display mirroring so main display mirrors virtual display
+        // This makes the main display adopt the virtual display's resolution
+        await setupDisplayMirroring(targetDisplayID: context.displayID)
+
+        let streamID = nextStreamID
+        nextStreamID += 1
+        if selectedCaptureSource == .virtualDisplay,
+           captureDisplay.display.displayID != context.displayID {
+            MirageLogger.error(.host, "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)")
+        }
+        MirageLogger.host("Desktop capture source: \(selectedCaptureSource.displayName) (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), color=\(config.colorSpace.displayName))")
+
         let effectiveScale = streamScale ?? 1.0
 
         let streamContext = StreamContext(
@@ -100,6 +126,18 @@ extension MirageHostService {
             maxPacketSize: networkConfig.maxPacketSize,
             additionalFrameFlags: [.desktopStream]
         )
+        let metricsClientID = clientContext.client.id
+        await streamContext.setMetricsUpdateHandler { [weak self] metrics in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard let clientContext = self.findClientContext(clientID: metricsClientID) else { return }
+                do {
+                    try await clientContext.send(.streamMetricsUpdate, content: metrics)
+                } catch {
+                    MirageLogger.error(.host, "Failed to send desktop stream metrics: \(error)")
+                }
+            }
+        }
 
         desktopStreamContext = streamContext
         desktopStreamID = streamID

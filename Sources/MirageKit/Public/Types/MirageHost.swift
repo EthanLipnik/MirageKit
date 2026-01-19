@@ -97,7 +97,7 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         supportsP3ColorSpace: Bool = true,
         // supportsHDR: Bool = true,
         maxFrameRate: Int = 120,
-        protocolVersion: Int = 1
+        protocolVersion: Int = Int(MirageKit.protocolVersion)
     ) {
         self.maxStreams = maxStreams
         self.supportsHEVC = supportsHEVC

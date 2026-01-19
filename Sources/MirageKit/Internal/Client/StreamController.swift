@@ -34,6 +34,12 @@ actor StreamController {
         let contentRect: CGRect
     }
 
+    struct ClientFrameMetrics: Sendable {
+        let decodedFPS: Double
+        let receivedFPS: Double
+        let droppedFrames: UInt64
+    }
+
     // MARK: - Properties
 
     /// The stream this controller manages
@@ -86,6 +92,13 @@ actor StreamController {
     private var fpsSampleTimes: [CFAbsoluteTime] = []
     /// Latest computed FPS sample
     private var currentFPS: Double = 0
+    /// Total reassembled frames (lifetime)
+    private var receivedFrameCount: UInt64 = 0
+    /// Recent receive timestamps for FPS sampling
+    private var receiveSampleTimes: [CFAbsoluteTime] = []
+    /// Latest computed receive FPS sample
+    private var currentReceiveFPS: Double = 0
+    private var lastMetricsLogTime: CFAbsoluteTime = 0
 
     // MARK: - Callbacks
 
@@ -102,7 +115,7 @@ actor StreamController {
     /// This callback notifies AppState that a frame was decoded for UI state tracking.
     /// Does NOT pass the pixel buffer (CVPixelBuffer isn't Sendable).
     /// The delegate should read from MirageFrameCache if it needs the actual frame.
-    private(set) var onFrameDecoded: (@MainActor @Sendable (Double) -> Void)? = nil
+    private(set) var onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil
 
     /// Called when input blocking state changes (true = block input, false = allow input)
     /// Input should be blocked when decoder is in a bad state (awaiting keyframe, decode errors)
@@ -116,7 +129,7 @@ actor StreamController {
         onKeyframeNeeded: (@MainActor @Sendable () -> Void)?,
         onResizeEvent: (@MainActor @Sendable (ResizeEvent) -> Void)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
-        onFrameDecoded: (@MainActor @Sendable (Double) -> Void)? = nil,
+        onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
         onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
@@ -210,6 +223,9 @@ actor StreamController {
 
         // Set up reassembler callback - yields frames to AsyncStream for ordered processing
         let capturedContinuation = frameContinuation
+        let recordReceivedFrame: @Sendable () -> Void = { [weak self] in
+            Task { await self?.recordReceivedFrame() }
+        }
         let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect) -> Void = { _, frameData, isKeyframe, timestamp, contentRect in
             // CRITICAL: Force copy data BEFORE yielding to stream
             // Swift's Data uses copy-on-write, so we must ensure a real copy exists
@@ -217,6 +233,7 @@ actor StreamController {
             // reassembler may be deallocated by ARC before processing completes.
             let copiedData = frameData.withUnsafeBytes { Data($0) }
             let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
+            recordReceivedFrame()
 
             // Yield to stream instead of creating a new Task
             // AsyncStream maintains FIFO order, ensuring frames are decoded sequentially
@@ -248,16 +265,13 @@ actor StreamController {
     private func recordDecodedFrame() {
         decodedFrameCount += 1
         let now = CFAbsoluteTimeGetCurrent()
-        fpsSampleTimes.append(now)
-        let cutoff = now - 1.0
-        if let firstValid = fpsSampleTimes.firstIndex(where: { $0 >= cutoff }) {
-            if firstValid > 0 {
-                fpsSampleTimes.removeFirst(firstValid)
-            }
-        } else {
-            fpsSampleTimes.removeAll()
-        }
-        currentFPS = Double(fpsSampleTimes.count)
+        currentFPS = updateSampleTimes(&fpsSampleTimes, now: now)
+    }
+
+    private func recordReceivedFrame() {
+        receivedFrameCount += 1
+        let now = CFAbsoluteTimeGetCurrent()
+        currentReceiveFPS = updateSampleTimes(&receiveSampleTimes, now: now)
     }
 
     func getCurrentFPS() -> Double {
@@ -265,10 +279,18 @@ actor StreamController {
     }
 
     private func notifyFrameDecoded() async {
-        let fps = currentFPS
+        let decodedFPS = currentFPS
+        let receivedFPS = currentReceiveFPS
+        let droppedFrames = await reassembler.getDroppedFrameCount()
+        logMetricsIfNeeded(droppedFrames: droppedFrames)
+        let metrics = ClientFrameMetrics(
+            decodedFPS: decodedFPS,
+            receivedFPS: receivedFPS,
+            droppedFrames: droppedFrames
+        )
         let callback = onFrameDecoded
         await MainActor.run {
-            callback?(fps)
+            callback?(metrics)
         }
     }
 
@@ -286,6 +308,35 @@ actor StreamController {
         await decoder.resetForNewSession()
         await reassembler.reset()
         decodedFrameCount = 0
+        currentFPS = 0
+        fpsSampleTimes.removeAll()
+        receivedFrameCount = 0
+        currentReceiveFPS = 0
+        receiveSampleTimes.removeAll()
+        lastMetricsLogTime = 0
+    }
+
+    private func updateSampleTimes(_ sampleTimes: inout [CFAbsoluteTime], now: CFAbsoluteTime) -> Double {
+        sampleTimes.append(now)
+        let cutoff = now - 1.0
+        if let firstValid = sampleTimes.firstIndex(where: { $0 >= cutoff }) {
+            if firstValid > 0 {
+                sampleTimes.removeFirst(firstValid)
+            }
+        } else {
+            sampleTimes.removeAll()
+        }
+        return Double(sampleTimes.count)
+    }
+
+    private func logMetricsIfNeeded(droppedFrames: UInt64) {
+        let now = CFAbsoluteTimeGetCurrent()
+        guard MirageLogger.isEnabled(.client) else { return }
+        guard lastMetricsLogTime == 0 || now - lastMetricsLogTime > 2.0 else { return }
+        let decodedText = currentFPS.formatted(.number.precision(.fractionLength(1)))
+        let receivedText = currentReceiveFPS.formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.client("Client FPS: decoded=\(decodedText), received=\(receivedText), dropped=\(droppedFrames), stream=\(streamID)")
+        lastMetricsLogTime = now
     }
 
     /// Get the reassembler for packet routing

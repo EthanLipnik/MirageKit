@@ -1143,6 +1143,7 @@ actor FrameReassembler {
     private var lastDeliveredKeyframe: UInt32 = 0
     private var droppedFrameCount: UInt64 = 0
     private var awaitingKeyframe: Bool = false
+    private var currentEpoch: UInt16 = 0
 
     /// Expected dimension token - frames with mismatched tokens are silently discarded.
     /// Updated when stream starts or client receives a resize notification.
@@ -1163,6 +1164,7 @@ actor FrameReassembler {
     private var packetsDiscardedCRC: UInt64 = 0
     private var packetsDiscardedToken: UInt64 = 0
     private var packetsDiscardedAwaitingKeyframe: UInt64 = 0
+    private var packetsDiscardedEpoch: UInt64 = 0
     private var lastStatsLog: UInt64 = 0
 
     struct PendingFrame {
@@ -1195,18 +1197,38 @@ actor FrameReassembler {
     /// Process a received packet
     func processPacket(_ data: Data, header: FrameHeader) {
         let frameNumber = header.frameNumber
+        let isKeyframePacket = header.flags.contains(.keyframe)
         totalPacketsReceived += 1
 
         // Log stats every 1000 packets
         if totalPacketsReceived - lastStatsLog >= 1000 {
             lastStatsLog = totalPacketsReceived
-            MirageLogger.log(.frameAssembly, "STATS: packets=\(totalPacketsReceived), framesDelivered=\(framesDelivered), pending=\(pendingFrames.count), discarded(old=\(packetsDiscardedOld), crc=\(packetsDiscardedCRC), token=\(packetsDiscardedToken), awaitKeyframe=\(packetsDiscardedAwaitingKeyframe))")
+            MirageLogger.log(.frameAssembly, "STATS: packets=\(totalPacketsReceived), framesDelivered=\(framesDelivered), pending=\(pendingFrames.count), discarded(old=\(packetsDiscardedOld), crc=\(packetsDiscardedCRC), token=\(packetsDiscardedToken), epoch=\(packetsDiscardedEpoch), awaitKeyframe=\(packetsDiscardedAwaitingKeyframe))")
+        }
+
+        if header.epoch != currentEpoch {
+            if isKeyframePacket {
+                resetForEpoch(header.epoch, reason: "epoch mismatch")
+            } else {
+                packetsDiscardedEpoch += 1
+                awaitingKeyframe = true
+                return
+            }
+        }
+
+        if header.flags.contains(.discontinuity) {
+            if isKeyframePacket {
+                resetForEpoch(header.epoch, reason: "discontinuity")
+            } else {
+                packetsDiscardedEpoch += 1
+                awaitingKeyframe = true
+                return
+            }
         }
 
         // Validate dimension token to reject old-dimension frames after resize.
         // Keyframes always update the expected token since they establish new dimensions.
         // P-frames with mismatched tokens are silently discarded.
-        let isKeyframePacket = header.flags.contains(.keyframe)
         if dimensionTokenValidationEnabled {
             if isKeyframePacket {
                 // Keyframes update the expected token - they carry new VPS/SPS/PPS
@@ -1369,6 +1391,16 @@ actor FrameReassembler {
         }
     }
 
+    private func resetForEpoch(_ epoch: UInt16, reason: String) {
+        currentEpoch = epoch
+        pendingFrames.removeAll()
+        lastCompletedFrame = 0
+        lastDeliveredKeyframe = 0
+        awaitingKeyframe = false
+        packetsDiscardedAwaitingKeyframe = 0
+        MirageLogger.log(.frameAssembly, "Epoch \(epoch) reset (\(reason)) for stream \(streamID)")
+    }
+
     private func cleanupOldFrames() {
         let now = Date()
         // P-frame timeout: 500ms - allows time for UDP packet jitter without dropping frames
@@ -1413,6 +1445,8 @@ actor FrameReassembler {
         droppedFrameCount = 0
         awaitingKeyframe = false
         packetsDiscardedAwaitingKeyframe = 0
+        currentEpoch = 0
+        packetsDiscardedEpoch = 0
     }
 
     /// Enter keyframe-only mode after decoder errors until a keyframe arrives.

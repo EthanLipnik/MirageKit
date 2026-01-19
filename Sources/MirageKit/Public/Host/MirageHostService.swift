@@ -466,8 +466,10 @@ public final class MirageHostService {
     ///   - dataPort: Optional UDP port for video data
     ///   - clientDisplayResolution: Client's display resolution for virtual display sizing
     ///   - keyFrameInterval: Optional client-requested keyframe interval (in frames)
-    ///   - keyframeQuality: Optional client-requested frame quality (0.0-1.0)
+    ///   - frameQuality: Optional client-requested inter-frame quality (0.0-1.0)
+    ///   - keyframeQuality: Optional client-requested keyframe quality (0.0-1.0)
     ///   - colorSpace: Optional color space override for capture and encode
+    ///   - captureQueueDepth: Optional ScreenCaptureKit queue depth override
     ///   - minBitrate: Optional minimum target bitrate (bits per second)
     ///   - maxBitrate: Optional maximum target bitrate (bits per second)
     ///   - targetFrameRate: Optional frame rate override (60 or 120fps, based on client capability and quality)
@@ -480,11 +482,13 @@ public final class MirageHostService {
         dataPort: UInt16? = nil,
         clientDisplayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
+        frameQuality: Float? = nil,
         keyframeQuality: Float? = nil,
         streamScale: CGFloat? = nil,
         targetFrameRate: Int? = nil,
         pixelFormat: MiragePixelFormat? = nil,
         colorSpace: MirageColorSpace? = nil,
+        captureQueueDepth: Int? = nil,
         minBitrate: Int? = nil,
         maxBitrate: Int? = nil
         // hdr: Bool = false
@@ -528,23 +532,31 @@ public final class MirageHostService {
 
         // Create encoder config with client-requested overrides
         var effectiveEncoderConfig: MirageEncoderConfiguration
-        if keyFrameInterval != nil || keyframeQuality != nil || pixelFormat != nil || colorSpace != nil || minBitrate != nil || maxBitrate != nil {
+        if keyFrameInterval != nil || frameQuality != nil || keyframeQuality != nil || pixelFormat != nil || colorSpace != nil || captureQueueDepth != nil || minBitrate != nil || maxBitrate != nil {
             effectiveEncoderConfig = encoderConfig.withOverrides(
                 keyFrameInterval: keyFrameInterval,
-                frameQuality: keyframeQuality,
+                frameQuality: frameQuality,
+                keyframeQuality: keyframeQuality,
                 pixelFormat: pixelFormat,
                 colorSpace: colorSpace,
+                captureQueueDepth: captureQueueDepth,
                 minBitrate: minBitrate,
                 maxBitrate: maxBitrate
             )
             if let interval = keyFrameInterval {
                 MirageLogger.host("Using client-requested keyframe interval: \(interval) frames")
             }
+            if let quality = frameQuality {
+                MirageLogger.host("Using client-requested frame quality: \(quality)")
+            }
             if let quality = keyframeQuality {
-                MirageLogger.host("Using client-requested encoder quality: \(quality)")
+                MirageLogger.host("Using client-requested keyframe quality: \(quality)")
             }
             if let colorSpace {
                 MirageLogger.host("Using client-requested color space: \(colorSpace.displayName)")
+            }
+            if let captureQueueDepth {
+                MirageLogger.host("Using client-requested capture queue depth: \(captureQueueDepth)")
             }
             if let minBitrate {
                 MirageLogger.host("Using client-requested minimum bitrate: \(minBitrate)")
@@ -577,6 +589,17 @@ public final class MirageHostService {
             streamScale: streamScale ?? 1.0,
             maxPacketSize: networkConfig.maxPacketSize
         )
+        await context.setMetricsUpdateHandler { [weak self] metrics in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                guard let clientContext = self.findClientContext(clientID: client.id) else { return }
+                do {
+                    try await clientContext.send(.streamMetricsUpdate, content: metrics)
+                } catch {
+                    MirageLogger.error(.host, "Failed to send stream metrics: \(error)")
+                }
+            }
+        }
 
         streamsByID[streamID] = context
         activeStreams.append(session)
@@ -1553,11 +1576,12 @@ public final class MirageHostService {
 
                 let presetConfig = request.preferredQuality.encoderConfiguration(for: targetFrameRate)
                 let keyFrameInterval = request.keyFrameInterval ?? presetConfig.keyFrameInterval
-                let frameQuality = request.keyframeQuality ?? presetConfig.frameQuality
-                let pixelFormat = presetConfig.pixelFormat
-                let colorSpace = presetConfig.colorSpace
-                let minBitrate = presetConfig.minBitrate
-                let maxBitrate = presetConfig.maxBitrate
+                let frameQuality = request.frameQuality ?? presetConfig.frameQuality
+                let keyframeQuality = request.keyframeQuality ?? presetConfig.keyframeQuality
+                let pixelFormat = request.pixelFormat ?? presetConfig.pixelFormat
+                let colorSpace = request.colorSpace ?? presetConfig.colorSpace
+                let minBitrate = request.minBitrate ?? presetConfig.minBitrate
+                let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
                 let requestedScale = request.streamScale ?? 1.0
                 MirageLogger.host("Frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
@@ -1567,11 +1591,13 @@ public final class MirageHostService {
                     dataPort: request.dataPort,
                     clientDisplayResolution: clientDisplayResolution,
                     keyFrameInterval: keyFrameInterval,
-                    keyframeQuality: frameQuality,
+                    frameQuality: frameQuality,
+                    keyframeQuality: keyframeQuality,
                     streamScale: requestedScale,
                     targetFrameRate: targetFrameRate,
                     pixelFormat: pixelFormat,
                     colorSpace: colorSpace,
+                    captureQueueDepth: request.captureQueueDepth,
                     minBitrate: minBitrate,
                     maxBitrate: maxBitrate
                 )

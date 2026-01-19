@@ -22,6 +22,8 @@ public struct MirageEncoderConfiguration: Sendable {
 
     /// Pixel format for capture and encode
     public var pixelFormat: MiragePixelFormat
+    /// Capture queue depth override for ScreenCaptureKit (nil uses adaptive defaults)
+    public var captureQueueDepth: Int?
 
     /// Minimum target bitrate in bits per second
     public var minBitrate: Int?
@@ -43,7 +45,8 @@ public struct MirageEncoderConfiguration: Sendable {
         keyFrameInterval: Int = 1_800,
         colorSpace: MirageColorSpace = .displayP3,
         scaleFactor: CGFloat = 2.0,
-        pixelFormat: MiragePixelFormat = .bgr10a2,
+        pixelFormat: MiragePixelFormat = .p010,
+        captureQueueDepth: Int? = nil,
         minBitrate: Int? = nil,
         maxBitrate: Int? = nil,
         frameQuality: Float = 0.8,
@@ -55,6 +58,7 @@ public struct MirageEncoderConfiguration: Sendable {
         self.colorSpace = colorSpace
         self.scaleFactor = scaleFactor
         self.pixelFormat = pixelFormat
+        self.captureQueueDepth = captureQueueDepth
         self.minBitrate = minBitrate
         self.maxBitrate = maxBitrate
         self.frameQuality = frameQuality
@@ -65,7 +69,7 @@ public struct MirageEncoderConfiguration: Sendable {
     public static let highQuality = MirageEncoderConfiguration(
         targetFrameRate: 120,
         keyFrameInterval: 3_600,
-        pixelFormat: .bgr10a2,
+        pixelFormat: .p010,
         frameQuality: 1.0,
         keyframeQuality: 0.75
     )
@@ -74,7 +78,7 @@ public struct MirageEncoderConfiguration: Sendable {
     public static let balanced = MirageEncoderConfiguration(
         targetFrameRate: 120,
         keyFrameInterval: 3_600,
-        pixelFormat: .bgra8,
+        pixelFormat: .nv12,
         frameQuality: 0.75,
         keyframeQuality: 0.65
     )
@@ -92,7 +96,7 @@ public struct MirageEncoderConfiguration: Sendable {
         keyFrameInterval: 3_600,
         colorSpace: .sRGB,
         scaleFactor: 2.0,
-        pixelFormat: .bgra8,
+        pixelFormat: .nv12,
         frameQuality: 0.85,
         keyframeQuality: 0.65
     )
@@ -105,6 +109,7 @@ public struct MirageEncoderConfiguration: Sendable {
         keyframeQuality: Float? = nil,
         pixelFormat: MiragePixelFormat? = nil,
         colorSpace: MirageColorSpace? = nil,
+        captureQueueDepth: Int? = nil,
         minBitrate: Int? = nil,
         maxBitrate: Int? = nil
     ) -> MirageEncoderConfiguration {
@@ -127,6 +132,9 @@ public struct MirageEncoderConfiguration: Sendable {
         if let colorSpace {
             config.colorSpace = colorSpace
         }
+        if let captureQueueDepth {
+            config.captureQueueDepth = captureQueueDepth
+        }
         if let minBitrate {
             config.minBitrate = minBitrate
         }
@@ -142,6 +150,38 @@ public struct MirageEncoderConfiguration: Sendable {
         var config = self
         config.targetFrameRate = newFrameRate
         return config
+    }
+}
+
+/// Optional overrides for encoder settings supplied by the client.
+public struct MirageEncoderOverrides: Sendable, Codable {
+    public var keyFrameInterval: Int?
+    public var frameQuality: Float?
+    public var keyframeQuality: Float?
+    public var pixelFormat: MiragePixelFormat?
+    public var colorSpace: MirageColorSpace?
+    public var captureQueueDepth: Int?
+    public var minBitrate: Int?
+    public var maxBitrate: Int?
+
+    public init(
+        keyFrameInterval: Int? = nil,
+        frameQuality: Float? = nil,
+        keyframeQuality: Float? = nil,
+        pixelFormat: MiragePixelFormat? = nil,
+        colorSpace: MirageColorSpace? = nil,
+        captureQueueDepth: Int? = nil,
+        minBitrate: Int? = nil,
+        maxBitrate: Int? = nil
+    ) {
+        self.keyFrameInterval = keyFrameInterval
+        self.frameQuality = frameQuality
+        self.keyframeQuality = keyframeQuality
+        self.pixelFormat = pixelFormat
+        self.colorSpace = colorSpace
+        self.captureQueueDepth = captureQueueDepth
+        self.minBitrate = minBitrate
+        self.maxBitrate = maxBitrate
     }
 }
 
@@ -179,12 +219,14 @@ public enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
     case p010
     case bgr10a2
     case bgra8
+    case nv12
 
     public var displayName: String {
         switch self {
-        case .p010: return "10-bit (P010)"
-        case .bgr10a2: return "10-bit (ARGB2101010)"
-        case .bgra8: return "8-bit (BGRA)"
+        case .p010: return "10-bit (P010 4:2:0)"
+        case .bgr10a2: return "10-bit (ARGB2101010 4:4:4)"
+        case .bgra8: return "8-bit (BGRA 4:4:4)"
+        case .nv12: return "8-bit (NV12 4:2:0)"
         }
     }
 }
@@ -247,6 +289,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
     case medium      // Balanced quality
     case low         // Low quality
     case lowLatency  // Optimized for text apps - aggressive frame skipping, full quality
+    case custom      // User-defined overrides
 
     public var displayName: String {
         switch self {
@@ -255,6 +298,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
         case .medium: return "Medium"
         case .low: return "Low"
         case .lowLatency: return "Low Latency"
+        case .custom: return "Custom"
         }
     }
 
@@ -272,7 +316,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
         case .ultra:
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
-                pixelFormat: .bgr10a2,
+                pixelFormat: .p010,
                 minBitrate: bitrateMbps(200),
                 maxBitrate: bitrateMbps(200),
                 frameQuality: 1.0,
@@ -281,7 +325,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
         case .high:
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
-                pixelFormat: .bgr10a2,
+                pixelFormat: .p010,
                 minBitrate: bitrateMbps(isHighRefresh ? 130 : 100),
                 maxBitrate: bitrateMbps(isHighRefresh ? 130 : 100),
                 frameQuality: isHighRefresh ? 0.88 : 0.95,
@@ -291,7 +335,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
                 colorSpace: .displayP3,
-                pixelFormat: .bgr10a2,
+                pixelFormat: .p010,
                 minBitrate: bitrateMbps(isHighRefresh ? 85 : 50),
                 maxBitrate: bitrateMbps(isHighRefresh ? 85 : 50),
                 frameQuality: isHighRefresh ? 0.70 : 0.80,
@@ -301,7 +345,7 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
                 colorSpace: .sRGB,
-                pixelFormat: .bgra8,
+                pixelFormat: .nv12,
                 minBitrate: bitrateMbps(isHighRefresh ? 8 : 12),
                 maxBitrate: bitrateMbps(isHighRefresh ? 8 : 12),
                 frameQuality: isHighRefresh ? 0.18 : 0.24,
@@ -311,11 +355,21 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
             return MirageEncoderConfiguration(
                 keyFrameInterval: keyFrameInterval,
                 colorSpace: .sRGB,
-                pixelFormat: .bgra8,
+                pixelFormat: .nv12,
                 minBitrate: bitrateMbps(150),
                 maxBitrate: bitrateMbps(150),
                 frameQuality: 0.85,
                 keyframeQuality: 0.65
+            )
+        case .custom:
+            return MirageEncoderConfiguration(
+                keyFrameInterval: keyFrameInterval,
+                colorSpace: .displayP3,
+                pixelFormat: .p010,
+                minBitrate: bitrateMbps(isHighRefresh ? 85 : 50),
+                maxBitrate: bitrateMbps(isHighRefresh ? 85 : 50),
+                frameQuality: isHighRefresh ? 0.70 : 0.80,
+                keyframeQuality: isHighRefresh ? 0.60 : 0.70
             )
         }
     }

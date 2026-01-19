@@ -50,11 +50,13 @@ extension MirageHostService {
                 dataPort: nil,
                 clientDisplayResolution: displayResolution,
                 keyFrameInterval: encoderSettings.keyFrameInterval,
-                keyframeQuality: encoderSettings.frameQuality,
+                frameQuality: encoderSettings.frameQuality,
+                keyframeQuality: encoderSettings.keyframeQuality,
                 streamScale: streamScale,
                 targetFrameRate: targetFrameRate,
                 pixelFormat: encoderSettings.pixelFormat,
                 colorSpace: encoderSettings.colorSpace,
+                captureQueueDepth: encoderSettings.captureQueueDepth,
                 minBitrate: encoderSettings.minBitrate,
                 maxBitrate: encoderSettings.maxBitrate
             )

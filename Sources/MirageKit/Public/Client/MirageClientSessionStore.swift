@@ -151,11 +151,16 @@ public final class MirageClientSessionStore {
     ///   - streamID: Stream identifier for the decoded frame.
     ///   - pixelBuffer: The decoded pixel buffer.
     ///   - contentRect: Content rectangle for cropping (SCK black bar removal).
+    ///   - decodedFPS: Client-side decoded FPS estimate.
+    ///   - receivedFPS: Client-side reassembled FPS estimate.
+    ///   - droppedFrames: Client-side dropped frame count from reassembly.
     public func handleDecodedFrame(
         streamID: StreamID,
         pixelBuffer: CVPixelBuffer,
         contentRect: CGRect,
-        fps: Double
+        decodedFPS: Double,
+        receivedFPS: Double,
+        droppedFrames: UInt64
     ) {
         // Check if this is a login display frame.
         if streamID == loginDisplayStreamID {
@@ -169,9 +174,30 @@ public final class MirageClientSessionStore {
             latestFrames[sessionEntry.key] = pixelBuffer
             contentRects[sessionEntry.key] = contentRect
             var session = sessionEntry.value
-            session.currentFPS = fps
+            session.currentFPS = decodedFPS
+            session.receivedFPS = receivedFPS
+            session.clientDroppedFrames = droppedFrames
             streamSessions[sessionEntry.key] = session
         }
+    }
+
+    public func handleHostStreamMetrics(
+        streamID: StreamID,
+        encodedFPS: Double,
+        idleEncodedFPS: Double,
+        droppedFrames: UInt64,
+        activeQuality: Float
+    ) {
+        guard let sessionEntry = streamSessions.first(where: { $0.value.streamID == streamID }) else {
+            return
+        }
+
+        var session = sessionEntry.value
+        session.hostEncodedFPS = encodedFPS
+        session.hostIdleFPS = idleEncodedFPS
+        session.hostDroppedFrames = droppedFrames
+        session.hostActiveQuality = Double(activeQuality)
+        streamSessions[sessionEntry.key] = session
     }
 
     // MARK: - Minimum Size Updates
@@ -253,6 +279,12 @@ public struct MirageStreamSessionState: Identifiable {
     public let hostName: String
     public var statistics: MirageStreamStatistics?
     public var currentFPS: Double
+    public var receivedFPS: Double
+    public var hostEncodedFPS: Double
+    public var hostIdleFPS: Double
+    public var clientDroppedFrames: UInt64
+    public var hostDroppedFrames: UInt64
+    public var hostActiveQuality: Double
     /// Minimum window size in points (from host).
     public var minWidth: CGFloat = 400
     public var minHeight: CGFloat = 300
@@ -264,6 +296,12 @@ public struct MirageStreamSessionState: Identifiable {
         hostName: String,
         statistics: MirageStreamStatistics? = nil,
         currentFPS: Double = 0,
+        receivedFPS: Double = 0,
+        hostEncodedFPS: Double = 0,
+        hostIdleFPS: Double = 0,
+        clientDroppedFrames: UInt64 = 0,
+        hostDroppedFrames: UInt64 = 0,
+        hostActiveQuality: Double = 0,
         minWidth: CGFloat = 400,
         minHeight: CGFloat = 300
     ) {
@@ -273,6 +311,12 @@ public struct MirageStreamSessionState: Identifiable {
         self.hostName = hostName
         self.statistics = statistics
         self.currentFPS = currentFPS
+        self.receivedFPS = receivedFPS
+        self.hostEncodedFPS = hostEncodedFPS
+        self.hostIdleFPS = hostIdleFPS
+        self.clientDroppedFrames = clientDroppedFrames
+        self.hostDroppedFrames = hostDroppedFrames
+        self.hostActiveQuality = hostActiveQuality
         self.minWidth = minWidth
         self.minHeight = minHeight
     }

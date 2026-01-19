@@ -754,6 +754,9 @@ public final class MirageClientService {
     ///   - quality: Quality preset for the streams
     ///   - scaleFactor: Optional display scale factor (e.g., 2.0 for Retina)
     ///   - displayResolution: Client's display resolution for virtual display sizing
+    ///   - keyFrameInterval: Optional keyframe interval in frames.
+    ///   - keyframeQuality: Optional inter-frame quality (0.0-1.0).
+    ///   - encoderOverrides: Optional per-stream encoder overrides.
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ)
     public func selectApp(
@@ -762,7 +765,8 @@ public final class MirageClientService {
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
-        keyframeQuality: Float? = nil
+        keyframeQuality: Float? = nil,
+        encoderOverrides: MirageEncoderOverrides? = nil
         // preferHDR: Bool = false
     ) async throws {
         guard case .connected = connectionState, let connection else {
@@ -772,7 +776,7 @@ public final class MirageClientService {
         // Use provided display resolution or detect from main display
         let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
 
-        let request = SelectAppMessage(
+        var request = SelectAppMessage(
             bundleIdentifier: bundleIdentifier,
             preferredQuality: quality,
             dataPort: nil,  // Not needed - host will use our UDP connection
@@ -780,12 +784,26 @@ public final class MirageClientService {
             displayWidth: effectiveDisplayResolution.width > 0 ? Int(effectiveDisplayResolution.width) : nil,
             displayHeight: effectiveDisplayResolution.height > 0 ? Int(effectiveDisplayResolution.height) : nil,
             maxRefreshRate: getScreenMaxRefreshRate(),
-            keyFrameInterval: keyFrameInterval,
-            keyframeQuality: keyframeQuality,
+            keyFrameInterval: nil,
+            frameQuality: nil,
+            keyframeQuality: nil,
+            pixelFormat: nil,
+            colorSpace: nil,
+            minBitrate: nil,
+            maxBitrate: nil,
             streamScale: clampedStreamScale()
         )
         // TODO: HDR support - requires proper virtual display EDR configuration
         // request.preferHDR = preferHDR
+
+        var overrides = encoderOverrides ?? MirageEncoderOverrides()
+        if overrides.keyFrameInterval == nil {
+            overrides.keyFrameInterval = keyFrameInterval
+        }
+        if overrides.frameQuality == nil {
+            overrides.frameQuality = keyframeQuality
+        }
+        applyEncoderOverrides(overrides, to: &request)
 
         let message = try ControlMessage(type: .selectApp, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
@@ -812,6 +830,10 @@ public final class MirageClientService {
     ///   - quality: Quality preset for the stream
     ///   - scaleFactor: Optional display scale factor
     ///   - displayResolution: Client's display resolution for virtual display sizing
+    ///   - keyFrameInterval: Optional keyframe interval in frames.
+    ///   - keyframeQuality: Optional inter-frame quality (0.0-1.0).
+    ///   - encoderOverrides: Optional per-stream encoder overrides.
+    ///   - captureSource: Optional desktop capture source override.
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ)
     public func startDesktopStream(
@@ -819,7 +841,9 @@ public final class MirageClientService {
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
-        keyframeQuality: Float? = nil
+        keyframeQuality: Float? = nil,
+        encoderOverrides: MirageEncoderOverrides? = nil,
+        captureSource: MirageDesktopCaptureSource? = nil
         // preferHDR: Bool = false
     ) async throws {
         guard case .connected = connectionState, let connection else {
@@ -833,19 +857,38 @@ public final class MirageClientService {
             throw MirageError.protocolError("Invalid display resolution")
         }
 
-        let request = StartDesktopStreamMessage(
+        var request = StartDesktopStreamMessage(
             preferredQuality: quality,
             scaleFactor: scaleFactor,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
-            keyFrameInterval: keyFrameInterval,
-            keyframeQuality: keyframeQuality,
+            keyFrameInterval: nil,
+            frameQuality: nil,
+            keyframeQuality: nil,
+            pixelFormat: nil,
+            colorSpace: nil,
+            captureSource: captureSource,
+            minBitrate: nil,
+            maxBitrate: nil,
             streamScale: clampedStreamScale(),
             dataPort: nil,  // Host will use our UDP connection
             maxRefreshRate: getScreenMaxRefreshRate()
         )
         // TODO: HDR support - requires proper virtual display EDR configuration
         // request.preferHDR = preferHDR
+
+        var overrides = encoderOverrides ?? MirageEncoderOverrides()
+        if overrides.keyFrameInterval == nil {
+            overrides.keyFrameInterval = keyFrameInterval
+        }
+        if overrides.frameQuality == nil {
+            overrides.frameQuality = keyframeQuality
+        }
+        applyEncoderOverrides(overrides, to: &request)
+
+        if let captureSource {
+            MirageLogger.client("Requesting desktop capture source: \(captureSource.displayName)")
+        }
 
         let message = try ControlMessage(type: .startDesktopStream, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
@@ -883,7 +926,8 @@ public final class MirageClientService {
     ///     If provided, host creates a virtual display at this resolution for optimal quality.
     ///   - keyFrameInterval: Optional keyframe interval in frames. Higher = fewer lag spikes.
     ///     Examples: 600 (10 seconds @ 60fps), 300 (5 seconds @ 60fps)
-    ///   - keyframeQuality: Optional frame quality (0.0-1.0). Lower = smaller frames.
+    ///   - keyframeQuality: Optional inter-frame quality (0.0-1.0). Lower = smaller frames.
+    ///   - encoderOverrides: Optional per-stream encoder overrides.
     public func startViewing(
         window: MirageWindow,
         quality: MirageQualityPreset = .medium,
@@ -891,7 +935,8 @@ public final class MirageClientService {
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
-        keyframeQuality: Float? = nil
+        keyframeQuality: Float? = nil,
+        encoderOverrides: MirageEncoderOverrides? = nil
     ) async throws -> ClientStreamSession {
         guard case .connected = connectionState, let connection else {
             throw MirageError.protocolError("Not connected")
@@ -919,14 +964,14 @@ public final class MirageClientService {
         }
 
         // Include encoder config overrides if specified
-        if let keyFrameInterval, keyFrameInterval > 0 {
-            request.keyFrameInterval = keyFrameInterval
-            MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
+        var overrides = encoderOverrides ?? MirageEncoderOverrides()
+        if overrides.keyFrameInterval == nil {
+            overrides.keyFrameInterval = keyFrameInterval
         }
-        if let keyframeQuality, keyframeQuality > 0 {
-            request.keyframeQuality = keyframeQuality
-            MirageLogger.client("Requesting frame quality: \(keyframeQuality)")
+        if overrides.frameQuality == nil {
+            overrides.frameQuality = keyframeQuality
         }
+        applyEncoderOverrides(overrides, to: &request)
 
         request.streamScale = clampedStreamScale()
 
@@ -996,12 +1041,25 @@ public final class MirageClientService {
             onResizeEvent: { [weak self] event in
                 self?.handleResizeEvent(event, for: capturedStreamID)
             },
-            onFrameDecoded: { [weak self] fps in
+            onFrameDecoded: { [weak self] metrics in
                 guard let self else { return }
                 guard let (pixelBuffer, contentRect) = MirageFrameCache.shared.get(for: capturedStreamID) else { return }
-                self.sessionStore.handleDecodedFrame(streamID: capturedStreamID, pixelBuffer: pixelBuffer, contentRect: contentRect, fps: fps)
+                self.sessionStore.handleDecodedFrame(
+                    streamID: capturedStreamID,
+                    pixelBuffer: pixelBuffer,
+                    contentRect: contentRect,
+                    decodedFPS: metrics.decodedFPS,
+                    receivedFPS: metrics.receivedFPS,
+                    droppedFrames: metrics.droppedFrames
+                )
                 self.onDecodedFrame?(capturedStreamID, pixelBuffer, .invalid, contentRect)
-                self.delegate?.clientService(self, didDecodeFrame: pixelBuffer, forStream: capturedStreamID, contentRect: contentRect, fps: fps)
+                self.delegate?.clientService(
+                    self,
+                    didDecodeFrame: pixelBuffer,
+                    forStream: capturedStreamID,
+                    contentRect: contentRect,
+                    fps: metrics.decodedFPS
+                )
             },
             onInputBlockingChanged: { [weak self] isBlocked in
                 self?.setInputBlocked(isBlocked, for: capturedStreamID)
@@ -1582,6 +1640,17 @@ public final class MirageClientService {
                 }
             }
 
+        case .streamMetricsUpdate:
+            if let metrics = try? message.decode(StreamMetricsMessage.self) {
+                sessionStore.handleHostStreamMetrics(
+                    streamID: metrics.streamID,
+                    encodedFPS: metrics.encodedFPS,
+                    idleEncodedFPS: metrics.idleEncodedFPS,
+                    droppedFrames: metrics.droppedFrames,
+                    activeQuality: metrics.activeQuality
+                )
+            }
+
         case .error:
             if let error = try? message.decode(ErrorMessage.self) {
                 delegate?.clientService(self, didEncounterError: MirageError.protocolError(error.message))
@@ -1914,6 +1983,117 @@ public final class MirageClientService {
     private func handleVideoPacket(_ data: Data, header: FrameHeader) async {
         // Forward to appropriate stream's decoder
         delegate?.clientService(self, didReceiveVideoPacket: data, forStream: header.streamID)
+    }
+
+    private func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartStreamMessage) {
+        if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
+            request.keyFrameInterval = keyFrameInterval
+            MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
+        }
+        if let frameQuality = overrides.frameQuality, frameQuality > 0 {
+            request.frameQuality = frameQuality
+            MirageLogger.client("Requesting frame quality: \(frameQuality)")
+        }
+        if let keyframeQuality = overrides.keyframeQuality, keyframeQuality > 0 {
+            request.keyframeQuality = keyframeQuality
+            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
+        }
+        if let pixelFormat = overrides.pixelFormat {
+            request.pixelFormat = pixelFormat
+            MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
+        }
+        if let colorSpace = overrides.colorSpace {
+            request.colorSpace = colorSpace
+            MirageLogger.client("Requesting color space: \(colorSpace.displayName)")
+        }
+        if let captureQueueDepth = overrides.captureQueueDepth, captureQueueDepth > 0 {
+            request.captureQueueDepth = captureQueueDepth
+            MirageLogger.client("Requesting capture queue depth: \(captureQueueDepth)")
+        }
+        if let minBitrate = overrides.minBitrate, minBitrate > 0 {
+            request.minBitrate = minBitrate
+            let Mbps = Double(minBitrate) / 1_000_000.0
+            MirageLogger.client("Requesting minimum bitrate: \(Mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let maxBitrate = overrides.maxBitrate, maxBitrate > 0 {
+            request.maxBitrate = maxBitrate
+            let Mbps = Double(maxBitrate) / 1_000_000.0
+            MirageLogger.client("Requesting maximum bitrate: \(Mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+    }
+
+    private func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout SelectAppMessage) {
+        if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
+            request.keyFrameInterval = keyFrameInterval
+            MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
+        }
+        if let frameQuality = overrides.frameQuality, frameQuality > 0 {
+            request.frameQuality = frameQuality
+            MirageLogger.client("Requesting frame quality: \(frameQuality)")
+        }
+        if let keyframeQuality = overrides.keyframeQuality, keyframeQuality > 0 {
+            request.keyframeQuality = keyframeQuality
+            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
+        }
+        if let pixelFormat = overrides.pixelFormat {
+            request.pixelFormat = pixelFormat
+            MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
+        }
+        if let colorSpace = overrides.colorSpace {
+            request.colorSpace = colorSpace
+            MirageLogger.client("Requesting color space: \(colorSpace.displayName)")
+        }
+        if let captureQueueDepth = overrides.captureQueueDepth, captureQueueDepth > 0 {
+            request.captureQueueDepth = captureQueueDepth
+            MirageLogger.client("Requesting capture queue depth: \(captureQueueDepth)")
+        }
+        if let minBitrate = overrides.minBitrate, minBitrate > 0 {
+            request.minBitrate = minBitrate
+            let Mbps = Double(minBitrate) / 1_000_000.0
+            MirageLogger.client("Requesting minimum bitrate: \(Mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let maxBitrate = overrides.maxBitrate, maxBitrate > 0 {
+            request.maxBitrate = maxBitrate
+            let Mbps = Double(maxBitrate) / 1_000_000.0
+            MirageLogger.client("Requesting maximum bitrate: \(Mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+    }
+
+    private func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartDesktopStreamMessage) {
+        if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
+            request.keyFrameInterval = keyFrameInterval
+            MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
+        }
+        if let frameQuality = overrides.frameQuality, frameQuality > 0 {
+            request.frameQuality = frameQuality
+            MirageLogger.client("Requesting frame quality: \(frameQuality)")
+        }
+        if let keyframeQuality = overrides.keyframeQuality, keyframeQuality > 0 {
+            request.keyframeQuality = keyframeQuality
+            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
+        }
+        if let pixelFormat = overrides.pixelFormat {
+            request.pixelFormat = pixelFormat
+            MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
+        }
+        if let colorSpace = overrides.colorSpace {
+            request.colorSpace = colorSpace
+            MirageLogger.client("Requesting color space: \(colorSpace.displayName)")
+        }
+        if let captureQueueDepth = overrides.captureQueueDepth, captureQueueDepth > 0 {
+            request.captureQueueDepth = captureQueueDepth
+            MirageLogger.client("Requesting capture queue depth: \(captureQueueDepth)")
+        }
+        if let minBitrate = overrides.minBitrate, minBitrate > 0 {
+            request.minBitrate = minBitrate
+            let Mbps = Double(minBitrate) / 1_000_000.0
+            MirageLogger.client("Requesting minimum bitrate: \(Mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let maxBitrate = overrides.maxBitrate, maxBitrate > 0 {
+            request.maxBitrate = maxBitrate
+            let Mbps = Double(maxBitrate) / 1_000_000.0
+            MirageLogger.client("Requesting maximum bitrate: \(Mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
     }
 
     // MARK: - Display Resolution Helpers

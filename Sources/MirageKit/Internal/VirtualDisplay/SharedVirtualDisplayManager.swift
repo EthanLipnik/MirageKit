@@ -22,6 +22,7 @@ actor SharedVirtualDisplayManager {
         let spaceID: CGSSpaceID
         let resolution: CGSize
         let refreshRate: Double
+        let colorSpace: MirageColorSpace
         let createdAt: Date
 
         /// Display reference (non-Sendable, managed internally)
@@ -44,6 +45,7 @@ actor SharedVirtualDisplayManager {
     struct ClientDisplayInfo: Sendable {
         let resolution: CGSize
         let windowID: WindowID
+        let colorSpace: MirageColorSpace
         let acquiredAt: Date
     }
 
@@ -108,7 +110,8 @@ actor SharedVirtualDisplayManager {
         for streamID: StreamID,
         clientResolution: CGSize,
         windowID: WindowID,
-        refreshRate: Int = 60
+        refreshRate: Int = 60,
+        colorSpace: MirageColorSpace
     ) async throws -> ManagedDisplayContext {
         let consumer = DisplayConsumer.stream(streamID)
 
@@ -122,22 +125,26 @@ actor SharedVirtualDisplayManager {
         activeConsumers[consumer] = ClientDisplayInfo(
             resolution: clientResolution,
             windowID: windowID,
+            colorSpace: colorSpace,
             acquiredAt: Date()
         )
 
         // Calculate optimal resolution (fixed 3K)
         let optimalResolution = calculateOptimalResolution()
 
-        MirageLogger.host("Stream \(streamID) acquiring shared display. Consumers: \(activeConsumers.count), client res: \(Int(clientResolution.width))x\(Int(clientResolution.height)) → virtual display: \(Int(optimalResolution.width))x\(Int(optimalResolution.height))")
+        MirageLogger.host("Stream \(streamID) acquiring shared display. Consumers: \(activeConsumers.count), client res: \(Int(clientResolution.width))x\(Int(clientResolution.height)) → virtual display: \(Int(optimalResolution.width))x\(Int(optimalResolution.height)), color=\(colorSpace.displayName)")
 
         // Create or resize display as needed
         if sharedDisplay == nil {
             // First consumer - create the display
-            sharedDisplay = try await createDisplay(resolution: optimalResolution, refreshRate: refreshRate)
+            sharedDisplay = try await createDisplay(resolution: optimalResolution, refreshRate: refreshRate, colorSpace: colorSpace)
+        } else if sharedDisplay?.colorSpace != colorSpace {
+            MirageLogger.host("Recreating shared display for color space change (\(sharedDisplay?.colorSpace.displayName ?? "Unknown") → \(colorSpace.displayName))")
+            sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate, colorSpace: colorSpace)
         } else if needsResize(currentResolution: sharedDisplay!.resolution, targetResolution: optimalResolution) {
             // Consumer needs larger display - recreate
             MirageLogger.host("Resizing shared display from \(Int(sharedDisplay!.resolution.width))x\(Int(sharedDisplay!.resolution.height)) to \(Int(optimalResolution.width))x\(Int(optimalResolution.height))")
-            sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate)
+            sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate, colorSpace: colorSpace)
         }
 
         guard let display = sharedDisplay else {
@@ -177,7 +184,12 @@ actor SharedVirtualDisplayManager {
     ///   - refreshRate: Refresh rate in Hz (default 60, use 120 for high refresh rate clients)
     /// - Returns: The managed display context
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
-    func acquireDisplayForConsumer(_ consumer: DisplayConsumer, resolution: CGSize? = nil, refreshRate: Int = 60) async throws -> ManagedDisplayContext {
+    func acquireDisplayForConsumer(
+        _ consumer: DisplayConsumer,
+        resolution: CGSize? = nil,
+        refreshRate: Int = 60,
+        colorSpace: MirageColorSpace = .displayP3
+    ) async throws -> ManagedDisplayContext {
         // Use provided resolution or fall back to default
         let targetResolution = resolution ?? CGSize(width: 2880, height: 1800)
 
@@ -191,17 +203,21 @@ actor SharedVirtualDisplayManager {
         activeConsumers[consumer] = ClientDisplayInfo(
             resolution: targetResolution,
             windowID: 0,
+            colorSpace: colorSpace,
             acquiredAt: Date()
         )
 
-        MirageLogger.host("\(consumer) acquiring shared display at \(Int(targetResolution.width))x\(Int(targetResolution.height))@\(refreshRate)Hz. Consumers: \(activeConsumers.count)")
+        MirageLogger.host("\(consumer) acquiring shared display at \(Int(targetResolution.width))x\(Int(targetResolution.height))@\(refreshRate)Hz, color=\(colorSpace.displayName). Consumers: \(activeConsumers.count)")
 
         // Create display if needed, or resize if resolution differs
         if sharedDisplay == nil {
-            sharedDisplay = try await createDisplay(resolution: targetResolution, refreshRate: refreshRate)
+            sharedDisplay = try await createDisplay(resolution: targetResolution, refreshRate: refreshRate, colorSpace: colorSpace)
+        } else if sharedDisplay?.colorSpace != colorSpace {
+            MirageLogger.host("Recreating shared display for color space change (\(sharedDisplay?.colorSpace.displayName ?? "Unknown") → \(colorSpace.displayName))")
+            sharedDisplay = try await recreateDisplay(newResolution: targetResolution, refreshRate: refreshRate, colorSpace: colorSpace)
         } else if needsResize(currentResolution: sharedDisplay!.resolution, targetResolution: targetResolution) {
             MirageLogger.host("Resizing shared display from \(Int(sharedDisplay!.resolution.width))x\(Int(sharedDisplay!.resolution.height)) to \(Int(targetResolution.width))x\(Int(targetResolution.height))")
-            sharedDisplay = try await recreateDisplay(newResolution: targetResolution, refreshRate: refreshRate)
+            sharedDisplay = try await recreateDisplay(newResolution: targetResolution, refreshRate: refreshRate, colorSpace: colorSpace)
         }
 
         guard let display = sharedDisplay else {
@@ -245,6 +261,7 @@ actor SharedVirtualDisplayManager {
         clientInfo = ClientDisplayInfo(
             resolution: newResolution,
             windowID: clientInfo.windowID,
+            colorSpace: clientInfo.colorSpace,
             acquiredAt: clientInfo.acquiredAt
         )
         activeConsumers[consumer] = clientInfo
@@ -254,7 +271,7 @@ actor SharedVirtualDisplayManager {
 
         if let current = sharedDisplay, needsResize(currentResolution: current.resolution, targetResolution: optimalResolution) {
             MirageLogger.host("Client resolution change requires display resize to \(Int(optimalResolution.width))x\(Int(optimalResolution.height))")
-            sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate)
+            sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate, colorSpace: clientInfo.colorSpace)
         }
     }
 
@@ -279,12 +296,19 @@ actor SharedVirtualDisplayManager {
             return
         }
 
+        let requestedColorSpace = activeConsumers[consumer]?.colorSpace ?? .displayP3
         // Update stored resolution for this consumer
         activeConsumers[consumer] = ClientDisplayInfo(
             resolution: newResolution,
             windowID: 0,
+            colorSpace: requestedColorSpace,
             acquiredAt: Date()
         )
+        if display.colorSpace != requestedColorSpace {
+            MirageLogger.host("Display color space mismatch (\(display.colorSpace.displayName) → \(requestedColorSpace.displayName)); recreating")
+            sharedDisplay = try await recreateDisplay(newResolution: newResolution, refreshRate: refreshRate, colorSpace: requestedColorSpace)
+            return
+        }
 
         MirageLogger.host("Updating display \(display.displayID) for \(consumer) to \(Int(newResolution.width))x\(Int(newResolution.height))")
 
@@ -305,6 +329,7 @@ actor SharedVirtualDisplayManager {
                 spaceID: display.spaceID,
                 resolution: newResolution,
                 refreshRate: Double(refreshRate),
+                colorSpace: display.colorSpace,
                 createdAt: display.createdAt,
                 displayRef: display.displayRef  // Keep same reference
             )
@@ -312,7 +337,7 @@ actor SharedVirtualDisplayManager {
         } else {
             // Fallback to recreate if in-place update fails
             MirageLogger.host("In-place update failed, falling back to recreate")
-            sharedDisplay = try await recreateDisplay(newResolution: newResolution, refreshRate: refreshRate)
+            sharedDisplay = try await recreateDisplay(newResolution: newResolution, refreshRate: refreshRate, colorSpace: requestedColorSpace)
         }
     }
 
@@ -415,7 +440,7 @@ actor SharedVirtualDisplayManager {
 
     /// Create the shared virtual display
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
-    private func createDisplay(resolution: CGSize, refreshRate: Int) async throws -> ManagedDisplayContext {
+    private func createDisplay(resolution: CGSize, refreshRate: Int, colorSpace: MirageColorSpace) async throws -> ManagedDisplayContext {
         displayCounter += 1
         let displayName = "Mirage Shared Display (#\(displayCounter))"
 
@@ -424,7 +449,8 @@ actor SharedVirtualDisplayManager {
             width: Int(resolution.width),
             height: Int(resolution.height),
             refreshRate: Double(refreshRate),
-            hiDPI: true  // Enable HiDPI for Retina-quality rendering
+            hiDPI: true,  // Enable HiDPI for Retina-quality rendering
+            colorSpace: colorSpace
         ) else {
             throw SharedDisplayError.creationFailed("CGVirtualDisplay creation returned nil")
         }
@@ -448,18 +474,19 @@ actor SharedVirtualDisplayManager {
             spaceID: spaceID,
             resolution: resolution,
             refreshRate: displayContext.refreshRate,
+            colorSpace: displayContext.colorSpace,
             createdAt: Date(),
             displayRef: UncheckedSendableBox(displayContext.display)
         )
 
-        MirageLogger.host("Created shared virtual display: \(Int(resolution.width))x\(Int(resolution.height))@\(refreshRate)Hz, displayID=\(displayContext.displayID), spaceID=\(spaceID), bounds=\(readyBounds)")
+        MirageLogger.host("Created shared virtual display: \(Int(resolution.width))x\(Int(resolution.height))@\(refreshRate)Hz, color=\(displayContext.colorSpace.displayName), displayID=\(displayContext.displayID), spaceID=\(spaceID), bounds=\(readyBounds)")
 
         return managedContext
     }
 
     /// Recreate the display at a new resolution
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
-    private func recreateDisplay(newResolution: CGSize, refreshRate: Int) async throws -> ManagedDisplayContext {
+    private func recreateDisplay(newResolution: CGSize, refreshRate: Int, colorSpace: MirageColorSpace) async throws -> ManagedDisplayContext {
         // Destroy current display
         await destroyDisplay()
 
@@ -467,7 +494,7 @@ actor SharedVirtualDisplayManager {
         try await Task.sleep(nanoseconds: 50_000_000)  // 50ms
 
         // Create new display
-        return try await createDisplay(resolution: newResolution, refreshRate: refreshRate)
+        return try await createDisplay(resolution: newResolution, refreshRate: refreshRate, colorSpace: colorSpace)
     }
 
     /// Destroy the shared display

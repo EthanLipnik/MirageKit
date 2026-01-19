@@ -37,6 +37,14 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         static let whitePoint = CGPoint(x: 0.3127, y: 0.3290)  // D65
     }
 
+    /// sRGB (Rec. 709) color primaries for SDR virtual display configuration
+    struct SRGBPrimaries {
+        static let red = CGPoint(x: 0.640, y: 0.330)
+        static let green = CGPoint(x: 0.300, y: 0.600)
+        static let blue = CGPoint(x: 0.150, y: 0.060)
+        static let whitePoint = CGPoint(x: 0.3127, y: 0.3290)  // D65
+    }
+
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// BT.2020 (Rec. 2020) color primaries for HDR virtual display configuration
     // /// These match the encoder's HDR color space settings (Rec. 2020 + PQ)
@@ -55,6 +63,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let displayID: CGDirectDisplayID
         let resolution: CGSize
         let refreshRate: Double
+        let colorSpace: MirageColorSpace
     }
 
     // MARK: - Initialization
@@ -99,7 +108,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         height: Int,
         refreshRate: Double = 60.0,
         hiDPI: Bool = false,
-        ppi: Double = 220.0
+        ppi: Double = 220.0,
+        colorSpace: MirageColorSpace
     ) -> VirtualDisplayContext? {
         guard loadPrivateAPIs() else { return nil }
 
@@ -134,12 +144,19 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let heightMM = 25.4 * Double(height) / ppi
         descriptor.setValue(CGSize(width: widthMM, height: heightMM), forKey: "sizeInMillimeters")
 
-        // Set P3-D65 color primaries for SDR content
-        // TODO: HDR support - add BT.2020 primaries branch when EDR configuration is figured out
-        descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
-        descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
-        descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
-        descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
+        switch colorSpace {
+        case .displayP3:
+            // TODO: HDR support - add BT.2020 primaries branch when EDR configuration is figured out
+            descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
+            descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
+            descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
+            descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
+        case .sRGB:
+            descriptor.setValue(SRGBPrimaries.red, forKey: "redPrimary")
+            descriptor.setValue(SRGBPrimaries.green, forKey: "greenPrimary")
+            descriptor.setValue(SRGBPrimaries.blue, forKey: "bluePrimary")
+            descriptor.setValue(SRGBPrimaries.whitePoint, forKey: "whitePoint")
+        }
 
         // Set dispatch queue
         descriptor.setValue(DispatchQueue.main, forKey: "queue")
@@ -160,7 +177,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         settings.setValue([displayMode], forKey: "modes")
         settings.setValue(hiDPI ? UInt32(1) : UInt32(0), forKey: "hiDPI")
 
-        MirageLogger.host("Creating virtual display '\(name)' at \(width)x\(height) pixels, mode=\(modeWidth)x\(modeHeight)@\(refreshRate)Hz, hiDPI=\(hiDPI)")
+        MirageLogger.host("Creating virtual display '\(name)' at \(width)x\(height) pixels, mode=\(modeWidth)x\(modeHeight)@\(refreshRate)Hz, hiDPI=\(hiDPI), color=\(colorSpace.displayName)")
 
         // Create the virtual display
         // IMPORTANT: Use takeRetainedValue() so ARC properly manages the display lifecycle
@@ -209,7 +226,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             display: display as AnyObject,
             displayID: displayID,
             resolution: CGSize(width: width, height: height),
-            refreshRate: refreshRate
+            refreshRate: refreshRate,
+            colorSpace: colorSpace
         )
     }
 

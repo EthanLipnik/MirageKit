@@ -123,7 +123,10 @@ extension MirageHostService {
     func resolveLoginDisplay() async throws -> (displayWrapper: SCDisplayWrapper, displayID: CGDirectDisplayID, resolution: CGSize, bounds: CGRect) {
         // Always use SharedVirtualDisplayManager for consistent 2880x1800 resolution
         // This creates the display if needed, or reuses existing one
-        let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(.loginDisplay)
+        let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+            .loginDisplay,
+            colorSpace: encoderConfig.colorSpace
+        )
 
         // Wait for display to be available in SCShareableContent
         try await Task.sleep(for: .milliseconds(200))

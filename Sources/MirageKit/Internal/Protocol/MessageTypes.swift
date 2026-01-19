@@ -24,6 +24,7 @@ enum ControlMessageType: UInt8, Codable {
     case stopStream = 0x24
     case streamStarted = 0x25
     case streamStopped = 0x26
+    case streamMetricsUpdate = 0x27
 
     // Input events
     case inputEvent = 0x30
@@ -218,10 +219,23 @@ struct StartStreamMessage: Codable {
     /// Higher values (e.g., 600 = 10 seconds @ 60fps) reduce periodic lag spikes
     /// If nil, host uses default from encoder configuration
     var keyFrameInterval: Int? = nil
-    /// Client-requested encoder quality (0.0-1.0)
+    /// Client-requested inter-frame quality (0.0-1.0)
     /// Lower values reduce frame size with minimal visual impact
     /// If nil, host uses default from encoder configuration
+    var frameQuality: Float? = nil
+    /// Client-requested keyframe quality (0.0-1.0)
+    /// If nil, host uses default from encoder configuration
     var keyframeQuality: Float? = nil
+    /// Client-requested pixel format (capture + encode)
+    var pixelFormat: MiragePixelFormat? = nil
+    /// Client-requested color space
+    var colorSpace: MirageColorSpace? = nil
+    /// Client-requested ScreenCaptureKit queue depth
+    var captureQueueDepth: Int? = nil
+    /// Client-requested minimum target bitrate (bits per second)
+    var minBitrate: Int? = nil
+    /// Client-requested maximum target bitrate (bits per second)
+    var maxBitrate: Int? = nil
     /// Client-requested stream scale (0.1-1.0)
     /// Applies post-capture downscaling without resizing the host window
     var streamScale: CGFloat? = nil
@@ -232,6 +246,27 @@ struct StartStreamMessage: Codable {
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // /// Requires HDR-capable display on both host and client
     // var preferHDR: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case windowID
+        case preferredQuality
+        case dataPort
+        case scaleFactor
+        case pixelWidth
+        case pixelHeight
+        case displayWidth
+        case displayHeight
+        case keyFrameInterval
+        case frameQuality = "keyframeQuality"
+        case keyframeQuality = "keyframeQualityOverride"
+        case pixelFormat
+        case colorSpace
+        case captureQueueDepth
+        case minBitrate
+        case maxBitrate
+        case streamScale
+        case maxRefreshRate
+    }
 }
 
 struct StopStreamMessage: Codable {
@@ -264,6 +299,14 @@ struct StreamStoppedMessage: Codable {
         case windowClosed
         case error
     }
+}
+
+struct StreamMetricsMessage: Codable, Sendable {
+    let streamID: StreamID
+    let encodedFPS: Double
+    let idleEncodedFPS: Double
+    let droppedFrames: UInt64
+    let activeQuality: Float
 }
 
 // MARK: - Input Messages
@@ -512,14 +555,45 @@ struct SelectAppMessage: Codable {
     /// Used with P2P detection to enable 120fps streaming on capable displays
     let maxRefreshRate: Int
     /// Client-requested keyframe interval in frames
-    let keyFrameInterval: Int?
-    /// Client-requested encoder quality (0.0-1.0)
-    let keyframeQuality: Float?
+    var keyFrameInterval: Int?
+    /// Client-requested inter-frame quality (0.0-1.0)
+    var frameQuality: Float?
+    /// Client-requested keyframe quality (0.0-1.0)
+    var keyframeQuality: Float?
+    /// Client-requested pixel format (capture + encode)
+    var pixelFormat: MiragePixelFormat?
+    /// Client-requested color space
+    var colorSpace: MirageColorSpace?
+    /// Client-requested ScreenCaptureKit queue depth
+    var captureQueueDepth: Int?
+    /// Client-requested minimum target bitrate (bits per second)
+    var minBitrate: Int?
+    /// Client-requested maximum target bitrate (bits per second)
+    var maxBitrate: Int?
     /// Client-requested stream scale (0.1-1.0)
     let streamScale: CGFloat?
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case bundleIdentifier
+        case preferredQuality
+        case dataPort
+        case scaleFactor
+        case displayWidth
+        case displayHeight
+        case maxRefreshRate
+        case keyFrameInterval
+        case frameQuality = "keyframeQuality"
+        case keyframeQuality = "keyframeQualityOverride"
+        case pixelFormat
+        case colorSpace
+        case captureQueueDepth
+        case minBitrate
+        case maxBitrate
+        case streamScale
+    }
 }
 
 /// Confirmation that app streaming has started (Host → Client)
@@ -711,9 +785,23 @@ struct StartDesktopStreamMessage: Codable {
     /// Client's display height in pixels
     let displayHeight: Int
     /// Client-requested keyframe interval in frames
-    let keyFrameInterval: Int?
-    /// Client-requested encoder quality (0.0-1.0)
-    let keyframeQuality: Float?
+    var keyFrameInterval: Int?
+    /// Client-requested inter-frame quality (0.0-1.0)
+    var frameQuality: Float?
+    /// Client-requested keyframe quality (0.0-1.0)
+    var keyframeQuality: Float?
+    /// Client-requested pixel format (capture + encode)
+    var pixelFormat: MiragePixelFormat?
+    /// Client-requested color space
+    var colorSpace: MirageColorSpace?
+    /// Client-requested ScreenCaptureKit queue depth
+    var captureQueueDepth: Int?
+    /// Client-requested capture source for desktop streams
+    var captureSource: MirageDesktopCaptureSource?
+    /// Client-requested minimum target bitrate (bits per second)
+    var minBitrate: Int?
+    /// Client-requested maximum target bitrate (bits per second)
+    var maxBitrate: Int?
     /// Client-requested stream scale (0.1-1.0)
     let streamScale: CGFloat?
     /// UDP port the client is listening on for video data
@@ -724,6 +812,25 @@ struct StartDesktopStreamMessage: Codable {
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
+
+    enum CodingKeys: String, CodingKey {
+        case preferredQuality
+        case scaleFactor
+        case displayWidth
+        case displayHeight
+        case keyFrameInterval
+        case frameQuality = "keyframeQuality"
+        case keyframeQuality = "keyframeQualityOverride"
+        case pixelFormat
+        case colorSpace
+        case captureQueueDepth
+        case captureSource
+        case minBitrate
+        case maxBitrate
+        case streamScale
+        case dataPort
+        case maxRefreshRate
+    }
 }
 
 /// Request to stop the desktop stream (Client → Host)

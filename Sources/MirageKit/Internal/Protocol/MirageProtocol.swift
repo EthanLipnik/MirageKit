@@ -5,18 +5,19 @@ import CoreGraphics
 let MirageProtocolMagic: UInt32 = 0x4D495247 // "MIRG"
 
 /// Protocol version
-let MirageProtocolVersion: UInt8 = 1
+let MirageProtocolVersion: UInt8 = 2
 
 /// Default maximum UDP packet size (header + payload) to avoid IPv6 fragmentation.
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.
 public let MirageDefaultMaxPacketSize: Int = 1200
 
 /// Header size in bytes:
-/// Base fields (4+1+1+2+4+8+4+2+2+4+4+4+4+4+4 = 52) +
+/// Base fields (4+1+2+2+4+8+4+2+2+4+4+4+4+4+4 = 53) +
 /// contentRect (4 x Float32 = 16) +
 /// tile info (8 x UInt16 = 16) +
-/// dimensionToken (UInt16 = 2) = 70 total
-let MirageHeaderSize: Int = 70
+/// dimensionToken (UInt16 = 2) +
+/// epoch (UInt16 = 2) = 73 total
+let MirageHeaderSize: Int = 73
 
 /// Compute payload size from the configured maximum packet size.
 /// `maxPacketSize` includes the Mirage header; this returns the payload size only.
@@ -28,7 +29,7 @@ func miragePayloadSize(maxPacketSize: Int) -> Int {
     return MirageDefaultMaxPacketSize - MirageHeaderSize
 }
 
-/// Video frame packet header (68 bytes, fixed size)
+/// Video frame packet header (73 bytes, fixed size)
 struct FrameHeader {
     /// Magic number for validation (0x4D495247 = "MIRG")
     var magic: UInt32 = MirageProtocolMagic
@@ -102,6 +103,10 @@ struct FrameHeader {
     /// to expected token and silently discards frames with mismatched tokens.
     var dimensionToken: UInt16 = 0
 
+    /// Stream epoch for discontinuity boundaries.
+    /// Incremented when the host resets send state or restarts capture.
+    var epoch: UInt16 = 0
+
     init(
         flags: FrameFlags = [],
         streamID: StreamID,
@@ -114,7 +119,8 @@ struct FrameHeader {
         checksum: UInt32,
         contentRect: CGRect = .zero,
         tileInfo: TileInfo? = nil,
-        dimensionToken: UInt16 = 0
+        dimensionToken: UInt16 = 0,
+        epoch: UInt16 = 0
     ) {
         self.flags = flags
         self.streamID = streamID
@@ -130,6 +136,7 @@ struct FrameHeader {
         self.contentRectWidth = Float32(contentRect.size.width)
         self.contentRectHeight = Float32(contentRect.size.height)
         self.dimensionToken = dimensionToken
+        self.epoch = epoch
 
         // Tile info (only populated when .tile flag is set)
         if let tile = tileInfo {
@@ -172,7 +179,7 @@ struct FrameHeader {
 
         withUnsafeBytes(of: magic.littleEndian) { data.append(contentsOf: $0) }
         data.append(version)
-        data.append(flags.rawValue)
+        withUnsafeBytes(of: flags.rawValue.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: streamID.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: sequenceNumber.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: timestamp.littleEndian) { data.append(contentsOf: $0) }
@@ -198,6 +205,9 @@ struct FrameHeader {
 
         // Dimension token (2 bytes)
         withUnsafeBytes(of: dimensionToken.littleEndian) { data.append(contentsOf: $0) }
+
+        // Epoch (2 bytes)
+        withUnsafeBytes(of: epoch.littleEndian) { data.append(contentsOf: $0) }
 
         return data
     }
@@ -233,7 +243,8 @@ struct FrameHeader {
         let version = readByte()
         guard version == MirageProtocolVersion else { return nil }
 
-        let flags = FrameFlags(rawValue: readByte())
+        let flagsRaw = read(UInt16.self)
+        let flags = FrameFlags(rawValue: flagsRaw)
         let streamID = read(UInt16.self)
         let sequenceNumber = read(UInt32.self)
         let timestamp = read(UInt64.self)
@@ -259,6 +270,9 @@ struct FrameHeader {
 
         // Dimension token
         let dimensionToken = read(UInt16.self)
+
+        // Epoch
+        let epoch = read(UInt16.self)
 
         // Build tile info if this is a tile packet
         let tileInfo: TileInfo? = flags.contains(.tile) ? TileInfo(
@@ -289,14 +303,15 @@ struct FrameHeader {
                 height: CGFloat(contentRectHeight)
             ),
             tileInfo: tileInfo,
-            dimensionToken: dimensionToken
+            dimensionToken: dimensionToken,
+            epoch: epoch
         )
     }
 }
 
 /// Frame flags
 struct FrameFlags: OptionSet, Sendable {
-    let rawValue: UInt8
+    let rawValue: UInt16
 
     /// This is a keyframe (IDR frame)
     static let keyframe = FrameFlags(rawValue: 1 << 0)
@@ -327,6 +342,9 @@ struct FrameFlags: OptionSet, Sendable {
     /// This is a full desktop stream (virtual display mirroring mode)
     /// Used when client requests streaming of the entire desktop
     static let desktopStream = FrameFlags(rawValue: 1 << 8)
+
+    /// Frame is a repeat of the most recent capture
+    static let repeatedFrame = FrameFlags(rawValue: 1 << 9)
 }
 
 /// CRC32 calculation for packet validation
