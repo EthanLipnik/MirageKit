@@ -411,7 +411,9 @@ actor StreamController {
     /// Request stream recovery (keyframe + reassembler reset)
     func requestRecovery() async {
         await clearResizeState()
+        await decoder.resetForNewSession()
         await reassembler.reset()
+        await reassembler.enterKeyframeOnlyMode()
         Task { @MainActor [weak self] in
             await self?.onKeyframeNeeded?()
         }

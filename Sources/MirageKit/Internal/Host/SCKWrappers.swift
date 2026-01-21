@@ -1,6 +1,4 @@
 import Foundation
-import CoreMedia
-
 #if os(macOS)
 import ScreenCaptureKit
 
@@ -18,12 +16,6 @@ struct SCApplicationWrapper: @unchecked Sendable {
 /// Wrapper to send SCDisplay across actor boundaries safely
 struct SCDisplayWrapper: @unchecked Sendable {
     let display: SCDisplay
-}
-
-/// Wrapper to send CMSampleBuffer across actor boundaries safely
-/// CMSampleBuffer is a Core Media type that's internally thread-safe
-struct SampleBufferWrapper: @unchecked Sendable {
-    let buffer: CMSampleBuffer
 }
 
 #endif

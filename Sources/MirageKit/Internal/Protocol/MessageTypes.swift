@@ -239,6 +239,8 @@ struct StartStreamMessage: Codable {
     /// Client-requested stream scale (0.1-1.0)
     /// Applies post-capture downscaling without resizing the host window
     var streamScale: CGFloat? = nil
+    /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
+    var adaptiveScaleEnabled: Bool? = nil
     /// Client's display maximum refresh rate in Hz (60 or 120)
     /// Mirrors the client-side ProMotion toggle (60 when disabled).
     var maxRefreshRate: Int = 60
@@ -265,6 +267,7 @@ struct StartStreamMessage: Codable {
         case minBitrate
         case maxBitrate
         case streamScale
+        case adaptiveScaleEnabled
         case maxRefreshRate
     }
 }
@@ -397,6 +400,8 @@ struct StreamScaleChangeMessage: Codable {
     let streamID: StreamID
     /// Stream scale factor (0.1-1.0)
     let streamScale: CGFloat
+    /// Optional adaptive scale toggle
+    var adaptiveScaleEnabled: Bool? = nil
 }
 
 // MARK: - Session State Messages (Headless Mac Support)
@@ -572,6 +577,8 @@ struct SelectAppMessage: Codable {
     var maxBitrate: Int?
     /// Client-requested stream scale (0.1-1.0)
     let streamScale: CGFloat?
+    /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
+    let adaptiveScaleEnabled: Bool?
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
@@ -593,6 +600,7 @@ struct SelectAppMessage: Codable {
         case minBitrate
         case maxBitrate
         case streamScale
+        case adaptiveScaleEnabled
     }
 }
 
@@ -804,6 +812,8 @@ struct StartDesktopStreamMessage: Codable {
     var maxBitrate: Int?
     /// Client-requested stream scale (0.1-1.0)
     let streamScale: CGFloat?
+    /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
+    let adaptiveScaleEnabled: Bool?
     /// UDP port the client is listening on for video data
     let dataPort: UInt16?
     /// Client's display maximum refresh rate in Hz (60 or 120)
@@ -828,6 +838,7 @@ struct StartDesktopStreamMessage: Codable {
         case minBitrate
         case maxBitrate
         case streamScale
+        case adaptiveScaleEnabled
         case dataPort
         case maxRefreshRate
     }

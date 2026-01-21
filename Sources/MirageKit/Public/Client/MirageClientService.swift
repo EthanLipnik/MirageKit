@@ -72,6 +72,9 @@ public final class MirageClientService {
     /// 1.0 = native resolution, lower values reduce encoded size
     public var resolutionScale: CGFloat = 1.0
 
+    /// Whether the host is allowed to adapt stream scale for FPS recovery.
+    public var adaptiveScaleEnabled: Bool = true
+
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
 
@@ -791,7 +794,8 @@ public final class MirageClientService {
             colorSpace: nil,
             minBitrate: nil,
             maxBitrate: nil,
-            streamScale: clampedStreamScale()
+            streamScale: clampedStreamScale(),
+            adaptiveScaleEnabled: adaptiveScaleEnabled
         )
         // TODO: HDR support - requires proper virtual display EDR configuration
         // request.preferHDR = preferHDR
@@ -871,6 +875,7 @@ public final class MirageClientService {
             minBitrate: nil,
             maxBitrate: nil,
             streamScale: clampedStreamScale(),
+            adaptiveScaleEnabled: adaptiveScaleEnabled,
             dataPort: nil,  // Host will use our UDP connection
             maxRefreshRate: getScreenMaxRefreshRate()
         )
@@ -974,6 +979,7 @@ public final class MirageClientService {
         applyEncoderOverrides(overrides, to: &request)
 
         request.streamScale = clampedStreamScale()
+        request.adaptiveScaleEnabled = adaptiveScaleEnabled
 
         // Include screen refresh rate for 120fps support on P2P connections
         request.maxRefreshRate = getScreenMaxRefreshRate()
@@ -1340,9 +1346,20 @@ public final class MirageClientService {
         MirageFrameCache.shared.clear(for: streamID)
         latestFrameStorage.clearFrame(for: streamID)
 
-        // Request stream recovery from controller
-        Task {
+        // Request stream recovery from controller and refresh UDP registration
+        Task { [weak self] in
+            guard let self else { return }
             await controllersByStream[streamID]?.requestRecovery()
+
+            do {
+                if udpConnection == nil {
+                    try await startVideoConnection()
+                }
+                try await sendStreamRegistration(streamID: streamID)
+            } catch {
+                MirageLogger.error(.client, "Stream recovery registration failed: \(error)")
+                stopVideoConnection()
+            }
         }
     }
 
@@ -2325,13 +2342,17 @@ public final class MirageClientService {
         }
     }
 
-    public func sendStreamScaleChange(streamID: StreamID, scale: CGFloat) async throws {
+    public func sendStreamScaleChange(streamID: StreamID, scale: CGFloat, adaptiveScaleEnabled: Bool? = nil) async throws {
         guard case .connected = connectionState, let connection else {
             throw MirageError.protocolError("Not connected")
         }
 
         let clampedScale = max(0.1, min(1.0, scale))
-        let request = StreamScaleChangeMessage(streamID: streamID, streamScale: clampedScale)
+        let request = StreamScaleChangeMessage(
+            streamID: streamID,
+            streamScale: clampedScale,
+            adaptiveScaleEnabled: adaptiveScaleEnabled
+        )
         let message = try ControlMessage(type: .streamScaleChange, content: request)
 
         let roundedScale = (clampedScale * 100).rounded() / 100

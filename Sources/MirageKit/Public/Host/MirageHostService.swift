@@ -475,6 +475,7 @@ public final class MirageHostService {
     ///   - maxBitrate: Optional maximum target bitrate (bits per second)
     ///   - targetFrameRate: Optional frame rate override (60 or 120fps, based on client capability and quality)
     ///   - pixelFormat: Optional pixel format override for capture and encode
+    ///   - adaptiveScaleEnabled: Optional toggle for adaptive stream scaling
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - hdr: Whether to enable HDR streaming (Rec. 2020 with PQ transfer function)
     public func startStream(
@@ -486,6 +487,7 @@ public final class MirageHostService {
         frameQuality: Float? = nil,
         keyframeQuality: Float? = nil,
         streamScale: CGFloat? = nil,
+        adaptiveScaleEnabled: Bool? = nil,
         qualityPreset: MirageQualityPreset? = nil,
         targetFrameRate: Int? = nil,
         pixelFormat: MiragePixelFormat? = nil,
@@ -590,7 +592,8 @@ public final class MirageHostService {
             encoderConfig: effectiveEncoderConfig,
             qualityPreset: qualityPreset,
             streamScale: streamScale ?? 1.0,
-            maxPacketSize: networkConfig.maxPacketSize
+            maxPacketSize: networkConfig.maxPacketSize,
+            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true
         )
         await context.setMetricsUpdateHandler { [weak self] metrics in
             Task { @MainActor [weak self] in
@@ -601,6 +604,11 @@ public final class MirageHostService {
                 } catch {
                     MirageLogger.error(.host, "Failed to send stream metrics: \(error)")
                 }
+            }
+        }
+        await context.setStreamScaleUpdateHandler { [weak self] streamID in
+            Task { @MainActor [weak self] in
+                await self?.sendStreamScaleUpdate(streamID: streamID)
             }
         }
 
@@ -1586,6 +1594,7 @@ public final class MirageHostService {
                 let minBitrate = request.minBitrate ?? presetConfig.minBitrate
                 let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
                 let requestedScale = request.streamScale ?? 1.0
+                let adaptiveScaleEnabled = request.adaptiveScaleEnabled ?? true
                 MirageLogger.host("Frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
                 try await startStream(
@@ -1597,6 +1606,7 @@ public final class MirageHostService {
                     frameQuality: frameQuality,
                     keyframeQuality: keyframeQuality,
                     streamScale: requestedScale,
+                    adaptiveScaleEnabled: adaptiveScaleEnabled,
                     qualityPreset: request.preferredQuality,
                     targetFrameRate: targetFrameRate,
                     pixelFormat: pixelFormat,
@@ -1625,7 +1635,11 @@ public final class MirageHostService {
             do {
                 let request = try message.decode(StreamScaleChangeMessage.self)
                 MirageLogger.host("Client requested stream scale change for stream \(request.streamID): \(request.streamScale)")
-                await handleStreamScaleChange(streamID: request.streamID, streamScale: request.streamScale)
+                await handleStreamScaleChange(
+                    streamID: request.streamID,
+                    streamScale: request.streamScale,
+                    adaptiveScaleEnabled: request.adaptiveScaleEnabled
+                )
             } catch {
                 MirageLogger.error(.host, "Failed to handle streamScaleChange: \(error)")
             }

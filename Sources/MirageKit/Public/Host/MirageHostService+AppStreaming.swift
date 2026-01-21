@@ -64,6 +64,7 @@ extension MirageHostService {
         let existingStreamID = session.windowStreams.values.first?.streamID
         let existingContext = existingStreamID.flatMap { streamsByID[$0] }
         let streamScale = await existingContext?.getStreamScale() ?? 1.0
+        let adaptiveScaleEnabled = await existingContext?.getAdaptiveScaleEnabled() ?? true
         let encoderSettings = await existingContext?.getEncoderSettings()
         let targetFrameRate = await existingContext?.getTargetFrameRate()
         let qualityPreset = await existingContext?.getQualityPreset()
@@ -92,6 +93,7 @@ extension MirageHostService {
                         frameQuality: encoderSettings?.frameQuality,
                         keyframeQuality: encoderSettings?.keyframeQuality,
                         streamScale: streamScale,
+                        adaptiveScaleEnabled: adaptiveScaleEnabled,
                         qualityPreset: qualityPreset,
                         targetFrameRate: targetFrameRate,
                         pixelFormat: encoderSettings?.pixelFormat,
@@ -152,6 +154,7 @@ extension MirageHostService {
                 frameQuality: encoderSettings?.frameQuality,
                 keyframeQuality: encoderSettings?.keyframeQuality,
                 streamScale: streamScale,
+                adaptiveScaleEnabled: adaptiveScaleEnabled,
                 qualityPreset: qualityPreset,
                 targetFrameRate: targetFrameRate,
                 pixelFormat: encoderSettings?.pixelFormat,
@@ -316,6 +319,7 @@ extension MirageHostService {
             let minBitrate = request.minBitrate ?? presetConfig.minBitrate
             let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
             let streamScale = request.streamScale ?? 1.0
+            let adaptiveScaleEnabled = request.adaptiveScaleEnabled ?? true
 
             // Check if app is available for streaming
             guard await appStreamManager.isAppAvailableForStreaming(request.bundleIdentifier) else {
@@ -387,6 +391,7 @@ extension MirageHostService {
                         frameQuality: frameQuality,
                         keyframeQuality: keyframeQuality,
                         streamScale: streamScale,
+                        adaptiveScaleEnabled: adaptiveScaleEnabled,
                         qualityPreset: request.preferredQuality,
                         targetFrameRate: targetFrameRate,
                         pixelFormat: pixelFormat,

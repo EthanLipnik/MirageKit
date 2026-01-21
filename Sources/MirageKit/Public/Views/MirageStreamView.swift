@@ -324,11 +324,11 @@ private class ScrollPhysicsCapturingNSView: NSView {
             }
         }
 
-        // Send the scroll event with proper phases
-        // Note: deltas from NSEvent are the raw values, not accumulated
-        if event.scrollingDeltaX != 0 || event.scrollingDeltaY != 0 || phase == .began || phase == .ended || momentumPhase == .ended {
+        // Send phase events so the host can end scroll smoothing promptly.
+        if phase == .began || phase == .ended || phase == .cancelled ||
+            momentumPhase == .began || momentumPhase == .ended || momentumPhase == .cancelled {
             let isPrecise = event.hasPreciseScrollingDeltas
-            onScroll?(event.scrollingDeltaX, event.scrollingDeltaY, lastMouseLocation, phase, momentumPhase, isPrecise)
+            onScroll?(0, 0, lastMouseLocation, phase, momentumPhase, isPrecise)
         }
     }
 
@@ -1531,11 +1531,13 @@ public class InputCapturingView: UIView {
         ]
 
         return passthroughShortcuts.map { (key, modifiers) in
-            UIKeyCommand(
+            let command = UIKeyCommand(
                 action: #selector(handlePassthroughShortcut(_:)),
                 input: key,
                 modifierFlags: modifiers
             )
+            command.wantsPriorityOverSystemBehavior = true
+            return command
         }
     }
 

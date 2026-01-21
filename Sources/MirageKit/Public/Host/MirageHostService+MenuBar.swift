@@ -99,6 +99,7 @@ extension MirageHostService {
                 minBitrate: request.minBitrate,
                 maxBitrate: request.maxBitrate,
                 streamScale: request.streamScale,
+                adaptiveScaleEnabled: request.adaptiveScaleEnabled,
                 dataPort: request.dataPort,
                 captureSource: request.captureSource,
                 targetFrameRate: targetFrameRate

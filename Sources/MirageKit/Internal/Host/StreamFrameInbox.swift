@@ -7,7 +7,7 @@ import Foundation
 final class StreamFrameInbox: @unchecked Sendable {
     private let lock = NSLock()
     private let capacity: Int
-    private var buffer: [(SampleBufferWrapper, CapturedFrameInfo)?]
+    private var buffer: [CapturedFrame?]
     private var headIndex: Int = 0
     private var tailIndex: Int = 0
     private var count: Int = 0
@@ -21,7 +21,7 @@ final class StreamFrameInbox: @unchecked Sendable {
     }
 
     /// Enqueue a frame, returning true if a drain task should be scheduled.
-    func enqueue(_ wrapper: SampleBufferWrapper, _ frameInfo: CapturedFrameInfo) -> Bool {
+    func enqueue(_ frame: CapturedFrame) -> Bool {
         lock.lock()
         enqueuedCount += 1
         if count == capacity {
@@ -29,7 +29,7 @@ final class StreamFrameInbox: @unchecked Sendable {
             headIndex = (headIndex + 1) % capacity
             count -= 1
         }
-        buffer[tailIndex] = (wrapper, frameInfo)
+        buffer[tailIndex] = frame
         tailIndex = (tailIndex + 1) % capacity
         count += 1
         let shouldSchedule = !isScheduled
@@ -41,7 +41,7 @@ final class StreamFrameInbox: @unchecked Sendable {
     }
 
     /// Take the oldest queued frame (FIFO).
-    func takeNext() -> (SampleBufferWrapper, CapturedFrameInfo)? {
+    func takeNext() -> CapturedFrame? {
         lock.lock()
         guard count > 0 else {
             lock.unlock()

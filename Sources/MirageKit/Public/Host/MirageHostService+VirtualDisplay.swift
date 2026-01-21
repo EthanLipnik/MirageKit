@@ -39,6 +39,7 @@ extension MirageHostService {
         }
 
         let streamScale = await originalContext.getStreamScale()
+        let adaptiveScaleEnabled = await originalContext.getAdaptiveScaleEnabled()
         let encoderSettings = await originalContext.getEncoderSettings()
         let targetFrameRate = await originalContext.getTargetFrameRate()
         let qualityPreset = await originalContext.getQualityPreset()
@@ -54,6 +55,7 @@ extension MirageHostService {
                 frameQuality: encoderSettings.frameQuality,
                 keyframeQuality: encoderSettings.keyframeQuality,
                 streamScale: streamScale,
+                adaptiveScaleEnabled: adaptiveScaleEnabled,
                 qualityPreset: qualityPreset,
                 targetFrameRate: targetFrameRate,
                 pixelFormat: encoderSettings.pixelFormat,
@@ -68,7 +70,7 @@ extension MirageHostService {
         }
     }
 
-    func handleStreamScaleChange(streamID: StreamID, streamScale: CGFloat) async {
+    func handleStreamScaleChange(streamID: StreamID, streamScale: CGFloat, adaptiveScaleEnabled: Bool?) async {
         let clampedScale = max(0.1, min(1.0, streamScale))
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale change: \(streamID)")
@@ -76,50 +78,62 @@ extension MirageHostService {
         }
 
         do {
+            if let adaptiveScaleEnabled {
+                await context.setAdaptiveScaleEnabled(adaptiveScaleEnabled)
+            }
             try await context.updateStreamScale(clampedScale)
-            let dimensionToken = await context.getDimensionToken()
-            let encodedDimensions = await context.getEncodedDimensions()
-
-            if streamID == desktopStreamID {
-                if let clientContext = desktopStreamClientContext {
-                    let message = DesktopStreamStartedMessage(
-                        streamID: streamID,
-                        width: encodedDimensions.width,
-                        height: encodedDimensions.height,
-                        frameRate: await context.getTargetFrameRate(),
-                        codec: await context.getCodec(),
-                        displayCount: 1,
-                        dimensionToken: dimensionToken
-                    )
-                    try? await clientContext.send(.desktopStreamStarted, content: message)
-                }
-                return
-            }
-
-            if streamID == loginDisplayStreamID {
-                loginDisplayResolution = CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
-                await broadcastLoginDisplayReady()
-                return
-            }
-
-            guard let session = activeStreams.first(where: { $0.id == streamID }) else { return }
-            guard let clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id }) else { return }
-
-            let message = StreamStartedMessage(
-                streamID: streamID,
-                windowID: session.window.id,
-                width: encodedDimensions.width,
-                height: encodedDimensions.height,
-                frameRate: await context.getTargetFrameRate(),
-                codec: await context.getCodec(),
-                minWidth: nil,
-                minHeight: nil,
-                dimensionToken: dimensionToken
-            )
-            try? await clientContext.send(.streamStarted, content: message)
+            await sendStreamScaleUpdate(streamID: streamID)
         } catch {
             MirageLogger.error(.host, "Failed to update stream scale: \(error)")
         }
+    }
+
+    func sendStreamScaleUpdate(streamID: StreamID) async {
+        guard let context = streamsByID[streamID] else {
+            MirageLogger.debug(.host, "No stream found for stream scale update: \(streamID)")
+            return
+        }
+
+        let dimensionToken = await context.getDimensionToken()
+        let encodedDimensions = await context.getEncodedDimensions()
+
+        if streamID == desktopStreamID {
+            if let clientContext = desktopStreamClientContext {
+                let message = DesktopStreamStartedMessage(
+                    streamID: streamID,
+                    width: encodedDimensions.width,
+                    height: encodedDimensions.height,
+                    frameRate: await context.getTargetFrameRate(),
+                    codec: await context.getCodec(),
+                    displayCount: 1,
+                    dimensionToken: dimensionToken
+                )
+                try? await clientContext.send(.desktopStreamStarted, content: message)
+            }
+            return
+        }
+
+        if streamID == loginDisplayStreamID {
+            loginDisplayResolution = CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
+            await broadcastLoginDisplayReady()
+            return
+        }
+
+        guard let session = activeStreams.first(where: { $0.id == streamID }) else { return }
+        guard let clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id }) else { return }
+
+        let message = StreamStartedMessage(
+            streamID: streamID,
+            windowID: session.window.id,
+            width: encodedDimensions.width,
+            height: encodedDimensions.height,
+            frameRate: await context.getTargetFrameRate(),
+            codec: await context.getCodec(),
+            minWidth: nil,
+            minHeight: nil,
+            dimensionToken: dimensionToken
+        )
+        try? await clientContext.send(.streamStarted, content: message)
     }
 
     /// Handle display resolution change from client

@@ -36,16 +36,29 @@ public final class MirageHostInputController: @unchecked Sendable {
     /// Serial queue for blocking Accessibility API operations.
     private let accessibilityQueue = DispatchQueue(label: "com.mirage.accessibility", qos: .userInteractive)
 
-    // MARK: - Mouse Batching State (accessed from accessibilityQueue only)
+    private struct PointerLerpContext {
+        var type: CGEventType
+        var event: MirageMouseEvent
+        var frame: CGRect
+        var windowID: WindowID
+        var app: MirageApplication?
+        var isDesktop: Bool
+    }
 
-    /// Pending mouse move event waiting to be flushed.
-    private var pendingMouseMove: (type: CGEventType, event: MirageMouseEvent, frame: CGRect, windowID: WindowID, app: MirageApplication?)?
+    // MARK: - Pointer Lerp State (accessed from accessibilityQueue only)
 
-    /// Timer for flushing batched mouse moves.
-    private var mouseBatchTimer: DispatchSourceTimer?
+    private var pointerContext: PointerLerpContext?
+    private var pointerCurrentLocation: CGPoint?
+    private var pointerTargetLocation: CGPoint?
+    private var pointerLastInputTime: TimeInterval = 0
+    private var pointerLastSendTime: TimeInterval = 0
 
-    /// Batch window in milliseconds.
-    private let mouseBatchIntervalMs: UInt64 = 2
+    private var pointerLerpTimer: DispatchSourceTimer?
+
+    private let pointerOutputIntervalMs: UInt64 = 8
+    private let pointerLerpTimeConstant: TimeInterval = 0.025
+    private let pointerStopDelay: TimeInterval = 0.05
+    private let pointerSnapThreshold: CGFloat = 0.0005
 
     // MARK: - Modifier State Tracking (accessed from accessibilityQueue only)
 
@@ -87,9 +100,12 @@ public final class MirageHostInputController: @unchecked Sendable {
     /// Smoothed scroll rate in pixels per second.
     private var scrollRateX: CGFloat = 0
     private var scrollRateY: CGFloat = 0
+    private var scrollTargetRateX: CGFloat = 0
+    private var scrollTargetRateY: CGFloat = 0
 
     /// Timestamp of last scroll input.
     private var lastScrollInputTime: TimeInterval = 0
+    private var lastScrollOutputTime: TimeInterval = 0
 
     /// Fractional remainders to preserve precision.
     private var scrollRemainderX: CGFloat = 0
@@ -102,7 +118,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     private var scrollOutputTimer: DispatchSourceTimer?
 
     /// Scroll smoothing constants.
-    private let scrollRateAlpha: CGFloat = 0.5
+    private let scrollLerpTimeConstant: TimeInterval = 0.025
     private let scrollRateDecay: CGFloat = 0.85
     private let scrollDecayDelay: TimeInterval = 0.03
     private let scrollRateThreshold: CGFloat = 10.0
@@ -179,61 +195,53 @@ public final class MirageHostInputController: @unchecked Sendable {
 
             switch event {
             case .mouseDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.clearUnexpectedSystemModifiers()
                 let point = self.screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 self.injectDesktopMouseEvent(.leftMouseDown, e, at: point)
             case .mouseUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 let point = self.screenPoint(e.location, in: bounds)
                 self.injectDesktopMouseEvent(.leftMouseUp, e, at: point)
             case .rightMouseDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.clearUnexpectedSystemModifiers()
                 let point = self.screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 self.injectDesktopMouseEvent(.rightMouseDown, e, at: point)
             case .rightMouseUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 let point = self.screenPoint(e.location, in: bounds)
                 self.injectDesktopMouseEvent(.rightMouseUp, e, at: point)
             case .otherMouseDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.clearUnexpectedSystemModifiers()
                 let point = self.screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 self.injectDesktopMouseEvent(.otherMouseDown, e, at: point)
             case .otherMouseUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 let point = self.screenPoint(e.location, in: bounds)
                 self.injectDesktopMouseEvent(.otherMouseUp, e, at: point)
 
             case .mouseMoved(let e):
-                let point = self.screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                self.injectDesktopMouseEvent(.mouseMoved, e, at: point)
+                self.queuePointerLerp(.mouseMoved, e, bounds, windowID: 0, app: nil, isDesktop: true)
             case .mouseDragged(let e):
-                let point = self.screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                self.injectDesktopMouseEvent(.leftMouseDragged, e, at: point)
+                self.queuePointerLerp(.leftMouseDragged, e, bounds, windowID: 0, app: nil, isDesktop: true)
             case .rightMouseDragged(let e):
-                let point = self.screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                self.injectDesktopMouseEvent(.rightMouseDragged, e, at: point)
+                self.queuePointerLerp(.rightMouseDragged, e, bounds, windowID: 0, app: nil, isDesktop: true)
             case .otherMouseDragged(let e):
-                let point = self.screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                self.injectDesktopMouseEvent(.otherMouseDragged, e, at: point)
+                self.queuePointerLerp(.otherMouseDragged, e, bounds, windowID: 0, app: nil, isDesktop: true)
 
             case .scrollWheel(let e):
                 self.injectDesktopScrollEvent(e, bounds: bounds)
 
             case .keyDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.injectKeyEvent(isKeyDown: true, e, app: nil)
             case .keyUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.injectKeyEvent(isKeyDown: false, e, app: nil)
             case .flagsChanged(let modifiers):
                 self.injectFlagsChanged(modifiers, app: nil)
@@ -482,48 +490,48 @@ public final class MirageHostInputController: @unchecked Sendable {
 
             switch event {
             case .mouseDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.clearUnexpectedSystemModifiers()
                 self.activateWindow(windowID: window.id, app: window.application)
                 self.injectMouseEvent(.leftMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case .mouseUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.injectMouseEvent(.leftMouseUp, e, windowFrame, windowID: window.id, app: window.application)
             case .rightMouseDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.clearUnexpectedSystemModifiers()
                 self.activateWindow(windowID: window.id, app: window.application)
                 self.injectMouseEvent(.rightMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case .rightMouseUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.injectMouseEvent(.rightMouseUp, e, windowFrame, windowID: window.id, app: window.application)
             case .otherMouseDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.clearUnexpectedSystemModifiers()
                 self.activateWindow(windowID: window.id, app: window.application)
                 self.injectMouseEvent(.otherMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case .otherMouseUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.injectMouseEvent(.otherMouseUp, e, windowFrame, windowID: window.id, app: window.application)
 
             case .mouseMoved(let e):
-                self.batchMouseMove(.mouseMoved, e, windowFrame, windowID: window.id, app: window.application)
+                self.queuePointerLerp(.mouseMoved, e, windowFrame, windowID: window.id, app: window.application, isDesktop: false)
             case .mouseDragged(let e):
-                self.batchMouseMove(.leftMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
+                self.queuePointerLerp(.leftMouseDragged, e, windowFrame, windowID: window.id, app: window.application, isDesktop: false)
             case .rightMouseDragged(let e):
-                self.batchMouseMove(.rightMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
+                self.queuePointerLerp(.rightMouseDragged, e, windowFrame, windowID: window.id, app: window.application, isDesktop: false)
             case .otherMouseDragged(let e):
-                self.batchMouseMove(.otherMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
+                self.queuePointerLerp(.otherMouseDragged, e, windowFrame, windowID: window.id, app: window.application, isDesktop: false)
 
             case .scrollWheel(let e):
                 self.batchScroll(e, windowFrame, app: window.application)
 
             case .keyDown(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.activateWindow(windowID: window.id, app: window.application)
                 self.injectKeyEvent(isKeyDown: true, e, app: window.application)
             case .keyUp(let e):
-                self.flushPendingMouseMove()
+                self.flushPointerLerp()
                 self.injectKeyEvent(isKeyDown: false, e, app: window.application)
             case .flagsChanged(let modifiers):
                 self.injectFlagsChanged(modifiers, app: window.application)
@@ -543,30 +551,135 @@ public final class MirageHostInputController: @unchecked Sendable {
         }
     }
 
-    // MARK: - Mouse Batching (runs on accessibilityQueue)
+    // MARK: - Pointer Lerp (runs on accessibilityQueue)
 
-    private func batchMouseMove(_ type: CGEventType, _ event: MirageMouseEvent, _ windowFrame: CGRect, windowID: WindowID, app: MirageApplication?) {
-        pendingMouseMove = (type, event, windowFrame, windowID, app)
+    private func queuePointerLerp(
+        _ type: CGEventType,
+        _ event: MirageMouseEvent,
+        _ frame: CGRect,
+        windowID: WindowID,
+        app: MirageApplication?,
+        isDesktop: Bool
+    ) {
+        let now = CACurrentMediaTime()
+        pointerLastInputTime = now
+        pointerContext = PointerLerpContext(
+            type: type,
+            event: event,
+            frame: frame,
+            windowID: windowID,
+            app: app,
+            isDesktop: isDesktop
+        )
+        pointerTargetLocation = event.location
 
-        mouseBatchTimer?.cancel()
-
-        let timer = DispatchSource.makeTimerSource(queue: accessibilityQueue)
-        timer.schedule(deadline: .now() + .milliseconds(Int(mouseBatchIntervalMs)))
-        timer.setEventHandler { [weak self] in
-            self?.flushPendingMouseMove()
+        if pointerCurrentLocation == nil || now - pointerLastSendTime > pointerStopDelay {
+            pointerCurrentLocation = event.location
+            pointerLastSendTime = now
+            emitPointerEvent(at: event.location)
         }
-        timer.resume()
-        mouseBatchTimer = timer
+
+        startPointerLerpTimerIfNeeded()
     }
 
-    private func flushPendingMouseMove() {
-        mouseBatchTimer?.cancel()
-        mouseBatchTimer = nil
+    private func startPointerLerpTimerIfNeeded() {
+        guard pointerLerpTimer == nil else { return }
 
-        guard let pending = pendingMouseMove else { return }
-        pendingMouseMove = nil
+        let timer = DispatchSource.makeTimerSource(queue: accessibilityQueue)
+        timer.schedule(
+            deadline: .now() + .milliseconds(Int(pointerOutputIntervalMs)),
+            repeating: .milliseconds(Int(pointerOutputIntervalMs)),
+            leeway: .milliseconds(1)
+        )
+        timer.setEventHandler { [weak self] in
+            self?.pointerLerpTick()
+        }
+        timer.resume()
+        pointerLerpTimer = timer
+    }
 
-        injectMouseEvent(pending.type, pending.event, pending.frame, windowID: pending.windowID, app: pending.app)
+    private func stopPointerLerpTimer() {
+        pointerLerpTimer?.cancel()
+        pointerLerpTimer = nil
+    }
+
+    private func pointerLerpTick() {
+        guard let target = pointerTargetLocation,
+              let context = pointerContext else {
+            stopPointerLerpTimer()
+            return
+        }
+
+        let now = CACurrentMediaTime()
+        let dt = max(0.001, min(now - pointerLastSendTime, 0.05))
+        let alpha = min(1.0, dt / pointerLerpTimeConstant)
+        let current = pointerCurrentLocation ?? target
+        let next = lerp(current, target, alpha: alpha)
+
+        pointerCurrentLocation = next
+        pointerLastSendTime = now
+        emitPointerEvent(at: next, using: context)
+
+        let distance = hypot(target.x - next.x, target.y - next.y)
+        if now - pointerLastInputTime > pointerStopDelay {
+            if distance > pointerSnapThreshold {
+                pointerCurrentLocation = target
+                emitPointerEvent(at: target, using: context)
+            }
+            resetPointerLerp()
+        }
+    }
+
+    private func emitPointerEvent(at location: CGPoint) {
+        guard let context = pointerContext else { return }
+        emitPointerEvent(at: location, using: context)
+    }
+
+    private func emitPointerEvent(at location: CGPoint, using context: PointerLerpContext) {
+        let event = MirageMouseEvent(
+            button: context.event.button,
+            location: location,
+            clickCount: context.event.clickCount,
+            modifiers: context.event.modifiers,
+            pressure: context.event.pressure,
+            timestamp: Date.timeIntervalSinceReferenceDate
+        )
+
+        if context.isDesktop {
+            let point = screenPoint(location, in: context.frame)
+            CGWarpMouseCursorPosition(point)
+            injectDesktopMouseEvent(context.type, event, at: point)
+        } else {
+            injectMouseEvent(context.type, event, context.frame, windowID: context.windowID, app: context.app)
+        }
+    }
+
+    private func resetPointerLerp() {
+        stopPointerLerpTimer()
+        pointerContext = nil
+        pointerCurrentLocation = nil
+        pointerTargetLocation = nil
+        pointerLastInputTime = 0
+        pointerLastSendTime = 0
+    }
+
+    private func flushPointerLerp() {
+        guard let target = pointerTargetLocation,
+              let context = pointerContext else {
+            resetPointerLerp()
+            return
+        }
+
+        pointerCurrentLocation = target
+        emitPointerEvent(at: target, using: context)
+        resetPointerLerp()
+    }
+
+    private func lerp(_ from: CGPoint, _ to: CGPoint, alpha: Double) -> CGPoint {
+        CGPoint(
+            x: from.x + (to.x - from.x) * alpha,
+            y: from.y + (to.y - from.y) * alpha
+        )
     }
 
     // MARK: - Scroll Rate Smoothing (runs on accessibilityQueue)
@@ -579,8 +692,11 @@ public final class MirageHostInputController: @unchecked Sendable {
             if event.phase == .began || event.momentumPhase == .began {
                 scrollRateX = 0
                 scrollRateY = 0
+                scrollTargetRateX = 0
+                scrollTargetRateY = 0
                 scrollRemainderX = 0
                 scrollRemainderY = 0
+                lastScrollOutputTime = 0
             }
             injectScrollEvent(event, windowFrame, app: app)
             lastScrollInputTime = now
@@ -594,17 +710,15 @@ public final class MirageHostInputController: @unchecked Sendable {
         let instantRateX = event.deltaX / CGFloat(effectiveDt)
         let instantRateY = event.deltaY / CGFloat(effectiveDt)
 
-        if abs(scrollRateX) < 1 && abs(scrollRateY) < 1 {
-            scrollRateX = instantRateX
-            scrollRateY = instantRateY
-        } else {
-            scrollRateX = scrollRateAlpha * instantRateX + (1 - scrollRateAlpha) * scrollRateX
-            scrollRateY = scrollRateAlpha * instantRateY + (1 - scrollRateAlpha) * scrollRateY
-        }
+        scrollTargetRateX = instantRateX
+        scrollTargetRateY = instantRateY
 
         scrollContext = (windowFrame, app, event.location, event.modifiers, event.isPrecise)
 
         if scrollOutputTimer == nil {
+            scrollRateX = instantRateX
+            scrollRateY = instantRateY
+            lastScrollOutputTime = now
             startScrollOutputTimer()
         }
     }
@@ -635,9 +749,15 @@ public final class MirageHostInputController: @unchecked Sendable {
         let timeSinceInput = now - lastScrollInputTime
 
         if timeSinceInput > scrollDecayDelay {
-            scrollRateX *= scrollRateDecay
-            scrollRateY *= scrollRateDecay
+            scrollTargetRateX *= scrollRateDecay
+            scrollTargetRateY *= scrollRateDecay
         }
+
+        let dt = max(0.001, min(now - lastScrollOutputTime, 0.05))
+        lastScrollOutputTime = now
+        let alpha = min(1.0, dt / scrollLerpTimeConstant)
+        scrollRateX += (scrollTargetRateX - scrollRateX) * alpha
+        scrollRateY += (scrollTargetRateY - scrollRateY) * alpha
 
         let tickDuration: CGFloat = CGFloat(scrollOutputIntervalMs) / 1000.0
         let deltaX = scrollRateX * tickDuration
@@ -665,6 +785,8 @@ public final class MirageHostInputController: @unchecked Sendable {
 
             scrollRateX = 0
             scrollRateY = 0
+            scrollTargetRateX = 0
+            scrollTargetRateY = 0
             scrollRemainderX = 0
             scrollRemainderY = 0
             scrollContext = nil
@@ -675,6 +797,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     private func stopScrollOutputTimer() {
         scrollOutputTimer?.cancel()
         scrollOutputTimer = nil
+        lastScrollOutputTime = 0
     }
 
     private func injectScrollPixels(

@@ -76,7 +76,14 @@ actor StreamContext {
     private var pendingKeyframeUrgent: Bool = false
     private var pendingKeyframeRequiresReset: Bool = false
     private var lastQualityAdjustmentTime: CFAbsoluteTime = 0
-    private let qualityAdjustmentCooldown: CFAbsoluteTime = 0.25
+    private let qualityAdjustmentCooldown: CFAbsoluteTime = 0.35
+    private var qualityOverBudgetCount: Int = 0
+    private var qualityUnderBudgetCount: Int = 0
+    private let qualityDropThreshold: Int = 3
+    private let qualityRaiseThreshold: Int = 4
+    private let qualityDropStep: Float = 0.02
+    private let qualityDropStepHighPressure: Float = 0.05
+    private let qualityRaiseStep: Float = 0.03
     private var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     private let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
 
@@ -123,7 +130,7 @@ actor StreamContext {
 
     /// Keyframe request throttling
     private let keyframeRequestCooldown: CFAbsoluteTime = 0.25
-    private let keyframeInFlightCap: CFAbsoluteTime = 3.0
+    private let keyframeInFlightCap: CFAbsoluteTime = 1.0
     private let keyframeSettleTimeout: CFAbsoluteTime = 2.0
     private let keyframeQueueSettleFactor: Double = 0.4
     private var lastKeyframeRequestTime: CFAbsoluteTime = 0
@@ -169,6 +176,27 @@ actor StreamContext {
 
     /// Quality preset used to configure latency-sensitive defaults.
     private let qualityPreset: MirageQualityPreset?
+    /// When true, force low-latency buffering regardless of preset.
+    private let useLowLatencyPipeline: Bool
+    /// Client-requested stream scale (before adaptive adjustments).
+    private var requestedStreamScale: CGFloat
+    /// Whether adaptive stream scaling is allowed for this stream.
+    private var adaptiveScaleEnabled: Bool
+    /// Adaptive multiplier applied when capture FPS falls below target.
+    private var adaptiveScale: CGFloat = 1.0
+    /// Adaptive stream scale update handler (host sends dimension update to client).
+    private var streamScaleUpdateHandler: (@Sendable (StreamID) -> Void)?
+    private var adaptiveScaleLowStreak: Int = 0
+    private var adaptiveScaleHighStreak: Int = 0
+    private var lastAdaptiveScaleChangeTime: CFAbsoluteTime = 0
+    private let adaptiveScaleCooldown: CFAbsoluteTime = 6.0
+    private let adaptiveScaleLowThreshold: Double = 0.85
+    private let adaptiveScaleHighThreshold: Double = 0.97
+    private let adaptiveScaleDownSamples: Int = 2
+    private let adaptiveScaleUpSamples: Int = 4
+    private let adaptiveScaleDownStep: CGFloat = 0.9
+    private let adaptiveScaleUpStep: CGFloat = 1.05
+    private let adaptiveScaleMin: CGFloat = 0.7
 
     init(
         streamID: StreamID,
@@ -177,7 +205,8 @@ actor StreamContext {
         qualityPreset: MirageQualityPreset? = nil,
         streamScale: CGFloat = 1.0,
         maxPacketSize: Int = MirageDefaultMaxPacketSize,
-        additionalFrameFlags: FrameFlags = []
+        additionalFrameFlags: FrameFlags = [],
+        adaptiveScaleEnabled: Bool = true
     ) {
         self.streamID = streamID
         self.windowID = windowID
@@ -185,23 +214,28 @@ actor StreamContext {
         self.qualityPreset = qualityPreset
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
+        self.requestedStreamScale = clampedScale
+        self.adaptiveScaleEnabled = adaptiveScaleEnabled
         self.baseFrameFlags = additionalFrameFlags
         self.shouldMaintainIdleFrames = additionalFrameFlags.contains(.desktopStream)
         self.maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
         self.currentFrameRate = encoderConfig.targetFrameRate
         self.activePixelFormat = encoderConfig.pixelFormat
-        let bufferDepth = Self.frameBufferDepth(for: qualityPreset, frameRate: encoderConfig.targetFrameRate)
-        let inFlightCap = max(1, min(bufferDepth, 3))
-        self.maxInFlightFramesCap = inFlightCap
+        self.useLowLatencyPipeline = qualityPreset == .lowLatency || encoderConfig.targetFrameRate >= 120
+        let bufferDepth = Self.frameBufferDepth(useLowLatencyPipeline: useLowLatencyPipeline, frameRate: encoderConfig.targetFrameRate)
+        let inFlightCap = min(bufferDepth, Self.inFlightCap(for: encoderConfig.targetFrameRate))
+        self.maxInFlightFramesCap = max(1, inFlightCap)
         self.maxInFlightFrames = 1
         self.frameBufferDepth = bufferDepth
         self.frameInbox = StreamFrameInbox(capacity: bufferDepth)
         self.maxEncodeTimeMs = encoderConfig.targetFrameRate >= 120 ? 900 : 600
         self.shouldEncodeFrames = false
+        let qualityFloorFactor: Float = 0.6
+        let keyframeFloorFactor: Float = 0.6
         self.qualityCeiling = encoderConfig.frameQuality
-        self.qualityFloor = max(0.1, encoderConfig.frameQuality * 0.6)
+        self.qualityFloor = max(0.1, encoderConfig.frameQuality * qualityFloorFactor)
         self.activeQuality = encoderConfig.frameQuality
-        self.keyframeQualityFloor = max(0.1, encoderConfig.keyframeQuality * 0.6)
+        self.keyframeQualityFloor = max(0.1, encoderConfig.keyframeQuality * keyframeFloorFactor)
         let cadence = Self.keyframeCadence(
             intervalFrames: encoderConfig.keyFrameInterval,
             frameRate: encoderConfig.targetFrameRate
@@ -221,11 +255,15 @@ actor StreamContext {
         return max(even, 2)
     }
 
-    private static func frameBufferDepth(for qualityPreset: MirageQualityPreset?, frameRate: Int) -> Int {
-        if qualityPreset == .lowLatency {
-            return 1
+    private static func frameBufferDepth(useLowLatencyPipeline: Bool, frameRate: Int) -> Int {
+        if useLowLatencyPipeline {
+            return frameRate >= 120 ? 2 : 1
         }
         return frameRate >= 120 ? 3 : 2
+    }
+
+    private static func inFlightCap(for frameRate: Int) -> Int {
+        frameRate >= 120 ? 2 : 1
     }
 
     /// Update the current content rectangle (called per-frame from capture callback)
@@ -340,6 +378,21 @@ actor StreamContext {
         return true
     }
 
+    private func forceKeyframeAfterCaptureRestart() {
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+        let queued = queueKeyframe(
+            reason: "Fallback keyframe",
+            checkInFlight: false,
+            requiresFlush: true,
+            requiresReset: true,
+            urgent: true
+        )
+        if !queued {
+            MirageLogger.stream("Fallback keyframe skipped (unable to queue after restart)")
+        }
+    }
+
     private func shouldEmitPendingKeyframe(queueBytes: Int) -> Bool {
         guard pendingKeyframeReason != nil else { return false }
         let now = CFAbsoluteTimeGetCurrent()
@@ -425,9 +478,9 @@ actor StreamContext {
         }
     }
 
-    nonisolated func enqueueCapturedFrame(_ wrapper: SampleBufferWrapper, _ frameInfo: CapturedFrameInfo) {
+    nonisolated func enqueueCapturedFrame(_ frame: CapturedFrame) {
         guard shouldEncodeFrames else { return }
-        if frameInbox.enqueue(wrapper, frameInfo) {
+        if frameInbox.enqueue(frame) {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
         }
     }
@@ -437,6 +490,36 @@ actor StreamContext {
         if frameInbox.scheduleIfNeeded() {
             Task(priority: .userInitiated) { await processPendingFrames() }
         }
+    }
+
+    private func resetStalledInFlightIfNeeded(label: String) -> Bool {
+        guard inFlightCount > 0, lastEncodeActivityTime > 0 else { return false }
+        let now = CFAbsoluteTimeGetCurrent()
+        let elapsedMs = (now - lastEncodeActivityTime) * 1000
+        guard elapsedMs > maxEncodeTimeMs else { return false }
+        MirageLogger.stream("Encoder in-flight stalled for \(Int(elapsedMs))ms (\(label)), scheduling reset")
+        inFlightCount = 0
+        lastEncodeActivityTime = 0
+        isKeyframeEncoding = false
+        needsEncoderReset = true
+        return true
+    }
+
+    private func resetPipelineStateForReconfiguration(reason: String) {
+        if inFlightCount > 0 || isKeyframeEncoding || lastEncodeActivityTime > 0 {
+            MirageLogger.stream("Resetting pipeline state for \(reason) (inFlight=\(inFlightCount))")
+        }
+        inFlightCount = 0
+        lastEncodeActivityTime = 0
+        isKeyframeEncoding = false
+        needsEncoderReset = false
+        pendingKeyframeReason = nil
+        pendingKeyframeDeadline = 0
+        pendingKeyframeRequiresFlush = false
+        pendingKeyframeUrgent = false
+        pendingKeyframeRequiresReset = false
+        backpressureActive = false
+        frameInbox.clear()
     }
 
     /// Process pending frames (encodes using HEVC and keeps only the most recent)
@@ -452,7 +535,8 @@ actor StreamContext {
             return
         }
 
-        if isKeyframeEncoding {
+        let didResetStall = resetStalledInFlightIfNeeded(label: "processPendingFrames")
+        if isKeyframeEncoding, !didResetStall {
             return
         }
 
@@ -467,7 +551,7 @@ actor StreamContext {
         }
 
         while inFlightCount < maxInFlightFrames {
-            guard let (wrapper, frameInfo) = frameInbox.takeNext() else { return }
+            guard let frame = frameInbox.takeNext() else { return }
 
             // Check if encoder has been stuck for too long (common during drag operations)
             // If so, mark for reset and process new frame
@@ -482,14 +566,12 @@ actor StreamContext {
                 needsEncoderReset = true  // Will be handled in processLatestFrame
             }
 
-            if let pixelBuffer = CMSampleBufferGetImageBuffer(wrapper.buffer) {
-                let bufferSize = CGSize(
-                    width: CVPixelBufferGetWidth(pixelBuffer),
-                    height: CVPixelBufferGetHeight(pixelBuffer)
-                )
-                updateCaptureSizesIfNeeded(bufferSize)
-            }
-            updateMotionState(with: frameInfo)
+            let bufferSize = CGSize(
+                width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                height: CVPixelBufferGetHeight(frame.pixelBuffer)
+            )
+            updateCaptureSizesIfNeeded(bufferSize)
+            updateMotionState(with: frame.info)
 
             // Reset encoder if it was stuck on previous frame
             // This invalidates the VTCompressionSession and creates a new one
@@ -524,7 +606,7 @@ actor StreamContext {
             if !forceKeyframe, let captureEngine {
                 let shouldRequest = await captureEngine.consumePendingKeyframeRequest()
                 if shouldRequest {
-                    queueKeyframe(reason: "Fallback keyframe", checkInFlight: true, requiresReset: true, urgent: true)
+                    forceKeyframeAfterCaptureRestart()
                 }
             }
             if !forceKeyframe {
@@ -553,7 +635,7 @@ actor StreamContext {
                 queueKeyframe(reason: "Scheduled keyframe", checkInFlight: true)
             }
 
-            let isIdleFrame = frameInfo.isIdleFrame
+            let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
                 let shouldEncodeIdle = shouldMaintainIdleFrames && queueBytes < queuePressureBytes
                 if !shouldEncodeIdle {
@@ -567,7 +649,7 @@ actor StreamContext {
             // Keyframes are handled by scheduled cadence + recovery; don't use capture hints.
 
             // Store contentRect for use in frame header
-            setContentRect(frameInfo.contentRect)
+            setContentRect(frame.info.contentRect)
 
             do {
                 guard let encoder else {
@@ -588,7 +670,7 @@ actor StreamContext {
                     }
                     await encoder.prepareForKeyframe(quality: keyframeQuality(for: queueBytes))
                 }
-                let accepted = try await encoder.encodeFrame(wrapper, forceKeyframe: forceKeyframe)
+                let accepted = try await encoder.encodeFrame(frame, forceKeyframe: forceKeyframe)
                 if accepted {
                     encodeAcceptedIntervalCount += 1
                     if inFlightCount == 0 {
@@ -629,6 +711,10 @@ actor StreamContext {
 
     func setMetricsUpdateHandler(_ handler: (@Sendable (StreamMetricsMessage) -> Void)?) {
         metricsUpdateHandler = handler
+    }
+
+    func setStreamScaleUpdateHandler(_ handler: (@Sendable (StreamID) -> Void)?) {
+        streamScaleUpdateHandler = handler
     }
 
     func allowEncodingAfterRegistration() async {
@@ -713,6 +799,8 @@ actor StreamContext {
             "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms"
         )
 
+        await updateAdaptiveScaleIfNeeded(captureFPS: captureFPS)
+
         await updateInFlightLimitIfNeeded(
             averageEncodeMs: encodeAvgMs,
             pendingCount: pendingCount
@@ -727,13 +815,82 @@ actor StreamContext {
         lastPipelineStatsLogTime = now
     }
 
+    private func updateAdaptiveScaleIfNeeded(captureFPS: Double) async {
+        guard adaptiveScaleEnabled else { return }
+        guard currentFrameRate >= 120 else { return }
+        guard shouldEncodeFrames else { return }
+        guard !isResizing else { return }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastAdaptiveScaleChangeTime > 0,
+           now - lastAdaptiveScaleChangeTime < adaptiveScaleCooldown {
+            return
+        }
+
+        let targetFPS = Double(currentFrameRate)
+        let lowThreshold = targetFPS * adaptiveScaleLowThreshold
+        let highThreshold = targetFPS * adaptiveScaleHighThreshold
+
+        if captureFPS < lowThreshold {
+            adaptiveScaleLowStreak += 1
+            adaptiveScaleHighStreak = 0
+        } else if captureFPS >= highThreshold {
+            adaptiveScaleHighStreak += 1
+            adaptiveScaleLowStreak = 0
+        } else {
+            adaptiveScaleLowStreak = max(0, adaptiveScaleLowStreak - 1)
+            adaptiveScaleHighStreak = max(0, adaptiveScaleHighStreak - 1)
+            return
+        }
+
+        if adaptiveScaleLowStreak >= adaptiveScaleDownSamples {
+            let nextAdaptive = max(adaptiveScaleMin, adaptiveScale * adaptiveScaleDownStep)
+            if nextAdaptive < adaptiveScale - 0.001 {
+                adaptiveScale = nextAdaptive
+                let effectiveScale = StreamContext.clampStreamScale(requestedStreamScale * adaptiveScale)
+                if effectiveScale != streamScale {
+                    lastAdaptiveScaleChangeTime = now
+                    adaptiveScaleLowStreak = 0
+                    adaptiveScaleHighStreak = 0
+                    do {
+                        try await applyStreamScale(effectiveScale, logLabel: "Adaptive scale down")
+                        streamScaleUpdateHandler?(streamID)
+                    } catch {
+                        MirageLogger.error(.stream, "Adaptive scale down failed: \(error)")
+                    }
+                }
+            }
+            return
+        }
+
+        if adaptiveScaleHighStreak >= adaptiveScaleUpSamples {
+            let nextAdaptive = min(1.0, adaptiveScale * adaptiveScaleUpStep)
+            if nextAdaptive > adaptiveScale + 0.001 {
+                adaptiveScale = nextAdaptive
+                let effectiveScale = StreamContext.clampStreamScale(requestedStreamScale * adaptiveScale)
+                if effectiveScale != streamScale {
+                    lastAdaptiveScaleChangeTime = now
+                    adaptiveScaleLowStreak = 0
+                    adaptiveScaleHighStreak = 0
+                    do {
+                        try await applyStreamScale(effectiveScale, logLabel: "Adaptive scale up")
+                        streamScaleUpdateHandler?(streamID)
+                    } catch {
+                        MirageLogger.error(.stream, "Adaptive scale up failed: \(error)")
+                    }
+                }
+            }
+        }
+    }
+
     private func updateInFlightLimitIfNeeded(averageEncodeMs: Double, pendingCount: Int) async {
         guard maxInFlightFramesCap > 1 else { return }
-        if qualityPreset == .lowLatency {
-            if maxInFlightFrames != 1 {
-                maxInFlightFrames = 1
-                await encoder?.updateInFlightLimit(1)
-                MirageLogger.metrics("In-flight depth forced to 1 (low latency preset)")
+        if useLowLatencyPipeline {
+            let lowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
+            if maxInFlightFrames != lowLatencyLimit {
+                maxInFlightFrames = lowLatencyLimit
+                await encoder?.updateInFlightLimit(lowLatencyLimit)
+                MirageLogger.metrics("In-flight depth forced to \(lowLatencyLimit) (low latency pipeline)")
             }
             return
         }
@@ -766,36 +923,65 @@ actor StreamContext {
         let now = CFAbsoluteTimeGetCurrent()
         guard now - lastQualityAdjustmentTime > qualityAdjustmentCooldown else { return }
 
-        let frameBudgetMs = 1000.0 / Double(currentFrameRate)
+        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+        let isHighRefresh = currentFrameRate >= 120
         let averageEncodeMs = await encoder.getAverageEncodeTimeMs()
+        let queuePressure = queueBytes >= queuePressureBytes
+        let severePressure = queueBytes >= Int(Double(queuePressureBytes) * 1.5)
+        let encodePressureMultiplier = isHighRefresh ? 1.55 : 1.35
+        let heavyEncodePressureMultiplier = isHighRefresh ? 1.85 : 1.60
+        let underBudgetMultiplier = isHighRefresh ? 0.65 : 0.75
+        let encodePressure = averageEncodeMs > frameBudgetMs * encodePressureMultiplier
+        let heavyEncodePressure = averageEncodeMs > frameBudgetMs * heavyEncodePressureMultiplier
+        let underBudget = averageEncodeMs < frameBudgetMs * underBudgetMultiplier
+        let queueClear = queueBytes < queuePressureBytes / 2
 
-        if averageEncodeMs > frameBudgetMs * 1.25, activeQuality > qualityFloor {
-            activeQuality = max(qualityFloor, activeQuality - 0.03)
+        if isHighRefresh {
+            let scaleRoom = adaptiveScaleEnabled && adaptiveScale > adaptiveScaleMin + 0.01
+            let demandDrop = queuePressure || severePressure || heavyEncodePressure
+            if scaleRoom && !demandDrop {
+                qualityOverBudgetCount = 0
+                qualityUnderBudgetCount = 0
+                return
+            }
+        }
+
+        if queuePressure || encodePressure {
+            qualityOverBudgetCount += 1
+            qualityUnderBudgetCount = 0
+        } else if queueClear && underBudget {
+            qualityUnderBudgetCount += 1
+            qualityOverBudgetCount = 0
+        } else {
+            qualityOverBudgetCount = max(0, qualityOverBudgetCount - 1)
+            qualityUnderBudgetCount = max(0, qualityUnderBudgetCount - 1)
+        }
+
+        if qualityOverBudgetCount >= qualityDropThreshold, activeQuality > qualityFloor {
+            let dropStep = (severePressure || heavyEncodePressure) ? qualityDropStepHighPressure : qualityDropStep
+            activeQuality = max(qualityFloor, activeQuality - dropStep)
             await encoder.updateQuality(activeQuality)
             lastQualityAdjustmentTime = now
+            qualityOverBudgetCount = 0
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
             let encodeText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.stream("Encoder quality throttled to \(qualityText) (encode \(encodeText)ms)")
+            if queuePressure {
+                let queueKB = Int(Double(queueBytes) / 1024.0)
+                MirageLogger.stream("Encoder quality throttled to \(qualityText) (encode \(encodeText)ms, queue \(queueKB)KB)")
+            } else {
+                MirageLogger.stream("Encoder quality throttled to \(qualityText) (encode \(encodeText)ms)")
+            }
             return
         }
 
-        if queueBytes > queuePressureBytes && activeQuality > qualityFloor {
-            activeQuality = max(qualityFloor, activeQuality - 0.05)
+        if qualityUnderBudgetCount >= qualityRaiseThreshold, activeQuality < qualityCeiling {
+            activeQuality = min(qualityCeiling, activeQuality + qualityRaiseStep)
             await encoder.updateQuality(activeQuality)
             lastQualityAdjustmentTime = now
+            qualityUnderBudgetCount = 0
             let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.stream("Encoder quality throttled to \(qualityText)")
-            return
-        }
-
-        if queueBytes < queuePressureBytes / 2,
-           activeQuality < qualityCeiling,
-           averageEncodeMs < frameBudgetMs * 0.90 {
-            activeQuality = min(qualityCeiling, activeQuality + 0.05)
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.stream("Encoder quality restored to \(qualityText)")
+            let encodeText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.stream("Encoder quality restored to \(qualityText) (encode \(encodeText)ms)")
         }
     }
 
@@ -918,10 +1104,8 @@ actor StreamContext {
             application: application,
             display: display,
             outputScale: streamScale
-        ) { [weak self] sampleBuffer, frameInfo in
-            guard let self else { return }
-            let wrapper = SampleBufferWrapper(buffer: sampleBuffer)
-            self.enqueueCapturedFrame(wrapper, frameInfo)
+        ) { [weak self] frame in
+            self?.enqueueCapturedFrame(frame)
         }
 
         MirageLogger.stream("Started stream \(streamID) for window \(windowID)")
@@ -1033,10 +1217,8 @@ actor StreamContext {
             display: display,
             resolution: outputSize,
             showsCursor: showsCursor
-        ) { [weak self] sampleBuffer, frameInfo in
-            guard let self else { return }
-            let wrapper = SampleBufferWrapper(buffer: sampleBuffer)
-            self.enqueueCapturedFrame(wrapper, frameInfo)
+        ) { [weak self] frame in
+            self?.enqueueCapturedFrame(frame)
         }
 
         MirageLogger.stream("Started login display stream \(streamID) at \(width)x\(height)")
@@ -1149,10 +1331,8 @@ actor StreamContext {
             display: display,
             resolution: captureSizeForSCK,
             showsCursor: false
-        ) { [weak self] sampleBuffer, frameInfo in
-            guard let self else { return }
-            let wrapper = SampleBufferWrapper(buffer: sampleBuffer)
-            self.enqueueCapturedFrame(wrapper, frameInfo)
+        ) { [weak self] frame in
+            self?.enqueueCapturedFrame(frame)
         }
 
         MirageLogger.stream("Started desktop display stream \(streamID) at \(width)x\(height)")
@@ -1332,10 +1512,8 @@ actor StreamContext {
             display: displayWrapper.display,
             knownScaleFactor: 2.0,  // Virtual display is HiDPI 2x, NSScreen detection fails on headless Macs
             outputScale: streamScale
-        ) { [weak self] sampleBuffer, frameInfo in
-            guard let self else { return }
-            let wrapper = SampleBufferWrapper(buffer: sampleBuffer)
-            self.enqueueCapturedFrame(wrapper, frameInfo)
+        ) { [weak self] frame in
+            self?.enqueueCapturedFrame(frame)
         }
 
         MirageLogger.stream("Started stream \(streamID) with virtual display \(vdContext.displayID) for window \(windowID)")
@@ -1356,6 +1534,7 @@ actor StreamContext {
         dimensionToken &+= 1
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "virtual display resize")
+        resetPipelineStateForReconfiguration(reason: "virtual display resize")
 
         MirageLogger.stream("Updating shared virtual display for client resolution \(Int(newResolution.width))x\(Int(newResolution.height)) (frames paused)")
 
@@ -1440,10 +1619,8 @@ actor StreamContext {
             display: displayWrapper.display,
             knownScaleFactor: 2.0,  // Virtual display is HiDPI 2x
             outputScale: streamScale
-        ) { [weak self] sampleBuffer, frameInfo in
-            guard let self else { return }
-            let wrapper = SampleBufferWrapper(buffer: sampleBuffer)
-            self.enqueueCapturedFrame(wrapper, frameInfo)
+        ) { [weak self] frame in
+            self?.enqueueCapturedFrame(frame)
         }
 
         // Force keyframe after virtual display update for clean restart
@@ -1506,6 +1683,7 @@ actor StreamContext {
         dimensionToken &+= 1
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "dimension update")
+        resetPipelineStateForReconfiguration(reason: "dimension update")
 
         // Encode at scaled resolution based on stream scale
         let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
@@ -1554,6 +1732,7 @@ actor StreamContext {
         dimensionToken &+= 1
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "resolution update")
+        resetPipelineStateForReconfiguration(reason: "resolution update")
 
         baseCaptureSize = CGSize(width: width, height: height)
         let outputSize = scaledOutputSize(for: baseCaptureSize)
@@ -1587,6 +1766,8 @@ actor StreamContext {
     /// Update stream scale and reconfigure capture output size
     func updateStreamScale(_ newScale: CGFloat) async throws {
         let clampedScale = StreamContext.clampStreamScale(newScale)
+        requestedStreamScale = clampedScale
+        adaptiveScale = 1.0
         guard clampedScale != streamScale else { return }
 
         let previousScale = streamScale
@@ -1603,6 +1784,7 @@ actor StreamContext {
         dimensionToken &+= 1
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "stream scale update")
+        resetPipelineStateForReconfiguration(reason: "stream scale update")
 
         let derivedBaseSize: CGSize
         if baseCaptureSize != .zero {
@@ -1646,6 +1828,64 @@ actor StreamContext {
         MirageLogger.stream("Stream scale updated to \(streamScale), encoding at \(Int(outputSize.width))x\(Int(outputSize.height))")
     }
 
+    private func applyStreamScale(_ newScale: CGFloat, logLabel: String) async throws {
+        let clampedScale = StreamContext.clampStreamScale(newScale)
+        guard clampedScale != streamScale else { return }
+
+        let previousScale = streamScale
+        streamScale = clampedScale
+
+        isResizing = true
+        defer { isResizing = false }
+
+        currentContentRect = .zero
+        dimensionToken &+= 1
+        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
+        await packetSender?.bumpGeneration(reason: "stream scale update")
+        resetPipelineStateForReconfiguration(reason: "adaptive scale update")
+
+        let derivedBaseSize: CGSize
+        if baseCaptureSize != .zero {
+            derivedBaseSize = baseCaptureSize
+        } else if previousScale > 0 {
+            let fallbackSize = currentCaptureSize == .zero ? currentEncodedSize : currentCaptureSize
+            derivedBaseSize = CGSize(
+                width: fallbackSize.width / previousScale,
+                height: fallbackSize.height / previousScale
+            )
+        } else {
+            derivedBaseSize = currentCaptureSize
+        }
+        baseCaptureSize = derivedBaseSize
+        guard derivedBaseSize.width > 0, derivedBaseSize.height > 0 else { return }
+
+        let outputSize = scaledOutputSize(for: derivedBaseSize)
+        let scaledWidth = Int(outputSize.width)
+        let scaledHeight = Int(outputSize.height)
+        currentCaptureSize = outputSize
+        currentEncodedSize = outputSize
+
+        if let captureEngine {
+            switch captureMode {
+            case .display:
+                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
+            case .window:
+                if !lastWindowFrame.isEmpty {
+                    try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
+                }
+            }
+        }
+
+        if let encoder {
+            try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+            updateQueueLimits()
+        }
+        updateQueueLimits()
+
+        await encoder?.forceKeyframe()
+        MirageLogger.stream("\(logLabel): scale=\(streamScale), encoding \(scaledWidth)x\(scaledHeight)")
+    }
+
     /// Update capture to a new display (after virtual display recreation)
     /// This switches the SCStream to capture the new display without restarting
     func updateCaptureDisplay(_ displayWrapper: SCDisplayWrapper, resolution: CGSize) async throws {
@@ -1662,6 +1902,7 @@ actor StreamContext {
         dimensionToken &+= 1
         MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
         await packetSender?.bumpGeneration(reason: "display switch")
+        resetPipelineStateForReconfiguration(reason: "display switch")
 
         baseCaptureSize = resolution
         let outputSize = scaledOutputSize(for: baseCaptureSize)
@@ -1752,7 +1993,7 @@ actor StreamContext {
     }
 
     func getTargetFrameRate() -> Int {
-        currentFrameRate
+        encoderConfig.targetFrameRate
     }
 
     func getCodec() -> MirageVideoCodec {
@@ -1765,6 +2006,18 @@ actor StreamContext {
 
     func getQualityPreset() -> MirageQualityPreset? {
         qualityPreset
+    }
+
+    func getAdaptiveScaleEnabled() -> Bool {
+        adaptiveScaleEnabled
+    }
+
+    func setAdaptiveScaleEnabled(_ enabled: Bool) {
+        adaptiveScaleEnabled = enabled
+        adaptiveScale = 1.0
+        adaptiveScaleLowStreak = 0
+        adaptiveScaleHighStreak = 0
+        lastAdaptiveScaleChangeTime = 0
     }
 
     func getEncoderSettings() -> (

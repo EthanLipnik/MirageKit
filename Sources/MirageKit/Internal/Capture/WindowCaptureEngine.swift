@@ -7,23 +7,6 @@ import os
 import ScreenCaptureKit
 import AppKit
 
-/// Manages window capture using ScreenCaptureKit
-/// Frame information passed from capture to encoding
-struct CapturedFrameInfo: Sendable {
-    /// The pixel buffer content area (excluding black padding)
-    let contentRect: CGRect
-    /// Total area of dirty regions as percentage of frame (0-100)
-    let dirtyPercentage: Float
-    /// True when SCK reports the frame as idle (no changes)
-    let isIdleFrame: Bool
-
-    init(contentRect: CGRect, dirtyPercentage: Float, isIdleFrame: Bool) {
-        self.contentRect = contentRect
-        self.dirtyPercentage = dirtyPercentage
-        self.isIdleFrame = isIdleFrame
-    }
-}
-
 actor WindowCaptureEngine {
     private var stream: SCStream?
     private var streamOutput: CaptureStreamOutput?
@@ -32,7 +15,7 @@ actor WindowCaptureEngine {
     private var pendingKeyframeRequest = false
     private var isCapturing = false
     private var isRestarting = false
-    private var capturedFrameHandler: (@Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void)?
+    private var capturedFrameHandler: (@Sendable (CapturedFrame) -> Void)?
     private var dimensionChangeHandler: (@Sendable (Int, Int) -> Void)?
     private var captureMode: CaptureMode?
     private var captureSessionConfig: CaptureSessionConfiguration?
@@ -46,7 +29,7 @@ actor WindowCaptureEngine {
     private var useExplicitCaptureDimensions: Bool = true
     private var contentFilter: SCContentFilter?
     private var lastRestartTime: CFAbsoluteTime = 0
-    private let restartCooldown: CFAbsoluteTime = 1.5
+    private let restartCooldown: CFAbsoluteTime = 3.0
 
     init(configuration: MirageEncoderConfiguration) {
         self.configuration = configuration
@@ -73,12 +56,17 @@ actor WindowCaptureEngine {
             return min(max(1, override), 16)
         }
         if currentFrameRate >= 120 {
-            return 6
+            return 8
         }
         if currentFrameRate >= 60 {
-            return 5
+            return 6
         }
         return 4
+    }
+
+    private var bufferPoolMinimumCount: Int {
+        let extra = currentFrameRate >= 120 ? 4 : 3
+        return max(6, captureQueueDepth + extra)
     }
 
     private func frameGapThreshold(for frameRate: Int) -> CFAbsoluteTime {
@@ -96,13 +84,13 @@ actor WindowCaptureEngine {
 
     private func stallThreshold(for frameRate: Int) -> CFAbsoluteTime {
         if frameRate >= 120 {
-            return 0.75
+            return 2.5
         }
         if frameRate >= 60 {
-            return 1.25
+            return 2.0
         }
         if frameRate >= 30 {
-            return 2.0
+            return 2.5
         }
         return 4.0
     }
@@ -136,7 +124,7 @@ actor WindowCaptureEngine {
         display: SCDisplay,
         knownScaleFactor: CGFloat? = nil,
         outputScale: CGFloat = 1.0,
-        onFrame: @escaping @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void,
+        onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onDimensionChange: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     ) async throws {
         guard !isCapturing else {
@@ -243,7 +231,8 @@ actor WindowCaptureEngine {
             tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
-            expectedFrameRate: Double(currentFrameRate)
+            expectedFrameRate: Double(currentFrameRate),
+            poolMinimumBufferCount: bufferPoolMinimumCount
         )
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
@@ -543,7 +532,7 @@ actor WindowCaptureEngine {
         display: SCDisplay,
         resolution: CGSize? = nil,
         showsCursor: Bool = true,
-        onFrame: @escaping @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void,
+        onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onDimensionChange: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     ) async throws {
         guard !isCapturing else {
@@ -658,7 +647,8 @@ actor WindowCaptureEngine {
             tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
-            expectedFrameRate: Double(currentFrameRate)
+            expectedFrameRate: Double(currentFrameRate),
+            poolMinimumBufferCount: bufferPoolMinimumCount
         )
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
@@ -680,8 +670,8 @@ actor WindowCaptureEngine {
         // Would need to restart capture with new config
     }
 
-    private func handleFrame(_ sampleBuffer: CMSampleBuffer, frameInfo: CapturedFrameInfo) {
-        capturedFrameHandler?(sampleBuffer, frameInfo)
+    private func handleFrame(_ frame: CapturedFrame) {
+        capturedFrameHandler?(frame)
     }
 
     private func markKeyframeRequested() {
@@ -699,7 +689,7 @@ actor WindowCaptureEngine {
 
 /// Stream output delegate
 private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
-    private let onFrame: @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void
+    private let onFrame: @Sendable (CapturedFrame) -> Void
     private let onKeyframeRequest: @Sendable () -> Void
     private let onCaptureStall: @Sendable (String) -> Void
     private let usesDetailedMetadata: Bool
@@ -731,6 +721,13 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
     private var expectedFrameRate: Double
     private let expectationLock = NSLock()
 
+    private let poolMinimumBufferCount: Int
+    private let frameCopier: CaptureFrameCopier?
+    private var loggedCopyFallback = false
+    private var poolDropCount: UInt64 = 0
+    private var lastPoolLogTime: CFAbsoluteTime = 0
+    private let poolLogLock = NSLock()
+
     // Track if we've been in fallback mode - when SCK resumes, we may need a keyframe
     // to prevent decode errors from reference frame discontinuity
     private var wasInFallbackMode: Bool = false
@@ -742,7 +739,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
     private let keyframeThreshold: CFAbsoluteTime = 0.35
 
     init(
-        onFrame: @escaping @Sendable (CMSampleBuffer, CapturedFrameInfo) -> Void,
+        onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onKeyframeRequest: @escaping @Sendable () -> Void,
         onCaptureStall: @escaping @Sendable (String) -> Void = { _ in },
         windowID: CGWindowID = 0,
@@ -750,7 +747,8 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         tracksFrameStatus: Bool = true,
         frameGapThreshold: CFAbsoluteTime = 0.100,
         stallThreshold: CFAbsoluteTime = 1.0,
-        expectedFrameRate: Double = 0
+        expectedFrameRate: Double = 0,
+        poolMinimumBufferCount: Int = 6
     ) {
         self.onFrame = onFrame
         self.onKeyframeRequest = onKeyframeRequest
@@ -761,6 +759,8 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
         self.frameGapThreshold = frameGapThreshold
         self.stallThreshold = stallThreshold
         self.expectedFrameRate = expectedFrameRate
+        self.poolMinimumBufferCount = max(2, poolMinimumBufferCount)
+        self.frameCopier = CaptureFrameCopier()
         super.init()
         startWatchdogTimer()
     }
@@ -925,7 +925,7 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
                 dirtyPercentage: 100,
                 isIdleFrame: false
             )
-            onFrame(sampleBuffer, frameInfo)
+            emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo)
             return
         }
 
@@ -1074,7 +1074,77 @@ private final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Se
             isIdleFrame: isIdleFrame
         )
 
-        onFrame(sampleBuffer, frameInfo)
+        emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo)
+    }
+
+    private func emitFrame(
+        sampleBuffer: CMSampleBuffer,
+        sourcePixelBuffer: CVPixelBuffer,
+        frameInfo: CapturedFrameInfo
+    ) {
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let duration = CMSampleBufferGetDuration(sampleBuffer)
+        let emitFrame: @Sendable (CVPixelBuffer) -> Void = { [onFrame] pixelBuffer in
+            let frame = CapturedFrame(
+                pixelBuffer: pixelBuffer,
+                presentationTime: presentationTime,
+                duration: duration,
+                info: frameInfo
+            )
+            onFrame(frame)
+        }
+
+        if let frameCopier {
+            let inFlightLimit = expectedFrameRate >= 120 ? 3 : 2
+            let scheduleResult = frameCopier.scheduleCopy(
+                pixelBuffer: sourcePixelBuffer,
+                minimumBufferCount: poolMinimumBufferCount,
+                inFlightLimit: inFlightLimit
+            ) { [weak self] result in
+                guard let self else { return }
+                switch result {
+                case .copied(let copiedBuffer):
+                    emitFrame(copiedBuffer)
+                case .poolExhausted:
+                    self.logPoolDrop()
+                case .unsupported:
+                    self.logCopyFallback("Capture copy failed: dropping frame")
+                }
+            }
+
+            switch scheduleResult {
+            case .scheduled:
+                return
+            case .poolExhausted:
+                logPoolDrop()
+                return
+            case .unsupported:
+                logCopyFallback("Capture copy unsupported: dropping frame")
+            }
+        } else {
+            logCopyFallback("Capture copy disabled: dropping frame")
+        }
+    }
+
+    private func logPoolDrop() {
+        poolLogLock.withLock {
+            poolDropCount += 1
+            guard MirageLogger.isEnabled(.capture) else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            if lastPoolLogTime == 0 || now - lastPoolLogTime > 2.0 {
+                MirageLogger.capture("Capture pool exhausted: dropped \(poolDropCount) frames")
+                poolDropCount = 0
+                lastPoolLogTime = now
+            }
+        }
+    }
+
+    private func logCopyFallback(_ message: String) {
+        poolLogLock.withLock {
+            guard !loggedCopyFallback else { return }
+            loggedCopyFallback = true
+            MirageLogger.capture(message)
+        }
     }
 }
 
