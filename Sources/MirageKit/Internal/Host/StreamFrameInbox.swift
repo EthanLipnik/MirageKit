@@ -1,3 +1,10 @@
+//
+//  StreamFrameInbox.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/21/26.
+//
+
 import Foundation
 
 #if os(macOS)

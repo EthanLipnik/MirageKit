@@ -1,3 +1,10 @@
+//
+//  MirageInstalledApp.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/9/26.
+//
+
 import Foundation
 
 /// Represents an installed application that can be selected for streaming

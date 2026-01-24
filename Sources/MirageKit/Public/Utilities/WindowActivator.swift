@@ -1,3 +1,10 @@
+//
+//  WindowActivator.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/5/26.
+//
+
 import Foundation
 
 #if os(macOS)

@@ -1,3 +1,10 @@
+//
+//  Statistics.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/2/26.
+//
+
 import Foundation
 
 /// Statistics for an active stream

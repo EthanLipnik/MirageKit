@@ -1,3 +1,10 @@
+//
+//  CGVirtualDisplayBridge.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/6/26.
+//
+
 import Foundation
 import CoreGraphics
 

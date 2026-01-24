@@ -1,3 +1,10 @@
+//
+//  CursorMonitor.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/3/26.
+//
+
 #if os(macOS)
 import Foundation
 import AppKit

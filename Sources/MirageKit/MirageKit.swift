@@ -1,7 +1,10 @@
-// MirageKit - Window Streaming Framework
-// https://github.com/your-repo/mirage
+//
+//  MirageKit.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/2/26.
+//
 
-// MARK: - Public Types
 @_exported import Foundation
 
 // Re-export all public types

@@ -1,3 +1,10 @@
+//
+//  MirageCursorType.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/3/26.
+//
+
 import Foundation
 
 /// Standard cursor types that can be synchronized between host and client.

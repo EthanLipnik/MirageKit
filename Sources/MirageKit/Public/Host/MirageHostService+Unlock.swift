@@ -1,3 +1,10 @@
+//
+//  MirageHostService+Unlock.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/11/26.
+//
+
 import Foundation
 import Network
 

@@ -1,3 +1,10 @@
+//
+//  ConnectionManager.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/2/26.
+//
+
 import Foundation
 import Network
 

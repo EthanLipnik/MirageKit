@@ -1,3 +1,10 @@
+//
+//  MirageAppStreamSession.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/9/26.
+//
+
 import Foundation
 
 /// Represents the state of an app streaming session

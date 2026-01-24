@@ -2,7 +2,7 @@
 //  MirageWindowFocusObserver.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 1/16/26.
+//  Created by Ethan Lipnik on 1/21/26.
 //
 
 #if os(macOS)

@@ -2,7 +2,7 @@
 //  MenuBarExtractor.swift
 //  MirageKit
 //
-//  Extracts menu bar structure from macOS applications using Accessibility APIs.
+//  Created by Ethan Lipnik on 1/9/26.
 //
 
 #if os(macOS)

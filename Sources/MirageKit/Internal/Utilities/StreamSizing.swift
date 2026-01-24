@@ -1,3 +1,10 @@
+//
+//  StreamSizing.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/3/26.
+//
+
 import CoreGraphics
 
 #if os(macOS)

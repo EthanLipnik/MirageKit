@@ -1,3 +1,10 @@
+//
+//  StreamPacketSender.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/15/26.
+//
+
 import Foundation
 import CoreMedia
 import CoreGraphics

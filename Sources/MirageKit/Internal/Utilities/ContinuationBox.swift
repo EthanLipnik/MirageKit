@@ -1,3 +1,10 @@
+//
+//  ContinuationBox.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/5/26.
+//
+
 import Foundation
 
 /// Thread-safe wrapper for throwing CheckedContinuation to prevent double-resume crashes.

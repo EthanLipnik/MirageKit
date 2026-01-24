@@ -2,8 +2,7 @@
 //  WindowActivityMonitor.swift
 //  MirageKit
 //
-//  Monitors window activity state on macOS to enable throttling of inactive streams.
-//  A window is considered "active" when its owning application is the frontmost app.
+//  Created by Ethan Lipnik on 1/9/26.
 //
 
 import Foundation

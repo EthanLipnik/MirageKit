@@ -1,5 +1,12 @@
 // swift-tools-version: 6.2
 
+//
+//  Package.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/2/26.
+//
+
 import PackageDescription
 
 let package = Package(

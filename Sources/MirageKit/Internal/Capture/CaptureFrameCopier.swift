@@ -1,3 +1,10 @@
+//
+//  CaptureFrameCopier.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/21/26.
+//
+
 import CoreMedia
 import CoreVideo
 import Foundation

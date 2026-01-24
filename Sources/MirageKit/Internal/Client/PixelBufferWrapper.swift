@@ -1,3 +1,10 @@
+//
+//  PixelBufferWrapper.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/5/26.
+//
+
 import Foundation
 import CoreMedia
 import CoreVideo

@@ -1,3 +1,10 @@
+//
+//  PowerAssertionManager.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/8/26.
+//
+
 import Foundation
 
 #if os(macOS)

@@ -1,3 +1,10 @@
+//
+//  MirageClientMetricsStore.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/23/26.
+//
+
 import Foundation
 
 /// Thread-safe metrics store for client stream telemetry.

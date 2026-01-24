@@ -2,7 +2,7 @@
 //  MenuBarMonitor.swift
 //  MirageKit
 //
-//  Monitors menu bar changes for streamed applications.
+//  Created by Ethan Lipnik on 1/9/26.
 //
 
 #if os(macOS)

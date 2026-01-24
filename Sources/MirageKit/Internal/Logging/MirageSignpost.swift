@@ -1,3 +1,10 @@
+//
+//  MirageSignpost.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/23/26.
+//
+
 import Foundation
 import os
 

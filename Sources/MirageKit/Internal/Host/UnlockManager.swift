@@ -1,3 +1,10 @@
+//
+//  UnlockManager.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/7/26.
+//
+
 import Foundation
 import CoreGraphics
 import Security

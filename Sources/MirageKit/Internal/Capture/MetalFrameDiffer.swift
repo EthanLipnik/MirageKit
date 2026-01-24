@@ -1,3 +1,10 @@
+//
+//  MetalFrameDiffer.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/9/26.
+//
+
 import Foundation
 import Metal
 import CoreVideo

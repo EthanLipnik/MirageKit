@@ -2,7 +2,7 @@
 //  MirageMenuItem.swift
 //  MirageKit
 //
-//  Menu bar data types for passthrough from host to client.
+//  Created by Ethan Lipnik on 1/9/26.
 //
 
 import Foundation

@@ -1,3 +1,10 @@
+//
+//  AppStreamManager.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/9/26.
+//
+
 #if os(macOS)
 import AppKit
 import ApplicationServices
