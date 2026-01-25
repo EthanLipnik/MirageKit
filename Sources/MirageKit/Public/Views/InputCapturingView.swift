@@ -35,11 +35,26 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Callback when the view decides on a refresh rate override (60 or 120).
+    public var onRefreshRateOverrideChange: ((Int) -> Void)? {
+        didSet {
+            metalView.onRefreshRateOverrideChange = onRefreshRateOverrideChange
+        }
+    }
+
     /// Stream ID for direct frame cache access (iOS gesture tracking support)
     /// Forwards to the underlying Metal view
     public var streamID: StreamID? {
         didSet {
             metalView.streamID = streamID
+            let previousID = registeredCursorStreamID
+            if let previousID, previousID != streamID {
+                MirageCursorUpdateRouter.shared.unregister(streamID: previousID)
+            }
+            registeredCursorStreamID = streamID
+            if let streamID {
+                MirageCursorUpdateRouter.shared.register(view: self, for: streamID)
+            }
             cursorSequence = 0
             refreshCursorIfNeeded(force: true)
         }
@@ -67,6 +82,7 @@ public class InputCapturingView: UIView {
     var cursorSequence: UInt64 = 0
     var lastCursorRefreshTime: CFTimeInterval = 0
     let cursorRefreshInterval: CFTimeInterval = 1.0 / 30.0
+    private var registeredCursorStreamID: StreamID?
 
     // Gesture recognizers
     var tapGesture: UITapGestureRecognizer!
@@ -226,10 +242,6 @@ public class InputCapturingView: UIView {
         metalView.translatesAutoresizingMaskIntoConstraints = false
         scrollPhysicsView!.contentView.addSubview(metalView)
 
-        metalView.onFrameTick = { [weak self] in
-            self?.refreshCursorIfNeeded()
-        }
-
         // Add scroll physics view to self
         addSubview(scrollPhysicsView!)
 
@@ -309,15 +321,14 @@ public class InputCapturingView: UIView {
         stopAllKeyRepeats()
         resetAllModifiers()
 
-        // Pause display link to avoid Metal GPU permission errors when backgrounded
+        // Suspend rendering to avoid Metal GPU permission errors when backgrounded
         // iOS doesn't allow GPU work from background state
-        metalView.pauseDisplayLink()
+        metalView.suspendRendering()
     }
 
     @objc private func appDidBecomeActive() {
-        // Ensure display link is running after returning from background
         if window != nil {
-            metalView.restartDisplayLinkIfNeeded()
+            metalView.resumeRendering()
         }
 
         sendModifierStateIfNeeded(force: true)
@@ -343,6 +354,9 @@ public class InputCapturingView: UIView {
     }
 
     deinit {
+        if let registeredCursorStreamID {
+            MirageCursorUpdateRouter.shared.unregister(streamID: registeredCursorStreamID)
+        }
         NotificationCenter.default.removeObserver(self)
     }
 }

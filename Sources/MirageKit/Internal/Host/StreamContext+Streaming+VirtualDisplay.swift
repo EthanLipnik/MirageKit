@@ -17,7 +17,7 @@ extension StreamContext {
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         clientDisplayResolution: CGSize,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader) -> Void,
+        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void,
         onContentBoundsChanged: @escaping @Sendable (CGRect) -> Void,
         onNewWindowDetected: @escaping @Sendable (MirageWindow) -> Void,
         onVirtualDisplayReady: @escaping @Sendable (CGRect) async -> Void = { _ in }

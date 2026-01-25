@@ -28,7 +28,8 @@ actor StreamPacketSender {
     }
 
     private let maxPayloadSize: Int
-    private let onEncodedFrame: @Sendable (Data, FrameHeader) -> Void
+    private let onEncodedFrame: @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
+    private let packetBufferPool: PacketBufferPool
     private var sendTask: Task<Void, Never>?
     // Accessed from encoder callbacks; lifecycle is managed by start/stop.
     nonisolated(unsafe) private var sendContinuation: AsyncStream<WorkItem>.Continuation?
@@ -42,9 +43,10 @@ actor StreamPacketSender {
     private let largeFrameThresholdBytes = 800 * 1024
     private let hugeFrameThresholdBytes = 1_500 * 1024
 
-    init(maxPayloadSize: Int, onEncodedFrame: @escaping @Sendable (Data, FrameHeader) -> Void) {
+    init(maxPayloadSize: Int, onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void) {
         self.maxPayloadSize = maxPayloadSize
         self.onEncodedFrame = onEncodedFrame
+        self.packetBufferPool = PacketBufferPool(capacity: MirageHeaderSize + maxPayloadSize)
     }
 
     func start() {
@@ -143,34 +145,50 @@ actor StreamPacketSender {
             for fragmentIndex in burstStart..<burstEnd {
                 let start = fragmentIndex * maxPayload
                 let end = min(start + maxPayload, item.encodedData.count)
-                let fragmentData = item.encodedData.subdata(in: start..<end)
+                let fragmentSize = end - start
 
                 var flags = item.additionalFlags
                 if item.isKeyframe { flags.insert(.keyframe) }
                 if fragmentIndex == totalFragments - 1 { flags.insert(.endOfFrame) }
                 if item.isKeyframe && fragmentIndex == 0 { flags.insert(.parameterSet) }
 
-                let header = FrameHeader(
-                    flags: flags,
-                    streamID: item.streamID,
-                    sequenceNumber: currentSequence,
-                    timestamp: timestamp,
-                    frameNumber: item.frameNumber,
-                    fragmentIndex: UInt16(fragmentIndex),
-                    fragmentCount: UInt16(totalFragments),
-                    payloadLength: UInt32(fragmentData.count),
-                    checksum: CRC32.calculate(fragmentData),
-                    contentRect: item.contentRect,
-                    dimensionToken: item.dimensionToken,
-                    epoch: item.epoch
-                )
+                item.encodedData.withUnsafeBytes { buffer in
+                    guard let baseAddress = buffer.baseAddress else { return }
+                    let fragmentPtr = baseAddress.advanced(by: start)
+                    let fragmentBuffer = UnsafeRawBufferPointer(start: fragmentPtr, count: fragmentSize)
+                    let checksum = CRC32.calculate(fragmentBuffer)
 
+                    let header = FrameHeader(
+                        flags: flags,
+                        streamID: item.streamID,
+                        sequenceNumber: currentSequence,
+                        timestamp: timestamp,
+                        frameNumber: item.frameNumber,
+                        fragmentIndex: UInt16(fragmentIndex),
+                        fragmentCount: UInt16(totalFragments),
+                        payloadLength: UInt32(fragmentSize),
+                        checksum: checksum,
+                        contentRect: item.contentRect,
+                        dimensionToken: item.dimensionToken,
+                        epoch: item.epoch
+                    )
+
+                    let packetBuffer = packetBufferPool.acquire()
+                    let packetLength = MirageHeaderSize + fragmentSize
+                    packetBuffer.prepare(length: packetLength)
+
+                    packetBuffer.withMutableBytes { packetBytes in
+                        guard packetBytes.count >= packetLength, let baseAddress = packetBytes.baseAddress else { return }
+                        let headerBuffer = UnsafeMutableRawBufferPointer(start: baseAddress, count: min(packetBytes.count, MirageHeaderSize))
+                        header.serialize(into: headerBuffer)
+                        baseAddress.advanced(by: MirageHeaderSize).copyMemory(from: fragmentPtr, byteCount: fragmentSize)
+                    }
+
+                    let packet = packetBuffer.finalize(length: packetLength)
+                    let releasePacket: @Sendable () -> Void = { packetBuffer.release() }
+                    onEncodedFrame(packet, header, releasePacket)
+                }
                 currentSequence += 1
-
-                var packet = header.serialize()
-                packet.append(fragmentData)
-
-                onEncodedFrame(packet, header)
             }
 
             if shouldPace && burstIndex < burstCount - 1 {

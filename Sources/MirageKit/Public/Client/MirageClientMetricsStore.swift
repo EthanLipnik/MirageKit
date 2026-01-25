@@ -16,6 +16,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostIdleFPS: Double
     public var hostDroppedFrames: UInt64
     public var hostActiveQuality: Double
+    public var hostTargetFrameRate: Int
     public var hasHostMetrics: Bool
 
     public init(
@@ -26,6 +27,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostIdleFPS: Double = 0,
         hostDroppedFrames: UInt64 = 0,
         hostActiveQuality: Double = 0,
+        hostTargetFrameRate: Int = 0,
         hasHostMetrics: Bool = false
     ) {
         self.decodedFPS = decodedFPS
@@ -35,6 +37,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostIdleFPS = hostIdleFPS
         self.hostDroppedFrames = hostDroppedFrames
         self.hostActiveQuality = hostActiveQuality
+        self.hostTargetFrameRate = hostTargetFrameRate
         self.hasHostMetrics = hasHostMetrics
     }
 }
@@ -65,7 +68,8 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         encodedFPS: Double,
         idleEncodedFPS: Double,
         droppedFrames: UInt64,
-        activeQuality: Double
+        activeQuality: Double,
+        targetFrameRate: Int
     ) {
         lock.lock()
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
@@ -73,6 +77,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostIdleFPS = idleEncodedFPS
         snapshot.hostDroppedFrames = droppedFrames
         snapshot.hostActiveQuality = activeQuality
+        snapshot.hostTargetFrameRate = targetFrameRate
         snapshot.hasHostMetrics = true
         metricsByStream[streamID] = snapshot
         lock.unlock()

@@ -180,10 +180,13 @@ extension MirageHostService {
         try await streamContext.startDesktopDisplay(
             displayWrapper: captureDisplay,
             resolution: captureResolution,
-            onEncodedFrame: { [weak self] packetData, _ in
-                guard let self else { return }
+            onEncodedFrame: { [weak self] packetData, _, releasePacket in
+                guard let self else {
+                    releasePacket()
+                    return
+                }
                 Task { @MainActor in
-                    self.sendVideoPacketForStream(streamID, data: packetData)
+                    self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                 }
             }
         )

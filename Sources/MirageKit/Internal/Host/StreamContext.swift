@@ -161,7 +161,7 @@ actor StreamContext {
     let keyframeMotionThreshold: Double = 0.25
 
     /// Callback for sending encoded packets
-    var onEncodedPacket: (@Sendable (Data, FrameHeader) -> Void)?
+    var onEncodedPacket: (@Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void)?
 
     /// Serializes packet fragmentation/sending to preserve frame order
     var packetSender: StreamPacketSender?

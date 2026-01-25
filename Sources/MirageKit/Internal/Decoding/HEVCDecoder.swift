@@ -204,11 +204,14 @@ final class DecodePerformanceTracker: @unchecked Sendable {
 
 }
 
-/// Reassembles video frames from network packets
-/// Each reassembler is associated with a specific stream for multi-stream support
-actor FrameReassembler {
+/// Reassembles video frames from network packets.
+/// Uses lock-based synchronization to avoid per-packet Task overhead.
+final class FrameReassembler: @unchecked Sendable {
     /// The stream ID this reassembler handles
     let streamID: StreamID
+    let maxPayloadSize: Int
+    let lock = NSLock()
+    let bufferPool = FrameBufferPool()
 
     var pendingFrames: [UInt32: PendingFrame] = [:]
     var lastCompletedFrame: UInt32 = 0
@@ -228,8 +231,8 @@ actor FrameReassembler {
     /// Disabled by default to maintain backward compatibility with older hosts.
     var dimensionTokenValidationEnabled: Bool = false
 
-    /// Frame completion callback: (streamID, frameData, isKeyframe, timestamp, contentRect)
-    var onFrameComplete: (@Sendable (StreamID, Data, Bool, UInt64, CGRect) -> Void)?
+    /// Frame completion callback: (streamID, frameData, isKeyframe, timestamp, contentRect, release)
+    var onFrameComplete: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void)?
 
     // MARK: - Diagnostic counters
     var totalPacketsReceived: UInt64 = 0
@@ -241,17 +244,43 @@ actor FrameReassembler {
     var packetsDiscardedEpoch: UInt64 = 0
     var lastStatsLog: UInt64 = 0
 
-    struct PendingFrame {
-        var fragments: [UInt16: Data]
-        var totalFragments: UInt16
+    final class PendingFrame {
+        let buffer: FrameBufferPool.Buffer
+        var receivedMap: [Bool]
+        var receivedCount: Int
+        let totalFragments: UInt16
         var isKeyframe: Bool
-        var timestamp: UInt64
-        var receivedAt: Date
-        var contentRect: CGRect
+        let timestamp: UInt64
+        let receivedAt: Date
+        let contentRect: CGRect
+        var expectedTotalBytes: Int
+
+        init(
+            buffer: FrameBufferPool.Buffer,
+            receivedMap: [Bool],
+            receivedCount: Int,
+            totalFragments: UInt16,
+            isKeyframe: Bool,
+            timestamp: UInt64,
+            receivedAt: Date,
+            contentRect: CGRect,
+            expectedTotalBytes: Int
+        ) {
+            self.buffer = buffer
+            self.receivedMap = receivedMap
+            self.receivedCount = receivedCount
+            self.totalFragments = totalFragments
+            self.isKeyframe = isKeyframe
+            self.timestamp = timestamp
+            self.receivedAt = receivedAt
+            self.contentRect = contentRect
+            self.expectedTotalBytes = expectedTotalBytes
+        }
     }
 
-    init(streamID: StreamID) {
+    init(streamID: StreamID, maxPayloadSize: Int) {
         self.streamID = streamID
+        self.maxPayloadSize = max(1, maxPayloadSize)
     }
 
 

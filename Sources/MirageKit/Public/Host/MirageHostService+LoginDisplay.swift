@@ -48,10 +48,13 @@ extension MirageHostService {
             try await context.startLoginDisplay(
                 displayWrapper: displayInfo.displayWrapper,
                 resolution: displayInfo.resolution,
-                onEncodedFrame: { [weak self] packetData, _ in
-                    guard let self else { return }
+                onEncodedFrame: { [weak self] packetData, _, releasePacket in
+                    guard let self else {
+                        releasePacket()
+                        return
+                    }
                     Task { @MainActor in
-                        self.sendVideoPacketForStream(streamID, data: packetData)
+                        self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                     }
                 }
             )

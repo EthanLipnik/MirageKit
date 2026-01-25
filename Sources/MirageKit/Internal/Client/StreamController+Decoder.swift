@@ -18,7 +18,7 @@ extension StreamController {
         // Drop any queued frames from the previous session to avoid BadData storms.
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
-        await reassembler.reset()
+        reassembler.reset()
         decodedFrameCount = 0
         currentFPS = 0
         fpsSampleTimes.removeAll()

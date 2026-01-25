@@ -9,7 +9,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Preset pixel format: ultra/high/medium 10-bit; low/lowLatency 8-bit.
 - Preset color space: P3 except low.
 - Stream scale: client resolution scale; presets define encoder quality.
-- ProMotion toggle: refresh rate override 120.
+- ProMotion preference: refresh override based on MTKView cadence, 120 when supported and enabled, otherwise 60.
 - Backpressure: queue-based frame drops.
 - Encoder quality: fixed per stream; QP bounds mapping when supported.
 - Capture pixel format: 10-bit P010 when supported; NV12 fallback; 4:4:4 formats only when explicitly selected.
@@ -66,9 +66,9 @@ MirageKit/
 - Utilities: `Utilities/`.
 
 ## Internal Implementation (`Sources/MirageKit/Internal/`)
-- Host: app enumeration, session state, menu bar capture, unlock handling, stream lifecycle, power assertions.
+- Host: app enumeration, session state, menu bar capture, unlock handling, stream lifecycle, power assertions, packet buffer reuse for UDP sends.
 - Capture: capture orchestration, frame metadata, Metal copy, differential encoding.
-- Encoding/Decoding: HEVC encoder and decoder.
+- Encoding/Decoding: HEVC encoder and decoder, frame reassembly buffer reuse.
 - Network: discovery and connectivity (Bonjour, TLS transport).
 - Protocol: wire format and serialization.
 - VirtualDisplay: CGVirtualDisplay bridge and shared display coordination.
@@ -103,7 +103,7 @@ MirageKit/
 ## Network Configuration
 - Service type: `_mirage._tcp` (Bonjour).
 - Control port: 9847; Data port: 9848.
-- Protocol version: 2.
+- Protocol version: 3.
 - Hybrid transport with TLS encryption.
 - UDP packet sizing: `MirageNetworkConfiguration.maxPacketSize` caps Mirage header + payload to avoid IPv6 fragmentation; `StreamContext` uses it for frame fragmentation.
 - `StreamPacketSender` sends bounded bursts and tracks queued bytes for backpressure.

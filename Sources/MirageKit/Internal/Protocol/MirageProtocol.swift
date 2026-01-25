@@ -12,19 +12,18 @@ import CoreGraphics
 let MirageProtocolMagic: UInt32 = 0x4D495247 // "MIRG"
 
 /// Protocol version
-let MirageProtocolVersion: UInt8 = 2
+let MirageProtocolVersion: UInt8 = 3
 
 /// Default maximum UDP packet size (header + payload) to avoid IPv6 fragmentation.
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.
 public let MirageDefaultMaxPacketSize: Int = 1200
 
 /// Header size in bytes:
-/// Base fields (4+1+2+2+4+8+4+2+2+4+4+4+4+4+4 = 53) +
+/// Base fields (4+1+2+2+4+8+4+2+2+4+4 = 37) +
 /// contentRect (4 x Float32 = 16) +
-/// tile info (8 x UInt16 = 16) +
 /// dimensionToken (UInt16 = 2) +
-/// epoch (UInt16 = 2) = 73 total
-let MirageHeaderSize: Int = 73
+/// epoch (UInt16 = 2) = 57 total
+let MirageHeaderSize: Int = 57
 
 /// Compute payload size from the configured maximum packet size.
 /// `maxPacketSize` includes the Mirage header; this returns the payload size only.
@@ -79,32 +78,6 @@ struct FrameHeader {
     var contentRectWidth: Float32 = 0
     var contentRectHeight: Float32 = 0
 
-    // MARK: - Tile encoding fields (used when .tile flag is set)
-
-    /// Number of columns in the tile grid
-    var tileGridColumns: UInt16 = 0
-
-    /// Number of rows in the tile grid
-    var tileGridRows: UInt16 = 0
-
-    /// Column index of this tile (0-based)
-    var tileColumn: UInt16 = 0
-
-    /// Row index of this tile (0-based)
-    var tileRow: UInt16 = 0
-
-    /// Pixel X position of this tile in the frame
-    var tileX: UInt16 = 0
-
-    /// Pixel Y position of this tile in the frame
-    var tileY: UInt16 = 0
-
-    /// Width of this tile in pixels
-    var tileWidth: UInt16 = 0
-
-    /// Height of this tile in pixels
-    var tileHeight: UInt16 = 0
-
     /// Dimension token for rejecting old-dimension P-frames after resize.
     /// Incremented each time encoder dimensions change. Client compares this
     /// to expected token and silently discards frames with mismatched tokens.
@@ -125,7 +98,6 @@ struct FrameHeader {
         payloadLength: UInt32,
         checksum: UInt32,
         contentRect: CGRect = .zero,
-        tileInfo: TileInfo? = nil,
         dimensionToken: UInt16 = 0,
         epoch: UInt16 = 0
     ) {
@@ -144,30 +116,6 @@ struct FrameHeader {
         self.contentRectHeight = Float32(contentRect.size.height)
         self.dimensionToken = dimensionToken
         self.epoch = epoch
-
-        // Tile info (only populated when .tile flag is set)
-        if let tile = tileInfo {
-            self.tileGridColumns = tile.gridColumns
-            self.tileGridRows = tile.gridRows
-            self.tileColumn = tile.column
-            self.tileRow = tile.row
-            self.tileX = tile.x
-            self.tileY = tile.y
-            self.tileWidth = tile.width
-            self.tileHeight = tile.height
-        }
-    }
-
-    /// Tile information for tile-based encoding
-    struct TileInfo {
-        let gridColumns: UInt16
-        let gridRows: UInt16
-        let column: UInt16
-        let row: UInt16
-        let x: UInt16
-        let y: UInt16
-        let width: UInt16
-        let height: UInt16
     }
 
     /// Get contentRect as CGRect
@@ -200,16 +148,6 @@ struct FrameHeader {
         withUnsafeBytes(of: contentRectWidth.bitPattern.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: contentRectHeight.bitPattern.littleEndian) { data.append(contentsOf: $0) }
 
-        // Tile fields (16 bytes)
-        withUnsafeBytes(of: tileGridColumns.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileGridRows.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileColumn.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileRow.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileX.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileY.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileWidth.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: tileHeight.littleEndian) { data.append(contentsOf: $0) }
-
         // Dimension token (2 bytes)
         withUnsafeBytes(of: dimensionToken.littleEndian) { data.append(contentsOf: $0) }
 
@@ -217,6 +155,44 @@ struct FrameHeader {
         withUnsafeBytes(of: epoch.littleEndian) { data.append(contentsOf: $0) }
 
         return data
+    }
+
+    /// Serialize header into a preallocated buffer.
+    func serialize(into buffer: UnsafeMutableRawBufferPointer) {
+        guard buffer.count >= MirageHeaderSize, buffer.baseAddress != nil else { return }
+        var offset = 0
+
+        func write<T: FixedWidthInteger>(_ value: T) {
+            buffer.storeBytes(of: value.littleEndian, toByteOffset: offset, as: T.self)
+            offset += MemoryLayout<T>.size
+        }
+
+        func writeByte(_ value: UInt8) {
+            buffer.storeBytes(of: value, toByteOffset: offset, as: UInt8.self)
+            offset += 1
+        }
+
+        func writeFloat32(_ value: Float32) {
+            write(value.bitPattern)
+        }
+
+        write(magic)
+        writeByte(version)
+        write(flags.rawValue)
+        write(streamID)
+        write(sequenceNumber)
+        write(timestamp)
+        write(frameNumber)
+        write(fragmentIndex)
+        write(fragmentCount)
+        write(payloadLength)
+        write(checksum)
+        writeFloat32(contentRectX)
+        writeFloat32(contentRectY)
+        writeFloat32(contentRectWidth)
+        writeFloat32(contentRectHeight)
+        write(dimensionToken)
+        write(epoch)
     }
 
     /// Deserialize header from bytes
@@ -265,33 +241,11 @@ struct FrameHeader {
         let contentRectWidth = readFloat32()
         let contentRectHeight = readFloat32()
 
-        // Tile fields
-        let tileGridColumns = read(UInt16.self)
-        let tileGridRows = read(UInt16.self)
-        let tileColumn = read(UInt16.self)
-        let tileRow = read(UInt16.self)
-        let tileX = read(UInt16.self)
-        let tileY = read(UInt16.self)
-        let tileWidth = read(UInt16.self)
-        let tileHeight = read(UInt16.self)
-
         // Dimension token
         let dimensionToken = read(UInt16.self)
 
         // Epoch
         let epoch = read(UInt16.self)
-
-        // Build tile info if this is a tile packet
-        let tileInfo: TileInfo? = flags.contains(.tile) ? TileInfo(
-            gridColumns: tileGridColumns,
-            gridRows: tileGridRows,
-            column: tileColumn,
-            row: tileRow,
-            x: tileX,
-            y: tileY,
-            width: tileWidth,
-            height: tileHeight
-        ) : nil
 
         return FrameHeader(
             flags: flags,
@@ -309,7 +263,6 @@ struct FrameHeader {
                 width: CGFloat(contentRectWidth),
                 height: CGFloat(contentRectHeight)
             ),
-            tileInfo: tileInfo,
             dimensionToken: dimensionToken,
             epoch: epoch
         )
@@ -334,13 +287,6 @@ struct FrameFlags: OptionSet, Sendable {
 
     /// High priority packet (for QoS)
     static let priority = FrameFlags(rawValue: 1 << 4)
-
-    /// This is a tile packet (JPEG-encoded partial update)
-    /// When set, the tile fields in the header contain valid data
-    static let tile = FrameFlags(rawValue: 1 << 5)
-
-    /// This is the last tile in a tile update batch
-    static let lastTile = FrameFlags(rawValue: 1 << 6)
 
     /// This is a login/lock screen display stream (not a window stream)
     /// Used when host is locked and streaming the virtual display for remote unlock
@@ -367,8 +313,15 @@ enum CRC32 {
     }()
 
     static func calculate(_ data: Data) -> UInt32 {
+        data.withUnsafeBytes { buffer in
+            calculate(buffer)
+        }
+    }
+
+    static func calculate(_ buffer: UnsafeRawBufferPointer) -> UInt32 {
         var crc: UInt32 = 0xFFFFFFFF
-        for byte in data {
+        let bytes = buffer.bindMemory(to: UInt8.self)
+        for byte in bytes {
             let index = Int((crc ^ UInt32(byte)) & 0xFF)
             crc = (crc >> 8) ^ table[index]
         }

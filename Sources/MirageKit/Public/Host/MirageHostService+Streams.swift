@@ -180,10 +180,13 @@ extension MirageHostService {
                     windowWrapper: windowWrapper,
                     applicationWrapper: applicationWrapper,
                     clientDisplayResolution: displayResolution,
-                    onEncodedFrame: { [weak self] packetData, header in
-                        guard let self else { return }
+                    onEncodedFrame: { [weak self] packetData, _, releasePacket in
+                        guard let self else {
+                            releasePacket()
+                            return
+                        }
                         Task { @MainActor in
-                            self.sendVideoPacketForStream(streamID, data: packetData)
+                            self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                         }
                     },
                     onContentBoundsChanged: { [weak self] bounds in
@@ -229,10 +232,13 @@ extension MirageHostService {
                     windowWrapper: windowWrapper,
                     applicationWrapper: applicationWrapper,
                     displayWrapper: displayWrapper
-                ) { [weak self] packetData, header in
-                    guard let self else { return }
+                ) { [weak self] packetData, _, releasePacket in
+                    guard let self else {
+                        releasePacket()
+                        return
+                    }
                     Task { @MainActor in
-                        self.sendVideoPacketForStream(streamID, data: packetData)
+                        self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                     }
                 }
             }

@@ -128,11 +128,8 @@ extension MirageClientService {
                             return
                         }
 
-                        let payload = Data(data.dropFirst(MirageHeaderSize))
-
-                        Task {
-                            await reassembler.processPacket(payload, header: header)
-                        }
+                        let payload = data.dropFirst(MirageHeaderSize)
+                        reassembler.processPacket(payload, header: header)
                     }
                 }
 

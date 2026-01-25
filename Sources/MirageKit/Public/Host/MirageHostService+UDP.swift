@@ -106,11 +106,18 @@ extension MirageHostService {
     }
 
     /// Send video packet for a specific stream.
-    func sendVideoPacketForStream(_ streamID: StreamID, data: Data) {
+    func sendVideoPacketForStream(_ streamID: StreamID, data: Data, onComplete: (@Sendable () -> Void)? = nil) {
         guard let connection = udpConnectionsByStream[streamID] else {
+            onComplete?()
             return
         }
-        connection.send(content: data, completion: .idempotent)
+        if let onComplete {
+            connection.send(content: data, completion: .contentProcessed { _ in
+                onComplete()
+            })
+        } else {
+            connection.send(content: data, completion: .idempotent)
+        }
     }
 }
 #endif

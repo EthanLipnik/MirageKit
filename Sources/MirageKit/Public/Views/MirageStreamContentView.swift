@@ -70,6 +70,12 @@ public struct MirageStreamContentView: View {
                 onDrawableMetricsChanged: { metrics in
                     handleDrawableMetricsChanged(metrics)
                 },
+                onRefreshRateOverrideChange: { override in
+                    clientService.updateStreamRefreshRateOverride(
+                        streamID: session.streamID,
+                        maxRefreshRate: override
+                    )
+                },
                 cursorStore: clientService.cursorStore,
                 onBecomeActive: {
                     handleForegroundRecovery()

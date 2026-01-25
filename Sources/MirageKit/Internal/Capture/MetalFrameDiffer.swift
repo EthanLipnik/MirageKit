@@ -13,7 +13,7 @@ import CoreVideo
 
 /// Metal-based frame differencing to work around ScreenCaptureKit's broken dirty rect reporting
 /// on virtual displays. SCK reports 100% dirty for all frames on virtual displays, preventing
-/// tile encoding optimization. This class accurately detects changed regions without blocking.
+/// accurate dirty-region heuristics. This class detects changed regions without blocking.
 ///
 /// Key design:
 /// 1. Uses pipelined async GPU operations - never blocks on GPU completion
@@ -157,13 +157,13 @@ final class MetalFrameDiffer: @unchecked Sendable {
     /// This keeps dirty percentage meaningful - small changes don't inflate to 50%+
     /// Block count between 128-256 regardless of resolution
     private static func optimalBlockSize(for width: Int, height: Int) -> Int {
-        // Target ~200 tiles total (between 128 and 256)
-        let targetTiles = 200
+        // Target ~200 blocks total (between 128 and 256)
+        let targetBlocks = 200
 
-        // Calculate block size to achieve target tile count
+        // Calculate block size to achieve target block count
         let area = width * height
-        let tileArea = area / targetTiles
-        let blockSize = Int(sqrt(Double(tileArea)))
+        let blockArea = area / targetBlocks
+        let blockSize = Int(sqrt(Double(blockArea)))
 
         // Round to multiple of 32 for GPU efficiency, clamp to reasonable range
         let rounded = ((blockSize + 16) / 32) * 32

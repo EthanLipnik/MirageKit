@@ -36,7 +36,7 @@ struct SelectAppMessage: Codable {
     /// Client's display dimensions
     let displayWidth: Int?
     let displayHeight: Int?
-    /// Client's display maximum refresh rate in Hz (60 or 120)
+    /// Client refresh rate override in Hz (60 or 120)
     /// Used with P2P detection to enable 120fps streaming on capable displays
     let maxRefreshRate: Int
     /// Client-requested keyframe interval in frames

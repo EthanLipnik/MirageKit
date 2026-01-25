@@ -46,6 +46,7 @@ enum ControlMessageType: UInt8, Codable {
     case contentBoundsUpdate = 0x60
     case displayResolutionChange = 0x61
     case streamScaleChange = 0x62
+    case streamRefreshRateChange = 0x63
 
     // Session state and unlock (for headless Mac support)
     case sessionStateUpdate = 0x70

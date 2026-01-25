@@ -95,6 +95,63 @@ extension MirageHostService {
         }
     }
 
+    func handleStreamRefreshRateChange(
+        streamID: StreamID,
+        maxRefreshRate: Int,
+        forceDisplayRefresh: Bool
+    ) async {
+        let targetFrameRate = maxRefreshRate >= 120 ? 120 : 60
+
+        if streamID == desktopStreamID, let desktopContext = desktopStreamContext {
+            let currentRate = await desktopContext.getTargetFrameRate()
+            guard currentRate != targetFrameRate || forceDisplayRefresh else { return }
+
+            do {
+                try await desktopContext.updateFrameRate(targetFrameRate)
+                if forceDisplayRefresh {
+                    let encoded = await desktopContext.getEncodedDimensions()
+                    let resolution = CGSize(width: encoded.width, height: encoded.height)
+                    await handleDisplayResolutionChange(streamID: streamID, newResolution: resolution)
+                }
+                let appliedRate = await desktopContext.getTargetFrameRate()
+                if appliedRate == targetFrameRate {
+                    MirageLogger.host("Desktop stream refresh override applied: \(targetFrameRate)fps")
+                } else {
+                    MirageLogger.host("Desktop stream refresh override pending: requested \(targetFrameRate)fps, applied \(appliedRate)fps")
+                }
+            } catch {
+                MirageLogger.error(.host, "Failed to update desktop stream refresh rate: \(error)")
+            }
+            return
+        }
+
+        guard let context = streamsByID[streamID] else {
+            MirageLogger.debug(.host, "No stream found for refresh rate change: \(streamID)")
+            return
+        }
+
+        let currentRate = await context.getTargetFrameRate()
+        guard currentRate != targetFrameRate || forceDisplayRefresh else { return }
+
+        do {
+            try await context.updateFrameRate(targetFrameRate)
+            if forceDisplayRefresh, await context.isUsingVirtualDisplay() {
+                let encoded = await context.getEncodedDimensions()
+                let resolution = CGSize(width: encoded.width, height: encoded.height)
+                try await context.updateVirtualDisplayResolution(newResolution: resolution)
+                await sendStreamScaleUpdate(streamID: streamID)
+            }
+            let appliedRate = await context.getTargetFrameRate()
+            if appliedRate == targetFrameRate {
+                MirageLogger.host("Stream refresh override applied: \(targetFrameRate)fps")
+            } else {
+                MirageLogger.host("Stream refresh override pending: requested \(targetFrameRate)fps, applied \(appliedRate)fps")
+            }
+        } catch {
+            MirageLogger.error(.host, "Failed to update stream refresh rate: \(error)")
+        }
+    }
+
     func sendStreamScaleUpdate(streamID: StreamID) async {
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale update: \(streamID)")

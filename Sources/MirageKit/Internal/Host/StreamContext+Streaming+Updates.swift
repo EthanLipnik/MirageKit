@@ -15,12 +15,14 @@ import ScreenCaptureKit
 extension StreamContext {
     func updateFrameRate(_ fps: Int) async throws {
         guard isRunning, let captureEngine else { return }
-        currentFrameRate = fps
+        let clamped = max(1, fps)
+        try await captureEngine.updateFrameRate(clamped)
+        await encoder?.updateFrameRate(clamped)
+        encoderConfig = encoderConfig.withTargetFrameRate(clamped)
+        currentFrameRate = clamped
         updateKeyframeCadence()
         updateQueueLimits()
-        try await captureEngine.updateFrameRate(fps)
-        await encoder?.updateFrameRate(fps)
-        MirageLogger.stream("Stream \(streamID) frame rate updated to \(fps) fps")
+        MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps")
     }
 
     func updateDimensions(windowFrame: CGRect) async throws {

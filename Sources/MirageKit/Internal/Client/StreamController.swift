@@ -40,6 +40,7 @@ actor StreamController {
         let presentationTime: CMTime
         let isKeyframe: Bool
         let contentRect: CGRect
+        let releaseBuffer: @Sendable () -> Void
     }
 
     struct ClientFrameMetrics: Sendable {
@@ -163,10 +164,10 @@ actor StreamController {
     // MARK: - Initialization
 
     /// Create a new stream controller
-    init(streamID: StreamID) {
+    init(streamID: StreamID, maxPayloadSize: Int) {
         self.streamID = streamID
         self.decoder = HEVCDecoder()
-        self.reassembler = FrameReassembler(streamID: streamID)
+        self.reassembler = FrameReassembler(streamID: streamID, maxPayloadSize: maxPayloadSize)
     }
 
     /// Start the controller - sets up decoder and reassembler callbacks
@@ -175,7 +176,7 @@ actor StreamController {
         await decoder.setErrorThresholdHandler { [weak self] in
             guard let self else { return }
             Task {
-                await self.reassembler.enterKeyframeOnlyMode()
+                self.reassembler.enterKeyframeOnlyMode()
                 await self.onKeyframeNeeded?()
             }
         }
@@ -185,7 +186,7 @@ actor StreamController {
         await decoder.setDimensionChangeHandler { [weak self] in
             guard let self else { return }
             Task {
-                await self.reassembler.reset()
+                self.reassembler.reset()
                 MirageLogger.client("Reassembler reset due to dimension change for stream \(capturedStreamID)")
             }
         }
@@ -211,6 +212,7 @@ actor StreamController {
                 texture: texture,
                 for: capturedStreamID
             )
+            MirageRenderScheduler.shared.signalFrame(for: capturedStreamID)
 
             // Mark that we've received a frame and notify delegate
             Task { [weak self] in
@@ -235,7 +237,8 @@ actor StreamController {
         let capturedDecoder = decoder
         frameProcessingTask = Task { [weak self] in
             for await frame in stream {
-                guard self != nil else { break }
+                defer { frame.releaseBuffer() }
+                guard self != nil else { continue }
                 do {
                     try await capturedDecoder.decodeFrame(
                         frame.data,
@@ -253,25 +256,21 @@ actor StreamController {
         let recordReceivedFrame: @Sendable () -> Void = { [weak self] in
             Task { await self?.recordReceivedFrame() }
         }
-        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect) -> Void = { _, frameData, isKeyframe, timestamp, contentRect in
-            // CRITICAL: Force copy data BEFORE yielding to stream
-            // Swift's Data uses copy-on-write, so we must ensure a real copy exists
-            // that survives until the frame is processed. The original frameData from the
-            // reassembler may be deallocated by ARC before processing completes.
-            let copiedData = frameData.withUnsafeBytes { Data($0) }
+        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void = { _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
             let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
             recordReceivedFrame()
 
             // Yield to stream instead of creating a new Task
             // AsyncStream maintains FIFO order, ensuring frames are decoded sequentially
             continuation.yield(FrameData(
-                data: copiedData,
+                data: frameData,
                 presentationTime: presentationTime,
                 isKeyframe: isKeyframe,
-                contentRect: contentRect
+                contentRect: contentRect,
+                releaseBuffer: releaseBuffer
             ))
         }
-        await reassembler.setFrameHandler(reassemblerHandler)
+        reassembler.setFrameHandler(reassemblerHandler)
     }
 
     func stopFrameProcessingPipeline() {
@@ -319,7 +318,7 @@ actor StreamController {
         lastMetricsDispatchTime = now
         let decodedFPS = currentFPS
         let receivedFPS = currentReceiveFPS
-        let droppedFrames = await reassembler.getDroppedFrameCount()
+        let droppedFrames = reassembler.getDroppedFrameCount()
         logMetricsIfNeeded(droppedFrames: droppedFrames)
         let metrics = ClientFrameMetrics(
             decodedFPS: decodedFPS,

@@ -18,7 +18,7 @@ extension StreamContext {
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader) -> Void
+        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
     ) async throws {
         guard !isRunning else { return }
         isRunning = true
@@ -124,7 +124,7 @@ extension StreamContext {
         displayWrapper: SCDisplayWrapper,
         resolution: CGSize? = nil,
         showsCursor: Bool = true,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader) -> Void
+        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
     ) async throws {
         guard !isRunning else { return }
         isRunning = true
@@ -226,7 +226,7 @@ extension StreamContext {
     func startDesktopDisplay(
         displayWrapper: SCDisplayWrapper,
         resolution: CGSize? = nil,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader) -> Void
+        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
     ) async throws {
         guard !isRunning else { return }
         isRunning = true

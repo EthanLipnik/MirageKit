@@ -19,6 +19,9 @@ public struct MirageStreamViewRepresentable: UIViewRepresentable {
     /// Callback when drawable metrics change - reports actual pixel dimensions and scale
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
 
+    /// Callback when the view decides on a refresh rate override (60 or 120).
+    public var onRefreshRateOverrideChange: ((Int) -> Void)?
+
     /// Cursor store for pointer updates (decoupled from SwiftUI observation).
     public var cursorStore: MirageClientCursorStore?
 
@@ -33,6 +36,7 @@ public struct MirageStreamViewRepresentable: UIViewRepresentable {
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
+        onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         onBecomeActive: (() -> Void)? = nil,
         dockSnapEnabled: Bool = false
@@ -40,6 +44,7 @@ public struct MirageStreamViewRepresentable: UIViewRepresentable {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
+        self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.onBecomeActive = onBecomeActive
         self.dockSnapEnabled = dockSnapEnabled
@@ -57,6 +62,7 @@ public struct MirageStreamViewRepresentable: UIViewRepresentable {
         let view = InputCapturingView(frame: .zero)
         view.onInputEvent = context.coordinator.handleInputEvent
         view.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
+        view.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         view.onBecomeActive = context.coordinator.handleBecomeActive
         view.dockSnapEnabled = dockSnapEnabled
         view.cursorStore = cursorStore
@@ -78,6 +84,7 @@ public struct MirageStreamViewRepresentable: UIViewRepresentable {
         uiView.dockSnapEnabled = dockSnapEnabled
         uiView.cursorStore = cursorStore
         uiView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
+        uiView.onRefreshRateOverrideChange = onRefreshRateOverrideChange
     }
 }
 #endif

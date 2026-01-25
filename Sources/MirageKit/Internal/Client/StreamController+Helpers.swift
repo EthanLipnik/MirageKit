@@ -58,8 +58,8 @@ extension StreamController {
             }
             guard isInputBlocked && !Task.isCancelled else { break }
             let now = CFAbsoluteTimeGetCurrent()
-            guard let awaitingDuration = await reassembler.awaitingKeyframeDuration(now: now) else { continue }
-            let timeout = await reassembler.keyframeTimeoutSeconds()
+            guard let awaitingDuration = reassembler.awaitingKeyframeDuration(now: now) else { continue }
+            let timeout = reassembler.keyframeTimeoutSeconds()
             guard awaitingDuration >= timeout else { continue }
             if lastRecoveryRequestTime > 0, now - lastRecoveryRequestTime < timeout {
                 continue

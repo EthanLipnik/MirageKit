@@ -7,6 +7,7 @@
 
 #if os(iOS) || os(visionOS)
 import MetalKit
+import QuartzCore
 import UIKit
 
 /// Metal-backed view for displaying streamed content on iOS/visionOS
@@ -20,9 +21,17 @@ public class MirageMetalView: MTKView {
     private var renderer: MetalRenderer?
     private let renderState = MirageMetalRenderState()
     private let preferencesObserver = MirageUserDefaultsObserver()
+    private lazy var refreshRateMonitor = MirageRefreshRateMonitor(view: self)
 
     /// Callback when drawable metrics change - reports pixel size and scale factor
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
+
+    /// Callback when the view decides on a refresh rate override (60 or 120).
+    public var onRefreshRateOverrideChange: ((Int) -> Void)? {
+        didSet {
+            refreshRateMonitor.onOverrideChange = onRefreshRateOverrideChange
+        }
+    }
 
     /// Last reported drawable size to avoid redundant callbacks
     private var lastReportedDrawableSize: CGSize = .zero
@@ -33,18 +42,20 @@ public class MirageMetalView: MTKView {
     public var streamID: StreamID? {
         didSet {
             renderState.reset()
+            let previousID = registeredStreamID
+            if let previousID, previousID != streamID {
+                MirageRenderScheduler.shared.unregister(streamID: previousID)
+            }
+            registeredStreamID = streamID
+            if let streamID {
+                MirageRenderScheduler.shared.register(view: self, for: streamID)
+                MirageRenderScheduler.shared.signalFrame(for: streamID)
+            }
         }
     }
 
-    /// Custom display link so drawing continues in UITrackingRunLoopMode.
-    private var displayLink: CADisplayLink?
-    /// Optional per-frame callback for auxiliary updates (cursor refresh, etc.).
-    public var onFrameTick: (() -> Void)?
-    private var maxFramesPerSecondOverride: Int = 120 {
-        didSet {
-            updateDisplayLinkFrameRate()
-        }
-    }
+    private var registeredStreamID: StreamID?
+    private var renderingSuspended = false
 
     public var temporalDitheringEnabled: Bool = true {
         didSet {
@@ -53,10 +64,11 @@ public class MirageMetalView: MTKView {
     }
 
     private var effectiveScale: CGFloat {
-        if let screenScale = window?.screen.nativeScale {
-            return screenScale
+        let traitScale = traitCollection.displayScale
+        if traitScale > 0 {
+            return traitScale
         }
-        // Default to 2.0 (Retina) if we can't determine the screen
+        // Default to 2.0 (Retina) if we can't determine the scale
         return 2.0
     }
 
@@ -104,63 +116,37 @@ public class MirageMetalView: MTKView {
         startObservingPreferences()
     }
 
-    public override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if let window {
-            updateDisplayLinkFrameRate()
-            startDisplayLink()
+    public override func didMoveToSuperview() {
+        super.didMoveToSuperview()
+        if superview != nil {
+            refreshRateMonitor.start()
+            resumeRendering()
+            if let streamID {
+                MirageRenderScheduler.shared.signalFrame(for: streamID)
+            }
         } else {
-            stopDisplayLink()
+            refreshRateMonitor.stop()
+            suspendRendering()
         }
     }
 
     deinit {
-        stopDisplayLink()
+        if let registeredStreamID {
+            MirageRenderScheduler.shared.unregister(streamID: registeredStreamID)
+        }
         stopObservingPreferences()
     }
 
-    private func startDisplayLink() {
-        guard displayLink == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(displayLinkFired))
-        link.preferredFramesPerSecond = preferredFramesPerSecond
-        link.add(to: .main, forMode: .common)
-        displayLink = link
+    public func suspendRendering() {
+        renderingSuspended = true
     }
 
-    private func stopDisplayLink() {
-        displayLink?.invalidate()
-        displayLink = nil
-    }
-
-    /// Restart the display link if needed after returning from background.
-    /// Called when app becomes active to ensure rendering resumes.
-    public func restartDisplayLinkIfNeeded() {
-        guard window != nil, displayLink == nil else { return }
+    public func resumeRendering() {
+        renderingSuspended = false
         renderState.markNeedsRedraw()
-        startDisplayLink()
-    }
-
-    /// Pause the display link when app enters background to avoid Metal GPU permission errors
-    /// iOS doesn't allow GPU work from background state - attempting to render causes
-    /// "Insufficient Permission to submit GPU work from background" errors
-    public func pauseDisplayLink() {
-        stopDisplayLink()
-    }
-
-    @objc private func displayLinkFired(_ link: CADisplayLink) {
-        onFrameTick?()
-        draw()
-    }
-
-    private func resolvedPreferredFramesPerSecond() -> Int {
-        let screenMax = window?.screen.maximumFramesPerSecond ?? maxFramesPerSecondOverride
-        return min(maxFramesPerSecondOverride, screenMax)
-    }
-
-    private func updateDisplayLinkFrameRate() {
-        let fps = max(1, resolvedPreferredFramesPerSecond())
-        preferredFramesPerSecond = fps
-        displayLink?.preferredFramesPerSecond = fps
+        if let streamID {
+            MirageRenderScheduler.shared.signalFrame(for: streamID)
+        }
     }
 
     public override func layoutSubviews() {
@@ -187,6 +173,9 @@ public class MirageMetalView: MTKView {
         }
 
         reportDrawableMetricsIfChanged()
+        if let streamID {
+            MirageRenderScheduler.shared.signalFrame(for: streamID)
+        }
     }
 
     /// Report actual drawable pixel size to ensure host captures at correct resolution
@@ -240,6 +229,7 @@ public class MirageMetalView: MTKView {
         // Pull-based frame update: read directly from global cache using stream ID
         // This completely bypasses Swift actor machinery that blocks during iOS gesture tracking.
         // CRITICAL: No closures, no weak references to @MainActor objects, just direct cache access.
+        guard !renderingSuspended else { return }
         guard renderState.updateFrameIfNeeded(streamID: streamID, renderer: renderer) else { return }
 
         guard let drawable = currentDrawable,
@@ -250,9 +240,17 @@ public class MirageMetalView: MTKView {
 
     private func applyRenderPreferences() {
         temporalDitheringEnabled = MirageRenderPreferences.temporalDitheringEnabled()
-
         let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
-        maxFramesPerSecondOverride = proMotionEnabled ? 120 : 60
+        refreshRateMonitor.isProMotionEnabled = proMotionEnabled
+        updateFrameRatePreference(proMotionEnabled: proMotionEnabled)
+        if let streamID {
+            renderState.markNeedsRedraw()
+            MirageRenderScheduler.shared.signalFrame(for: streamID)
+        }
+    }
+
+    private func updateFrameRatePreference(proMotionEnabled: Bool) {
+        preferredFramesPerSecond = proMotionEnabled ? 120 : 60
     }
 
     private func startObservingPreferences() {

@@ -64,8 +64,7 @@ struct StartStreamMessage: Codable {
     var streamScale: CGFloat? = nil
     /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
     var adaptiveScaleEnabled: Bool? = nil
-    /// Client's display maximum refresh rate in Hz (60 or 120)
-    /// Mirrors the client-side ProMotion toggle (60 when disabled).
+    /// Client refresh rate override in Hz (60 or 120).
     var maxRefreshRate: Int = 60
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
@@ -133,4 +132,5 @@ struct StreamMetricsMessage: Codable, Sendable {
     let idleEncodedFPS: Double
     let droppedFrames: UInt64
     let activeQuality: Float
+    let targetFrameRate: Int
 }

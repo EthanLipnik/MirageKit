@@ -257,7 +257,8 @@ extension StreamContext {
                 encodedFPS: encodedFPS,
                 idleEncodedFPS: idleEncodedFPS,
                 droppedFrames: droppedFrameCount,
-                activeQuality: activeQuality
+                activeQuality: activeQuality,
+                targetFrameRate: currentFrameRate
             )
             metricsUpdateHandler(message)
         }

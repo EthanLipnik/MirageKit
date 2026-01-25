@@ -117,7 +117,8 @@ extension MirageClientService {
             return
         }
 
-        let controller = StreamController(streamID: streamID)
+        let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
+        let controller = StreamController(streamID: streamID, maxPayloadSize: payloadSize)
         controllersByStream[streamID] = controller
 
         let capturedStreamID = streamID
@@ -195,6 +196,7 @@ extension MirageClientService {
 
         removeActiveStreamID(streamID)
         registeredStreamIDs.remove(streamID)
+        clearStreamRefreshRateOverride(streamID: streamID)
 
         if let controller = controllersByStream[streamID] {
             await controller.stop()

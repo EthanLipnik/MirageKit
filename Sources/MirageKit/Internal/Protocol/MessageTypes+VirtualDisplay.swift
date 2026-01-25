@@ -56,3 +56,14 @@ struct StreamScaleChangeMessage: Codable {
     /// Optional adaptive scale toggle
     var adaptiveScaleEnabled: Bool? = nil
 }
+
+/// Stream refresh rate override sent from client to host
+/// Controls whether the host targets 60 Hz or 120 Hz for this stream
+struct StreamRefreshRateChangeMessage: Codable {
+    /// The stream to update
+    let streamID: StreamID
+    /// Maximum refresh rate in Hz (60 or 120)
+    let maxRefreshRate: Int
+    /// Force a display refresh reconfiguration on the host (fallback path)
+    var forceDisplayRefresh: Bool? = nil
+}

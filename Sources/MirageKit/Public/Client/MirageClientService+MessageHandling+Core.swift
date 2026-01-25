@@ -63,14 +63,16 @@ extension MirageClientService {
             let streamID = started.streamID
             MirageLogger.client("Stream started: \(streamID) for window \(started.windowID)")
 
+            refreshRateOverridesByStream[streamID] = getScreenMaxRefreshRate()
+
             let dimensionToken = started.dimensionToken
 
             Task { [weak self] in
                 if let controller = self?.controllersByStream[streamID] {
                     let reassembler = await controller.getReassembler()
-                    await reassembler.reset()
+                    reassembler.reset()
                     if let token = dimensionToken {
-                        await reassembler.updateExpectedDimensionToken(token)
+                        reassembler.updateExpectedDimensionToken(token)
                     }
                 }
             }
@@ -99,7 +101,7 @@ extension MirageClientService {
 
                         if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
                             let reassembler = await controller.getReassembler()
-                            await reassembler.updateExpectedDimensionToken(token)
+                            reassembler.updateExpectedDimensionToken(token)
                         }
 
                         if self.udpConnection == nil {
@@ -126,6 +128,7 @@ extension MirageClientService {
 
             removeActiveStreamID(streamID)
             registeredStreamIDs.remove(streamID)
+            clearStreamRefreshRateOverride(streamID: streamID)
 
             Task { [weak self] in
                 guard let self else { return }
@@ -145,8 +148,41 @@ extension MirageClientService {
                 encodedFPS: metrics.encodedFPS,
                 idleEncodedFPS: metrics.idleEncodedFPS,
                 droppedFrames: metrics.droppedFrames,
-                activeQuality: Double(metrics.activeQuality)
+                activeQuality: Double(metrics.activeQuality),
+                targetFrameRate: metrics.targetFrameRate
             )
+
+            if let requested = refreshRateOverridesByStream[metrics.streamID] {
+                if requested != metrics.targetFrameRate {
+                    let updatedCount = (refreshRateMismatchCounts[metrics.streamID] ?? 0) + 1
+                    refreshRateMismatchCounts[metrics.streamID] = updatedCount
+                    if updatedCount == 2 {
+                        MirageLogger.client(
+                            "Refresh override pending for stream \(metrics.streamID): requested \(requested)Hz, host \(metrics.targetFrameRate)Hz"
+                        )
+                    }
+                    let fallbackThreshold = 4
+                    if updatedCount >= fallbackThreshold {
+                        let lastFallback = refreshRateFallbackTargets[metrics.streamID]
+                        if lastFallback != requested {
+                            refreshRateFallbackTargets[metrics.streamID] = requested
+                            Task { [weak self] in
+                                try? await self?.sendStreamRefreshRateChange(
+                                    streamID: metrics.streamID,
+                                    maxRefreshRate: requested,
+                                    forceDisplayRefresh: true
+                                )
+                            }
+                            MirageLogger.client(
+                                "Refresh override fallback requested for stream \(metrics.streamID): \(requested)Hz"
+                            )
+                        }
+                    }
+                } else {
+                    refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)
+                    refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)
+                }
+            }
         }
     }
 
@@ -169,11 +205,16 @@ extension MirageClientService {
     func handleCursorUpdate(_ message: ControlMessage) {
         if let update = try? message.decode(CursorUpdateMessage.self) {
             MirageLogger.client("Cursor update received: \(update.cursorType) (visible: \(update.isVisible))")
-            cursorStore.updateCursor(
+            let didChange = cursorStore.updateCursor(
                 streamID: update.streamID,
                 cursorType: update.cursorType,
                 isVisible: update.isVisible
             )
+            #if os(iOS) || os(visionOS)
+            if didChange {
+                MirageCursorUpdateRouter.shared.notify(streamID: update.streamID)
+            }
+            #endif
             onCursorUpdate?(update.streamID, update.cursorType, update.isVisible)
         }
     }
@@ -238,7 +279,7 @@ extension MirageClientService {
 
                 if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
                     let reassembler = await controller.getReassembler()
-                    await reassembler.updateExpectedDimensionToken(token)
+                    reassembler.updateExpectedDimensionToken(token)
                 }
 
                 if !self.registeredStreamIDs.contains(streamID) {

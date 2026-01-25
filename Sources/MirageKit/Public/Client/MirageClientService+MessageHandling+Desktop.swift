@@ -19,6 +19,7 @@ extension MirageClientService {
             let streamID = started.streamID
             desktopStreamID = streamID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
+            refreshRateOverridesByStream[streamID] = getScreenMaxRefreshRate()
 
             let dimensionToken = started.dimensionToken
 
@@ -28,7 +29,7 @@ extension MirageClientService {
 
                 if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
                     let reassembler = await controller.getReassembler()
-                    await reassembler.updateExpectedDimensionToken(token)
+                    reassembler.updateExpectedDimensionToken(token)
                 }
 
                 if !self.registeredStreamIDs.contains(streamID) {
@@ -66,6 +67,7 @@ extension MirageClientService {
             desktopStreamResolution = nil
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
+            clearStreamRefreshRateOverride(streamID: streamID)
 
             removeActiveStreamID(streamID)
             registeredStreamIDs.remove(streamID)

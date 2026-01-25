@@ -25,6 +25,15 @@ public class MirageMetalView: MTKView {
     var streamID: StreamID? {
         didSet {
             renderState.reset()
+            let previousID = registeredStreamID
+            if let previousID, previousID != streamID {
+                MirageRenderScheduler.shared.unregister(streamID: previousID)
+            }
+            registeredStreamID = streamID
+            if let streamID {
+                MirageRenderScheduler.shared.register(view: self, for: streamID)
+                MirageRenderScheduler.shared.signalFrame(for: streamID)
+            }
         }
     }
 
@@ -33,6 +42,8 @@ public class MirageMetalView: MTKView {
 
     /// Last reported drawable size to avoid redundant callbacks
     private var lastReportedDrawableSize: CGSize = .zero
+    private var registeredStreamID: StreamID?
+    private var renderingSuspended = false
 
     public override init(frame: CGRect, device: MTLDevice?) {
         super.init(frame: frame, device: device ?? MTLCreateSystemDefaultDevice())
@@ -54,11 +65,8 @@ public class MirageMetalView: MTKView {
         }
 
         // Configure for low latency
-        isPaused = false
+        isPaused = true
         enableSetNeedsDisplay = false
-
-        // Adapt to actual screen refresh rate (120Hz for ProMotion, 60Hz for standard)
-        preferredFramesPerSecond = NSScreen.main?.maximumFramesPerSecond ?? 120
 
         // P3 color space with 10-bit color for wide color gamut
         colorspace = CGColorSpace(name: CGColorSpace.displayP3)
@@ -71,9 +79,15 @@ public class MirageMetalView: MTKView {
     public override func layout() {
         super.layout()
         reportDrawableMetricsIfChanged()
+        if let streamID {
+            MirageRenderScheduler.shared.signalFrame(for: streamID)
+        }
     }
 
     deinit {
+        if let registeredStreamID {
+            MirageRenderScheduler.shared.unregister(streamID: registeredStreamID)
+        }
         stopObservingPreferences()
     }
 
@@ -99,6 +113,7 @@ public class MirageMetalView: MTKView {
 
     public override func draw(_ rect: CGRect) {
         // Pull-based frame update to avoid MainActor stalls during menu tracking/dragging.
+        guard !renderingSuspended else { return }
         guard renderState.updateFrameIfNeeded(streamID: streamID, renderer: renderer) else { return }
 
         guard let drawable = currentDrawable,
@@ -109,6 +124,22 @@ public class MirageMetalView: MTKView {
 
     private func applyRenderPreferences() {
         temporalDitheringEnabled = MirageRenderPreferences.temporalDitheringEnabled()
+        if let streamID {
+            renderState.markNeedsRedraw()
+            MirageRenderScheduler.shared.signalFrame(for: streamID)
+        }
+    }
+
+    func suspendRendering() {
+        renderingSuspended = true
+    }
+
+    func resumeRendering() {
+        renderingSuspended = false
+        renderState.markNeedsRedraw()
+        if let streamID {
+            MirageRenderScheduler.shared.signalFrame(for: streamID)
+        }
     }
 
     private func startObservingPreferences() {

@@ -71,8 +71,8 @@ extension StreamController {
         await clearResizeState()
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
-        await reassembler.reset()
-        await reassembler.enterKeyframeOnlyMode()
+        reassembler.reset()
+        reassembler.enterKeyframeOnlyMode()
         await startFrameProcessingPipeline()
         Task { @MainActor [weak self] in
             await self?.onKeyframeNeeded?()

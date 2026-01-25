@@ -47,7 +47,7 @@ struct StartDesktopStreamMessage: Codable {
     let adaptiveScaleEnabled: Bool?
     /// UDP port the client is listening on for video data
     let dataPort: UInt16?
-    /// Client's display maximum refresh rate in Hz (60 or 120)
+    /// Client refresh rate override in Hz (60 or 120)
     /// Used with P2P detection to enable 120fps streaming on capable displays
     let maxRefreshRate: Int
     // TODO: HDR support - requires proper virtual display EDR configuration

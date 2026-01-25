@@ -98,10 +98,13 @@ final class CaptureFrameCopier: @unchecked Sendable {
         }
 
         let context = CopyContext(source: source, destination: destination)
+        if scheduleMetalCopy(source: context.source, destination: context.destination, completion: completion) {
+            return .scheduled
+        }
         copyQueue.async { [weak self] in
             guard let self else { return }
             autoreleasepool {
-                let didCopy = self.copyPixelBuffer(source: context.source, destination: context.destination)
+                let didCopy = self.copyPixelBufferCPU(source: context.source, destination: context.destination)
                 self.releaseCopySlot()
                 if didCopy {
                     completion(.copied(context.destination))
@@ -160,11 +163,66 @@ final class CaptureFrameCopier: @unchecked Sendable {
         inFlightLock.unlock()
     }
 
+    private func scheduleMetalCopy(
+        source: CVPixelBuffer,
+        destination: CVPixelBuffer,
+        completion: @escaping @Sendable (CopyResult) -> Void
+    ) -> Bool {
+        guard ensureMetal() else { return false }
+        guard let format = metalFormat(for: CVPixelBufferGetPixelFormatType(source)) else { return false }
+        guard let commandQueue = metalQueue, let textureCache = metalTextureCache else { return false }
 
-    private func copyPixelBuffer(source: CVPixelBuffer, destination: CVPixelBuffer) -> Bool {
-        if copyPixelBufferWithMetal(source: source, destination: destination) {
-            return true
+        let planeCount = CVPixelBufferGetPlaneCount(source)
+        let blits: [(source: MTLTexture, destination: MTLTexture)]
+
+        switch format {
+        case .single(let pixelFormat):
+            guard planeCount == 0 else { return false }
+            guard let srcTexture = makeTexture(from: source, pixelFormat: pixelFormat, planeIndex: 0, cache: textureCache),
+                  let dstTexture = makeTexture(from: destination, pixelFormat: pixelFormat, planeIndex: 0, cache: textureCache) else {
+                return false
+            }
+            blits = [(source: srcTexture, destination: dstTexture)]
+
+        case .biPlanar(let lumaFormat, let chromaFormat):
+            guard planeCount == 2 else { return false }
+            guard let srcLuma = makeTexture(from: source, pixelFormat: lumaFormat, planeIndex: 0, cache: textureCache),
+                  let dstLuma = makeTexture(from: destination, pixelFormat: lumaFormat, planeIndex: 0, cache: textureCache),
+                  let srcChroma = makeTexture(from: source, pixelFormat: chromaFormat, planeIndex: 1, cache: textureCache),
+                  let dstChroma = makeTexture(from: destination, pixelFormat: chromaFormat, planeIndex: 1, cache: textureCache) else {
+                return false
+            }
+            blits = [
+                (source: srcLuma, destination: dstLuma),
+                (source: srcChroma, destination: dstChroma)
+            ]
         }
+
+        guard let commandBuffer = commandQueue.makeCommandBuffer(),
+              let encoder = commandBuffer.makeBlitCommandEncoder() else {
+            return false
+        }
+
+        for blit in blits {
+            encoder.copy(from: blit.source, to: blit.destination)
+        }
+
+        encoder.endEncoding()
+
+        commandBuffer.addCompletedHandler { [weak self] buffer in
+            guard let self else { return }
+            self.releaseCopySlot()
+            if buffer.status == .completed {
+                completion(.copied(destination))
+            } else {
+                completion(.unsupported)
+            }
+        }
+        commandBuffer.commit()
+        return true
+    }
+
+    private func copyPixelBufferCPU(source: CVPixelBuffer, destination: CVPixelBuffer) -> Bool {
         let srcLock = CVPixelBufferLockBaseAddress(source, .readOnly)
         let dstLock = CVPixelBufferLockBaseAddress(destination, [])
         guard srcLock == kCVReturnSuccess, dstLock == kCVReturnSuccess else {
@@ -219,35 +277,6 @@ final class CaptureFrameCopier: @unchecked Sendable {
         }
 
         return true
-    }
-
-    private func copyPixelBufferWithMetal(source: CVPixelBuffer, destination: CVPixelBuffer) -> Bool {
-        guard ensureMetal() else { return false }
-        guard let format = metalFormat(for: CVPixelBufferGetPixelFormatType(source)) else { return false }
-        guard let commandQueue = metalQueue, let textureCache = metalTextureCache else { return false }
-
-        let planeCount = CVPixelBufferGetPlaneCount(source)
-        switch format {
-        case .single(let pixelFormat):
-            guard planeCount == 0 else { return false }
-            guard let srcTexture = makeTexture(from: source, pixelFormat: pixelFormat, planeIndex: 0, cache: textureCache),
-                  let dstTexture = makeTexture(from: destination, pixelFormat: pixelFormat, planeIndex: 0, cache: textureCache) else {
-                return false
-            }
-            return blitCopy(from: srcTexture, to: dstTexture, queue: commandQueue)
-
-        case .biPlanar(let lumaFormat, let chromaFormat):
-            guard planeCount == 2 else { return false }
-            guard let srcLuma = makeTexture(from: source, pixelFormat: lumaFormat, planeIndex: 0, cache: textureCache),
-                  let dstLuma = makeTexture(from: destination, pixelFormat: lumaFormat, planeIndex: 0, cache: textureCache),
-                  let srcChroma = makeTexture(from: source, pixelFormat: chromaFormat, planeIndex: 1, cache: textureCache),
-                  let dstChroma = makeTexture(from: destination, pixelFormat: chromaFormat, planeIndex: 1, cache: textureCache) else {
-                return false
-            }
-
-            guard blitCopy(from: srcLuma, to: dstLuma, queue: commandQueue) else { return false }
-            return blitCopy(from: srcChroma, to: dstChroma, queue: commandQueue)
-        }
     }
 
     private func ensureMetal() -> Bool {
@@ -308,17 +337,6 @@ final class CaptureFrameCopier: @unchecked Sendable {
         return CVMetalTextureGetTexture(textureRef)
     }
 
-    private func blitCopy(from source: MTLTexture, to destination: MTLTexture, queue: MTLCommandQueue) -> Bool {
-        guard let commandBuffer = queue.makeCommandBuffer(),
-              let encoder = commandBuffer.makeBlitCommandEncoder() else {
-            return false
-        }
-        encoder.copy(from: source, to: destination)
-        encoder.endEncoding()
-        commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
-        return commandBuffer.status == .completed
-    }
 }
 
 #endif

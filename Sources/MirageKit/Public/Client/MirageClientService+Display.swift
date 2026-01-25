@@ -88,6 +88,12 @@ extension MirageClientService {
         #endif
     }
 
+    public func updateMaxRefreshRateOverride(_ newValue: Int) {
+        let clamped = newValue >= 120 ? 120 : 60
+        guard maxRefreshRateOverride != clamped else { return }
+        maxRefreshRateOverride = clamped
+    }
+
     /// Send display resolution change to host (when window moves to different display).
     public func sendDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async throws {
         guard case .connected = connectionState, let connection else {
@@ -140,5 +146,54 @@ extension MirageClientService {
                 }
             })
         }
+    }
+
+    func sendStreamRefreshRateChange(
+        streamID: StreamID,
+        maxRefreshRate: Int,
+        forceDisplayRefresh: Bool = false
+    ) async throws {
+        guard case .connected = connectionState, let connection else {
+            throw MirageError.protocolError("Not connected")
+        }
+
+        let clamped = maxRefreshRate >= 120 ? 120 : 60
+        let request = StreamRefreshRateChangeMessage(
+            streamID: streamID,
+            maxRefreshRate: clamped,
+            forceDisplayRefresh: forceDisplayRefresh ? true : nil
+        )
+        let message = try ControlMessage(type: .streamRefreshRateChange, content: request)
+
+        MirageLogger.client("Sending refresh rate override for stream \(streamID): \(clamped)Hz")
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: message.serialize(), completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    func updateStreamRefreshRateOverride(streamID: StreamID, maxRefreshRate: Int) {
+        let clamped = maxRefreshRate >= 120 ? 120 : 60
+        let existing = refreshRateOverridesByStream[streamID]
+        guard existing != clamped else { return }
+        refreshRateOverridesByStream[streamID] = clamped
+        refreshRateMismatchCounts.removeValue(forKey: streamID)
+        refreshRateFallbackTargets.removeValue(forKey: streamID)
+
+        Task { [weak self] in
+            try? await self?.sendStreamRefreshRateChange(streamID: streamID, maxRefreshRate: clamped)
+        }
+    }
+
+    func clearStreamRefreshRateOverride(streamID: StreamID) {
+        refreshRateOverridesByStream.removeValue(forKey: streamID)
+        refreshRateMismatchCounts.removeValue(forKey: streamID)
+        refreshRateFallbackTargets.removeValue(forKey: streamID)
     }
 }

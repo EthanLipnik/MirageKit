@@ -116,6 +116,19 @@ extension MirageHostService {
                 MirageLogger.error(.host, "Failed to handle streamScaleChange: \(error)")
             }
 
+        case .streamRefreshRateChange:
+            do {
+                let request = try message.decode(StreamRefreshRateChangeMessage.self)
+                MirageLogger.host("Client requested refresh rate override for stream \(request.streamID): \(request.maxRefreshRate)Hz")
+                await handleStreamRefreshRateChange(
+                    streamID: request.streamID,
+                    maxRefreshRate: request.maxRefreshRate,
+                    forceDisplayRefresh: request.forceDisplayRefresh ?? false
+                )
+            } catch {
+                MirageLogger.error(.host, "Failed to handle streamRefreshRateChange: \(error)")
+            }
+
         case .stopStream:
             if let request = try? message.decode(StopStreamMessage.self) {
                 if let session = activeStreams.first(where: { $0.id == request.streamID }) {
