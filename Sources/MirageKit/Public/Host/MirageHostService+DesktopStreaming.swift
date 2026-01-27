@@ -95,6 +95,7 @@ extension MirageHostService {
         // }
 
         let selectedCaptureSource = captureSource ?? .virtualDisplay
+        desktopCaptureSource = selectedCaptureSource
 
         // Acquire virtual display at client's full requested resolution
         // The 5K cap is applied at the encoding layer, not the virtual display
@@ -125,6 +126,7 @@ extension MirageHostService {
         }
         desktopDisplayBounds = bounds
         desktopUsesVirtualDisplay = true
+        sharedVirtualDisplayGeneration = await SharedVirtualDisplayManager.shared.getDisplayGeneration()
         logDesktopStartStep("display bounds cached")
 
         // Set up display mirroring so main display mirrors virtual display
@@ -267,6 +269,7 @@ extension MirageHostService {
         desktopStreamClientContext = nil
         desktopDisplayBounds = nil
         desktopUsesVirtualDisplay = false
+        desktopCaptureSource = .virtualDisplay
         streamsByID.removeValue(forKey: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)

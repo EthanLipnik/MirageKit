@@ -38,9 +38,70 @@ extension MirageHostInputController {
         ) else { return }
 
         cgEvent.location = scrollPoint
+        cgEvent.flags = event.modifiers.cgEventFlags
+        applyScrollFields(
+            to: cgEvent,
+            deltaX: event.deltaX,
+            deltaY: event.deltaY,
+            phase: event.phase,
+            momentumPhase: event.momentumPhase,
+            isPrecise: event.isPrecise
+        )
         postEvent(cgEvent)
     }
 
+}
+
+private extension MirageHostInputController {
+    func applyScrollFields(
+        to cgEvent: CGEvent,
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        phase: MirageScrollPhase,
+        momentumPhase: MirageScrollPhase,
+        isPrecise: Bool
+    ) {
+        cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: isPrecise ? 1 : 0)
+        cgEvent.setIntegerValueField(
+            .scrollWheelEventScrollPhase,
+            value: Int64(phase.nsEventPhase.rawValue)
+        )
+        cgEvent.setIntegerValueField(
+            .scrollWheelEventMomentumPhase,
+            value: Int64(momentumPhase.nsEventPhase.rawValue)
+        )
+
+        guard isPrecise else { return }
+
+        // Preserve sub-pixel deltas for trackpad-grade precision.
+        cgEvent.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(deltaY.rounded()))
+        cgEvent.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(deltaX.rounded()))
+        cgEvent.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis1, value: fixedPoint(deltaY))
+        cgEvent.setIntegerValueField(.scrollWheelEventFixedPtDeltaAxis2, value: fixedPoint(deltaX))
+    }
+
+    func fixedPoint(_ value: CGFloat) -> Int64 {
+        Int64((value * 65_536).rounded(.towardZero))
+    }
+}
+
+private extension MirageScrollPhase {
+    var nsEventPhase: NSEvent.Phase {
+        switch self {
+        case .none:
+            return []
+        case .began:
+            return .began
+        case .changed:
+            return .changed
+        case .ended:
+            return .ended
+        case .cancelled:
+            return .cancelled
+        case .mayBegin:
+            return .mayBegin
+        }
+    }
 }
 
 #endif

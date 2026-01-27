@@ -59,6 +59,9 @@ extension WindowCaptureEngine {
         captureMode = .window
         useExplicitCaptureDimensions = true
         captureSessionConfig = CaptureSessionConfiguration(
+            windowID: WindowID(window.windowID),
+            applicationPID: application.processID,
+            displayID: display.displayID,
             window: window,
             application: application,
             display: display,
@@ -183,28 +186,30 @@ extension WindowCaptureEngine {
         MirageLogger.capture("Restarting capture (\(reason))")
 
         await stopCapture()
+        let resolvedConfig = await resolveCaptureTargetsForRestart(config: config, mode: mode)
+        captureSessionConfig = resolvedConfig
 
         do {
             switch mode {
             case .window:
-                guard let window = config.window, let application = config.application else {
+                guard let window = resolvedConfig.window, let application = resolvedConfig.application else {
                     MirageLogger.error(.capture, "Capture restart failed: missing window/application")
                     break
                 }
                 try await startCapture(
                     window: window,
                     application: application,
-                    display: config.display,
-                    knownScaleFactor: config.knownScaleFactor,
-                    outputScale: config.outputScale,
+                    display: resolvedConfig.display,
+                    knownScaleFactor: resolvedConfig.knownScaleFactor,
+                    outputScale: resolvedConfig.outputScale,
                     onFrame: onFrame,
                     onDimensionChange: dimensionChangeHandler ?? { _, _ in }
                 )
             case .display:
                 try await startDisplayCapture(
-                    display: config.display,
-                    resolution: config.resolution,
-                    showsCursor: config.showsCursor,
+                    display: resolvedConfig.display,
+                    resolution: resolvedConfig.resolution,
+                    showsCursor: resolvedConfig.showsCursor,
                     onFrame: onFrame,
                     onDimensionChange: dimensionChangeHandler ?? { _, _ in }
                 )
@@ -249,6 +254,9 @@ extension WindowCaptureEngine {
         currentHeight = max(1, Int(captureResolution.height))
         captureMode = .display
         captureSessionConfig = CaptureSessionConfiguration(
+            windowID: nil,
+            applicationPID: nil,
+            displayID: display.displayID,
             window: nil,
             application: nil,
             display: display,

@@ -48,6 +48,14 @@ extension MirageHostService {
 
             // Set up app streaming callbacks
             setupAppStreamManagerCallbacks()
+            await SharedVirtualDisplayManager.shared.setGenerationChangeHandler { [weak self] context, previousGeneration in
+                Task { @MainActor [weak self] in
+                    await self?.handleSharedDisplayGenerationChange(
+                        newContext: context,
+                        previousGeneration: previousGeneration
+                    )
+                }
+            }
         } catch {
             MirageLogger.error(.host, "Failed to start: \(error)")
             state = .error(error.localizedDescription)
@@ -73,6 +81,7 @@ extension MirageHostService {
         sessionRefreshTask?.cancel()
         sessionRefreshTask = nil
         stopLoginDisplayWatchdog()
+        await SharedVirtualDisplayManager.shared.setGenerationChangeHandler(nil)
 
         // Stop cursor monitoring
         await cursorMonitor?.stop()

@@ -29,6 +29,16 @@ extension SharedVirtualDisplayManager {
         return sharedDisplay
     }
 
+    /// Get the shared display generation.
+    func getDisplayGeneration() -> UInt64 {
+        sharedDisplay?.generation ?? 0
+    }
+
+    /// Register a handler for shared-display generation changes.
+    func setGenerationChangeHandler(_ handler: (@Sendable (ManagedDisplayContext, UInt64) -> Void)?) {
+        generationChangeHandler = handler
+    }
+
     /// Get the shared display bounds
     /// Uses the known resolution instead of CGDisplayBounds (which returns stale values for new displays)
     func getDisplayBounds() -> CGRect? {

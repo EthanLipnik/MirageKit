@@ -30,6 +30,7 @@ actor SharedVirtualDisplayManager {
         let resolution: CGSize
         let refreshRate: Double
         let colorSpace: MirageColorSpace
+        let generation: UInt64
         let createdAt: Date
 
         /// Display reference (non-Sendable, managed internally)
@@ -101,6 +102,12 @@ actor SharedVirtualDisplayManager {
 
     /// Counter for display naming
     var displayCounter: UInt32 = 0
+
+    /// Monotonic display generation incremented when the shared display instance changes.
+    var displayGeneration: UInt64 = 0
+
+    /// Handler invoked when the shared display generation changes while streams are active.
+    var generationChangeHandler: (@Sendable (ManagedDisplayContext, UInt64) -> Void)?
 
     static let preferredStreamRefreshRate: Int = 120
 

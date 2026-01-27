@@ -32,6 +32,7 @@ extension SharedVirtualDisplayManager {
         let refreshRate = resolvedRefreshRate(requestedRate)
         // Use provided resolution or fall back to default
         let targetResolution = resolution ?? CGSize(width: 2880, height: 1800)
+        let previousGeneration = sharedDisplay?.generation ?? 0
 
         // Check if this consumer already has the display
         if activeConsumers[consumer] != nil, let display = sharedDisplay {
@@ -62,6 +63,8 @@ extension SharedVirtualDisplayManager {
             MirageLogger.host("Resizing shared display from \(Int(sharedDisplay!.resolution.width))x\(Int(sharedDisplay!.resolution.height)) to \(Int(targetResolution.width))x\(Int(targetResolution.height))")
             sharedDisplay = try await recreateDisplay(newResolution: targetResolution, refreshRate: refreshRate, colorSpace: colorSpace)
         }
+
+        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
 
         guard let display = sharedDisplay else {
             throw SharedDisplayError.noActiveDisplay
@@ -98,6 +101,7 @@ extension SharedVirtualDisplayManager {
         let requestedRate = refreshRate
         let refreshRate = resolvedRefreshRate(requestedRate)
         let consumer = DisplayConsumer.stream(streamID)
+        let previousGeneration = sharedDisplay?.generation ?? 0
         guard var clientInfo = activeConsumers[consumer] else {
             throw SharedDisplayError.clientNotFound(streamID)
         }
@@ -118,6 +122,7 @@ extension SharedVirtualDisplayManager {
             if current.refreshRate != Double(refreshRate) {
                 MirageLogger.host("Client resolution change requires refresh update to \(refreshRate)Hz (requested \(requestedRate)Hz)")
                 sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate, colorSpace: clientInfo.colorSpace)
+                notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
                 return
             }
             if needsResize(currentResolution: current.resolution, targetResolution: optimalResolution) {
@@ -125,6 +130,8 @@ extension SharedVirtualDisplayManager {
                 sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate, colorSpace: clientInfo.colorSpace)
             }
         }
+
+        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
     }
 
     /// Update the display resolution for a consumer (used for desktop streaming resize)
@@ -149,6 +156,7 @@ extension SharedVirtualDisplayManager {
             MirageLogger.error(.host, "Cannot update resolution: no active display")
             return
         }
+        let previousGeneration = display.generation
 
         let requestedColorSpace = activeConsumers[consumer]?.colorSpace ?? .displayP3
         // Update stored resolution for this consumer
@@ -161,11 +169,13 @@ extension SharedVirtualDisplayManager {
         if display.colorSpace != requestedColorSpace {
             MirageLogger.host("Display color space mismatch (\(display.colorSpace.displayName) → \(requestedColorSpace.displayName)); recreating")
             sharedDisplay = try await recreateDisplay(newResolution: newResolution, refreshRate: refreshRate, colorSpace: requestedColorSpace)
+            notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
             return
         }
         if display.refreshRate != Double(refreshRate) {
             MirageLogger.host("Display refresh rate mismatch (\(display.refreshRate) → \(Double(refreshRate)))")
             sharedDisplay = try await recreateDisplay(newResolution: newResolution, refreshRate: refreshRate, colorSpace: requestedColorSpace)
+            notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
             return
         }
 
@@ -189,6 +199,7 @@ extension SharedVirtualDisplayManager {
                 resolution: newResolution,
                 refreshRate: Double(refreshRate),
                 colorSpace: display.colorSpace,
+                generation: display.generation,
                 createdAt: display.createdAt,
                 displayRef: display.displayRef  // Keep same reference
             )
@@ -202,6 +213,8 @@ extension SharedVirtualDisplayManager {
             MirageLogger.host("In-place update failed, falling back to recreate")
             sharedDisplay = try await recreateDisplay(newResolution: newResolution, refreshRate: refreshRate, colorSpace: requestedColorSpace)
         }
+
+        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
     }
 
 }

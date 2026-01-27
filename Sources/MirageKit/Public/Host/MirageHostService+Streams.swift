@@ -210,8 +210,10 @@ extension MirageHostService {
                         // window movement or capture setup - preventing race condition
                         // where the window centering timer fires before bounds are cached
                         guard let self else { return }
+                        let generation = await SharedVirtualDisplayManager.shared.getDisplayGeneration()
                         await MainActor.run {
                             self.sharedVirtualDisplayBounds = bounds
+                            self.sharedVirtualDisplayGeneration = generation
                             self.windowsUsingVirtualDisplay.insert(window.id)
                             MirageLogger.host("Cached virtual display bounds immediately: \(bounds)")
                         }
@@ -247,6 +249,7 @@ extension MirageHostService {
         } catch {
             // Capture failed (likely permission issue) - clean up and rethrow
             MirageLogger.error(.host, "Failed to start capture: \(error)")
+            await context.stop()
             streamsByID.removeValue(forKey: streamID)
             activeStreams.removeAll { $0.id == streamID }
             throw error

@@ -14,6 +14,14 @@ import CoreGraphics
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
+    func notifyGenerationChangeIfNeeded(previousGeneration: UInt64) {
+        guard previousGeneration > 0 else { return }
+        guard let display = sharedDisplay else { return }
+        guard display.generation != previousGeneration else { return }
+        MirageLogger.host("Shared display generation advanced: \(previousGeneration) -> \(display.generation)")
+        generationChangeHandler?(display, previousGeneration)
+    }
+
     /// Fixed 3K resolution for virtual display
     /// 2880×1800 (16:10) - balanced between 4K (text too small) and 1080p (text too big)
     /// With HiDPI this gives 1440×900 logical points
@@ -33,6 +41,8 @@ extension SharedVirtualDisplayManager {
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func createDisplay(resolution: CGSize, refreshRate: Int, colorSpace: MirageColorSpace) async throws -> ManagedDisplayContext {
         displayCounter += 1
+        displayGeneration &+= 1
+        let generation = displayGeneration
         let displayName = "Mirage Shared Display (#\(displayCounter))"
 
         guard let displayContext = CGVirtualDisplayBridge.createVirtualDisplay(
@@ -66,11 +76,12 @@ extension SharedVirtualDisplayManager {
             resolution: resolution,
             refreshRate: displayContext.refreshRate,
             colorSpace: displayContext.colorSpace,
+            generation: generation,
             createdAt: Date(),
             displayRef: UncheckedSendableBox(displayContext.display)
         )
 
-        MirageLogger.host("Created shared virtual display: \(Int(resolution.width))x\(Int(resolution.height))@\(refreshRate)Hz, color=\(displayContext.colorSpace.displayName), displayID=\(displayContext.displayID), spaceID=\(spaceID), bounds=\(readyBounds)")
+        MirageLogger.host("Created shared virtual display: \(Int(resolution.width))x\(Int(resolution.height))@\(refreshRate)Hz, color=\(displayContext.colorSpace.displayName), displayID=\(displayContext.displayID), spaceID=\(spaceID), generation=\(generation), bounds=\(readyBounds)")
 
         await MainActor.run {
             VirtualDisplayKeepaliveController.shared.start(

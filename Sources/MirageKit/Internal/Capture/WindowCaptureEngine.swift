@@ -13,6 +13,7 @@ import os
 #if os(macOS)
 import ScreenCaptureKit
 import AppKit
+import CoreGraphics
 
 actor WindowCaptureEngine {
     var stream: SCStream?
@@ -56,6 +57,9 @@ actor WindowCaptureEngine {
     }
 
     struct CaptureSessionConfiguration {
+        let windowID: WindowID?
+        let applicationPID: pid_t?
+        let displayID: CGDirectDisplayID
         let window: SCWindow?
         let application: SCRunningApplication?
         let display: SCDisplay

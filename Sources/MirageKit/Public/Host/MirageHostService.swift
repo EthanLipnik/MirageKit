@@ -83,6 +83,7 @@ public final class MirageHostService {
     // Shared virtual display bounds for synchronous access from AppState
     // Single bounds since all windows share one virtual display
     var sharedVirtualDisplayBounds: CGRect?
+    var sharedVirtualDisplayGeneration: UInt64 = 0
 
     // Track which windows are using the shared virtual display
     var windowsUsingVirtualDisplay: Set<WindowID> = []
@@ -116,6 +117,7 @@ public final class MirageHostService {
     var desktopStreamClientContext: ClientContext?
     var desktopDisplayBounds: CGRect?
     var desktopUsesVirtualDisplay = false
+    var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
 
     /// Physical displays that were mirrored during desktop streaming (for restoration)
     var mirroredPhysicalDisplayIDs: Set<CGDirectDisplayID> = []

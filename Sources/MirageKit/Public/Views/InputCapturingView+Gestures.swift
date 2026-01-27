@@ -214,6 +214,58 @@ extension InputCapturingView {
         onInputEvent?(.scrollWheel(scrollEvent))
     }
 
+    /// Detect large, axis-dominant trackpad scrolls and map them to arrow keys.
+    /// This provides a fallback for swipe-style navigation in apps that rely on
+    /// gesture semantics instead of scroll deltas.
+    func handleTrackpadSwipeIfNeeded(
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        phase: MirageScrollPhase,
+        momentumPhase: MirageScrollPhase
+    ) -> Bool {
+        let gestureBegan = phase == .began || momentumPhase == .began
+        if gestureBegan {
+            trackpadSwipeAccumX = 0
+            trackpadSwipeAccumY = 0
+            trackpadSwipeArrowSent = false
+            return false
+        }
+
+        let gestureEnded = phase == .ended || phase == .cancelled ||
+            momentumPhase == .ended || momentumPhase == .cancelled
+        if gestureEnded {
+            trackpadSwipeAccumX = 0
+            trackpadSwipeAccumY = 0
+            trackpadSwipeArrowSent = false
+            return false
+        }
+
+        // Only consider swipe detection during direct finger tracking, not momentum.
+        guard phase == .changed, momentumPhase == .none else { return false }
+
+        trackpadSwipeAccumX += deltaX
+        trackpadSwipeAccumY += deltaY
+
+        guard !trackpadSwipeArrowSent else { return false }
+
+        let absX = abs(trackpadSwipeAccumX)
+        let absY = abs(trackpadSwipeAccumY)
+
+        if absX >= trackpadSwipeDistanceThreshold && absX > absY * trackpadSwipeAxisRatioThreshold {
+            sendArrowKey(trackpadSwipeAccumX > 0 ? 0x7C : 0x7B)
+            trackpadSwipeArrowSent = true
+            return true
+        }
+
+        if absY >= trackpadSwipeDistanceThreshold && absY > absX * trackpadSwipeAxisRatioThreshold {
+            sendArrowKey(trackpadSwipeAccumY > 0 ? 0x7E : 0x7D)
+            trackpadSwipeArrowSent = true
+            return true
+        }
+
+        return false
+    }
+
     @objc func handleHover(_ gesture: UIHoverGestureRecognizer) {
         let location = normalizedLocation(gesture.location(in: self))
 
@@ -303,6 +355,17 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
         }
 
         return false
+    }
+}
+
+// MARK: - Trackpad Swipe Helpers
+
+private extension InputCapturingView {
+    func sendArrowKey(_ keyCode: UInt16) {
+        let modifiers = keyboardModifiers
+        let keyEvent = MirageKeyEvent(keyCode: keyCode, modifiers: modifiers)
+        onInputEvent?(.keyDown(keyEvent))
+        onInputEvent?(.keyUp(keyEvent))
     }
 }
 #endif

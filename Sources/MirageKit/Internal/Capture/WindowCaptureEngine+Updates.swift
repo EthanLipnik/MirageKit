@@ -28,6 +28,9 @@ extension WindowCaptureEngine {
         let newHeight = Self.alignedEvenPixel(CGFloat(target.height) * scale)
         if let config = captureSessionConfig {
             captureSessionConfig = CaptureSessionConfiguration(
+                windowID: config.windowID,
+                applicationPID: config.applicationPID,
+                displayID: config.displayID,
                 window: config.window,
                 application: config.application,
                 display: config.display,
@@ -91,6 +94,9 @@ extension WindowCaptureEngine {
         useBestCaptureResolution = false
         if let config = captureSessionConfig {
             captureSessionConfig = CaptureSessionConfiguration(
+                windowID: config.windowID,
+                applicationPID: config.applicationPID,
+                displayID: config.displayID,
                 window: config.window,
                 application: config.application,
                 display: config.display,
@@ -138,6 +144,9 @@ extension WindowCaptureEngine {
         useBestCaptureResolution = false
         if let config = captureSessionConfig {
             captureSessionConfig = CaptureSessionConfiguration(
+                windowID: config.windowID,
+                applicationPID: config.applicationPID,
+                displayID: newDisplay.displayID,
                 window: config.window,
                 application: config.application,
                 display: newDisplay,

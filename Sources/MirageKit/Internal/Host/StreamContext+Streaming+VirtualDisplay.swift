@@ -31,6 +31,7 @@ extension StreamContext {
         updateFrameThrottle()
 
         let application = applicationWrapper.application
+        applicationProcessID = application.processID
 
         self.onEncodedPacket = onEncodedFrame
         self.onContentBoundsChanged = onContentBoundsChanged
@@ -49,6 +50,7 @@ extension StreamContext {
             colorSpace: encoderConfig.colorSpace
         )
         self.virtualDisplayContext = vdContext
+        sharedDisplayGeneration = vdContext.generation
 
         let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(vdContext.displayID, knownResolution: vdContext.resolution)
         await onVirtualDisplayReady(displayBounds)
@@ -60,22 +62,18 @@ extension StreamContext {
             displayBounds: displayBounds
         )
 
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let scWindow = content.windows.first(where: { $0.windowID == windowID }) else {
-            throw MirageError.protocolError("Window \(windowID) not found after moving to virtual display")
-        }
-        guard let scApp = content.applications.first(where: { $0.processID == application.processID }) else {
-            throw MirageError.protocolError("Application (PID \(application.processID)) not found")
-        }
-        guard let scDisplay = content.displays.first(where: { $0.displayID == vdContext.displayID }) else {
-            throw MirageError.protocolError("Virtual display \(vdContext.displayID) not found in SCShareableContent")
-        }
+        let resolvedTargets = try await resolveVirtualDisplayTargets(
+            windowID: windowID,
+            applicationPID: applicationProcessID,
+            displayID: vdContext.displayID,
+            label: "virtual display start"
+        )
+        let scWindow = resolvedTargets.window.window
+        let resolvedWindowWrapper = resolvedTargets.window
+        let resolvedAppWrapper = resolvedTargets.application
+        let resolvedDisplayWrapper = resolvedTargets.display
 
-        let windowWrapper = SCWindowWrapper(window: scWindow)
-        let appWrapper = SCApplicationWrapper(application: scApp)
-        let displayWrapper = SCDisplayWrapper(display: scDisplay)
-
-        MirageLogger.stream("Found SCWindow \(scWindow.windowID) on virtual display \(scDisplay.displayID)")
+        MirageLogger.stream("Resolved SCWindow \(scWindow.windowID) on virtual display \(resolvedDisplayWrapper.display.displayID)")
 
         let encoder = HEVCEncoder(
             configuration: encoderConfig,
@@ -168,9 +166,9 @@ extension StreamContext {
         self.captureEngine = windowCaptureEngine
 
         try await windowCaptureEngine.startCapture(
-            window: windowWrapper.window,
-            application: appWrapper.application,
-            display: displayWrapper.display,
+            window: resolvedWindowWrapper.window,
+            application: resolvedAppWrapper.application,
+            display: resolvedDisplayWrapper.display,
             knownScaleFactor: 2.0,
             outputScale: streamScale
         ) { [weak self] frame in
@@ -209,6 +207,7 @@ extension StreamContext {
             throw MirageError.protocolError("No shared virtual display available after resolution update")
         }
         self.virtualDisplayContext = newContext
+        sharedDisplayGeneration = newContext.generation
 
         let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(newContext.displayID, knownResolution: newContext.resolution)
         try await WindowSpaceManager.shared.moveWindow(
@@ -218,23 +217,23 @@ extension StreamContext {
             displayBounds: displayBounds
         )
 
-        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-        guard let scWindow = content.windows.first(where: { $0.windowID == windowID }) else {
-            throw MirageError.protocolError("Window \(windowID) not found after virtual display update")
-        }
-        guard let scDisplay = content.displays.first(where: { $0.displayID == newContext.displayID }) else {
-            throw MirageError.protocolError("Virtual display \(newContext.displayID) not found")
-        }
-
         let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[CFString: Any]]
-        let pid = windowList?.first?[kCGWindowOwnerPID] as? pid_t ?? 0
-        guard let scApp = content.applications.first(where: { $0.processID == pid }) else {
-            throw MirageError.protocolError("Application (PID \(pid)) not found")
+        if let pid = windowList?.first?[kCGWindowOwnerPID] as? pid_t, pid > 0 {
+            applicationProcessID = pid
         }
-
-        let windowWrapper = SCWindowWrapper(window: scWindow)
-        let appWrapper = SCApplicationWrapper(application: scApp)
-        let displayWrapper = SCDisplayWrapper(display: scDisplay)
+        guard applicationProcessID > 0 else {
+            throw MirageError.protocolError("Application PID unavailable for virtual display update")
+        }
+        let resolvedTargets = try await resolveVirtualDisplayTargets(
+            windowID: windowID,
+            applicationPID: applicationProcessID,
+            displayID: newContext.displayID,
+            label: "virtual display update"
+        )
+        let scWindow = resolvedTargets.window.window
+        let resolvedWindowWrapper = resolvedTargets.window
+        let resolvedAppWrapper = resolvedTargets.application
+        let resolvedDisplayWrapper = resolvedTargets.display
 
         let captureScaleFactor: CGFloat = 2.0
         let captureTarget = streamTargetDimensions(windowFrame: scWindow.frame, scaleFactor: captureScaleFactor)
@@ -255,20 +254,23 @@ extension StreamContext {
                 width: Int(outputSize.width),
                 height: Int(outputSize.height)
             )
+            let resolvedPixelFormat = await encoder.getActivePixelFormat()
+            activePixelFormat = resolvedPixelFormat
             MirageLogger.encoder("Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for resolution change")
         }
 
+        let captureConfig = encoderConfig.withOverrides(pixelFormat: activePixelFormat)
         let windowCaptureEngine = WindowCaptureEngine(
-            configuration: encoderConfig,
+            configuration: captureConfig,
             latencyMode: latencyMode,
             captureFrameRate: captureFrameRate
         )
         self.captureEngine = windowCaptureEngine
 
         try await windowCaptureEngine.startCapture(
-            window: windowWrapper.window,
-            application: appWrapper.application,
-            display: displayWrapper.display,
+            window: resolvedWindowWrapper.window,
+            application: resolvedAppWrapper.application,
+            display: resolvedDisplayWrapper.display,
             knownScaleFactor: 2.0,
             outputScale: streamScale
         ) { [weak self] frame in

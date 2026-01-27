@@ -73,17 +73,19 @@ actor WindowSpaceManager {
             throw WindowSpaceError.windowNotFound(windowID)
         }
 
-        // Save current state for restoration
-        let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-        let savedState = SavedWindowState(
-            windowID: windowID,
-            originalFrame: windowInfo.frame,
-            originalSpaceIDs: currentSpaces,
-            savedAt: Date()
-        )
-        savedStates[windowID] = savedState
-
-        MirageLogger.host("Saving window \(windowID) state: frame=\(windowInfo.frame), spaces=\(currentSpaces)")
+        if savedStates[windowID] == nil {
+            let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+            let savedState = SavedWindowState(
+                windowID: windowID,
+                originalFrame: windowInfo.frame,
+                originalSpaceIDs: currentSpaces,
+                savedAt: Date()
+            )
+            savedStates[windowID] = savedState
+            MirageLogger.host("Saving window \(windowID) state: frame=\(windowInfo.frame), spaces=\(currentSpaces)")
+        } else {
+            MirageLogger.host("Window \(windowID) already has saved state; preserving original state during move")
+        }
 
         // Move window to the virtual display's space
         CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: spaceID)

@@ -20,6 +20,24 @@ extension MirageHostInputController {
     func batchScroll(_ event: MirageScrollEvent, _ windowFrame: CGRect, app: MirageApplication?) {
         let now = CACurrentMediaTime()
 
+        // Precise trackpad/touch scrolling already includes high-frequency deltas
+        // and phases from the client. Bypass host smoothing to avoid losing small
+        // horizontal deltas through quantization.
+        if event.isPrecise {
+            stopScrollOutputTimer()
+            scrollRateX = 0
+            scrollRateY = 0
+            scrollTargetRateX = 0
+            scrollTargetRateY = 0
+            scrollRemainderX = 0
+            scrollRemainderY = 0
+            scrollContext = nil
+
+            injectScrollEvent(event, windowFrame, app: app)
+            lastScrollInputTime = now
+            return
+        }
+
         if event.phase == .began || event.phase == .ended || event.phase == .cancelled ||
            event.momentumPhase == .began || event.momentumPhase == .ended || event.momentumPhase == .cancelled {
             if event.phase == .began || event.momentumPhase == .began {
@@ -158,6 +176,25 @@ extension MirageHostInputController {
         ) else { return }
 
         cgEvent.location = scrollPoint
+        cgEvent.flags = context.modifiers.cgEventFlags
+        cgEvent.setIntegerValueField(.scrollWheelEventIsContinuous, value: context.isPrecise ? 1 : 0)
+        cgEvent.setIntegerValueField(
+            .scrollWheelEventScrollPhase,
+            value: Int64(NSEvent.Phase.changed.rawValue)
+        )
+        cgEvent.setIntegerValueField(.scrollWheelEventMomentumPhase, value: 0)
+        if context.isPrecise {
+            cgEvent.setIntegerValueField(.scrollWheelEventPointDeltaAxis1, value: Int64(pixelsY))
+            cgEvent.setIntegerValueField(.scrollWheelEventPointDeltaAxis2, value: Int64(pixelsX))
+            cgEvent.setIntegerValueField(
+                .scrollWheelEventFixedPtDeltaAxis1,
+                value: Int64(pixelsY) * 65_536
+            )
+            cgEvent.setIntegerValueField(
+                .scrollWheelEventFixedPtDeltaAxis2,
+                value: Int64(pixelsX) * 65_536
+            )
+        }
         postEvent(cgEvent)
     }
 

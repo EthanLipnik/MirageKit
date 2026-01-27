@@ -180,6 +180,15 @@ public class InputCapturingView: UIView {
     // Scroll physics capturing view for native trackpad momentum/bounce
     var scrollPhysicsView: ScrollPhysicsCapturingView?
 
+    // Trackpad swipe detection state (fallback for gesture-style navigation)
+    var trackpadSwipeAccumX: CGFloat = 0
+    var trackpadSwipeAccumY: CGFloat = 0
+    var trackpadSwipeArrowSent: Bool = false
+
+    /// Swipe detection thresholds tuned to reduce false positives during scroll.
+    let trackpadSwipeDistanceThreshold: CGFloat = 180
+    let trackpadSwipeAxisRatioThreshold: CGFloat = 2.2
+
     // Direct touch multi-finger gestures
     var directPinchGesture: UIPinchGestureRecognizer!
     var directRotationGesture: UIRotationGestureRecognizer!
@@ -261,8 +270,20 @@ public class InputCapturingView: UIView {
 
         // Configure scroll physics callback
         // Scroll events don't have a gesture recognizer with modifierFlags, so use keyboard state only
-        scrollPhysicsView!.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase in
+        scrollPhysicsView!.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase, location in
             guard let self else { return }
+            if let location {
+                // Update targeting even when hover callbacks are suppressed during scrolling.
+                self.lastCursorPosition = self.normalizedLocation(location)
+            }
+            if self.handleTrackpadSwipeIfNeeded(
+                deltaX: deltaX,
+                deltaY: deltaY,
+                phase: phase,
+                momentumPhase: momentumPhase
+            ) {
+                return
+            }
             let scrollEvent = MirageScrollEvent(
                 deltaX: deltaX,
                 deltaY: deltaY,

@@ -50,6 +50,7 @@ extension SharedVirtualDisplayManager {
 
         // Calculate optimal resolution (fixed 3K)
         let optimalResolution = calculateOptimalResolution()
+        let previousGeneration = sharedDisplay?.generation ?? 0
 
         MirageLogger.host("Stream \(streamID) acquiring shared display. Consumers: \(activeConsumers.count), client res: \(Int(clientResolution.width))x\(Int(clientResolution.height)) → virtual display: \(Int(optimalResolution.width))x\(Int(optimalResolution.height)), color=\(colorSpace.displayName), refresh=\(refreshRate)Hz (requested \(requestedRate)Hz)")
 
@@ -68,6 +69,8 @@ extension SharedVirtualDisplayManager {
             MirageLogger.host("Resizing shared display from \(Int(sharedDisplay!.resolution.width))x\(Int(sharedDisplay!.resolution.height)) to \(Int(optimalResolution.width))x\(Int(optimalResolution.height))")
             sharedDisplay = try await recreateDisplay(newResolution: optimalResolution, refreshRate: refreshRate, colorSpace: colorSpace)
         }
+
+        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
 
         guard let display = sharedDisplay else {
             throw SharedDisplayError.noActiveDisplay

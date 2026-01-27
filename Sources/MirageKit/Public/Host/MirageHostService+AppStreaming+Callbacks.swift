@@ -71,6 +71,13 @@ extension MirageHostService {
         let encoderSettings = await existingContext?.getEncoderSettings()
         let targetFrameRate = await existingContext?.getTargetFrameRate()
         let qualityPreset = await existingContext?.getQualityPreset()
+        let usesVirtualDisplay = await existingContext?.isUsingVirtualDisplay() ?? false
+        let sharedDisplayResolution: CGSize?
+        if usesVirtualDisplay {
+            sharedDisplayResolution = await SharedVirtualDisplayManager.shared.getDisplayBounds()?.size
+        } else {
+            sharedDisplayResolution = nil
+        }
 
         // Check if there's a window in cooldown - if so, redirect to it
         if !session.windowsInCooldown.isEmpty {
@@ -91,7 +98,7 @@ extension MirageHostService {
                         for: mirageWindow,
                         to: clientContext.client,
                         dataPort: nil,
-                        clientDisplayResolution: nil,
+                        clientDisplayResolution: sharedDisplayResolution,
                         keyFrameInterval: encoderSettings?.keyFrameInterval,
                         frameQuality: encoderSettings?.frameQuality,
                         keyframeQuality: encoderSettings?.keyframeQuality,
@@ -152,7 +159,7 @@ extension MirageHostService {
                 for: mirageWindow,
                 to: clientContext.client,
                 dataPort: nil,
-                clientDisplayResolution: nil,
+                clientDisplayResolution: sharedDisplayResolution,
                 keyFrameInterval: encoderSettings?.keyFrameInterval,
                 frameQuality: encoderSettings?.frameQuality,
                 keyframeQuality: encoderSettings?.keyframeQuality,

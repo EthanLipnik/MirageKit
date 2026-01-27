@@ -24,6 +24,7 @@ actor StreamContext {
     var currentCaptureSize: CGSize = .zero
     var activePixelFormat: MiragePixelFormat
     var lastWindowFrame: CGRect = .zero
+    var applicationProcessID: pid_t = 0
     enum CaptureMode {
         case window
         case display
@@ -40,6 +41,7 @@ actor StreamContext {
     // Uses SharedVirtualDisplayManager for single shared display across all streams
     var virtualDisplayContext: SharedVirtualDisplayManager.ManagedDisplayContext?
     var useVirtualDisplay: Bool = true
+    var sharedDisplayGeneration: UInt64 = 0
 
     var encoder: HEVCEncoder?
     var isRunning = false
