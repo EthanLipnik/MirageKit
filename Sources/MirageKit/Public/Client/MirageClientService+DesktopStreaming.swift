@@ -80,6 +80,8 @@ extension MirageClientService {
         }
 
         let message = try ControlMessage(type: .startDesktopStream, content: request)
+        desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+        MirageLogger.client("Desktop start: request sent")
         connection.send(content: message.serialize(), completion: .idempotent)
 
         MirageLogger.client("Requested desktop stream: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height))")

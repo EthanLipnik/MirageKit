@@ -63,6 +63,30 @@ extension MirageHostService {
         MirageLogger.host("Waiting for hello message from \(endpointDescription)...")
 
         let deviceInfo = await receiveHelloMessage(from: connection, endpoint: endpointDescription)
+        let connectionID = ObjectIdentifier(connection)
+
+        guard reserveSingleClientSlot(for: connectionID) else {
+            if let activeClient = clientsByConnection.values.first?.client {
+                MirageLogger.host(
+                    "Rejecting \(deviceInfo.name); host already has active client \(activeClient.name)"
+                )
+            } else {
+                MirageLogger.host("Rejecting \(deviceInfo.name); host already has a pending client")
+            }
+            sendHelloResponse(
+                accepted: false,
+                to: connection,
+                dataPort: currentDataPort(),
+                cancelAfterSend: true
+            )
+            return
+        }
+
+        defer {
+            if clientsByConnection[connectionID] == nil {
+                releaseSingleClientSlot(for: connectionID)
+            }
+        }
 
         MirageLogger.host("Requesting approval for \(deviceInfo.name) (\(deviceInfo.deviceType.displayName))...")
 
@@ -84,36 +108,12 @@ extension MirageHostService {
         }
 
         MirageLogger.host("Connection approved, sending hello response...")
-
-        let dataPort: UInt16
-        if case .advertising(_, let port) = state {
-            dataPort = port
-        } else {
-            dataPort = 0
-        }
-
-        do {
-            let hostName = Host.current().localizedName ?? "Mac"
-            let response = HelloResponseMessage(
-                accepted: true,
-                hostID: hostID,
-                hostName: hostName,
-                requiresAuth: false,
-                dataPort: dataPort
-            )
-            let message = try ControlMessage(type: .helloResponse, content: response)
-            let data = message.serialize()
-
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error {
-                    MirageLogger.error(.host, "Failed to send hello response: \(error)")
-                } else {
-                    MirageLogger.host("Sent hello response with dataPort \(dataPort)")
-                }
-            })
-        } catch {
-            MirageLogger.error(.host, "Failed to create hello response: \(error)")
-        }
+        sendHelloResponse(
+            accepted: true,
+            to: connection,
+            dataPort: currentDataPort(),
+            cancelAfterSend: false
+        )
 
         let client = MirageConnectedClient(
             id: deviceInfo.id,
@@ -188,6 +188,72 @@ extension MirageHostService {
         } catch {
             MirageLogger.error(.host, "Failed to decode hello: \(error)")
             return MirageDeviceInfo(name: "Unknown Device", deviceType: .unknown, endpoint: endpoint)
+        }
+    }
+
+    private func currentDataPort() -> UInt16 {
+        if case .advertising(_, let port) = state {
+            return port
+        }
+        return 0
+    }
+
+    func reserveSingleClientSlot(for connectionID: ObjectIdentifier) -> Bool {
+        if let reservedID = singleClientConnectionID, reservedID != connectionID {
+            return false
+        }
+
+        if let existingConnectionID = clientsByConnection.keys.first, existingConnectionID != connectionID {
+            singleClientConnectionID = existingConnectionID
+            return false
+        }
+
+        singleClientConnectionID = connectionID
+        return true
+    }
+
+    func releaseSingleClientSlot(for connectionID: ObjectIdentifier) {
+        if singleClientConnectionID == connectionID {
+            singleClientConnectionID = nil
+        }
+    }
+
+    private func sendHelloResponse(
+        accepted: Bool,
+        to connection: NWConnection,
+        dataPort: UInt16,
+        cancelAfterSend: Bool
+    ) {
+        do {
+            let hostName = Host.current().localizedName ?? "Mac"
+            let response = HelloResponseMessage(
+                accepted: accepted,
+                hostID: hostID,
+                hostName: hostName,
+                requiresAuth: false,
+                dataPort: dataPort
+            )
+            let message = try ControlMessage(type: .helloResponse, content: response)
+            let data = message.serialize()
+
+            connection.send(content: data, completion: .contentProcessed { error in
+                if let error {
+                    MirageLogger.error(.host, "Failed to send hello response: \(error)")
+                } else if accepted {
+                    MirageLogger.host("Sent hello response with dataPort \(dataPort)")
+                } else {
+                    MirageLogger.host("Sent rejection hello response")
+                }
+
+                if cancelAfterSend {
+                    connection.cancel()
+                }
+            })
+        } catch {
+            MirageLogger.error(.host, "Failed to create hello response: \(error)")
+            if cancelAfterSend {
+                connection.cancel()
+            }
         }
     }
 }

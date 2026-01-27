@@ -228,6 +228,13 @@ extension MirageClientService {
         }
         controllersByStream.removeAll()
         registeredStreamIDs.removeAll()
+        desktopStreamRequestStartTime = 0
+        streamStartupBaseTimes.removeAll()
+        streamStartupFirstRegistrationSent.removeAll()
+        streamStartupFirstPacketReceived.removeAll()
+        startupPacketPendingLock.withLock {
+            _startupPacketPending.removeAll()
+        }
         activeStreams.removeAll()
         for session in storedSessions {
             sessionStore.removeSession(session.id)

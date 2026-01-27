@@ -66,10 +66,14 @@ public final class MirageHostService {
     var nextStreamID: StreamID = 1
     var streamsByID: [StreamID: StreamContext] = [:]
     var clientsByConnection: [ObjectIdentifier: ClientContext] = [:]
+    var singleClientConnectionID: ObjectIdentifier?
 
     // UDP connections by stream ID (received from client registrations)
     var udpConnectionsByStream: [StreamID: NWConnection] = [:]
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
+    var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
+    var streamStartupRegistrationLogged: Set<StreamID> = []
+    var streamStartupFirstPacketSent: Set<StreamID> = []
 
     // Track first error time per client for graceful disconnect on persistent errors
     // If errors persist for 5+ seconds, disconnect the client

@@ -26,14 +26,21 @@ extension MirageHostService {
         }
 
         // Remove client
+        var removedConnectionID: ObjectIdentifier?
         if let key = clientsByConnection.first(where: { $0.value.client.id == client.id })?.key {
             clientsByConnection.removeValue(forKey: key)
+            removedConnectionID = key
+        }
+
+        if let removedConnectionID, singleClientConnectionID == removedConnectionID {
+            singleClientConnectionID = nil
         }
 
         connectedClients.removeAll { $0.id == client.id }
 
         stopSessionRefreshLoopIfIdle()
         if clientsByConnection.isEmpty {
+            singleClientConnectionID = nil
             await stopLoginDisplayStream(newState: sessionState)
             await cleanupSharedVirtualDisplayIfIdle()
         }

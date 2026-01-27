@@ -296,6 +296,10 @@ extension StreamContext {
         shouldEncodeFrames = true
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
+        if !startupRegistrationLogged {
+            startupRegistrationLogged = true
+            logStartupEvent("UDP registration confirmed")
+        }
 
         if let encoder {
             await encoder.resetFrameNumber()

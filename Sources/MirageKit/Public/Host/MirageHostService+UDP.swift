@@ -92,6 +92,13 @@ extension MirageHostService {
                 continue
             }
 
+            if let baseTime = streamStartupBaseTimes[streamID],
+               !streamStartupRegistrationLogged.contains(streamID) {
+                streamStartupRegistrationLogged.insert(streamID)
+                let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
+                MirageLogger.host("Desktop start: UDP registration received for stream \(streamID) (+\(deltaMs)ms)")
+            }
+
             udpConnectionsByStream[streamID] = connection
 
             MirageLogger.host("UDP connection registered for stream \(streamID)")
@@ -110,6 +117,12 @@ extension MirageHostService {
         guard let connection = udpConnectionsByStream[streamID] else {
             onComplete?()
             return
+        }
+        if let baseTime = streamStartupBaseTimes[streamID],
+           !streamStartupFirstPacketSent.contains(streamID) {
+            streamStartupFirstPacketSent.insert(streamID)
+            let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
+            MirageLogger.host("Desktop start: first video packet sent for stream \(streamID) (+\(deltaMs)ms)")
         }
         if let onComplete {
             connection.send(content: data, completion: .contentProcessed { _ in

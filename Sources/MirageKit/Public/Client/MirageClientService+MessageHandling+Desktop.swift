@@ -20,6 +20,15 @@ extension MirageClientService {
             desktopStreamID = streamID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
             refreshRateOverridesByStream[streamID] = getScreenMaxRefreshRate()
+            if desktopStreamRequestStartTime > 0 {
+                let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStreamRequestStartTime) * 1000)
+                MirageLogger.client("Desktop start: desktopStreamStarted received for stream \(streamID) (+\(deltaMs)ms)")
+                streamStartupBaseTimes[streamID] = desktopStreamRequestStartTime
+                streamStartupFirstRegistrationSent.remove(streamID)
+                streamStartupFirstPacketReceived.remove(streamID)
+                markStartupPacketPending(streamID)
+                desktopStreamRequestStartTime = 0
+            }
 
             let dimensionToken = started.dimensionToken
 
@@ -71,6 +80,10 @@ extension MirageClientService {
 
             removeActiveStreamID(streamID)
             registeredStreamIDs.remove(streamID)
+            streamStartupBaseTimes.removeValue(forKey: streamID)
+            streamStartupFirstRegistrationSent.remove(streamID)
+            streamStartupFirstPacketReceived.remove(streamID)
+            clearStartupPacketPending(streamID)
 
             Task {
                 if let controller = self.controllersByStream[streamID] {

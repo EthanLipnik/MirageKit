@@ -123,6 +123,12 @@ extension MirageClientService {
                             return
                         }
 
+                        if service.takeStartupPacketPending(streamID) {
+                            Task { @MainActor in
+                                service.logStartupFirstPacketIfNeeded(streamID: streamID)
+                            }
+                        }
+
                         guard let reassembler = service.reassemblerForStream(streamID) else {
                             receiveNext()
                             return
@@ -169,7 +175,23 @@ extension MirageClientService {
         }
 
         MirageLogger.client("Stream registration sent")
+        if let baseTime = streamStartupBaseTimes[streamID],
+           !streamStartupFirstRegistrationSent.contains(streamID) {
+            streamStartupFirstRegistrationSent.insert(streamID)
+            let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
+            MirageLogger.client("Desktop start: stream registration sent for stream \(streamID) (+\(deltaMs)ms)")
+        }
         lastKeyframeRequestTime[streamID] = CFAbsoluteTimeGetCurrent()
+    }
+
+    func logStartupFirstPacketIfNeeded(streamID: StreamID) {
+        guard let baseTime = streamStartupBaseTimes[streamID],
+              !streamStartupFirstPacketReceived.contains(streamID) else {
+            return
+        }
+        streamStartupFirstPacketReceived.insert(streamID)
+        let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
+        MirageLogger.client("Desktop start: first UDP packet received for stream \(streamID) (+\(deltaMs)ms)")
     }
 
     /// Stop the video connection.

@@ -113,6 +113,11 @@ actor StreamContext {
     let pipelineStatsInterval: CFAbsoluteTime = 2.0
     var lastCapturedFrameTime: CFAbsoluteTime = 0
     var cadenceTask: Task<Void, Never>?
+    var startupBaseTime: CFAbsoluteTime = 0
+    var startupLabel: String = ""
+    var startupFirstCaptureLogged = false
+    var startupFirstEncodeLogged = false
+    var startupRegistrationLogged = false
 
     /// Maximum time to wait for encode progress before considering encoder stuck (ms)
     /// During drag operations, VideoToolbox can block - we need to detect this and recover
@@ -300,6 +305,21 @@ actor StreamContext {
             captureFrameRate: captureFrameRate,
             isPaced: true
         )
+    }
+
+    func setStartupBaseTime(_ baseTime: CFAbsoluteTime, label: String) {
+        startupBaseTime = baseTime
+        startupLabel = label
+        startupFirstCaptureLogged = false
+        startupFirstEncodeLogged = false
+        startupRegistrationLogged = false
+    }
+
+    func logStartupEvent(_ event: String) {
+        guard startupBaseTime > 0 else { return }
+        let deltaMs = Int((CFAbsoluteTimeGetCurrent() - startupBaseTime) * 1000)
+        let label = startupLabel.isEmpty ? "stream \(streamID)" : startupLabel
+        MirageLogger.stream("\(label) start: \(event) (+\(deltaMs)ms)")
     }
 
     static func clampStreamScale(_ scale: CGFloat) -> CGFloat {

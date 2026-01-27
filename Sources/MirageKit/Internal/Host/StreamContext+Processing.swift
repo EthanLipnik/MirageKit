@@ -29,6 +29,10 @@ extension StreamContext {
         lastCapturedFrameTime = CFAbsoluteTimeGetCurrent()
         lastCapturedFrame = frame
         lastCapturedDuration = frame.duration
+        if startupBaseTime > 0, !startupFirstCaptureLogged {
+            startupFirstCaptureLogged = true
+            logStartupEvent("first captured frame")
+        }
     }
 
     func recordCaptureDrop() {
@@ -235,6 +239,10 @@ extension StreamContext {
                 }
                 encodeAttemptIntervalCount += 1
                 let encodeStartTime = CFAbsoluteTimeGetCurrent()
+                if startupBaseTime > 0, !startupFirstEncodeLogged {
+                    startupFirstEncodeLogged = true
+                    logStartupEvent("first encode attempt")
+                }
                 if forceKeyframe {
                     if pendingKeyframeRequiresFlush {
                         pendingKeyframeRequiresFlush = false

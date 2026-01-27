@@ -49,10 +49,18 @@ extension MirageHostService {
             return
         }
 
+        let desktopStartTime = CFAbsoluteTimeGetCurrent()
+        func logDesktopStartStep(_ step: String) {
+            let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStartTime) * 1000)
+            MirageLogger.host("Desktop start: \(step) (+\(deltaMs)ms)")
+        }
+
         MirageLogger.host("Starting desktop stream at \(Int(displayResolution.width))x\(Int(displayResolution.height))")
+        logDesktopStartStep("request accepted")
 
         // Stop all active app/window streams (mutual exclusivity)
         await stopAllStreamsForDesktopMode()
+        logDesktopStartStep("other streams stopped")
 
         // Configure encoder with quality preset and optional overrides
         var config = encoderConfig
@@ -100,6 +108,7 @@ extension MirageHostService {
             refreshRate: virtualDisplayRefreshRate,
             colorSpace: config.colorSpace
         )
+        logDesktopStartStep("virtual display acquired (\(context.displayID))")
 
         let captureDisplay: SCDisplayWrapper
         switch selectedCaptureSource {
@@ -108,6 +117,7 @@ extension MirageHostService {
         case .virtualDisplay:
             captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
         }
+        logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
         let captureResolution = context.resolution
 
         guard let bounds = await SharedVirtualDisplayManager.shared.getDisplayBounds() else {
@@ -115,13 +125,18 @@ extension MirageHostService {
         }
         desktopDisplayBounds = bounds
         desktopUsesVirtualDisplay = true
+        logDesktopStartStep("display bounds cached")
 
         // Set up display mirroring so main display mirrors virtual display
         // This makes the main display adopt the virtual display's resolution
         await setupDisplayMirroring(targetDisplayID: context.displayID)
+        logDesktopStartStep("display mirroring configured")
 
         let streamID = nextStreamID
         nextStreamID += 1
+        streamStartupBaseTimes[streamID] = desktopStartTime
+        streamStartupRegistrationLogged.remove(streamID)
+        streamStartupFirstPacketSent.remove(streamID)
         if selectedCaptureSource == .virtualDisplay,
            captureDisplay.display.displayID != context.displayID {
             MirageLogger.error(.host, "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)")
@@ -141,6 +156,8 @@ extension MirageHostService {
             adaptiveScaleEnabled: adaptiveScaleEnabled ?? true,
             latencyMode: latencyMode
         )
+        await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
+        logDesktopStartStep("stream context created (\(streamID))")
         let metricsClientID = clientContext.client.id
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in
             Task { @MainActor [weak self] in
@@ -195,6 +212,7 @@ extension MirageHostService {
                 }
             }
         )
+        logDesktopStartStep("capture and encoder started")
 
         // Get dimension token from stream context
         let dimensionToken = await streamContext.getDimensionToken()
@@ -213,6 +231,7 @@ extension MirageHostService {
             dimensionToken: dimensionToken
         )
         try? await clientContext.send(.desktopStreamStarted, content: message)
+        logDesktopStartStep("desktopStreamStarted sent")
 
         MirageLogger.host("Desktop stream started: streamID=\(streamID), resolution=\(encodedDimensions.width)x\(encodedDimensions.height)")
     }
@@ -249,6 +268,9 @@ extension MirageHostService {
         desktopDisplayBounds = nil
         desktopUsesVirtualDisplay = false
         streamsByID.removeValue(forKey: streamID)
+        streamStartupBaseTimes.removeValue(forKey: streamID)
+        streamStartupRegistrationLogged.remove(streamID)
+        streamStartupFirstPacketSent.remove(streamID)
         udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
         inputStreamCacheActor.remove(streamID)
 
@@ -308,14 +330,17 @@ extension MirageHostService {
 
     /// Find SCDisplay with retry - faster than fixed sleep
     func findSCDisplayWithRetry(maxAttempts: Int, delayMs: UInt64) async throws -> SCDisplayWrapper {
+        var attemptDelayMs = max(10, Int(delayMs))
         for attempt in 1...maxAttempts {
             do {
-                let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay()
+                let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(maxAttempts: 1)
                 MirageLogger.host("Found SCDisplay on attempt \(attempt)")
                 return scDisplay
             } catch {
                 if attempt < maxAttempts {
-                    try await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                    MirageLogger.host("SCDisplay not ready (attempt \(attempt)/\(maxAttempts)); retrying in \(attemptDelayMs)ms")
+                    try? await Task.sleep(for: .milliseconds(attemptDelayMs))
+                    attemptDelayMs = min(1_000, Int(Double(attemptDelayMs) * 1.6))
                 } else {
                     MirageLogger.error(.host, "Failed to find SCDisplay after \(maxAttempts) attempts")
                     throw error

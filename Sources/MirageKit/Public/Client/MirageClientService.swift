@@ -151,6 +151,10 @@ public final class MirageClientService {
     var registeredStreamIDs: Set<StreamID> = []
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
     let keyframeRequestCooldown: CFAbsoluteTime = 0.75
+    var desktopStreamRequestStartTime: CFAbsoluteTime = 0
+    var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
+    var streamStartupFirstRegistrationSent: Set<StreamID> = []
+    var streamStartupFirstPacketReceived: Set<StreamID> = []
 
     /// Thread-safe set of active stream IDs for packet filtering from UDP callback
     let activeStreamIDsLock = NSLock()
@@ -161,6 +165,38 @@ public final class MirageClientService {
         activeStreamIDsLock.lock()
         defer { activeStreamIDsLock.unlock() }
         return _activeStreamIDs
+    }
+
+    /// Thread-safe set of streams awaiting a first-packet startup log.
+    let startupPacketPendingLock = NSLock()
+    nonisolated(unsafe) var _startupPacketPending: Set<StreamID> = []
+
+    nonisolated func isStartupPacketPending(_ streamID: StreamID) -> Bool {
+        startupPacketPendingLock.lock()
+        defer { startupPacketPendingLock.unlock() }
+        return _startupPacketPending.contains(streamID)
+    }
+
+    nonisolated func takeStartupPacketPending(_ streamID: StreamID) -> Bool {
+        startupPacketPendingLock.lock()
+        defer { startupPacketPendingLock.unlock() }
+        if _startupPacketPending.contains(streamID) {
+            _startupPacketPending.remove(streamID)
+            return true
+        }
+        return false
+    }
+
+    func markStartupPacketPending(_ streamID: StreamID) {
+        startupPacketPendingLock.lock()
+        _startupPacketPending.insert(streamID)
+        startupPacketPendingLock.unlock()
+    }
+
+    func clearStartupPacketPending(_ streamID: StreamID) {
+        startupPacketPendingLock.lock()
+        _startupPacketPending.remove(streamID)
+        startupPacketPendingLock.unlock()
     }
 
     /// Thread-safe set of stream IDs where input is blocked (decoder unhealthy)

@@ -313,22 +313,27 @@ extension MirageClientService {
         do {
             let stopped = try message.decode(LoginDisplayStoppedMessage.self)
             let streamID = StreamID(stopped.streamID)
+            let borrowedDesktopStream = desktopStreamID != nil && streamID == desktopStreamID
             MirageLogger.client("Login display stopped: stream=\(streamID)")
             loginDisplayStreamID = nil
             loginDisplayResolution = nil
             sessionStore.stopLoginDisplay()
-            metricsStore.clear(streamID: streamID)
-            cursorStore.clear(streamID: streamID)
+            if borrowedDesktopStream {
+                MirageLogger.client("Login display stop shares the active desktop stream; desktop stream state remains active")
+            } else {
+                metricsStore.clear(streamID: streamID)
+                cursorStore.clear(streamID: streamID)
 
-            removeActiveStreamID(streamID)
-            registeredStreamIDs.remove(streamID)
+                removeActiveStreamID(streamID)
+                registeredStreamIDs.remove(streamID)
 
-            Task {
-                if let controller = self.controllersByStream[streamID] {
-                    await controller.stop()
-                    self.controllersByStream.removeValue(forKey: streamID)
+                Task {
+                    if let controller = self.controllersByStream[streamID] {
+                        await controller.stop()
+                        self.controllersByStream.removeValue(forKey: streamID)
+                    }
+                    await self.updateReassemblerSnapshot()
                 }
-                await self.updateReassemblerSnapshot()
             }
 
             delegate?.clientService(self, loginDisplayDidStop: streamID, newState: stopped.newState)
