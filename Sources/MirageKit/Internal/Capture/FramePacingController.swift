@@ -8,55 +8,60 @@
 import Foundation
 
 #if os(macOS)
-import CoreVideo
 
-/// Frame pacing controller for consistent frame timing
-actor FramePacingController {
-    private let targetFrameInterval: TimeInterval
-    private var lastFrameTime: UInt64 = 0
+/// Frame pacing controller for consistent frame timing.
+final class FramePacingController: @unchecked Sendable {
+    private let lock = NSLock()
+    private var targetFrameInterval: TimeInterval
+    private var lastFrameTime: CFAbsoluteTime = 0
     private var frameCount: UInt64 = 0
     private var droppedCount: UInt64 = 0
-
-    private var timebaseInfo: mach_timebase_info_data_t = {
-        var info = mach_timebase_info_data_t()
-        mach_timebase_info(&info)
-        return info
-    }()
+    private let toleranceFactor: Double = 0.9
 
     init(targetFPS: Int) {
-        self.targetFrameInterval = 1.0 / Double(targetFPS)
+        let clamped = max(1, targetFPS)
+        self.targetFrameInterval = 1.0 / Double(clamped)
     }
 
-    /// Check if a frame should be captured based on timing
-    func shouldCaptureFrame() -> Bool {
-        let now = mach_absolute_time()
+    func updateTargetFPS(_ targetFPS: Int) {
+        let clamped = max(1, targetFPS)
+        lock.lock()
+        targetFrameInterval = 1.0 / Double(clamped)
+        lastFrameTime = 0
+        frameCount = 0
+        droppedCount = 0
+        lock.unlock()
+    }
 
+    /// Check if a frame should be captured based on timing.
+    func shouldCaptureFrame(at time: CFAbsoluteTime) -> Bool {
+        lock.lock()
         if lastFrameTime == 0 {
-            lastFrameTime = now
+            lastFrameTime = time
             frameCount += 1
+            lock.unlock()
             return true
         }
 
-        let elapsedNanos = (now - lastFrameTime) * UInt64(timebaseInfo.numer) / UInt64(timebaseInfo.denom)
-        let elapsedSeconds = Double(elapsedNanos) / 1_000_000_000.0
-
-        if elapsedSeconds >= targetFrameInterval * 0.95 {
-            lastFrameTime = now
+        let elapsedSeconds = time - lastFrameTime
+        if elapsedSeconds >= targetFrameInterval * toleranceFactor {
+            lastFrameTime = time
             frameCount += 1
+            lock.unlock()
             return true
         }
 
+        droppedCount += 1
+        lock.unlock()
         return false
     }
 
-    /// Mark a frame as dropped
-    func markFrameDropped() {
-        droppedCount += 1
-    }
-
-    /// Get statistics
+    /// Get statistics.
     func getStatistics() -> (frames: UInt64, dropped: UInt64) {
-        (frameCount, droppedCount)
+        lock.lock()
+        let stats = (frameCount, droppedCount)
+        lock.unlock()
+        return stats
     }
 }
 

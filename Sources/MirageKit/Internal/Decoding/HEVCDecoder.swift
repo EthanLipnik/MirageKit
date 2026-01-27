@@ -15,7 +15,7 @@ import CoreGraphics
 actor HEVCDecoder {
     var decompressionSession: VTDecompressionSession?
     var formatDescription: CMFormatDescription?
-    var outputPixelFormat: OSType = kCVPixelFormatType_ARGB2101010LEPacked
+    var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
 
     /// Cached parameter sets for resilience against corrupted keyframes
     /// When a keyframe fails to parse, we can continue with cached format description
@@ -120,19 +120,25 @@ final class DecodeInfo: @unchecked Sendable {
     let errorTracker: DecodeErrorTracker?
     let decodeStartTime: CFAbsoluteTime
     let performanceTracker: DecodePerformanceTracker?
+    let releaseBuffer: (@Sendable () -> Void)?
+    let data: Data
 
     init(
         handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?,
         contentRect: CGRect,
         errorTracker: DecodeErrorTracker?,
         decodeStartTime: CFAbsoluteTime,
-        performanceTracker: DecodePerformanceTracker?
+        performanceTracker: DecodePerformanceTracker?,
+        releaseBuffer: (@Sendable () -> Void)?,
+        data: Data
     ) {
         self.handler = handler
         self.contentRect = contentRect
         self.errorTracker = errorTracker
         self.decodeStartTime = decodeStartTime
         self.performanceTracker = performanceTracker
+        self.releaseBuffer = releaseBuffer
+        self.data = data
     }
 }
 

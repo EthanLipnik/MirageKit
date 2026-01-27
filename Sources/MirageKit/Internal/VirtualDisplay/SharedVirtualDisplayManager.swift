@@ -101,10 +101,17 @@ actor SharedVirtualDisplayManager {
 
     /// Counter for display naming
     var displayCounter: UInt32 = 0
-    let fixedRefreshRate: Int = 120
 
+    static let preferredStreamRefreshRate: Int = 120
+
+    static func streamRefreshRate(for targetFrameRate: Int) -> Int {
+        max(preferredStreamRefreshRate, max(1, targetFrameRate))
+    }
     func resolvedRefreshRate(_ requested: Int) -> Int {
-        fixedRefreshRate
+        if requested >= 120 {
+            return 120
+        }
+        return 60
     }
 }
 

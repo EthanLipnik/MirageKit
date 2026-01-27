@@ -18,7 +18,9 @@ actor WindowCaptureEngine {
     var stream: SCStream?
     var streamOutput: CaptureStreamOutput?
     let configuration: MirageEncoderConfiguration
+    let latencyMode: MirageStreamLatencyMode
     var currentFrameRate: Int
+    var currentDisplayRefreshRate: Int?
     var pendingKeyframeRequest = false
     var isCapturing = false
     var isRestarting = false
@@ -38,9 +40,14 @@ actor WindowCaptureEngine {
     var lastRestartTime: CFAbsoluteTime = 0
     let restartCooldown: CFAbsoluteTime = 3.0
 
-    init(configuration: MirageEncoderConfiguration) {
+    init(
+        configuration: MirageEncoderConfiguration,
+        latencyMode: MirageStreamLatencyMode = .balanced,
+        captureFrameRate: Int? = nil
+    ) {
         self.configuration = configuration
-        self.currentFrameRate = configuration.targetFrameRate
+        self.latencyMode = latencyMode
+        self.currentFrameRate = max(1, captureFrameRate ?? configuration.targetFrameRate)
     }
 
     enum CaptureMode {

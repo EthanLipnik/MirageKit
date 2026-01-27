@@ -70,7 +70,8 @@ extension MirageClientService {
             minBitrate: nil,
             maxBitrate: nil,
             streamScale: clampedStreamScale(),
-            adaptiveScaleEnabled: adaptiveScaleEnabled
+            adaptiveScaleEnabled: adaptiveScaleEnabled,
+            latencyMode: latencyMode
         )
         // TODO: HDR support - requires proper virtual display EDR configuration.
         // request.preferHDR = preferHDR

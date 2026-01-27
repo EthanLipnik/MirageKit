@@ -206,12 +206,22 @@ extension HEVCEncoder {
         // Real-time encoding
         setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
-        // Disable B-frames for lowest latency
+        // Disable B-frames for predictable latency (smoothest relies on buffering only).
         setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
-        // Eliminate encoder buffering - critical for low latency streaming
-        // Without this, the encoder may queue 1-2 frames before outputting
-        setProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: 0 as CFNumber)
+        // Allow limited encoder buffering for smoother throughput in higher-latency modes.
+        let frameDelayCount: Int
+        switch latencyMode {
+        case .smoothest:
+            frameDelayCount = 2
+        case .balanced:
+            frameDelayCount = 1
+        case .lowestLatency:
+            frameDelayCount = 0
+        }
+        if frameDelayCount > 0 {
+            setProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: frameDelayCount as CFNumber)
+        }
 
         // Frame rate
         setProperty(

@@ -45,6 +45,8 @@ struct StartDesktopStreamMessage: Codable {
     let streamScale: CGFloat?
     /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
     let adaptiveScaleEnabled: Bool?
+    /// Client latency preference for buffering behavior
+    let latencyMode: MirageStreamLatencyMode?
     /// UDP port the client is listening on for video data
     let dataPort: UInt16?
     /// Client refresh rate override in Hz (60 or 120)
@@ -70,6 +72,7 @@ struct StartDesktopStreamMessage: Codable {
         case maxBitrate
         case streamScale
         case adaptiveScaleEnabled
+        case latencyMode
         case dataPort
         case maxRefreshRate
     }

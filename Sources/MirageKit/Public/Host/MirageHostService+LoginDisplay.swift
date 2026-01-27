@@ -31,7 +31,8 @@ extension MirageHostService {
                 windowID: 0,
                 encoderConfig: encoderConfig,
                 maxPacketSize: networkConfig.maxPacketSize,
-                additionalFrameFlags: [.loginDisplay]
+                additionalFrameFlags: [.loginDisplay],
+                latencyMode: .smoothest
             )
 
             loginDisplayContext = context

@@ -11,13 +11,23 @@ import Foundation
 
 #if os(macOS)
 extension StreamContext {
-    func advanceEpoch(reason: String) {
+    func markDiscontinuity(reason: String, advanceEpoch: Bool) {
         if dynamicFrameFlags.contains(.discontinuity) {
             return
         }
-        epoch &+= 1
+        if advanceEpoch {
+            epoch &+= 1
+        }
         dynamicFrameFlags.insert(.discontinuity)
-        MirageLogger.stream("Stream epoch advanced to \(epoch) (\(reason))")
+        if advanceEpoch {
+            MirageLogger.stream("Stream epoch advanced to \(epoch) (\(reason))")
+        } else {
+            MirageLogger.stream("Stream discontinuity flagged without epoch bump (\(reason))")
+        }
+    }
+
+    func advanceEpoch(reason: String) {
+        markDiscontinuity(reason: reason, advanceEpoch: true)
     }
 
     func markKeyframeInFlight() {
@@ -57,6 +67,7 @@ extension StreamContext {
         checkInFlight: Bool,
         requiresFlush: Bool = false,
         requiresReset: Bool = false,
+        advanceEpochOnReset: Bool = true,
         urgent: Bool = false
     ) -> Bool {
         guard !shouldThrottleKeyframeRequest(requestLabel: reason, checkInFlight: checkInFlight) else {
@@ -71,7 +82,7 @@ extension StreamContext {
             pendingKeyframeDeadline = max(pendingKeyframeDeadline, now + keyframeSettleTimeout)
         }
         if requiresReset {
-            advanceEpoch(reason: reason)
+            markDiscontinuity(reason: reason, advanceEpoch: advanceEpochOnReset)
             pendingKeyframeRequiresReset = true
             pendingKeyframeRequiresFlush = true
         }
@@ -183,7 +194,14 @@ extension StreamContext {
 
     /// Request a keyframe from the encoder.
     func requestKeyframe() async {
-        if queueKeyframe(reason: "Keyframe request", checkInFlight: true, requiresReset: true, urgent: true) {
+        if queueKeyframe(
+            reason: "Keyframe request",
+            checkInFlight: true,
+            requiresFlush: true,
+            requiresReset: true,
+            advanceEpochOnReset: false,
+            urgent: true
+        ) {
             markKeyframeRequestIssued()
             scheduleProcessingIfNeeded()
         }

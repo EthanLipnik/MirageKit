@@ -16,13 +16,20 @@ extension StreamContext {
     func updateFrameRate(_ fps: Int) async throws {
         guard isRunning, let captureEngine else { return }
         let clamped = max(1, fps)
-        try await captureEngine.updateFrameRate(clamped)
+        let desiredCaptureRate = resolvedCaptureFrameRate(for: clamped)
+        if desiredCaptureRate != captureFrameRate {
+            try await captureEngine.updateFrameRate(desiredCaptureRate)
+            captureFrameRate = desiredCaptureRate
+        }
         await encoder?.updateFrameRate(clamped)
         encoderConfig = encoderConfig.withTargetFrameRate(clamped)
         currentFrameRate = clamped
         updateKeyframeCadence()
         updateQueueLimits()
-        MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps")
+        updateFrameThrottle()
+        stopCadenceTask()
+        startCadenceTaskIfNeeded()
+        MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps (capture \(captureFrameRate) fps)")
     }
 
     func updateDimensions(windowFrame: CGRect) async throws {
@@ -301,6 +308,8 @@ extension StreamContext {
     func stop() async {
         guard isRunning else { return }
         isRunning = false
+
+        stopCadenceTask()
 
         await captureEngine?.stopCapture()
         captureEngine = nil

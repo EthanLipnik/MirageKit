@@ -382,3 +382,20 @@ public enum MirageQualityPreset: String, Sendable, CaseIterable, Codable {
     }
 
 }
+
+// MARK: - Latency Mode
+
+/// Latency preference for stream buffering behavior.
+public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
+    case lowestLatency
+    case balanced
+    case smoothest
+
+    public var displayName: String {
+        switch self {
+        case .lowestLatency: return "Lowest Latency"
+        case .balanced: return "Balanced"
+        case .smoothest: return "Smoothest"
+        }
+    }
+}

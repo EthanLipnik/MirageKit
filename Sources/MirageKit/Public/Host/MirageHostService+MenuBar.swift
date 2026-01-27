@@ -92,6 +92,7 @@ extension MirageHostService {
             let clientMaxRefreshRate = request.maxRefreshRate
             let targetFrameRate = clientMaxRefreshRate >= 120 ? 120 : 60
             MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
+            let latencyMode = request.latencyMode ?? .smoothest
 
             try await startDesktopStream(
                 to: clientContext,
@@ -107,6 +108,7 @@ extension MirageHostService {
                 maxBitrate: request.maxBitrate,
                 streamScale: request.streamScale,
                 adaptiveScaleEnabled: request.adaptiveScaleEnabled,
+                latencyMode: latencyMode,
                 dataPort: request.dataPort,
                 captureSource: request.captureSource,
                 targetFrameRate: targetFrameRate

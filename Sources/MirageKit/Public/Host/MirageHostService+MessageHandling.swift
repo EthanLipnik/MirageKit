@@ -67,6 +67,7 @@ extension MirageHostService {
                 let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
                 let requestedScale = request.streamScale ?? 1.0
                 let adaptiveScaleEnabled = request.adaptiveScaleEnabled ?? true
+                let latencyMode = request.latencyMode ?? .smoothest
                 MirageLogger.host("Frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
                 try await startStream(
@@ -79,6 +80,7 @@ extension MirageHostService {
                     keyframeQuality: keyframeQuality,
                     streamScale: requestedScale,
                     adaptiveScaleEnabled: adaptiveScaleEnabled,
+                    latencyMode: latencyMode,
                     qualityPreset: request.preferredQuality,
                     targetFrameRate: targetFrameRate,
                     pixelFormat: pixelFormat,

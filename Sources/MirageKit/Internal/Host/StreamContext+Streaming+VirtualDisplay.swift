@@ -25,6 +25,10 @@ extension StreamContext {
         guard !isRunning else { return }
         isRunning = true
         useVirtualDisplay = true
+        let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate)
+        captureFrameRateOverride = nil
+        captureFrameRate = currentFrameRate
+        updateFrameThrottle()
 
         let application = applicationWrapper.application
 
@@ -41,7 +45,7 @@ extension StreamContext {
             for: streamID,
             clientResolution: clientDisplayResolution,
             windowID: windowID,
-            refreshRate: currentFrameRate,
+            refreshRate: virtualDisplayRefreshRate,
             colorSpace: encoderConfig.colorSpace
         )
         self.virtualDisplayContext = vdContext
@@ -73,7 +77,11 @@ extension StreamContext {
 
         MirageLogger.stream("Found SCWindow \(scWindow.windowID) on virtual display \(scDisplay.displayID)")
 
-        let encoder = HEVCEncoder(configuration: encoderConfig, inFlightLimit: maxInFlightFrames)
+        let encoder = HEVCEncoder(
+            configuration: encoderConfig,
+            latencyMode: latencyMode,
+            inFlightLimit: maxInFlightFrames
+        )
         self.encoder = encoder
 
         let captureScaleFactor: CGFloat = 2.0
@@ -90,7 +98,7 @@ extension StreamContext {
         captureMode = .window
         lastWindowFrame = scWindow.frame
         updateQueueLimits()
-        MirageLogger.stream("Virtual display init: scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB")
+        MirageLogger.stream("Virtual display init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB")
         try await encoder.createSession(
             width: Int(outputSize.width),
             height: Int(outputSize.height)
@@ -140,7 +148,9 @@ extension StreamContext {
                 dimensionToken: dimToken,
                 epoch: epoch,
                 logPrefix: "VD Frame",
-                generation: generation
+                generation: generation,
+                onSendStart: nil,
+                onSendComplete: nil
             )
             packetSender.enqueue(workItem)
         }, onFrameComplete: { [weak self] in
@@ -150,7 +160,11 @@ extension StreamContext {
         let resolvedPixelFormat = await encoder.getActivePixelFormat()
         activePixelFormat = resolvedPixelFormat
         let captureConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
-        let windowCaptureEngine = WindowCaptureEngine(configuration: captureConfig)
+        let windowCaptureEngine = WindowCaptureEngine(
+            configuration: captureConfig,
+            latencyMode: latencyMode,
+            captureFrameRate: captureFrameRate
+        )
         self.captureEngine = windowCaptureEngine
 
         try await windowCaptureEngine.startCapture(
@@ -162,6 +176,8 @@ extension StreamContext {
         ) { [weak self] frame in
             self?.enqueueCapturedFrame(frame)
         }
+
+        startCadenceTaskIfNeeded()
 
         MirageLogger.stream("Started stream \(streamID) with virtual display \(vdContext.displayID) for window \(windowID)")
     }
@@ -186,7 +202,7 @@ extension StreamContext {
         try await SharedVirtualDisplayManager.shared.updateClientResolution(
             for: streamID,
             newResolution: newResolution,
-            refreshRate: currentFrameRate
+            refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate)
         )
 
         guard let newContext = await SharedVirtualDisplayManager.shared.getDisplayContext() else {
@@ -242,7 +258,11 @@ extension StreamContext {
             MirageLogger.encoder("Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for resolution change")
         }
 
-        let windowCaptureEngine = WindowCaptureEngine(configuration: encoderConfig)
+        let windowCaptureEngine = WindowCaptureEngine(
+            configuration: encoderConfig,
+            latencyMode: latencyMode,
+            captureFrameRate: captureFrameRate
+        )
         self.captureEngine = windowCaptureEngine
 
         try await windowCaptureEngine.startCapture(
@@ -254,6 +274,8 @@ extension StreamContext {
         ) { [weak self] frame in
             self?.enqueueCapturedFrame(frame)
         }
+
+        startCadenceTaskIfNeeded()
 
         await encoder?.forceKeyframe()
 

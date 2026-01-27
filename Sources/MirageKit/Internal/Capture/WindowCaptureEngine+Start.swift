@@ -36,6 +36,8 @@ extension WindowCaptureEngine {
         capturedFrameHandler = onFrame
         dimensionChangeHandler = onDimensionChange
 
+        currentDisplayRefreshRate = nil
+
         // Create stream configuration
         let streamConfig = SCStreamConfiguration()
 
@@ -84,7 +86,7 @@ extension WindowCaptureEngine {
         // Frame rate
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
-            timescale: CMTimeScale(currentFrameRate)
+            timescale: CMTimeScale(minimumFrameIntervalRate())
         )
 
         // Color and format - configured pixel format (P010, ARGB2101010, BGRA, NV12)
@@ -103,6 +105,9 @@ extension WindowCaptureEngine {
         if let override = configuration.captureQueueDepth, override > 0 {
             MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)")
         }
+        let queueDepth = streamConfig.queueDepth
+        let poolMinimumCount = bufferPoolMinimumCount
+        MirageLogger.capture("Capture buffering: latency=\(latencyMode.displayName), queue=\(queueDepth), pool=\(poolMinimumCount)")
 
         // Use window-level capture for precise dimensions (captures just this window)
         // Note: This may not capture modal dialogs/sheets, but avoids black bars from app-level bounding box
@@ -134,6 +139,7 @@ extension WindowCaptureEngine {
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
             expectedFrameRate: Double(currentFrameRate),
+            pacingFrameRate: currentFrameRate,
             poolMinimumBufferCount: bufferPoolMinimumCount
         )
 
@@ -252,8 +258,8 @@ extension WindowCaptureEngine {
             showsCursor: showsCursor
         )
 
-        if let displayMode = CGDisplayCopyDisplayMode(display.displayID) {
-            let refreshRate = displayMode.refreshRate
+        updateDisplayRefreshRate(for: display.displayID)
+        if let refreshRate = currentDisplayRefreshRate {
             MirageLogger.capture("Display mode refresh rate: \(refreshRate)")
         }
 
@@ -284,7 +290,7 @@ extension WindowCaptureEngine {
         // Frame rate
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
-            timescale: CMTimeScale(currentFrameRate)
+            timescale: CMTimeScale(minimumFrameIntervalRate())
         )
 
         // Color and format
@@ -305,6 +311,9 @@ extension WindowCaptureEngine {
         if let override = configuration.captureQueueDepth, override > 0 {
             MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)")
         }
+        let queueDepth = streamConfig.queueDepth
+        let poolMinimumCount = bufferPoolMinimumCount
+        MirageLogger.capture("Capture buffering: latency=\(latencyMode.displayName), queue=\(queueDepth), pool=\(poolMinimumCount)")
 
         // Capture displayID before creating filter (for logging after)
         let capturedDisplayID = display.displayID
@@ -340,6 +349,7 @@ extension WindowCaptureEngine {
             frameGapThreshold: frameGapThreshold(for: currentFrameRate),
             stallThreshold: stallThreshold(for: currentFrameRate),
             expectedFrameRate: Double(currentFrameRate),
+            pacingFrameRate: currentFrameRate,
             poolMinimumBufferCount: bufferPoolMinimumCount
         )
 

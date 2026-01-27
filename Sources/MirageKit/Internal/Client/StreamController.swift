@@ -8,7 +8,6 @@
 import Foundation
 import CoreMedia
 import CoreVideo
-import Metal
 
 /// Controls the lifecycle and state of a single stream.
 /// Owned by MirageClientService, not by views. This ensures:
@@ -60,8 +59,6 @@ actor StreamController {
     /// Frame reassembler for this stream
     let reassembler: FrameReassembler
 
-    let textureCache = StreamTextureCache()
-
     /// Current resize state
     var resizeState: ResizeState = .idle
 
@@ -83,6 +80,12 @@ actor StreamController {
     /// Interval for retrying keyframe requests while decoder is unhealthy
     static let keyframeRecoveryInterval: Duration = .seconds(1)
 
+    /// Maximum number of frames buffered for decode before dropping old frames.
+    static let maxQueuedFrames: Int = 6
+
+    /// Minimum interval between decode backpressure drop logs.
+    static let queueDropLogInterval: CFAbsoluteTime = 1.0
+
     /// Pending resize debounce task
     var resizeDebounceTask: Task<Void, Never>?
 
@@ -93,29 +96,23 @@ actor StreamController {
     /// Whether we've received at least one frame
     var hasReceivedFirstFrame = false
 
-    /// AsyncStream continuation for ordered frame delivery
-    /// Frames are yielded here and processed sequentially by frameProcessingTask
-    var frameContinuation: AsyncStream<FrameData>.Continuation?
+    /// Bounded queue of frames waiting to be decoded.
+    var queuedFrames: [FrameData] = []
+
+    /// Continuation resumed when the decode task is waiting for a frame.
+    var dequeueContinuation: CheckedContinuation<FrameData?, Never>?
 
     /// Task that processes frames from the stream in FIFO order
     /// This ensures frames are decoded sequentially, preventing P-frame decode errors
     var frameProcessingTask: Task<Void, Never>?
 
-    /// Total decoded frames (lifetime)
-    var decodedFrameCount: UInt64 = 0
-    /// Recent decode timestamps for FPS sampling
-    var fpsSampleTimes: [CFAbsoluteTime] = []
-    /// Latest computed FPS sample
-    var currentFPS: Double = 0
-    /// Total reassembled frames (lifetime)
-    var receivedFrameCount: UInt64 = 0
-    /// Recent receive timestamps for FPS sampling
-    var receiveSampleTimes: [CFAbsoluteTime] = []
-    /// Latest computed receive FPS sample
-    var currentReceiveFPS: Double = 0
+    var queueDropsSinceLastLog: UInt64 = 0
+    var lastQueueDropLogTime: CFAbsoluteTime = 0
+
+    let metricsTracker = ClientFrameMetricsTracker()
+    var metricsTask: Task<Void, Never>?
     var lastMetricsLogTime: CFAbsoluteTime = 0
-    var lastMetricsDispatchTime: CFAbsoluteTime = 0
-    static let metricsDispatchInterval: TimeInterval = 0.5
+    static let metricsDispatchInterval: Duration = .milliseconds(500)
 
     // MARK: - Callbacks
 
@@ -176,7 +173,6 @@ actor StreamController {
         await decoder.setErrorThresholdHandler { [weak self] in
             guard let self else { return }
             Task {
-                self.reassembler.enterKeyframeOnlyMode()
                 await self.onKeyframeNeeded?()
             }
         }
@@ -200,45 +196,37 @@ actor StreamController {
         }
 
         // Set up frame handler
+        let metricsTracker = metricsTracker
         await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, presentationTime: CMTime, contentRect: CGRect) in
-            guard let self else { return }
-
             // Also store in global cache for iOS gesture tracking compatibility
-            let (metalTexture, texture) = self.textureCache.makeTexture(from: pixelBuffer)
-            MirageFrameCache.shared.store(
-                pixelBuffer,
-                contentRect: contentRect,
-                metalTexture: metalTexture,
-                texture: texture,
-                for: capturedStreamID
-            )
+            MirageFrameCache.shared.store(pixelBuffer, contentRect: contentRect, for: capturedStreamID)
             MirageRenderScheduler.shared.signalFrame(for: capturedStreamID)
 
-            // Mark that we've received a frame and notify delegate
-            Task { [weak self] in
-                guard let self else { return }
-                await self.recordDecodedFrame()
-                await self.markFirstFrameReceived()
-                await notifyFrameDecoded()
+            if metricsTracker.recordDecodedFrame() {
+                Task { [weak self] in
+                    await self?.markFirstFrameReceived()
+                }
             }
         }
 
         await startFrameProcessingPipeline()
+        startMetricsReporting()
     }
 
     func startFrameProcessingPipeline() async {
-        // Create AsyncStream for ordered frame processing
-        // This ensures frames are decoded in the order they were received,
-        // preventing P-frame decode errors caused by out-of-order Task execution
-        let (stream, continuation) = AsyncStream.makeStream(of: FrameData.self, bufferingPolicy: .unbounded)
-        frameContinuation = continuation
+        finishFrameQueue()
+        queueDropsSinceLastLog = 0
+        lastQueueDropLogTime = 0
+        metricsTracker.reset()
+        lastMetricsLogTime = 0
 
         // Start the frame processing task - single task processes all frames sequentially
         let capturedDecoder = decoder
         frameProcessingTask = Task { [weak self] in
-            for await frame in stream {
+            guard let self else { return }
+            while !Task.isCancelled {
+                guard let frame = await self.dequeueFrame() else { break }
                 defer { frame.releaseBuffer() }
-                guard self != nil else { continue }
                 do {
                     try await capturedDecoder.decodeFrame(
                         frame.data,
@@ -252,38 +240,111 @@ actor StreamController {
             }
         }
 
-        // Set up reassembler callback - yields frames to AsyncStream for ordered processing
-        let recordReceivedFrame: @Sendable () -> Void = { [weak self] in
-            Task { await self?.recordReceivedFrame() }
+        // Set up reassembler callback - enqueue frames for ordered processing
+        let metricsTracker = metricsTracker
+        let recordReceivedFrame: @Sendable () -> Void = {
+            metricsTracker.recordReceivedFrame()
         }
-        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void = { _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
+        let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void) -> Void = { [weak self] _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
             let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
             recordReceivedFrame()
 
-            // Yield to stream instead of creating a new Task
-            // AsyncStream maintains FIFO order, ensuring frames are decoded sequentially
-            continuation.yield(FrameData(
+            let frame = FrameData(
                 data: frameData,
                 presentationTime: presentationTime,
                 isKeyframe: isKeyframe,
                 contentRect: contentRect,
                 releaseBuffer: releaseBuffer
-            ))
+            )
+
+            Task {
+                guard let self else {
+                    releaseBuffer()
+                    return
+                }
+                await self.enqueueFrame(frame)
+            }
         }
         reassembler.setFrameHandler(reassemblerHandler)
     }
 
     func stopFrameProcessingPipeline() {
-        frameContinuation?.finish()
-        frameContinuation = nil
+        finishFrameQueue()
         frameProcessingTask?.cancel()
         frameProcessingTask = nil
+    }
+
+    private func enqueueFrame(_ frame: FrameData) {
+        if let continuation = dequeueContinuation {
+            dequeueContinuation = nil
+            continuation.resume(returning: frame)
+            return
+        }
+
+        if queuedFrames.count >= Self.maxQueuedFrames {
+            if frame.isKeyframe {
+                let dropIndex = queuedFrames.lastIndex(where: { !$0.isKeyframe }) ?? queuedFrames.indices.last
+                if let dropIndex {
+                    let droppedFrame = queuedFrames.remove(at: dropIndex)
+                    droppedFrame.releaseBuffer()
+                    queueDropsSinceLastLog += 1
+                    metricsTracker.recordQueueDrop()
+                }
+            } else {
+                frame.releaseBuffer()
+                queueDropsSinceLastLog += 1
+                metricsTracker.recordQueueDrop()
+                logQueueDropIfNeeded()
+                return
+            }
+
+            logQueueDropIfNeeded()
+        }
+
+        queuedFrames.append(frame)
+    }
+
+    private func dequeueFrame() async -> FrameData? {
+        if !queuedFrames.isEmpty {
+            return queuedFrames.removeFirst()
+        }
+        return await withCheckedContinuation { continuation in
+            dequeueContinuation = continuation
+        }
+    }
+
+    private func finishFrameQueue() {
+        if let continuation = dequeueContinuation {
+            dequeueContinuation = nil
+            continuation.resume(returning: nil)
+        }
+        if queuedFrames.isEmpty {
+            return
+        }
+        let frames = queuedFrames
+        queuedFrames.removeAll(keepingCapacity: false)
+        for frame in frames {
+            frame.releaseBuffer()
+        }
+    }
+
+    private func logQueueDropIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastQueueDropLogTime >= Self.queueDropLogInterval {
+            lastQueueDropLogTime = now
+            let dropped = queueDropsSinceLastLog
+            queueDropsSinceLastLog = 0
+            MirageLogger.client(
+                "Decode backpressure: dropped \(dropped) frames (depth \(queuedFrames.count)) for stream \(streamID)"
+            )
+        }
     }
 
     /// Stop the controller and clean up resources
     func stop() async {
         // Stop frame processing - finish stream and cancel task
         stopFrameProcessingPipeline()
+        stopMetricsReporting()
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
@@ -292,37 +353,34 @@ actor StreamController {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
-    /// Record a decoded frame (used for FPS sampling).
-    private func recordDecodedFrame() {
-        decodedFrameCount += 1
-        let now = CFAbsoluteTimeGetCurrent()
-        currentFPS = updateSampleTimes(&fpsSampleTimes, now: now)
-    }
-
-    private func recordReceivedFrame() {
-        receivedFrameCount += 1
-        let now = CFAbsoluteTimeGetCurrent()
-        currentReceiveFPS = updateSampleTimes(&receiveSampleTimes, now: now)
-    }
-
-    func getCurrentFPS() -> Double {
-        currentFPS
-    }
-
-    private func notifyFrameDecoded() async {
-        let now = CFAbsoluteTimeGetCurrent()
-        if lastMetricsDispatchTime > 0, now - lastMetricsDispatchTime < Self.metricsDispatchInterval {
-            return
+    private func startMetricsReporting() {
+        metricsTask?.cancel()
+        metricsTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: Self.metricsDispatchInterval)
+                } catch {
+                    break
+                }
+                await self.dispatchMetrics()
+            }
         }
+    }
 
-        lastMetricsDispatchTime = now
-        let decodedFPS = currentFPS
-        let receivedFPS = currentReceiveFPS
-        let droppedFrames = reassembler.getDroppedFrameCount()
-        logMetricsIfNeeded(droppedFrames: droppedFrames)
+    private func stopMetricsReporting() {
+        metricsTask?.cancel()
+        metricsTask = nil
+    }
+
+    private func dispatchMetrics() async {
+        let now = CFAbsoluteTimeGetCurrent()
+        let snapshot = metricsTracker.snapshot(now: now)
+        let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
+        logMetricsIfNeeded(decodedFPS: snapshot.decodedFPS, receivedFPS: snapshot.receivedFPS, droppedFrames: droppedFrames)
         let metrics = ClientFrameMetrics(
-            decodedFPS: decodedFPS,
-            receivedFPS: receivedFPS,
+            decodedFPS: snapshot.decodedFPS,
+            receivedFPS: snapshot.receivedFPS,
             droppedFrames: droppedFrames
         )
         let callback = onFrameDecoded

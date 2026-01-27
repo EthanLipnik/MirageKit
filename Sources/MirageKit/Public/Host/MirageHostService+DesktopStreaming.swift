@@ -31,6 +31,7 @@ extension MirageHostService {
         maxBitrate: Int?,
         streamScale: CGFloat?,
         adaptiveScaleEnabled: Bool?,
+        latencyMode: MirageStreamLatencyMode = .smoothest,
         dataPort: UInt16?,
         captureSource: MirageDesktopCaptureSource?,
         targetFrameRate: Int? = nil
@@ -90,10 +91,13 @@ extension MirageHostService {
         // Acquire virtual display at client's full requested resolution
         // The 5K cap is applied at the encoding layer, not the virtual display
         // Pass the target frame rate to enable 120Hz when appropriate
+        let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
+            for: targetFrameRate ?? 60
+        )
         let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
             .desktopStream,
             resolution: displayResolution,
-            refreshRate: targetFrameRate ?? 60,
+            refreshRate: virtualDisplayRefreshRate,
             colorSpace: config.colorSpace
         )
 
@@ -134,7 +138,8 @@ extension MirageHostService {
             streamScale: effectiveScale,
             maxPacketSize: networkConfig.maxPacketSize,
             additionalFrameFlags: [.desktopStream],
-            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true
+            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true,
+            latencyMode: latencyMode
         )
         let metricsClientID = clientContext.client.id
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in

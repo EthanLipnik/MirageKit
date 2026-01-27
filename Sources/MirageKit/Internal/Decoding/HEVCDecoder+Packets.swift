@@ -40,8 +40,11 @@ extension FrameReassembler {
             MirageLogger.log(.frameAssembly, "STATS: packets=\(totalPacketsReceived), framesDelivered=\(framesDelivered), pending=\(pendingFrames.count), discarded(old=\(packetsDiscardedOld), crc=\(packetsDiscardedCRC), token=\(packetsDiscardedToken), epoch=\(packetsDiscardedEpoch), awaitKeyframe=\(packetsDiscardedAwaitingKeyframe))")
         }
 
+        let epochIsNewer = isEpochNewer(header.epoch, than: currentEpoch)
+        let epochIsCurrentOrNewer = header.epoch == currentEpoch || epochIsNewer
+
         if header.epoch != currentEpoch {
-            if isKeyframePacket {
+            if isKeyframePacket && epochIsNewer {
                 resetForEpoch(header.epoch, reason: "epoch mismatch")
             } else {
                 packetsDiscardedEpoch += 1
@@ -52,7 +55,7 @@ extension FrameReassembler {
         }
 
         if header.flags.contains(.discontinuity) {
-            if isKeyframePacket {
+            if isKeyframePacket && epochIsCurrentOrNewer {
                 resetForEpoch(header.epoch, reason: "discontinuity")
             } else {
                 packetsDiscardedEpoch += 1
@@ -278,8 +281,16 @@ extension FrameReassembler {
         lastCompletedFrame = 0
         lastDeliveredKeyframe = 0
         clearAwaitingKeyframe()
+        beginAwaitingKeyframe()
         packetsDiscardedAwaitingKeyframe = 0
         MirageLogger.log(.frameAssembly, "Epoch \(epoch) reset (\(reason)) for stream \(streamID)")
+    }
+
+    private func isEpochNewer(_ incoming: UInt16, than current: UInt16) -> Bool {
+        let diff = UInt16(incoming &- current)
+        // Treat epochs as monotonically increasing with wrap-around semantics.
+        // Values in the "forward" half-range are considered newer.
+        return diff != 0 && diff < 0x8000
     }
 
     private func cleanupOldFramesLocked() {

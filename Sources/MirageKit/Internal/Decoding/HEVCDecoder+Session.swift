@@ -14,6 +14,18 @@ import VideoToolbox
 
 extension HEVCDecoder {
     func createSession(formatDescription: CMFormatDescription) throws {
+        do {
+            try createSession(formatDescription: formatDescription, outputPixelFormat: outputPixelFormat)
+        } catch {
+            guard let fallback = fallbackOutputPixelFormat(for: outputPixelFormat) else {
+                throw error
+            }
+            try createSession(formatDescription: formatDescription, outputPixelFormat: fallback)
+            outputPixelFormat = fallback
+        }
+    }
+
+    private func createSession(formatDescription: CMFormatDescription, outputPixelFormat: OSType) throws {
         let destinationAttributes: [CFString: Any] = [
             kCVPixelBufferPixelFormatTypeKey: outputPixelFormat,
             kCVPixelBufferMetalCompatibilityKey: true,
@@ -36,10 +48,22 @@ extension HEVCDecoder {
             throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status)))
         }
 
-        // Configure for real-time decoding
         VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-
         decompressionSession = session
     }
-}
 
+    private func fallbackOutputPixelFormat(for outputPixelFormat: OSType) -> OSType? {
+        switch outputPixelFormat {
+        case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            return kCVPixelFormatType_32BGRA
+        case kCVPixelFormatType_ARGB2101010LEPacked:
+            return kCVPixelFormatType_32BGRA
+        default:
+            return nil
+        }
+    }
+}

@@ -68,6 +68,7 @@ extension MirageClientService {
 
         request.streamScale = clampedStreamScale()
         request.adaptiveScaleEnabled = adaptiveScaleEnabled
+        request.latencyMode = latencyMode
         request.maxRefreshRate = getScreenMaxRefreshRate()
 
         let message = try ControlMessage(type: .startStream, content: request)

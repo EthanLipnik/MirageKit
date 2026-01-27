@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import CoreVideo
+import CoreGraphics
 
 extension StreamController {
     // MARK: - Private Helpers
@@ -161,60 +161,5 @@ extension StreamController {
         } catch {
             // Cancelled, ignore
         }
-    }
-}
-
-final class StreamTextureCache: @unchecked Sendable {
-    private let lock = NSLock()
-    private let device: MTLDevice?
-    private var cache: CVMetalTextureCache?
-
-    init() {
-        device = MTLCreateSystemDefaultDevice()
-        guard let device else { return }
-        var createdCache: CVMetalTextureCache?
-        let status = CVMetalTextureCacheCreate(kCFAllocatorDefault, nil, device, nil, &createdCache)
-        if status == kCVReturnSuccess {
-            cache = createdCache
-        }
-    }
-
-    func makeTexture(from pixelBuffer: CVPixelBuffer) -> (CVMetalTexture?, MTLTexture?) {
-        lock.lock()
-        defer { lock.unlock() }
-
-        guard let cache else { return (nil, nil) }
-
-        let width = CVPixelBufferGetWidth(pixelBuffer)
-        let height = CVPixelBufferGetHeight(pixelBuffer)
-        let pixelFormatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        let metalPixelFormat: MTLPixelFormat
-        switch pixelFormatType {
-        case kCVPixelFormatType_32BGRA:
-            metalPixelFormat = .bgra8Unorm
-        case kCVPixelFormatType_ARGB2101010LEPacked:
-            metalPixelFormat = .bgr10a2Unorm
-        default:
-            metalPixelFormat = .bgr10a2Unorm
-        }
-
-        var metalTexture: CVMetalTexture?
-        let status = CVMetalTextureCacheCreateTextureFromImage(
-            kCFAllocatorDefault,
-            cache,
-            pixelBuffer,
-            nil,
-            metalPixelFormat,
-            width,
-            height,
-            0,
-            &metalTexture
-        )
-
-        guard status == kCVReturnSuccess, let metalTexture else {
-            return (nil, nil)
-        }
-
-        return (metalTexture, CVMetalTextureGetTexture(metalTexture))
     }
 }

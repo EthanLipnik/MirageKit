@@ -61,7 +61,7 @@ extension WindowCaptureEngine {
         }
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
-            timescale: CMTimeScale(currentFrameRate)
+            timescale: CMTimeScale(minimumFrameIntervalRate())
         )
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
@@ -108,7 +108,7 @@ extension WindowCaptureEngine {
         streamConfig.height = height
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
-            timescale: CMTimeScale(currentFrameRate)
+            timescale: CMTimeScale(minimumFrameIntervalRate())
         )
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
@@ -130,6 +130,7 @@ extension WindowCaptureEngine {
         let newHeight = Int(resolution.height)
 
         MirageLogger.capture("Switching capture to new display \(newDisplay.displayID) at \(newWidth)x\(newHeight)")
+        updateDisplayRefreshRate(for: newDisplay.displayID)
 
         // Update dimensions
         currentWidth = newWidth
@@ -161,7 +162,7 @@ extension WindowCaptureEngine {
         streamConfig.height = newHeight
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
-            timescale: CMTimeScale(currentFrameRate)
+            timescale: CMTimeScale(minimumFrameIntervalRate())
         )
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
@@ -193,7 +194,7 @@ extension WindowCaptureEngine {
         }
         streamConfig.minimumFrameInterval = CMTime(
             value: 1,
-            timescale: CMTimeScale(fps)
+            timescale: CMTimeScale(minimumFrameIntervalRate())
         )
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = configuration.colorSpace == .displayP3

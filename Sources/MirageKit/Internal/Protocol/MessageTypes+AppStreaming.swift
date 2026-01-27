@@ -59,6 +59,8 @@ struct SelectAppMessage: Codable {
     let streamScale: CGFloat?
     /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
     let adaptiveScaleEnabled: Bool?
+    /// Client latency preference for buffering behavior
+    let latencyMode: MirageStreamLatencyMode?
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
@@ -81,6 +83,7 @@ struct SelectAppMessage: Codable {
         case maxBitrate
         case streamScale
         case adaptiveScaleEnabled
+        case latencyMode
     }
 }
 

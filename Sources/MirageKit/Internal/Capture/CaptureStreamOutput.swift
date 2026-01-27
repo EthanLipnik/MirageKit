@@ -48,11 +48,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var expectedFrameRate: Double
     private let expectationLock = NSLock()
 
+    private let framePacer: FramePacingController?
+    private var pacingDropCount: UInt64 = 0
+    private var lastPacingLogTime: CFAbsoluteTime = 0
+    private var pacingDropsWindowCount: UInt64 = 0
+    private var rawFrameWindowCount: UInt64 = 0
+    private var rawFrameWindowStartTime: CFAbsoluteTime = 0
+    private var pacingAnchorPTS: CMTime?
+    private var pacingAnchorWallTime: CFAbsoluteTime = 0
+
     private let poolMinimumBufferCount: Int
     private let frameCopier: CaptureFrameCopier?
     private var loggedCopyFallback = false
     private var poolDropCount: UInt64 = 0
     private var lastPoolLogTime: CFAbsoluteTime = 0
+    private var inFlightDropCount: UInt64 = 0
+    private var lastInFlightLogTime: CFAbsoluteTime = 0
     private let poolLogLock = NSLock()
 
     // Track if we've been in fallback mode - when SCK resumes, we may need a keyframe
@@ -75,6 +86,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         frameGapThreshold: CFAbsoluteTime = 0.100,
         stallThreshold: CFAbsoluteTime = 1.0,
         expectedFrameRate: Double = 0,
+        pacingFrameRate: Int? = nil,
         poolMinimumBufferCount: Int = 6
     ) {
         self.onFrame = onFrame
@@ -86,6 +98,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         self.frameGapThreshold = frameGapThreshold
         self.stallThreshold = stallThreshold
         self.expectedFrameRate = expectedFrameRate
+        if let pacingFrameRate, pacingFrameRate > 0 {
+            self.framePacer = FramePacingController(targetFPS: pacingFrameRate)
+        } else {
+            self.framePacer = nil
+        }
         self.poolMinimumBufferCount = max(2, poolMinimumBufferCount)
         self.frameCopier = CaptureFrameCopier()
         super.init()
@@ -123,6 +140,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             frameGapThreshold = gapThreshold
             self.stallThreshold = stallThreshold
         }
+        framePacer?.updateTargetFPS(frameRate)
         stallSignaled = false
         stopWatchdogTimer()
         startWatchdogTimer()
@@ -172,11 +190,35 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         fallbackLock.unlock()
     }
 
+    /// Use SCK's presentation timestamps for pacing when available.
+    /// This decouples pacing decisions from callback scheduling jitter.
+    private func pacingTime(for sampleBuffer: CMSampleBuffer, wallTime: CFAbsoluteTime) -> CFAbsoluteTime {
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        guard pts.isValid, pts.isNumeric else { return wallTime }
+        if pacingAnchorPTS == nil {
+            pacingAnchorPTS = pts
+            pacingAnchorWallTime = wallTime
+            return wallTime
+        }
+        let delta = CMTimeSubtract(pts, pacingAnchorPTS!)
+        let seconds = CMTimeGetSeconds(delta)
+        guard seconds.isFinite, seconds >= 0 else {
+            pacingAnchorPTS = pts
+            pacingAnchorWallTime = wallTime
+            return wallTime
+        }
+        return pacingAnchorWallTime + seconds
+    }
+
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
-        let captureTime = CFAbsoluteTimeGetCurrent()  // Timing: when SCK delivered the frame
+        let wallTime = CFAbsoluteTimeGetCurrent()  // Timing: when SCK delivered the frame
+        let captureTime = wallTime
+        let pacingTime = pacingTime(for: sampleBuffer, wallTime: wallTime)
 
         // NOTE: lastDeliveredFrameTime is updated ONLY for .complete frames (below)
         // This allows the watchdog to continue firing during drags when SCK only sends .idle frames
+
+        let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
 
         // Check if we're resuming from fallback mode
         // Only request keyframe if fallback lasted long enough to cause decode issues
@@ -215,13 +257,45 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
         guard type == .screen else { return }
 
+        if diagnosticsEnabled {
+            rawFrameWindowCount += 1
+            if rawFrameWindowStartTime == 0 {
+                rawFrameWindowStartTime = captureTime
+            } else if captureTime - rawFrameWindowStartTime > 2.0 {
+                let elapsed = captureTime - rawFrameWindowStartTime
+                let rawFps = Double(rawFrameWindowCount) / elapsed
+                let rawFpsText = rawFps.formatted(.number.precision(.fractionLength(1)))
+                let targetText = expectedFrameRate.formatted(.number.precision(.fractionLength(1)))
+                MirageLogger.capture(
+                    "Capture raw fps: \(rawFpsText) (target=\(targetText), pacingDrops=\(pacingDropsWindowCount))"
+                )
+                rawFrameWindowCount = 0
+                pacingDropsWindowCount = 0
+                rawFrameWindowStartTime = captureTime
+            }
+        }
+
+        if let framePacer, !framePacer.shouldCaptureFrame(at: pacingTime) {
+            lastDeliveredFrameTime = captureTime
+            stallSignaled = false
+            pacingDropsWindowCount += 1
+            if diagnosticsEnabled {
+                pacingDropCount += 1
+                if lastPacingLogTime == 0 || captureTime - lastPacingLogTime > 2.0 {
+                    let drops = pacingDropCount
+                    pacingDropCount = 0
+                    lastPacingLogTime = captureTime
+                    MirageLogger.capture("Capture pacing drops: \(drops) frames")
+                }
+            }
+            return
+        }
+
         // Validate the sample buffer
         guard CMSampleBufferIsValid(sampleBuffer),
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
-
-        let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
 
         if !tracksFrameStatus {
             lastDeliveredFrameTime = captureTime
@@ -442,6 +516,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             switch scheduleResult {
             case .scheduled:
                 return
+            case .inFlightLimit:
+                logInFlightDrop()
+                return
             case .poolExhausted:
                 logPoolDrop()
                 return
@@ -462,6 +539,19 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 MirageLogger.capture("Capture pool exhausted: dropped \(poolDropCount) frames")
                 poolDropCount = 0
                 lastPoolLogTime = now
+            }
+        }
+    }
+
+    private func logInFlightDrop() {
+        poolLogLock.withLock {
+            inFlightDropCount += 1
+            guard MirageLogger.isEnabled(.capture) else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            if lastInFlightLogTime == 0 || now - lastInFlightLogTime > 2.0 {
+                MirageLogger.capture("Capture copy in-flight limit: dropped \(inFlightDropCount) frames")
+                inFlightDropCount = 0
+                lastInFlightLogTime = now
             }
         }
     }

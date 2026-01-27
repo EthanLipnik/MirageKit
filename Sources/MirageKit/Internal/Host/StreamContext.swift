@@ -62,6 +62,7 @@ actor StreamContext {
     // Bounded frame inbox to decouple capture from encode with low latency.
     nonisolated let frameInbox: StreamFrameInbox
     var inFlightCount: Int = 0
+    let minInFlightFrames: Int
     var maxInFlightFrames: Int
     let maxInFlightFramesCap: Int
     let frameBufferDepth: Int
@@ -70,6 +71,13 @@ actor StreamContext {
     var idleSkippedCount: UInt64 = 0
     var idleEncodedCount: UInt64 = 0
     var encodedFrameCount: UInt64 = 0
+    var syntheticFrameCount: UInt64 = 0
+    var syntheticIntervalCount: UInt64 = 0
+    var lastCapturedFrame: CapturedFrame?
+    var lastCapturedDuration: CMTime = .invalid
+    var lastEncodedPresentationTime: CMTime = .invalid
+    var lastSyntheticFrameTime: CFAbsoluteTime = 0
+    var lastSyntheticLogTime: CFAbsoluteTime = 0
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
     var activeQuality: Float
@@ -103,6 +111,8 @@ actor StreamContext {
     var encodeErrorIntervalCount: UInt64 = 0
     var lastPipelineStatsLogTime: CFAbsoluteTime = 0
     let pipelineStatsInterval: CFAbsoluteTime = 2.0
+    var lastCapturedFrameTime: CFAbsoluteTime = 0
+    var cadenceTask: Task<Void, Never>?
 
     /// Maximum time to wait for encode progress before considering encoder stuck (ms)
     /// During drag operations, VideoToolbox can block - we need to detect this and recover
@@ -150,6 +160,10 @@ actor StreamContext {
 
     /// Frame rate for cadence and queue limits
     var currentFrameRate: Int
+    /// Frame rate requested from ScreenCaptureKit.
+    var captureFrameRate: Int
+    /// Optional override for capture frame rate.
+    var captureFrameRateOverride: Int?
 
     /// Maximum encoded resolution (5K cap)
     static let maxEncodedWidth: CGFloat = 5120
@@ -182,11 +196,16 @@ actor StreamContext {
     /// Incremented when the host resets capture or send state.
     nonisolated(unsafe) var epoch: UInt16 = 0
 
+    /// Drops capture frames when capture cadence exceeds the encoder target cadence.
+    nonisolated let frameThrottle = StreamFrameThrottle()
+
     /// Whether idle frames should be encoded to maintain cadence.
     let shouldMaintainIdleFrames: Bool
 
     /// Quality preset used to configure latency-sensitive defaults.
     let qualityPreset: MirageQualityPreset?
+    /// Latency preference for buffering behavior.
+    let latencyMode: MirageStreamLatencyMode
     /// When true, force low-latency buffering regardless of preset.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale (before adaptive adjustments).
@@ -217,12 +236,14 @@ actor StreamContext {
         streamScale: CGFloat = 1.0,
         maxPacketSize: Int = MirageDefaultMaxPacketSize,
         additionalFrameFlags: FrameFlags = [],
-        adaptiveScaleEnabled: Bool = true
+        adaptiveScaleEnabled: Bool = true,
+        latencyMode: MirageStreamLatencyMode = .smoothest
     ) {
         self.streamID = streamID
         self.windowID = windowID
         self.encoderConfig = encoderConfig
         self.qualityPreset = qualityPreset
+        self.latencyMode = latencyMode
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         self.requestedStreamScale = clampedScale
@@ -231,12 +252,33 @@ actor StreamContext {
         self.shouldMaintainIdleFrames = additionalFrameFlags.contains(.desktopStream)
         self.maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
         self.currentFrameRate = encoderConfig.targetFrameRate
+        self.captureFrameRateOverride = nil
+        self.captureFrameRate = encoderConfig.targetFrameRate
         self.activePixelFormat = encoderConfig.pixelFormat
-        self.useLowLatencyPipeline = qualityPreset == .lowLatency || encoderConfig.targetFrameRate >= 120
-        let bufferDepth = Self.frameBufferDepth(useLowLatencyPipeline: useLowLatencyPipeline, frameRate: encoderConfig.targetFrameRate)
-        let inFlightCap = min(bufferDepth, Self.inFlightCap(for: encoderConfig.targetFrameRate))
+        let prefersSmoothness = latencyMode == .smoothest
+        let latencySensitive = latencyMode == .lowestLatency || qualityPreset == .lowLatency
+        self.useLowLatencyPipeline = latencySensitive || (encoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
+        let bufferDepth = Self.frameBufferDepth(
+            useLowLatencyPipeline: useLowLatencyPipeline,
+            frameRate: encoderConfig.targetFrameRate,
+            latencyMode: latencyMode
+        )
+        let minInFlight = Self.minInFlightFrames(
+            useLowLatencyPipeline: useLowLatencyPipeline,
+            frameRate: encoderConfig.targetFrameRate,
+            latencyMode: latencyMode
+        )
+        let inFlightCap = min(
+            bufferDepth,
+            Self.inFlightCap(
+                useLowLatencyPipeline: useLowLatencyPipeline,
+                frameRate: encoderConfig.targetFrameRate,
+                latencyMode: latencyMode
+            )
+        )
         self.maxInFlightFramesCap = max(1, inFlightCap)
-        self.maxInFlightFrames = 1
+        self.minInFlightFrames = minInFlight
+        self.maxInFlightFrames = min(minInFlight, maxInFlightFramesCap)
         self.frameBufferDepth = bufferDepth
         self.frameInbox = StreamFrameInbox(capacity: bufferDepth)
         self.maxEncodeTimeMs = encoderConfig.targetFrameRate >= 120 ? 900 : 600
@@ -253,6 +295,11 @@ actor StreamContext {
         )
         self.keyframeIntervalSeconds = cadence.interval
         self.keyframeMaxIntervalSeconds = cadence.maxInterval
+        frameThrottle.configure(
+            targetFrameRate: currentFrameRate,
+            captureFrameRate: captureFrameRate,
+            isPaced: true
+        )
     }
 
     static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
@@ -260,15 +307,115 @@ actor StreamContext {
         return max(0.1, min(1.0, scale))
     }
 
-    static func frameBufferDepth(useLowLatencyPipeline: Bool, frameRate: Int) -> Int {
+    func resolvedCaptureFrameRate(for targetFrameRate: Int) -> Int {
+        if let override = captureFrameRateOverride {
+            return override
+        }
+        return targetFrameRate
+    }
+
+    func updateFrameThrottle() {
+        frameThrottle.configure(
+            targetFrameRate: currentFrameRate,
+            captureFrameRate: captureFrameRate,
+            isPaced: true
+        )
+    }
+
+    static func frameBufferDepth(
+        useLowLatencyPipeline: Bool,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
         if useLowLatencyPipeline {
             return frameRate >= 120 ? 2 : 1
         }
-        return frameRate >= 120 ? 3 : 2
+        switch latencyMode {
+        case .smoothest:
+            if frameRate >= 120 {
+                return 6
+            }
+            if frameRate >= 60 {
+                return 5
+            }
+            return 3
+        case .balanced:
+            if frameRate >= 120 {
+                return 4
+            }
+            if frameRate >= 60 {
+                return 3
+            }
+            return 2
+        case .lowestLatency:
+            if frameRate >= 120 {
+                return 2
+            }
+            if frameRate >= 60 {
+                return 2
+            }
+            return 1
+        }
     }
 
-    static func inFlightCap(for frameRate: Int) -> Int {
-        frameRate >= 120 ? 2 : 1
+    static func inFlightCap(
+        useLowLatencyPipeline: Bool,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
+        if useLowLatencyPipeline {
+            return frameRate >= 120 ? 2 : 1
+        }
+        switch latencyMode {
+        case .smoothest:
+            if frameRate >= 120 {
+                return 5
+            }
+            if frameRate >= 60 {
+                return 4
+            }
+            return 2
+        case .balanced:
+            if frameRate >= 120 {
+                return 3
+            }
+            if frameRate >= 60 {
+                return 2
+            }
+            return 1
+        case .lowestLatency:
+            if frameRate >= 120 {
+                return 2
+            }
+            return 1
+        }
+    }
+
+    static func minInFlightFrames(
+        useLowLatencyPipeline: Bool,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Int {
+        if useLowLatencyPipeline {
+            return 1
+        }
+        switch latencyMode {
+        case .smoothest:
+            if frameRate >= 120 {
+                return 4
+            }
+            if frameRate >= 60 {
+                return 3
+            }
+            return 1
+        case .balanced:
+            if frameRate >= 60 {
+                return 2
+            }
+            return 1
+        case .lowestLatency:
+            return 1
+        }
     }
 }
 

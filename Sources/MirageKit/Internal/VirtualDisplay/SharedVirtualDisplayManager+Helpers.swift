@@ -72,6 +72,14 @@ extension SharedVirtualDisplayManager {
 
         MirageLogger.host("Created shared virtual display: \(Int(resolution.width))x\(Int(resolution.height))@\(refreshRate)Hz, color=\(displayContext.colorSpace.displayName), displayID=\(displayContext.displayID), spaceID=\(spaceID), bounds=\(readyBounds)")
 
+        await MainActor.run {
+            VirtualDisplayKeepaliveController.shared.start(
+                displayID: displayContext.displayID,
+                spaceID: spaceID,
+                refreshRate: displayContext.refreshRate
+            )
+        }
+
         return managedContext
     }
 
@@ -94,6 +102,10 @@ extension SharedVirtualDisplayManager {
 
         let displayID = display.displayID
         MirageLogger.host("Destroying shared virtual display, displayID=\(displayID)")
+
+        await MainActor.run {
+            VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
+        }
 
         // Clear the reference - ARC will deallocate the CGVirtualDisplay
         // which removes it from the system display list

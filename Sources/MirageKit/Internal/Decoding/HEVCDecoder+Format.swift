@@ -298,9 +298,9 @@ extension HEVCDecoder {
     private func preferredOutputPixelFormat(for formatDescription: CMFormatDescription) -> OSType {
         guard let extensions = CMFormatDescriptionGetExtensions(formatDescription) as? [CFString: Any],
               let bits = extensions[kCMFormatDescriptionExtension_BitsPerComponent] as? Int else {
-            return kCVPixelFormatType_ARGB2101010LEPacked
+            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         }
-        return bits > 8 ? kCVPixelFormatType_ARGB2101010LEPacked : kCVPixelFormatType_32BGRA
+        return bits > 8 ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
     }
     private func stripSEINALUnits(from data: Data) -> Data {
         var result = data
@@ -473,4 +473,3 @@ extension HEVCDecoder {
         return nalUnits
     }
 }
-

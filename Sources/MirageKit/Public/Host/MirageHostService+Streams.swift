@@ -24,6 +24,7 @@ extension MirageHostService {
         keyframeQuality: Float? = nil,
         streamScale: CGFloat? = nil,
         adaptiveScaleEnabled: Bool? = nil,
+        latencyMode: MirageStreamLatencyMode = .smoothest,
         qualityPreset: MirageQualityPreset? = nil,
         targetFrameRate: Int? = nil,
         pixelFormat: MiragePixelFormat? = nil,
@@ -129,7 +130,8 @@ extension MirageHostService {
             qualityPreset: qualityPreset,
             streamScale: streamScale ?? 1.0,
             maxPacketSize: networkConfig.maxPacketSize,
-            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true
+            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true,
+            latencyMode: latencyMode
         )
         await context.setMetricsUpdateHandler { [weak self] metrics in
             Task { @MainActor [weak self] in

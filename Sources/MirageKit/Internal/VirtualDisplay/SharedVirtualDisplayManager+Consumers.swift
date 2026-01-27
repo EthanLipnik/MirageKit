@@ -193,6 +193,10 @@ extension SharedVirtualDisplayManager {
                 displayRef: display.displayRef  // Keep same reference
             )
             MirageLogger.host("Display resolution updated in place to \(Int(newResolution.width))x\(Int(newResolution.height))")
+
+            await MainActor.run {
+                VirtualDisplayKeepaliveController.shared.update(displayID: display.displayID)
+            }
         } else {
             // Fallback to recreate if in-place update fails
             MirageLogger.host("In-place update failed, falling back to recreate")

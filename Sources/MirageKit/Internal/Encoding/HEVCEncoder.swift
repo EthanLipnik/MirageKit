@@ -16,6 +16,7 @@ import CoreVideo
 actor HEVCEncoder {
     var compressionSession: VTCompressionSession?
     let configuration: MirageEncoderConfiguration
+    let latencyMode: MirageStreamLatencyMode
     var activePixelFormat: MiragePixelFormat
     var supportedPropertyKeys: Set<CFString> = []
     var didQuerySupportedProperties = false
@@ -46,8 +47,13 @@ actor HEVCEncoder {
     /// and needs to be compared atomically
     nonisolated(unsafe) var sessionVersion: UInt64 = 0
 
-    init(configuration: MirageEncoderConfiguration, inFlightLimit: Int? = nil) {
+    init(
+        configuration: MirageEncoderConfiguration,
+        latencyMode: MirageStreamLatencyMode = .balanced,
+        inFlightLimit: Int? = nil
+    ) {
         self.configuration = configuration
+        self.latencyMode = latencyMode
         self.activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1
         self.encoderInFlightLimit = max(1, inFlightLimit ?? defaultLimit)

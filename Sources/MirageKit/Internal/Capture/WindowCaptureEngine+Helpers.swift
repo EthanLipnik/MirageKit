@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import CoreGraphics
 import CoreMedia
 import CoreVideo
 import os
@@ -21,18 +22,68 @@ extension WindowCaptureEngine {
         if let override = configuration.captureQueueDepth, override > 0 {
             return min(max(1, override), 16)
         }
-        if currentFrameRate >= 120 {
-            return 8
-        }
-        if currentFrameRate >= 60 {
+        switch latencyMode {
+        case .lowestLatency:
+            if currentFrameRate >= 120 {
+                return 6
+            }
+            if currentFrameRate >= 60 {
+                return 4
+            }
+            return 3
+        case .balanced:
+            if currentFrameRate >= 120 {
+                return 8
+            }
+            if currentFrameRate >= 60 {
+                return 6
+            }
+            return 4
+        case .smoothest:
+            if currentFrameRate >= 120 {
+                return 10
+            }
+            if currentFrameRate >= 60 {
+                return 8
+            }
             return 6
         }
-        return 4
     }
 
     var bufferPoolMinimumCount: Int {
-        let extra = currentFrameRate >= 120 ? 4 : 3
+        let extra: Int
+        switch latencyMode {
+        case .lowestLatency:
+            extra = currentFrameRate >= 120 ? 3 : 2
+        case .balanced:
+            extra = currentFrameRate >= 120 ? 4 : 3
+        case .smoothest:
+            extra = currentFrameRate >= 120 ? 6 : 5
+        }
         return max(6, captureQueueDepth + extra)
+    }
+
+    func updateDisplayRefreshRate(for displayID: CGDirectDisplayID) {
+        guard let displayMode = CGDisplayCopyDisplayMode(displayID) else {
+            currentDisplayRefreshRate = nil
+            return
+        }
+        let refreshRate = displayMode.refreshRate
+        if refreshRate > 0 {
+            currentDisplayRefreshRate = Int(refreshRate.rounded())
+        } else {
+            currentDisplayRefreshRate = nil
+        }
+    }
+
+    func minimumFrameIntervalRate() -> Int {
+        if let refreshRate = currentDisplayRefreshRate, refreshRate > 0 {
+            // Never request a faster cadence than our target capture rate.
+            // Using the display refresh rate here can make SCK deliver at 120Hz,
+            // forcing the pacing controller to drop roughly half the frames.
+            return min(currentFrameRate, refreshRate)
+        }
+        return currentFrameRate
     }
 
     func frameGapThreshold(for frameRate: Int) -> CFAbsoluteTime {

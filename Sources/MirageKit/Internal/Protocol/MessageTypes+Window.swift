@@ -64,6 +64,8 @@ struct StartStreamMessage: Codable {
     var streamScale: CGFloat? = nil
     /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
     var adaptiveScaleEnabled: Bool? = nil
+    /// Client latency preference for buffering behavior
+    var latencyMode: MirageStreamLatencyMode? = nil
     /// Client refresh rate override in Hz (60 or 120).
     var maxRefreshRate: Int = 60
     // TODO: HDR support - requires proper virtual display EDR configuration
@@ -90,6 +92,7 @@ struct StartStreamMessage: Codable {
         case maxBitrate
         case streamScale
         case adaptiveScaleEnabled
+        case latencyMode
         case maxRefreshRate
     }
 }

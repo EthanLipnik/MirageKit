@@ -24,6 +24,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
 
     enum ScheduleResult {
         case scheduled
+        case inFlightLimit
         case poolExhausted
         case unsupported
     }
@@ -33,6 +34,23 @@ final class CaptureFrameCopier: @unchecked Sendable {
         let height: Int
         let pixelFormat: OSType
         let minimumBufferCount: Int
+    }
+
+    private struct CopyTelemetry {
+        var copyAttempts: UInt64 = 0
+        var copySuccesses: UInt64 = 0
+        var metalCopies: UInt64 = 0
+        var cpuCopies: UInt64 = 0
+        var copyFailures: UInt64 = 0
+        var inFlightLimitDrops: UInt64 = 0
+        var poolFailures: UInt64 = 0
+        var bufferFailures: UInt64 = 0
+        var durationTotalMs: Double = 0
+        var durationMaxMs: Double = 0
+
+        var hasData: Bool {
+            copyAttempts > 0 || inFlightLimitDrops > 0 || poolFailures > 0 || bufferFailures > 0
+        }
     }
 
     private struct CopyContext: @unchecked Sendable {
@@ -52,6 +70,10 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private let poolLock = NSLock()
     private var pool: CVPixelBufferPool?
     private var poolConfig: PoolConfig?
+    private let telemetryLock = NSLock()
+    private var telemetry = CopyTelemetry()
+    private var lastTelemetryLogTime: CFAbsoluteTime = 0
+    private let telemetryLogInterval: CFAbsoluteTime = 2.0
     private let metalLock = NSLock()
     private var metalDevice: MTLDevice?
     private var metalQueue: MTLCommandQueue?
@@ -76,6 +98,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
             minimumBufferCount: max(1, minimumBufferCount)
         )
         guard ensurePool(config: config) else {
+            recordPoolFailure()
             return .poolExhausted
         }
 
@@ -83,28 +106,39 @@ final class CaptureFrameCopier: @unchecked Sendable {
         let pool = self.pool
         poolLock.unlock()
         guard let pool else {
+            recordPoolFailure()
             return .poolExhausted
         }
 
         guard reserveCopySlot(limit: max(1, inFlightLimit)) else {
-            return .poolExhausted
+            recordInFlightLimitDrop()
+            return .inFlightLimit
         }
 
         var destination: CVPixelBuffer?
         let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destination)
         guard status == kCVReturnSuccess, let destination else {
             releaseCopySlot()
+            recordBufferFailure()
             return .poolExhausted
         }
 
         let context = CopyContext(source: source, destination: destination)
-        if scheduleMetalCopy(source: context.source, destination: context.destination, completion: completion) {
+        let copyStartTime = CFAbsoluteTimeGetCurrent()
+        if scheduleMetalCopy(
+            source: context.source,
+            destination: context.destination,
+            startTime: copyStartTime,
+            completion: completion
+        ) {
             return .scheduled
         }
         copyQueue.async { [weak self] in
             guard let self else { return }
             autoreleasepool {
                 let didCopy = self.copyPixelBufferCPU(source: context.source, destination: context.destination)
+                let durationMs = (CFAbsoluteTimeGetCurrent() - copyStartTime) * 1000
+                self.recordCopyCompletion(durationMs: durationMs, success: didCopy, usedMetal: false)
                 self.releaseCopySlot()
                 if didCopy {
                     completion(.copied(context.destination))
@@ -166,6 +200,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private func scheduleMetalCopy(
         source: CVPixelBuffer,
         destination: CVPixelBuffer,
+        startTime: CFAbsoluteTime,
         completion: @escaping @Sendable (CopyResult) -> Void
     ) -> Bool {
         guard ensureMetal() else { return false }
@@ -211,15 +246,93 @@ final class CaptureFrameCopier: @unchecked Sendable {
 
         commandBuffer.addCompletedHandler { [weak self] buffer in
             guard let self else { return }
+            let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
             self.releaseCopySlot()
             if buffer.status == .completed {
+                self.recordCopyCompletion(durationMs: durationMs, success: true, usedMetal: true)
                 completion(.copied(destination))
             } else {
+                self.recordCopyCompletion(durationMs: durationMs, success: false, usedMetal: true)
                 completion(.unsupported)
             }
         }
         commandBuffer.commit()
         return true
+    }
+
+    private func recordInFlightLimitDrop() {
+        telemetryLock.lock()
+        telemetry.inFlightLimitDrops += 1
+        telemetryLock.unlock()
+        logTelemetryIfNeeded()
+    }
+
+    private func recordPoolFailure() {
+        telemetryLock.lock()
+        telemetry.poolFailures += 1
+        telemetryLock.unlock()
+        logTelemetryIfNeeded()
+    }
+
+    private func recordBufferFailure() {
+        telemetryLock.lock()
+        telemetry.bufferFailures += 1
+        telemetryLock.unlock()
+        logTelemetryIfNeeded()
+    }
+
+    private func recordCopyCompletion(durationMs: Double, success: Bool, usedMetal: Bool) {
+        telemetryLock.lock()
+        telemetry.copyAttempts += 1
+        if usedMetal {
+            telemetry.metalCopies += 1
+        } else {
+            telemetry.cpuCopies += 1
+        }
+        if success {
+            telemetry.copySuccesses += 1
+            telemetry.durationTotalMs += durationMs
+            telemetry.durationMaxMs = max(telemetry.durationMaxMs, durationMs)
+        } else {
+            telemetry.copyFailures += 1
+        }
+        telemetryLock.unlock()
+        logTelemetryIfNeeded()
+    }
+
+    private func logTelemetryIfNeeded() {
+        guard MirageLogger.isEnabled(.capture) else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        telemetryLock.lock()
+        guard now - lastTelemetryLogTime >= telemetryLogInterval, telemetry.hasData else {
+            telemetryLock.unlock()
+            return
+        }
+        let snapshot = telemetry
+        telemetry = CopyTelemetry()
+        lastTelemetryLogTime = now
+        telemetryLock.unlock()
+
+        let averageMs = snapshot.copySuccesses > 0
+            ? snapshot.durationTotalMs / Double(snapshot.copySuccesses)
+            : 0
+        let (inFlightCount, inFlightLimit) = inFlightSnapshot()
+        MirageLogger.capture(
+            "Capture copy telemetry: attempts=\(snapshot.copyAttempts) ok=\(snapshot.copySuccesses) fail=\(snapshot.copyFailures) " +
+                "avg=\(averageMs.formatted(.number.precision(.fractionLength(1))))ms " +
+                "max=\(snapshot.durationMaxMs.formatted(.number.precision(.fractionLength(1))))ms " +
+                "metal=\(snapshot.metalCopies) cpu=\(snapshot.cpuCopies) " +
+                "inFlightDrops=\(snapshot.inFlightLimitDrops) poolFailures=\(snapshot.poolFailures) " +
+                "bufferFailures=\(snapshot.bufferFailures) inFlight=\(inFlightCount)/\(inFlightLimit)"
+        )
+    }
+
+    private func inFlightSnapshot() -> (Int, Int) {
+        inFlightLock.lock()
+        let count = inFlightCount
+        let limit = inFlightLimit
+        inFlightLock.unlock()
+        return (count, limit)
     }
 
     private func copyPixelBufferCPU(source: CVPixelBuffer, destination: CVPixelBuffer) -> Bool {

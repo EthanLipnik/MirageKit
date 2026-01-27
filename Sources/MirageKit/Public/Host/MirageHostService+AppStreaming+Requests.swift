@@ -51,6 +51,7 @@ extension MirageHostService {
             let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
             let streamScale = request.streamScale ?? 1.0
             let adaptiveScaleEnabled = request.adaptiveScaleEnabled ?? true
+            let latencyMode = request.latencyMode ?? .smoothest
 
             // Check if app is available for streaming
             guard await appStreamManager.isAppAvailableForStreaming(request.bundleIdentifier) else {
@@ -123,6 +124,7 @@ extension MirageHostService {
                         keyframeQuality: keyframeQuality,
                         streamScale: streamScale,
                         adaptiveScaleEnabled: adaptiveScaleEnabled,
+                        latencyMode: latencyMode,
                         qualityPreset: request.preferredQuality,
                         targetFrameRate: targetFrameRate,
                         pixelFormat: pixelFormat,

@@ -12,6 +12,10 @@ import CoreMedia
 import CoreVideo
 import VideoToolbox
 
+private struct SendableOpaquePointer: @unchecked Sendable {
+    let value: UnsafeMutableRawPointer
+}
+
 extension HEVCDecoder {
     func startDecoding(onDecodedFrame: @escaping @Sendable (CVPixelBuffer, CMTime, CGRect) -> Void) {
         decodedFrameHandler = onDecodedFrame
@@ -42,7 +46,7 @@ extension HEVCDecoder {
         }
         decompressionSession = nil
         formatDescription = nil
-        outputPixelFormat = kCVPixelFormatType_ARGB2101010LEPacked
+        outputPixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
 
         // Clear cached parameter sets so next keyframe is used fresh
         cachedVPS = nil
@@ -191,9 +195,11 @@ extension HEVCDecoder {
             contentRect: contentRect,
             errorTracker: errorTracker,
             decodeStartTime: CFAbsoluteTimeGetCurrent(),
-            performanceTracker: performanceTracker
+            performanceTracker: performanceTracker,
+            releaseBuffer: nil,
+            data: frameData
         )
-        let opaqueInfo = Unmanaged.passRetained(decodeInfo).toOpaque()
+        let opaqueInfo = SendableOpaquePointer(value: Unmanaged.passRetained(decodeInfo).toOpaque())
 
         let decodeStatus = VTDecompressionSessionDecodeFrame(
             session,
@@ -216,20 +222,20 @@ extension HEVCDecoder {
                 }
                 MirageLogger.error(.decoder, "Decode callback error: \(status) (\(errorName))")
                 // Track consecutive errors to detect when we need a fresh keyframe
-                let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo).takeRetainedValue()
+                let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
                 info.errorTracker?.recordError()
                 return
             }
             guard let pixelBuffer = imageBuffer else {
                 MirageLogger.error(.decoder, "Decode callback: no image buffer")
-                let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo).takeRetainedValue()
+                let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
                 info.errorTracker?.recordError()
                 return
             }
 
             MirageSignpost.emitEvent("DecodeOutput")
 
-            let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo).takeRetainedValue()
+            let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
             // Successful decode - reset error counter
             info.errorTracker?.recordSuccess()
             let decodeDurationMs = (CFAbsoluteTimeGetCurrent() - info.decodeStartTime) * 1000
@@ -242,7 +248,7 @@ extension HEVCDecoder {
         }
 
         if decodeStatus != noErr {
-            Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo).release()
+            Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).release()
             throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(decodeStatus)))
         }
     }
@@ -251,4 +257,3 @@ extension HEVCDecoder {
         VTDecompressionSessionWaitForAsynchronousFrames(session)
     }
 }
-

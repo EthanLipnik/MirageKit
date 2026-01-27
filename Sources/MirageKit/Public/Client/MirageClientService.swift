@@ -60,6 +60,9 @@ public final class MirageClientService {
     /// Whether the host is allowed to adapt stream scale for FPS recovery.
     public var adaptiveScaleEnabled: Bool = true
 
+    /// Latency preference for stream buffering behavior.
+    public var latencyMode: MirageStreamLatencyMode = .smoothest
+
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
 

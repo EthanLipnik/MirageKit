@@ -27,7 +27,7 @@ extension InputCapturingView {
 
             if isModifier {
                 heldModifierKeys.insert(key.keyCode)
-                sendModifierStateIfNeeded(force: true)
+                resyncModifierState(from: key.modifierFlags)
             } else {
                 resyncModifierState(from: key.modifierFlags)
                 startKeyRepeat(for: press)
@@ -52,7 +52,7 @@ extension InputCapturingView {
 
             if isModifier {
                 heldModifierKeys.remove(key.keyCode)
-                sendModifierStateIfNeeded(force: true)
+                resyncModifierState(from: key.modifierFlags)
             } else {
                 stopKeyRepeat(for: key.keyCode)
                 resyncModifierState(from: key.modifierFlags)
@@ -76,7 +76,7 @@ extension InputCapturingView {
 
             if isModifier {
                 heldModifierKeys.remove(key.keyCode)
-                sendModifierStateIfNeeded(force: true)
+                resyncModifierState(from: key.modifierFlags)
             } else {
                 stopKeyRepeat(for: key.keyCode)
                 resyncModifierState(from: key.modifierFlags)
@@ -191,14 +191,10 @@ extension InputCapturingView {
 
         let macKeyCode = Self.characterToMacKeyCode(input)
 
-        // Build modifiers from the command's modifier flags merged with our tracked keyboard state
-        // This handles cases like CMD+Shift+Z where Shift is part of the command
-        resyncModifierState(from: command.modifierFlags)
-        var eventModifiers = keyboardModifiers
-        if command.modifierFlags.contains(.shift) { eventModifiers.insert(.shift) }
-        if command.modifierFlags.contains(.control) { eventModifiers.insert(.control) }
-        if command.modifierFlags.contains(.alternate) { eventModifiers.insert(.option) }
-        if command.modifierFlags.contains(.command) { eventModifiers.insert(.command) }
+        // Build modifiers from the command's modifier flags merged with our tracked keyboard state.
+        // Keep shortcuts stateless so key commands don't pin modifier state.
+        let commandModifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
+        let eventModifiers = keyboardModifiers.union(commandModifiers)
 
         // Send keyDown for the character key
         let keyDownEvent = MirageKeyEvent(

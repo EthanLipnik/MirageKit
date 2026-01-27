@@ -6,6 +6,7 @@
 //
 
 #if os(iOS) || os(visionOS)
+import CoreVideo
 import MetalKit
 import QuartzCore
 import UIKit
@@ -35,6 +36,7 @@ public class MirageMetalView: MTKView {
 
     /// Last reported drawable size to avoid redundant callbacks
     private var lastReportedDrawableSize: CGSize = .zero
+    var onDrawCompleted: (@Sendable () -> Void)?
 
     /// Stream ID for direct frame cache access (iOS gesture tracking support)
     /// The Metal view reads frames directly from MirageFrameCache using this ID,
@@ -50,12 +52,26 @@ public class MirageMetalView: MTKView {
             if let streamID {
                 MirageRenderScheduler.shared.register(view: self, for: streamID)
                 MirageRenderScheduler.shared.signalFrame(for: streamID)
+            } else {
+                stopRenderDisplayLink()
             }
         }
     }
 
     private var registeredStreamID: StreamID?
     private var renderingSuspended = false
+    private var renderDisplayLink: CADisplayLink?
+    private var needsDisplayLinkDraw = false
+    private var lastScheduledSignalTime: CFAbsoluteTime = 0
+    private var drawStatsStartTime: CFAbsoluteTime = 0
+    private var drawStatsCount: UInt64 = 0
+    private var drawStatsSignalDelayTotal: CFAbsoluteTime = 0
+    private var drawStatsSignalDelayMax: CFAbsoluteTime = 0
+    private var drawStatsDrawableWaitTotal: CFAbsoluteTime = 0
+    private var drawStatsDrawableWaitMax: CFAbsoluteTime = 0
+    private var drawStatsRenderLatencyTotal: CFAbsoluteTime = 0
+    private var drawStatsRenderLatencyMax: CFAbsoluteTime = 0
+    private var drawableRetryScheduled = false
 
     public var temporalDitheringEnabled: Bool = true {
         didSet {
@@ -71,6 +87,9 @@ public class MirageMetalView: MTKView {
         // Default to 2.0 (Retina) if we can't determine the scale
         return 2.0
     }
+
+    private static let maxDrawableWidth: CGFloat = 5120
+    private static let maxDrawableHeight: CGFloat = 2880
 
     public override init(frame: CGRect, device: MTLDevice?) {
         super.init(frame: frame, device: device ?? MTLCreateSystemDefaultDevice())
@@ -97,6 +116,7 @@ public class MirageMetalView: MTKView {
         // Configure for low latency
         isPaused = true
         enableSetNeedsDisplay = false
+        framebufferOnly = true
 
         // Use 10-bit color with P3 color space for wide color gamut
         colorPixelFormat = .bgr10a2Unorm
@@ -110,6 +130,9 @@ public class MirageMetalView: MTKView {
             metalLayer.colorspace = CGColorSpace(name: CGColorSpace.displayP3)
             metalLayer.wantsExtendedDynamicRangeContent = true
             metalLayer.contentsScale = effectiveScale
+            // Allow nextDrawable to time out rather than block indefinitely.
+            metalLayer.allowsNextDrawableTimeout = true
+            metalLayer.maximumDrawableCount = 3
         }
 
         applyRenderPreferences()
@@ -127,18 +150,23 @@ public class MirageMetalView: MTKView {
         } else {
             refreshRateMonitor.stop()
             suspendRendering()
+            stopRenderDisplayLink()
         }
     }
 
     deinit {
-        if let registeredStreamID {
-            MirageRenderScheduler.shared.unregister(streamID: registeredStreamID)
+        let streamID = registeredStreamID
+        Task { @MainActor in
+            if let streamID {
+                MirageRenderScheduler.shared.unregister(streamID: streamID)
+            }
         }
         stopObservingPreferences()
     }
 
     public func suspendRendering() {
         renderingSuspended = true
+        stopRenderDisplayLink()
     }
 
     public func resumeRendering() {
@@ -147,6 +175,46 @@ public class MirageMetalView: MTKView {
         if let streamID {
             MirageRenderScheduler.shared.signalFrame(for: streamID)
         }
+    }
+
+    @MainActor
+    func noteScheduledDraw(signalTime: CFAbsoluteTime) {
+        lastScheduledSignalTime = signalTime
+    }
+
+    @MainActor
+    func requestDisplayLinkDraw(signalTime: CFAbsoluteTime) {
+        noteScheduledDraw(signalTime: signalTime)
+        needsDisplayLinkDraw = true
+        startRenderDisplayLinkIfNeeded()
+    }
+
+    private func startRenderDisplayLinkIfNeeded() {
+        guard renderDisplayLink == nil else { return }
+        guard superview != nil, !renderingSuspended else { return }
+        let link = CADisplayLink(target: self, selector: #selector(handleRenderDisplayLink(_:)))
+        link.preferredFramesPerSecond = preferredFramesPerSecond
+        link.add(to: .main, forMode: .common)
+        renderDisplayLink = link
+        if MirageLogger.isEnabled(.renderer) {
+            MirageLogger.renderer("Render display link started: fps=\(preferredFramesPerSecond)")
+        }
+    }
+
+    private func stopRenderDisplayLink() {
+        renderDisplayLink?.invalidate()
+        renderDisplayLink = nil
+        needsDisplayLinkDraw = false
+        if MirageLogger.isEnabled(.renderer) {
+            MirageLogger.renderer("Render display link stopped")
+        }
+    }
+
+    @objc
+    private func handleRenderDisplayLink(_ link: CADisplayLink) {
+        guard needsDisplayLinkDraw else { return }
+        needsDisplayLinkDraw = false
+        draw()
     }
 
     public override func layoutSubviews() {
@@ -162,13 +230,20 @@ public class MirageMetalView: MTKView {
         }
 
         if bounds.width > 0, bounds.height > 0 {
-            let expectedDrawableSize = CGSize(
+            let rawDrawableSize = CGSize(
                 width: bounds.width * expectedScale,
                 height: bounds.height * expectedScale
             )
+            let expectedDrawableSize = cappedDrawableSize(rawDrawableSize)
             if drawableSize != expectedDrawableSize {
                 drawableSize = expectedDrawableSize
                 renderState.markNeedsRedraw()
+                if expectedDrawableSize != rawDrawableSize {
+                    MirageLogger.renderer(
+                        "Drawable size capped: \(rawDrawableSize.width)x\(rawDrawableSize.height) -> " +
+                            "\(expectedDrawableSize.width)x\(expectedDrawableSize.height) px"
+                    )
+                }
             }
         }
 
@@ -225,17 +300,166 @@ public class MirageMetalView: MTKView {
         )
     }
 
+    private func cappedDrawableSize(_ size: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0 else { return size }
+        var width = size.width
+        var height = size.height
+        let aspectRatio = width / height
+
+        if width > Self.maxDrawableWidth {
+            width = Self.maxDrawableWidth
+            height = width / aspectRatio
+        }
+
+        if height > Self.maxDrawableHeight {
+            height = Self.maxDrawableHeight
+            width = height * aspectRatio
+        }
+
+        return CGSize(
+            width: alignedEven(width),
+            height: alignedEven(height)
+        )
+    }
+
+    private func alignedEven(_ value: CGFloat) -> CGFloat {
+        let rounded = CGFloat(Int(value.rounded()))
+        let even = rounded - CGFloat(Int(rounded) % 2)
+        return max(2, even)
+    }
+
     public override func draw(_ rect: CGRect) {
         // Pull-based frame update: read directly from global cache using stream ID
         // This completely bypasses Swift actor machinery that blocks during iOS gesture tracking.
         // CRITICAL: No closures, no weak references to @MainActor objects, just direct cache access.
-        guard !renderingSuspended else { return }
-        guard renderState.updateFrameIfNeeded(streamID: streamID, renderer: renderer) else { return }
+        guard !renderingSuspended else {
+            onDrawCompleted?()
+            return
+        }
+        guard renderState.updateFrameIfNeeded(streamID: streamID) else {
+            onDrawCompleted?()
+            return
+        }
 
-        guard let drawable = currentDrawable,
-              let texture = renderState.currentTexture else { return }
+        if let pixelFormatType = renderState.currentPixelFormatType {
+            updateOutputFormatIfNeeded(pixelFormatType)
+        }
 
-        renderer?.render(texture: texture, to: drawable, contentRect: renderState.currentContentRect)
+        let drawStartTime = CFAbsoluteTimeGetCurrent()
+        let signalDelay = lastScheduledSignalTime > 0 ? max(0, drawStartTime - lastScheduledSignalTime) : 0
+
+        guard let pixelBuffer = renderState.currentPixelBuffer else {
+            onDrawCompleted?()
+            return
+        }
+
+        let drawableStartTime = CFAbsoluteTimeGetCurrent()
+        let drawable: CAMetalDrawable?
+        if let metalLayer = layer as? CAMetalLayer {
+            drawable = metalLayer.nextDrawable()
+        } else {
+            drawable = currentDrawable
+        }
+        let drawableWait = max(0, CFAbsoluteTimeGetCurrent() - drawableStartTime)
+
+        guard let drawable else {
+            scheduleDrawableRetry()
+            onDrawCompleted?()
+            return
+        }
+
+        guard let renderer else {
+            onDrawCompleted?()
+            return
+        }
+
+        renderer.render(
+            pixelBuffer: pixelBuffer,
+            to: drawable,
+            contentRect: renderState.currentContentRect,
+            outputPixelFormat: colorPixelFormat,
+            completion: { [weak self] in
+                guard let self else { return }
+                self.recordDrawCompletion(
+                    startTime: drawStartTime,
+                    signalDelay: signalDelay,
+                    drawableWait: drawableWait
+                )
+                self.onDrawCompleted?()
+            }
+        )
+    }
+
+    private func scheduleDrawableRetry() {
+        guard !drawableRetryScheduled, let streamID else { return }
+        drawableRetryScheduled = true
+        let retryStreamID = streamID
+        // Small backoff prevents tight loops when CAMetalLayer is out of drawables.
+        DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(4)) { [weak self] in
+            guard let self else { return }
+            self.drawableRetryScheduled = false
+            guard self.streamID == retryStreamID else { return }
+            self.renderState.markNeedsRedraw()
+            MirageRenderScheduler.shared.signalFrame(for: retryStreamID)
+        }
+    }
+
+    private func recordDrawCompletion(
+        startTime: CFAbsoluteTime,
+        signalDelay: CFAbsoluteTime,
+        drawableWait: CFAbsoluteTime
+    ) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let renderLatency = max(0, now - startTime)
+
+        if drawStatsStartTime == 0 {
+            drawStatsStartTime = now
+        }
+
+        drawStatsCount &+= 1
+        drawStatsSignalDelayTotal += signalDelay
+        drawStatsSignalDelayMax = max(drawStatsSignalDelayMax, signalDelay)
+        drawStatsDrawableWaitTotal += drawableWait
+        drawStatsDrawableWaitMax = max(drawStatsDrawableWaitMax, drawableWait)
+        drawStatsRenderLatencyTotal += renderLatency
+        drawStatsRenderLatencyMax = max(drawStatsRenderLatencyMax, renderLatency)
+
+        let elapsed = now - drawStatsStartTime
+        guard elapsed >= 2.0 else { return }
+
+        if MirageLogger.isEnabled(.renderer) {
+            let count = max(1, Double(drawStatsCount))
+            let fps = count / elapsed
+            let signalDelayAvgMs = (drawStatsSignalDelayTotal / count) * 1000
+            let signalDelayMaxMs = drawStatsSignalDelayMax * 1000
+            let drawableWaitAvgMs = (drawStatsDrawableWaitTotal / count) * 1000
+            let drawableWaitMaxMs = drawStatsDrawableWaitMax * 1000
+            let renderLatencyAvgMs = (drawStatsRenderLatencyTotal / count) * 1000
+            let renderLatencyMaxMs = drawStatsRenderLatencyMax * 1000
+
+            let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
+            let signalDelayAvgText = signalDelayAvgMs.formatted(.number.precision(.fractionLength(1)))
+            let signalDelayMaxText = signalDelayMaxMs.formatted(.number.precision(.fractionLength(1)))
+            let drawableWaitAvgText = drawableWaitAvgMs.formatted(.number.precision(.fractionLength(1)))
+            let drawableWaitMaxText = drawableWaitMaxMs.formatted(.number.precision(.fractionLength(1)))
+            let renderLatencyAvgText = renderLatencyAvgMs.formatted(.number.precision(.fractionLength(1)))
+            let renderLatencyMaxText = renderLatencyMaxMs.formatted(.number.precision(.fractionLength(1)))
+
+            MirageLogger.renderer(
+                "Render timings: fps=\(fpsText) signalDelay=\(signalDelayAvgText)/\(signalDelayMaxText)ms " +
+                    "drawableWait=\(drawableWaitAvgText)/\(drawableWaitMaxText)ms " +
+                    "renderLatency=\(renderLatencyAvgText)/\(renderLatencyMaxText)ms"
+            )
+        }
+
+        drawStatsStartTime = now
+        drawStatsCount = 0
+        drawStatsSignalDelayTotal = 0
+        drawStatsSignalDelayMax = 0
+        drawStatsDrawableWaitTotal = 0
+        drawStatsDrawableWaitMax = 0
+        drawStatsRenderLatencyTotal = 0
+        drawStatsRenderLatencyMax = 0
     }
 
     private func applyRenderPreferences() {
@@ -251,6 +475,40 @@ public class MirageMetalView: MTKView {
 
     private func updateFrameRatePreference(proMotionEnabled: Bool) {
         preferredFramesPerSecond = proMotionEnabled ? 120 : 60
+        renderDisplayLink?.preferredFramesPerSecond = preferredFramesPerSecond
+    }
+
+    private func updateOutputFormatIfNeeded(_ pixelFormatType: OSType) {
+        let outputPixelFormat: MTLPixelFormat
+        let colorSpace: CGColorSpace?
+        let wantsHDR: Bool
+
+        switch pixelFormatType {
+        case kCVPixelFormatType_32BGRA,
+             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            outputPixelFormat = .bgra8Unorm
+            colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+            wantsHDR = false
+        case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            outputPixelFormat = .bgr10a2Unorm
+            colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
+            wantsHDR = true
+        default:
+            outputPixelFormat = .bgr10a2Unorm
+            colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
+            wantsHDR = true
+        }
+
+        guard colorPixelFormat != outputPixelFormat else { return }
+        colorPixelFormat = outputPixelFormat
+        renderState.markNeedsRedraw()
+
+        if let metalLayer = layer as? CAMetalLayer {
+            metalLayer.colorspace = colorSpace
+            metalLayer.wantsExtendedDynamicRangeContent = wantsHDR
+        }
     }
 
     private func startObservingPreferences() {

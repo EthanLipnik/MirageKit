@@ -25,6 +25,8 @@ actor StreamPacketSender {
         let epoch: UInt16
         let logPrefix: String
         let generation: UInt32
+        let onSendStart: (@Sendable () -> Void)?
+        let onSendComplete: (@Sendable () -> Void)?
     }
 
     private let maxPayloadSize: Int
@@ -36,6 +38,8 @@ actor StreamPacketSender {
     // Snapshot read from encoder callbacks to tag enqueued frames.
     nonisolated(unsafe) private var generation: UInt32 = 0
     nonisolated(unsafe) private var queuedBytes: Int = 0
+    nonisolated(unsafe) private var dropNonKeyframesUntilKeyframe: Bool = false
+    nonisolated(unsafe) private var latestKeyframeFrameNumber: UInt32 = 0
     private let queueLock = NSLock()
     private let basePacingBurstSize = 16
     private let pacingThresholdBytes = 512 * 1024
@@ -99,14 +103,39 @@ actor StreamPacketSender {
         guard sendContinuation != nil else { return }
         queueLock.withLock {
             queuedBytes += item.encodedData.count
+            if item.isKeyframe {
+                dropNonKeyframesUntilKeyframe = true
+                latestKeyframeFrameNumber = item.frameNumber
+            }
         }
         sendContinuation?.yield(item)
     }
 
     private func handle(_ item: WorkItem) async {
+        let (shouldDropNonKeyframes, newestKeyframe) = queueLock.withLock {
+            (dropNonKeyframesUntilKeyframe, latestKeyframeFrameNumber)
+        }
+        if shouldDropNonKeyframes && !item.isKeyframe {
+            queueLock.withLock {
+                queuedBytes = max(0, queuedBytes - item.encodedData.count)
+            }
+            return
+        }
+        if item.isKeyframe, newestKeyframe > 0, item.frameNumber < newestKeyframe {
+            queueLock.withLock {
+                queuedBytes = max(0, queuedBytes - item.encodedData.count)
+            }
+            MirageLogger.stream("Dropping stale keyframe \(item.frameNumber) (newest \(newestKeyframe))")
+            return
+        }
         guard item.generation == generation else {
             if item.isKeyframe {
                 MirageLogger.stream("Dropping stale keyframe \(item.frameNumber) (gen \(item.generation) != \(generation))")
+                queueLock.withLock {
+                    if latestKeyframeFrameNumber == item.frameNumber {
+                        dropNonKeyframesUntilKeyframe = false
+                    }
+                }
             }
             queueLock.withLock {
                 queuedBytes = max(0, queuedBytes - item.encodedData.count)
@@ -114,7 +143,18 @@ actor StreamPacketSender {
             return
         }
 
+        if item.isKeyframe {
+            item.onSendStart?()
+        }
         await fragmentAndSendPackets(item)
+        if item.isKeyframe {
+            item.onSendComplete?()
+            queueLock.withLock {
+                if latestKeyframeFrameNumber == item.frameNumber {
+                    dropNonKeyframesUntilKeyframe = false
+                }
+            }
+        }
         queueLock.withLock {
             queuedBytes = max(0, queuedBytes - item.encodedData.count)
         }
@@ -136,6 +176,13 @@ actor StreamPacketSender {
         for burstIndex in 0..<burstCount {
             if item.generation != generation {
                 MirageLogger.stream("Aborting send for frame \(item.frameNumber) (gen \(item.generation) != \(generation))")
+                if item.isKeyframe {
+                    queueLock.withLock {
+                        if latestKeyframeFrameNumber == item.frameNumber {
+                            dropNonKeyframesUntilKeyframe = false
+                        }
+                    }
+                }
                 return
             }
 
@@ -148,6 +195,9 @@ actor StreamPacketSender {
                 let fragmentSize = end - start
 
                 var flags = item.additionalFlags
+                if fragmentIndex > 0, flags.contains(.discontinuity) {
+                    flags.remove(.discontinuity)
+                }
                 if item.isKeyframe { flags.insert(.keyframe) }
                 if fragmentIndex == totalFragments - 1 { flags.insert(.endOfFrame) }
                 if item.isKeyframe && fragmentIndex == 0 { flags.insert(.parameterSet) }

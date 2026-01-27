@@ -7,6 +7,7 @@
 
 #if os(macOS)
 import AppKit
+import CoreVideo
 import MetalKit
 
 /// Metal-backed view for displaying streamed content on macOS
@@ -42,8 +43,13 @@ public class MirageMetalView: MTKView {
 
     /// Last reported drawable size to avoid redundant callbacks
     private var lastReportedDrawableSize: CGSize = .zero
+    var onDrawCompleted: (@Sendable () -> Void)?
     private var registeredStreamID: StreamID?
     private var renderingSuspended = false
+    private var lastScheduledSignalTime: CFAbsoluteTime = 0
+
+    private static let maxDrawableWidth: CGFloat = 5120
+    private static let maxDrawableHeight: CGFloat = 2880
 
     public override init(frame: CGRect, device: MTLDevice?) {
         super.init(frame: frame, device: device ?? MTLCreateSystemDefaultDevice())
@@ -67,6 +73,7 @@ public class MirageMetalView: MTKView {
         // Configure for low latency
         isPaused = true
         enableSetNeedsDisplay = false
+        framebufferOnly = true
 
         // P3 color space with 10-bit color for wide color gamut
         colorspace = CGColorSpace(name: CGColorSpace.displayP3)
@@ -85,20 +92,34 @@ public class MirageMetalView: MTKView {
     }
 
     deinit {
-        if let registeredStreamID {
-            MirageRenderScheduler.shared.unregister(streamID: registeredStreamID)
+        let streamID = registeredStreamID
+        Task { @MainActor in
+            if let streamID {
+                MirageRenderScheduler.shared.unregister(streamID: streamID)
+            }
         }
         stopObservingPreferences()
     }
 
     /// Report actual drawable pixel size to ensure host captures at correct resolution
     private func reportDrawableMetricsIfChanged() {
-        let drawableSize = self.drawableSize
-        if drawableSize != lastReportedDrawableSize && drawableSize.width > 0 && drawableSize.height > 0 {
-            lastReportedDrawableSize = drawableSize
+        let rawDrawableSize = self.drawableSize
+        let cappedDrawableSize = cappedDrawableSize(rawDrawableSize)
+        if cappedDrawableSize != rawDrawableSize {
+            self.drawableSize = cappedDrawableSize
+        }
+        if cappedDrawableSize != lastReportedDrawableSize && cappedDrawableSize.width > 0 && cappedDrawableSize.height > 0 {
+            lastReportedDrawableSize = cappedDrawableSize
             renderState.markNeedsRedraw()
-            MirageLogger.renderer("Drawable size: \(drawableSize.width)x\(drawableSize.height) px (bounds: \(bounds.size))")
-            onDrawableMetricsChanged?(currentDrawableMetrics(drawableSize: drawableSize))
+            if cappedDrawableSize != rawDrawableSize {
+                MirageLogger.renderer(
+                    "Drawable size capped: \(rawDrawableSize.width)x\(rawDrawableSize.height) -> " +
+                        "\(cappedDrawableSize.width)x\(cappedDrawableSize.height) px (bounds: \(bounds.size))"
+                )
+            } else {
+                MirageLogger.renderer("Drawable size: \(cappedDrawableSize.width)x\(cappedDrawableSize.height) px (bounds: \(bounds.size))")
+            }
+            onDrawableMetricsChanged?(currentDrawableMetrics(drawableSize: cappedDrawableSize))
         }
     }
 
@@ -111,15 +132,67 @@ public class MirageMetalView: MTKView {
         )
     }
 
+    private func cappedDrawableSize(_ size: CGSize) -> CGSize {
+        guard size.width > 0, size.height > 0 else { return size }
+        var width = size.width
+        var height = size.height
+        let aspectRatio = width / height
+
+        if width > Self.maxDrawableWidth {
+            width = Self.maxDrawableWidth
+            height = width / aspectRatio
+        }
+
+        if height > Self.maxDrawableHeight {
+            height = Self.maxDrawableHeight
+            width = height * aspectRatio
+        }
+
+        return CGSize(
+            width: alignedEven(width),
+            height: alignedEven(height)
+        )
+    }
+
+    private func alignedEven(_ value: CGFloat) -> CGFloat {
+        let rounded = CGFloat(Int(value.rounded()))
+        let even = rounded - CGFloat(Int(rounded) % 2)
+        return max(2, even)
+    }
+
     public override func draw(_ rect: CGRect) {
         // Pull-based frame update to avoid MainActor stalls during menu tracking/dragging.
-        guard !renderingSuspended else { return }
-        guard renderState.updateFrameIfNeeded(streamID: streamID, renderer: renderer) else { return }
+        guard !renderingSuspended else {
+            onDrawCompleted?()
+            return
+        }
+        guard renderState.updateFrameIfNeeded(streamID: streamID) else {
+            onDrawCompleted?()
+            return
+        }
+
+        if let pixelFormatType = renderState.currentPixelFormatType {
+            updateOutputFormatIfNeeded(pixelFormatType)
+        }
 
         guard let drawable = currentDrawable,
-              let texture = renderState.currentTexture else { return }
+              let pixelBuffer = renderState.currentPixelBuffer else {
+            onDrawCompleted?()
+            return
+        }
 
-        renderer?.render(texture: texture, to: drawable, contentRect: renderState.currentContentRect)
+        guard let renderer else {
+            onDrawCompleted?()
+            return
+        }
+
+        renderer.render(
+            pixelBuffer: pixelBuffer,
+            to: drawable,
+            contentRect: renderState.currentContentRect,
+            outputPixelFormat: colorPixelFormat,
+            completion: onDrawCompleted
+        )
     }
 
     private func applyRenderPreferences() {
@@ -142,6 +215,17 @@ public class MirageMetalView: MTKView {
         }
     }
 
+    @MainActor
+    func noteScheduledDraw(signalTime: CFAbsoluteTime) {
+        lastScheduledSignalTime = signalTime
+    }
+
+    @MainActor
+    func requestDisplayLinkDraw(signalTime: CFAbsoluteTime) {
+        noteScheduledDraw(signalTime: signalTime)
+        draw()
+    }
+
     private func startObservingPreferences() {
         preferencesObserver.start { [weak self] in
             self?.applyRenderPreferences()
@@ -150,6 +234,31 @@ public class MirageMetalView: MTKView {
 
     private func stopObservingPreferences() {
         preferencesObserver.stop()
+    }
+
+    private func updateOutputFormatIfNeeded(_ pixelFormatType: OSType) {
+        let outputPixelFormat: MTLPixelFormat
+        let colorSpace: CGColorSpace?
+
+        switch pixelFormatType {
+        case kCVPixelFormatType_32BGRA,
+             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            outputPixelFormat = .bgra8Unorm
+            colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
+        case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            outputPixelFormat = .bgr10a2Unorm
+            colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
+        default:
+            outputPixelFormat = .bgr10a2Unorm
+            colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
+        }
+
+        guard colorPixelFormat != outputPixelFormat else { return }
+        colorPixelFormat = outputPixelFormat
+        colorspace = colorSpace
+        renderState.markNeedsRedraw()
     }
 }
 #endif
