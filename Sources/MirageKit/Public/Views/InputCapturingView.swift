@@ -85,7 +85,8 @@ public class InputCapturingView: UIView {
     var cursorSequence: UInt64 = 0
     var lastCursorRefreshTime: CFTimeInterval = 0
     let cursorRefreshInterval: CFTimeInterval = 1.0 / 30.0
-    private var registeredCursorStreamID: StreamID?
+    // nonisolated(unsafe) allows access from deinit for cleanup
+    private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
 
     // Gesture recognizers
     var tapGesture: UITapGestureRecognizer!
@@ -215,28 +216,28 @@ public class InputCapturingView: UIView {
         guard let keyboardInput = GCKeyboard.coalesced?.keyboardInput else { return false }
         var refreshedKeys: Set<UIKeyboardHIDUsage> = []
 
-        if keyboardInput.buttonInput(forKeyCode: .leftShift)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .leftShift)?.isPressed == true {
             refreshedKeys.insert(.keyboardLeftShift)
         }
-        if keyboardInput.buttonInput(forKeyCode: .rightShift)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .rightShift)?.isPressed == true {
             refreshedKeys.insert(.keyboardRightShift)
         }
-        if keyboardInput.buttonInput(forKeyCode: .leftControl)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .leftControl)?.isPressed == true {
             refreshedKeys.insert(.keyboardLeftControl)
         }
-        if keyboardInput.buttonInput(forKeyCode: .rightControl)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .rightControl)?.isPressed == true {
             refreshedKeys.insert(.keyboardRightControl)
         }
-        if keyboardInput.buttonInput(forKeyCode: .leftAlt)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .leftAlt)?.isPressed == true {
             refreshedKeys.insert(.keyboardLeftAlt)
         }
-        if keyboardInput.buttonInput(forKeyCode: .rightAlt)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .rightAlt)?.isPressed == true {
             refreshedKeys.insert(.keyboardRightAlt)
         }
-        if keyboardInput.buttonInput(forKeyCode: .leftGUI)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .leftGUI)?.isPressed == true {
             refreshedKeys.insert(.keyboardLeftGUI)
         }
-        if keyboardInput.buttonInput(forKeyCode: .rightGUI)?.isPressed == true {
+        if keyboardInput.button(forKeyCode: .rightGUI)?.isPressed == true {
             refreshedKeys.insert(.keyboardRightGUI)
         }
 

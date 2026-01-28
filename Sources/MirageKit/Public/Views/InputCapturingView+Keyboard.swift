@@ -291,6 +291,11 @@ extension InputCapturingView {
         )
         onInputEvent?(.keyUp(keyUpEvent))
 
+        // Refresh hardware state to sync modifiers after shortcut handling.
+        // iOS doesn't call pressesEnded for modifiers during UIKeyCommand interception.
+#if canImport(GameController)
+        refreshModifierStateFromHardware()
+#endif
         updateModifierRefreshTimer()
     }
 
