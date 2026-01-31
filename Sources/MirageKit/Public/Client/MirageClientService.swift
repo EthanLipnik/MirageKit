@@ -148,6 +148,19 @@ public final class MirageClientService {
     var udpConnection: NWConnection?
     var hostDataPort: UInt16 = 0
 
+    // Audio receiving
+    var audioConnection: NWConnection?
+    var hostAudioPort: UInt16 = 0
+    var audioDecoder: AudioDecoder?
+    var audioPlayer: AudioPlayer?
+    var currentAudioConfig: AudioConfigMessage?
+    var audioPacketCount: UInt64 = 0
+    var audioFirstPacketReceived = false
+    var audioLastEmptyBufferLogTime: CFAbsoluteTime = 0
+    public var audioMode: MirageAudioMode = .stereo
+    public var audioQuality: MirageAudioQuality = .medium
+    public var audioMatchVideoQuality: Bool = true
+
     // Per-stream controllers for lifecycle management
     // StreamController owns decoder, reassembler, and resize state machine
     var controllersByStream: [StreamID: StreamController] = [:]

@@ -41,6 +41,10 @@ extension MirageClientService {
             handleStreamStopped(message)
         case .streamMetricsUpdate:
             handleStreamMetricsUpdate(message)
+        case .audioStreamStarted:
+            handleAudioStreamStarted(message)
+        case .audioStreamStopped:
+            handleAudioStreamStopped(message)
         case .error:
             handleErrorMessage(message)
         case .disconnect:

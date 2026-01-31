@@ -61,6 +61,12 @@ struct SelectAppMessage: Codable {
     let adaptiveScaleEnabled: Bool?
     /// Client latency preference for buffering behavior
     let latencyMode: MirageStreamLatencyMode?
+    /// Client audio mode selection (off/mono/stereo/surround/full)
+    var audioMode: MirageAudioMode?
+    /// Client audio quality preset for AAC
+    var audioQuality: MirageAudioQuality?
+    /// Client toggle to match audio quality to video preset
+    var audioMatchVideoQuality: Bool?
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
@@ -84,6 +90,9 @@ struct SelectAppMessage: Codable {
         case streamScale
         case adaptiveScaleEnabled
         case latencyMode
+        case audioMode
+        case audioQuality
+        case audioMatchVideoQuality
     }
 }
 

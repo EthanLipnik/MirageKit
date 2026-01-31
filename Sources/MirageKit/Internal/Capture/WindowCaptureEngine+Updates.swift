@@ -54,6 +54,8 @@ extension WindowCaptureEngine {
 
         // Create new stream configuration with updated dimensions
         let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
         }
@@ -109,6 +111,8 @@ extension WindowCaptureEngine {
 
         // Create new stream configuration with client's exact pixel dimensions
         let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true
         useExplicitCaptureDimensions = true
         streamConfig.width = width
         streamConfig.height = height
@@ -163,6 +167,8 @@ extension WindowCaptureEngine {
 
         // Create configuration for the new display
         let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
         }
@@ -201,6 +207,8 @@ extension WindowCaptureEngine {
 
         // Create new stream configuration with updated frame rate
         let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true
         if useBestCaptureResolution {
             streamConfig.captureResolution = .best
         }

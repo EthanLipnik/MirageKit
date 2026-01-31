@@ -347,6 +347,10 @@ extension MirageHostService {
             if loginDisplayStreamID == nil {
                 await PowerAssertionManager.shared.disable()
             }
+
+            if desktopStreamContext == nil, loginDisplayContext == nil {
+                await stopAudioStreaming(reason: "No active streams")
+            }
         }
     }
 

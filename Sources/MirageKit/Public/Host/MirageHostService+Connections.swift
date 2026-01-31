@@ -115,7 +115,8 @@ extension MirageHostService {
         let clientContext = ClientContext(
             client: client,
             tcpConnection: connection,
-            udpConnection: nil
+            udpConnection: nil,
+            audioConnection: nil
         )
         clientsByConnection[ObjectIdentifier(connection)] = clientContext
 
@@ -232,7 +233,14 @@ extension MirageHostService {
     }
 
     private func currentDataPort() -> UInt16 {
-        if case .advertising(_, let port) = state {
+        if case .advertising(_, let port, _) = state {
+            return port
+        }
+        return 0
+    }
+
+    private func currentAudioPort() -> UInt16 {
+        if case .advertising(_, _, let port) = state {
             return port
         }
         return 0
@@ -271,7 +279,8 @@ extension MirageHostService {
                 hostID: hostID,
                 hostName: hostName,
                 requiresAuth: false,
-                dataPort: dataPort
+                dataPort: dataPort,
+                audioPort: currentAudioPort()
             )
             let message = try ControlMessage(type: .helloResponse, content: response)
             let data = message.serialize()

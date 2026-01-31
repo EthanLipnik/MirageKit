@@ -15,6 +15,7 @@ struct ClientContext {
     let client: MirageConnectedClient
     let tcpConnection: NWConnection
     var udpConnection: NWConnection?
+    var audioConnection: NWConnection?
 
     /// Check if connection is peer-to-peer (local network, low latency)
     /// Returns true when connected over local WiFi or Ethernet to a local network address
@@ -64,6 +65,11 @@ struct ClientContext {
     /// Send video data over UDP
     func sendVideoPacket(_ data: Data) {
         udpConnection?.send(content: data, completion: .idempotent)
+    }
+
+    /// Send audio data over UDP
+    func sendAudioPacket(_ data: Data) {
+        audioConnection?.send(content: data, completion: .idempotent)
     }
 }
 

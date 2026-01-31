@@ -32,6 +32,9 @@ enum ControlMessageType: UInt8, Codable {
     case streamStarted = 0x25
     case streamStopped = 0x26
     case streamMetricsUpdate = 0x27
+    case audioStreamStarted = 0x28
+    case audioStreamStopped = 0x29
+    case audioConfigChanged = 0x2A
 
     // Input events
     case inputEvent = 0x30

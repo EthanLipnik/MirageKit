@@ -61,10 +61,14 @@ extension MirageClientService {
             adaptiveScaleEnabled: adaptiveScaleEnabled,
             latencyMode: latencyMode,
             dataPort: nil,
-            maxRefreshRate: getScreenMaxRefreshRate()
+            maxRefreshRate: getScreenMaxRefreshRate(),
+            audioMode: nil,
+            audioQuality: nil,
+            audioMatchVideoQuality: nil
         )
         // TODO: HDR support - requires proper virtual display EDR configuration.
         // request.preferHDR = preferHDR
+        applyAudioPreferences(to: &request)
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil {

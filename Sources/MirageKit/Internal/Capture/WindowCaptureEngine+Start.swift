@@ -44,6 +44,8 @@ extension WindowCaptureEngine {
 
         // Create stream configuration
         let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true
 
         // Calculate target dimensions based on window frame
         // Use known scale factor if provided (for virtual displays on headless Macs),
@@ -135,6 +137,7 @@ extension WindowCaptureEngine {
         let captureRate = effectiveCaptureRate()
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
+            onAudioSample: audioSampleHandler,
             onKeyframeRequest: { [weak self] in
                 Task { await self?.markKeyframeRequested() }
             },
@@ -157,6 +160,11 @@ extension WindowCaptureEngine {
             sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.output", qos: .userInteractive)
         )
 
+        if let streamOutput {
+            try stream.addStreamOutput(streamOutput, type: .audio, sampleHandlerQueue: audioOutputQueue)
+            audioOutputRegistered = true
+        }
+
         // Start capturing
         try await stream.startCapture()
         isCapturing = true
@@ -174,6 +182,7 @@ extension WindowCaptureEngine {
 
         stream = nil
         streamOutput = nil
+        audioOutputRegistered = false
         capturedFrameHandler = nil
         isCapturing = false
     }
@@ -251,6 +260,8 @@ extension WindowCaptureEngine {
 
         // Create stream configuration for display capture
         let streamConfig = SCStreamConfiguration()
+        streamConfig.capturesAudio = true
+        streamConfig.excludesCurrentProcessAudio = true
 
         // Use display's native resolution or the explicit pixel override (for HiDPI virtual displays)
         let captureResolution = resolution ?? CGSize(width: display.width, height: display.height)
@@ -351,6 +362,7 @@ extension WindowCaptureEngine {
         let captureRate = effectiveCaptureRate()
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
+            onAudioSample: audioSampleHandler,
             onKeyframeRequest: { [weak self] in
                 Task { await self?.markKeyframeRequested() }
             },
@@ -371,6 +383,11 @@ extension WindowCaptureEngine {
             type: .screen,
             sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.output", qos: .userInteractive)
         )
+
+        if let streamOutput {
+            try stream.addStreamOutput(streamOutput, type: .audio, sampleHandlerQueue: audioOutputQueue)
+            audioOutputRegistered = true
+        }
 
         // Start capturing
         try await stream.startCapture()

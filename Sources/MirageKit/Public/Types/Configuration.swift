@@ -220,6 +220,111 @@ public enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
     }
 }
 
+// MARK: - Audio Configuration
+
+/// Audio channel layout options.
+public enum MirageAudioChannelLayout: String, Sendable, CaseIterable, Codable {
+    case mono
+    case stereo
+    case surround5_1
+    case source
+
+    public var displayName: String {
+        switch self {
+        case .mono: return "Mono"
+        case .stereo: return "Stereo"
+        case .surround5_1: return "5.1 Surround"
+        case .source: return "Source"
+        }
+    }
+}
+
+/// Audio mode selection for streams.
+public enum MirageAudioMode: String, Sendable, CaseIterable, Codable {
+    case off
+    case mono
+    case stereo
+    case surround
+    case full
+
+    public var displayName: String {
+        switch self {
+        case .off: return "Off"
+        case .mono: return "Mono"
+        case .stereo: return "Stereo"
+        case .surround: return "Surround"
+        case .full: return "Full"
+        }
+    }
+}
+
+/// Audio quality presets for AAC.
+public enum MirageAudioQuality: String, Sendable, CaseIterable, Codable {
+    case low
+    case medium
+    case high
+
+    public var displayName: String {
+        switch self {
+        case .low: return "Low"
+        case .medium: return "Medium"
+        case .high: return "High"
+        }
+    }
+}
+
+/// Audio codec selection.
+public enum MirageAudioCodec: String, Sendable, Codable {
+    case aacLc
+    case pcmFloat32
+}
+
+/// Resolved audio configuration for a stream.
+public struct MirageAudioConfiguration: Sendable, Codable {
+    public var mode: MirageAudioMode
+    public var quality: MirageAudioQuality
+    public var matchVideoQuality: Bool
+    public var sampleRate: Int
+    public var channelCount: Int
+    public var channelLayout: MirageAudioChannelLayout
+    public var codec: MirageAudioCodec
+    public var bitrate: Int?
+
+    public init(
+        mode: MirageAudioMode = .stereo,
+        quality: MirageAudioQuality = .medium,
+        matchVideoQuality: Bool = true,
+        sampleRate: Int = 48_000,
+        channelCount: Int = 2,
+        channelLayout: MirageAudioChannelLayout = .stereo,
+        codec: MirageAudioCodec = .aacLc,
+        bitrate: Int? = nil
+    ) {
+        self.mode = mode
+        self.quality = quality
+        self.matchVideoQuality = matchVideoQuality
+        self.sampleRate = sampleRate
+        self.channelCount = channelCount
+        self.channelLayout = channelLayout
+        self.codec = codec
+        self.bitrate = bitrate
+    }
+
+    public static func aacBitrate(for quality: MirageAudioQuality, channelCount: Int) -> Int {
+        switch (quality, channelCount) {
+        case (.low, 1): return 96_000
+        case (.low, 2): return 160_000
+        case (.low, _): return 320_000
+        case (.medium, 1): return 128_000
+        case (.medium, 2): return 192_000
+        case (.medium, _): return 384_000
+        case (.high, 1): return 160_000
+        case (.high, 2): return 256_000
+        case (.high, _): return 448_000
+        }
+    }
+}
+
 // MARK: - Network Configuration
 
 /// Configuration for network connections
@@ -232,6 +337,9 @@ public struct MirageNetworkConfiguration: Sendable {
 
     /// Data channel port (UDP) - 0 for auto-assign
     public var dataPort: UInt16
+
+    /// Audio channel port (UDP) - 0 for auto-assign
+    public var audioPort: UInt16
 
     /// Whether to enable TLS encryption
     public var enableTLS: Bool
@@ -251,6 +359,7 @@ public struct MirageNetworkConfiguration: Sendable {
         serviceType: String = MirageKit.serviceType,
         controlPort: UInt16 = 0,
         dataPort: UInt16 = 0,
+        audioPort: UInt16 = 0,
         enableTLS: Bool = true,
         connectionTimeout: TimeInterval = 10,
         maxPacketSize: Int = MirageDefaultMaxPacketSize,
@@ -259,6 +368,7 @@ public struct MirageNetworkConfiguration: Sendable {
         self.serviceType = serviceType
         self.controlPort = controlPort
         self.dataPort = dataPort
+        self.audioPort = audioPort
         self.enableTLS = enableTLS
         self.connectionTimeout = connectionTimeout
         self.maxPacketSize = maxPacketSize

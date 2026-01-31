@@ -70,6 +70,7 @@ extension MirageClientService {
         request.adaptiveScaleEnabled = adaptiveScaleEnabled
         request.latencyMode = latencyMode
         request.maxRefreshRate = getScreenMaxRefreshRate()
+        applyAudioPreferences(to: &request)
 
         let message = try ControlMessage(type: .startStream, content: request)
         let messageData = message.serialize()

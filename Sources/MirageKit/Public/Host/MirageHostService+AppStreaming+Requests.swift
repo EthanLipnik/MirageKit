@@ -115,6 +115,7 @@ extension MirageHostService {
 
             // Start streams for each window
             var streamedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
+            var audioConfigured = false
             for window in finalWindows {
                 do {
                     let streamSession = try await startStream(
@@ -138,6 +139,18 @@ extension MirageHostService {
                         minBitrate: minBitrate,
                         maxBitrate: maxBitrate
                     )
+
+                    if !audioConfigured, let context = clientsByConnection[ObjectIdentifier(connection)] {
+                        await configureAudioIfNeeded(
+                            for: context,
+                            streamKind: .app(bundleIdentifier: app.bundleIdentifier),
+                            preferredQuality: request.preferredQuality,
+                            audioMode: request.audioMode,
+                            audioQuality: request.audioQuality,
+                            audioMatchVideoQuality: request.audioMatchVideoQuality
+                        )
+                        audioConfigured = true
+                    }
 
                     // Check window resizability
                     let isResizable = await appStreamManager.checkWindowResizability(

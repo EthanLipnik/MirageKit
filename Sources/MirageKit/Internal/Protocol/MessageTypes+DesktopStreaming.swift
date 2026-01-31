@@ -52,6 +52,12 @@ struct StartDesktopStreamMessage: Codable {
     /// Client refresh rate override in Hz (60/120 based on client capability)
     /// Used with P2P detection to enable 120fps streaming on capable displays
     let maxRefreshRate: Int
+    /// Client audio mode selection (off/mono/stereo/surround/full)
+    var audioMode: MirageAudioMode?
+    /// Client audio quality preset for AAC
+    var audioQuality: MirageAudioQuality?
+    /// Client toggle to match audio quality to video preset
+    var audioMatchVideoQuality: Bool?
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
@@ -75,6 +81,9 @@ struct StartDesktopStreamMessage: Codable {
         case latencyMode
         case dataPort
         case maxRefreshRate
+        case audioMode
+        case audioQuality
+        case audioMatchVideoQuality
     }
 }
 

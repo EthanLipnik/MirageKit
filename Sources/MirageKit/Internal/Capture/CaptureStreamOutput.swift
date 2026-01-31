@@ -17,6 +17,7 @@ import AppKit
 /// Stream output delegate
 final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let onFrame: @Sendable (CapturedFrame) -> Void
+    private var onAudioSample: (@Sendable (AudioSampleBuffer) -> Void)?
     private let onKeyframeRequest: @Sendable () -> Void
     private let onCaptureStall: @Sendable (String) -> Void
     private let usesDetailedMetadata: Bool
@@ -71,6 +72,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
     init(
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
+        onAudioSample: (@Sendable (AudioSampleBuffer) -> Void)? = nil,
         onKeyframeRequest: @escaping @Sendable () -> Void,
         onCaptureStall: @escaping @Sendable (String) -> Void = { _ in },
         windowID: CGWindowID = 0,
@@ -82,6 +84,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         poolMinimumBufferCount: Int = 6
     ) {
         self.onFrame = onFrame
+        self.onAudioSample = onAudioSample
         self.onKeyframeRequest = onKeyframeRequest
         self.onCaptureStall = onCaptureStall
         self.windowID = windowID
@@ -177,6 +180,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        if type == .audio {
+            if let onAudioSample {
+                onAudioSample(AudioSampleBuffer(buffer: sampleBuffer))
+            }
+            return
+        }
+
         let wallTime = CFAbsoluteTimeGetCurrent()  // Timing: when SCK delivered the frame
         let captureTime = wallTime
 
@@ -422,6 +432,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         )
 
         emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo)
+    }
+
+    func updateAudioHandler(_ handler: (@Sendable (AudioSampleBuffer) -> Void)?) {
+        onAudioSample = handler
     }
 
     private func emitFrame(

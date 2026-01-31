@@ -43,6 +43,7 @@ struct HelloResponseMessage: Codable {
     let hostName: String
     let requiresAuth: Bool
     let dataPort: UInt16
+    let audioPort: UInt16?
 }
 
 struct DisconnectMessage: Codable {
