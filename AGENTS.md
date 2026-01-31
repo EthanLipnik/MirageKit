@@ -51,6 +51,7 @@ MirageKit/
 │        ├─ Protocol/
 │        ├─ Rendering/
 │        ├─ Cursor/
+│        ├─ Audio/
 │        ├─ VirtualDisplay/
 │        └─ Utilities/
 └─ Tests/
@@ -69,6 +70,7 @@ MirageKit/
 ## Internal Implementation (`Sources/MirageKit/Internal/`)
 - Host: app enumeration, session state, menu bar capture, unlock handling, stream lifecycle, power assertions, packet buffer reuse for UDP sends.
 - Capture: capture orchestration, frame metadata, Metal copy, differential encoding.
+- Audio: ScreenCaptureKit audio capture, AAC/PCM encoding, audio packetization, client decode/playback.
 - Encoding/Decoding: HEVC encoder and decoder, frame reassembly buffer reuse.
 - Network: discovery and connectivity (Bonjour, TLS transport).
 - Protocol: wire format and serialization.

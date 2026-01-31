@@ -113,6 +113,15 @@ extension MirageHostService {
                 captureSource: request.captureSource,
                 targetFrameRate: targetFrameRate
             )
+
+            await configureAudioIfNeeded(
+                for: clientContext,
+                streamKind: .system,
+                preferredQuality: request.preferredQuality,
+                audioMode: request.audioMode,
+                audioQuality: request.audioQuality,
+                audioMatchVideoQuality: request.audioMatchVideoQuality
+            )
         } catch {
             MirageLogger.error(.host, "Failed to handle desktop stream request: \(error)")
         }

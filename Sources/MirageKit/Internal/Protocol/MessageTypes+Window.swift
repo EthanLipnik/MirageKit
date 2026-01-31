@@ -68,6 +68,12 @@ struct StartStreamMessage: Codable {
     var latencyMode: MirageStreamLatencyMode? = nil
     /// Client refresh rate override in Hz (60/120 based on client capability).
     var maxRefreshRate: Int = 60
+    /// Client audio mode selection (off/mono/stereo/surround/full)
+    var audioMode: MirageAudioMode? = nil
+    /// Client audio quality preset for AAC
+    var audioQuality: MirageAudioQuality? = nil
+    /// Client toggle to match audio quality to video preset
+    var audioMatchVideoQuality: Bool? = nil
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // /// Requires HDR-capable display on both host and client
@@ -94,6 +100,9 @@ struct StartStreamMessage: Codable {
         case adaptiveScaleEnabled
         case latencyMode
         case maxRefreshRate
+        case audioMode
+        case audioQuality
+        case audioMatchVideoQuality
     }
 }
 

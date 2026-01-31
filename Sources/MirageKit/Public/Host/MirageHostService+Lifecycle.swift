@@ -43,8 +43,13 @@ extension MirageHostService {
             let dataPort = try await startDataListener()
             MirageLogger.host("UDP listener started on port \(dataPort)")
 
-            state = .advertising(controlPort: controlPort, dataPort: dataPort)
-            MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort)")
+            // Start UDP listener for audio
+            MirageLogger.host("Starting audio UDP listener...")
+            let audioPort = try await startAudioListener()
+            MirageLogger.host("Audio UDP listener started on port \(audioPort)")
+
+            state = .advertising(controlPort: controlPort, dataPort: dataPort, audioPort: audioPort)
+            MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort) audio:\(audioPort)")
 
             // Set up app streaming callbacks
             setupAppStreamManagerCallbacks()
@@ -95,6 +100,8 @@ extension MirageHostService {
             await stopStream(stream)
         }
 
+        await stopAudioStreaming(reason: "Host stopped")
+
         // Disconnect all clients
         for client in connectedClients {
             await disconnectClient(client)
@@ -106,6 +113,8 @@ extension MirageHostService {
         await advertiser.stop()
         udpListener?.cancel()
         udpListener = nil
+        audioListener?.cancel()
+        audioListener = nil
 
         state = .idle
     }

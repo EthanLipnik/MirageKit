@@ -70,7 +70,7 @@ extension MirageHostService {
                 let latencyMode = request.latencyMode ?? .smoothest
                 MirageLogger.host("Frame rate: \(targetFrameRate)fps (quality=\(request.preferredQuality.displayName), client max=\(clientMaxRefreshRate)Hz)")
 
-                try await startStream(
+                _ = try await startStream(
                     for: window,
                     to: client,
                     dataPort: request.dataPort,
@@ -89,6 +89,17 @@ extension MirageHostService {
                     minBitrate: minBitrate,
                     maxBitrate: maxBitrate
                 )
+
+                if let context = clientsByConnection[ObjectIdentifier(connection)] {
+                    await configureAudioIfNeeded(
+                        for: context,
+                        streamKind: .system,
+                        preferredQuality: request.preferredQuality,
+                        audioMode: request.audioMode,
+                        audioQuality: request.audioQuality,
+                        audioMatchVideoQuality: request.audioMatchVideoQuality
+                    )
+                }
             } catch {
                 MirageLogger.error(.host, "Failed to handle startStream: \(error)")
             }

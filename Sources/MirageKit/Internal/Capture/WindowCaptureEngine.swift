@@ -18,6 +18,8 @@ import CoreGraphics
 actor WindowCaptureEngine {
     var stream: SCStream?
     var streamOutput: CaptureStreamOutput?
+    var audioSampleHandler: (@Sendable (AudioSampleBuffer) -> Void)?
+    var audioOutputRegistered = false
     let configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
     var currentFrameRate: Int
@@ -40,6 +42,7 @@ actor WindowCaptureEngine {
     var contentFilter: SCContentFilter?
     var lastRestartTime: CFAbsoluteTime = 0
     let restartCooldown: CFAbsoluteTime = 3.0
+    let audioOutputQueue = DispatchQueue(label: "com.mirage.capture.audio", qos: .userInteractive)
 
     init(
         configuration: MirageEncoderConfiguration,
@@ -49,6 +52,11 @@ actor WindowCaptureEngine {
         self.configuration = configuration
         self.latencyMode = latencyMode
         self.currentFrameRate = max(1, captureFrameRate ?? configuration.targetFrameRate)
+    }
+
+    func setAudioSampleHandler(_ handler: (@Sendable (AudioSampleBuffer) -> Void)?) {
+        audioSampleHandler = handler
+        streamOutput?.updateAudioHandler(handler)
     }
 
     enum CaptureMode {

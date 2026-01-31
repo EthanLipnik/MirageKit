@@ -16,6 +16,12 @@ extension MirageHostService {
         // Clear any stuck modifier state from this client's session
         inputController.clearAllModifiers()
 
+        if activeAudioClientID == client.id {
+            await stopAudioStreaming(reason: "Client disconnected")
+        }
+
+        audioConnectionByClientID.removeValue(forKey: client.id)
+
         // Stop all window streams for this client and minimize their windows
         for stream in activeStreams where stream.client.id == client.id {
             await stopStream(stream, minimizeWindow: true)

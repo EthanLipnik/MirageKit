@@ -329,6 +329,7 @@ extension MirageHostService {
 
         if activeStreams.isEmpty && loginDisplayContext == nil {
             await PowerAssertionManager.shared.disable()
+            await stopAudioStreaming(reason: "No active streams")
         }
 
         MirageLogger.host("Desktop stream stopped")

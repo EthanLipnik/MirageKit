@@ -18,12 +18,19 @@ let MirageProtocolVersion: UInt8 = 4
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.
 public let MirageDefaultMaxPacketSize: Int = 1200
 
+/// Magic number for audio packet validation ("MIRA").
+let MirageAudioMagic: UInt32 = 0x4D495241
+
 /// Header size in bytes:
 /// Base fields (4+1+2+2+4+8+4+2+2+4+4+4 = 41) +
 /// contentRect (4 x Float32 = 16) +
 /// dimensionToken (UInt16 = 2) +
 /// epoch (UInt16 = 2) = 61 total
 let MirageHeaderSize: Int = 61
+
+/// Audio packet header size in bytes:
+/// 4 + 1 + 2 + 4 + 8 + 4 + 2 + 1 + 1 + 4 + 1 = 32 bytes.
+let MirageAudioHeaderSize: Int = 32
 
 /// Compute payload size from the configured maximum packet size.
 /// `maxPacketSize` includes the Mirage header; this returns the payload size only.
@@ -274,6 +281,136 @@ struct FrameHeader {
             ),
             dimensionToken: dimensionToken,
             epoch: epoch
+        )
+    }
+}
+
+/// Audio frame flags
+struct AudioFlags: OptionSet, Sendable {
+    let rawValue: UInt16
+
+    /// Stream discontinuity (decoder should reset)
+    static let discontinuity = AudioFlags(rawValue: 1 << 0)
+
+    /// High priority packet (for QoS)
+    static let priority = AudioFlags(rawValue: 1 << 1)
+}
+
+/// Audio packet header (32 bytes, fixed size)
+struct AudioPacketHeader {
+    /// Magic number for validation ("MIRA")
+    var magic: UInt32 = MirageAudioMagic
+
+    /// Protocol version
+    var version: UInt8 = MirageProtocolVersion
+
+    /// Packet flags
+    var flags: AudioFlags
+
+    /// Packet sequence number
+    var sequenceNumber: UInt32
+
+    /// Presentation timestamp in nanoseconds
+    var timestamp: UInt64
+
+    /// Payload length in bytes
+    var payloadLength: UInt32
+
+    /// Stream epoch for discontinuity boundaries.
+    var epoch: UInt16
+
+    /// Audio codec identifier
+    var codec: UInt8
+
+    /// Channel count
+    var channelCount: UInt8
+
+    /// Sample rate
+    var sampleRate: UInt32
+
+    /// Channel layout identifier
+    var channelLayout: UInt8
+
+    init(
+        flags: AudioFlags = [],
+        sequenceNumber: UInt32,
+        timestamp: UInt64,
+        payloadLength: UInt32,
+        epoch: UInt16,
+        codec: UInt8,
+        channelCount: UInt8,
+        sampleRate: UInt32,
+        channelLayout: UInt8
+    ) {
+        self.flags = flags
+        self.sequenceNumber = sequenceNumber
+        self.timestamp = timestamp
+        self.payloadLength = payloadLength
+        self.epoch = epoch
+        self.codec = codec
+        self.channelCount = channelCount
+        self.sampleRate = sampleRate
+        self.channelLayout = channelLayout
+    }
+
+    func serialize() -> Data {
+        var data = Data(capacity: MirageAudioHeaderSize)
+        withUnsafeBytes(of: magic.littleEndian) { data.append(contentsOf: $0) }
+        data.append(version)
+        withUnsafeBytes(of: flags.rawValue.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: sequenceNumber.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: timestamp.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: payloadLength.littleEndian) { data.append(contentsOf: $0) }
+        withUnsafeBytes(of: epoch.littleEndian) { data.append(contentsOf: $0) }
+        data.append(codec)
+        data.append(channelCount)
+        withUnsafeBytes(of: sampleRate.littleEndian) { data.append(contentsOf: $0) }
+        data.append(channelLayout)
+        return data
+    }
+
+    static func deserialize(from data: Data) -> AudioPacketHeader? {
+        guard data.count >= MirageAudioHeaderSize else { return nil }
+        var offset = 0
+
+        func read<T: FixedWidthInteger>(_ type: T.Type) -> T {
+            let value = data.withUnsafeBytes { ptr in
+                ptr.loadUnaligned(fromByteOffset: offset, as: T.self)
+            }
+            offset += MemoryLayout<T>.size
+            return T(littleEndian: value)
+        }
+
+        func readByte() -> UInt8 {
+            let value = data[offset]
+            offset += 1
+            return value
+        }
+
+        let magic = read(UInt32.self)
+        guard magic == MirageAudioMagic else { return nil }
+        let version = readByte()
+        guard version == MirageProtocolVersion else { return nil }
+        let flagsRaw = read(UInt16.self)
+        let sequenceNumber = read(UInt32.self)
+        let timestamp = read(UInt64.self)
+        let payloadLength = read(UInt32.self)
+        let epoch = read(UInt16.self)
+        let codec = readByte()
+        let channelCount = readByte()
+        let sampleRate = read(UInt32.self)
+        let channelLayout = readByte()
+
+        return AudioPacketHeader(
+            flags: AudioFlags(rawValue: flagsRaw),
+            sequenceNumber: sequenceNumber,
+            timestamp: timestamp,
+            payloadLength: payloadLength,
+            epoch: epoch,
+            codec: codec,
+            channelCount: channelCount,
+            sampleRate: sampleRate,
+            channelLayout: channelLayout
         )
     }
 }

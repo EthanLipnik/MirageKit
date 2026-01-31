@@ -65,6 +65,7 @@ public final class MirageHostService {
 
     let advertiser: BonjourAdvertiser
     var udpListener: NWListener?
+    var audioListener: NWListener?
     let encoderConfig: MirageEncoderConfiguration
     let networkConfig: MirageNetworkConfiguration
     var hostID: UUID = UUID()
@@ -77,6 +78,7 @@ public final class MirageHostService {
 
     // UDP connections by stream ID (received from client registrations)
     var udpConnectionsByStream: [StreamID: NWConnection] = [:]
+    var audioConnectionByClientID: [UUID: NWConnection] = [:]
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []
@@ -137,6 +139,18 @@ public final class MirageHostService {
     // Cursor monitoring - internal for extension access
     var cursorMonitor: CursorMonitor?
 
+    // Audio streaming state - internal for extension access
+    var audioEncoder: AudioEncoder?
+    var audioPacketSender: AudioPacketSender?
+    var audioConfiguration: MirageAudioConfiguration?
+    var audioStreamEpoch: UInt16 = 0
+    var audioStreamStartedSent: Bool = false
+    var audioSampleCount: UInt64 = 0
+    var audioPacketCount: UInt64 = 0
+    var audioLastEmptyLogTime: CFAbsoluteTime = 0
+    var activeAudioClientID: UUID?
+    var audioStreamContextID: StreamID?
+
     // Session state monitoring (for headless Mac unlock support) - internal for extension access
     var sessionStateMonitor: SessionStateMonitor?
     var unlockManager: UnlockManager?
@@ -178,7 +192,7 @@ public final class MirageHostService {
     public enum HostState: Equatable {
         case idle
         case starting
-        case advertising(controlPort: UInt16, dataPort: UInt16)
+        case advertising(controlPort: UInt16, dataPort: UInt16, audioPort: UInt16)
         case error(String)
     }
 

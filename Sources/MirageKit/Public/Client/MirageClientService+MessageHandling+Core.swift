@@ -17,7 +17,8 @@ extension MirageClientService {
             let response = try message.decode(HelloResponseMessage.self)
             if response.accepted {
                 hostDataPort = response.dataPort
-                MirageLogger.client("Received hello response, dataPort: \(hostDataPort)")
+                hostAudioPort = response.audioPort ?? 0
+                MirageLogger.client("Received hello response, dataPort: \(hostDataPort), audioPort: \(hostAudioPort)")
             } else {
                 MirageLogger.client("Connection rejected by host")
                 connectionState = .error("Connection rejected")

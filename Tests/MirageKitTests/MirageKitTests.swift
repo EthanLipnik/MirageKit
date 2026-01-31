@@ -35,6 +35,31 @@ struct MirageKitTests {
         #expect(deserialized?.flags.contains(.keyframe) == true)
     }
 
+    @Test("Audio header serialization")
+    func testAudioHeaderSerialization() {
+        let header = AudioPacketHeader(
+            flags: [.discontinuity],
+            sequenceNumber: 42,
+            timestamp: 987654321,
+            payloadLength: 512,
+            epoch: 3,
+            codec: 1,
+            channelCount: 2,
+            sampleRate: 48_000,
+            channelLayout: 2
+        )
+
+        let data = header.serialize()
+        #expect(data.count == MirageAudioHeaderSize)
+
+        let deserialized = AudioPacketHeader.deserialize(from: data)
+        #expect(deserialized != nil)
+        #expect(deserialized?.sequenceNumber == 42)
+        #expect(deserialized?.timestamp == 987654321)
+        #expect(deserialized?.channelCount == 2)
+        #expect(deserialized?.flags.contains(.discontinuity) == true)
+    }
+
     @Test("CRC32 calculation")
     func testCRC32() {
         let data = Data("Hello, World!".utf8)
