@@ -62,8 +62,6 @@ struct StartStreamMessage: Codable {
     /// Client-requested stream scale (0.1-1.0)
     /// Applies post-capture downscaling without resizing the host window
     var streamScale: CGFloat?
-    /// Client toggle for adaptive stream scaling (host may reduce streamScale to recover FPS)
-    var adaptiveScaleEnabled: Bool?
     /// Client latency preference for buffering behavior
     var latencyMode: MirageStreamLatencyMode?
     /// Client refresh rate override in Hz (60/120 based on client capability).
@@ -91,7 +89,6 @@ struct StartStreamMessage: Codable {
         case minBitrate
         case maxBitrate
         case streamScale
-        case adaptiveScaleEnabled
         case latencyMode
         case maxRefreshRate
     }

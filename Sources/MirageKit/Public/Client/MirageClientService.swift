@@ -24,6 +24,8 @@ import AppKit
 public final class MirageClientService {
     /// Current connection state
     public internal(set) var connectionState: ConnectionState = .disconnected
+    /// Whether the host connection is awaiting manual approval
+    public internal(set) var isAwaitingManualApproval: Bool = false
 
     /// Available windows on the connected host
     public internal(set) var availableWindows: [MirageWindow] = []
@@ -60,7 +62,6 @@ public final class MirageClientService {
     public var resolutionScale: CGFloat = 1.0
 
     /// Whether the host is allowed to adapt stream scale for FPS recovery.
-    public var adaptiveScaleEnabled: Bool = true
 
     /// Latency preference for stream buffering behavior.
     public var latencyMode: MirageStreamLatencyMode = .smoothest
@@ -148,6 +149,8 @@ public final class MirageClientService {
     public let deviceID: UUID
     let deviceName: String
     var receiveBuffer = Data()
+    var approvalWaitTask: Task<Void, Never>?
+    var hasReceivedHelloResponse = false
 
     // Video receiving
     var udpConnection: NWConnection?

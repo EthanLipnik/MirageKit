@@ -51,8 +51,6 @@ struct StreamScaleChangeMessage: Codable {
     let streamID: StreamID
     /// Stream scale factor (0.1-1.0)
     let streamScale: CGFloat
-    /// Optional adaptive scale toggle
-    var adaptiveScaleEnabled: Bool?
 }
 
 /// Stream refresh rate override sent from client to host

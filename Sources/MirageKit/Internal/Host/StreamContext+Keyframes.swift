@@ -212,14 +212,8 @@ extension StreamContext {
     }
 
     func keyframeQuality(for queueBytes: Int) -> Float {
-        var quality = min(activeQuality, encoderConfig.keyframeQuality)
-        if queueBytes >= queuePressureBytes {
-            let pressure = min(1.0, Double(queueBytes - queuePressureBytes) / Double(queuePressureBytes))
-            let reduction = Float(0.25 * pressure)
-            quality = max(keyframeQualityFloor, quality - reduction)
-        }
-        if smoothedDirtyPercentage >= keyframeMotionThreshold { quality = max(keyframeQualityFloor, quality - 0.10) }
-        return quality
+        _ = queueBytes
+        return min(activeQuality, encoderConfig.keyframeQuality)
     }
 }
 #endif

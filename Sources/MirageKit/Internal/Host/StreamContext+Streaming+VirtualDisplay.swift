@@ -101,7 +101,7 @@ extension StreamContext {
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
-            requestedScale: requestedStreamScale * adaptiveScale,
+            requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
         let outputSize = scaledOutputSize(for: baseCaptureSize)
@@ -273,7 +273,7 @@ extension StreamContext {
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
-            requestedScale: requestedStreamScale * adaptiveScale,
+            requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
         let outputSize = scaledOutputSize(for: baseCaptureSize)

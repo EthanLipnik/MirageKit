@@ -31,7 +31,6 @@ extension MirageHostService {
         minBitrate: Int?,
         maxBitrate: Int?,
         streamScale: CGFloat?,
-        adaptiveScaleEnabled: Bool?,
         latencyMode: MirageStreamLatencyMode = .smoothest,
         dataPort _: UInt16?,
         captureSource: MirageDesktopCaptureSource?,
@@ -186,7 +185,6 @@ extension MirageHostService {
             streamScale: effectiveScale,
             maxPacketSize: networkConfig.maxPacketSize,
             additionalFrameFlags: [.desktopStream],
-            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true,
             latencyMode: latencyMode
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
@@ -201,11 +199,6 @@ extension MirageHostService {
                 } catch {
                     MirageLogger.error(.host, "Failed to send desktop stream metrics: \(error)")
                 }
-            }
-        }
-        await streamContext.setStreamScaleUpdateHandler { [weak self] streamID in
-            Task { @MainActor [weak self] in
-                await self?.sendStreamScaleUpdate(streamID: streamID)
             }
         }
 

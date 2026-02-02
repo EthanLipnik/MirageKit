@@ -15,6 +15,9 @@ extension MirageClientService {
     func handleHelloResponse(_ message: ControlMessage) {
         do {
             let response = try message.decode(HelloResponseMessage.self)
+            hasReceivedHelloResponse = true
+            isAwaitingManualApproval = false
+            approvalWaitTask?.cancel()
             if response.accepted {
                 hostDataPort = response.dataPort
                 MirageLogger.client("Received hello response, dataPort: \(hostDataPort)")

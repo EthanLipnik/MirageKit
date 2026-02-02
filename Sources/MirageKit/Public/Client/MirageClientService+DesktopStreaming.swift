@@ -60,7 +60,6 @@ public extension MirageClientService {
             minBitrate: nil,
             maxBitrate: nil,
             streamScale: clampedStreamScale(),
-            adaptiveScaleEnabled: adaptiveScaleEnabled,
             latencyMode: latencyMode,
             dataPort: nil,
             maxRefreshRate: getScreenMaxRefreshRate()

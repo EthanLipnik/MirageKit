@@ -48,7 +48,6 @@ extension MirageHostService {
         }
 
         let streamScale = await originalContext.getStreamScale()
-        let adaptiveScaleEnabled = await originalContext.getAdaptiveScaleEnabled()
         let encoderSettings = await originalContext.getEncoderSettings()
         let targetFrameRate = await originalContext.getTargetFrameRate()
         let qualityPreset = await originalContext.getQualityPreset()
@@ -64,7 +63,6 @@ extension MirageHostService {
                 frameQuality: encoderSettings.frameQuality,
                 keyframeQuality: encoderSettings.keyframeQuality,
                 streamScale: streamScale,
-                adaptiveScaleEnabled: adaptiveScaleEnabled,
                 qualityPreset: qualityPreset,
                 targetFrameRate: targetFrameRate,
                 pixelFormat: encoderSettings.pixelFormat,
@@ -79,7 +77,7 @@ extension MirageHostService {
         }
     }
 
-    func handleStreamScaleChange(streamID: StreamID, streamScale: CGFloat, adaptiveScaleEnabled: Bool?) async {
+    func handleStreamScaleChange(streamID: StreamID, streamScale: CGFloat) async {
         let clampedScale = max(0.1, min(1.0, streamScale))
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale change: \(streamID)")
@@ -87,7 +85,6 @@ extension MirageHostService {
         }
 
         do {
-            if let adaptiveScaleEnabled { await context.setAdaptiveScaleEnabled(adaptiveScaleEnabled) }
             try await context.updateStreamScale(clampedScale)
             await sendStreamScaleUpdate(streamID: streamID)
         } catch {

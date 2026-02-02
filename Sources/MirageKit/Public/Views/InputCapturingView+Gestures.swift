@@ -9,6 +9,8 @@
 import UIKit
 
 extension InputCapturingView {
+    private static let dockSnapThreshold: CGFloat = 0.98
+
     func setupGestureRecognizers() {
         // Long press gesture for immediate click detection
         // minimumPressDuration=0 fires immediately on touch down
@@ -125,9 +127,9 @@ extension InputCapturingView {
         guard dockSnapEnabled else { return normalized }
 
         var snapped = normalized
-        // Snap cursor to bottom edge when in dock trigger zone (bottom 1%)
+        // Snap cursor to bottom edge when in dock trigger zone (bottom 2%)
         // This allows users to easily open the iPad dock without precise edge targeting
-        if snapped.y >= 0.99 { snapped.y = 1.0 }
+        if snapped.y >= Self.dockSnapThreshold { snapped.y = 1.0 }
 
         return snapped
     }

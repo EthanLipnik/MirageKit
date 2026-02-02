@@ -70,7 +70,6 @@ extension MirageHostService {
                 let minBitrate = request.minBitrate ?? presetConfig.minBitrate
                 let maxBitrate = request.maxBitrate ?? presetConfig.maxBitrate
                 let requestedScale = request.streamScale ?? 1.0
-                let adaptiveScaleEnabled = request.adaptiveScaleEnabled ?? true
                 let latencyMode = request.latencyMode ?? .smoothest
                 MirageLogger
                     .host(
@@ -86,7 +85,6 @@ extension MirageHostService {
                     frameQuality: frameQuality,
                     keyframeQuality: keyframeQuality,
                     streamScale: requestedScale,
-                    adaptiveScaleEnabled: adaptiveScaleEnabled,
                     latencyMode: latencyMode,
                     qualityPreset: request.preferredQuality,
                     targetFrameRate: targetFrameRate,
@@ -120,11 +118,7 @@ extension MirageHostService {
                 let request = try message.decode(StreamScaleChangeMessage.self)
                 MirageLogger
                     .host("Client requested stream scale change for stream \(request.streamID): \(request.streamScale)")
-                await handleStreamScaleChange(
-                    streamID: request.streamID,
-                    streamScale: request.streamScale,
-                    adaptiveScaleEnabled: request.adaptiveScaleEnabled
-                )
+                await handleStreamScaleChange(streamID: request.streamID, streamScale: request.streamScale)
             } catch {
                 MirageLogger.error(.host, "Failed to handle streamScaleChange: \(error)")
             }

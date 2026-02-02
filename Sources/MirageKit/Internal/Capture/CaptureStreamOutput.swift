@@ -43,6 +43,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let watchdogQueue = DispatchQueue(label: "com.mirage.capture.watchdog", qos: .userInteractive)
     private var windowID: CGWindowID = 0
     private var lastDeliveredFrameTime: CFAbsoluteTime = 0
+    private var lastCompleteFrameTime: CFAbsoluteTime = 0
     private var frameGapThreshold: CFAbsoluteTime
     private var stallThreshold: CFAbsoluteTime
     private var expectedFrameRate: Double
@@ -152,10 +153,14 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let now = CFAbsoluteTimeGetCurrent()
         guard lastDeliveredFrameTime > 0 else { return }
 
-        let gap = now - lastDeliveredFrameTime
         let (gapThreshold, stallLimit) = expectationLock.withLock {
             (frameGapThreshold, stallThreshold)
         }
+        let recentActivityWindow = max(2.0, min(6.0, stallLimit * 2.0))
+        let anyGap = now - lastDeliveredFrameTime
+        let completeGap = lastCompleteFrameTime > 0 ? now - lastCompleteFrameTime : anyGap
+        let useCompleteGap = lastCompleteFrameTime > 0 && completeGap <= recentActivityWindow
+        let gap = useCompleteGap ? completeGap : anyGap
         guard gap > gapThreshold else { return }
 
         // SCK has stopped delivering - mark fallback mode
@@ -165,7 +170,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             stallSignaled = true
             lastStallTime = now
             let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
-            onCaptureStall("frame gap \(gapMs)ms")
+            let completeGapMs = (completeGap * 1000).formatted(.number.precision(.fractionLength(1)))
+            let anyGapMs = (anyGap * 1000).formatted(.number.precision(.fractionLength(1)))
+            let mode = useCompleteGap ? "content" : "any"
+            onCaptureStall("frame gap \(gapMs)ms (complete \(completeGapMs)ms, any \(anyGapMs)ms, mode=\(mode))")
         }
     }
 
@@ -182,38 +190,45 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         fallbackLock.unlock()
     }
 
+    private func updateDeliveryState(captureTime: CFAbsoluteTime, isComplete: Bool) {
+        lastDeliveredFrameTime = captureTime
+        stallSignaled = false
+        if isComplete {
+            lastCompleteFrameTime = captureTime
+            handleFallbackResumeIfNeeded()
+        }
+    }
+
+    private func handleFallbackResumeIfNeeded() {
+        // Only request keyframe if fallback lasted long enough to cause decode issues.
+        fallbackLock.lock()
+        guard wasInFallbackMode else {
+            fallbackLock.unlock()
+            return
+        }
+        let fallbackDuration = CFAbsoluteTimeGetCurrent() - fallbackStartTime
+        wasInFallbackMode = false
+        fallbackLock.unlock()
+
+        if fallbackDuration > keyframeThreshold {
+            onKeyframeRequest()
+            MirageLogger
+                .capture(
+                    "SCK resumed after long fallback (\(Int(fallbackDuration * 1000))ms) - scheduling keyframe"
+                )
+        } else {
+            MirageLogger
+                .capture(
+                    "SCK resumed after brief fallback (\(Int(fallbackDuration * 1000))ms) - no keyframe needed"
+                )
+        }
+    }
+
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         let wallTime = CFAbsoluteTimeGetCurrent() // Timing: when SCK delivered the frame
         let captureTime = wallTime
 
-        // NOTE: lastDeliveredFrameTime is updated ONLY for .complete frames (below)
-        // This allows the watchdog to continue firing during drags when SCK only sends .idle frames
-
         let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
-
-        // Check if we're resuming from fallback mode
-        // Only request keyframe if fallback lasted long enough to cause decode issues
-        fallbackLock.lock()
-        if wasInFallbackMode {
-            let fallbackDuration = CFAbsoluteTimeGetCurrent() - fallbackStartTime
-            wasInFallbackMode = false
-
-            // Only request keyframe for long fallbacks (>200ms)
-            // Brief fallbacks don't cause decoder reference frame issues
-            if fallbackDuration > keyframeThreshold {
-                onKeyframeRequest()
-                MirageLogger
-                    .capture(
-                        "SCK resumed after long fallback (\(Int(fallbackDuration * 1000))ms) - scheduling keyframe"
-                    )
-            } else {
-                MirageLogger
-                    .capture(
-                        "SCK resumed after brief fallback (\(Int(fallbackDuration * 1000))ms) - no keyframe needed"
-                    )
-            }
-        }
-        fallbackLock.unlock()
 
         // DIAGNOSTIC: Track frame delivery gaps to detect drag/menu freeze
         if lastFrameTime > 0 {
@@ -254,8 +269,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         if !tracksFrameStatus {
-            lastDeliveredFrameTime = captureTime
-            stallSignaled = false
+            updateDeliveryState(captureTime: captureTime, isComplete: true)
             if diagnosticsEnabled {
                 deliveredFrameCount += 1
                 if lastFPSLogTime == 0 { lastFPSLogTime = captureTime } else if captureTime - lastFPSLogTime > 2.0 {
@@ -331,10 +345,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         guard effectiveStatus == .complete || effectiveStatus == .idle else { return }
         if effectiveStatus == .idle { isIdleFrame = true }
 
-        // Update watchdog timer for any delivered frame so fallback only runs
-        // when SCK stops delivering frames entirely.
-        lastDeliveredFrameTime = captureTime
-        stallSignaled = false
+        updateDeliveryState(captureTime: captureTime, isComplete: effectiveStatus == .complete)
         if diagnosticsEnabled {
             deliveredFrameCount += 1
             if effectiveStatus == .idle { deliveredIdleCount += 1 } else {

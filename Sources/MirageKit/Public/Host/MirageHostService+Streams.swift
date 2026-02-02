@@ -23,7 +23,6 @@ public extension MirageHostService {
         frameQuality: Float? = nil,
         keyframeQuality: Float? = nil,
         streamScale: CGFloat? = nil,
-        adaptiveScaleEnabled: Bool? = nil,
         latencyMode: MirageStreamLatencyMode = .smoothest,
         qualityPreset: MirageQualityPreset? = nil,
         targetFrameRate: Int? = nil,
@@ -98,7 +97,6 @@ public extension MirageHostService {
             qualityPreset: qualityPreset,
             streamScale: streamScale ?? 1.0,
             maxPacketSize: networkConfig.maxPacketSize,
-            adaptiveScaleEnabled: adaptiveScaleEnabled ?? true,
             latencyMode: latencyMode
         )
         await context.setMetricsUpdateHandler { [weak self] metrics in
@@ -110,11 +108,6 @@ public extension MirageHostService {
                 } catch {
                     MirageLogger.error(.host, "Failed to send stream metrics: \(error)")
                 }
-            }
-        }
-        await context.setStreamScaleUpdateHandler { [weak self] streamID in
-            Task { @MainActor [weak self] in
-                await self?.sendStreamScaleUpdate(streamID: streamID)
             }
         }
 

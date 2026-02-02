@@ -31,10 +31,6 @@ extension StreamContext {
         metricsUpdateHandler = handler
     }
 
-    func setStreamScaleUpdateHandler(_ handler: (@Sendable (StreamID) -> Void)?) {
-        streamScaleUpdateHandler = handler
-    }
-
     func isUsingVirtualDisplay() -> Bool {
         useVirtualDisplay && virtualDisplayContext != nil
     }
@@ -83,18 +79,6 @@ extension StreamContext {
 
     func getQualityPreset() -> MirageQualityPreset? {
         qualityPreset
-    }
-
-    func getAdaptiveScaleEnabled() -> Bool {
-        adaptiveScaleEnabled
-    }
-
-    func setAdaptiveScaleEnabled(_ enabled: Bool) {
-        adaptiveScaleEnabled = enabled
-        adaptiveScale = 1.0
-        adaptiveScaleLowStreak = 0
-        adaptiveScaleHighStreak = 0
-        lastAdaptiveScaleChangeTime = 0
     }
 
     func getEncoderSettings() -> EncoderSettingsSnapshot {

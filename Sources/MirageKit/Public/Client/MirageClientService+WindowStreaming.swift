@@ -65,7 +65,6 @@ public extension MirageClientService {
         applyEncoderOverrides(overrides, to: &request)
 
         request.streamScale = clampedStreamScale()
-        request.adaptiveScaleEnabled = adaptiveScaleEnabled
         request.latencyMode = latencyMode
         request.maxRefreshRate = getScreenMaxRefreshRate()
 

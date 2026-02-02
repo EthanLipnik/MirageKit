@@ -83,9 +83,12 @@ public final class MirageHostService {
     var streamStartupFirstPacketSent: Set<StreamID> = []
 
     // Track first error time per client for graceful disconnect on persistent errors
-    // If errors persist for 5+ seconds, disconnect the client
+    // If errors persist past the timeout, disconnect the client.
     var clientFirstErrorTime: [ObjectIdentifier: CFAbsoluteTime] = [:]
-    let clientErrorTimeoutSeconds: CFAbsoluteTime = 5.0
+    let clientErrorTimeoutSeconds: CFAbsoluteTime = 2.0
+
+    // Approval timeout to avoid wedging the single-client slot.
+    let connectionApprovalTimeoutSeconds: CFAbsoluteTime = 15.0
 
     // Shared virtual display bounds for synchronous access from AppState
     // Single bounds since all windows share one virtual display
@@ -349,7 +352,6 @@ public final class MirageHostService {
     ///   - maxBitrate: Optional maximum target bitrate (bits per second)
     ///   - targetFrameRate: Optional frame rate override (60/120 based on client capability)
     ///   - pixelFormat: Optional pixel format override for capture and encode
-    ///   - adaptiveScaleEnabled: Optional toggle for adaptive stream scaling
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - hdr: Whether to enable HDR streaming (Rec. 2020 with PQ transfer function)
 

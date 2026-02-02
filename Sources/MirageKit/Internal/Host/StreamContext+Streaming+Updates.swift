@@ -45,7 +45,7 @@ extension StreamContext {
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
-            requestedScale: requestedStreamScale * adaptiveScale,
+            requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
         let outputSize = scaledOutputSize(for: baseCaptureSize)
@@ -78,7 +78,7 @@ extension StreamContext {
 
         let candidateScale = resolvedStreamScale(
             for: requestedBaseSize,
-            requestedScale: requestedStreamScale * adaptiveScale,
+            requestedScale: requestedStreamScale,
             logLabel: nil
         )
         let candidateScaledWidth = StreamContext.alignedEvenPixel(requestedBaseSize.width * candidateScale)
@@ -104,7 +104,7 @@ extension StreamContext {
 
         let resolvedScaleForUpdate = resolvedStreamScale(
             for: requestedBaseSize,
-            requestedScale: requestedStreamScale * adaptiveScale,
+            requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
         let scaledWidth = StreamContext.alignedEvenPixel(requestedBaseSize.width * resolvedScaleForUpdate)
@@ -139,7 +139,6 @@ extension StreamContext {
     func updateStreamScale(_ newScale: CGFloat) async throws {
         let clampedScale = StreamContext.clampStreamScale(newScale)
         requestedStreamScale = clampedScale
-        adaptiveScale = 1.0
         let previousScale = streamScale
 
         isResizing = true
@@ -201,65 +200,6 @@ extension StreamContext {
             )
     }
 
-    func applyStreamScale(_ newScale: CGFloat, logLabel: String) async throws {
-        let clampedScale = StreamContext.clampStreamScale(newScale)
-        let previousScale = streamScale
-
-        isResizing = true
-        defer { isResizing = false }
-
-        currentContentRect = .zero
-        dimensionToken &+= 1
-        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
-        await packetSender?.bumpGeneration(reason: "stream scale update")
-        resetPipelineStateForReconfiguration(reason: "adaptive scale update")
-
-        let derivedBaseSize: CGSize
-        if baseCaptureSize != .zero { derivedBaseSize = baseCaptureSize } else if previousScale > 0 {
-            let fallbackSize = currentCaptureSize == .zero ? currentEncodedSize : currentCaptureSize
-            derivedBaseSize = CGSize(
-                width: fallbackSize.width / previousScale,
-                height: fallbackSize.height / previousScale
-            )
-        } else {
-            derivedBaseSize = currentCaptureSize
-        }
-        baseCaptureSize = derivedBaseSize
-        guard derivedBaseSize.width > 0, derivedBaseSize.height > 0 else { return }
-
-        let resolvedScale = resolvedStreamScale(
-            for: derivedBaseSize,
-            requestedScale: clampedScale,
-            logLabel: "Resolution cap"
-        )
-        guard resolvedScale != streamScale else { return }
-        streamScale = resolvedScale
-
-        let outputSize = scaledOutputSize(for: derivedBaseSize)
-        let scaledWidth = Int(outputSize.width)
-        let scaledHeight = Int(outputSize.height)
-        currentCaptureSize = outputSize
-        currentEncodedSize = outputSize
-
-        if let captureEngine {
-            switch captureMode {
-            case .display:
-                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
-            case .window:
-                if !lastWindowFrame.isEmpty { try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale) }
-            }
-        }
-
-        if let encoder {
-            try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
-            updateQueueLimits()
-        }
-        updateQueueLimits()
-
-        await encoder?.forceKeyframe()
-        MirageLogger.stream("\(logLabel): scale=\(streamScale), encoding \(scaledWidth)x\(scaledHeight)")
-    }
-
     func updateCaptureDisplay(_ displayWrapper: SCDisplayWrapper, resolution: CGSize) async throws {
         guard isRunning else { return }
 
@@ -276,7 +216,7 @@ extension StreamContext {
         baseCaptureSize = resolution
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
-            requestedScale: requestedStreamScale * adaptiveScale,
+            requestedScale: requestedStreamScale,
             logLabel: "Resolution cap"
         )
         let outputSize = scaledOutputSize(for: baseCaptureSize)

@@ -14,6 +14,18 @@ import VideoToolbox
 #if os(macOS)
 import ScreenCaptureKit
 
+enum EncodeSkipReason: String {
+    case dimensionUpdate = "dimension update"
+    case encoderInactive = "encoder inactive"
+    case noSession = "no session"
+    case queueFull = "queue full"
+}
+
+enum EncodeAdmission {
+    case accepted
+    case skipped(EncodeSkipReason)
+}
+
 extension HEVCEncoder {
     func preheat() async throws {
         guard let session = compressionSession else {
@@ -126,21 +138,21 @@ extension HEVCEncoder {
         compressionSession = nil
     }
 
-    func encodeFrame(_ frame: CapturedFrame, forceKeyframe: Bool = false) async throws -> Bool {
+    func encodeFrame(_ frame: CapturedFrame, forceKeyframe: Bool = false) async throws -> EncodeAdmission {
         let encodeStartTime = CFAbsoluteTimeGetCurrent() // Timing: encode start
 
         // Drop frames during dimension update to prevent deadlock
         guard !isUpdatingDimensions else {
             MirageLogger.encoder("Skipping encode: dimension update in progress")
-            return false
+            return .skipped(.dimensionUpdate)
         }
         guard isEncoding else {
             MirageLogger.encoder("Skipping encode: encoder not active")
-            return false
+            return .skipped(.encoderInactive)
         }
         guard let session = compressionSession else {
             MirageLogger.encoder("Skipping encode: no compression session")
-            return false
+            return .skipped(.noSession)
         }
 
         let pixelBuffer = frame.pixelBuffer
@@ -162,7 +174,7 @@ extension HEVCEncoder {
 
         guard reserveEncoderSlot() else {
             MirageLogger.encoder("Skipping encode: encoder queue full")
-            return false
+            return .skipped(.queueFull)
         }
 
         let presentationTime = frame.presentationTime
@@ -292,7 +304,7 @@ extension HEVCEncoder {
             releaseEncoderSlot()
             throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status)))
         }
-        return true
+        return .accepted
     }
 }
 

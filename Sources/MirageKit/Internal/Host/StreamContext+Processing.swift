@@ -162,12 +162,14 @@ extension StreamContext {
                     backpressureActive = false
                     MirageLogger.stream("Backpressure cleared (queue \(Int(Double(queueBytes) / 1024.0))KB)")
                 } else {
+                    backpressureDropIntervalCount += 1
                     droppedFrameCount += 1
                     logStreamStatsIfNeeded()
                     continue
                 }
             } else if queueBytes > maxQueuedBytes, !forceKeyframe {
                 backpressureActive = true
+                backpressureDropIntervalCount += 1
                 droppedFrameCount += 1
                 let queuedKB = (Double(queueBytes) / 1024.0).rounded()
                 MirageLogger.stream("Backpressure: pausing encode (queue \(Int(queuedKB))KB)")
@@ -207,8 +209,9 @@ extension StreamContext {
                     }
                     await encoder.prepareForKeyframe(quality: keyframeQuality(for: queueBytes))
                 }
-                let accepted = try await encoder.encodeFrame(frame, forceKeyframe: forceKeyframe)
-                if accepted {
+                let result = try await encoder.encodeFrame(frame, forceKeyframe: forceKeyframe)
+                switch result {
+                case .accepted:
                     encodeAcceptedIntervalCount += 1
                     if inFlightCount == 0 { lastEncodeActivityTime = encodeStartTime }
                     inFlightCount += 1
@@ -216,15 +219,15 @@ extension StreamContext {
                     lastEncodedPresentationTime = frame.presentationTime
                     if forceKeyframe { isKeyframeEncoding = true }
                     if isIdleFrame { idleEncodedCount += 1 }
-                } else if forceKeyframe {
+                case let .skipped(reason):
                     encodeRejectedIntervalCount += 1
                     droppedFrameCount += 1
-                    let now = CFAbsoluteTimeGetCurrent()
-                    pendingKeyframeReason = "Deferred keyframe"
-                    pendingKeyframeDeadline = max(pendingKeyframeDeadline, now + keyframeSettleTimeout)
-                } else {
-                    encodeRejectedIntervalCount += 1
-                    droppedFrameCount += 1
+                    recordEncoderSkip(reason)
+                    if forceKeyframe {
+                        let now = CFAbsoluteTimeGetCurrent()
+                        pendingKeyframeReason = "Deferred keyframe"
+                        pendingKeyframeDeadline = max(pendingKeyframeDeadline, now + keyframeSettleTimeout)
+                    }
                 }
             } catch {
                 encodeErrorIntervalCount += 1
@@ -279,7 +282,6 @@ extension StreamContext {
     }
 
     func logPipelineStatsIfNeeded() async {
-        guard MirageLogger.isEnabled(.metrics) else { return }
         let now = CFAbsoluteTimeGetCurrent()
         guard lastPipelineStatsLogTime > 0 else {
             lastPipelineStatsLogTime = now
@@ -288,34 +290,37 @@ extension StreamContext {
         let elapsed = now - lastPipelineStatsLogTime
         guard elapsed >= pipelineStatsInterval else { return }
 
+        let metricsEnabled = MirageLogger.isEnabled(.metrics)
         let captureIngressFPS = Double(captureIngressIntervalCount) / elapsed
         let captureFPS = Double(captureIntervalCount) / elapsed
         let encodeAttemptFPS = Double(encodeAttemptIntervalCount) / elapsed
         let encodeFPS = Double(encodeAcceptedIntervalCount) / elapsed
-        let ingressText = captureIngressFPS.formatted(.number.precision(.fractionLength(1)))
-        let captureText = captureFPS.formatted(.number.precision(.fractionLength(1)))
-        let attemptText = encodeAttemptFPS.formatted(.number.precision(.fractionLength(1)))
-        let encodeText = encodeFPS.formatted(.number.precision(.fractionLength(1)))
         let encodeAvgMs = await encoder?.getAverageEncodeTimeMs() ?? 0
-        let encodeAvgText = encodeAvgMs.formatted(.number.precision(.fractionLength(1)))
         let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
-        let queueKB = Int((Double(queueBytes) / 1024.0).rounded())
         let pendingCount = frameInbox.pendingCount()
         let captureGapMs = lastCapturedFrameTime > 0
             ? (now - lastCapturedFrameTime) * 1000
             : 0
-        let captureGapText = captureGapMs.formatted(.number.precision(.fractionLength(1)))
         let syntheticFPS = Double(syntheticIntervalCount) / elapsed
-        let syntheticText = syntheticFPS.formatted(.number.precision(.fractionLength(1)))
+        if metricsEnabled {
+            let ingressText = captureIngressFPS.formatted(.number.precision(.fractionLength(1)))
+            let captureText = captureFPS.formatted(.number.precision(.fractionLength(1)))
+            let attemptText = encodeAttemptFPS.formatted(.number.precision(.fractionLength(1)))
+            let encodeText = encodeFPS.formatted(.number.precision(.fractionLength(1)))
+            let encodeAvgText = encodeAvgMs.formatted(.number.precision(.fractionLength(1)))
+            let queueKB = Int((Double(queueBytes) / 1024.0).rounded())
+            let captureGapText = captureGapMs.formatted(.number.precision(.fractionLength(1)))
+            let syntheticText = syntheticFPS.formatted(.number.precision(.fractionLength(1)))
 
-        MirageLogger.metrics(
-            "Pipeline: ingress=\(ingressText)fps capture=\(captureText)fps drop=\(captureDroppedIntervalCount) " +
-                "encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) error=\(encodeErrorIntervalCount) " +
-                "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
-                "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms"
-        )
-
-        await updateAdaptiveScaleIfNeeded(captureFPS: captureFPS)
+            MirageLogger.metrics(
+                "Pipeline: ingress=\(ingressText)fps capture=\(captureText)fps drop=\(captureDroppedIntervalCount) " +
+                    "bp=\(backpressureDropIntervalCount) encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
+                    "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
+                    "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) " +
+                    "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
+                    "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms"
+            )
+        }
 
         await updateInFlightLimitIfNeeded(
             averageEncodeMs: encodeAvgMs,
@@ -329,83 +334,25 @@ extension StreamContext {
         encodeAcceptedIntervalCount = 0
         encodeRejectedIntervalCount = 0
         encodeErrorIntervalCount = 0
+        backpressureDropIntervalCount = 0
+        encodeSkipQueueFullIntervalCount = 0
+        encodeSkipDimensionIntervalCount = 0
+        encodeSkipInactiveIntervalCount = 0
+        encodeSkipNoSessionIntervalCount = 0
         syntheticIntervalCount = 0
         lastPipelineStatsLogTime = now
     }
 
-    func updateAdaptiveScaleIfNeeded(captureFPS: Double) async {
-        guard adaptiveScaleEnabled else { return }
-        guard currentFrameRate >= 120 else { return }
-        guard shouldEncodeFrames else { return }
-        guard !isResizing else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        if lastAdaptiveScaleChangeTime > 0,
-           now - lastAdaptiveScaleChangeTime < adaptiveScaleCooldown {
-            return
-        }
-
-        let targetFPS = Double(currentFrameRate)
-        let lowThreshold = targetFPS * adaptiveScaleLowThreshold
-        let highThreshold = targetFPS * adaptiveScaleHighThreshold
-
-        if captureFPS < lowThreshold {
-            adaptiveScaleLowStreak += 1
-            adaptiveScaleHighStreak = 0
-        } else if captureFPS >= highThreshold {
-            adaptiveScaleHighStreak += 1
-            adaptiveScaleLowStreak = 0
-        } else {
-            adaptiveScaleLowStreak = max(0, adaptiveScaleLowStreak - 1)
-            adaptiveScaleHighStreak = max(0, adaptiveScaleHighStreak - 1)
-            return
-        }
-
-        if adaptiveScaleLowStreak >= adaptiveScaleDownSamples {
-            let nextAdaptive = max(adaptiveScaleMin, adaptiveScale * adaptiveScaleDownStep)
-            if nextAdaptive < adaptiveScale - 0.001 {
-                adaptiveScale = nextAdaptive
-                let effectiveScale = resolvedStreamScale(
-                    for: baseCaptureSize,
-                    requestedScale: requestedStreamScale * adaptiveScale,
-                    logLabel: "Resolution cap"
-                )
-                if effectiveScale != streamScale {
-                    lastAdaptiveScaleChangeTime = now
-                    adaptiveScaleLowStreak = 0
-                    adaptiveScaleHighStreak = 0
-                    do {
-                        try await applyStreamScale(effectiveScale, logLabel: "Adaptive scale down")
-                        streamScaleUpdateHandler?(streamID)
-                    } catch {
-                        MirageLogger.error(.stream, "Adaptive scale down failed: \(error)")
-                    }
-                }
-            }
-            return
-        }
-
-        if adaptiveScaleHighStreak >= adaptiveScaleUpSamples {
-            let nextAdaptive = min(1.0, adaptiveScale * adaptiveScaleUpStep)
-            if nextAdaptive > adaptiveScale + 0.001 {
-                adaptiveScale = nextAdaptive
-                let effectiveScale = resolvedStreamScale(
-                    for: baseCaptureSize,
-                    requestedScale: requestedStreamScale * adaptiveScale,
-                    logLabel: "Resolution cap"
-                )
-                if effectiveScale != streamScale {
-                    lastAdaptiveScaleChangeTime = now
-                    adaptiveScaleLowStreak = 0
-                    adaptiveScaleHighStreak = 0
-                    do {
-                        try await applyStreamScale(effectiveScale, logLabel: "Adaptive scale up")
-                        streamScaleUpdateHandler?(streamID)
-                    } catch {
-                        MirageLogger.error(.stream, "Adaptive scale up failed: \(error)")
-                    }
-                }
-            }
+    func recordEncoderSkip(_ reason: EncodeSkipReason) {
+        switch reason {
+        case .queueFull:
+            encodeSkipQueueFullIntervalCount += 1
+        case .dimensionUpdate:
+            encodeSkipDimensionIntervalCount += 1
+        case .encoderInactive:
+            encodeSkipInactiveIntervalCount += 1
+        case .noSession:
+            encodeSkipNoSessionIntervalCount += 1
         }
     }
 
@@ -445,72 +392,8 @@ extension StreamContext {
     }
 
     func adjustQualityForQueue(queueBytes: Int) async {
-        guard let encoder else { return }
-        guard latencyMode != .smoothest else { return }
-        let now = CFAbsoluteTimeGetCurrent()
-        guard now - lastQualityAdjustmentTime > qualityAdjustmentCooldown else { return }
-
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-        let isHighRefresh = currentFrameRate >= 120
-        let averageEncodeMs = await encoder.getAverageEncodeTimeMs()
-        let queuePressure = queueBytes >= queuePressureBytes
-        let severePressure = queueBytes >= Int(Double(queuePressureBytes) * 1.5)
-        let encodePressureMultiplier = isHighRefresh ? 1.55 : 1.35
-        let heavyEncodePressureMultiplier = isHighRefresh ? 1.85 : 1.60
-        let underBudgetMultiplier = isHighRefresh ? 0.65 : 0.75
-        let encodePressure = averageEncodeMs > frameBudgetMs * encodePressureMultiplier
-        let heavyEncodePressure = averageEncodeMs > frameBudgetMs * heavyEncodePressureMultiplier
-        let underBudget = averageEncodeMs < frameBudgetMs * underBudgetMultiplier
-        let queueClear = queueBytes < queuePressureBytes / 2
-
-        if isHighRefresh {
-            let scaleRoom = adaptiveScaleEnabled && adaptiveScale > adaptiveScaleMin + 0.01
-            let demandDrop = queuePressure || severePressure || heavyEncodePressure
-            if scaleRoom, !demandDrop {
-                qualityOverBudgetCount = 0
-                qualityUnderBudgetCount = 0
-                return
-            }
-        }
-
-        if queuePressure || encodePressure {
-            qualityOverBudgetCount += 1
-            qualityUnderBudgetCount = 0
-        } else if queueClear, underBudget {
-            qualityUnderBudgetCount += 1
-            qualityOverBudgetCount = 0
-        } else {
-            qualityOverBudgetCount = max(0, qualityOverBudgetCount - 1)
-            qualityUnderBudgetCount = max(0, qualityUnderBudgetCount - 1)
-        }
-
-        if qualityOverBudgetCount >= qualityDropThreshold, activeQuality > qualityFloor {
-            let dropStep = (severePressure || heavyEncodePressure) ? qualityDropStepHighPressure : qualityDropStep
-            activeQuality = max(qualityFloor, activeQuality - dropStep)
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            qualityOverBudgetCount = 0
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let encodeText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            if queuePressure {
-                let queueKB = Int(Double(queueBytes) / 1024.0)
-                MirageLogger
-                    .stream("Encoder quality throttled to \(qualityText) (encode \(encodeText)ms, queue \(queueKB)KB)")
-            } else {
-                MirageLogger.stream("Encoder quality throttled to \(qualityText) (encode \(encodeText)ms)")
-            }
-            return
-        }
-
-        if qualityUnderBudgetCount >= qualityRaiseThreshold, activeQuality < qualityCeiling {
-            activeQuality = min(qualityCeiling, activeQuality + qualityRaiseStep)
-            await encoder.updateQuality(activeQuality)
-            lastQualityAdjustmentTime = now
-            qualityUnderBudgetCount = 0
-            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-            let encodeText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.stream("Encoder quality restored to \(qualityText) (encode \(encodeText)ms)")
-        }
+        _ = queueBytes
+        return
     }
 }
 #endif

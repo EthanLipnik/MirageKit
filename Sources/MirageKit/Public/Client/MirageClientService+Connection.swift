@@ -73,6 +73,9 @@ extension MirageClientService {
 
         MirageLogger.client("Connecting to \(host.name)...")
         connectionState = .connecting
+        isAwaitingManualApproval = false
+        hasReceivedHelloResponse = false
+        approvalWaitTask?.cancel()
         connectedHost = host
 
         do {
@@ -144,6 +147,7 @@ extension MirageClientService {
 
             // Send hello message with device info.
             await sendHelloMessage(connection: connection)
+            startManualApprovalWaitTimer()
 
             // Start receiving messages from the server.
             startReceiving()
@@ -152,6 +156,8 @@ extension MirageClientService {
             connectionState = .disconnected
             connectedHost = nil
             transport = nil
+            isAwaitingManualApproval = false
+            approvalWaitTask?.cancel()
             throw error
         }
     }
@@ -238,11 +244,27 @@ extension MirageClientService {
         currentSessionToken = nil
         loginDisplayStreamID = nil
         loginDisplayResolution = nil
+        isAwaitingManualApproval = false
+        approvalWaitTask?.cancel()
+        hasReceivedHelloResponse = false
         desktopStreamID = nil
         desktopStreamResolution = nil
         desktopStreamMode = nil
         connectionState = state
 
         if notifyDelegate { delegate?.clientService(self, didDisconnectFromHost: reason) }
+    }
+
+    private func startManualApprovalWaitTimer() {
+        approvalWaitTask?.cancel()
+        approvalWaitTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(1.5))
+            guard let self else { return }
+            guard !self.hasReceivedHelloResponse else { return }
+
+            if case .connected = self.connectionState {
+                self.isAwaitingManualApproval = true
+            }
+        }
     }
 }

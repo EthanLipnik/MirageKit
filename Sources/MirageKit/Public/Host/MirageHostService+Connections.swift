@@ -13,6 +13,40 @@ import Network
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    private enum ApprovalOutcome {
+        case accepted
+        case rejected
+        case connectionClosed
+        case timedOut
+    }
+
+    private actor ApprovalDecisionGate {
+        private var didResume = false
+        private var tasks: [Task<Void, Never>] = []
+        private let box: SafeContinuationBox<ApprovalOutcome>
+
+        init(box: SafeContinuationBox<ApprovalOutcome>) {
+            self.box = box
+        }
+
+        func register(tasks: [Task<Void, Never>]) {
+            guard !didResume else {
+                for task in tasks { task.cancel() }
+                return
+            }
+            self.tasks = tasks
+        }
+
+        func finish(_ outcome: ApprovalOutcome) {
+            guard !didResume else { return }
+            didResume = true
+            let tasksToCancel = tasks
+            tasks = []
+            for task in tasksToCancel { task.cancel() }
+            box.resume(returning: outcome)
+        }
+    }
+
     /// Check if an error indicates a fatal, unrecoverable connection state.
     func isFatalConnectionError(_ error: Error) -> Bool {
         let nsError = error as NSError
@@ -87,11 +121,22 @@ extension MirageHostService {
             if clientsByConnection[connectionID] == nil { releaseSingleClientSlot(for: connectionID) }
         }
 
-        // Evaluate trust using provider first, then fall back to delegate
-        let shouldAccept: Bool = await evaluateTrustAndApproval(for: deviceInfo)
+        let approvalOutcome = await awaitApprovalDecision(for: deviceInfo, connection: connection)
+        connection.stateUpdateHandler = nil
 
-        guard shouldAccept else {
+        switch approvalOutcome {
+        case .accepted:
+            break
+        case .rejected:
             MirageLogger.host("Connection rejected")
+            connection.cancel()
+            return
+        case .connectionClosed:
+            MirageLogger.host("Connection closed while awaiting approval")
+            connection.cancel()
+            return
+        case .timedOut:
+            MirageLogger.host("Connection approval timed out after \(Int(connectionApprovalTimeoutSeconds))s")
             connection.cancel()
             return
         }
@@ -231,6 +276,58 @@ extension MirageHostService {
                 // No delegate and no trust provider decision - accept by default
                 box.resume(returning: true)
             }
+        }
+    }
+
+    private func awaitApprovalDecision(
+        for deviceInfo: MirageDeviceInfo,
+        connection: NWConnection
+    ) async -> ApprovalOutcome {
+        await withCheckedContinuation { continuation in
+            let box = SafeContinuationBox<ApprovalOutcome>(continuation)
+            let gate = ApprovalDecisionGate(box: box)
+
+            let approvalTask = Task { @MainActor in
+                let approved = await self.evaluateTrustAndApproval(for: deviceInfo)
+                await gate.finish(approved ? .accepted : .rejected)
+            }
+
+            let closureTask = Task { @MainActor in
+                await self.waitForConnectionClosure(connection)
+                await gate.finish(.connectionClosed)
+            }
+
+            let timeoutTask = Task {
+                let timeout = Duration.seconds(Int(self.connectionApprovalTimeoutSeconds))
+                try? await Task.sleep(for: timeout)
+                await gate.finish(.timedOut)
+            }
+
+            Task {
+                await gate.register(tasks: [approvalTask, closureTask, timeoutTask])
+            }
+        }
+    }
+
+    private func waitForConnectionClosure(_ connection: NWConnection) async {
+        let stream = AsyncStream<Void> { continuation in
+            connection.stateUpdateHandler = { state in
+                switch state {
+                case .failed,
+                     .cancelled:
+                    continuation.yield(())
+                    continuation.finish()
+                default:
+                    break
+                }
+            }
+            continuation.onTermination = { _ in
+                connection.stateUpdateHandler = nil
+            }
+        }
+
+        for await _ in stream {
+            break
         }
     }
 
