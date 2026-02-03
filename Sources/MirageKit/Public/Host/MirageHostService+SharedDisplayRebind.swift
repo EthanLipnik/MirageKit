@@ -93,14 +93,13 @@ extension MirageHostService {
         desktopDisplayBounds = displayBounds
 
         do {
-            await setupDisplayMirroring(targetDisplayID: newContext.displayID)
-
-            let captureDisplay: SCDisplayWrapper = switch desktopCaptureSource {
-            case .mainDisplay:
-                try await findMainSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
-            case .virtualDisplay:
-                try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+            if desktopStreamMode == .mirrored {
+                await setupDisplayMirroring(targetDisplayID: newContext.displayID)
+            } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                await disableDisplayMirroring(displayID: newContext.displayID)
             }
+
+            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
             try await desktopContext.updateCaptureDisplay(
                 captureDisplay,
                 resolution: newContext.resolution
@@ -115,7 +114,7 @@ extension MirageHostService {
             await sendStreamScaleUpdate(streamID: desktopStreamID)
             MirageLogger
                 .host(
-                    "Desktop stream rebound to shared display generation \(newContext.generation) (\(desktopCaptureSource.displayName))"
+                    "Desktop stream rebound to shared display generation \(newContext.generation) (Virtual Display)"
                 )
         } catch {
             MirageLogger.error(

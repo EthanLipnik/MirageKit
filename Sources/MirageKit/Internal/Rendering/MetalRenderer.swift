@@ -13,10 +13,6 @@ import simd
 
 /// Uniforms structure matching Metal shader (must be 16-byte aligned)
 struct RenderUniforms {
-    var frameCount: UInt32
-    var padding: UInt32 = 0 // Padding for alignment
-    var padding2: UInt32 = 0
-    var padding3: UInt32 = 0
     var contentRect: SIMD4<Float> // x, y, width, height (normalized 0-1)
     var colorMatrix: simd_float4x4
     var colorOffset: SIMD4<Float>
@@ -31,20 +27,15 @@ private struct ColorConversion {
 final class MetalRenderer {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
-    private let pipelineStateDither10: MTLRenderPipelineState
-    private let pipelineStateNoDither10: MTLRenderPipelineState
-    private let pipelineStateDither8: MTLRenderPipelineState
-    private let pipelineStateNoDither8: MTLRenderPipelineState
-    private let pipelineStateDither10YCbCr: MTLRenderPipelineState
-    private let pipelineStateNoDither10YCbCr: MTLRenderPipelineState
-    private let pipelineStateDither8YCbCr: MTLRenderPipelineState
-    private let pipelineStateNoDither8YCbCr: MTLRenderPipelineState
+    private let pipelineState10: MTLRenderPipelineState
+    private let pipelineState8: MTLRenderPipelineState
+    private let pipelineState10YCbCr: MTLRenderPipelineState
+    private let pipelineState8YCbCr: MTLRenderPipelineState
     private var textureCache: CVMetalTextureCache?
     private var uniformsBuffers: [MTLBuffer] = []
     private var uniformsBufferIndex: Int = 0
     private let uniformsBufferCount: Int = 3
     private var frameCount: UInt32 = 0
-    private var temporalDitheringEnabled: Bool = true
     private static let identityConversion = ColorConversion(
         matrix: matrix_identity_float4x4,
         offset: .zero
@@ -82,51 +73,27 @@ final class MetalRenderer {
         }
         uniformsBuffers = buffers
 
-        // Create render pipelines (dithered and non-dithered)
+        // Create render pipelines.
         let library = try Self.makeLibrary(device: mtlDevice)
-        pipelineStateDither10 = try Self.createPipeline(
-            device: mtlDevice,
-            library: library,
-            fragmentFunctionName: "videoFragmentDither",
-            colorPixelFormat: .bgr10a2Unorm
-        )
-        pipelineStateNoDither10 = try Self.createPipeline(
+        pipelineState10 = try Self.createPipeline(
             device: mtlDevice,
             library: library,
             fragmentFunctionName: "videoFragmentPlain",
             colorPixelFormat: .bgr10a2Unorm
         )
-        pipelineStateDither8 = try Self.createPipeline(
-            device: mtlDevice,
-            library: library,
-            fragmentFunctionName: "videoFragmentDither",
-            colorPixelFormat: .bgra8Unorm
-        )
-        pipelineStateNoDither8 = try Self.createPipeline(
+        pipelineState8 = try Self.createPipeline(
             device: mtlDevice,
             library: library,
             fragmentFunctionName: "videoFragmentPlain",
             colorPixelFormat: .bgra8Unorm
         )
-        pipelineStateDither10YCbCr = try Self.createPipeline(
-            device: mtlDevice,
-            library: library,
-            fragmentFunctionName: "videoFragmentYCbCrDither",
-            colorPixelFormat: .bgr10a2Unorm
-        )
-        pipelineStateNoDither10YCbCr = try Self.createPipeline(
+        pipelineState10YCbCr = try Self.createPipeline(
             device: mtlDevice,
             library: library,
             fragmentFunctionName: "videoFragmentYCbCrPlain",
             colorPixelFormat: .bgr10a2Unorm
         )
-        pipelineStateDither8YCbCr = try Self.createPipeline(
-            device: mtlDevice,
-            library: library,
-            fragmentFunctionName: "videoFragmentYCbCrDither",
-            colorPixelFormat: .bgra8Unorm
-        )
-        pipelineStateNoDither8YCbCr = try Self.createPipeline(
+        pipelineState8YCbCr = try Self.createPipeline(
             device: mtlDevice,
             library: library,
             fragmentFunctionName: "videoFragmentYCbCrPlain",
@@ -135,7 +102,7 @@ final class MetalRenderer {
     }
 
     private static func makeLibrary(device: MTLDevice) throws -> MTLLibrary {
-        // Shader source with optional temporal dithering and contentRect support.
+        // Shader source with contentRect support.
         let shaderSource = """
         #include <metal_stdlib>
         using namespace metal;
@@ -146,10 +113,6 @@ final class MetalRenderer {
         };
 
         struct Uniforms {
-            uint frameCount;
-            uint padding;
-            uint padding2;
-            uint padding3;
             float4 contentRect;  // x, y, width, height (normalized 0-1)
             float4x4 colorMatrix;
             float4 colorOffset;
@@ -183,41 +146,10 @@ final class MetalRenderer {
             return out;
         }
 
-        // Interleaved gradient noise - high-quality per-pixel noise
-        float interleavedGradientNoise(float2 screenPos) {
-            float3 magic = float3(0.06711056, 0.00583715, 52.9829189);
-            return fract(magic.z * fract(dot(screenPos, magic.xy)));
-        }
-
-        // Temporal variation using R2 sequence to prevent static noise patterns
-        float temporalDither(float2 screenPos, uint frame) {
-            float2 offset = float2(
-                fract(float(frame) * 0.7548776662466927),
-                fract(float(frame) * 0.5698402909980532)
-            );
-            return interleavedGradientNoise(screenPos + offset * 1000.0);
-        }
-
         float3 ycbcrToRgb(float y, float2 cbcr, constant Uniforms& uniforms) {
             float4 ycbcr = float4(y, cbcr, 1.0);
             ycbcr.xyz += uniforms.colorOffset.xyz;
             return (uniforms.colorMatrix * ycbcr).xyz;
-        }
-
-        fragment float4 videoFragmentDither(
-            VertexOut in [[stage_in]],
-            texture2d<float> colorTexture [[texture(0)]],
-            constant Uniforms& uniforms [[buffer(0)]]
-        ) {
-            constexpr sampler textureSampler(mag_filter::linear, min_filter::linear);
-            float4 color = colorTexture.sample(textureSampler, in.texCoord);
-
-            // Apply temporal dithering to reduce color banding
-            // Noise centered around zero, scaled to 1 bit of 10-bit color
-            float noise = (temporalDither(in.position.xy, uniforms.frameCount) - 0.5) / 1023.0;
-            color.rgb += noise;
-
-            return color;
         }
 
         fragment float4 videoFragmentPlain(
@@ -226,23 +158,6 @@ final class MetalRenderer {
         ) {
             constexpr sampler textureSampler(mag_filter::linear, min_filter::linear);
             return colorTexture.sample(textureSampler, in.texCoord);
-        }
-
-        fragment float4 videoFragmentYCbCrDither(
-            VertexOut in [[stage_in]],
-            texture2d<float> lumaTexture [[texture(0)]],
-            texture2d<float> chromaTexture [[texture(1)]],
-            constant Uniforms& uniforms [[buffer(0)]]
-        ) {
-            constexpr sampler textureSampler(mag_filter::linear, min_filter::linear);
-            float y = lumaTexture.sample(textureSampler, in.texCoord).r;
-            float2 cbcr = chromaTexture.sample(textureSampler, in.texCoord).rg;
-            float3 rgb = ycbcrToRgb(y, cbcr, uniforms);
-
-            float noise = (temporalDither(in.position.xy, uniforms.frameCount) - 0.5) / 1023.0;
-            rgb += noise;
-
-            return float4(rgb, 1.0);
         }
 
         fragment float4 videoFragmentYCbCrPlain(
@@ -520,7 +435,6 @@ final class MetalRenderer {
 
         frameCount = frameCount &+ 1
         var uniforms = RenderUniforms(
-            frameCount: frameCount,
             contentRect: normalizedRect,
             colorMatrix: colorConversion.matrix,
             colorOffset: colorConversion.offset
@@ -660,21 +574,16 @@ final class MetalRenderer {
         if let cache = textureCache { CVMetalTextureCacheFlush(cache, 0) }
     }
 
-    func setTemporalDitheringEnabled(_ enabled: Bool) {
-        temporalDitheringEnabled = enabled
-    }
-
     private func pipelineState(for outputPixelFormat: MTLPixelFormat, usesYCbCr: Bool) -> MTLRenderPipelineState {
-        let useDither = temporalDitheringEnabled
         switch (outputPixelFormat, usesYCbCr) {
         case (.bgra8Unorm, true):
-            return useDither ? pipelineStateDither8YCbCr : pipelineStateNoDither8YCbCr
+            return pipelineState8YCbCr
         case (.bgra8Unorm, false):
-            return useDither ? pipelineStateDither8 : pipelineStateNoDither8
+            return pipelineState8
         case (_, true):
-            return useDither ? pipelineStateDither10YCbCr : pipelineStateNoDither10YCbCr
+            return pipelineState10YCbCr
         default:
-            return useDither ? pipelineStateDither10 : pipelineStateNoDither10
+            return pipelineState10
         }
     }
 }

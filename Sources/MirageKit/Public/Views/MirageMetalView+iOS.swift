@@ -68,12 +68,6 @@ public class MirageMetalView: MTKView {
     private var inFlightDraws: Int = 0
     private var pendingDraw = false
 
-    public var temporalDitheringEnabled: Bool = true {
-        didSet {
-            renderer?.setTemporalDitheringEnabled(temporalDitheringEnabled)
-        }
-    }
-
     private var effectiveScale: CGFloat {
         let traitScale = traitCollection.displayScale
         if traitScale > 0 { return traitScale }
@@ -494,7 +488,6 @@ public class MirageMetalView: MTKView {
     }
 
     private func applyRenderPreferences() {
-        temporalDitheringEnabled = MirageRenderPreferences.temporalDitheringEnabled()
         let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
         refreshRateMonitor.isProMotionEnabled = proMotionEnabled
         updateFrameRatePreference(proMotionEnabled: proMotionEnabled)

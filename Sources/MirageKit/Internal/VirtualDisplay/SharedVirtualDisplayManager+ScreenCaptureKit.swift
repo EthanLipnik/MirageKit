@@ -73,9 +73,7 @@ extension SharedVirtualDisplayManager {
         throw SharedDisplayError.scDisplayNotFound(missingID)
     }
 
-    /// Find the SCDisplay for the main display (used for desktop streaming capture).
-    /// When mirroring is active, capturing the main display can avoid mirrored-display
-    /// cadence issues that sometimes appear on virtual targets.
+    /// Find the SCDisplay for the main display (used for login display streaming).
     func findMainSCDisplay() async throws -> SCDisplayWrapper {
         let mainDisplayID = CGMainDisplayID()
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)

@@ -253,7 +253,13 @@ extension MirageHostService {
                 )
 
                 // Re-apply mirroring after mode changes (display updates can drop mirror state).
-                if let displayID = await SharedVirtualDisplayManager.shared.getDisplayID() { await setupDisplayMirroring(targetDisplayID: displayID) }
+                if let displayID = await SharedVirtualDisplayManager.shared.getDisplayID() {
+                    if desktopStreamMode == .mirrored {
+                        await setupDisplayMirroring(targetDisplayID: displayID)
+                    } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                        await disableDisplayMirroring(displayID: displayID)
+                    }
+                }
 
                 // 2. Update the capture/encoder dimensions to match new resolution
                 //    Since displayID doesn't change, we just need to update the stream config

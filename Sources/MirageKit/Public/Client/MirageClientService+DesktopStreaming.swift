@@ -19,7 +19,6 @@ public extension MirageClientService {
     ///   - mode: Desktop stream mode (mirrored vs secondary display).
     ///   - keyFrameInterval: Optional keyframe interval in frames.
     ///   - encoderOverrides: Optional per-stream encoder overrides.
-    ///   - captureSource: Optional desktop capture source override.
     // TODO: HDR support - requires proper virtual display EDR configuration.
     // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ).
     func startDesktopStream(
@@ -27,8 +26,7 @@ public extension MirageClientService {
         displayResolution: CGSize? = nil,
         mode: MirageDesktopStreamMode = .mirrored,
         keyFrameInterval: Int? = nil,
-        encoderOverrides: MirageEncoderOverrides? = nil,
-        captureSource: MirageDesktopCaptureSource? = nil
+        encoderOverrides: MirageEncoderOverrides? = nil
         // preferHDR: Bool = false
     )
     async throws {
@@ -48,7 +46,6 @@ public extension MirageClientService {
             keyFrameInterval: nil,
             pixelFormat: nil,
             colorSpace: nil,
-            captureSource: captureSource,
             mode: mode,
             minBitrate: nil,
             maxBitrate: nil,
@@ -63,8 +60,6 @@ public extension MirageClientService {
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
         applyEncoderOverrides(overrides, to: &request)
-
-        if let captureSource { MirageLogger.client("Requesting desktop capture source: \(captureSource.displayName)") }
 
         let message = try ControlMessage(type: .startDesktopStream, content: request)
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()

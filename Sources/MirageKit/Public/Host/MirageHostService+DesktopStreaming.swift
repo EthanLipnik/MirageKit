@@ -30,7 +30,6 @@ extension MirageHostService {
         streamScale: CGFloat?,
         latencyMode: MirageStreamLatencyMode = .smoothest,
         dataPort _: UInt16?,
-        captureSource: MirageDesktopCaptureSource?,
         targetFrameRate: Int? = nil
     )
     async throws {
@@ -93,21 +92,17 @@ extension MirageHostService {
         //     MirageLogger.host("Desktop stream HDR enabled (Rec. 2020 + PQ)")
         // }
 
-        let selectedCaptureSource = captureSource ?? .virtualDisplay
-        desktopCaptureSource = selectedCaptureSource
         desktopBaseDisplayResolution = displayResolution
         let clampedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
         desktopRequestedStreamScale = clampedStreamScale
-        desktopUsesScaledVirtualDisplay = selectedCaptureSource == .virtualDisplay
-        let virtualDisplayResolution = desktopUsesScaledVirtualDisplay
-            ? resolvedDesktopVirtualDisplayResolution(
-                baseResolution: displayResolution,
-                streamScale: clampedStreamScale
-            )
-            : displayResolution
-        let effectiveStreamScale = desktopUsesScaledVirtualDisplay ? 1.0 : clampedStreamScale
+        desktopUsesScaledVirtualDisplay = true
+        let virtualDisplayResolution = resolvedDesktopVirtualDisplayResolution(
+            baseResolution: displayResolution,
+            streamScale: clampedStreamScale
+        )
+        let effectiveStreamScale: CGFloat = 1.0
 
-        if desktopUsesScaledVirtualDisplay, clampedStreamScale < 1.0 {
+        if clampedStreamScale < 1.0 {
             MirageLogger.host(
                 "Desktop scale \(clampedStreamScale) → virtual display \(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)); encoder scale forced to 1.0"
             )
@@ -127,12 +122,7 @@ extension MirageHostService {
         )
         logDesktopStartStep("virtual display acquired (\(context.displayID))")
 
-        let captureDisplay: SCDisplayWrapper = switch selectedCaptureSource {
-        case .mainDisplay:
-            try await findMainSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
-        case .virtualDisplay:
-            try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
-        }
+        let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
         logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
         let captureResolution = context.resolution
 
@@ -173,8 +163,7 @@ extension MirageHostService {
         streamStartupBaseTimes[streamID] = desktopStartTime
         streamStartupRegistrationLogged.remove(streamID)
         streamStartupFirstPacketSent.remove(streamID)
-        if selectedCaptureSource == .virtualDisplay,
-           captureDisplay.display.displayID != context.displayID {
+        if captureDisplay.display.displayID != context.displayID {
             MirageLogger.error(
                 .host,
                 "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
@@ -182,7 +171,7 @@ extension MirageHostService {
         }
         MirageLogger
             .host(
-                "Desktop capture source: \(selectedCaptureSource.displayName) (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), color=\(config.colorSpace.displayName))"
+                "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), color=\(config.colorSpace.displayName))"
             )
 
         let effectiveScale = effectiveStreamScale
@@ -315,7 +304,6 @@ extension MirageHostService {
         desktopPrimaryPhysicalDisplayID = nil
         desktopPrimaryPhysicalBounds = nil
         desktopUsesVirtualDisplay = false
-        desktopCaptureSource = .virtualDisplay
         desktopStreamMode = .mirrored
         desktopBaseDisplayResolution = nil
         desktopRequestedStreamScale = 1.0

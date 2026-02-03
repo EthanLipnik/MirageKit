@@ -14,13 +14,6 @@ import MetalKit
 public class MirageMetalView: MTKView {
     private var renderer: MetalRenderer?
     private let renderState = MirageMetalRenderState()
-    private let preferencesObserver = MirageUserDefaultsObserver()
-
-    public var temporalDitheringEnabled: Bool = true {
-        didSet {
-            renderer?.setTemporalDitheringEnabled(temporalDitheringEnabled)
-        }
-    }
 
     /// Stream ID for direct frame cache access (gesture tracking support)
     var streamID: StreamID? {
@@ -87,9 +80,6 @@ public class MirageMetalView: MTKView {
         // P3 color space with 10-bit color for wide color gamut
         colorspace = CGColorSpace(name: CGColorSpace.displayP3)
         colorPixelFormat = .bgr10a2Unorm
-
-        applyRenderPreferences()
-        startObservingPreferences()
     }
 
     override public func layout() {
@@ -103,7 +93,6 @@ public class MirageMetalView: MTKView {
         Task { @MainActor in
             if let streamID { MirageClientRenderTrigger.shared.unregister(streamID: streamID) }
         }
-        stopObservingPreferences()
     }
 
     /// Report actual drawable pixel size to ensure host captures at correct resolution
@@ -203,12 +192,6 @@ public class MirageMetalView: MTKView {
         )
     }
 
-    private func applyRenderPreferences() {
-        temporalDitheringEnabled = MirageRenderPreferences.temporalDitheringEnabled()
-        renderState.markNeedsRedraw()
-        requestDraw()
-    }
-
     func suspendRendering() {
         renderingSuspended = true
     }
@@ -242,16 +225,6 @@ public class MirageMetalView: MTKView {
     private func scheduleDraw() {
         drawScheduled = true
         draw()
-    }
-
-    private func startObservingPreferences() {
-        preferencesObserver.start { [weak self] in
-            self?.applyRenderPreferences()
-        }
-    }
-
-    private func stopObservingPreferences() {
-        preferencesObserver.stop()
     }
 
     private func updateOutputFormatIfNeeded(_ pixelFormatType: OSType) {

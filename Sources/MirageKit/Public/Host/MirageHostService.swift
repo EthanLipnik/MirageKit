@@ -134,7 +134,6 @@ public final class MirageHostService {
     var desktopDisplayBounds: CGRect?
     var desktopVirtualDisplayID: CGDirectDisplayID?
     var desktopUsesVirtualDisplay = false
-    var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
     var desktopStreamMode: MirageDesktopStreamMode = .mirrored
     var desktopBaseDisplayResolution: CGSize?
     var desktopRequestedStreamScale: CGFloat = 1.0

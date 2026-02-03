@@ -29,8 +29,6 @@ struct StartDesktopStreamMessage: Codable {
     var colorSpace: MirageColorSpace?
     /// Client-requested ScreenCaptureKit queue depth
     var captureQueueDepth: Int?
-    /// Client-requested capture source for desktop streams
-    var captureSource: MirageDesktopCaptureSource?
     /// Desktop stream mode (mirrored vs secondary display)
     var mode: MirageDesktopStreamMode?
     /// Client-requested minimum target bitrate (bits per second)
@@ -58,7 +56,6 @@ struct StartDesktopStreamMessage: Codable {
         case pixelFormat
         case colorSpace
         case captureQueueDepth
-        case captureSource
         case mode
         case minBitrate
         case maxBitrate

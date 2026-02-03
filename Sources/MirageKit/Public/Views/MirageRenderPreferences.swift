@@ -8,10 +8,6 @@
 import Foundation
 
 enum MirageRenderPreferences {
-    static func temporalDitheringEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: "enableTemporalDithering") as? Bool ?? true
-    }
-
     static func proMotionEnabled() -> Bool {
         UserDefaults.standard.object(forKey: "enableProMotion") as? Bool ?? false
     }

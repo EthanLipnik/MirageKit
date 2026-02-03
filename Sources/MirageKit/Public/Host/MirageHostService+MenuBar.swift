@@ -124,7 +124,6 @@ extension MirageHostService {
                 streamScale: request.streamScale,
                 latencyMode: latencyMode,
                 dataPort: request.dataPort,
-                captureSource: request.captureSource,
                 targetFrameRate: targetFrameRate
             )
         } catch {
