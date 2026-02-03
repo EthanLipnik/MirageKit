@@ -82,7 +82,9 @@ extension SharedVirtualDisplayManager {
         colorSpace: MirageColorSpace
     )
     async throws -> ManagedDisplayContext {
-        displayCounter += 1
+        if displayCounter == 0 {
+            displayCounter = 1
+        }
         displayGeneration &+= 1
         let generation = displayGeneration
         let displayName = "Mirage Shared Display (#\(displayCounter))"

@@ -55,6 +55,8 @@ MirageKit/
    └─ MirageKitTests/
 ```
 
+Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
+
 ## Public API (`Sources/MirageKit/Public/`)
 - Host services and delegates: `Host/`.
 - Host frame-rate helpers: `Host/MirageHostService+FrameRate.swift`.

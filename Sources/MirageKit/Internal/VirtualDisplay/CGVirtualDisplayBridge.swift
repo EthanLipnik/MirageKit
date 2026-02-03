@@ -28,9 +28,11 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     private nonisolated(unsafe) static var cgVirtualDisplaySettingsClass: AnyClass?
     private nonisolated(unsafe) static var cgVirtualDisplayModeClass: AnyClass?
     private nonisolated(unsafe) static var isLoaded = false
+    private nonisolated(unsafe) static var cachedSerialNumbers: [MirageColorSpace: UInt32] = [:]
     nonisolated(unsafe) static var configuredDisplayOrigins: [CGDirectDisplayID: CGPoint] = [:]
     static let mirageVendorID: UInt32 = 0x1234
     static let mirageProductID: UInt32 = 0xE000
+    private static let serialDefaultsPrefix = "MirageVirtualDisplaySerial"
 
     // MARK: - Color Primaries
 
@@ -142,7 +144,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         descriptor.setValue(name, forKey: "name")
         descriptor.setValue(mirageVendorID, forKey: "vendorID")
         descriptor.setValue(mirageProductID, forKey: "productID") // Virtual display marker
-        descriptor.setValue(UInt32(arc4random()), forKey: "serialNum")
+        descriptor.setValue(persistentSerialNumber(for: colorSpace), forKey: "serialNum")
         descriptor.setValue(UInt32(width), forKey: "maxPixelsWide")
         descriptor.setValue(UInt32(height), forKey: "maxPixelsHigh")
 
@@ -238,6 +240,29 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             refreshRate: refreshRate,
             colorSpace: colorSpace
         )
+    }
+
+    private static func persistentSerialNumber(for colorSpace: MirageColorSpace) -> UInt32 {
+        if let cached = cachedSerialNumbers[colorSpace] {
+            return cached
+        }
+
+        let defaultsKey = "\(serialDefaultsPrefix).\(colorSpace.rawValue)"
+        let stored = UserDefaults.standard.integer(forKey: defaultsKey)
+        if stored > 0, stored <= Int(UInt32.max) {
+            let serial = UInt32(stored)
+            cachedSerialNumbers[colorSpace] = serial
+            return serial
+        }
+
+        var serial: UInt32 = 0
+        repeat {
+            serial = UInt32.random(in: 1 ... UInt32.max)
+        } while serial == 0
+
+        UserDefaults.standard.set(Int(serial), forKey: defaultsKey)
+        cachedSerialNumbers[colorSpace] = serial
+        return serial
     }
 
     /// Update an existing virtual display's resolution without recreating it
