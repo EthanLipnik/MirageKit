@@ -23,6 +23,9 @@ extension StreamContext {
         encoderConfig = encoderConfig.withTargetFrameRate(clamped)
         await refreshCaptureCadence()
         await encoder?.updateFrameRate(clamped)
+        if currentEncodedSize != .zero {
+            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Frame rate update")
+        }
         updateKeyframeCadence()
         updateQueueLimits()
         MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps (capture \(captureFrameRate) fps)")
@@ -64,6 +67,7 @@ extension StreamContext {
         if let captureEngine { try await captureEngine.updateDimensions(windowFrame: windowFrame, outputScale: streamScale) }
 
         if let encoder { try await encoder.updateDimensions(width: width, height: height) }
+        await applyDerivedQuality(for: outputSize, logLabel: "Dimension update")
 
         await encoder?.forceKeyframe()
 
@@ -193,6 +197,7 @@ extension StreamContext {
         }
         updateQueueLimits()
 
+        await applyDerivedQuality(for: outputSize, logLabel: "Stream scale update")
         await encoder?.forceKeyframe()
         MirageLogger
             .stream(
@@ -237,6 +242,7 @@ extension StreamContext {
 
         if let encoder { try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight) }
 
+        await applyDerivedQuality(for: outputSize, logLabel: "Display switch")
         await encoder?.forceKeyframe()
 
         MirageLogger.stream("Display switch complete (frames resumed)")

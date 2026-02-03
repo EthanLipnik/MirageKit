@@ -41,10 +41,6 @@ struct SelectAppMessage: Codable {
     let maxRefreshRate: Int
     /// Client-requested keyframe interval in frames
     var keyFrameInterval: Int?
-    /// Client-requested inter-frame quality (0.0-1.0)
-    var frameQuality: Float?
-    /// Client-requested keyframe quality (0.0-1.0)
-    var keyframeQuality: Float?
     /// Client-requested pixel format (capture + encode)
     var pixelFormat: MiragePixelFormat?
     /// Client-requested color space
@@ -72,8 +68,6 @@ struct SelectAppMessage: Codable {
         case displayHeight
         case maxRefreshRate
         case keyFrameInterval
-        case frameQuality = "keyframeQuality"
-        case keyframeQuality = "keyframeQualityOverride"
         case pixelFormat
         case colorSpace
         case captureQueueDepth

@@ -348,8 +348,6 @@ public final class MirageHostService {
     ///   - dataPort: Optional UDP port for video data
     ///   - clientDisplayResolution: Client's display resolution for virtual display sizing
     ///   - keyFrameInterval: Optional client-requested keyframe interval (in frames)
-    ///   - frameQuality: Optional client-requested inter-frame quality (0.0-1.0)
-    ///   - keyframeQuality: Optional client-requested keyframe quality (0.0-1.0)
     ///   - qualityPreset: Optional preset for latency-sensitive defaults
     ///   - colorSpace: Optional color space override for capture and encode
     ///   - captureQueueDepth: Optional ScreenCaptureKit queue depth override

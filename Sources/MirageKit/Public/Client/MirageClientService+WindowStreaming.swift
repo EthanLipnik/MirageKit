@@ -24,7 +24,6 @@ public extension MirageClientService {
     ///     If provided, host creates a virtual display at this resolution for optimal quality.
     ///   - keyFrameInterval: Optional keyframe interval in frames. Higher = fewer lag spikes.
     ///     Examples: 600 (10 seconds @ 60fps), 300 (5 seconds @ 60fps).
-    ///   - keyframeQuality: Optional inter-frame quality (0.0-1.0). Lower = smaller frames.
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     func startViewing(
         window: MirageWindow,
@@ -33,7 +32,6 @@ public extension MirageClientService {
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
-        keyframeQuality: Float? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil
     )
     async throws -> ClientStreamSession {
@@ -61,7 +59,6 @@ public extension MirageClientService {
         // Include encoder config overrides if specified.
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
-        if overrides.frameQuality == nil { overrides.frameQuality = keyframeQuality }
         applyEncoderOverrides(overrides, to: &request)
 
         request.streamScale = clampedStreamScale()

@@ -5,21 +5,21 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 
 ## Behavior Notes
 - MirageKit license: PolyForm Shield 1.0.0 with the line-of-business notice for dedicated remote window/desktop/secondary display/drawing-tablet streaming.
-- Streaming presets (60/120): low 0.24/0.22, medium 0.85/0.78, high 0.95/0.88, ultra 1.0.
+- Streaming presets (60/120 fps bitrates, Mbps): low 12/8, medium 70/100, high 100/130, ultra 200.
 - Preset pixel format: ultra/high/medium 10-bit; low 8-bit.
 - Preset color space: P3 except low.
-- Stream scale: client resolution scale; presets define encoder quality.
+- Stream scale: client-provided scale derived from the app's resolution limit; presets define bitrate targets.
 - ProMotion preference: refresh override based on MTKView cadence, 120 when supported and enabled, otherwise 60.
 - Backpressure: queue-based frame drops.
-- Encoder quality: fixed per stream; QP bounds mapping when supported.
+- Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
 - Capture pixel format: 10-bit P010 when supported; NV12 fallback; 4:4:4 formats only when explicitly selected.
 - Encode flow: limited in-flight frames; completion-driven next encode.
 - In-flight cap: 120Hz 2 frames; 60Hz 1 frame.
 - Keyframe payload: 4-byte parameter set length prefix; Annex B parameter sets; AVCC frame data.
 - iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
-- Custom preset: encoder overrides for pixel format, color space, bitrate, and keyframe settings.
+- Custom preset: encoder overrides for pixel format, color space, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
-- Automatic quality tests use UDP payloads plus VideoToolbox benchmarks for encode/decode timing.
+- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
 
 ## Interaction Guidelines
 - Planning phase: detailed step list; explicit plan.
@@ -78,7 +78,7 @@ MirageKit/
 - Rendering: Metal renderer.
 - Cursor: cursor position tracking.
 - Logging: unified logging and signposts.
-- Utilities: codec benchmark timing storage and helpers for automatic quality tests.
+- Utilities: codec benchmark timing storage, bitrate-to-quality mapping, and helpers for automatic quality tests.
 
 ## Architecture Patterns
 - `MirageHostService` and `MirageClientService` are the main entry points.
@@ -90,7 +90,7 @@ MirageKit/
 - Client: Network → HEVCDecoder → MirageStreamView (Metal rendering).
 - Client rendering reads frames from `MirageFrameCache` inside Metal views to avoid SwiftUI per-frame churn.
 - Stream scaling: capture at `streamScale` output resolution; content rects are in scaled pixel coordinates.
-- Adaptive stream scale (120Hz): host can reduce `streamScale` to recover capture FPS and sends updated dimensions.
+- Adaptive stream scale: not supported; streams keep the client-selected `streamScale` throughout the session.
 - SCK buffer lifetime: captured frames are copied into a CVPixelBufferPool before encode to avoid retaining SCK buffers.
 - Queue limits: packet queue thresholds scale with encoded area and frame rate.
 - Frame rate selection: host follows client refresh rate (120fps when supported) across presets.
@@ -108,7 +108,7 @@ MirageKit/
 ## Network Configuration
 - Service type: `_mirage._tcp` (Bonjour).
 - Control port: 9847; Data port: 9848.
-- Protocol version: 3.
+- Protocol version: 1.
 - Hybrid transport with TLS encryption.
 - UDP packet sizing: `MirageNetworkConfiguration.maxPacketSize` caps Mirage header + payload to avoid IPv6 fragmentation; `StreamContext` uses it for frame fragmentation.
 - `StreamPacketSender` sends bounded bursts and tracks queued bytes for backpressure.

@@ -61,9 +61,6 @@ public final class MirageClientService {
     /// 1.0 = native resolution, lower values reduce encoded size
     public var resolutionScale: CGFloat = 1.0
 
-    /// Whether the host is allowed to adapt stream scale for FPS recovery.
-    public var adaptiveScaleEnabled: Bool = true
-
     /// Latency preference for stream buffering behavior.
     public var latencyMode: MirageStreamLatencyMode = .smoothest
 

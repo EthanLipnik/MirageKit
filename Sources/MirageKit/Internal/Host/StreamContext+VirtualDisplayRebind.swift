@@ -155,6 +155,8 @@ extension StreamContext {
             activePixelFormat = resolvedPixelFormat
         }
 
+        await applyDerivedQuality(for: outputSize, logLabel: "Shared display rebind")
+
         let captureConfig = encoderConfig.withOverrides(pixelFormat: activePixelFormat)
         let newCaptureEngine = WindowCaptureEngine(
             configuration: captureConfig,

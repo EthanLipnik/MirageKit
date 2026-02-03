@@ -122,19 +122,20 @@ struct MirageKitTests {
     func qualityPresets() {
         let ultra60 = MirageQualityPreset.ultra.encoderConfiguration(for: 60)
         let ultra120 = MirageQualityPreset.ultra.encoderConfiguration(for: 120)
-        #expect(ultra120.frameQuality == 1.0)
-        #expect(ultra60.frameQuality == 1.0)
+        #expect(ultra120.minBitrate == 200_000_000)
+        #expect(ultra60.maxBitrate == 200_000_000)
+        #expect(ultra120.minBitrate == ultra120.maxBitrate)
         #expect(ultra120.pixelFormat == .p010)
 
         let medium60 = MirageQualityPreset.medium.encoderConfiguration(for: 60)
         let medium120 = MirageQualityPreset.medium.encoderConfiguration(for: 120)
-        #expect(medium120.frameQuality < medium60.frameQuality)
+        #expect((medium120.minBitrate ?? 0) > (medium60.minBitrate ?? 0))
         #expect(medium120.pixelFormat == .p010)
 
         let low60 = MirageQualityPreset.low.encoderConfiguration(for: 60)
         let low120 = MirageQualityPreset.low.encoderConfiguration(for: 120)
-        #expect(low120.frameQuality < low60.frameQuality)
-        #expect(low120.frameQuality < medium120.frameQuality)
+        #expect((low120.minBitrate ?? 0) < (low60.minBitrate ?? 0))
+        #expect((low120.minBitrate ?? 0) < (medium120.minBitrate ?? 0))
         #expect(low120.pixelFormat == .nv12)
     }
 

@@ -84,9 +84,11 @@ actor StreamContext {
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
     var activeQuality: Float
-    let qualityFloor: Float
-    let qualityCeiling: Float
-    let keyframeQualityFloor: Float
+    var qualityFloor: Float
+    var qualityCeiling: Float
+    var keyframeQualityFloor: Float
+    let qualityFloorFactor: Float = 0.6
+    let keyframeFloorFactor: Float = 0.6
     var pendingKeyframeReason: String?
     var pendingKeyframeDeadline: CFAbsoluteTime = 0
     var isKeyframeEncoding: Bool = false
@@ -275,8 +277,6 @@ actor StreamContext {
         frameInbox = StreamFrameInbox(capacity: bufferDepth)
         maxEncodeTimeMs = encoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
-        let qualityFloorFactor: Float = 0.6
-        let keyframeFloorFactor: Float = 0.6
         qualityCeiling = encoderConfig.frameQuality
         qualityFloor = max(0.1, encoderConfig.frameQuality * qualityFloorFactor)
         activeQuality = encoderConfig.frameQuality

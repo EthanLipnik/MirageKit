@@ -12,54 +12,156 @@ import Network
 
 @MainActor
 extension MirageClientService {
-    public func runQualityTest(plan: MirageQualityTestPlan) async throws -> MirageQualityTestSummary {
+    public func runQualityTest() async throws -> MirageQualityTestSummary {
         guard case .connected = connectionState, let connection else {
             throw MirageError.protocolError("Not connected")
         }
 
         let testID = UUID()
         let payloadBytes = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
-        let accumulator = QualityTestAccumulator(testID: testID, plan: plan, payloadBytes: payloadBytes)
-        setQualityTestAccumulator(accumulator, testID: testID)
-        defer { clearQualityTestAccumulator() }
-
+        MirageLogger.client(
+            "Quality test starting (payload \(payloadBytes)B, p2p \(networkConfig.enablePeerToPeer), maxPacket \(networkConfig.maxPacketSize)B)"
+        )
         let rttMs = try await measureRTT()
-        let benchmarkRecord = try await ensureDecodeBenchmark()
+        let benchmarkTask = Task { try await ensureDecodeBenchmark() }
 
         if udpConnection == nil {
             try await startVideoConnection()
         }
+        if let udpConnection, let path = udpConnection.currentPath {
+            MirageLogger.client("Quality test UDP path: \(describeNetworkPath(path))")
+        }
         try await sendQualityTestRegistration()
 
-        let request = QualityTestRequestMessage(
-            testID: testID,
-            plan: plan,
-            payloadBytes: payloadBytes,
-            includeCodecBenchmark: true
-        )
-        let message = try ControlMessage(type: .qualityTestRequest, content: request)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.serialize(), completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
+        let hostBenchmarkTask = Task { [weak self] in
+            await self?.awaitQualityTestResult(testID: testID, timeout: .seconds(15))
         }
 
-        let hostBenchmark = await awaitQualityTestResult(testID: testID, timeout: .seconds(10))
-        let totalDurationMs = plan.totalDurationMs
-        try await Task.sleep(for: .milliseconds(totalDurationMs + 500))
-        try Task.checkCancellation()
+        let minTargetBitrate = 20_000_000
+        let maxTargetBitrate = 10_000_000_000
+        let warmupDurationMs = 800
+        let stageDurationMs = 1500
+        let growthFactor = 1.6
+        let maxStages = 14
+        let maxRefineSteps = 4
+        let plateauThreshold = 0.05
+        let plateauLimit = 2
+        let minMeasurementStages = 3
+        let throughputFloor = 0.9
+        let lossCeiling = 2.0
 
-        let stageResults = accumulator.makeStageResults()
-        let evaluation = evaluateStageResults(stageResults)
+        var stageResults: [MirageQualityTestSummary.StageResult] = []
+        var stageID = 0
+        var measurementStages = 0
+        var targetBitrate = minTargetBitrate
+        var lastStableBitrate = 0
+        var lastStableThroughput = 0
+        var lastStableLoss = 0.0
+        var plateauCount = 0
+        var refining = false
+        var refineLow = 0
+        var refineHigh = 0
+        var refineSteps = 0
+        var includeBenchmark = true
+
+        while stageID < maxStages {
+            let durationMs = stageID == 0 ? warmupDurationMs : stageDurationMs
+            let stage = try await runQualityTestStage(
+                testID: testID,
+                stageID: stageID,
+                targetBitrateBps: targetBitrate,
+                durationMs: durationMs,
+                payloadBytes: payloadBytes,
+                includeCodecBenchmark: includeBenchmark,
+                connection: connection
+            )
+            includeBenchmark = false
+            stageResults.append(stage)
+
+            if stageID == 0 {
+                stageID += 1
+                continue
+            }
+
+            measurementStages += 1
+            let isStable = stageIsStable(
+                stage,
+                targetBitrate: targetBitrate,
+                payloadBytes: payloadBytes,
+                throughputFloor: throughputFloor,
+                lossCeiling: lossCeiling
+            )
+            if isStable {
+                let previousThroughput = lastStableThroughput
+                lastStableBitrate = targetBitrate
+                lastStableThroughput = stage.throughputBps
+                lastStableLoss = stage.lossPercent
+
+                if refining {
+                    refineLow = targetBitrate
+                } else if previousThroughput > 0 {
+                    let improvement = Double(lastStableThroughput - previousThroughput) / Double(previousThroughput)
+                    if improvement < plateauThreshold {
+                        plateauCount += 1
+                    } else {
+                        plateauCount = 0
+                    }
+                }
+
+                if !refining {
+                    if plateauCount >= plateauLimit, measurementStages >= minMeasurementStages { break }
+                    let next = Int(Double(targetBitrate) * growthFactor)
+                    if next <= targetBitrate { break }
+                    if next > maxTargetBitrate { break }
+                    targetBitrate = min(next, maxTargetBitrate)
+                }
+            } else {
+                if lastStableBitrate == 0 {
+                    lastStableBitrate = max(minTargetBitrate, stage.throughputBps)
+                    lastStableThroughput = stage.throughputBps
+                    lastStableLoss = stage.lossPercent
+                    if stage.throughputBps <= 0 || measurementStages >= minMeasurementStages {
+                        break
+                    }
+                    let next = Int(Double(targetBitrate) * growthFactor)
+                    if next <= targetBitrate { break }
+                    if next > maxTargetBitrate { break }
+                    targetBitrate = min(next, maxTargetBitrate)
+                    stageID += 1
+                    continue
+                }
+                if !refining {
+                    refining = true
+                    refineLow = lastStableBitrate
+                    refineHigh = targetBitrate
+                } else {
+                    refineHigh = targetBitrate
+                }
+            }
+
+            if refining {
+                refineSteps += 1
+                let ratio = Double(refineHigh) / Double(max(1, refineLow))
+                if ratio <= 1.1 || refineSteps >= maxRefineSteps {
+                    if measurementStages >= minMeasurementStages { break }
+                }
+                let next = Int(Double(refineLow) * sqrt(ratio))
+                if next <= refineLow { break }
+                targetBitrate = min(next, maxTargetBitrate)
+            }
+
+            stageID += 1
+        }
+
+        let benchmarkRecord = try await benchmarkTask.value
+        let hostBenchmark = await hostBenchmarkTask.value
+        let maxStableBitrate = max(minTargetBitrate, lastStableBitrate)
 
         return MirageQualityTestSummary(
             testID: testID,
             rttMs: rttMs,
-            lossPercent: evaluation.lossPercent,
-            maxStableBitrateBps: evaluation.maxStableBitrateBps,
+            lossPercent: lastStableLoss,
+            maxStableBitrateBps: maxStableBitrate,
             targetFrameRate: getScreenMaxRefreshRate(),
             benchmarkWidth: benchmarkRecord.benchmarkWidth,
             benchmarkHeight: benchmarkRecord.benchmarkHeight,
@@ -166,7 +268,7 @@ extension MirageClientService {
         }
 
         var data = Data()
-        withUnsafeBytes(of: mirageQualityTestMagic.littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: [0x4D, 0x49, 0x52, 0x51])
         withUnsafeBytes(of: deviceID.uuid) { data.append(contentsOf: $0) }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -200,27 +302,84 @@ extension MirageClientService {
         return record
     }
 
-    private func evaluateStageResults(
-        _ stageResults: [MirageQualityTestSummary.StageResult]
-    ) -> (maxStableBitrateBps: Int, lossPercent: Double) {
-        var maxStable = 0
-        var lossPercent = 0.0
+    private func runQualityTestStage(
+        testID: UUID,
+        stageID: Int,
+        targetBitrateBps: Int,
+        durationMs: Int,
+        payloadBytes: Int,
+        includeCodecBenchmark: Bool,
+        connection: NWConnection
+    ) async throws -> MirageQualityTestSummary.StageResult {
+        let stage = MirageQualityTestPlan.Stage(
+            id: stageID,
+            targetBitrateBps: targetBitrateBps,
+            durationMs: durationMs
+        )
+        let plan = MirageQualityTestPlan(stages: [stage])
+        let accumulator = QualityTestAccumulator(testID: testID, plan: plan, payloadBytes: payloadBytes)
+        setQualityTestAccumulator(accumulator, testID: testID)
+        defer { clearQualityTestAccumulator() }
 
-        for stage in stageResults {
-            let throughputOk = Double(stage.throughputBps) >= Double(stage.targetBitrateBps) * 0.9
-            let lossOk = stage.lossPercent <= 1
-            if throughputOk && lossOk {
-                maxStable = stage.targetBitrateBps
-                lossPercent = stage.lossPercent
-            }
+        let targetMbps = Double(targetBitrateBps) / 1_000_000.0
+        MirageLogger.client(
+            "Quality test stage \(stageID) start: target \(targetMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, duration \(durationMs)ms, payload \(payloadBytes)B, includeBenchmark \(includeCodecBenchmark)"
+        )
+
+        let request = QualityTestRequestMessage(
+            testID: testID,
+            plan: plan,
+            payloadBytes: payloadBytes,
+            includeCodecBenchmark: includeCodecBenchmark
+        )
+        let message = try ControlMessage(type: .qualityTestRequest, content: request)
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: message.serialize(), completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) } else {
+                    continuation.resume()
+                }
+            })
         }
 
-        if maxStable == 0, let first = stageResults.first {
-            maxStable = first.throughputBps
-            lossPercent = first.lossPercent
+        try await Task.sleep(for: .milliseconds(durationMs + 400))
+        try Task.checkCancellation()
+
+        let results = accumulator.makeStageResults()
+        if let stageResult = results.first {
+            let metrics = accumulator.stageMetrics(for: stage)
+            let throughputMbps = Double(stageResult.throughputBps) / 1_000_000.0
+            let lossText = stageResult.lossPercent.formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.client(
+                "Quality test stage \(stageID) result: throughput \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, received \(metrics.receivedBytes)B, expected \(metrics.expectedBytes)B, packets \(metrics.packetCount)"
+            )
+            return stageResult
         }
 
-        return (maxStable, lossPercent)
+        return MirageQualityTestSummary.StageResult(
+            stageID: stageID,
+            targetBitrateBps: targetBitrateBps,
+            durationMs: durationMs,
+            throughputBps: 0,
+            lossPercent: 100
+        )
+    }
+
+    private func stageIsStable(
+        _ stage: MirageQualityTestSummary.StageResult,
+        targetBitrate: Int,
+        payloadBytes: Int,
+        throughputFloor: Double,
+        lossCeiling: Double
+    ) -> Bool {
+        let packetBytes = payloadBytes + mirageQualityTestHeaderSize
+        let payloadRatio = packetBytes > 0
+            ? Double(payloadBytes) / Double(packetBytes)
+            : 1.0
+        let targetPayloadBps = Double(targetBitrate) * payloadRatio
+        let throughputOk = Double(stage.throughputBps) >= targetPayloadBps * throughputFloor
+        let lossOk = stage.lossPercent <= lossCeiling
+        return throughputOk && lossOk
     }
 
     nonisolated private func setQualityTestAccumulator(_ accumulator: QualityTestAccumulator, testID: UUID) {
@@ -236,4 +395,19 @@ extension MirageClientService {
         qualityTestActiveTestIDStorage = nil
         qualityTestLock.unlock()
     }
+}
+
+private func describeNetworkPath(_ path: NWPath) -> String {
+    var interfaces: [String] = []
+    if path.usesInterfaceType(.wifi) { interfaces.append("wifi") }
+    if path.usesInterfaceType(.wiredEthernet) { interfaces.append("wired") }
+    if path.usesInterfaceType(.cellular) { interfaces.append("cellular") }
+    if path.usesInterfaceType(.loopback) { interfaces.append("loopback") }
+    if path.usesInterfaceType(.other) { interfaces.append("other") }
+    let interfaceText = interfaces.isEmpty ? "unknown" : interfaces.joined(separator: ",")
+    let available = path.availableInterfaces
+        .map { "\($0.name)(\(String(describing: $0.type)))" }
+        .joined(separator: ",")
+    let availableText = available.isEmpty ? "none" : available
+    return "status=\(path.status), interfaces=\(interfaceText), available=\(availableText), expensive=\(path.isExpensive), constrained=\(path.isConstrained), ipv4=\(path.supportsIPv4), ipv6=\(path.supportsIPv6)"
 }

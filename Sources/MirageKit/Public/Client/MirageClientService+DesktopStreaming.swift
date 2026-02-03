@@ -19,7 +19,6 @@ public extension MirageClientService {
     ///   - displayResolution: Client's display resolution for virtual display sizing.
     ///   - mode: Desktop stream mode (mirrored vs secondary display).
     ///   - keyFrameInterval: Optional keyframe interval in frames.
-    ///   - keyframeQuality: Optional inter-frame quality (0.0-1.0).
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - captureSource: Optional desktop capture source override.
     // TODO: HDR support - requires proper virtual display EDR configuration.
@@ -30,7 +29,6 @@ public extension MirageClientService {
         displayResolution: CGSize? = nil,
         mode: MirageDesktopStreamMode = .mirrored,
         keyFrameInterval: Int? = nil,
-        keyframeQuality: Float? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
         captureSource: MirageDesktopCaptureSource? = nil
         // preferHDR: Bool = false
@@ -51,8 +49,6 @@ public extension MirageClientService {
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
             keyFrameInterval: nil,
-            frameQuality: nil,
-            keyframeQuality: nil,
             pixelFormat: nil,
             colorSpace: nil,
             captureSource: captureSource,
@@ -69,7 +65,6 @@ public extension MirageClientService {
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
-        if overrides.frameQuality == nil { overrides.frameQuality = keyframeQuality }
         applyEncoderOverrides(overrides, to: &request)
 
         if let captureSource { MirageLogger.client("Requesting desktop capture source: \(captureSource.displayName)") }

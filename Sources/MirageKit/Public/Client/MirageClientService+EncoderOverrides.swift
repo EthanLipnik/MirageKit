@@ -16,14 +16,6 @@ extension MirageClientService {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
         }
-        if let frameQuality = overrides.frameQuality, frameQuality > 0 {
-            request.frameQuality = frameQuality
-            MirageLogger.client("Requesting frame quality: \(frameQuality)")
-        }
-        if let keyframeQuality = overrides.keyframeQuality, keyframeQuality > 0 {
-            request.keyframeQuality = keyframeQuality
-            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
-        }
         if let pixelFormat = overrides.pixelFormat {
             request.pixelFormat = pixelFormat
             MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
@@ -55,14 +47,6 @@ extension MirageClientService {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
         }
-        if let frameQuality = overrides.frameQuality, frameQuality > 0 {
-            request.frameQuality = frameQuality
-            MirageLogger.client("Requesting frame quality: \(frameQuality)")
-        }
-        if let keyframeQuality = overrides.keyframeQuality, keyframeQuality > 0 {
-            request.keyframeQuality = keyframeQuality
-            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
-        }
         if let pixelFormat = overrides.pixelFormat {
             request.pixelFormat = pixelFormat
             MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
@@ -93,14 +77,6 @@ extension MirageClientService {
         if let keyFrameInterval = overrides.keyFrameInterval, keyFrameInterval > 0 {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
-        }
-        if let frameQuality = overrides.frameQuality, frameQuality > 0 {
-            request.frameQuality = frameQuality
-            MirageLogger.client("Requesting frame quality: \(frameQuality)")
-        }
-        if let keyframeQuality = overrides.keyframeQuality, keyframeQuality > 0 {
-            request.keyframeQuality = keyframeQuality
-            MirageLogger.client("Requesting keyframe quality: \(keyframeQuality)")
         }
         if let pixelFormat = overrides.pixelFormat {
             request.pixelFormat = pixelFormat

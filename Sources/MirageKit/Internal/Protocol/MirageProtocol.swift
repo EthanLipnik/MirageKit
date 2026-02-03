@@ -12,7 +12,7 @@ import Foundation
 let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 
 /// Protocol version
-let mirageProtocolVersion: UInt8 = 4
+let mirageProtocolVersion: UInt8 = 1
 
 /// Default maximum UDP packet size (header + payload) to avoid IPv6 fragmentation.
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.

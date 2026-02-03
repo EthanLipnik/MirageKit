@@ -894,6 +894,12 @@ public class InputCapturingView: UIView {
     }
 
     override public func layoutSubviews() {
+        if !Thread.isMainThread {
+            Task { @MainActor [weak self] in
+                self?.setNeedsLayout()
+            }
+            return
+        }
         super.layoutSubviews()
         updateVirtualCursorViewPosition()
         updateLockedCursorViewPosition()

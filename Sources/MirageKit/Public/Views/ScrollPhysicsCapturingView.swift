@@ -127,6 +127,12 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
     }
 
     override func layoutSubviews() {
+        if !Thread.isMainThread {
+            Task { @MainActor [weak self] in
+                self?.setNeedsLayout()
+            }
+            return
+        }
         super.layoutSubviews()
 
         // Center content offset on initial layout

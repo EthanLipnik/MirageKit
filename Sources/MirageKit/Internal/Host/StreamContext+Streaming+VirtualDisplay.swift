@@ -89,13 +89,6 @@ extension StreamContext {
                 "Resolved SCWindow \(scWindow.windowID) on virtual display \(resolvedDisplayID)"
             )
 
-        let encoder = HEVCEncoder(
-            configuration: encoderConfig,
-            latencyMode: latencyMode,
-            inFlightLimit: maxInFlightFrames
-        )
-        self.encoder = encoder
-
         let captureScaleFactor: CGFloat = 2.0
         let captureTarget = streamTargetDimensions(windowFrame: scWindow.frame, scaleFactor: captureScaleFactor)
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
@@ -110,10 +103,17 @@ extension StreamContext {
         captureMode = .window
         lastWindowFrame = scWindow.frame
         updateQueueLimits()
+        await applyDerivedQuality(for: outputSize, logLabel: "Virtual display init")
         MirageLogger
             .stream(
                 "Virtual display init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
             )
+        let encoder = HEVCEncoder(
+            configuration: encoderConfig,
+            latencyMode: latencyMode,
+            inFlightLimit: maxInFlightFrames
+        )
+        self.encoder = encoder
         try await encoder.createSession(
             width: Int(outputSize.width),
             height: Int(outputSize.height)
@@ -292,6 +292,8 @@ extension StreamContext {
             MirageLogger
                 .encoder("Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for resolution change")
         }
+
+        await applyDerivedQuality(for: outputSize, logLabel: "Virtual display resize")
 
         let captureConfig = encoderConfig.withOverrides(pixelFormat: activePixelFormat)
         let windowCaptureEngine = WindowCaptureEngine(

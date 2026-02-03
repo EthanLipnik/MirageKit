@@ -23,8 +23,6 @@ extension MirageHostService {
         mode: MirageDesktopStreamMode,
         qualityPreset: MirageQualityPreset,
         keyFrameInterval: Int?,
-        frameQuality: Float?,
-        keyframeQuality: Float?,
         pixelFormat: MiragePixelFormat?,
         colorSpace: MirageColorSpace?,
         captureQueueDepth: Int?,
@@ -75,8 +73,6 @@ extension MirageHostService {
         let presetFrameRate = targetFrameRate ?? 60
         let presetConfig = qualityPreset.encoderConfiguration(for: presetFrameRate)
         config.keyFrameInterval = presetConfig.keyFrameInterval
-        config.frameQuality = presetConfig.frameQuality
-        config.keyframeQuality = presetConfig.keyframeQuality
         config.pixelFormat = presetConfig.pixelFormat
         config.colorSpace = presetConfig.colorSpace
         config.minBitrate = presetConfig.minBitrate
@@ -84,14 +80,20 @@ extension MirageHostService {
 
         config = config.withOverrides(
             keyFrameInterval: keyFrameInterval,
-            frameQuality: frameQuality,
-            keyframeQuality: keyframeQuality,
             pixelFormat: pixelFormat,
             colorSpace: colorSpace,
             captureQueueDepth: captureQueueDepth,
             minBitrate: minBitrate,
             maxBitrate: maxBitrate
         )
+
+        if let normalized = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            minBitrate: config.minBitrate,
+            maxBitrate: config.maxBitrate
+        ) {
+            config.minBitrate = normalized
+            config.maxBitrate = normalized
+        }
 
         if let targetFrameRate { config = config.withTargetFrameRate(targetFrameRate) }
         // TODO: HDR support - requires proper virtual display EDR configuration

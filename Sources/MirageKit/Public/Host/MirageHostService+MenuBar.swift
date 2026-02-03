@@ -117,8 +117,6 @@ extension MirageHostService {
                 mode: request.mode ?? .mirrored,
                 qualityPreset: request.preferredQuality,
                 keyFrameInterval: request.keyFrameInterval,
-                frameQuality: request.frameQuality,
-                keyframeQuality: request.keyframeQuality,
                 pixelFormat: request.pixelFormat,
                 colorSpace: request.colorSpace,
                 captureQueueDepth: request.captureQueueDepth,

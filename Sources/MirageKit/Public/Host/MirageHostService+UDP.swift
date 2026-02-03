@@ -86,7 +86,8 @@ extension MirageHostService {
                 }
                 let deviceID = UUID(uuid: uuidBytes)
                 qualityTestConnectionsByClientID[deviceID] = connection
-                MirageLogger.host("Registered quality test UDP connection for device \(deviceID.uuidString)")
+                let pathText = connection.currentPath.map(describeNetworkPath) ?? "unknown"
+                MirageLogger.host("Registered quality test UDP connection for device \(deviceID.uuidString) (\(pathText))")
                 continue
             }
 
@@ -99,7 +100,8 @@ extension MirageHostService {
                 ptr.loadUnaligned(fromByteOffset: 0, as: StreamID.self).littleEndian
             }
 
-            MirageLogger.host("Received video registration for stream \(streamID)")
+            let pathText = connection.currentPath.map(describeNetworkPath) ?? "unknown"
+            MirageLogger.host("Received video registration for stream \(streamID) (\(pathText))")
 
             guard streamsByID[streamID] != nil else {
                 MirageLogger.host("Stream \(streamID) not found, may be pending")
@@ -146,5 +148,20 @@ extension MirageHostService {
             connection.send(content: data, completion: .idempotent)
         }
     }
+}
+
+private func describeNetworkPath(_ path: NWPath) -> String {
+    var interfaces: [String] = []
+    if path.usesInterfaceType(.wifi) { interfaces.append("wifi") }
+    if path.usesInterfaceType(.wiredEthernet) { interfaces.append("wired") }
+    if path.usesInterfaceType(.cellular) { interfaces.append("cellular") }
+    if path.usesInterfaceType(.loopback) { interfaces.append("loopback") }
+    if path.usesInterfaceType(.other) { interfaces.append("other") }
+    let interfaceText = interfaces.isEmpty ? "unknown" : interfaces.joined(separator: ",")
+    let available = path.availableInterfaces
+        .map { "\($0.name)(\(String(describing: $0.type)))" }
+        .joined(separator: ",")
+    let availableText = available.isEmpty ? "none" : available
+    return "status=\(path.status), interfaces=\(interfaceText), available=\(availableText), expensive=\(path.isExpensive), constrained=\(path.isConstrained), ipv4=\(path.supportsIPv4), ipv6=\(path.supportsIPv6)"
 }
 #endif

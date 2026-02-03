@@ -207,6 +207,12 @@ public class MirageMetalView: MTKView {
     }
 
     override public func layoutSubviews() {
+        if !Thread.isMainThread {
+            Task { @MainActor [weak self] in
+                self?.setNeedsLayout()
+            }
+            return
+        }
         super.layoutSubviews()
 
         // CRITICAL: Ensure scale factor is maintained - UIKit/SwiftUI may reset it

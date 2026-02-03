@@ -38,6 +38,9 @@ extension MirageClientService {
 
                     let udpConn = NWConnection(to: dataEndpoint, using: params)
                     udpConnection = udpConn
+                    udpConn.pathUpdateHandler = { path in
+                        MirageLogger.client("UDP path updated: \(describeNetworkPath(path))")
+                    }
 
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                         let box = ContinuationBox<Void>(continuation)
@@ -56,6 +59,9 @@ extension MirageClientService {
                         udpConn.start(queue: .global(qos: .userInteractive))
                     }
                     MirageLogger.client("UDP connection established to host data port")
+                    if let path = udpConn.currentPath {
+                        MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
+                    }
                     startReceivingVideo()
                     return
                 }
@@ -72,6 +78,9 @@ extension MirageClientService {
 
         let udpConn = NWConnection(to: dataEndpoint, using: params)
         udpConnection = udpConn
+        udpConn.pathUpdateHandler = { path in
+            MirageLogger.client("UDP path updated: \(describeNetworkPath(path))")
+        }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             let box = ContinuationBox<Void>(continuation)
@@ -93,6 +102,9 @@ extension MirageClientService {
         }
 
         MirageLogger.client("UDP connection established to host data port")
+        if let path = udpConn.currentPath {
+            MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
+        }
         startReceivingVideo()
     }
 
@@ -262,4 +274,19 @@ extension MirageClientService {
     func handleVideoPacket(_ data: Data, header: FrameHeader) async {
         delegate?.clientService(self, didReceiveVideoPacket: data, forStream: header.streamID)
     }
+}
+
+private func describeNetworkPath(_ path: NWPath) -> String {
+    var interfaces: [String] = []
+    if path.usesInterfaceType(.wifi) { interfaces.append("wifi") }
+    if path.usesInterfaceType(.wiredEthernet) { interfaces.append("wired") }
+    if path.usesInterfaceType(.cellular) { interfaces.append("cellular") }
+    if path.usesInterfaceType(.loopback) { interfaces.append("loopback") }
+    if path.usesInterfaceType(.other) { interfaces.append("other") }
+    let interfaceText = interfaces.isEmpty ? "unknown" : interfaces.joined(separator: ",")
+    let available = path.availableInterfaces
+        .map { "\($0.name)(\(String(describing: $0.type)))" }
+        .joined(separator: ",")
+    let availableText = available.isEmpty ? "none" : available
+    return "status=\(path.status), interfaces=\(interfaceText), available=\(availableText), expensive=\(path.isExpensive), constrained=\(path.isConstrained), ipv4=\(path.supportsIPv4), ipv6=\(path.supportsIPv6)"
 }

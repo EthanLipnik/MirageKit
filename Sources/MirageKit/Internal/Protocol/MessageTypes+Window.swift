@@ -42,13 +42,6 @@ struct StartStreamMessage: Codable {
     /// Higher values (e.g., 600 = 10 seconds @ 60fps) reduce periodic lag spikes
     /// If nil, host uses default from encoder configuration
     var keyFrameInterval: Int?
-    /// Client-requested inter-frame quality (0.0-1.0)
-    /// Lower values reduce frame size with minimal visual impact
-    /// If nil, host uses default from encoder configuration
-    var frameQuality: Float?
-    /// Client-requested keyframe quality (0.0-1.0)
-    /// If nil, host uses default from encoder configuration
-    var keyframeQuality: Float?
     /// Client-requested pixel format (capture + encode)
     var pixelFormat: MiragePixelFormat?
     /// Client-requested color space
@@ -81,8 +74,6 @@ struct StartStreamMessage: Codable {
         case displayWidth
         case displayHeight
         case keyFrameInterval
-        case frameQuality = "keyframeQuality"
-        case keyframeQuality = "keyframeQualityOverride"
         case pixelFormat
         case colorSpace
         case captureQueueDepth

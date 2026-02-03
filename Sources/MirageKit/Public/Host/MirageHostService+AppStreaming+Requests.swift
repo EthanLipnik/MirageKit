@@ -58,8 +58,6 @@ extension MirageHostService {
 
             let presetConfig = request.preferredQuality.encoderConfiguration(for: targetFrameRate)
             let keyFrameInterval = request.keyFrameInterval ?? presetConfig.keyFrameInterval
-            let frameQuality = request.frameQuality ?? presetConfig.frameQuality
-            let keyframeQuality = request.keyframeQuality ?? presetConfig.keyframeQuality
             let pixelFormat = request.pixelFormat ?? presetConfig.pixelFormat
             let colorSpace = request.colorSpace ?? presetConfig.colorSpace
             let minBitrate = request.minBitrate ?? presetConfig.minBitrate
@@ -135,8 +133,6 @@ extension MirageHostService {
                             ? CGSize(width: request.displayWidth!, height: request.displayHeight!)
                             : nil,
                         keyFrameInterval: keyFrameInterval,
-                        frameQuality: frameQuality,
-                        keyframeQuality: keyframeQuality,
                         streamScale: streamScale,
                         latencyMode: latencyMode,
                         qualityPreset: request.preferredQuality,

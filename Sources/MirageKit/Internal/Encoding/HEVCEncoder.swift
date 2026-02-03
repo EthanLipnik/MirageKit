@@ -105,7 +105,8 @@ actor HEVCEncoder {
     // Update quality dynamically (0.0 to 1.0)
     // Lower quality reduces frame size during throughput pressure.
 
-    // No explicit bitrate caps; encoder quality and QP bounds define compression.
+    // Bitrate targets are enforced via VideoToolbox data rate limits.
+    // Encoder quality and QP bounds control compression within that target.
 
     // Update encoder dimensions (requires session recreation)
 

@@ -38,7 +38,14 @@ final class QualityTestAccumulator: @unchecked Sendable {
 
         return plan.stages.map { stage in
             let receivedBytes = bytesSnapshot[stage.id, default: 0]
-            let expectedBytes = max(0, stage.targetBitrateBps * stage.durationMs / 1000 / 8)
+            let packetBytes = payloadBytes + mirageQualityTestHeaderSize
+            let payloadRatio = packetBytes > 0
+                ? Double(payloadBytes) / Double(packetBytes)
+                : 1.0
+            let expectedBytes = max(
+                0,
+                Int(Double(stage.targetBitrateBps) * Double(stage.durationMs) / 1000.0 / 8.0 * payloadRatio)
+            )
             let throughputBps = stage.durationMs > 0
                 ? Int(Double(receivedBytes * 8) / (Double(stage.durationMs) / 1000.0))
                 : 0
@@ -54,5 +61,22 @@ final class QualityTestAccumulator: @unchecked Sendable {
                 lossPercent: lossPercent
             )
         }
+    }
+
+    func stageMetrics(for stage: MirageQualityTestPlan.Stage) -> (expectedBytes: Int, receivedBytes: Int, packetCount: Int) {
+        lock.lock()
+        let receivedBytes = bytesByStage[stage.id, default: 0]
+        let packetCount = packetsByStage[stage.id, default: 0]
+        lock.unlock()
+
+        let packetBytes = payloadBytes + mirageQualityTestHeaderSize
+        let payloadRatio = packetBytes > 0
+            ? Double(payloadBytes) / Double(packetBytes)
+            : 1.0
+        let expectedBytes = max(
+            0,
+            Int(Double(stage.targetBitrateBps) * Double(stage.durationMs) / 1000.0 / 8.0 * payloadRatio)
+        )
+        return (expectedBytes, receivedBytes, packetCount)
     }
 }
