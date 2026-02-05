@@ -75,6 +75,7 @@ actor SharedVirtualDisplayManager {
         case loginDisplay
         case unlockKeyboard
         case desktopStream
+        case qualityTest
     }
 
     /// Error types for shared display operations

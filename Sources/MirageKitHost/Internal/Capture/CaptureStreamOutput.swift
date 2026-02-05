@@ -58,6 +58,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var rawFrameWindowCount: UInt64 = 0
     private var rawFrameWindowStartTime: CFAbsoluteTime = 0
 
+    // Menu tracking/alerts can pause window capture for several seconds.
+    // Use a longer stall threshold for window-based capture to avoid restart loops.
+    private let windowStallThreshold: CFAbsoluteTime = 8.0
+
     private let poolMinimumBufferCount: Int
     private let frameCopier: CaptureFrameCopier?
     private var loggedCopyFallback = false
@@ -160,9 +164,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let now = CFAbsoluteTimeGetCurrent()
         guard lastDeliveredFrameTime > 0 else { return }
 
-        let (gapThreshold, stallLimit) = expectationLock.withLock {
+        let (gapThreshold, configuredStallLimit) = expectationLock.withLock {
             (frameGapThreshold, stallThreshold)
         }
+        let stallLimit = windowID == 0 ? configuredStallLimit : max(configuredStallLimit, windowStallThreshold)
         let recentActivityWindow = max(2.0, min(6.0, stallLimit * 2.0))
         let anyGap = now - lastDeliveredFrameTime
         let completeGap = lastCompleteFrameTime > 0 ? now - lastCompleteFrameTime : anyGap

@@ -66,13 +66,25 @@ extension MirageHostService {
             task.cancel()
         }
 
-        let task = Task.detached(priority: .userInitiated) { [request, connection] in
+        let transportConfig = request.transportConfig
+        let transportConnection = transportConfig == nil ? nil : qualityTestConnectionsByClientID[client.id]
+        let maxPacketSize = networkConfig.maxPacketSize
+        let clientName = client.name
+
+        if transportConfig != nil, transportConnection == nil {
+            MirageLogger.host("Transport probe skipped - no UDP registration for client \(clientName)")
+        }
+
+        let task = Task.detached(priority: .userInitiated) { [request, connection, transportConfig, transportConnection, maxPacketSize] in
             let frameRate = max(1, request.frameRate)
-            let encodeMs = try? await MirageCodecBenchmark.runEncodeProbe(
-                width: request.width,
-                height: request.height,
+            let probe = try? await MirageScreenCaptureProbe.runVirtualDisplayProbe(
+                resolution: CGSize(width: request.width, height: request.height),
                 frameRate: frameRate,
-                pixelFormat: request.pixelFormat
+                pixelFormat: request.pixelFormat,
+                targetBitrateBps: request.targetBitrateBps,
+                transportConfig: transportConfig,
+                maxPacketSize: maxPacketSize,
+                transportConnection: transportConnection
             )
             let result = QualityProbeResultMessage(
                 probeID: request.probeID,
@@ -80,7 +92,8 @@ extension MirageHostService {
                 height: request.height,
                 frameRate: frameRate,
                 pixelFormat: request.pixelFormat,
-                encodeMs: encodeMs
+                encodeMs: probe?.encodeMs,
+                observedBitrateBps: probe?.observedBitrateBps
             )
             if let message = try? ControlMessage(type: .qualityProbeResult, content: result) {
                 connection.send(content: message.serialize(), completion: .idempotent)

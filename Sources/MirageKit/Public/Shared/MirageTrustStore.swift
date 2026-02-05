@@ -49,6 +49,7 @@ public final class MirageTrustStore {
     public func loadTrustedDevices() {
         guard let data = UserDefaults.standard.data(forKey: trustedDevicesKey) else { return }
         do {
+            // Avoid writing back while decoding persisted state.
             isLoading = true
             trustedDevices = try JSONDecoder().decode([MirageTrustedDevice].self, from: data)
             isLoading = false

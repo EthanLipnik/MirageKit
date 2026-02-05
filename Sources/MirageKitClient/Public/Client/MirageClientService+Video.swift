@@ -139,6 +139,12 @@ extension MirageClientService {
                                 return
                             }
 
+                            if streamID == service.qualityProbeTransportStreamIDForFiltering {
+                                let payload = data.dropFirst(mirageHeaderSize)
+                                let payloadBytes = min(Int(header.payloadLength), payload.count)
+                                service.recordQualityProbeTransportBytes(payloadBytes)
+                            }
+
                             if service.takeStartupPacketPending(streamID) {
                                 Task { @MainActor in
                                     service.logStartupFirstPacketIfNeeded(streamID: streamID)

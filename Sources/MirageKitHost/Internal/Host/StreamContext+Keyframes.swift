@@ -192,7 +192,7 @@ extension StreamContext {
             checkInFlight: true,
             requiresFlush: true,
             requiresReset: true,
-            advanceEpochOnReset: false,
+            advanceEpochOnReset: true,
             urgent: true
         ) {
             noteLossEvent(reason: "Keyframe request")
@@ -206,6 +206,7 @@ extension StreamContext {
         if shouldThrottleKeyframeRequest(requestLabel: "Immediate keyframe", checkInFlight: false) { return }
 
         markKeyframeRequestIssued()
+        advanceEpoch(reason: "Immediate keyframe")
 
         await packetSender?.resetQueue(reason: "immediate keyframe")
         await encoder?.flush()

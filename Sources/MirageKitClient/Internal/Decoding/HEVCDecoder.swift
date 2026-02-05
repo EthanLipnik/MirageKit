@@ -205,6 +205,10 @@ final class DecodePerformanceTracker: @unchecked Sendable {
 /// Reassembles video frames from network packets.
 /// Uses lock-based synchronization to avoid per-packet Task overhead.
 final class FrameReassembler: @unchecked Sendable {
+    struct Metrics: Sendable {
+        let framesDelivered: UInt64
+        let droppedFrames: UInt64
+    }
     /// The stream ID this reassembler handles
     let streamID: StreamID
     let maxPayloadSize: Int

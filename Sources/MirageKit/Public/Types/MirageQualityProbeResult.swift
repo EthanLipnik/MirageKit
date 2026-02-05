@@ -16,6 +16,9 @@ public struct MirageQualityProbeResult: Codable, Equatable, Sendable {
     public let pixelFormat: MiragePixelFormat
     public let hostEncodeMs: Double?
     public let clientDecodeMs: Double?
+    public let hostObservedBitrateBps: Int?
+    public let transportThroughputBps: Int?
+    public let transportLossPercent: Double?
 
     public init(
         width: Int,
@@ -23,7 +26,10 @@ public struct MirageQualityProbeResult: Codable, Equatable, Sendable {
         frameRate: Int,
         pixelFormat: MiragePixelFormat,
         hostEncodeMs: Double?,
-        clientDecodeMs: Double?
+        clientDecodeMs: Double?,
+        hostObservedBitrateBps: Int?,
+        transportThroughputBps: Int? = nil,
+        transportLossPercent: Double? = nil
     ) {
         self.width = width
         self.height = height
@@ -31,5 +37,8 @@ public struct MirageQualityProbeResult: Codable, Equatable, Sendable {
         self.pixelFormat = pixelFormat
         self.hostEncodeMs = hostEncodeMs
         self.clientDecodeMs = clientDecodeMs
+        self.hostObservedBitrateBps = hostObservedBitrateBps
+        self.transportThroughputBps = transportThroughputBps
+        self.transportLossPercent = transportLossPercent
     }
 }

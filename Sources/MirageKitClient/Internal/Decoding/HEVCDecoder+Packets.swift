@@ -80,6 +80,12 @@ extension FrameReassembler {
             }
         }
 
+        if isKeyframePacket, isStaleKeyframeLocked(frameNumber) {
+            packetsDiscardedOld += 1
+            lock.unlock()
+            return
+        }
+
         // Validate dimension token to reject old-dimension frames after resize.
         // Keyframes always update the expected token since they establish new dimensions.
         // P-frames with mismatched tokens are silently discarded.
@@ -268,6 +274,7 @@ extension FrameReassembler {
         if shouldDeliver {
             // Discard any pending frames older than this one
             discardOlderPendingFramesLocked(olderThan: frameNumber)
+            purgeStaleKeyframesLocked()
 
             lastCompletedFrame = frameNumber
             pendingFrames.removeValue(forKey: frameNumber)
@@ -355,8 +362,14 @@ extension FrameReassembler {
         // They need much more time to complete than small P-frames
 
         var timedOutCount: UInt64 = 0
+        var staleKeyframeCount: UInt64 = 0
         var framesToRemove: [UInt32] = []
         for (frameNumber, frame) in pendingFrames {
+            if frame.isKeyframe, isStaleKeyframeLocked(frameNumber) {
+                framesToRemove.append(frameNumber)
+                staleKeyframeCount += 1
+                continue
+            }
             let timeout = frame.isKeyframe ? keyframeTimeout : pFrameTimeout
             let shouldKeep = now.timeIntervalSince(frame.receivedAt) < timeout
             if !shouldKeep {
@@ -375,7 +388,7 @@ extension FrameReassembler {
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
-        droppedFrameCount += timedOutCount
+        droppedFrameCount += timedOutCount + staleKeyframeCount
         return timedOutCount > 0 && !awaitingKeyframe
     }
 
@@ -393,14 +406,27 @@ extension FrameReassembler {
         return count
     }
 
+    func snapshotMetrics() -> Metrics {
+        lock.lock()
+        let metrics = Metrics(framesDelivered: framesDelivered, droppedFrames: droppedFrameCount)
+        lock.unlock()
+        return metrics
+    }
+
     func enterKeyframeOnlyMode() {
         lock.lock()
         beginAwaitingKeyframe()
-        let framesToRelease = pendingFrames.filter { !$0.value.isKeyframe }
+        let framesToRelease = pendingFrames.filter { entry in
+            let frame = entry.value
+            if frame.isKeyframe { return isStaleKeyframeLocked(entry.key) }
+            return true
+        }
         for frame in framesToRelease.values {
             frame.buffer.release()
         }
-        pendingFrames = pendingFrames.filter(\.value.isKeyframe)
+        pendingFrames = pendingFrames.filter { entry in
+            entry.value.isKeyframe && !isStaleKeyframeLocked(entry.key)
+        }
         lock.unlock()
         MirageLogger.log(.frameAssembly, "Entering keyframe-only mode for stream \(streamID)")
     }
@@ -444,6 +470,24 @@ extension FrameReassembler {
     private func clearAwaitingKeyframe() {
         awaitingKeyframe = false
         awaitingKeyframeSince = 0
+    }
+
+    private func isStaleKeyframeLocked(_ frameNumber: UInt32) -> Bool {
+        guard lastDeliveredKeyframe > 0 else { return false }
+        guard frameNumber < lastDeliveredKeyframe else { return false }
+        return lastDeliveredKeyframe - frameNumber < 1000
+    }
+
+    private func purgeStaleKeyframesLocked() {
+        guard lastDeliveredKeyframe > 0 else { return }
+        let staleFrames = pendingFrames.filter { entry in
+            entry.value.isKeyframe && isStaleKeyframeLocked(entry.key)
+        }
+        for (frameNumber, frame) in staleFrames {
+            pendingFrames.removeValue(forKey: frameNumber)
+            frame.buffer.release()
+            droppedFrameCount += 1
+        }
     }
 
     private func resolvedFrameByteCount(header: FrameHeader, maxPayloadSize: Int) -> Int {

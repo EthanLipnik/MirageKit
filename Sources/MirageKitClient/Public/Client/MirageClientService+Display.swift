@@ -77,7 +77,7 @@ extension MirageClientService {
     }
 
     /// Get the maximum refresh rate requested by the client.
-    func getScreenMaxRefreshRate() -> Int {
+    public func getScreenMaxRefreshRate() -> Int {
         #if os(iOS)
         let knownMax = MirageClientService.lastKnownScreenMaxFPS
         let screenMax = knownMax > 0 ? knownMax : 60

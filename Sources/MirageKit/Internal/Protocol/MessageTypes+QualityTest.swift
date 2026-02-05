@@ -52,19 +52,35 @@ package struct QualityProbeRequestMessage: Codable {
     package let height: Int
     package let frameRate: Int
     package let pixelFormat: MiragePixelFormat
+    package let targetBitrateBps: Int
+    package let transportConfig: QualityProbeTransportConfig?
 
     package init(
         probeID: UUID,
         width: Int,
         height: Int,
         frameRate: Int,
-        pixelFormat: MiragePixelFormat
+        pixelFormat: MiragePixelFormat,
+        targetBitrateBps: Int,
+        transportConfig: QualityProbeTransportConfig? = nil
     ) {
         self.probeID = probeID
         self.width = width
         self.height = height
         self.frameRate = frameRate
         self.pixelFormat = pixelFormat
+        self.targetBitrateBps = targetBitrateBps
+        self.transportConfig = transportConfig
+    }
+}
+
+package struct QualityProbeTransportConfig: Codable {
+    package let streamID: StreamID
+    package let durationMs: Int
+
+    package init(streamID: StreamID, durationMs: Int) {
+        self.streamID = streamID
+        self.durationMs = durationMs
     }
 }
 
@@ -75,6 +91,7 @@ package struct QualityProbeResultMessage: Codable {
     package let frameRate: Int
     package let pixelFormat: MiragePixelFormat
     package let encodeMs: Double?
+    package let observedBitrateBps: Int?
 
     package init(
         probeID: UUID,
@@ -82,7 +99,8 @@ package struct QualityProbeResultMessage: Codable {
         height: Int,
         frameRate: Int,
         pixelFormat: MiragePixelFormat,
-        encodeMs: Double?
+        encodeMs: Double?,
+        observedBitrateBps: Int?
     ) {
         self.probeID = probeID
         self.width = width
@@ -90,5 +108,6 @@ package struct QualityProbeResultMessage: Codable {
         self.frameRate = frameRate
         self.pixelFormat = pixelFormat
         self.encodeMs = encodeMs
+        self.observedBitrateBps = observedBitrateBps
     }
 }

@@ -16,7 +16,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
 - Custom mode: encoder overrides for pixel format, color space, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
-- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
+- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing; quality probes use a SwiftUI animated probe scene and a transport probe that sends real encoded frames over UDP.
 
 ## Interaction Guidelines
 - Planning phase: detailed step list; explicit plan.
@@ -82,6 +82,11 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Shared protocol, logging, and support utilities: `Sources/MirageKit/Internal/`.
 - Client decode, render, and transport: `Sources/MirageKitClient/Internal/`.
 - Host capture, encode, virtual display, and host utilities: `Sources/MirageKitHost/Internal/`.
+
+**Other Modules:**
+- `Sources/MirageKitHost/Internal/Utilities/MirageQualityProbeScene.swift` - SwiftUI animated probe scene for automatic quality testing
+- `Sources/MirageKitClient/Public/Client/MirageClientService+QualityProbeTransport.swift` - Transport probe helpers for automatic quality testing
+- `Sources/MirageKitClient/Public/Client/MirageClientService+QualityTestHelpers.swift` - Quality test helper routines
 
 ## Architecture Patterns
 - `MirageHostService` and `MirageClientService` are the main entry points.

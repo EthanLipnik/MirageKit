@@ -178,6 +178,19 @@ public final class MirageClientService {
     var qualityProbeResultContinuation: CheckedContinuation<QualityProbeResultMessage?, Never>?
     var qualityProbePendingID: UUID?
     var pingContinuation: CheckedContinuation<Void, Error>?
+    nonisolated let qualityProbeTransportAccumulator = QualityProbeTransportAccumulator()
+    var qualityProbeTransportStreamID: StreamID?
+    var qualityProbeTransportController: StreamController?
+
+    /// Thread-safe transport probe stream ID for UDP filtering.
+    let qualityProbeTransportLock = NSLock()
+    nonisolated(unsafe) var qualityProbeTransportStreamIDStorage: StreamID?
+
+    nonisolated var qualityProbeTransportStreamIDForFiltering: StreamID? {
+        qualityProbeTransportLock.lock()
+        defer { qualityProbeTransportLock.unlock() }
+        return qualityProbeTransportStreamIDStorage
+    }
 
     /// Thread-safe set of active stream IDs for packet filtering from UDP callback
     let activeStreamIDsLock = NSLock()
