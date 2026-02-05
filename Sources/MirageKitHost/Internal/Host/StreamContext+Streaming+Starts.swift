@@ -137,6 +137,12 @@ extension StreamContext {
             usesDisplayRefreshCadence: false
         )
         self.captureEngine = captureEngine
+        let frameInbox = self.frameInbox
+        await captureEngine.setAdmissionDropper { [weak self] in
+            let snapshot = frameInbox.pendingSnapshot()
+            if snapshot.pending >= max(1, snapshot.capacity - 1) { return true }
+            return self?.backpressureActiveSnapshot ?? false
+        }
 
         try await captureEngine.startCapture(
             window: window,
@@ -271,6 +277,12 @@ extension StreamContext {
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
         )
         self.captureEngine = captureEngine
+        let frameInbox = self.frameInbox
+        await captureEngine.setAdmissionDropper { [weak self] in
+            let snapshot = frameInbox.pendingSnapshot()
+            if snapshot.pending >= max(1, snapshot.capacity - 1) { return true }
+            return self?.backpressureActiveSnapshot ?? false
+        }
 
         try await captureEngine.startDisplayCapture(
             display: display,
@@ -402,6 +414,12 @@ extension StreamContext {
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
         )
         self.captureEngine = captureEngine
+        let frameInbox = self.frameInbox
+        await captureEngine.setAdmissionDropper { [weak self] in
+            let snapshot = frameInbox.pendingSnapshot()
+            if snapshot.pending >= max(1, snapshot.capacity - 1) { return true }
+            return self?.backpressureActiveSnapshot ?? false
+        }
 
         let captureSizeForSCK = CGVirtualDisplayBridge.isMirageDisplay(display.displayID) ? outputSize : nil
         try await captureEngine.startDisplayCapture(

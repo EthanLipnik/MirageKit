@@ -20,21 +20,37 @@ import ScreenCaptureKit
 
 extension WindowCaptureEngine {
     var captureQueueDepth: Int {
-        if let override = configuration.captureQueueDepth, override > 0 { return min(max(1, override), 16) }
+        if let override = configuration.captureQueueDepth, override > 0 {
+            return min(max(1, override), 8)
+        }
+
+        let width = max(1, currentWidth)
+        let height = max(1, currentHeight)
+        let pixelCount = max(1, width * height)
+        let basePixels = 1920 * 1080
+        let extraPixels = max(0, pixelCount - basePixels)
+        let extraDepth = extraPixels / 2_500_000
+
+        var depth = 3 + extraDepth
+        if currentFrameRate >= 120 { depth += 1 }
+
         switch latencyMode {
         case .lowestLatency:
-            if currentFrameRate >= 120 { return 6 }
-            if currentFrameRate >= 60 { return 4 }
-            return 3
+            depth -= 1
         case .balanced:
-            if currentFrameRate >= 120 { return 8 }
-            if currentFrameRate >= 60 { return 6 }
-            return 4
+            break
         case .smoothest:
-            if currentFrameRate >= 120 { return 12 }
-            if currentFrameRate >= 60 { return 10 }
-            return 8
+            depth += 1
         }
+
+        let minDepth: Int = switch latencyMode {
+        case .lowestLatency: 2
+        case .balanced: 3
+        case .smoothest: 4
+        }
+
+        depth = max(depth, minDepth)
+        return min(max(1, depth), 8)
     }
 
     var bufferPoolMinimumCount: Int {

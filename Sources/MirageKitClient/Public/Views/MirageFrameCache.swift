@@ -23,6 +23,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         let pixelBuffer: CVPixelBuffer
         let contentRect: CGRect
         let sequence: UInt64
+        let decodeTime: CFAbsoluteTime
         let metalTexture: CVMetalTexture?
         let texture: MTLTexture?
     }
@@ -43,12 +44,32 @@ public final class MirageFrameCache: @unchecked Sendable {
         texture: MTLTexture?,
         for streamID: StreamID
     ) {
+        store(
+            pixelBuffer,
+            contentRect: contentRect,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            metalTexture: metalTexture,
+            texture: texture,
+            for: streamID
+        )
+    }
+
+    /// Store a frame with explicit decode time (for render timing diagnostics).
+    public func store(
+        _ pixelBuffer: CVPixelBuffer,
+        contentRect: CGRect,
+        decodeTime: CFAbsoluteTime,
+        metalTexture: CVMetalTexture?,
+        texture: MTLTexture?,
+        for streamID: StreamID
+    ) {
         lock.lock()
         let nextSequence = (frames[streamID]?.sequence ?? 0) &+ 1
         frames[streamID] = FrameEntry(
             pixelBuffer: pixelBuffer,
             contentRect: contentRect,
             sequence: nextSequence,
+            decodeTime: decodeTime,
             metalTexture: metalTexture,
             texture: texture
         )
@@ -57,7 +78,14 @@ public final class MirageFrameCache: @unchecked Sendable {
 
     /// Store a frame for a stream without a prebuilt Metal texture.
     public func store(_ pixelBuffer: CVPixelBuffer, contentRect: CGRect, for streamID: StreamID) {
-        store(pixelBuffer, contentRect: contentRect, metalTexture: nil, texture: nil, for: streamID)
+        store(
+            pixelBuffer,
+            contentRect: contentRect,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            metalTexture: nil,
+            texture: nil,
+            for: streamID
+        )
     }
 
     func getEntry(for streamID: StreamID) -> FrameEntry? {

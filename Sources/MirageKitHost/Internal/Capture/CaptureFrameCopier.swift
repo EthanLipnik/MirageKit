@@ -80,6 +80,16 @@ final class CaptureFrameCopier: @unchecked Sendable {
 
     init() {}
 
+    func preparePool(width: Int, height: Int, pixelFormat: OSType, minimumBufferCount: Int) -> Bool {
+        let config = PoolConfig(
+            width: max(1, width),
+            height: max(1, height),
+            pixelFormat: pixelFormat,
+            minimumBufferCount: max(1, minimumBufferCount)
+        )
+        return ensurePool(config: config)
+    }
+
     func scheduleCopy(
         pixelBuffer source: CVPixelBuffer,
         minimumBufferCount: Int,

@@ -7,6 +7,7 @@
 
 import CoreMedia
 import CoreVideo
+import Dispatch
 import Foundation
 import os
 import MirageKit
@@ -20,6 +21,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let onFrame: @Sendable (CapturedFrame) -> Void
     private let onKeyframeRequest: @Sendable () -> Void
     private let onCaptureStall: @Sendable (String) -> Void
+    private let shouldDropFrame: (@Sendable () -> Bool)?
     private let usesDetailedMetadata: Bool
     private let tracksFrameStatus: Bool
     private var frameCount: UInt64 = 0
@@ -43,6 +45,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var stallSignaled: Bool = false
     private var lastStallTime: CFAbsoluteTime = 0
     private var lastContentRect: CGRect = .zero
+    private var statusBurstDeadline: CFAbsoluteTime = 0
 
     // Frame gap watchdog: when SCK stops delivering frames (during menus/drags),
     // mark fallback mode so resume can trigger a keyframe request
@@ -69,7 +72,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var lastPoolLogTime: CFAbsoluteTime = 0
     private var inFlightDropCount: UInt64 = 0
     private var lastInFlightLogTime: CFAbsoluteTime = 0
+    private var admissionDropCount: UInt64 = 0
+    private var lastAdmissionLogTime: CFAbsoluteTime = 0
     private let poolLogLock = NSLock()
+    private var loggedPoolWarmFailure = false
 
     // Track if we've been in fallback mode - when SCK resumes, we may need a keyframe
     // to prevent decode errors from reference frame discontinuity
@@ -85,6 +91,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onKeyframeRequest: @escaping @Sendable () -> Void,
         onCaptureStall: @escaping @Sendable (String) -> Void = { _ in },
+        shouldDropFrame: (@Sendable () -> Bool)? = nil,
         windowID: CGWindowID = 0,
         usesDetailedMetadata: Bool = false,
         tracksFrameStatus: Bool = true,
@@ -97,6 +104,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         self.onFrame = onFrame
         self.onKeyframeRequest = onKeyframeRequest
         self.onCaptureStall = onCaptureStall
+        self.shouldDropFrame = shouldDropFrame
         self.windowID = windowID
         self.usesDetailedMetadata = usesDetailedMetadata
         self.tracksFrameStatus = tracksFrameStatus
@@ -157,6 +165,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         fallbackStartTime = 0
         fallbackLock.unlock()
         MirageLogger.capture("Reset fallback state for resize")
+    }
+
+    func prepareBufferPool(width: Int, height: Int, pixelFormat: OSType) {
+        guard let frameCopier else { return }
+        let success = frameCopier.preparePool(
+            width: width,
+            height: height,
+            pixelFormat: pixelFormat,
+            minimumBufferCount: poolMinimumBufferCount
+        )
+        guard !success else { return }
+        poolLogLock.withLock {
+            guard !loggedPoolWarmFailure else { return }
+            loggedPoolWarmFailure = true
+            MirageLogger.capture("Capture copy pool prewarm failed")
+        }
     }
 
     /// Check if SCK has stopped delivering frames and trigger fallback
@@ -237,6 +261,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+        #if DEBUG
+        dispatchPrecondition(condition: .notOnQueue(.main))
+        #endif
         let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
         let callbackStartTime = diagnosticsEnabled ? CFAbsoluteTimeGetCurrent() : 0
         defer {
@@ -255,6 +282,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             if gap > 0.1 { // Log gaps > 100ms
                 let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
                 MirageLogger.capture("FRAME GAP: \(gapMs)ms since last frame")
+                statusBurstDeadline = max(statusBurstDeadline, captureTime + 2.0)
             }
             if gap > maxFrameGap {
                 maxFrameGap = gap
@@ -305,6 +333,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 }
             }
 
+            if let shouldDropFrame, shouldDropFrame() {
+                logAdmissionDrop()
+                return
+            }
+
             let bufferWidth = CVPixelBufferGetWidth(pixelBuffer)
             let bufferHeight = CVPixelBufferGetHeight(pixelBuffer)
             frameCount += 1
@@ -335,7 +368,8 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             // DIAGNOSTIC: Track status distribution
             if diagnosticsEnabled {
                 statusCounts[statusRawValue, default: 0] += 1
-                if captureTime - lastStatusLogTime > 2.0 {
+                let logInterval: CFAbsoluteTime = captureTime <= statusBurstDeadline ? 0.5 : 2.0
+                if captureTime - lastStatusLogTime > logInterval {
                     lastStatusLogTime = captureTime
                     let statusNames = statusCounts.map { key, count in
                         let name = switch SCFrameStatus(rawValue: key) {
@@ -385,6 +419,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 deliveredIdleCount = 0
                 lastFPSLogTime = captureTime
             }
+        }
+
+        if let shouldDropFrame, shouldDropFrame() {
+            logAdmissionDrop()
+            return
         }
 
         // Extract contentRect when detailed metadata is enabled. For display capture,
@@ -570,6 +609,19 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 MirageLogger.capture("Capture copy in-flight limit: dropped \(inFlightDropCount) frames")
                 inFlightDropCount = 0
                 lastInFlightLogTime = now
+            }
+        }
+    }
+
+    private func logAdmissionDrop() {
+        poolLogLock.withLock {
+            admissionDropCount += 1
+            guard MirageLogger.isEnabled(.capture) else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            if lastAdmissionLogTime == 0 || now - lastAdmissionLogTime > 2.0 {
+                MirageLogger.capture("Capture admission drop: dropped \(admissionDropCount) frames")
+                admissionDropCount = 0
+                lastAdmissionLogTime = now
             }
         }
     }

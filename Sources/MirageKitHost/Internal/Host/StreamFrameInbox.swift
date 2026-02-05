@@ -96,6 +96,14 @@ final class StreamFrameInbox: @unchecked Sendable {
         return pendingCount
     }
 
+    func pendingSnapshot() -> (pending: Int, capacity: Int) {
+        lock.lock()
+        let pending = count
+        let capacity = capacity
+        lock.unlock()
+        return (pending, capacity)
+    }
+
     /// Request a drain if none is scheduled yet.
     func scheduleIfNeeded() -> Bool {
         lock.lock()

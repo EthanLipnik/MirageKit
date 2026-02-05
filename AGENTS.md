@@ -17,6 +17,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Custom mode: encoder overrides for pixel format, color space, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
 - Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing; quality probes use a SwiftUI animated probe scene and a transport probe that sends real encoded frames over UDP.
+- MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
 
 ## Interaction Guidelines
 - Planning phase: detailed step list; explicit plan.

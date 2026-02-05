@@ -138,6 +138,7 @@ extension WindowCaptureEngine {
             onCaptureStall: { [weak self] reason in
                 Task { await self?.restartCapture(reason: reason) }
             },
+            shouldDropFrame: admissionDropper,
             windowID: window.windowID,
             usesDetailedMetadata: true,
             tracksFrameStatus: true,
@@ -147,6 +148,7 @@ extension WindowCaptureEngine {
             targetFrameRate: currentFrameRate,
             poolMinimumBufferCount: bufferPoolMinimumCount
         )
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
         try stream.addStreamOutput(
@@ -353,6 +355,7 @@ extension WindowCaptureEngine {
             onCaptureStall: { [weak self] reason in
                 Task { await self?.restartCapture(reason: reason) }
             },
+            shouldDropFrame: admissionDropper,
             usesDetailedMetadata: false,
             tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: captureRate),
@@ -361,6 +364,7 @@ extension WindowCaptureEngine {
             targetFrameRate: currentFrameRate,
             poolMinimumBufferCount: bufferPoolMinimumCount
         )
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
         try stream.addStreamOutput(

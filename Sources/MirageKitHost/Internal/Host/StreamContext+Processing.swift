@@ -73,6 +73,7 @@ extension StreamContext {
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
         backpressureActive = false
+        backpressureActiveSnapshot = false
         lastCapturedFrame = nil
         lastCapturedFrameTime = 0
         lastCapturedDuration = .invalid
@@ -161,6 +162,7 @@ extension StreamContext {
             if backpressureActive {
                 if queueBytes <= queuePressureBytes {
                     backpressureActive = false
+                    backpressureActiveSnapshot = false
                     MirageLogger.stream("Backpressure cleared (queue \(Int(Double(queueBytes) / 1024.0))KB)")
                 } else {
                     backpressureDropIntervalCount += 1
@@ -170,6 +172,7 @@ extension StreamContext {
                 }
             } else if queueBytes > maxQueuedBytes, !forceKeyframe {
                 backpressureActive = true
+                backpressureActiveSnapshot = true
                 backpressureDropIntervalCount += 1
                 droppedFrameCount += 1
                 let queuedKB = (Double(queueBytes) / 1024.0).rounded()

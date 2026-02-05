@@ -160,6 +160,7 @@ actor StreamContext {
     let backpressureLogInterval: CFAbsoluteTime = 1.0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
     var backpressureActive: Bool = false
+    nonisolated(unsafe) var backpressureActiveSnapshot: Bool = false
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25

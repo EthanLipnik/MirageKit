@@ -23,6 +23,7 @@ public class MirageMetalView: MTKView {
     private let renderState = MirageMetalRenderState()
     private let preferencesObserver = MirageUserDefaultsObserver()
     private lazy var refreshRateMonitor = MirageRefreshRateMonitor(view: self)
+    private lazy var renderScheduler = MirageRenderScheduler(view: self)
 
     /// Callback when drawable metrics change - reports pixel size and scale factor
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
@@ -47,9 +48,9 @@ public class MirageMetalView: MTKView {
     public var streamID: StreamID? {
         didSet {
             renderState.reset()
+            renderScheduler.reset()
             drawScheduled = false
             inFlightDraws = 0
-            pendingDraw = false
             let previousID = registeredStreamID
             if let previousID, previousID != streamID { MirageClientRenderTrigger.shared.unregister(streamID: previousID) }
             registeredStreamID = streamID
@@ -76,7 +77,6 @@ public class MirageMetalView: MTKView {
     private var renderDiagnostics = RenderDiagnostics()
     private var drawScheduled = false
     private var inFlightDraws: Int = 0
-    private var pendingDraw = false
 
     private var effectiveScale: CGFloat {
         let traitScale = traitCollection.displayScale
@@ -88,16 +88,14 @@ public class MirageMetalView: MTKView {
     private static let maxDrawableWidth: CGFloat = 5120
     private static let maxDrawableHeight: CGFloat = 2880
     private var maxInFlightDraws: Int {
+        let desired = maxRenderFPS >= 120 ? 2 : 1
         if let metalLayer = layer as? CAMetalLayer {
-            return max(1, min(2, metalLayer.maximumDrawableCount))
+            return max(1, min(desired, metalLayer.maximumDrawableCount - 1))
         }
         return 1
     }
 
     private var maxRenderFPS: Int = 120
-    private var lastRenderStartTime: CFAbsoluteTime = 0
-    private var throttledDrawScheduled = false
-    private var throttledDrawTask: Task<Void, Never>?
 
     override public init(frame: CGRect, device: MTLDevice?) {
         super.init(frame: frame, device: device ?? MTLCreateSystemDefaultDevice())
@@ -156,10 +154,12 @@ public class MirageMetalView: MTKView {
         super.didMoveToSuperview()
         if superview != nil {
             refreshRateMonitor.start()
+            renderScheduler.start()
             resumeRendering()
             requestDraw()
         } else {
             refreshRateMonitor.stop()
+            renderScheduler.stop()
             suspendRendering()
         }
     }
@@ -174,11 +174,8 @@ public class MirageMetalView: MTKView {
 
     public func suspendRendering() {
         renderingSuspended = true
-        throttledDrawTask?.cancel()
-        throttledDrawTask = nil
         drawableRetryTask?.cancel()
         drawableRetryTask = nil
-        throttledDrawScheduled = false
     }
 
     public func resumeRendering() {
@@ -198,58 +195,24 @@ public class MirageMetalView: MTKView {
         noteScheduledDraw(signalTime: CFAbsoluteTimeGetCurrent())
         renderDiagnostics.drawRequests &+= 1
         maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
-        if drawScheduled || inFlightDraws >= maxInFlightDraws {
-            pendingDraw = true
-            return
+        if let streamID,
+           let entry = MirageFrameCache.shared.getEntry(for: streamID) {
+            renderScheduler.notePending(sequence: entry.sequence, decodeTime: entry.decodeTime)
         }
-        scheduleDraw()
+        renderScheduler.requestRedraw()
     }
 
     @MainActor
     private func finishDraw() {
         inFlightDraws = max(0, inFlightDraws - 1)
-        if pendingDraw, inFlightDraws < maxInFlightDraws {
-            pendingDraw = false
-            scheduleDraw()
-        }
     }
 
     @MainActor
-    private func scheduleDraw() {
+    func renderSchedulerTick() {
+        guard !renderingSuspended else { return }
+        guard !drawScheduled, inFlightDraws < maxInFlightDraws else { return }
         drawScheduled = true
-        let now = CFAbsoluteTimeGetCurrent()
-        let minInterval: CFAbsoluteTime = maxRenderFPS >= 120 ? (1.0 / 120.0) : (1.0 / 60.0)
-        if lastRenderStartTime > 0 {
-            let elapsed = now - lastRenderStartTime
-            if elapsed < minInterval {
-                drawScheduled = false
-                scheduleThrottledDraw(after: minInterval - elapsed)
-                return
-            }
-        }
         draw()
-    }
-
-    @MainActor
-    private func scheduleThrottledDraw(after delay: CFAbsoluteTime) {
-        guard delay > 0 else {
-            requestDraw()
-            return
-        }
-        guard !throttledDrawScheduled else { return }
-        throttledDrawScheduled = true
-        throttledDrawTask?.cancel()
-        throttledDrawTask = Task { @MainActor [weak self] in
-            do {
-                try await Task.sleep(for: .seconds(delay))
-            } catch {
-                return
-            }
-            guard let self else { return }
-            self.throttledDrawScheduled = false
-            guard !self.renderingSuspended else { return }
-            self.requestDraw()
-        }
     }
 
     override public func layoutSubviews() {
@@ -416,11 +379,9 @@ public class MirageMetalView: MTKView {
         }
 
         let drawableStartTime = CFAbsoluteTimeGetCurrent()
-        let drawable: CAMetalDrawable? = if let metalLayer = layer as? CAMetalLayer {
-            metalLayer.nextDrawable()
-        } else {
-            currentDrawable
-        }
+        // Important: use MTKView's `currentDrawable`. `MTKView.draw()` is responsible for acquiring it.
+        // Calling `CAMetalLayer.nextDrawable()` directly here can double-acquire drawables and stall.
+        let drawable: CAMetalDrawable? = currentDrawable
         let drawableWait = max(0, CFAbsoluteTimeGetCurrent() - drawableStartTime)
 
         guard let drawable else {
@@ -438,7 +399,8 @@ public class MirageMetalView: MTKView {
             return
         }
 
-        lastRenderStartTime = drawStartTime
+        let presentedSequence = renderState.currentSequence
+        let presentedDecodeTime = renderState.currentDecodeTime
 
         renderer.render(
             pixelBuffer: pixelBuffer,
@@ -453,6 +415,7 @@ public class MirageMetalView: MTKView {
                     drawableWait: drawableWait
                 )
                 finishDraw()
+                renderScheduler.notePresented(sequence: presentedSequence, decodeTime: presentedDecodeTime)
             }
         )
     }
@@ -580,7 +543,8 @@ public class MirageMetalView: MTKView {
     private func applyRefreshRateOverride(_ override: Int) {
         let clamped = override >= 120 ? 120 : 60
         maxRenderFPS = clamped
-        preferredFramesPerSecond = 120
+        preferredFramesPerSecond = clamped
+        renderScheduler.updateTargetFPS(clamped)
         onRefreshRateOverrideChange?(clamped)
     }
 

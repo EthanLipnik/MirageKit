@@ -74,6 +74,7 @@ extension WindowCaptureEngine {
 
         // Update the stream configuration
         try await stream.updateConfiguration(streamConfig)
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         MirageLogger.capture("Stream configuration updated to \(newWidth)x\(newHeight)")
     }
 
@@ -124,6 +125,7 @@ extension WindowCaptureEngine {
         streamConfig.queueDepth = captureQueueDepth
 
         try await stream.updateConfiguration(streamConfig)
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         MirageLogger.capture("Resolution updated to client dimensions: \(width)x\(height)")
     }
 
@@ -179,6 +181,7 @@ extension WindowCaptureEngine {
         // Apply both filter and configuration updates
         try await stream.updateContentFilter(newFilter)
         try await stream.updateConfiguration(streamConfig)
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         let captureRate = effectiveCaptureRate()
         streamOutput?.updateExpectations(
@@ -213,6 +216,7 @@ extension WindowCaptureEngine {
         streamConfig.queueDepth = captureQueueDepth
 
         try await stream.updateConfiguration(streamConfig)
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
         streamOutput?.updateExpectations(
             frameRate: captureRate,

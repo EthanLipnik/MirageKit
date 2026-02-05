@@ -7,6 +7,7 @@
 
 import CoreGraphics
 import CoreVideo
+import Foundation
 import MirageKit
 
 final class MirageMetalRenderState {
@@ -16,6 +17,8 @@ final class MirageMetalRenderState {
     private(set) var currentPixelBuffer: CVPixelBuffer?
     private(set) var currentContentRect: CGRect = .zero
     private(set) var currentPixelFormatType: OSType?
+    private(set) var currentSequence: UInt64 = 0
+    private(set) var currentDecodeTime: CFAbsoluteTime = 0
 
     func reset() {
         lastRenderedSequence = 0
@@ -23,6 +26,8 @@ final class MirageMetalRenderState {
         currentPixelBuffer = nil
         currentContentRect = .zero
         currentPixelFormatType = nil
+        currentSequence = 0
+        currentDecodeTime = 0
     }
 
     func markNeedsRedraw() {
@@ -40,6 +45,8 @@ final class MirageMetalRenderState {
             currentPixelFormatType = CVPixelBufferGetPixelFormatType(entry.pixelBuffer)
             currentContentRect = entry.contentRect
             lastRenderedSequence = entry.sequence
+            currentSequence = entry.sequence
+            currentDecodeTime = entry.decodeTime
         }
 
         needsRedraw = false

@@ -24,6 +24,7 @@ actor WindowCaptureEngine {
     var currentFrameRate: Int
     let usesDisplayRefreshCadence: Bool
     var currentDisplayRefreshRate: Int?
+    var admissionDropper: (@Sendable () -> Bool)?
     var pendingKeyframeRequest = false
     var isCapturing = false
     var isRestarting = false
@@ -71,6 +72,10 @@ actor WindowCaptureEngine {
         let outputScale: CGFloat
         let resolution: CGSize?
         let showsCursor: Bool
+    }
+
+    func setAdmissionDropper(_ dropper: (@Sendable () -> Bool)?) {
+        admissionDropper = dropper
     }
 }
 
