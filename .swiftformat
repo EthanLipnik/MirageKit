@@ -1,0 +1,199 @@
+# SwiftFormat Configuration for Mirage
+# Aligned with AGENTS.md coding guidelines
+
+# Swift version
+--swiftversion 6.0
+
+# Indentation: 4 spaces per AGENTS.md
+--indent 4
+--tabwidth 4
+--smarttabs disabled
+--indentcase false
+--indentstrings false
+
+# Line wrapping
+--maxwidth none
+--wraparguments preserve
+--wrapparameters preserve
+--wrapcollections preserve
+--wrapconditions preserve
+--wrapreturntype preserve
+--wrapeffects preserve
+--wraptypealiases preserve
+--closingparen balanced
+
+# Braces and spacing
+--allman false
+--binarygrouping 4,8
+--decimalgrouping 3,6
+--hexgrouping 4,8
+--octalgrouping 4,8
+--exponentcase lowercase
+--exponentgrouping disabled
+--fractiongrouping disabled
+--hexliteralcase uppercase
+--operatorfunc spaced
+--nospaceoperators
+--ranges spaced
+--typeattributes preserve
+--varattributes preserve
+--funcattributes preserve
+--storedvarattrs preserve
+--computedvarattrs preserve
+--complexattributes preserve
+--elseposition same-line
+--guardelse same-line
+--xcodeindentation enabled
+
+# Blank lines
+--emptybraces no-space
+--linebreaks lf
+--trimwhitespace always
+--insertlines enabled
+--removelines enabled
+
+# Trailing commas (enable for multiline)
+--commas always
+
+# Semicolons
+--semicolons inline
+
+# Void style
+--voidtype void
+
+# Self usage
+--self remove
+--selfrequired
+
+# Imports
+--importgrouping alpha
+
+# Type inference
+--inferredtypes always
+
+# Redundant patterns
+--patternlet hoist
+
+# Doc comments
+--doc-comments preserve
+
+# Marks
+--marktypes always
+--markextensions always
+--markcategories true
+--categorymark "MARK: - %c"
+--extensionmark "MARK: - %t + %c"
+--groupedextension "MARK: %c"
+--beforemarks
+--lifecycle
+
+# Header
+--header ignore
+
+# Conditional compilation
+--ifdef no-indent
+
+# Acronyms
+--acronyms ID,URL,UUID,HTTP,HTTPS,API,JSON,XML,HTML,UI,URI,FPS,RGB,RGBA,HEVC,TCP,UDP,TLS
+
+# Rules to enable
+--enable acronyms
+--enable andOperator
+--enable anyObjectProtocol
+--enable applicationMain
+--enable assertionFailures
+--enable blankLineAfterImports
+--enable blankLinesAroundMark
+--enable blankLinesAtEndOfScope
+--enable blankLinesAtStartOfScope
+--enable blankLinesBetweenChainedFunctions
+--enable blankLinesBetweenImports
+--enable blankLinesBetweenScopes
+--enable blockComments
+--enable braces
+--enable consecutiveBlankLines
+--enable consecutiveSpaces
+--enable duplicateImports
+--enable elseOnSameLine
+--enable emptyBraces
+--enable enumNamespaces
+--enable extensionAccessControl
+--enable fileHeader
+--enable genericExtensions
+--enable hoistAwait
+--enable hoistPatternLet
+--enable hoistTry
+--enable indent
+--enable initCoderUnavailable
+--enable leadingDelimiters
+--enable linebreakAtEndOfFile
+--enable linebreaks
+--enable numberFormatting
+--enable opaqueGenericParameters
+--enable preferKeyPath
+--enable redundantBackticks
+--enable redundantBreak
+--enable redundantClosure
+--enable redundantExtensionACL
+--enable redundantFileprivate
+--enable redundantGet
+--enable redundantInit
+--enable redundantLet
+--enable redundantLetError
+--enable redundantNilInit
+--enable redundantObjc
+--enable redundantOptionalBinding
+--enable redundantParens
+--enable redundantPattern
+--enable redundantRawValues
+--enable redundantReturn
+--enable redundantSelf
+--enable redundantStaticSelf
+--enable redundantType
+--enable redundantVoidReturnType
+--enable semicolons
+--enable spaceAroundBraces
+--enable spaceAroundBrackets
+--enable spaceAroundComments
+--enable spaceAroundGenerics
+--enable spaceAroundOperators
+--enable spaceAroundParens
+--enable spaceInsideBraces
+--enable spaceInsideBrackets
+--enable spaceInsideComments
+--enable spaceInsideGenerics
+--enable spaceInsideParens
+--enable strongOutlets
+--enable strongifiedSelf
+--enable todos
+--enable trailingClosures
+--enable trailingCommas
+--enable trailingSpace
+--enable typeSugar
+--enable unusedArguments
+--enable void
+--enable wrapArguments
+--enable wrapAttributes
+--enable yodaConditions
+
+# Rules to disable
+--disable modifierOrder
+--disable sortDeclarations
+--disable sortImports
+--disable sortSwitchCases
+--disable sortedImports
+--disable sortedSwitchCases
+--disable sortTypealiases
+--disable wrapConditionalBodies
+--disable wrapEnumCases
+--disable wrapFunctionBodies
+--disable wrapLoopBodies
+--disable wrapMultilineStatementBraces
+--disable wrapPropertyBodies
+--disable wrapSingleLineComments
+--disable wrapSwitchCases
+--disable organizeDeclarations
+
+# Paths to exclude (relative to where swiftformat is run)
+# Works when run from MirageKit or from Mirage root via symlink
+--exclude .build,MirageKit/.build,"Mirage Host"

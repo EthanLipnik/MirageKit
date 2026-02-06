@@ -1,0 +1,34 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Xcode
+DerivedData/
+*.xcworkspace
+*.xcuserstate
+*.xcuserdata/
+*.moved-aside
+*.swp
+*.xcscmblueprint
+*.xccheckout
+
+# SwiftPM
+.build/
+.swiftpm/
+Packages/
+Package.resolved
+
+# SwiftPM registries
+.swiftpm/configuration/registries.json
+
+# SwiftPM Xcode workspace
+.swiftpm/xcode/package.xcworkspace/contents.xcworkspacedata
+
+# Test artifacts
+*.profraw
+*.profdata
+
+# Misc
+.netrc
+Docs/

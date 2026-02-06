@@ -1,0 +1,219 @@
+# MirageKit Agent Guidelines
+
+## Overview
+MirageKit is the Swift Package that implements the core streaming framework for macOS, iOS, and visionOS clients.
+
+## Behavior Notes
+- MirageKit license: PolyForm Shield 1.0.0 with the line-of-business notice for dedicated remote window/desktop/secondary display/drawing-tablet streaming.
+- Stream scale: client-provided scale derived from the app's resolution limit; encoder overrides define bitrate targets.
+- ProMotion preference: refresh override based on MTKView cadence, 120 when supported and enabled, otherwise 60.
+- Backpressure: queue-based frame drops.
+- Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
+- Capture pixel format: 10-bit P010 when supported; NV12 fallback; 4:4:4 formats only when explicitly selected.
+- Encode flow: limited in-flight frames; completion-driven next encode.
+- In-flight cap: 120Hz 2 frames; 60Hz 1 frame.
+- Keyframe payload: 4-byte parameter set length prefix; Annex B parameter sets; AVCC frame data.
+- iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
+- Custom mode: encoder overrides for pixel format, color space, bitrate, and keyframe interval.
+- `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
+- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing; quality probes use a SwiftUI animated probe scene and a transport probe that sends real encoded frames over UDP.
+- MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
+- Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows are excluded from display capture.
+- Client startup retries stream registration until the first UDP packet arrives.
+
+## Interaction Guidelines
+- Planning phase: detailed step list; explicit plan.
+- Complex issues: code review + plan before action.
+- Unclear requirements or behavior: questions first.
+- Comments and READMEs: static descriptions; avoid update-history phrasing.
+
+## Keeping This Document Current
+AGENTS.md is the live reference for MirageKit. Include entries for new files, directories, modules, architecture shifts, build commands, dependencies, and coding conventions.
+
+## Project Structure
+```
+MirageKit/
+├─ Package.swift
+├─ Sources/
+│  ├─ MirageKit/ (shared)
+│  │  ├─ Public/
+│  │  │  ├─ CloudKit/
+│  │  │  ├─ Input/
+│  │  │  ├─ Shared/
+│  │  │  └─ Types/
+│  │  └─ Internal/
+│  │     ├─ Logging/
+│  │     ├─ Protocol/
+│  │     └─ Utilities/
+│  ├─ MirageKitClient/
+│  │  ├─ Public/
+│  │  │  ├─ Client/
+│  │  │  └─ Views/
+│  │  └─ Internal/
+│  │     ├─ Client/
+│  │     ├─ Decoding/
+│  │     ├─ Network/
+│  │     ├─ Rendering/
+│  │     └─ Utilities/
+│  └─ MirageKitHost/
+│     ├─ Public/
+│     │  ├─ Host/
+│     │  └─ Utilities/
+│     ├─ Internal/
+│     │  ├─ Capture/
+│     │  ├─ Cursor/
+│     │  ├─ Encoding/
+│     │  ├─ Host/
+│     │  ├─ Network/
+│     │  ├─ Utilities/
+│     │  └─ VirtualDisplay/
+└─ Tests/
+   ├─ MirageKitClientTests/
+   ├─ MirageKitHostTests/
+   └─ MirageKitTests/
+```
+
+Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
+
+## Public API
+- Shared types, input events, trust, and CloudKit helpers: `Sources/MirageKit/Public/`.
+- Client services, delegates, session stores, metrics, cursor snapshots, and stream views: `Sources/MirageKitClient/Public/`.
+- Host services, delegates, window/input controllers, and host utilities: `Sources/MirageKitHost/Public/`.
+- Quality probe results: `MirageQualityProbeResult` in `Sources/MirageKit/Public/Types/`.
+
+## Internal Implementation
+- Shared protocol, logging, and support utilities: `Sources/MirageKit/Internal/`.
+- Client decode, render, and transport: `Sources/MirageKitClient/Internal/`.
+- Host capture, encode, virtual display, and host utilities: `Sources/MirageKitHost/Internal/`.
+- Host Lights Out support: `Sources/MirageKitHost/Internal/Host/HostLightsOutController.swift`, `Sources/MirageKitHost/Internal/Host/MirageInjectedEventTag.swift`.
+- Host Lights Out integration: `Sources/MirageKitHost/Public/Host/MirageHostService+LightsOut.swift`.
+
+**Other Modules:**
+- `Sources/MirageKitHost/Internal/Utilities/MirageQualityProbeScene.swift` - SwiftUI animated probe scene for automatic quality testing
+- `Sources/MirageKitClient/Public/Client/MirageClientService+QualityProbeTransport.swift` - Transport probe helpers for automatic quality testing
+- `Sources/MirageKitClient/Public/Client/MirageClientService+QualityTestHelpers.swift` - Quality test helper routines
+
+## Architecture Patterns
+- `MirageHostService` and `MirageClientService` are the main entry points.
+- Delegate pattern for event callbacks.
+- Services are `@Observable` and `@MainActor`.
+
+## Streaming Pipeline
+- Host: ApplicationScanner → WindowCaptureEngine → MetalFrameDiffer → HEVCEncoder → Network.
+- Client: Network → HEVCDecoder → MirageStreamView (Metal rendering).
+- Client rendering reads frames from `MirageFrameCache` inside Metal views to avoid SwiftUI per-frame churn.
+- Stream scaling: capture at `streamScale` output resolution; content rects are in scaled pixel coordinates.
+- Adaptive stream scale: not supported; streams keep the client-selected `streamScale` throughout the session.
+- SCK buffer lifetime: captured frames are copied into a CVPixelBufferPool before encode to avoid retaining SCK buffers.
+- Queue limits: packet queue thresholds scale with encoded area and frame rate.
+- Frame rate selection: host follows client refresh rate (120fps when supported) across streams.
+- Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
+- Low-latency backpressure: queue spikes drop frames to keep latency down; recovery keyframes are requested separately.
+- Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
+- Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
+- Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.
+- Compression ceiling: frame quality is capped at 0.80 while bitrate targets remain independent.
+- FEC policy: loss windows prioritize keyframe parity; P-frame parity is enabled only during hard recovery windows.
+- Adaptive fallback: sustained overload steps format from 4:4:4 to P010, then NV12, then reduces stream scale by 10% with a 0.6 floor.
+- Decoder recovery: client enters keyframe-only mode after decode errors or decode-backpressure overload until a fresh keyframe arrives.
+
+## Input Handling
+- Host input clears stuck modifiers after 0.5s of modifier inactivity.
+- iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
+- Client cursor state is read from `MirageClientCursorStore` inside input views to avoid SwiftUI-driven cursor churn.
+- Secondary display cursor position is read from `MirageClientCursorPositionStore` for locked cursor rendering.
+
+## Network Configuration
+- Service type: `_mirage._tcp` (Bonjour).
+- Control port: 9847; Data port: 9848.
+- Protocol version: 1.
+- Hybrid transport with TLS encryption.
+- UDP packet sizing: `MirageNetworkConfiguration.maxPacketSize` caps Mirage header + payload to avoid IPv6 fragmentation; `StreamContext` uses it for frame fragmentation.
+- `StreamPacketSender` sends bounded bursts and tracks queued bytes for backpressure.
+- Quality feedback messages: none.
+
+## Virtual Display Behavior
+- App streaming: `acquireDisplay(for:clientResolution:)` creates a display sized to client resolution; window is moved onto it for isolation.
+- Desktop streaming: `acquireDisplayForConsumer(.desktopStream)` creates display at client-requested resolution; capture/encoder enforce the cap; main display is mirrored onto it.
+- Display capture for login/desktop streams uses the virtual display pixel resolution override to avoid HiDPI half-resolution captures.
+
+## Platform Support
+- macOS: host + client capability.
+- iOS/iPadOS: client only.
+- visionOS: client only.
+- Conditional compilation with `#if os(macOS)` throughout.
+
+## Build and Test
+- Build: `swift build --package-path MirageKit`.
+- Test: `swift test --package-path MirageKit`.
+
+## Coding Style and Naming
+- Use 4 spaces for indentation and keep line wrapping consistent with surrounding code.
+- Types use `UpperCamelCase`, functions and properties use `lowerCamelCase`.
+- Public API types keep the `Mirage` prefix.
+- Match file names to the primary type and use `// MARK: -` for sections.
+- New Swift files include the standard header with author and a 1-2 line summary of file purpose, for example:
+  ```
+  //
+  //  ExampleThing.swift
+  //  MirageKit
+  //
+  //  Created by Ethan Lipnik on 1/16/26.
+  //
+  //  Stream session state for client rendering.
+  //
+  ```
+- For `Created by` lines in Swift headers, check the system date or the file creation date before setting the date.
+- Keep public API edits in `Sources/MirageKit/Public` minimal and well documented.
+- Break different types into separate Swift files rather than placing multiple structs, classes, or enums in one file.
+- Do not introduce third-party frameworks without asking first.
+- Comments and READMEs use static descriptions; avoid update-history phrasing.
+
+## Swift Guidelines
+- Target Swift 6.2+ with strict concurrency.
+- Always mark `@Observable` classes with `@MainActor`.
+- Never use `DispatchQueue.main.async()`; use Swift concurrency instead.
+- Never use `Task.sleep(nanoseconds:)`; use `Task.sleep(for:)` instead.
+- Prefer Swift-native alternatives to Foundation methods where they exist:
+  - Use `replacing("hello", with: "world")` instead of `replacingOccurrences(of:with:)`.
+  - Use `URL.documentsDirectory` and `appending(path:)` for URL handling.
+- Never use C-style number formatting like `String(format: "%.2f", value)`; use formatters instead.
+- Prefer static member lookup over struct instances.
+- Use `localizedStandardContains()` instead of `contains()` for user-input text filtering.
+- Avoid force unwraps and force `try` unless failure is unrecoverable.
+- Avoid UIKit unless specifically requested.
+
+## SwiftUI Guidelines
+- Always use `foregroundStyle()` instead of `foregroundColor()`.
+- Always use `clipShape(.rect(cornerRadius:))` instead of `cornerRadius()`.
+- Always use the `Tab` API instead of `tabItem()`.
+- Always use `NavigationStack` with `navigationDestination(for:)` instead of `NavigationView`.
+- Use `.scrollIndicators(.hidden)` instead of `showsIndicators: false` in scroll view initializers.
+- Prefer `ImageRenderer` over `UIGraphicsImageRenderer` for rendering SwiftUI views.
+- Do not use `ObservableObject`; prefer `@Observable`.
+- Do not break views up using computed properties; extract new `View` structs instead.
+- Avoid `AnyView` unless absolutely required.
+- Avoid `GeometryReader` if newer alternatives work (`containerRelativeFrame()`, `visualEffect()`).
+- Never use `onChange()` with 1 parameter; use the 2-parameter or 0-parameter variant.
+- Never use `onTapGesture()` unless tap location or count is needed; use `Button` otherwise.
+- For image buttons, include text: `Button("Tap me", systemImage: "plus", action: myAction)`.
+- Never use `UIScreen.main.bounds` to read available space.
+- Do not force specific font sizes; prefer Dynamic Type.
+- When using `ForEach` with `enumerated()`, do not convert to an array first.
+- Avoid UIKit colors in SwiftUI code.
+
+## SwiftData Guidelines (if applicable)
+- Never use `@Attribute(.unique)`.
+- Model properties have default values or are optional.
+- All relationships are optional.
+
+## File Size Guidelines
+- Target: no file exceeds 500 lines.
+- When a file grows beyond 500 lines, extract related functionality into separate manager classes or extensions.
+
+## Testing Guidelines
+- Tests use Swift Testing (`import Testing`) with `@Suite`, `@Test`, and `#expect` assertions.
+- Place new tests under the matching package test target directory (`Tests/MirageKitTests`, `Tests/MirageKitHostTests`, or `Tests/MirageKitClientTests`) and name them descriptively.
+
+## Compilation Checks
+- When finishing work, build MirageKit with `swift build --package-path MirageKit`.

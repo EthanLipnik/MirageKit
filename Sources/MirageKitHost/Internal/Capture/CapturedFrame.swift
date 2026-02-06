@@ -1,0 +1,36 @@
+//
+//  CapturedFrame.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 1/21/26.
+//
+
+import CoreGraphics
+import CoreMedia
+import CoreVideo
+import Foundation
+import MirageKit
+
+#if os(macOS)
+
+/// Frame information passed from capture to encoding.
+struct CapturedFrameInfo: Sendable {
+    /// The pixel buffer content area (excluding black padding).
+    let contentRect: CGRect
+    /// Total area of dirty regions as percentage of frame (0-100).
+    let dirtyPercentage: Float
+    /// True when SCK reports the frame as idle (no changes).
+    let isIdleFrame: Bool
+}
+
+/// Captured frame with owned pixel buffer and timing metadata.
+struct CapturedFrame: @unchecked Sendable {
+    let pixelBuffer: CVPixelBuffer
+    let presentationTime: CMTime
+    let duration: CMTime
+    /// Host wall time when the frame was received from SCK (used for pacing).
+    let captureTime: CFAbsoluteTime
+    let info: CapturedFrameInfo
+}
+
+#endif
