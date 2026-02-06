@@ -107,6 +107,9 @@ public extension MirageClientService {
     internal func setupControllerForStream(_ streamID: StreamID) async {
         if let existingController = controllersByStream[streamID] {
             await existingController.resetForNewSession()
+            adaptiveFallbackStageByStream[streamID] = .preferP010
+            adaptiveFallbackScaleByStream[streamID] = clampedStreamScale()
+            adaptiveFallbackLastAppliedTime[streamID] = 0
             MirageLogger.client("Reset existing controller for stream \(streamID)")
             return
         }
@@ -114,6 +117,9 @@ public extension MirageClientService {
         let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
         let controller = StreamController(streamID: streamID, maxPayloadSize: payloadSize)
         controllersByStream[streamID] = controller
+        adaptiveFallbackStageByStream[streamID] = .preferP010
+        adaptiveFallbackScaleByStream[streamID] = clampedStreamScale()
+        adaptiveFallbackLastAppliedTime[streamID] = 0
 
         let capturedStreamID = streamID
         await controller.setCallbacks(
@@ -138,6 +144,9 @@ public extension MirageClientService {
             },
             onInputBlockingChanged: { [weak self] isBlocked in
                 self?.setInputBlocked(isBlocked, for: capturedStreamID)
+            },
+            onAdaptiveFallbackNeeded: { [weak self] in
+                self?.handleAdaptiveFallbackTrigger(for: capturedStreamID)
             }
         )
 
@@ -196,6 +205,9 @@ public extension MirageClientService {
             await controller.stop()
             controllersByStream.removeValue(forKey: streamID)
         }
+        adaptiveFallbackStageByStream.removeValue(forKey: streamID)
+        adaptiveFallbackScaleByStream.removeValue(forKey: streamID)
+        adaptiveFallbackLastAppliedTime.removeValue(forKey: streamID)
 
         await updateReassemblerSnapshot()
     }

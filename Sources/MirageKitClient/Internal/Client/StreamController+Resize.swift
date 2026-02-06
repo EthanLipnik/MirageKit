@@ -75,8 +75,6 @@ extension StreamController {
         reassembler.enterKeyframeOnlyMode()
         startKeyframeRecoveryLoopIfNeeded()
         await startFrameProcessingPipeline()
-        Task { @MainActor [weak self] in
-            await self?.onKeyframeNeeded?()
-        }
+        await requestKeyframeRecovery(reason: "manual-recovery")
     }
 }

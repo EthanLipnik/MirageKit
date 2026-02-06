@@ -189,6 +189,30 @@ extension MirageHostService {
         }
     }
 
+    func handleStreamEncoderSettingsChange(_ request: StreamEncoderSettingsChangeMessage) async {
+        guard let context = streamsByID[request.streamID] else {
+            MirageLogger.debug(.host, "No stream found for encoder settings update: \(request.streamID)")
+            return
+        }
+
+        let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
+        do {
+            if request.pixelFormat != nil || request.colorSpace != nil || request.bitrate != nil {
+                try await context.updateEncoderSettings(
+                    pixelFormat: request.pixelFormat,
+                    colorSpace: request.colorSpace,
+                    bitrate: normalizedBitrate
+                )
+            }
+            if let streamScale = request.streamScale {
+                try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
+            }
+            await sendStreamScaleUpdate(streamID: request.streamID)
+        } catch {
+            MirageLogger.error(.host, "Failed to apply encoder settings update: \(error)")
+        }
+    }
+
     func sendStreamScaleUpdate(streamID: StreamID) async {
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale update: \(streamID)")

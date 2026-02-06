@@ -19,7 +19,7 @@ import ScreenCaptureKit
 actor WindowCaptureEngine {
     var stream: SCStream?
     var streamOutput: CaptureStreamOutput?
-    let configuration: MirageEncoderConfiguration
+    var configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
     var currentFrameRate: Int
     let usesDisplayRefreshCadence: Bool

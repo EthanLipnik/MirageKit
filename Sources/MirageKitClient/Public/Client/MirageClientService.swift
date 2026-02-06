@@ -65,6 +65,9 @@ public final class MirageClientService {
     /// Latency preference for stream buffering behavior.
     public var latencyMode: MirageStreamLatencyMode = .smoothest
 
+    /// Enables automatic stream fallback when decode overload persists.
+    public var adaptiveFallbackEnabled: Bool = true
+
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
 
@@ -292,6 +295,17 @@ public final class MirageClientService {
     var refreshRateOverridesByStream: [StreamID: Int] = [:]
     var refreshRateMismatchCounts: [StreamID: Int] = [:]
     var refreshRateFallbackTargets: [StreamID: Int] = [:]
+
+    enum AdaptiveFallbackStage: Int {
+        case preferP010
+        case nv12
+        case streamScale
+    }
+
+    var adaptiveFallbackStageByStream: [StreamID: AdaptiveFallbackStage] = [:]
+    var adaptiveFallbackScaleByStream: [StreamID: CGFloat] = [:]
+    var adaptiveFallbackLastAppliedTime: [StreamID: CFAbsoluteTime] = [:]
+    let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
 
     public enum ConnectionState: Equatable {
         case disconnected

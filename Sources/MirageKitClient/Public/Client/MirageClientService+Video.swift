@@ -279,6 +279,84 @@ extension MirageClientService {
         }
     }
 
+    func sendStreamEncoderSettingsChange(
+        streamID: StreamID,
+        pixelFormat: MiragePixelFormat? = nil,
+        colorSpace: MirageColorSpace? = nil,
+        bitrate: Int? = nil,
+        streamScale: CGFloat? = nil
+    )
+    async throws {
+        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard pixelFormat != nil || colorSpace != nil || bitrate != nil || streamScale != nil else { return }
+
+        let clampedScale = streamScale.map(clampStreamScale)
+        let request = StreamEncoderSettingsChangeMessage(
+            streamID: streamID,
+            pixelFormat: pixelFormat,
+            colorSpace: colorSpace,
+            bitrate: bitrate,
+            streamScale: clampedScale
+        )
+        let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: message.serialize(), completion: .contentProcessed { error in
+                if let error { continuation.resume(throwing: error) } else {
+                    continuation.resume()
+                }
+            })
+        }
+    }
+
+    func handleAdaptiveFallbackTrigger(for streamID: StreamID) {
+        guard adaptiveFallbackEnabled else {
+            MirageLogger.client("Adaptive fallback skipped (disabled) for stream \(streamID)")
+            return
+        }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        let lastApplied = adaptiveFallbackLastAppliedTime[streamID] ?? 0
+        if lastApplied > 0, now - lastApplied < adaptiveFallbackCooldown {
+            let remainingMs = Int(((adaptiveFallbackCooldown - (now - lastApplied)) * 1000).rounded())
+            MirageLogger.client("Adaptive fallback cooldown \(remainingMs)ms for stream \(streamID)")
+            return
+        }
+
+        let stage = adaptiveFallbackStageByStream[streamID] ?? .preferP010
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                switch stage {
+                case .preferP010:
+                    try await sendStreamEncoderSettingsChange(streamID: streamID, pixelFormat: .p010)
+                    adaptiveFallbackStageByStream[streamID] = .nv12
+                    adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
+                    MirageLogger.client("Adaptive fallback stage P010 applied for stream \(streamID)")
+                case .nv12:
+                    try await sendStreamEncoderSettingsChange(streamID: streamID, pixelFormat: .nv12)
+                    adaptiveFallbackStageByStream[streamID] = .streamScale
+                    adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
+                    MirageLogger.client("Adaptive fallback stage NV12 applied for stream \(streamID)")
+                case .streamScale:
+                    let currentScale = adaptiveFallbackScaleByStream[streamID] ?? clampedStreamScale()
+                    let nextScale = max(0.6, clampStreamScale(currentScale * 0.9))
+                    if nextScale >= currentScale {
+                        MirageLogger.client("Adaptive fallback scale floor reached for stream \(streamID)")
+                        return
+                    }
+                    try await sendStreamEncoderSettingsChange(streamID: streamID, streamScale: nextScale)
+                    adaptiveFallbackScaleByStream[streamID] = nextScale
+                    adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
+                    let scaleText = Double(nextScale).formatted(.number.precision(.fractionLength(2)))
+                    MirageLogger.client("Adaptive fallback scale applied to \(scaleText) for stream \(streamID)")
+                }
+            } catch {
+                MirageLogger.error(.client, "Failed to apply adaptive fallback for stream \(streamID): \(error)")
+            }
+        }
+    }
+
     func handleVideoPacket(_ data: Data, header: FrameHeader) async {
         delegate?.clientService(self, didReceiveVideoPacket: data, forStream: header.streamID)
     }

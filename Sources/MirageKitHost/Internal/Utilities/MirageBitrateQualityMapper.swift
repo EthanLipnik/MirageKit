@@ -11,6 +11,8 @@ import Foundation
 import MirageKit
 
 enum MirageBitrateQualityMapper {
+    static let frameQualityCeiling: Float = 0.80
+
     private struct Point {
         let bpp: Double
         let quality: Double
@@ -36,18 +38,20 @@ enum MirageBitrateQualityMapper {
         height: Int,
         frameRate: Int
     ) -> (frameQuality: Float, keyframeQuality: Float) {
+        let defaultFrameQuality = min(Float(0.80), frameQualityCeiling)
+        let defaultKeyframeQuality = max(0.1, min(defaultFrameQuality, defaultFrameQuality * 0.85))
         guard targetBitrateBps > 0, width > 0, height > 0, frameRate > 0 else {
-            return (frameQuality: 0.80, keyframeQuality: 0.65)
+            return (frameQuality: defaultFrameQuality, keyframeQuality: defaultKeyframeQuality)
         }
 
         let pixelsPerSecond = Double(width) * Double(height) * Double(frameRate)
         guard pixelsPerSecond > 0 else {
-            return (frameQuality: 0.80, keyframeQuality: 0.65)
+            return (frameQuality: defaultFrameQuality, keyframeQuality: defaultKeyframeQuality)
         }
 
         let bpp = Double(targetBitrateBps) / pixelsPerSecond
         let mappedQuality = interpolateQuality(for: bpp)
-        let frameQuality = Float(max(0.1, min(1.0, mappedQuality)))
+        let frameQuality = Float(max(0.1, min(Double(frameQualityCeiling), mappedQuality)))
         let keyframeQuality = Float(max(0.1, min(frameQuality, frameQuality * 0.85)))
         return (frameQuality, keyframeQuality)
     }

@@ -134,6 +134,22 @@ extension MirageHostService {
                 MirageLogger.error(.host, "Failed to handle streamRefreshRateChange: \(error)")
             }
 
+        case .streamEncoderSettingsChange:
+            do {
+                let request = try message.decode(StreamEncoderSettingsChangeMessage.self)
+                MirageLogger
+                    .host(
+                        "Client requested encoder settings change for stream \(request.streamID): " +
+                            "pixelFormat=\(request.pixelFormat?.displayName ?? "unchanged"), " +
+                            "color=\(request.colorSpace?.displayName ?? "unchanged"), " +
+                            "bitrate=\(request.bitrate.map(String.init) ?? "unchanged"), " +
+                            "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged")"
+                    )
+                await handleStreamEncoderSettingsChange(request)
+            } catch {
+                MirageLogger.error(.host, "Failed to handle streamEncoderSettingsChange: \(error)")
+            }
+
         case .stopStream:
             if let request = try? message.decode(StopStreamMessage.self) {
                 if let session = activeStreams.first(where: { $0.id == request.streamID }) { await stopStream(session, minimizeWindow: request.minimizeWindow) }

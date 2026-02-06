@@ -18,14 +18,14 @@ import ScreenCaptureKit
 extension HEVCEncoder {
     func updateQuality(_ quality: Float) {
         guard let session = compressionSession else { return }
-        baseQuality = quality
+        baseQuality = min(quality, compressionQualityCeiling)
         guard !qualityOverrideActive else { return }
         applyQualitySettings(session, quality: baseQuality, log: false)
     }
 
     func prepareForKeyframe(quality: Float) {
         guard let session = compressionSession else { return }
-        let clamped = max(0.02, min(1.0, quality))
+        let clamped = max(0.02, min(compressionQualityCeiling, quality))
         guard clamped < baseQuality else { return }
         qualityOverrideActive = true
         applyQualitySettings(session, quality: clamped, log: false)
@@ -82,6 +82,32 @@ extension HEVCEncoder {
         // Create a new session with the new dimensions
         try createSession(width: width, height: height)
         MirageLogger.encoder("Session recreated with new dimensions")
+    }
+
+    func updateConfiguration(_ newConfiguration: MirageEncoderConfiguration) async throws {
+        configuration = newConfiguration
+        activePixelFormat = newConfiguration.pixelFormat
+        didLogPixelFormat = false
+        baseQuality = min(newConfiguration.frameQuality, compressionQualityCeiling)
+        qualityOverrideActive = false
+
+        guard currentWidth > 0, currentHeight > 0 else { return }
+
+        if let session = compressionSession {
+            VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
+            VTCompressionSessionInvalidate(session)
+            compressionSession = nil
+        }
+
+        frameNumber = 0
+        forceNextKeyframe = true
+
+        try createSession(width: currentWidth, height: currentHeight)
+        MirageLogger
+            .encoder(
+                "Encoder configuration updated: format=\(newConfiguration.pixelFormat.displayName), " +
+                    "color=\(newConfiguration.colorSpace.displayName), bitrate=\(newConfiguration.bitrate ?? 0)"
+            )
     }
 
     func forceKeyframe() {

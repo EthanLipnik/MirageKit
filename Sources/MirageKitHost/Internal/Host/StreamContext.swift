@@ -88,6 +88,7 @@ actor StreamContext {
     var qualityFloor: Float
     var qualityCeiling: Float
     var keyframeQualityFloor: Float
+    let compressionQualityCeiling: Float = 0.80
     let qualityFloorFactor: Float = 0.6
     let keyframeFloorFactor: Float = 0.6
     var pendingKeyframeReason: String?
@@ -174,11 +175,21 @@ actor StreamContext {
     var keyframeIntervalSeconds: CFAbsoluteTime = 0
     var keyframeMaxIntervalSeconds: CFAbsoluteTime = 0
     var lastKeyframeTime: CFAbsoluteTime = 0
+    let recoveryOnlyKeyframes = true
+
+    /// Two-tier recovery tracking.
+    let softRecoveryWindow: CFAbsoluteTime = 4.0
+    let hardRecoveryThreshold: Int = 2
+    var recoveryWindowStart: CFAbsoluteTime = 0
+    var recoveryRequestCount: Int = 0
+    var softRecoveryCount: UInt64 = 0
+    var hardRecoveryCount: UInt64 = 0
 
     /// Loss-mode deadline for adaptive redundancy and pacing.
     /// When active, keyframes and P-frames include FEC parity fragments.
     nonisolated(unsafe) var lossModeDeadline: CFAbsoluteTime = 0
-    let lossModeHold: CFAbsoluteTime = 10.0
+    nonisolated(unsafe) var lossModePFrameFECDeadline: CFAbsoluteTime = 0
+    let lossModeHold: CFAbsoluteTime = 4.0
 
     /// Frame rate for cadence and queue limits
     var currentFrameRate: Int
@@ -275,10 +286,12 @@ actor StreamContext {
         frameInbox = StreamFrameInbox(capacity: bufferDepth)
         maxEncodeTimeMs = encoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
-        qualityCeiling = encoderConfig.frameQuality
-        qualityFloor = max(0.1, encoderConfig.frameQuality * qualityFloorFactor)
-        activeQuality = encoderConfig.frameQuality
-        keyframeQualityFloor = max(0.1, encoderConfig.keyframeQuality * keyframeFloorFactor)
+        let cappedFrameQuality = min(encoderConfig.frameQuality, compressionQualityCeiling)
+        qualityCeiling = cappedFrameQuality
+        qualityFloor = max(0.1, cappedFrameQuality * qualityFloorFactor)
+        activeQuality = cappedFrameQuality
+        let cappedKeyframeQuality = min(encoderConfig.keyframeQuality, cappedFrameQuality)
+        keyframeQualityFloor = max(0.1, cappedKeyframeQuality * keyframeFloorFactor)
         let cadence = Self.keyframeCadence(
             intervalFrames: encoderConfig.keyFrameInterval,
             frameRate: encoderConfig.targetFrameRate

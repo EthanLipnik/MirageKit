@@ -397,6 +397,11 @@ extension StreamContext {
 
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
+        if qualityCeiling > compressionQualityCeiling { qualityCeiling = compressionQualityCeiling }
+        if activeQuality > qualityCeiling {
+            activeQuality = qualityCeiling
+            await encoder.updateQuality(activeQuality)
+        }
         let now = CFAbsoluteTimeGetCurrent()
         if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
 

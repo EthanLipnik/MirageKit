@@ -16,7 +16,7 @@ import MirageKit
 /// Hardware-accelerated HEVC encoder using VideoToolbox
 actor HEVCEncoder {
     var compressionSession: VTCompressionSession?
-    let configuration: MirageEncoderConfiguration
+    var configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
     var activePixelFormat: MiragePixelFormat
     var supportedPropertyKeys: Set<CFString> = []
@@ -25,6 +25,7 @@ actor HEVCEncoder {
     var didLogPixelFormat = false
     var baseQuality: Float
     var qualityOverrideActive = false
+    let compressionQualityCeiling: Float = 0.80
     let performanceTracker = EncodePerformanceTracker()
 
     var isEncoding = false
@@ -58,7 +59,7 @@ actor HEVCEncoder {
         activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1
         encoderInFlightLimit = max(1, inFlightLimit ?? defaultLimit)
-        baseQuality = configuration.frameQuality
+        baseQuality = min(configuration.frameQuality, compressionQualityCeiling)
     }
 
     var pixelFormatType: OSType {

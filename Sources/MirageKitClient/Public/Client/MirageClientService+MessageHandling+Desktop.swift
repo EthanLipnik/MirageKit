@@ -101,6 +101,9 @@ extension MirageClientService {
             streamStartupFirstPacketReceived.remove(streamID)
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
+            adaptiveFallbackStageByStream.removeValue(forKey: streamID)
+            adaptiveFallbackScaleByStream.removeValue(forKey: streamID)
+            adaptiveFallbackLastAppliedTime.removeValue(forKey: streamID)
 
             Task {
                 if let controller = self.controllersByStream[streamID] {

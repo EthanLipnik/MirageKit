@@ -142,8 +142,7 @@ extension StreamContext {
                 let seqStart = localSequenceNumber
 
                 let now = CFAbsoluteTimeGetCurrent()
-                let lossModeActive = isLossModeActive(now: now)
-                let fecBlockSize = lossModeActive ? (isKeyframe ? 8 : 16) : 0
+                let fecBlockSize = resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
                 let frameByteCount = encodedData.count
                 let dataFragments = (frameByteCount + maxPayloadSize - 1) / maxPayloadSize
                 let parityFragments = fecBlockSize > 1 ? (dataFragments + fecBlockSize - 1) / fecBlockSize : 0

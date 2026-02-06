@@ -21,6 +21,7 @@ struct MirageKitTests {
             fragmentIndex: 0,
             fragmentCount: 1,
             payloadLength: 1024,
+            frameByteCount: 1024,
             checksum: 0xDEAD_BEEF
         )
 
@@ -32,7 +33,7 @@ struct MirageKitTests {
         #expect(deserialized?.streamID == 1)
         #expect(deserialized?.sequenceNumber == 100)
         #expect(deserialized?.frameNumber == 50)
-        #expect(deserialized?.flags.contains(.keyframe) == true)
+        #expect(deserialized?.flags.contains(FrameFlags.keyframe) == true)
     }
 
     @Test("CRC32 calculation")
@@ -70,6 +71,31 @@ struct MirageKitTests {
 
         let decodedHello = try deserialized.decode(HelloMessage.self)
         #expect(decodedHello.deviceName == "Test Device")
+    }
+
+    @Test("Stream encoder settings message serialization")
+    func streamEncoderSettingsSerialization() throws {
+        let request = StreamEncoderSettingsChangeMessage(
+            streamID: 7,
+            pixelFormat: .nv12,
+            colorSpace: .displayP3,
+            bitrate: 120_000_000,
+            streamScale: 0.75
+        )
+
+        let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
+        let serialized = message.serialize()
+        let (decodedEnvelope, consumed) = try #require(ControlMessage.deserialize(from: serialized))
+        #expect(consumed == serialized.count)
+        #expect(decodedEnvelope.type == .streamEncoderSettingsChange)
+
+        let decodedRequest = try decodedEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
+        #expect(decodedRequest.streamID == 7)
+        #expect(decodedRequest.pixelFormat == .nv12)
+        #expect(decodedRequest.colorSpace == .displayP3)
+        #expect(decodedRequest.bitrate == 120_000_000)
+        let scale = try #require(decodedRequest.streamScale)
+        #expect(abs(Double(scale) - 0.75) < 0.0001)
     }
 
     @Test("MirageWindow equality")

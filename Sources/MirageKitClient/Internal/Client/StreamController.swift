@@ -88,6 +88,11 @@ actor StreamController {
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
+    static let overloadWindow: CFAbsoluteTime = 8.0
+    static let overloadQueueDropThreshold: Int = 12
+    static let overloadRecoveryThreshold: Int = 2
+    static let backpressureRecoveryCooldown: CFAbsoluteTime = 1.0
+    static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
 
     /// Pending resize debounce task
     var resizeDebounceTask: Task<Void, Never>?
@@ -111,6 +116,10 @@ actor StreamController {
 
     var queueDropsSinceLastLog: UInt64 = 0
     var lastQueueDropLogTime: CFAbsoluteTime = 0
+    var queueDropTimestamps: [CFAbsoluteTime] = []
+    var recoveryRequestTimestamps: [CFAbsoluteTime] = []
+    var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
+    var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
@@ -144,6 +153,9 @@ actor StreamController {
     /// Input is blocked only when the stream is frozen for a sustained period.
     private(set) var onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)?
 
+    /// Called when sustained decode overload should trigger host fallback.
+    private(set) var onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)?
+
     /// Current input blocking state - true when the stream is frozen.
     var isInputBlocked: Bool = false
 
@@ -154,7 +166,8 @@ actor StreamController {
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
         onFirstFrame: (@MainActor @Sendable () -> Void)? = nil,
-        onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)? = nil
+        onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)? = nil,
+        onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeEvent = onResizeEvent
@@ -162,6 +175,7 @@ actor StreamController {
         self.onFrameDecoded = onFrameDecoded
         self.onFirstFrame = onFirstFrame
         self.onInputBlockingChanged = onInputBlockingChanged
+        self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
     }
 
     // MARK: - Initialization
@@ -184,7 +198,7 @@ actor StreamController {
             Task {
                 self.reassembler.enterKeyframeOnlyMode()
                 await self.startKeyframeRecoveryLoopIfNeeded()
-                await self.onKeyframeNeeded?()
+                await self.requestKeyframeRecovery(reason: "decode-error-threshold")
             }
         }
 
@@ -286,7 +300,7 @@ actor StreamController {
             Task {
                 self.reassembler.enterKeyframeOnlyMode()
                 await self.startKeyframeRecoveryLoopIfNeeded()
-                await self.onKeyframeNeeded?()
+                await self.requestKeyframeRecovery(reason: "frame-loss")
             }
         }
     }
@@ -310,17 +324,17 @@ actor StreamController {
                 if let dropIndex {
                     let droppedFrame = queuedFrames.remove(at: dropIndex)
                     droppedFrame.releaseBuffer()
-                    queueDropsSinceLastLog += 1
-                    metricsTracker.recordQueueDrop()
+                    recordQueueDrop()
                 }
             } else {
                 frame.releaseBuffer()
-                queueDropsSinceLastLog += 1
-                metricsTracker.recordQueueDrop()
+                recordQueueDrop()
+                maybeTriggerBackpressureRecovery()
                 logQueueDropIfNeeded()
                 return
             }
 
+            maybeTriggerBackpressureRecovery()
             logQueueDropIfNeeded()
         }
 

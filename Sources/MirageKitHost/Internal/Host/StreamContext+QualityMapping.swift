@@ -28,25 +28,32 @@ extension StreamContext {
             height: height,
             frameRate: currentFrameRate
         )
+        let cappedFrameQuality = min(derived.frameQuality, compressionQualityCeiling)
+        let cappedKeyframeQuality = min(derived.keyframeQuality, cappedFrameQuality)
 
-        guard encoderConfig.frameQuality != derived.frameQuality ||
-            encoderConfig.keyframeQuality != derived.keyframeQuality else {
+        guard encoderConfig.frameQuality != cappedFrameQuality ||
+            encoderConfig.keyframeQuality != cappedKeyframeQuality else {
             return
         }
 
-        encoderConfig.frameQuality = derived.frameQuality
-        encoderConfig.keyframeQuality = derived.keyframeQuality
-        qualityCeiling = derived.frameQuality
-        qualityFloor = max(0.1, derived.frameQuality * qualityFloorFactor)
-        activeQuality = derived.frameQuality
-        keyframeQualityFloor = max(0.1, derived.keyframeQuality * keyframeFloorFactor)
+        encoderConfig.frameQuality = cappedFrameQuality
+        encoderConfig.keyframeQuality = cappedKeyframeQuality
+        qualityCeiling = cappedFrameQuality
+        qualityFloor = max(0.1, cappedFrameQuality * qualityFloorFactor)
+        activeQuality = min(activeQuality, qualityCeiling)
+        if activeQuality < qualityFloor { activeQuality = qualityFloor }
+        keyframeQualityFloor = max(0.1, cappedKeyframeQuality * keyframeFloorFactor)
 
-        await encoder?.updateQuality(derived.frameQuality)
+        await encoder?.updateQuality(activeQuality)
 
         if let logLabel {
             let mbps = Double(targetBitrate) / 1_000_000.0
-            let qualityText = derived.frameQuality.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.stream("\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText)")
+            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+            let capText = compressionQualityCeiling.formatted(.number.precision(.fractionLength(2)))
+            MirageLogger
+                .stream(
+                    "\(logLabel): target \(mbps.formatted(.number.precision(.fractionLength(0)))) Mbps, quality \(qualityText) (cap \(capText))"
+                )
         }
     }
 }

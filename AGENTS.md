@@ -68,6 +68,7 @@ MirageKit/
 │     │  ├─ Utilities/
 │     │  └─ VirtualDisplay/
 └─ Tests/
+   ├─ MirageKitClientTests/
    ├─ MirageKitHostTests/
    └─ MirageKitTests/
 ```
@@ -109,7 +110,12 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
 - Low-latency backpressure: queue spikes drop frames to keep latency down; recovery keyframes are requested separately.
 - Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
-- Decoder recovery: client enters keyframe-only mode after decode errors until a fresh keyframe arrives.
+- Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
+- Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.
+- Compression ceiling: frame quality is capped at 0.80 while bitrate targets remain independent.
+- FEC policy: loss windows prioritize keyframe parity; P-frame parity is enabled only during hard recovery windows.
+- Adaptive fallback: sustained overload steps format from 4:4:4 to P010, then NV12, then reduces stream scale by 10% with a 0.6 floor.
+- Decoder recovery: client enters keyframe-only mode after decode errors or decode-backpressure overload until a fresh keyframe arrives.
 
 ## Input Handling
 - Host input clears stuck modifiers after 0.5s of modifier inactivity.
@@ -207,7 +213,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 
 ## Testing Guidelines
 - Tests use Swift Testing (`import Testing`) with `@Suite`, `@Test`, and `#expect` assertions.
-- Place new tests under `Tests/MirageKitTests` and name them descriptively.
+- Place new tests under the matching package test target directory (`Tests/MirageKitTests`, `Tests/MirageKitHostTests`, or `Tests/MirageKitClientTests`) and name them descriptively.
 
 ## Compilation Checks
 - When finishing work, build MirageKit with `swift build --package-path MirageKit`.

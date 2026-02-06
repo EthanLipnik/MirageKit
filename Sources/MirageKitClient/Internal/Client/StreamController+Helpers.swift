@@ -38,6 +38,68 @@ extension StreamController {
         }
     }
 
+    func recordQueueDrop() {
+        queueDropsSinceLastLog += 1
+        metricsTracker.recordQueueDrop()
+        let now = CFAbsoluteTimeGetCurrent()
+        queueDropTimestamps.append(now)
+        trimOverloadWindow(now: now)
+        maybeSignalAdaptiveFallback(now: now)
+    }
+
+    func maybeTriggerBackpressureRecovery() {
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastBackpressureRecoveryTime > 0,
+           now - lastBackpressureRecoveryTime < Self.backpressureRecoveryCooldown {
+            return
+        }
+        lastBackpressureRecoveryTime = now
+        reassembler.enterKeyframeOnlyMode()
+        Task { [weak self] in
+            guard let self else { return }
+            await self.startKeyframeRecoveryLoopIfNeeded()
+            await self.requestKeyframeRecovery(reason: "decode-backpressure")
+        }
+    }
+
+    func requestKeyframeRecovery(reason: String) async {
+        let now = CFAbsoluteTimeGetCurrent()
+        recoveryRequestTimestamps.append(now)
+        trimOverloadWindow(now: now)
+        maybeSignalAdaptiveFallback(now: now)
+        guard let handler = onKeyframeNeeded else { return }
+        MirageLogger.client("Requesting recovery keyframe (\(reason)) for stream \(streamID)")
+        await MainActor.run {
+            handler()
+        }
+    }
+
+    private func trimOverloadWindow(now: CFAbsoluteTime) {
+        let oldestAllowed = now - Self.overloadWindow
+        queueDropTimestamps.removeAll { $0 < oldestAllowed }
+        recoveryRequestTimestamps.removeAll { $0 < oldestAllowed }
+    }
+
+    private func maybeSignalAdaptiveFallback(now: CFAbsoluteTime) {
+        if lastAdaptiveFallbackSignalTime > 0,
+           now - lastAdaptiveFallbackSignalTime < Self.adaptiveFallbackCooldown {
+            return
+        }
+        guard queueDropTimestamps.count >= Self.overloadQueueDropThreshold,
+              recoveryRequestTimestamps.count >= Self.overloadRecoveryThreshold else {
+            return
+        }
+        lastAdaptiveFallbackSignalTime = now
+        MirageLogger
+            .client(
+                "Adaptive fallback trigger: queueDrops=\(queueDropTimestamps.count), " +
+                    "recoveryRequests=\(recoveryRequestTimestamps.count), stream=\(streamID)"
+            )
+        Task { @MainActor [weak self] in
+            await self?.onAdaptiveFallbackNeeded?()
+        }
+    }
+
     func startKeyframeRecoveryLoopIfNeeded() {
         guard keyframeRecoveryTask == nil else { return }
         keyframeRecoveryTask = Task { [weak self] in
@@ -57,11 +119,8 @@ extension StreamController {
             let timeout = reassembler.keyframeTimeoutSeconds()
             guard awaitingDuration >= timeout else { continue }
             if lastRecoveryRequestTime > 0, now - lastRecoveryRequestTime < timeout { continue }
-            guard let handler = onKeyframeNeeded else { break }
             lastRecoveryRequestTime = now
-            await MainActor.run {
-                handler()
-            }
+            await requestKeyframeRecovery(reason: "keyframe-recovery-loop")
         }
         keyframeRecoveryTask = nil
         lastRecoveryRequestTime = 0

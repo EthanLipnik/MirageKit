@@ -95,7 +95,7 @@ extension HEVCEncoder {
     }
 
     private func qualitySettings(for quality: Float) -> QualitySettings {
-        let clamped = max(0.02, min(1.0, quality))
+        let clamped = max(0.02, min(compressionQualityCeiling, quality))
         let useQP = clamped < 0.98
         guard useQP else { return QualitySettings(quality: clamped, minQP: nil, maxQP: nil) }
         let rawMin = 10.0 + (1.0 - Double(clamped)) * 36.0
@@ -256,7 +256,13 @@ extension HEVCEncoder {
         MirageLogger.encoder("Prioritizing encoding speed over quality")
 
         // Apply base quality setting - lower values reduce size for all frames
-        baseQuality = configuration.frameQuality
+        let requestedQuality = configuration.frameQuality
+        baseQuality = min(requestedQuality, compressionQualityCeiling)
+        if requestedQuality > compressionQualityCeiling {
+            let requestedText = requestedQuality.formatted(.number.precision(.fractionLength(2)))
+            let capText = compressionQualityCeiling.formatted(.number.precision(.fractionLength(2)))
+            MirageLogger.encoder("Quality cap applied: requested \(requestedText), using \(capText)")
+        }
         applyQualitySettings(session, quality: baseQuality, log: true)
 
         // Apply bitrate caps to keep encode time bounded for motion-heavy scenes

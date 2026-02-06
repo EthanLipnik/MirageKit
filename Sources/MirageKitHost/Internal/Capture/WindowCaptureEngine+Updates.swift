@@ -267,8 +267,38 @@ extension WindowCaptureEngine {
         (currentWidth, currentHeight)
     }
 
-    func updateConfiguration(_: MirageEncoderConfiguration) async throws {
-        // Would need to restart capture with new config
+    func updateConfiguration(_ newConfiguration: MirageEncoderConfiguration) async throws {
+        configuration = newConfiguration
+        guard isCapturing, let stream else { return }
+
+        let streamConfig = SCStreamConfiguration()
+        if useBestCaptureResolution { streamConfig.captureResolution = .best }
+        if useExplicitCaptureDimensions {
+            streamConfig.width = currentWidth
+            streamConfig.height = currentHeight
+        }
+        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
+        streamConfig.pixelFormat = pixelFormatType
+        streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
+            ? CGColorSpace.displayP3
+            : CGColorSpace.sRGB
+        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
+        streamConfig.queueDepth = captureQueueDepth
+
+        try await stream.updateConfiguration(streamConfig)
+        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
+        let captureRate = effectiveCaptureRate()
+        streamOutput?.updateExpectations(
+            frameRate: captureRate,
+            gapThreshold: frameGapThreshold(for: captureRate),
+            stallThreshold: stallThreshold(for: captureRate),
+            targetFrameRate: currentFrameRate
+        )
+        MirageLogger
+            .capture(
+                "Capture configuration updated: pixelFormat=\(configuration.pixelFormat.displayName), " +
+                    "color=\(configuration.colorSpace.displayName), queue=\(captureQueueDepth)"
+            )
     }
 }
 

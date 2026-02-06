@@ -228,6 +228,9 @@ extension MirageClientService {
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
+        adaptiveFallbackStageByStream.removeAll()
+        adaptiveFallbackScaleByStream.removeAll()
+        adaptiveFallbackLastAppliedTime.removeAll()
         startupPacketPendingLock.withLock {
             startupPacketPendingStorage.removeAll()
         }

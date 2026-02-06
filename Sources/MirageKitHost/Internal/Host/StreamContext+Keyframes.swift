@@ -83,7 +83,7 @@ extension StreamContext {
     func forceKeyframeAfterCaptureRestart() {
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
-        noteLossEvent(reason: "Capture restart")
+        noteLossEvent(reason: "Capture restart", enablePFrameFEC: true)
         let queued = queueKeyframe(
             reason: "Fallback keyframe",
             checkInFlight: false,
@@ -147,6 +147,7 @@ extension StreamContext {
     }
 
     func shouldQueueScheduledKeyframe(queueBytes: Int) -> Bool {
+        guard !recoveryOnlyKeyframes else { return false }
         guard shouldEncodeFrames else { return false }
         guard !isResizing else { return false }
         guard lastKeyframeTime > 0 else { return false }
@@ -174,31 +175,74 @@ extension StreamContext {
         if dynamicFrameFlags.contains(.discontinuity) { dynamicFrameFlags.remove(.discontinuity) }
     }
 
-    func noteLossEvent(reason: String) {
+    func noteLossEvent(reason: String, enablePFrameFEC: Bool = false) {
         let now = CFAbsoluteTimeGetCurrent()
         let deadline = now + lossModeHold
         if deadline > lossModeDeadline { lossModeDeadline = deadline }
-        MirageLogger.stream("Loss mode extended to \(Int((lossModeDeadline - now) * 1000))ms (\(reason))")
+        if enablePFrameFEC, deadline > lossModePFrameFECDeadline { lossModePFrameFECDeadline = deadline }
+        let pFrameFECRemainderMs = Int(max(0, lossModePFrameFECDeadline - now) * 1000)
+        let pFrameFECState = pFrameFECRemainderMs > 0 ? "on(\(pFrameFECRemainderMs)ms)" : "off"
+        MirageLogger
+            .stream(
+                "Loss mode extended to \(Int((lossModeDeadline - now) * 1000))ms, pFrameFEC=\(pFrameFECState) (\(reason))"
+            )
     }
 
     nonisolated func isLossModeActive(now: CFAbsoluteTime) -> Bool {
         now < lossModeDeadline
     }
 
+    nonisolated func isPFrameFECActive(now: CFAbsoluteTime) -> Bool {
+        now < lossModePFrameFECDeadline
+    }
+
+    nonisolated func resolvedFECBlockSize(isKeyframe: Bool, now: CFAbsoluteTime) -> Int {
+        guard isLossModeActive(now: now) else { return 0 }
+        if isKeyframe { return 8 }
+        return isPFrameFECActive(now: now) ? 16 : 0
+    }
+
+    private func resetRecoveryWindowIfNeeded(now: CFAbsoluteTime) {
+        if recoveryWindowStart == 0 || now - recoveryWindowStart > softRecoveryWindow {
+            recoveryWindowStart = now
+            recoveryRequestCount = 0
+        }
+    }
+
     /// Request a keyframe from the encoder.
     func requestKeyframe() async {
-        if queueKeyframe(
-            reason: "Keyframe request",
+        let now = CFAbsoluteTimeGetCurrent()
+        resetRecoveryWindowIfNeeded(now: now)
+
+        let nextCount = recoveryRequestCount + 1
+        let useHardRecovery = nextCount >= hardRecoveryThreshold
+        let reason = useHardRecovery ? "Keyframe request (hard)" : "Keyframe request (soft)"
+
+        let queued = queueKeyframe(
+            reason: reason,
             checkInFlight: true,
-            requiresFlush: true,
-            requiresReset: true,
-            advanceEpochOnReset: true,
+            requiresFlush: useHardRecovery,
+            requiresReset: useHardRecovery,
+            advanceEpochOnReset: useHardRecovery,
             urgent: true
-        ) {
-            noteLossEvent(reason: "Keyframe request")
-            markKeyframeRequestIssued()
-            scheduleProcessingIfNeeded()
+        )
+        guard queued else { return }
+
+        recoveryRequestCount = nextCount
+        if useHardRecovery {
+            hardRecoveryCount += 1
+            noteLossEvent(reason: reason, enablePFrameFEC: true)
+        } else {
+            softRecoveryCount += 1
+            noteLossEvent(reason: reason)
         }
+        markKeyframeRequestIssued()
+        scheduleProcessingIfNeeded()
+        MirageLogger
+            .stream(
+                "Recovery request=\(recoveryRequestCount) window=\(Int(softRecoveryWindow))s " +
+                    "soft=\(softRecoveryCount) hard=\(hardRecoveryCount)"
+            )
     }
 
     /// Force an immediate keyframe by flushing the encoder pipeline.
@@ -215,7 +259,7 @@ extension StreamContext {
 
     func keyframeQuality(for queueBytes: Int) -> Float {
         _ = queueBytes
-        return min(activeQuality, encoderConfig.keyframeQuality)
+        return min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
     }
 }
 #endif

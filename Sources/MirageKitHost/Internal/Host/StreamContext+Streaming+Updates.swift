@@ -14,6 +14,75 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
+    func updateEncoderSettings(
+        pixelFormat: MiragePixelFormat?,
+        colorSpace: MirageColorSpace?,
+        bitrate: Int?
+    ) async throws {
+        guard isRunning else { return }
+
+        var updatedConfig = encoderConfig.withOverrides(
+            pixelFormat: pixelFormat,
+            colorSpace: colorSpace,
+            bitrate: bitrate
+        )
+        if let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            bitrate: updatedConfig.bitrate
+        ) {
+            updatedConfig.bitrate = normalizedBitrate
+        }
+
+        guard updatedConfig.pixelFormat != encoderConfig.pixelFormat ||
+            updatedConfig.colorSpace != encoderConfig.colorSpace ||
+            updatedConfig.bitrate != encoderConfig.bitrate else {
+            return
+        }
+
+        isResizing = true
+        defer { isResizing = false }
+
+        currentContentRect = .zero
+
+        dimensionToken &+= 1
+        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
+        await packetSender?.bumpGeneration(reason: "encoder settings update")
+        resetPipelineStateForReconfiguration(reason: "encoder settings update")
+
+        encoderConfig = updatedConfig
+
+        await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
+        if let captureEngine { try await captureEngine.updateConfiguration(encoderConfig) }
+        if let encoder {
+            try await encoder.updateConfiguration(encoderConfig)
+            let resolvedPixelFormat = await encoder.getActivePixelFormat()
+            activePixelFormat = resolvedPixelFormat
+            encoderConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
+        }
+        updateQueueLimits()
+        if currentEncodedSize != .zero {
+            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Encoder settings update")
+        }
+
+        if queueKeyframe(
+            reason: "Encoder settings update",
+            checkInFlight: false,
+            requiresFlush: true,
+            requiresReset: true,
+            urgent: true
+        ) {
+            noteLossEvent(reason: "Encoder settings update", enablePFrameFEC: true)
+            markKeyframeRequestIssued()
+            scheduleProcessingIfNeeded()
+        }
+
+        let bitrateText = encoderConfig.bitrate.map(String.init) ?? "auto"
+        MirageLogger
+            .stream(
+                "Encoder settings update applied: format=\(encoderConfig.pixelFormat.displayName), " +
+                    "color=\(encoderConfig.colorSpace.displayName), bitrate=\(bitrateText)"
+            )
+    }
+
     func updateFrameRate(_ fps: Int) async throws {
         guard isRunning, let captureEngine else { return }
         let clamped = max(1, fps)
