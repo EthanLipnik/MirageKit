@@ -319,6 +319,20 @@ public struct MirageStreamContentView: View {
             guard preferredDisplaySize.width > 0, preferredDisplaySize.height > 0 else { return }
             latestDrawableDisplaySize = preferredDisplaySize
 
+            let acknowledgedPixelSize = currentDesktopAcknowledgedPixelSize()
+            switch desktopResizeRequestDecision(
+                targetDisplaySize: preferredDisplaySize,
+                acknowledgedPixelSize: acknowledgedPixelSize,
+                mismatchThresholdPoints: desktopResizeConvergenceTolerance
+            ) {
+            case .skipNoOp:
+                lastSentDisplayResolution = preferredDisplaySize
+                if awaitingDesktopResizeAck { finishDesktopResizeAwaitingAck() }
+                return
+            case .send:
+                break
+            }
+
             displayResolutionTask?.cancel()
             displayResolutionTask = Task { @MainActor in
                 do {
@@ -411,6 +425,22 @@ public struct MirageStreamContentView: View {
         case .waitForTimeout:
             MirageLogger.client("Desktop resize ack mismatch persisted after correction for stream \(session.streamID)")
         }
+    }
+
+    private func currentDesktopAcknowledgedPixelSize() -> CGSize {
+        if let desktopResolution = clientService.desktopStreamResolution,
+           desktopResolution.width > 0,
+           desktopResolution.height > 0 {
+            return desktopResolution
+        }
+
+        if let minimumSize = sessionStore.sessionMinSizes[session.id],
+           minimumSize.width > 0,
+           minimumSize.height > 0 {
+            return minimumSize
+        }
+
+        return .zero
     }
 
     private func scheduleStreamScaleUpdate(for viewSize: CGSize) {
