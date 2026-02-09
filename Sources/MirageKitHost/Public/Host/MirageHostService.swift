@@ -147,6 +147,9 @@ public final class MirageHostService {
     var desktopVirtualDisplayID: CGDirectDisplayID?
     var desktopUsesVirtualDisplay = false
     var desktopStreamMode: MirageDesktopStreamMode = .mirrored
+    var pendingDesktopResizeResolution: CGSize?
+    var desktopResizeInFlight: Bool = false
+    var desktopResizeRequestCounter: UInt64 = 0
 
     /// Physical displays that were mirrored during desktop streaming (for restoration)
     var mirroredPhysicalDisplayIDs: Set<CGDirectDisplayID> = []

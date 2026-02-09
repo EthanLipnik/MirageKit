@@ -30,10 +30,18 @@ public final class MirageStreamViewCoordinator {
     }
 
     func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
-        onDrawableMetricsChanged?(metrics)
+        let callback = UnsafeDrawableMetricsCallback(callback: onDrawableMetricsChanged)
+        Task { @MainActor in
+            await Task.yield()
+            callback.callback?(metrics)
+        }
     }
 
     func handleBecomeActive() {
         onBecomeActive?()
     }
+}
+
+private struct UnsafeDrawableMetricsCallback: @unchecked Sendable {
+    let callback: ((MirageDrawableMetrics) -> Void)?
 }

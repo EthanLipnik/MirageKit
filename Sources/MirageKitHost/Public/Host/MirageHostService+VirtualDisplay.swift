@@ -268,103 +268,139 @@ extension MirageHostService {
         try? await clientContext.send(.streamStarted, content: message)
     }
 
+    func resetDesktopResizeTransactionState() {
+        pendingDesktopResizeResolution = nil
+        desktopResizeInFlight = false
+    }
+
+    private func enqueueDesktopResolutionChange(streamID: StreamID, logicalResolution: CGSize) async {
+        guard streamID == desktopStreamID else { return }
+
+        pendingDesktopResizeResolution = logicalResolution
+        desktopResizeRequestCounter &+= 1
+        let requestNumber = desktopResizeRequestCounter
+        MirageLogger
+            .host(
+                "Queued desktop resize request #\(requestNumber): " +
+                    "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts"
+            )
+
+        guard !desktopResizeInFlight else { return }
+        desktopResizeInFlight = true
+        defer { desktopResizeInFlight = false }
+
+        while let pendingResolution = pendingDesktopResizeResolution {
+            pendingDesktopResizeResolution = nil
+            let latestRequestNumber = desktopResizeRequestCounter
+            await applyDesktopResolutionChange(
+                streamID: streamID,
+                logicalResolution: pendingResolution,
+                requestNumber: latestRequestNumber
+            )
+
+            guard desktopStreamID == streamID, desktopStreamContext != nil else {
+                pendingDesktopResizeResolution = nil
+                return
+            }
+        }
+    }
+
+    private func applyDesktopResolutionChange(
+        streamID: StreamID,
+        logicalResolution: CGSize,
+        requestNumber: UInt64
+    )
+    async {
+        guard streamID == desktopStreamID, let desktopContext = desktopStreamContext else { return }
+
+        do {
+            let pixelResolution = virtualDisplayPixelResolution(
+                for: logicalResolution,
+                client: desktopStreamClientContext?.client
+            )
+            let targetFrameRate = await desktopContext.getTargetFrameRate()
+            let streamRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: targetFrameRate)
+
+            if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
+                let currentResolution = snapshot.resolution
+                let currentRefresh = Int(snapshot.refreshRate.rounded())
+                if currentResolution == pixelResolution, currentRefresh == streamRefreshRate {
+                    MirageLogger
+                        .host(
+                            "Desktop stream resize skipped (already " +
+                                "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
+                                "\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px @\(streamRefreshRate)Hz)"
+                        )
+                    return
+                }
+            }
+
+            MirageLogger
+                .host(
+                    "Desktop stream resize requested (#\(requestNumber)): " +
+                        "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
+                        "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
+                )
+
+            try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+                for: .desktopStream,
+                newResolution: pixelResolution,
+                refreshRate: streamRefreshRate
+            )
+
+            guard streamID == desktopStreamID else { return }
+
+            if let displayID = await SharedVirtualDisplayManager.shared.getDisplayID() {
+                if desktopStreamMode == .mirrored {
+                    await setupDisplayMirroring(targetDisplayID: displayID)
+                } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                    await disableDisplayMirroring(displayID: displayID)
+                }
+            }
+
+            let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+            guard streamID == desktopStreamID, let latestDesktopContext = desktopStreamContext else { return }
+            try await latestDesktopContext.updateCaptureDisplay(captureDisplay, resolution: pixelResolution)
+
+            let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
+            let inputBounds = resolvedDesktopInputBounds(
+                physicalBounds: primaryBounds,
+                virtualResolution: pixelResolution
+            )
+            inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+            MirageLogger
+                .host(
+                    "Desktop stream resized to " +
+                        "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
+                        "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px), input bounds: \(inputBounds)"
+                )
+
+            if let clientContext = desktopStreamClientContext {
+                let dimensionToken = await latestDesktopContext.getDimensionToken()
+                let encodedDimensions = await latestDesktopContext.getEncodedDimensions()
+                let updatedTargetFrameRate = await latestDesktopContext.getTargetFrameRate()
+                let codec = await latestDesktopContext.getCodec()
+                let message = DesktopStreamStartedMessage(
+                    streamID: streamID,
+                    width: encodedDimensions.width,
+                    height: encodedDimensions.height,
+                    frameRate: updatedTargetFrameRate,
+                    codec: codec,
+                    displayCount: 1,
+                    dimensionToken: dimensionToken
+                )
+                try? await clientContext.send(.desktopStreamStarted, content: message)
+                MirageLogger.host("Sent desktop resize completion for stream \(streamID) (request #\(requestNumber))")
+            }
+        } catch {
+            MirageLogger.error(.host, "Failed to resize desktop stream: \(error)")
+        }
+    }
+
     /// Handle display resolution change from client
     func handleDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async {
-        // Handle desktop stream resize differently from window streams
-        // Desktop streaming needs to resize the entire virtual display and update capture
-        if streamID == desktopStreamID, let desktopContext = desktopStreamContext {
-            do {
-                let logicalResolution = newResolution
-                let pixelResolution = virtualDisplayPixelResolution(
-                    for: logicalResolution,
-                    client: desktopStreamClientContext?.client
-                )
-                let targetFrameRate = await desktopContext.getTargetFrameRate()
-                let streamRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: targetFrameRate)
-
-                if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
-                    let currentResolution = snapshot.resolution
-                    let currentRefresh = Int(snapshot.refreshRate.rounded())
-                    if currentResolution == pixelResolution, currentRefresh == streamRefreshRate {
-                        MirageLogger
-                            .host(
-                                "Desktop stream resize skipped (already " +
-                                    "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
-                                    "\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px @\(streamRefreshRate)Hz)"
-                            )
-                        return
-                    }
-                }
-
-                MirageLogger
-                    .host(
-                        "Desktop stream resize requested: " +
-                            "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
-                            "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
-                    )
-
-                // 1. Update the virtual display resolution in place (no recreate, no displayID change)
-                //    This uses applySettings: to change the display mode without destroying it
-                try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
-                    for: .desktopStream,
-                    newResolution: pixelResolution,
-                    refreshRate: streamRefreshRate
-                )
-
-                // Re-apply mirroring after mode changes (display updates can drop mirror state).
-                if let displayID = await SharedVirtualDisplayManager.shared.getDisplayID() {
-                    if desktopStreamMode == .mirrored {
-                        await setupDisplayMirroring(targetDisplayID: displayID)
-                    } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
-                        await disableDisplayMirroring(displayID: displayID)
-                    }
-                }
-
-                // 2. Update the capture/encoder dimensions to match new resolution
-                //    Since displayID doesn't change, we just need to update the stream config
-                try await desktopContext.updateResolution(
-                    width: Int(pixelResolution.width),
-                    height: Int(pixelResolution.height)
-                )
-
-                // 3. Update input cache for mirrored content bounds on the physical display.
-                let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
-                let inputBounds = resolvedDesktopInputBounds(
-                    physicalBounds: primaryBounds,
-                    virtualResolution: pixelResolution
-                )
-                inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
-                MirageLogger
-                    .host(
-                        "Desktop stream resized to " +
-                            "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
-                            "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px), input bounds: \(inputBounds)"
-                    )
-
-                // 4. Send desktopStreamStarted to notify client that resize is complete
-                //    This triggers onStreamMinimumSizeUpdate which clears the resize blur
-                if let clientContext = desktopStreamClientContext {
-                    // Get updated dimension token after resize
-                    let dimensionToken = await desktopStreamContext?.getDimensionToken() ?? 0
-
-                    let encodedDimensions = await desktopStreamContext?.getEncodedDimensions() ?? (width: 0, height: 0)
-                    let targetFrameRate = await desktopStreamContext?.getTargetFrameRate() ?? 120
-                    let codec = await desktopStreamContext?.getCodec() ?? encoderConfig.codec
-                    let message = DesktopStreamStartedMessage(
-                        streamID: streamID,
-                        width: encodedDimensions.0,
-                        height: encodedDimensions.1,
-                        frameRate: targetFrameRate,
-                        codec: codec,
-                        displayCount: 1,
-                        dimensionToken: dimensionToken
-                    )
-                    try? await clientContext.send(.desktopStreamStarted, content: message)
-                    MirageLogger.host("Sent desktop resize completion for stream \(streamID)")
-                }
-            } catch {
-                MirageLogger.error(.host, "Failed to resize desktop stream: \(error)")
-            }
+        if streamID == desktopStreamID {
+            await enqueueDesktopResolutionChange(streamID: streamID, logicalResolution: newResolution)
             return
         }
 

@@ -73,6 +73,7 @@ extension MirageHostService {
         // Clear any stuck modifiers from previous streams
         inputController.clearAllModifiers()
         desktopStreamMode = mode
+        resetDesktopResizeTransactionState()
 
         // Configure encoder with optional overrides
         var config = encoderConfig
@@ -280,6 +281,7 @@ extension MirageHostService {
         guard let streamID = desktopStreamID else { return }
 
         MirageLogger.host("Stopping desktop stream: streamID=\(streamID), reason=\(reason)")
+        resetDesktopResizeTransactionState()
 
         let wasUsingVirtualDisplay = desktopUsesVirtualDisplay
         let borrowedByLoginDisplay = loginDisplayIsBorrowedStream && loginDisplayStreamID == streamID
@@ -443,6 +445,17 @@ extension MirageHostService {
 
         guard !displaysToMirror.isEmpty else {
             MirageLogger.host("No displays found to mirror")
+            return
+        }
+
+        let mirroredDisplayIDs = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
+        if mirroredDisplayIDs.count == displaysToMirror.count {
+            if desktopMirroringSnapshot.isEmpty {
+                desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
+                MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
+            }
+            mirroredPhysicalDisplayIDs = Set(displaysToMirror)
+            MirageLogger.host("Display mirroring already enabled for \(displaysToMirror.count) displays")
             return
         }
 

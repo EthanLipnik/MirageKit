@@ -68,6 +68,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     // Menu tracking/alerts can pause window capture for several seconds.
     // Use a longer stall threshold for window-based capture to avoid restart loops.
     private let windowStallThreshold: CFAbsoluteTime = 8.0
+    private let displayStallThreshold: CFAbsoluteTime = 1.5
 
     private let poolMinimumBufferCount: Int
     private let frameCopier: CaptureFrameCopier?
@@ -173,6 +174,17 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         MirageLogger.capture("Reset fallback state for resize")
     }
 
+    static func resolvedStallLimit(
+        windowID: CGWindowID,
+        configuredStallLimit: CFAbsoluteTime,
+        displayStallThreshold: CFAbsoluteTime = 1.5,
+        windowStallThreshold: CFAbsoluteTime = 8.0
+    )
+    -> CFAbsoluteTime {
+        if windowID == 0 { return displayStallThreshold }
+        return max(configuredStallLimit, windowStallThreshold)
+    }
+
     func prepareBufferPool(width: Int, height: Int, pixelFormat: OSType) {
         guard let frameCopier else { return }
         let success = frameCopier.preparePool(
@@ -197,7 +209,12 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let (gapThreshold, configuredStallLimit) = expectationLock.withLock {
             (frameGapThreshold, stallThreshold)
         }
-        let stallLimit = max(configuredStallLimit, windowStallThreshold)
+        let stallLimit = Self.resolvedStallLimit(
+            windowID: windowID,
+            configuredStallLimit: configuredStallLimit,
+            displayStallThreshold: displayStallThreshold,
+            windowStallThreshold: windowStallThreshold
+        )
         let recentActivityWindow = max(2.0, min(6.0, stallLimit * 2.0))
         let anyGap = now - lastDeliveredFrameTime
         let completeGap = lastCompleteFrameTime > 0 ? now - lastCompleteFrameTime : anyGap

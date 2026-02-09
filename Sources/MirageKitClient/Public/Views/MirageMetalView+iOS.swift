@@ -268,16 +268,16 @@ public class MirageMetalView: MTKView {
             return
         }
 
-        // Skip micro-changes (< 2% difference or < 20 pixels) to prevent resize spam
+        // Skip micro-changes (< 0.5% difference or < 4 pixels) to prevent resize spam
         // when iPad dock appears/disappears during Stage Manager transitions
         let widthDiff = abs(drawableSize.width - lastReportedDrawableSize.width)
         let heightDiff = abs(drawableSize.height - lastReportedDrawableSize.height)
-        let widthTolerance = lastReportedDrawableSize.width * 0.02
-        let heightTolerance = lastReportedDrawableSize.height * 0.02
+        let widthTolerance = lastReportedDrawableSize.width * 0.005
+        let heightTolerance = lastReportedDrawableSize.height * 0.005
 
-        // Only report if change exceeds 2% OR 20 pixels (whichever is larger)
-        let significantWidthChange = widthDiff > max(widthTolerance, 20)
-        let significantHeightChange = heightDiff > max(heightTolerance, 20)
+        // Only report if change exceeds 0.5% OR 4 pixels (whichever is larger)
+        let significantWidthChange = widthDiff > max(widthTolerance, 4)
+        let significantHeightChange = heightDiff > max(heightTolerance, 4)
 
         // Skip - change is too small
         guard significantWidthChange || significantHeightChange else { return }

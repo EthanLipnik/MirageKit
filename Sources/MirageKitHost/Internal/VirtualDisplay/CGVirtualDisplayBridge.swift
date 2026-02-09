@@ -36,8 +36,9 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     static let mirageProductID: UInt32 = 0xE000
     private static let legacySerialDefaultsPrefix = "MirageVirtualDisplaySerial"
     private static let serialSlotDefaultsPrefix = "MirageVirtualDisplaySerialSlot"
+    private static let descriptorProfileDefaultsPrefix = "MirageVirtualDisplayDescriptorProfile"
     private static let serialSchemeVersionDefaultsKey = "MirageVirtualDisplaySerialSchemeVersion"
-    private static let serialSchemeVersion = 2
+    private static let serialSchemeVersion = 3
     private static let hiDPIDisabledSetting: UInt32 = 0
     private static let hiDPIEnabledSetting: UInt32 = 2
 
@@ -200,24 +201,6 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 hiDPISetting: hiDPIEnabledSetting,
                 label: "logical-hiDPI\(hiDPIEnabledSetting)"
             ),
-            ModeActivationAttempt(
-                modeWidth: logicalWidth,
-                modeHeight: logicalHeight,
-                hiDPISetting: 1,
-                label: "logical-hiDPI1"
-            ),
-            ModeActivationAttempt(
-                modeWidth: pixelWidth,
-                modeHeight: pixelHeight,
-                hiDPISetting: hiDPIEnabledSetting,
-                label: "pixel-hiDPI\(hiDPIEnabledSetting)"
-            ),
-            ModeActivationAttempt(
-                modeWidth: pixelWidth,
-                modeHeight: pixelHeight,
-                hiDPISetting: 1,
-                label: "pixel-hiDPI1"
-            ),
         ]
 
         var deduped: [ModeActivationAttempt] = []
@@ -232,77 +215,89 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     }
 
     private struct DescriptorAttempt {
+        let profile: DescriptorProfile
         let serial: UInt32
         let queue: DispatchQueue
         let label: String
     }
 
-    private static func descriptorAttempts(
-        persistentSerial: UInt32,
-        hiDPI: Bool
-    )
-    -> [DescriptorAttempt] {
-        var attempts: [DescriptorAttempt] = [
-            DescriptorAttempt(
-                serial: persistentSerial,
-                queue: .main,
-                label: "persistent-main-queue"
-            ),
-        ]
-
-        if hiDPI {
-            attempts.append(
-                DescriptorAttempt(
-                    serial: 0,
-                    queue: .global(qos: .userInteractive),
-                    label: "serial0-global-queue"
-                )
-            )
-            attempts.append(
-                DescriptorAttempt(
-                    serial: persistentSerial,
-                    queue: .global(qos: .userInteractive),
-                    label: "persistent-global-queue"
-                )
-            )
-        }
-
-        return attempts
+    private enum DescriptorProfile: String, CaseIterable {
+        case persistentMainQueue = "persistent-main-queue"
+        case persistentGlobalQueue = "persistent-global-queue"
+        case serial0GlobalQueue = "serial0-global-queue"
     }
 
-    private static func forceDisplayModeSelection(
-        displayID: CGDirectDisplayID,
-        targetLogical: CGSize
+    private static func descriptorProfileDefaultsKey(for colorSpace: MirageColorSpace) -> String {
+        "\(descriptorProfileDefaultsPrefix).\(colorSpace.rawValue)"
+    }
+
+    private static func preferredDescriptorProfile(
+        for colorSpace: MirageColorSpace,
+        hiDPI: Bool
     )
-    -> Bool {
-        guard let allModes = CGDisplayCopyAllDisplayModes(displayID, nil) as? [CGDisplayMode], !allModes.isEmpty else {
-            MirageLogger.error(.host, "Failed to enumerate display modes for display \(displayID)")
-            return false
+    -> DescriptorProfile? {
+        let defaults = UserDefaults.standard
+        guard let raw = defaults.string(forKey: descriptorProfileDefaultsKey(for: colorSpace)),
+              let profile = DescriptorProfile(rawValue: raw) else {
+            return nil
         }
 
-        let tolerance: CGFloat = 1.0
-        let preferredMode = allModes.first { mode in
-            abs(CGFloat(mode.width) - targetLogical.width) <= tolerance &&
-                abs(CGFloat(mode.height) - targetLogical.height) <= tolerance
+        if hiDPI {
+            return profile == .persistentGlobalQueue || profile == .serial0GlobalQueue ? profile : nil
         }
 
-        guard let mode = preferredMode else {
-            MirageLogger.host(
-                "No matching display mode for display \(displayID) at logical \(targetLogical); available count=\(allModes.count)"
-            )
-            return false
+        return profile == .persistentMainQueue ? profile : nil
+    }
+
+    private static func storePreferredDescriptorProfile(
+        _ profile: DescriptorProfile,
+        for colorSpace: MirageColorSpace
+    ) {
+        UserDefaults.standard.set(profile.rawValue, forKey: descriptorProfileDefaultsKey(for: colorSpace))
+    }
+
+    private static func descriptorAttempts(
+        persistentSerial: UInt32,
+        hiDPI: Bool,
+        colorSpace: MirageColorSpace
+    )
+    -> [DescriptorAttempt] {
+        let defaults: [DescriptorProfile] = hiDPI ? [.persistentGlobalQueue, .serial0GlobalQueue] : [.persistentMainQueue]
+        var orderedProfiles: [DescriptorProfile] = []
+
+        if let preferred = preferredDescriptorProfile(for: colorSpace, hiDPI: hiDPI) {
+            orderedProfiles.append(preferred)
         }
 
-        let result = CGDisplaySetDisplayMode(displayID, mode, nil)
-        if result != .success {
-            MirageLogger.error(.host, "CGDisplaySetDisplayMode failed for display \(displayID): \(result.rawValue)")
-            return false
+        for profile in defaults where !orderedProfiles.contains(profile) {
+            orderedProfiles.append(profile)
         }
 
-        MirageLogger.host(
-            "Forced display mode selection for display \(displayID) to \(mode.width)x\(mode.height) (pixel=\(mode.pixelWidth)x\(mode.pixelHeight))"
-        )
-        return true
+        return orderedProfiles.map { profile in
+            switch profile {
+            case .persistentMainQueue:
+                DescriptorAttempt(
+                    profile: profile,
+                    serial: persistentSerial,
+                    queue: .main,
+                    label: profile.rawValue
+                )
+            case .persistentGlobalQueue:
+                DescriptorAttempt(
+                    profile: profile,
+                    serial: persistentSerial,
+                    queue: .global(qos: .userInteractive),
+                    label: profile.rawValue
+                )
+            case .serial0GlobalQueue:
+                DescriptorAttempt(
+                    profile: profile,
+                    serial: 0,
+                    queue: .global(qos: .userInteractive),
+                    label: profile.rawValue
+                )
+            }
+        }
     }
 
     private static func activateAndValidateMode(
@@ -358,20 +353,23 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 MirageLogger.host("Virtual display Retina activation succeeded with attempt \(attempt.label)")
                 return true
             }
-
-            if forceDisplayModeSelection(displayID: displayID, targetLogical: requestedLogical),
-               validateModeActivation(
-                   displayID: displayID,
-                   requestedLogical: requestedLogical,
-                   requestedPixel: requestedPixel,
-                   hiDPISetting: attempt.hiDPISetting,
-                   serial: serial
-               ) {
-                MirageLogger.host("Virtual display Retina activation succeeded after forced mode select (\(attempt.label))")
-                return true
-            }
         }
 
+        return false
+    }
+
+    private static func teardownFailedDisplay(displayID: CGDirectDisplayID, profileLabel: String) -> Bool {
+        let deadline = Date().addingTimeInterval(1.0)
+        while Date() < deadline {
+            if !isDisplayOnline(displayID) {
+                configuredDisplayOrigins.removeValue(forKey: displayID)
+                return true
+            }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+
+        configuredDisplayOrigins.removeValue(forKey: displayID)
+        MirageLogger.error(.host, "Failed to tear down virtual display \(displayID) after profile \(profileLabel) failure")
         return false
     }
 
@@ -400,31 +398,35 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         serial: UInt32?
     )
     -> Bool {
-        guard let observed = currentDisplayModeSizes(displayID) else {
-            MirageLogger.error(
-                .host,
-                modeValidationLogLine(
-                    displayID: displayID,
-                    serial: serial,
-                    hiDPISetting: hiDPISetting,
-                    requestedLogical: requestedLogical,
-                    requestedPixel: requestedPixel,
-                    observed: nil
-                )
-            )
-            return false
-        }
+        let deadline = Date().addingTimeInterval(0.8)
+        var lastObserved: DisplayModeSizes?
 
-        let logicalMatches = abs(observed.logical.width - requestedLogical.width) <= 1 &&
-            abs(observed.logical.height - requestedLogical.height) <= 1
-        let pixelMatches = abs(observed.pixel.width - requestedPixel.width) <= 1 &&
-            abs(observed.pixel.height - requestedPixel.height) <= 1
+        while Date() < deadline {
+            if let observed = currentDisplayModeSizes(displayID),
+               observed.logical.width > 0,
+               observed.logical.height > 0,
+               observed.pixel.width > 0,
+               observed.pixel.height > 0 {
+                lastObserved = observed
 
-        if logicalMatches, pixelMatches {
-            let scale = observed.logical.width > 0 ? observed.pixel.width / observed.logical.width : 0
-            let scaleText = Double(scale).formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.host("Virtual display mode active: logical=\(observed.logical), pixel=\(observed.pixel), scale=\(scaleText)x")
-            return true
+                let logicalMatches = abs(observed.logical.width - requestedLogical.width) <= 1 &&
+                    abs(observed.logical.height - requestedLogical.height) <= 1
+                let pixelMatches = abs(observed.pixel.width - requestedPixel.width) <= 1 &&
+                    abs(observed.pixel.height - requestedPixel.height) <= 1
+
+                if logicalMatches, pixelMatches {
+                    let scale = observed.logical.width > 0 ? observed.pixel.width / observed.logical.width : 0
+                    let scaleText = Double(scale).formatted(.number.precision(.fractionLength(2)))
+                    MirageLogger.host(
+                        "Virtual display mode active: logical=\(observed.logical), pixel=\(observed.pixel), scale=\(scaleText)x"
+                    )
+                    return true
+                }
+            } else {
+                lastObserved = nil
+            }
+
+            Thread.sleep(forTimeInterval: 0.05)
         }
 
         MirageLogger.error(
@@ -435,7 +437,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 hiDPISetting: hiDPISetting,
                 requestedLogical: requestedLogical,
                 requestedPixel: requestedPixel,
-                observed: observed
+                observed: lastObserved
             )
         )
         return false
@@ -481,93 +483,122 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         MirageLogger.host("Original main display ID: \(originalMainDisplayID)")
 
         let persistentSerial = persistentSerialNumber(for: colorSpace)
-        let descriptorProfiles = descriptorAttempts(persistentSerial: persistentSerial, hiDPI: hiDPI)
+        let descriptorProfiles = descriptorAttempts(
+            persistentSerial: persistentSerial,
+            hiDPI: hiDPI,
+            colorSpace: colorSpace
+        )
 
         for profile in descriptorProfiles {
-            let descriptor = descriptorClass.init()
-            descriptor.setValue(name, forKey: "name")
-            descriptor.setValue(mirageVendorID, forKey: "vendorID")
-            descriptor.setValue(mirageProductID, forKey: "productID")
-            descriptor.setValue(profile.serial, forKey: "serialNum")
-            descriptor.setValue(UInt32(width), forKey: "maxPixelsWide")
-            descriptor.setValue(UInt32(height), forKey: "maxPixelsHigh")
+            var failedDisplayID: CGDirectDisplayID?
+            var creationResult: VirtualDisplayContext?
 
-            let widthMM = 25.4 * Double(width) / ppi
-            let heightMM = 25.4 * Double(height) / ppi
-            descriptor.setValue(CGSize(width: widthMM, height: heightMM), forKey: "sizeInMillimeters")
+            autoreleasepool {
+                let descriptor = descriptorClass.init()
+                descriptor.setValue(name, forKey: "name")
+                descriptor.setValue(mirageVendorID, forKey: "vendorID")
+                descriptor.setValue(mirageProductID, forKey: "productID")
+                descriptor.setValue(profile.serial, forKey: "serialNum")
+                descriptor.setValue(UInt32(width), forKey: "maxPixelsWide")
+                descriptor.setValue(UInt32(height), forKey: "maxPixelsHigh")
 
-            switch colorSpace {
-            case .displayP3:
-                descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
-                descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
-                descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
-                descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
-            case .sRGB:
-                descriptor.setValue(SRGBPrimaries.red, forKey: "redPrimary")
-                descriptor.setValue(SRGBPrimaries.green, forKey: "greenPrimary")
-                descriptor.setValue(SRGBPrimaries.blue, forKey: "bluePrimary")
-                descriptor.setValue(SRGBPrimaries.whitePoint, forKey: "whitePoint")
+                let widthMM = 25.4 * Double(width) / ppi
+                let heightMM = 25.4 * Double(height) / ppi
+                descriptor.setValue(CGSize(width: widthMM, height: heightMM), forKey: "sizeInMillimeters")
+
+                switch colorSpace {
+                case .displayP3:
+                    descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
+                    descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
+                    descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
+                    descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
+                case .sRGB:
+                    descriptor.setValue(SRGBPrimaries.red, forKey: "redPrimary")
+                    descriptor.setValue(SRGBPrimaries.green, forKey: "greenPrimary")
+                    descriptor.setValue(SRGBPrimaries.blue, forKey: "bluePrimary")
+                    descriptor.setValue(SRGBPrimaries.whitePoint, forKey: "whitePoint")
+                }
+
+                descriptor.setValue(profile.queue, forKey: "queue")
+
+                MirageLogger.host(
+                    "Creating virtual display '\(name)' at \(width)x\(height) pixels, hiDPI=\(hiDPI), color=\(colorSpace.displayName), profile=\(profile.label), serial=\(profile.serial)"
+                )
+
+                let allocSelector = NSSelectorFromString("alloc")
+                guard let allocatedDisplay = (displayClass as AnyObject).perform(allocSelector)?.takeUnretainedValue() else {
+                    MirageLogger.error(.host, "Failed to allocate CGVirtualDisplay")
+                    return
+                }
+
+                let initSelector = NSSelectorFromString("initWithDescriptor:")
+                guard (allocatedDisplay as AnyObject).responds(to: initSelector) else {
+                    MirageLogger.error(.host, "CGVirtualDisplay doesn't respond to initWithDescriptor:")
+                    return
+                }
+
+                guard let display = (allocatedDisplay as AnyObject).perform(initSelector, with: descriptor)?
+                    .takeRetainedValue() else {
+                    MirageLogger.error(.host, "Failed to create CGVirtualDisplay for profile \(profile.label)")
+                    return
+                }
+
+                let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID
+                failedDisplayID = displayID
+
+                guard activateAndValidateMode(
+                    display: display as AnyObject,
+                    settingsClass: settingsClass,
+                    modeClass: modeClass,
+                    pixelWidth: width,
+                    pixelHeight: height,
+                    refreshRate: refreshRate,
+                    hiDPI: hiDPI,
+                    serial: profile.serial
+                ) else {
+                    MirageLogger.error(.host, "Virtual display Retina activation failed for profile \(profile.label)")
+                    let invalidateSelector = NSSelectorFromString("invalidate")
+                    if (display as AnyObject).responds(to: invalidateSelector) {
+                        _ = (display as AnyObject).perform(invalidateSelector)
+                    }
+                    return
+                }
+
+                guard let displayID else {
+                    MirageLogger.error(.host, "Failed to get displayID from CGVirtualDisplay for profile \(profile.label)")
+                    let invalidateSelector = NSSelectorFromString("invalidate")
+                    if (display as AnyObject).responds(to: invalidateSelector) {
+                        _ = (display as AnyObject).perform(invalidateSelector)
+                    }
+                    return
+                }
+
+                MirageLogger.host("Created virtual display with ID: \(displayID)")
+
+                configureDisplaySeparation(
+                    virtualDisplayID: displayID,
+                    originalMainDisplayID: originalMainDisplayID,
+                    requestedWidth: width,
+                    requestedHeight: height
+                )
+
+                creationResult = VirtualDisplayContext(
+                    display: display as AnyObject,
+                    displayID: displayID,
+                    resolution: CGSize(width: width, height: height),
+                    refreshRate: refreshRate,
+                    colorSpace: colorSpace
+                )
             }
 
-            descriptor.setValue(profile.queue, forKey: "queue")
-
-            MirageLogger.host(
-                "Creating virtual display '\(name)' at \(width)x\(height) pixels, hiDPI=\(hiDPI), color=\(colorSpace.displayName), profile=\(profile.label), serial=\(profile.serial)"
-            )
-
-            let allocSelector = NSSelectorFromString("alloc")
-            guard let allocatedDisplay = (displayClass as AnyObject).perform(allocSelector)?.takeUnretainedValue() else {
-                MirageLogger.error(.host, "Failed to allocate CGVirtualDisplay")
-                continue
+            if let creationResult {
+                storePreferredDescriptorProfile(profile.profile, for: colorSpace)
+                return creationResult
             }
 
-            let initSelector = NSSelectorFromString("initWithDescriptor:")
-            guard (allocatedDisplay as AnyObject).responds(to: initSelector) else {
-                MirageLogger.error(.host, "CGVirtualDisplay doesn't respond to initWithDescriptor:")
-                continue
+            if let failedDisplayID, !teardownFailedDisplay(displayID: failedDisplayID, profileLabel: profile.label) {
+                return nil
             }
-
-            guard let display = (allocatedDisplay as AnyObject).perform(initSelector, with: descriptor)?
-                .takeRetainedValue() else {
-                MirageLogger.error(.host, "Failed to create CGVirtualDisplay for profile \(profile.label)")
-                continue
-            }
-
-            guard activateAndValidateMode(
-                display: display as AnyObject,
-                settingsClass: settingsClass,
-                modeClass: modeClass,
-                pixelWidth: width,
-                pixelHeight: height,
-                refreshRate: refreshRate,
-                hiDPI: hiDPI,
-                serial: profile.serial
-            ) else {
-                MirageLogger.error(.host, "Virtual display Retina activation failed for profile \(profile.label)")
-                continue
-            }
-
-            guard let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID else {
-                MirageLogger.error(.host, "Failed to get displayID from CGVirtualDisplay for profile \(profile.label)")
-                continue
-            }
-
-            MirageLogger.host("Created virtual display with ID: \(displayID)")
-
-            configureDisplaySeparation(
-                virtualDisplayID: displayID,
-                originalMainDisplayID: originalMainDisplayID,
-                requestedWidth: width,
-                requestedHeight: height
-            )
-
-            return VirtualDisplayContext(
-                display: display as AnyObject,
-                displayID: displayID,
-                resolution: CGSize(width: width, height: height),
-                refreshRate: refreshRate,
-                colorSpace: colorSpace
-            )
         }
 
         MirageLogger.error(.host, "Virtual display failed Retina activation for all descriptor profiles")
@@ -590,13 +621,13 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
 
         for colorSpace in MirageColorSpace.allCases {
             defaults.removeObject(forKey: legacySerialDefaultsKey(for: colorSpace))
-            defaults.removeObject(forKey: serialSlotDefaultsKey(for: colorSpace))
+            defaults.set(SerialSlot.primary.rawValue, forKey: serialSlotDefaultsKey(for: colorSpace))
         }
 
         cachedSerialNumbers.removeAll()
         cachedSerialSlots.removeAll()
         defaults.set(serialSchemeVersion, forKey: serialSchemeVersionDefaultsKey)
-        MirageLogger.host("Initialized bounded virtual display serial strategy")
+        MirageLogger.host("Initialized deterministic virtual display serial strategy")
     }
 
     private static func serialNumber(for colorSpace: MirageColorSpace, slot: SerialSlot) -> UInt32 {
