@@ -50,6 +50,14 @@ public final class MirageHostService {
     /// If the provider returns `.denied`, the connection is rejected immediately.
     public weak var trustProvider: (any MirageTrustProvider)?
 
+    /// Identity manager for signed handshake envelopes.
+    public var identityManager: MirageIdentityManager? = MirageIdentityManager.shared {
+        didSet {
+            let keyID = Self.identityKeyID(for: identityManager)
+            updateAdvertisedIdentityKeyID(keyID)
+        }
+    }
+
     /// Accessibility permission manager for input injection.
     public let permissionManager = MirageAccessibilityPermissionManager()
 
@@ -59,16 +67,31 @@ public final class MirageHostService {
     /// Input controller for injecting remote input.
     public let inputController = MirageHostInputController()
 
+    /// Whether direct remote QUIC control transport is enabled.
+    public var remoteTransportEnabled: Bool = false {
+        didSet {
+            Task { @MainActor [weak self] in
+                await self?.updateRemoteControlListenerState()
+            }
+        }
+    }
+
+    /// Bound local port for the remote QUIC control listener.
+    public internal(set) var remoteControlPort: UInt16?
+
     /// Called when host should resize a window before streaming begins.
     /// The callback receives the window and the target size in points.
     /// This allows the app to resize and center the window via Accessibility API.
     public var onResizeWindowForStream: ((MirageWindow, CGSize) -> Void)?
 
     let advertiser: BonjourAdvertiser
+    var advertisedCapabilities: MirageHostCapabilities
     var udpListener: NWListener?
+    var remoteControlListener: NWListener?
     let encoderConfig: MirageEncoderConfiguration
     let networkConfig: MirageNetworkConfiguration
     var hostID: UUID = .init()
+    let handshakeReplayProtector = MirageReplayProtector()
 
     // Stream management (internal for extension access)
     var nextStreamID: StreamID = 1
@@ -203,6 +226,20 @@ public final class MirageHostService {
     /// Optional override for host lock behavior (defaults to CGSession if nil).
     public var lockHostHandler: (@MainActor () -> Void)?
 
+    /// Local shortcut used to recover from a stuck Lights Out session.
+    public var lightsOutEmergencyShortcut: MirageHostShortcut = .defaultLightsOutRecovery {
+        didSet {
+            lightsOutController.emergencyShortcut = lightsOutEmergencyShortcut
+        }
+    }
+
+    /// Called when the Lights Out emergency shortcut is detected.
+    @ObservationIgnored public var onLightsOutEmergencyShortcut: (@MainActor () async -> Void)? {
+        didSet {
+            lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
+        }
+    }
+
     /// Whether host output stays muted while host audio streaming is active.
     public var muteLocalAudioWhileStreaming: Bool = false {
         didSet {
@@ -258,14 +295,17 @@ public final class MirageHostService {
         networkConfiguration: MirageNetworkConfiguration = .default
     ) {
         let name = hostName ?? Host.current().localizedName ?? "Mac"
+        let identityKeyID = Self.identityKeyID(for: MirageIdentityManager.shared)
         let capabilities = MirageHostCapabilities(
             maxStreams: 4,
             supportsHEVC: true,
             supportsP3ColorSpace: true,
             maxFrameRate: 120,
             protocolVersion: Int(MirageKit.protocolVersion),
-            deviceID: deviceID
+            deviceID: deviceID,
+            identityKeyID: identityKeyID
         )
+        advertisedCapabilities = capabilities
 
         advertiser = BonjourAdvertiser(
             serviceName: name,
@@ -289,8 +329,29 @@ public final class MirageHostService {
                 await self?.refreshLightsOutCaptureExclusions()
             }
         }
+        lightsOutController.emergencyShortcut = lightsOutEmergencyShortcut
+        lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
 
         registerControlMessageHandlers()
+    }
+
+    private static func identityKeyID(for manager: MirageIdentityManager?) -> String? {
+        guard let manager else { return nil }
+        return try? manager.currentIdentity().keyID
+    }
+
+    /// Updates the identity key advertised in Bonjour TXT capabilities.
+    public func updateAdvertisedIdentityKeyID(_ keyID: String?) {
+        advertisedCapabilities = MirageHostCapabilities(
+            maxStreams: advertisedCapabilities.maxStreams,
+            supportsHEVC: advertisedCapabilities.supportsHEVC,
+            supportsP3ColorSpace: advertisedCapabilities.supportsP3ColorSpace,
+            maxFrameRate: advertisedCapabilities.maxFrameRate,
+            protocolVersion: advertisedCapabilities.protocolVersion,
+            deviceID: advertisedCapabilities.deviceID,
+            identityKeyID: keyID
+        )
+        Task { await advertiser.updateCapabilities(advertisedCapabilities) }
     }
 
     /// Resolve input bounds for desktop streaming based on physical display size.
@@ -330,6 +391,10 @@ public final class MirageHostService {
             y: physicalBounds.origin.y + verticalInset
         )
         return CGRect(origin: origin, size: fittedSize)
+    }
+
+    func setRemoteControlPort(_ port: UInt16?) {
+        remoteControlPort = port
     }
 
     /// Resolve the current virtual display bounds for secondary desktop streaming.

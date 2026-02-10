@@ -101,6 +101,9 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
     /// Stable device identifier for self-filtering (advertised via Bonjour TXT record)
     public let deviceID: UUID?
 
+    /// Stable identity key identifier for signed handshake verification.
+    public let identityKeyID: String?
+
     public init(
         maxStreams: Int = 4,
         supportsHEVC: Bool = true,
@@ -108,7 +111,8 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         // supportsHDR: Bool = true,
         maxFrameRate: Int = 120,
         protocolVersion: Int = Int(MirageKit.protocolVersion),
-        deviceID: UUID? = nil
+        deviceID: UUID? = nil,
+        identityKeyID: String? = nil
     ) {
         self.maxStreams = maxStreams
         self.supportsHEVC = supportsHEVC
@@ -117,6 +121,7 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         self.maxFrameRate = maxFrameRate
         self.protocolVersion = protocolVersion
         self.deviceID = deviceID
+        self.identityKeyID = identityKeyID
     }
 
     /// Encode to TXT record data for Bonjour
@@ -132,6 +137,7 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
 
         // Add device ID for self-filtering
         if let deviceID { record["did"] = deviceID.uuidString }
+        if let identityKeyID { record["ikid"] = identityKeyID }
 
         return record
     }
@@ -141,6 +147,7 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         // Parse device ID if present
         var parsedDeviceID: UUID?
         if let didString = txtRecord["did"] { parsedDeviceID = UUID(uuidString: didString) }
+        let parsedIdentityKeyID = txtRecord["ikid"]
 
         return MirageHostCapabilities(
             maxStreams: Int(txtRecord["maxStreams"] ?? "4") ?? 4,
@@ -148,7 +155,8 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
             supportsP3ColorSpace: txtRecord["p3"] == "1",
             // supportsHDR: txtRecord["hdr"] == "1",
             // maxFrameRate and protocolVersion use defaults
-            deviceID: parsedDeviceID
+            deviceID: parsedDeviceID,
+            identityKeyID: parsedIdentityKeyID
         )
     }
 }

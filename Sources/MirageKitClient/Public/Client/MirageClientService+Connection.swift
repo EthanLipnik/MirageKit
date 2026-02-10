@@ -36,56 +36,9 @@ extension MirageClientService {
         #endif
     }
 
-    /// Send hello message with device info to host.
-    private func sendHelloMessage(connection: NWConnection) async {
-        let negotiation = MirageProtocolNegotiation.clientHello(
-            protocolVersion: Int(MirageKit.protocolVersion),
-            supportedFeatures: mirageSupportedFeatures
-        )
-        let hello = HelloMessage(
-            deviceID: deviceID,
-            deviceName: deviceName,
-            deviceType: currentDeviceType,
-            protocolVersion: Int(MirageKit.protocolVersion),
-            capabilities: MirageHostCapabilities(
-                maxStreams: 4,
-                supportsHEVC: true,
-                supportsP3ColorSpace: true,
-                maxFrameRate: 120,
-                protocolVersion: Int(MirageKit.protocolVersion)
-            ),
-            negotiation: negotiation,
-            iCloudUserID: iCloudUserID
-        )
-
-        do {
-            let message = try ControlMessage(type: .hello, content: hello)
-            let data = message.serialize()
-            MirageLogger.client("Sending hello: \(deviceName) (\(currentDeviceType.displayName))")
-
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error { MirageLogger.error(.client, "Failed to send hello: \(error)") } else {
-                    MirageLogger.client("Hello sent successfully")
-                }
-            })
-        } catch {
-            MirageLogger.error(.client, "Failed to create hello message: \(error)")
-        }
-    }
-
-    /// Connect to a discovered host.
-    public func connect(to host: MirageHost) async throws {
-        guard connectionState.canConnect else { throw MirageError.protocolError("Already connected or connecting") }
-
-        MirageLogger.client("Connecting to \(host.name)...")
-        connectionState = .connecting
-        isAwaitingManualApproval = false
-        hasReceivedHelloResponse = false
-        approvalWaitTask?.cancel()
-        connectedHost = host
-
-        do {
-            // Create a direct TCP connection to the Bonjour endpoint.
+    private func controlParameters(for transport: ControlTransport) -> NWParameters {
+        switch transport {
+        case .tcp:
             let parameters = NWParameters.tcp
             parameters.serviceClass = .interactiveVideo
             parameters.includePeerToPeer = networkConfig.enablePeerToPeer
@@ -95,8 +48,115 @@ extension MirageClientService {
                 tcpOptions.enableKeepalive = true
                 tcpOptions.keepaliveInterval = 5
             }
+            return parameters
 
+        case .quic:
+            let options = NWProtocolQUIC.Options(alpn: ["mirage-v2"])
+            let parameters = NWParameters(quic: options)
+            parameters.serviceClass = .interactiveVideo
+            parameters.includePeerToPeer = networkConfig.enablePeerToPeer
+            parameters.allowLocalEndpointReuse = true
+            return parameters
+        }
+    }
+
+    /// Send hello message with device info to host.
+    private func sendHelloMessage(connection: NWConnection) async throws {
+        let negotiation = MirageProtocolNegotiation.clientHello(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            supportedFeatures: mirageSupportedFeatures
+        )
+        let capabilities = MirageHostCapabilities(
+            maxStreams: 4,
+            supportsHEVC: true,
+            supportsP3ColorSpace: true,
+            maxFrameRate: 120,
+            protocolVersion: Int(MirageKit.protocolVersion)
+        )
+
+        do {
+            let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
+            let identity = try resolvedIdentityManager.currentIdentity()
+            let timestampMs = MirageIdentitySigning.currentTimestampMs()
+            let nonce = UUID().uuidString.lowercased()
+            let payload = try MirageIdentitySigning.helloPayload(
+                deviceID: deviceID,
+                deviceName: deviceName,
+                deviceType: currentDeviceType,
+                protocolVersion: Int(MirageKit.protocolVersion),
+                capabilities: capabilities,
+                negotiation: negotiation,
+                iCloudUserID: iCloudUserID,
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: timestampMs,
+                nonce: nonce
+            )
+            let signature = try resolvedIdentityManager.sign(payload)
+            pendingHelloNonce = nonce
+            let hello = HelloMessage(
+                deviceID: deviceID,
+                deviceName: deviceName,
+                deviceType: currentDeviceType,
+                protocolVersion: Int(MirageKit.protocolVersion),
+                capabilities: capabilities,
+                negotiation: negotiation,
+                iCloudUserID: iCloudUserID,
+                identity: MirageIdentityEnvelope(
+                    keyID: identity.keyID,
+                    publicKey: identity.publicKey,
+                    timestampMs: timestampMs,
+                    nonce: nonce,
+                    signature: signature
+                )
+            )
+            let message = try ControlMessage(type: .hello, content: hello)
+            let data = message.serialize()
+            MirageLogger.client("Sending hello: \(deviceName) (\(currentDeviceType.displayName))")
+
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                let continuationBox = ContinuationBox<Void>(continuation)
+                connection.send(content: data, completion: .contentProcessed { error in
+                    if let error {
+                        continuationBox.resume(throwing: error)
+                    } else {
+                        continuationBox.resume()
+                    }
+                })
+            }
+
+            MirageLogger.client("Hello sent successfully")
+        } catch {
+            MirageLogger.error(.client, "Failed to send hello message: \(error)")
+            throw error
+        }
+    }
+
+    /// Connect to a discovered host.
+    public func connect(
+        to host: MirageHost,
+        controlTransport: ControlTransport = .tcp
+    )
+    async throws {
+        guard connectionState.canConnect else { throw MirageError.protocolError("Already connected or connecting") }
+
+        MirageLogger.client("Connecting to \(host.name) using \(controlTransport)...")
+        connectionState = .connecting
+        expectedHostIdentityKeyID = host.capabilities.identityKeyID
+        connectedHostIdentityKeyID = nil
+        await handshakeReplayProtector.reset()
+        isAwaitingManualApproval = false
+        hasReceivedHelloResponse = false
+        approvalWaitTask?.cancel()
+        connectedHost = host
+
+        var pendingConnection: NWConnection?
+
+        do {
+            // Create a direct control connection to the endpoint.
+            let parameters = controlParameters(for: controlTransport)
             let connection = NWConnection(to: host.endpoint, using: parameters)
+            pendingConnection = connection
 
             // Wait for connection to be ready.
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -152,18 +212,19 @@ extension MirageClientService {
             }
 
             // Send hello message with device info.
-            await sendHelloMessage(connection: connection)
+            try await sendHelloMessage(connection: connection)
             startManualApprovalWaitTimer()
 
             // Start receiving messages from the server.
             startReceiving()
         } catch {
+            pendingConnection?.cancel()
             MirageLogger.error(.client, "Connection failed: \(error)")
-            connectionState = .disconnected
-            connectedHost = nil
-            transport = nil
-            isAwaitingManualApproval = false
-            approvalWaitTask?.cancel()
+            await handleDisconnect(
+                reason: error.localizedDescription,
+                state: .disconnected,
+                notifyDelegate: false
+            )
             throw error
         }
     }
@@ -200,6 +261,9 @@ extension MirageClientService {
 
         connection?.cancel()
         connection = nil
+        expectedHostIdentityKeyID = nil
+        connectedHostIdentityKeyID = nil
+        pendingHelloNonce = nil
         receiveBuffer = Data()
         await transport?.disconnect()
         transport = nil

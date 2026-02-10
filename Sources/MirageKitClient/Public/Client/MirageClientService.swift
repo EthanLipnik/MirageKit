@@ -23,6 +23,11 @@ import AppKit
 @Observable
 @MainActor
 public final class MirageClientService {
+    public enum ControlTransport: Sendable {
+        case tcp
+        case quic
+    }
+
     public enum AdaptiveFallbackMode: Equatable, Sendable {
         case disabled
         case automatic
@@ -141,9 +146,24 @@ public final class MirageClientService {
     /// Client delegate for events
     public weak var delegate: MirageClientDelegate?
 
+    /// Called once per trusted host identity when auto-trust grants access.
+    public var onAutoTrustNotice: ((String) -> Void)?
+
     /// iCloud user record ID to send during connection handshake.
     /// Set this before calling connect(to:) to enable iCloud-based auto-trust.
     public var iCloudUserID: String?
+
+    /// Identity manager used for signed handshake envelopes.
+    public var identityManager: MirageIdentityManager?
+
+    /// Expected host key ID from discovery metadata, if available.
+    var expectedHostIdentityKeyID: String?
+
+    /// Last host identity key ID validated by hello response.
+    public internal(set) var connectedHostIdentityKeyID: String?
+
+    /// Replay protection for signed hello responses.
+    let handshakeReplayProtector = MirageReplayProtector()
 
     /// Session store for UI state and stream coordination.
     public let sessionStore: MirageClientSessionStore
@@ -162,6 +182,7 @@ public final class MirageClientService {
     var receiveBuffer = Data()
     var approvalWaitTask: Task<Void, Never>?
     var hasReceivedHelloResponse = false
+    var pendingHelloNonce: String?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
 
@@ -411,6 +432,7 @@ public final class MirageClientService {
             deviceID = newID
             MirageLogger.client("Generated new device ID: \(newID)")
         }
+        identityManager = MirageIdentityManager.shared
         self.sessionStore.clientService = self
         registerControlMessageHandlers()
     }

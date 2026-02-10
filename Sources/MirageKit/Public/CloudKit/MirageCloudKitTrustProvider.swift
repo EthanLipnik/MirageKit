@@ -76,6 +76,20 @@ public final class MirageCloudKitTrustProvider: MirageTrustProvider {
             return .requiresApproval
         }
 
+        guard peer.isIdentityAuthenticated else {
+            MirageLogger.appState("Trust evaluation: denied unauthenticated identity for \(peer.name)")
+            return .denied
+        }
+        guard let peerIdentityKeyID = peer.identityKeyID else {
+            MirageLogger.appState("Trust evaluation: denied missing identity key ID for \(peer.name)")
+            return .denied
+        }
+        if let publicKey = peer.identityPublicKey,
+           MirageIdentityManager.keyID(for: publicKey) != peerIdentityKeyID {
+            MirageLogger.appState("Trust evaluation: denied mismatched key ID for \(peer.name)")
+            return .denied
+        }
+
         // Check if locally trusted (overrides everything)
         if localTrustStore.isTrusted(deviceID: peer.deviceID) {
             MirageLogger.appState("Trust evaluation: device \(peer.name) is locally trusted")
@@ -103,8 +117,13 @@ public final class MirageCloudKitTrustProvider: MirageTrustProvider {
         // Check if peer is a share participant (friend)
         let isParticipant = await cloudKitManager.isShareParticipant(userID: peerUserID)
         if isParticipant {
-            MirageLogger.appState("Trust evaluation: share participant (friend) for \(peer.name)")
-            return .trusted
+            let identityTrusted = await cloudKitManager.isShareParticipantIdentityKeyTrusted(keyID: peerIdentityKeyID)
+            if identityTrusted {
+                MirageLogger.appState("Trust evaluation: share participant identity trusted for \(peer.name)")
+                return .trusted
+            }
+            MirageLogger.appState("Trust evaluation: share participant missing trusted identity key for \(peer.name)")
+            return .requiresApproval
         }
 
         // Unknown user - require approval

@@ -23,17 +23,32 @@ public struct MirageDeviceInfo: Identifiable, Sendable {
 
     /// iCloud user record ID for trust evaluation, if available.
     public let iCloudUserID: String?
+
+    /// Identity key identifier from signed handshake payload.
+    public let identityKeyID: String?
+
+    /// Identity public key from signed handshake payload.
+    public let identityPublicKey: Data?
+
+    /// Whether the handshake identity signature was validated.
+    public let isIdentityAuthenticated: Bool
     public init(
         id: UUID = UUID(),
         name: String,
         deviceType: DeviceType,
         endpoint: String,
-        iCloudUserID: String? = nil
+        iCloudUserID: String? = nil,
+        identityKeyID: String? = nil,
+        identityPublicKey: Data? = nil,
+        isIdentityAuthenticated: Bool = false
     ) {
         self.id = id
         self.name = name
         self.deviceType = deviceType
         self.endpoint = endpoint
         self.iCloudUserID = iCloudUserID
+        self.identityKeyID = identityKeyID
+        self.identityPublicKey = identityPublicKey
+        self.isIdentityAuthenticated = isIdentityAuthenticated
     }
 }

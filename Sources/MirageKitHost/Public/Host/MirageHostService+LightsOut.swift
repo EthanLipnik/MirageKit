@@ -15,6 +15,25 @@ import ScreenCaptureKit
 
 @MainActor
 extension MirageHostService {
+    /// Emergency recovery path for stuck Lights Out states.
+    /// Disconnects all clients, clears overlays, and locks the host.
+    public func performLightsOutEmergencyRecovery() async {
+        let clients = connectedClients
+        for client in clients {
+            await disconnectClient(client)
+        }
+
+        lightsOutController.deactivate()
+        await refreshLightsOutCaptureExclusions()
+
+        guard sessionState == .active else { return }
+        if let lockHostHandler {
+            lockHostHandler()
+            return
+        }
+        lockHost()
+    }
+
     func updateLightsOutState() async {
         guard lightsOutEnabled else {
             lightsOutController.deactivate()

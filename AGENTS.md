@@ -24,6 +24,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Host setting `muteLocalAudioWhileStreaming` mutes host output while audio streaming is active and restores prior mute state when audio streaming stops.
 - MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
 - Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows are excluded from display capture.
+- Lights Out emergency shortcut: host service exposes a configurable local shortcut that is matched inside the Lights Out event tap to run emergency recovery (disconnect clients, clear overlays, lock host).
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
 - Virtual display creation attempts Retina first and can fall back to 1x logical resolution when Retina activation does not validate; display snapshots carry active scale factors so bounds, capture, and input paths follow the active mode.
@@ -36,6 +37,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - iOS drawable size changes are reported immediately once they exceed the resize tolerance (0.5% or 4px).
 - iOS/visionOS virtual-display sizing derives from native screen metrics (`nativeBounds`, `nativeScale`) while drawable-size callbacks continue to drive live desktop resize transactions.
 - Host/client control-message dispatch uses handler registries keyed by `ControlMessageType`.
+- Signed identity handshake v2 requires `identityAuthV2` with canonical payload signatures and replay protection.
+- Remote signaling helpers include signed Worker requests, STUN probes, and host candidate parsing for direct remote readiness.
+- Host remote path runs a dedicated QUIC control listener (`MirageHostService+Remote.swift`) and publishes STUN-derived `hostCandidates` through signed signaling heartbeats.
 
 ## Interaction Guidelines
 - Planning phase: detailed step list; explicit plan.
@@ -49,11 +53,15 @@ AGENTS.md is the live reference for MirageKit. Include entries for new files, di
 ## Project Structure
 ```
 MirageKit/
+├─ .github/
+│  └─ workflows/
+│     └─ ci.yml
 ├─ Package.swift
 ├─ Sources/
 │  ├─ MirageKit/ (shared)
 │  │  ├─ Public/
 │  │  │  ├─ CloudKit/
+│  │  │  ├─ Remote/
 │  │  │  ├─ Input/
 │  │  │  ├─ Shared/
 │  │  │  └─ Types/
@@ -93,6 +101,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 
 ## Public API
 - Shared types, input events, trust, and CloudKit helpers: `Sources/MirageKit/Public/`.
+- Remote signaling and STUN preflight helpers: `Sources/MirageKit/Public/Remote/`.
 - Client services, delegates, session stores, metrics, cursor snapshots, and stream views: `Sources/MirageKitClient/Public/`.
 - Host services, delegates, window/input controllers, and host utilities: `Sources/MirageKitHost/Public/`.
 - Quality probe results: `MirageQualityProbeResult` in `Sources/MirageKit/Public/Types/`.
@@ -166,6 +175,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 ## Build and Test
 - Build: `swift build --package-path MirageKit`.
 - Test: `swift test --package-path MirageKit`.
+- CI: `.github/workflows/ci.yml` runs `swift build` and `swift test` on `macos-26` with `DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer`.
 
 ## Coding Style and Naming
 - Use 4 spaces for indentation and keep line wrapping consistent with surrounding code.

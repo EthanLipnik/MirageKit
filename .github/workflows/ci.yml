@@ -1,0 +1,32 @@
+name: Swift Package CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  swift-package:
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Show toolchain
+        run: |
+          xcodebuild -version
+          swift --version
+        shell: bash
+
+      - name: Build
+        run: swift build
+        shell: bash
+
+      - name: Test
+        run: swift test
+        shell: bash

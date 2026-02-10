@@ -56,6 +56,15 @@ public struct MiragePeerIdentity: Sendable {
     /// Used to determine if the peer is on the same iCloud account or is a share participant.
     public let iCloudUserID: String?
 
+    /// Identity key identifier from the signed handshake.
+    public let identityKeyID: String?
+
+    /// Identity public key from the signed handshake.
+    public let identityPublicKey: Data?
+
+    /// Whether the handshake identity was cryptographically validated.
+    public let isIdentityAuthenticated: Bool
+
     /// Network endpoint description (IP address or hostname).
     public let endpoint: String
 
@@ -64,12 +73,18 @@ public struct MiragePeerIdentity: Sendable {
         name: String,
         deviceType: DeviceType,
         iCloudUserID: String?,
+        identityKeyID: String?,
+        identityPublicKey: Data?,
+        isIdentityAuthenticated: Bool,
         endpoint: String
     ) {
         self.deviceID = deviceID
         self.name = name
         self.deviceType = deviceType
         self.iCloudUserID = iCloudUserID
+        self.identityKeyID = identityKeyID
+        self.identityPublicKey = identityPublicKey
+        self.isIdentityAuthenticated = isIdentityAuthenticated
         self.endpoint = endpoint
     }
 }

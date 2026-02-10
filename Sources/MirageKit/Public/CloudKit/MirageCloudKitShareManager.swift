@@ -198,7 +198,10 @@ public final class MirageCloudKitShareManager {
     public func registerHost(
         deviceID: UUID,
         name: String,
-        capabilities: MirageHostCapabilities
+        capabilities: MirageHostCapabilities,
+        identityKeyID: String? = nil,
+        identityPublicKey: Data? = nil,
+        remoteEnabled: Bool = false
     )
     async throws {
         MirageLogger.appState("ShareManager: registerHost called for '\(name)' (deviceID: \(deviceID))")
@@ -264,6 +267,9 @@ public final class MirageCloudKitShareManager {
         record[MirageCloudKitHostInfo.RecordKey.supportsP3.rawValue] = capabilities.supportsP3ColorSpace ? 1 : 0
         record[MirageCloudKitHostInfo.RecordKey.maxStreams.rawValue] = Int64(capabilities.maxStreams)
         record[MirageCloudKitHostInfo.RecordKey.protocolVersion.rawValue] = Int64(capabilities.protocolVersion)
+        record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] = identityKeyID
+        record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] = identityPublicKey
+        record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] = remoteEnabled ? 1 : 0
         record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] = Date()
 
         do {
@@ -276,10 +282,38 @@ public final class MirageCloudKitShareManager {
                 hostRecord = savedRecord
                 MirageLogger.appState("Registered host in CloudKit: \(name)")
             }
+            if let identityKeyID, let identityPublicKey {
+                try await upsertParticipantIdentityRecord(
+                    keyID: identityKeyID,
+                    publicKey: identityPublicKey
+                )
+            }
         } catch {
             MirageLogger.error(.appState, "Failed to register host in CloudKit: \(error)")
             throw error
         }
+    }
+
+    private func upsertParticipantIdentityRecord(keyID: String, publicKey: Data) async throws {
+        guard let container = cloudKitManager.container else { throw MirageCloudKitError.containerUnavailable }
+        let database = container.privateCloudDatabase
+        let recordID = CKRecord.ID(
+            recordName: "identity-\(keyID)",
+            zoneID: hostZoneID
+        )
+        let record = CKRecord(
+            recordType: cloudKitManager.configuration.participantIdentityRecordType,
+            recordID: recordID
+        )
+        record["keyID"] = keyID
+        record["publicKey"] = publicKey
+        record["lastSeen"] = Date()
+
+        _ = try await database.modifyRecords(
+            saving: [record],
+            deleting: [],
+            savePolicy: .changedKeys
+        )
     }
 
     /// Updates the last-seen timestamp for the host record.

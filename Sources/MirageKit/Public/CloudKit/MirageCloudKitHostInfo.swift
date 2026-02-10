@@ -44,6 +44,15 @@ public struct MirageCloudKitHostInfo: Identifiable, Hashable, Sendable {
     /// CloudKit record ID for reference.
     public let recordID: String
 
+    /// Host identity key ID used for signed handshake verification.
+    public let identityKeyID: String?
+
+    /// Host identity public key for signed handshake verification.
+    public let identityPublicKey: Data?
+
+    /// Whether the host opted into remote connectivity.
+    public let remoteEnabled: Bool
+
     /// Creates a CloudKit host info instance.
     ///
     /// - Parameters:
@@ -63,7 +72,10 @@ public struct MirageCloudKitHostInfo: Identifiable, Hashable, Sendable {
         lastSeen: Date,
         ownerUserID: String?,
         isShared: Bool,
-        recordID: String
+        recordID: String,
+        identityKeyID: String? = nil,
+        identityPublicKey: Data? = nil,
+        remoteEnabled: Bool = false
     ) {
         self.id = id
         self.name = name
@@ -73,6 +85,9 @@ public struct MirageCloudKitHostInfo: Identifiable, Hashable, Sendable {
         self.ownerUserID = ownerUserID
         self.isShared = isShared
         self.recordID = recordID
+        self.identityKeyID = identityKeyID
+        self.identityPublicKey = identityPublicKey
+        self.remoteEnabled = remoteEnabled
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -97,6 +112,9 @@ public extension MirageCloudKitHostInfo {
         case supportsP3
         case maxStreams
         case protocolVersion
+        case identityKeyID
+        case identityPublicKey
+        case remoteEnabled
         case lastSeen
         case createdAt
     }

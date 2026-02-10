@@ -200,13 +200,18 @@ public final class MirageCloudKitHostProvider {
         let maxStreams = (record[MirageCloudKitHostInfo.RecordKey.maxStreams.rawValue] as? Int64).map(Int.init) ?? 4
         let protocolVersion = (record[MirageCloudKitHostInfo.RecordKey.protocolVersion.rawValue] as? Int64)
             .map(Int.init) ?? Int(MirageKit.protocolVersion)
+        let identityKeyID = record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] as? String
+        let identityPublicKey = record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] as? Data
+        let remoteEnabled = (record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] as? Int64 ?? 0) != 0
 
         let capabilities = MirageHostCapabilities(
             maxStreams: maxStreams,
             supportsHEVC: supportsHEVC,
             supportsP3ColorSpace: supportsP3,
             maxFrameRate: maxFrameRate,
-            protocolVersion: protocolVersion
+            protocolVersion: protocolVersion,
+            deviceID: deviceID,
+            identityKeyID: identityKeyID
         )
 
         let lastSeen = record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] as? Date ?? record
@@ -220,7 +225,10 @@ public final class MirageCloudKitHostProvider {
             lastSeen: lastSeen,
             ownerUserID: ownerUserID,
             isShared: isShared,
-            recordID: record.recordID.recordName
+            recordID: record.recordID.recordName,
+            identityKeyID: identityKeyID,
+            identityPublicKey: identityPublicKey,
+            remoteEnabled: remoteEnabled
         )
     }
 }

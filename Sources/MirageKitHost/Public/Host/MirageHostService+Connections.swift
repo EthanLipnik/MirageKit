@@ -17,6 +17,7 @@ extension MirageHostService {
     private struct ReceivedHello {
         let deviceInfo: MirageDeviceInfo
         let negotiation: MirageProtocolNegotiation
+        let requestNonce: String
     }
 
     private enum ApprovalOutcome {
@@ -115,14 +116,15 @@ extension MirageHostService {
             } else {
                 MirageLogger.host("Rejecting \(deviceInfo.name); host already has a pending client")
             }
-        sendHelloResponse(
-            accepted: false,
-            to: connection,
-            dataPort: currentDataPort(),
-            negotiation: hello.negotiation,
-            cancelAfterSend: true
-        )
-        return
+            sendHelloResponse(
+                accepted: false,
+                to: connection,
+                dataPort: currentDataPort(),
+                negotiation: hello.negotiation,
+                requestNonce: hello.requestNonce,
+                cancelAfterSend: true
+            )
+            return
         }
 
         defer {
@@ -150,19 +152,25 @@ extension MirageHostService {
         }
 
         MirageLogger.host("Connection approved, sending hello response...")
-        sendHelloResponse(
+        guard sendHelloResponse(
             accepted: true,
             to: connection,
             dataPort: currentDataPort(),
             negotiation: hello.negotiation,
+            requestNonce: hello.requestNonce,
             cancelAfterSend: false
-        )
+        ) else {
+            MirageLogger.error(.host, "Failed to send accepted hello response to \(deviceInfo.name)")
+            connection.cancel()
+            return
+        }
 
         let client = MirageConnectedClient(
             id: deviceInfo.id,
             name: deviceInfo.name,
             deviceType: deviceInfo.deviceType,
-            connectedAt: Date()
+            connectedAt: Date(),
+            identityKeyID: deviceInfo.identityKeyID
         )
 
         let clientContext = ClientContext(
@@ -226,10 +234,54 @@ extension MirageHostService {
 
         do {
             let hello = try message.decode(HelloMessage.self)
+            guard hello.protocolVersion == Int(MirageKit.protocolVersion) else {
+                MirageLogger.host(
+                    "Rejected hello from \(hello.deviceName): legacy protocol field \(hello.protocolVersion) unsupported"
+                )
+                return nil
+            }
             guard hello.negotiation.protocolVersion == Int(MirageKit.protocolVersion) else {
                 MirageLogger.host(
                     "Rejected hello from \(hello.deviceName): protocol \(hello.negotiation.protocolVersion) unsupported"
                 )
+                return nil
+            }
+            guard hello.negotiation.supportedFeatures.contains(.identityAuthV2) else {
+                MirageLogger.host("Rejected hello from \(hello.deviceName): missing identityAuthV2 support")
+                return nil
+            }
+            let identity = hello.identity
+            guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
+                MirageLogger.host("Rejected hello from \(hello.deviceName): invalid identity key ID")
+                return nil
+            }
+            let replayValid = await handshakeReplayProtector.validate(
+                timestampMs: identity.timestampMs,
+                nonce: identity.nonce
+            )
+            guard replayValid else {
+                MirageLogger.host("Rejected hello from \(hello.deviceName): replay protection failed")
+                return nil
+            }
+            let signedPayload = try MirageIdentitySigning.helloPayload(
+                deviceID: hello.deviceID,
+                deviceName: hello.deviceName,
+                deviceType: hello.deviceType,
+                protocolVersion: hello.protocolVersion,
+                capabilities: hello.capabilities,
+                negotiation: hello.negotiation,
+                iCloudUserID: hello.iCloudUserID,
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: identity.timestampMs,
+                nonce: identity.nonce
+            )
+            guard MirageIdentityManager.verify(
+                signature: identity.signature,
+                payload: signedPayload,
+                publicKey: identity.publicKey
+            ) else {
+                MirageLogger.host("Rejected hello from \(hello.deviceName): signature verification failed")
                 return nil
             }
             let selectedFeatures = hello.negotiation.supportedFeatures.intersection(mirageSupportedFeatures)
@@ -240,13 +292,17 @@ extension MirageHostService {
                     name: hello.deviceName,
                     deviceType: hello.deviceType,
                     endpoint: endpoint,
-                    iCloudUserID: hello.iCloudUserID
+                    iCloudUserID: hello.iCloudUserID,
+                    identityKeyID: identity.keyID,
+                    identityPublicKey: identity.publicKey,
+                    isIdentityAuthenticated: true
                 ),
                 negotiation: MirageProtocolNegotiation(
                     protocolVersion: Int(MirageKit.protocolVersion),
                     supportedFeatures: mirageSupportedFeatures,
                     selectedFeatures: selectedFeatures
-                )
+                ),
+                requestNonce: identity.nonce
             )
         } catch {
             MirageLogger.error(.host, "Failed to decode hello: \(error)")
@@ -263,6 +319,9 @@ extension MirageHostService {
                 name: deviceInfo.name,
                 deviceType: deviceInfo.deviceType,
                 iCloudUserID: deviceInfo.iCloudUserID,
+                identityKeyID: deviceInfo.identityKeyID,
+                identityPublicKey: deviceInfo.identityPublicKey,
+                isIdentityAuthenticated: deviceInfo.isIdentityAuthenticated,
                 endpoint: deviceInfo.endpoint
             )
 
@@ -377,28 +436,64 @@ extension MirageHostService {
         if singleClientConnectionID == connectionID { singleClientConnectionID = nil }
     }
 
+    @discardableResult
     private func sendHelloResponse(
         accepted: Bool,
         to connection: NWConnection,
         dataPort: UInt16,
         negotiation: MirageProtocolNegotiation,
+        requestNonce: String,
         cancelAfterSend: Bool
-    ) {
+    )
+    -> Bool {
         do {
             let hostName = Host.current().localizedName ?? "Mac"
+            guard let identityManager else {
+                MirageLogger.error(.host, "Cannot send hello response without identity manager")
+                connection.cancel()
+                return false
+            }
+            let identity = try identityManager.currentIdentity()
+            let timestampMs = MirageIdentitySigning.currentTimestampMs()
+            let nonce = UUID().uuidString.lowercased()
+            let payload = try MirageIdentitySigning.helloResponsePayload(
+                accepted: accepted,
+                hostID: hostID,
+                hostName: hostName,
+                requiresAuth: false,
+                dataPort: dataPort,
+                negotiation: negotiation,
+                requestNonce: requestNonce,
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: timestampMs,
+                nonce: nonce
+            )
+            let signature = try identityManager.sign(payload)
             let response = HelloResponseMessage(
                 accepted: accepted,
                 hostID: hostID,
                 hostName: hostName,
                 requiresAuth: false,
                 dataPort: dataPort,
-                negotiation: negotiation
+                negotiation: negotiation,
+                requestNonce: requestNonce,
+                identity: MirageIdentityEnvelope(
+                    keyID: identity.keyID,
+                    publicKey: identity.publicKey,
+                    timestampMs: timestampMs,
+                    nonce: nonce,
+                    signature: signature
+                )
             )
             let message = try ControlMessage(type: .helloResponse, content: response)
             let data = message.serialize()
 
             connection.send(content: data, completion: .contentProcessed { error in
-                if let error { MirageLogger.error(.host, "Failed to send hello response: \(error)") } else if accepted {
+                if let error {
+                    MirageLogger.error(.host, "Failed to send hello response: \(error)")
+                    if accepted { connection.cancel() }
+                } else if accepted {
                     MirageLogger.host("Sent hello response with dataPort \(dataPort)")
                 } else {
                     MirageLogger.host("Sent rejection hello response")
@@ -406,9 +501,11 @@ extension MirageHostService {
 
                 if cancelAfterSend { connection.cancel() }
             })
+            return true
         } catch {
             MirageLogger.error(.host, "Failed to create hello response: \(error)")
             if cancelAfterSend { connection.cancel() }
+            return false
         }
     }
 }

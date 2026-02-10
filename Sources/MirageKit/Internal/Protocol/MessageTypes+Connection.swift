@@ -11,6 +11,28 @@ import Foundation
 
 // MARK: - Connection Messages
 
+package struct MirageIdentityEnvelope: Codable, Sendable {
+    package let keyID: String
+    package let publicKey: Data
+    package let timestampMs: Int64
+    package let nonce: String
+    package let signature: Data
+
+    package init(
+        keyID: String,
+        publicKey: Data,
+        timestampMs: Int64,
+        nonce: String,
+        signature: Data
+    ) {
+        self.keyID = keyID
+        self.publicKey = publicKey
+        self.timestampMs = timestampMs
+        self.nonce = nonce
+        self.signature = signature
+    }
+}
+
 package struct HelloMessage: Codable {
     package let deviceID: UUID
     package let deviceName: String
@@ -20,6 +42,8 @@ package struct HelloMessage: Codable {
     package let negotiation: MirageProtocolNegotiation
     /// iCloud user record ID for trust evaluation, if available.
     package let iCloudUserID: String?
+    /// Signed identity envelope proving possession of the account private key.
+    package let identity: MirageIdentityEnvelope
 
     package init(
         deviceID: UUID,
@@ -28,7 +52,8 @@ package struct HelloMessage: Codable {
         protocolVersion: Int,
         capabilities: MirageHostCapabilities,
         negotiation: MirageProtocolNegotiation,
-        iCloudUserID: String? = nil
+        iCloudUserID: String? = nil,
+        identity: MirageIdentityEnvelope
     ) {
         self.deviceID = deviceID
         self.deviceName = deviceName
@@ -37,6 +62,7 @@ package struct HelloMessage: Codable {
         self.capabilities = capabilities
         self.negotiation = negotiation
         self.iCloudUserID = iCloudUserID
+        self.identity = identity
     }
 }
 
@@ -47,6 +73,10 @@ package struct HelloResponseMessage: Codable {
     package let requiresAuth: Bool
     package let dataPort: UInt16
     package let negotiation: MirageProtocolNegotiation
+    /// Echoed client hello nonce for request/response binding.
+    package let requestNonce: String
+    /// Signed host identity envelope.
+    package let identity: MirageIdentityEnvelope
 
     package init(
         accepted: Bool,
@@ -54,7 +84,9 @@ package struct HelloResponseMessage: Codable {
         hostName: String,
         requiresAuth: Bool,
         dataPort: UInt16,
-        negotiation: MirageProtocolNegotiation
+        negotiation: MirageProtocolNegotiation,
+        requestNonce: String,
+        identity: MirageIdentityEnvelope
     ) {
         self.accepted = accepted
         self.hostID = hostID
@@ -62,6 +94,8 @@ package struct HelloResponseMessage: Codable {
         self.requiresAuth = requiresAuth
         self.dataPort = dataPort
         self.negotiation = negotiation
+        self.requestNonce = requestNonce
+        self.identity = identity
     }
 }
 

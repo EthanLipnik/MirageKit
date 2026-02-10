@@ -57,6 +57,9 @@ public final class MirageCloudKitManager {
     /// Cache of share participant user IDs with expiration.
     private var shareParticipantCache: [String: Date] = [:]
 
+    /// Cache of trusted participant identity key IDs with expiration.
+    private var shareParticipantIdentityCache: [String: Date] = [:]
+
     // MARK: - Initialization
 
     /// Creates a CloudKit manager with the specified configuration.
@@ -202,6 +205,7 @@ public final class MirageCloudKitManager {
         currentUserRecordID = nil
         isAvailable = false
         shareParticipantCache.removeAll()
+        shareParticipantIdentityCache.removeAll()
         await initialize()
     }
 
@@ -314,6 +318,7 @@ public final class MirageCloudKitManager {
     /// Call this after share membership changes to ensure fresh data.
     public func clearShareParticipantCache() {
         shareParticipantCache.removeAll()
+        shareParticipantIdentityCache.removeAll()
     }
 
     /// Refreshes share participant data from CloudKit.
@@ -321,6 +326,67 @@ public final class MirageCloudKitManager {
     /// Clears the cache so the next ``isShareParticipant(userID:)`` call fetches fresh data.
     public func refreshShareParticipants() async {
         shareParticipantCache.removeAll()
+        shareParticipantIdentityCache.removeAll()
+    }
+
+    /// Registers the current device identity key metadata in the private device record.
+    public func registerIdentity(keyID: String, publicKey: Data) async {
+        guard isAvailable, let container else { return }
+        let recordID = CKRecord.ID(recordName: getOrCreateDeviceID().uuidString)
+        let record = CKRecord(recordType: configuration.deviceRecordType, recordID: recordID)
+        record["identityKeyID"] = keyID
+        record["identityPublicKey"] = publicKey
+        record["lastSeen"] = Date()
+
+        do {
+            _ = try await container.privateCloudDatabase.modifyRecords(
+                saving: [record],
+                deleting: [],
+                savePolicy: .changedKeys
+            )
+        } catch {
+            MirageLogger.error(.appState, "Failed to register identity in CloudKit: \(error)")
+        }
+    }
+
+    /// Checks whether a shared participant has published the provided identity key ID.
+    public func isShareParticipantIdentityKeyTrusted(keyID: String) async -> Bool {
+        if let expiration = shareParticipantIdentityCache[keyID], expiration > Date() { return true }
+        guard isAvailable, let container else { return false }
+
+        do {
+            let sharedDatabase = container.sharedCloudDatabase
+            let zones = try await sharedDatabase.allRecordZones()
+            for zone in zones {
+                let query = CKQuery(
+                    recordType: configuration.participantIdentityRecordType,
+                    predicate: NSPredicate(format: "keyID == %@", keyID)
+                )
+                do {
+                    let (results, _) = try await sharedDatabase.records(
+                        matching: query,
+                        inZoneWith: zone.zoneID
+                    )
+                    if results.contains(where: { entry in
+                        if case .success = entry.1 { return true }
+                        return false
+                    }) {
+                        shareParticipantIdentityCache[keyID] = Date()
+                            .addingTimeInterval(configuration.shareParticipantCacheTTL)
+                        return true
+                    }
+                } catch {
+                    MirageLogger.error(
+                        .appState,
+                        "Failed to query identity keys in shared zone \(zone.zoneID.zoneName): \(error)"
+                    )
+                }
+            }
+        } catch {
+            MirageLogger.error(.appState, "Failed to enumerate shared zones for identity trust: \(error)")
+        }
+
+        return false
     }
 
     // MARK: - Account Change Handling

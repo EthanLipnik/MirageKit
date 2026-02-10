@@ -47,6 +47,7 @@ public extension MirageHostService {
 
             state = .advertising(controlPort: controlPort, dataPort: dataPort)
             MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort)")
+            await updateRemoteControlListenerState()
 
             // Set up app streaming callbacks
             setupAppStreamManagerCallbacks()
@@ -114,6 +115,7 @@ public extension MirageHostService {
         udpListener = nil
 
         state = .idle
+        await updateRemoteControlListenerState()
     }
 
     func endAppStream(bundleIdentifier: String) async {
