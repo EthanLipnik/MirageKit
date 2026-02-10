@@ -13,13 +13,76 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    func handleHelloResponse(_ message: ControlMessage) {
+    func handleHelloResponse(_ message: ControlMessage) async {
         do {
             let response = try message.decode(HelloResponseMessage.self)
+            guard let pendingHelloNonce else {
+                connectionState = .error("Invalid handshake state")
+                MirageLogger.client("Rejected hello response without pending nonce")
+                return
+            }
+            guard response.requestNonce == pendingHelloNonce else {
+                connectionState = .error("Invalid handshake nonce")
+                MirageLogger.client("Rejected hello response with mismatched nonce")
+                return
+            }
+
+            let identity = response.identity
+            guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
+                connectionState = .error("Invalid host identity key")
+                MirageLogger.client("Rejected hello response with invalid host key ID")
+                return
+            }
+            let replayValid = await handshakeReplayProtector.validate(
+                timestampMs: identity.timestampMs,
+                nonce: identity.nonce
+            )
+            guard replayValid else {
+                connectionState = .error("Replay detected")
+                MirageLogger.client("Rejected hello response due to replay protection")
+                return
+            }
+            let signedPayload = try MirageIdentitySigning.helloResponsePayload(
+                accepted: response.accepted,
+                hostID: response.hostID,
+                hostName: response.hostName,
+                requiresAuth: response.requiresAuth,
+                dataPort: response.dataPort,
+                negotiation: response.negotiation,
+                requestNonce: response.requestNonce,
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: identity.timestampMs,
+                nonce: identity.nonce
+            )
+            guard MirageIdentityManager.verify(
+                signature: identity.signature,
+                payload: signedPayload,
+                publicKey: identity.publicKey
+            ) else {
+                connectionState = .error("Host signature invalid")
+                MirageLogger.client("Rejected hello response with invalid host signature")
+                return
+            }
+            if let expectedHostIdentityKeyID, expectedHostIdentityKeyID != identity.keyID {
+                connectionState = .error("Host identity mismatch")
+                MirageLogger.client(
+                    "Rejected hello response due to host key mismatch expected=\(expectedHostIdentityKeyID) actual=\(identity.keyID)"
+                )
+                return
+            }
+
+            connectedHostIdentityKeyID = identity.keyID
+            self.pendingHelloNonce = nil
             hasReceivedHelloResponse = true
             isAwaitingManualApproval = false
             approvalWaitTask?.cancel()
             if response.accepted {
+                let noticeKey = "com.mirage.autotrust.client.\(response.hostID.uuidString.lowercased()).\(identity.keyID)"
+                if !UserDefaults.standard.bool(forKey: noticeKey) {
+                    UserDefaults.standard.set(true, forKey: noticeKey)
+                    onAutoTrustNotice?("Auto-approved trusted iCloud identity for \(response.hostName).")
+                }
                 if response.negotiation.protocolVersion != Int(MirageKit.protocolVersion) {
                     connectionState = .error("Protocol version mismatch")
                     MirageLogger.client(

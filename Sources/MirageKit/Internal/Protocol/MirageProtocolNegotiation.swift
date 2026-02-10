@@ -20,6 +20,8 @@ package struct MirageFeatureSet: OptionSet, Sendable, Codable {
     package static let controlMessageRouting = MirageFeatureSet(rawValue: 1 << 0)
     /// Endpoints support typed hello negotiation fields.
     package static let protocolNegotiation = MirageFeatureSet(rawValue: 1 << 1)
+    /// Endpoints enforce signed identity handshake metadata.
+    package static let identityAuthV2 = MirageFeatureSet(rawValue: 1 << 2)
 }
 
 package struct MirageProtocolNegotiation: Codable, Sendable {

@@ -16,6 +16,21 @@ public struct MirageConnectedClient: Identifiable, Sendable {
     public let name: String
     public let deviceType: DeviceType
     public let connectedAt: Date
+    public let identityKeyID: String?
+
+    public init(
+        id: UUID,
+        name: String,
+        deviceType: DeviceType,
+        connectedAt: Date,
+        identityKeyID: String? = nil
+    ) {
+        self.id = id
+        self.name = name
+        self.deviceType = deviceType
+        self.connectedAt = connectedAt
+        self.identityKeyID = identityKeyID
+    }
 }
 
 public struct MirageStreamSession: Identifiable, Sendable {

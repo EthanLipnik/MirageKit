@@ -104,6 +104,20 @@ final class HostLightsOutController {
         let sampleCount: UInt32
     }
 
+    private final class EmergencyShortcutStore: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value: MirageHostShortcut = .defaultLightsOutRecovery
+
+        var currentValue: MirageHostShortcut {
+            get {
+                lock.withLock { value }
+            }
+            set {
+                lock.withLock { value = newValue }
+            }
+        }
+    }
+
     private var target: Target?
     private var overlays: [CGDirectDisplayID: Overlay] = [:]
     private var eventTap: CFMachPort?
@@ -119,6 +133,12 @@ final class HostLightsOutController {
     private let dimmedGammaScale: CGGammaValue = 0.05
 
     var onOverlayWindowsChanged: (@MainActor () -> Void)?
+    private nonisolated let emergencyShortcutStore = EmergencyShortcutStore()
+    var emergencyShortcut: MirageHostShortcut {
+        get { emergencyShortcutStore.currentValue }
+        set { emergencyShortcutStore.currentValue = newValue }
+    }
+    var onEmergencyShortcut: (@MainActor () async -> Void)?
 
     var isActive: Bool { target != nil }
 
@@ -404,6 +424,15 @@ final class HostLightsOutController {
             return Unmanaged.passUnretained(event)
         }
 
+        if type == .keyDown, shouldTriggerEmergencyShortcut(event: event) {
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.handleLocalInteraction(triggerMessage: true)
+                await self.onEmergencyShortcut?()
+            }
+            return nil
+        }
+
         if Self.shouldTriggerMessage(for: type) {
             Task { @MainActor [weak self] in
                 self?.handleLocalInteraction(triggerMessage: true)
@@ -443,6 +472,18 @@ final class HostLightsOutController {
         default:
             return false
         }
+    }
+
+    private nonisolated func shouldTriggerEmergencyShortcut(event: CGEvent) -> Bool {
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if isRepeat { return false }
+
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        let modifierFlags = MirageModifierFlags(
+            nsEventFlags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+        )
+        let shortcut = emergencyShortcutStore.currentValue
+        return shortcut.matches(keyCode: keyCode, modifiers: modifierFlags)
     }
 
     // MARK: - Screen Change Handling

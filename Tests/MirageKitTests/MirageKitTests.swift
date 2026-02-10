@@ -63,6 +63,13 @@ struct MirageKitTests {
             negotiation: MirageProtocolNegotiation.clientHello(
                 protocolVersion: Int(MirageKit.protocolVersion),
                 supportedFeatures: mirageSupportedFeatures
+            ),
+            identity: MirageIdentityEnvelope(
+                keyID: "test-key-id",
+                publicKey: Data([0x01, 0x02]),
+                timestampMs: 1_234,
+                nonce: "nonce",
+                signature: Data([0x03, 0x04])
             )
         )
 

@@ -15,7 +15,8 @@ package let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 package let mirageProtocolVersion: UInt8 = 1
 package let mirageSupportedFeatures: MirageFeatureSet = [
     .controlMessageRouting,
-    .protocolNegotiation
+    .protocolNegotiation,
+    .identityAuthV2
 ]
 
 /// Registration packet magic values.

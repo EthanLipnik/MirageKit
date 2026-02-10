@@ -48,6 +48,9 @@ public struct MirageCloudKitConfiguration: Sendable {
     /// Zone name for host records.
     public let hostZoneName: String
 
+    /// Record type for shared participant identity metadata.
+    public let participantIdentityRecordType: String
+
     /// Title shown in the CloudKit sharing UI.
     public let shareTitle: String
 
@@ -72,6 +75,7 @@ public struct MirageCloudKitConfiguration: Sendable {
         deviceRecordType: String = "MirageDevice",
         hostRecordType: String = "MirageHost",
         hostZoneName: String = "MirageHostZone",
+        participantIdentityRecordType: String = "MirageParticipantIdentity",
         shareTitle: String = "Host Access",
         deviceIDKey: String = "com.mirage.cloudkit.deviceID",
         shareParticipantCacheTTL: TimeInterval = 300
@@ -80,6 +84,7 @@ public struct MirageCloudKitConfiguration: Sendable {
         self.deviceRecordType = deviceRecordType
         self.hostRecordType = hostRecordType
         self.hostZoneName = hostZoneName
+        self.participantIdentityRecordType = participantIdentityRecordType
         self.shareTitle = shareTitle
         self.deviceIDKey = deviceIDKey
         self.shareParticipantCacheTTL = shareParticipantCacheTTL

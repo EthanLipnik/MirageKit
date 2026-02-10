@@ -36,29 +36,80 @@ extension MirageClientService {
         #endif
     }
 
+    private func controlParameters(for transport: ControlTransport) -> NWParameters {
+        switch transport {
+        case .tcp:
+            let parameters = NWParameters.tcp
+            parameters.serviceClass = .interactiveVideo
+            parameters.includePeerToPeer = networkConfig.enablePeerToPeer
+
+            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+                tcpOptions.noDelay = true
+                tcpOptions.enableKeepalive = true
+                tcpOptions.keepaliveInterval = 5
+            }
+            return parameters
+
+        case .quic:
+            let options = NWProtocolQUIC.Options(alpn: ["mirage-v2"])
+            let parameters = NWParameters(quic: options)
+            parameters.serviceClass = .interactiveVideo
+            parameters.includePeerToPeer = networkConfig.enablePeerToPeer
+            parameters.allowLocalEndpointReuse = true
+            return parameters
+        }
+    }
+
     /// Send hello message with device info to host.
     private func sendHelloMessage(connection: NWConnection) async {
         let negotiation = MirageProtocolNegotiation.clientHello(
             protocolVersion: Int(MirageKit.protocolVersion),
             supportedFeatures: mirageSupportedFeatures
         )
-        let hello = HelloMessage(
-            deviceID: deviceID,
-            deviceName: deviceName,
-            deviceType: currentDeviceType,
-            protocolVersion: Int(MirageKit.protocolVersion),
-            capabilities: MirageHostCapabilities(
-                maxStreams: 4,
-                supportsHEVC: true,
-                supportsP3ColorSpace: true,
-                maxFrameRate: 120,
-                protocolVersion: Int(MirageKit.protocolVersion)
-            ),
-            negotiation: negotiation,
-            iCloudUserID: iCloudUserID
+        let capabilities = MirageHostCapabilities(
+            maxStreams: 4,
+            supportsHEVC: true,
+            supportsP3ColorSpace: true,
+            maxFrameRate: 120,
+            protocolVersion: Int(MirageKit.protocolVersion)
         )
 
         do {
+            let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
+            let identity = try resolvedIdentityManager.currentIdentity()
+            let timestampMs = MirageIdentitySigning.currentTimestampMs()
+            let nonce = UUID().uuidString.lowercased()
+            let payload = try MirageIdentitySigning.helloPayload(
+                deviceID: deviceID,
+                deviceName: deviceName,
+                deviceType: currentDeviceType,
+                protocolVersion: Int(MirageKit.protocolVersion),
+                capabilities: capabilities,
+                negotiation: negotiation,
+                iCloudUserID: iCloudUserID,
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: timestampMs,
+                nonce: nonce
+            )
+            let signature = try resolvedIdentityManager.sign(payload)
+            pendingHelloNonce = nonce
+            let hello = HelloMessage(
+                deviceID: deviceID,
+                deviceName: deviceName,
+                deviceType: currentDeviceType,
+                protocolVersion: Int(MirageKit.protocolVersion),
+                capabilities: capabilities,
+                negotiation: negotiation,
+                iCloudUserID: iCloudUserID,
+                identity: MirageIdentityEnvelope(
+                    keyID: identity.keyID,
+                    publicKey: identity.publicKey,
+                    timestampMs: timestampMs,
+                    nonce: nonce,
+                    signature: signature
+                )
+            )
             let message = try ControlMessage(type: .hello, content: hello)
             let data = message.serialize()
             MirageLogger.client("Sending hello: \(deviceName) (\(currentDeviceType.displayName))")
@@ -74,28 +125,26 @@ extension MirageClientService {
     }
 
     /// Connect to a discovered host.
-    public func connect(to host: MirageHost) async throws {
+    public func connect(
+        to host: MirageHost,
+        controlTransport: ControlTransport = .tcp
+    )
+    async throws {
         guard connectionState.canConnect else { throw MirageError.protocolError("Already connected or connecting") }
 
-        MirageLogger.client("Connecting to \(host.name)...")
+        MirageLogger.client("Connecting to \(host.name) using \(controlTransport)...")
         connectionState = .connecting
+        expectedHostIdentityKeyID = host.capabilities.identityKeyID
+        connectedHostIdentityKeyID = nil
+        await handshakeReplayProtector.reset()
         isAwaitingManualApproval = false
         hasReceivedHelloResponse = false
         approvalWaitTask?.cancel()
         connectedHost = host
 
         do {
-            // Create a direct TCP connection to the Bonjour endpoint.
-            let parameters = NWParameters.tcp
-            parameters.serviceClass = .interactiveVideo
-            parameters.includePeerToPeer = networkConfig.enablePeerToPeer
-
-            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-                tcpOptions.noDelay = true
-                tcpOptions.enableKeepalive = true
-                tcpOptions.keepaliveInterval = 5
-            }
-
+            // Create a direct control connection to the endpoint.
+            let parameters = controlParameters(for: controlTransport)
             let connection = NWConnection(to: host.endpoint, using: parameters)
 
             // Wait for connection to be ready.
@@ -200,6 +249,9 @@ extension MirageClientService {
 
         connection?.cancel()
         connection = nil
+        expectedHostIdentityKeyID = nil
+        connectedHostIdentityKeyID = nil
+        pendingHelloNonce = nil
         receiveBuffer = Data()
         await transport?.disconnect()
         transport = nil
