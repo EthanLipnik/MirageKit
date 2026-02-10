@@ -22,6 +22,9 @@ public struct MirageStreamContentView: View {
     public let isDesktopStream: Bool
     public let desktopStreamMode: MirageDesktopStreamMode
     public let onExitDesktopStream: (() -> Void)?
+    public let onToggleDictationShortcut: (() -> Void)?
+    public let desktopExitShortcut: MirageClientShortcut
+    public let dictationShortcut: MirageClientShortcut
     public let onInputActivity: ((MirageInputEvent) -> Void)?
     public let onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
     public let onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
@@ -29,6 +32,10 @@ public struct MirageStreamContentView: View {
     public let directTouchInputMode: MirageDirectTouchInputMode
     public let softwareKeyboardVisible: Bool
     public let pencilInputMode: MiragePencilInputMode
+    public let dictationToggleRequestID: UInt64
+    public let onDictationStateChanged: ((Bool) -> Void)?
+    public let onDictationError: ((String) -> Void)?
+    public let dictationMode: MirageDictationMode
     public let maxDrawableSize: CGSize?
     private let desktopResizeAckTimeout: Duration = .seconds(3)
     private let desktopResizeConvergenceTolerance: CGFloat = 4
@@ -65,6 +72,9 @@ public struct MirageStreamContentView: View {
     ///   - isDesktopStream: Whether the stream represents a desktop session.
     ///   - desktopStreamMode: Desktop stream mode (mirrored vs secondary display).
     ///   - onExitDesktopStream: Optional handler for the desktop exit shortcut.
+    ///   - onToggleDictationShortcut: Optional handler for the dictation toggle shortcut.
+    ///   - desktopExitShortcut: Client shortcut used for desktop stream exit.
+    ///   - dictationShortcut: Client shortcut used for dictation toggle.
     ///   - onInputActivity: Optional callback invoked for each locally captured input event.
     ///   - onHardwareKeyboardPresenceChanged: Optional handler for hardware keyboard availability.
     ///   - onSoftwareKeyboardVisibilityChanged: Optional handler for software keyboard visibility.
@@ -73,6 +83,10 @@ public struct MirageStreamContentView: View {
     ///   - directTouchInputMode: Direct-touch behavior mode for iPad and visionOS clients.
     ///   - softwareKeyboardVisible: Whether the software keyboard should be visible.
     ///   - pencilInputMode: Apple Pencil behavior mode for iPad clients.
+    ///   - dictationToggleRequestID: Increments to request a dictation toggle on iOS/visionOS.
+    ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
+    ///   - onDictationError: Optional callback for user-facing dictation errors.
+    ///   - dictationMode: Dictation behavior for realtime versus finalized output.
     public init(
         session: MirageStreamSessionState,
         sessionStore: MirageClientSessionStore,
@@ -80,6 +94,9 @@ public struct MirageStreamContentView: View {
         isDesktopStream: Bool = false,
         desktopStreamMode: MirageDesktopStreamMode = .mirrored,
         onExitDesktopStream: (() -> Void)? = nil,
+        onToggleDictationShortcut: (() -> Void)? = nil,
+        desktopExitShortcut: MirageClientShortcut = .defaultDesktopExit,
+        dictationShortcut: MirageClientShortcut = .defaultDictationToggle,
         onInputActivity: ((MirageInputEvent) -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
@@ -88,6 +105,10 @@ public struct MirageStreamContentView: View {
         directTouchInputMode: MirageDirectTouchInputMode? = nil,
         softwareKeyboardVisible: Bool = false,
         pencilInputMode: MiragePencilInputMode = .drawingTablet,
+        dictationToggleRequestID: UInt64 = 0,
+        onDictationStateChanged: ((Bool) -> Void)? = nil,
+        onDictationError: ((String) -> Void)? = nil,
+        dictationMode: MirageDictationMode = .best,
         maxDrawableSize: CGSize? = nil
     ) {
         self.session = session
@@ -96,6 +117,9 @@ public struct MirageStreamContentView: View {
         self.isDesktopStream = isDesktopStream
         self.desktopStreamMode = desktopStreamMode
         self.onExitDesktopStream = onExitDesktopStream
+        self.onToggleDictationShortcut = onToggleDictationShortcut
+        self.desktopExitShortcut = desktopExitShortcut
+        self.dictationShortcut = dictationShortcut
         self.onInputActivity = onInputActivity
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
@@ -104,6 +128,10 @@ public struct MirageStreamContentView: View {
             (usesVirtualTrackpad ? .dragCursor : .normal)
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilInputMode = pencilInputMode
+        self.dictationToggleRequestID = dictationToggleRequestID
+        self.onDictationStateChanged = onDictationStateChanged
+        self.onDictationError = onDictationError
+        self.dictationMode = dictationMode
         self.maxDrawableSize = maxDrawableSize
     }
 
@@ -136,6 +164,10 @@ public struct MirageStreamContentView: View {
                 directTouchInputMode: directTouchInputMode,
                 softwareKeyboardVisible: softwareKeyboardVisible,
                 pencilInputMode: pencilInputMode,
+                dictationToggleRequestID: dictationToggleRequestID,
+                onDictationStateChanged: onDictationStateChanged,
+                onDictationError: onDictationError,
+                dictationMode: dictationMode,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 maxDrawableSize: maxDrawableSize
             )
@@ -181,6 +213,9 @@ public struct MirageStreamContentView: View {
         .onChange(of: sessionStore.sessionMinSizes[session.id]) { _, minSize in
             handleResizeAcknowledgement(minSize)
         }
+        .onChange(of: sessionStore.sessionMinSizeUpdateGenerations[session.id]) { _, _ in
+            handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
+        }
         .onAppear {
             sessionStore.setFocusedSession(session.id)
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
@@ -218,14 +253,15 @@ public struct MirageStreamContentView: View {
     private func sendInputEvent(_ event: MirageInputEvent) {
         onInputActivity?(event)
 
-        if case let .keyDown(keyEvent) = event,
-           keyEvent.keyCode == 0x35,
-           keyEvent.modifiers.contains(.control),
-           keyEvent.modifiers.contains(.option),
-           !keyEvent.modifiers.contains(.command),
-           isDesktopStream {
-            onExitDesktopStream?()
-            return
+        if case let .keyDown(keyEvent) = event {
+            if isDesktopStream, desktopExitShortcut.matches(keyEvent) {
+                onExitDesktopStream?()
+                return
+            }
+            if dictationShortcut.matches(keyEvent) {
+                onToggleDictationShortcut?()
+                return
+            }
         }
 
         #if os(macOS)
@@ -336,20 +372,16 @@ public struct MirageStreamContentView: View {
             await Task.yield()
             guard allowsResizeEvents else { return }
 
-            if session.hasReceivedFirstFrame {
-                if isDesktopStream {
-                    isResizing = true
-                } else {
-                    isResizing = true
-                    resizeFallbackTask?.cancel()
-                    resizeFallbackTask = Task { @MainActor in
-                        do {
-                            try await Task.sleep(for: .seconds(2))
-                        } catch {
-                            return
-                        }
-                        if isResizing { isResizing = false }
+            if session.hasReceivedFirstFrame, !isDesktopStream {
+                isResizing = true
+                resizeFallbackTask?.cancel()
+                resizeFallbackTask = Task { @MainActor in
+                    do {
+                        try await Task.sleep(for: .seconds(2))
+                    } catch {
+                        return
                     }
+                    if isResizing { isResizing = false }
                 }
             }
 
@@ -383,10 +415,14 @@ public struct MirageStreamContentView: View {
                 mismatchThresholdPoints: desktopResizeConvergenceTolerance
             ) {
             case .skipNoOp:
+                displayResolutionTask?.cancel()
+                displayResolutionTask = nil
                 lastSentDisplayResolution = preferredDisplaySize
                 if awaitingDesktopResizeAck { finishDesktopResizeAwaitingAck() }
+                else if isResizing { isResizing = false }
                 return
             case .send:
+                guard lastSentDisplayResolution != preferredDisplaySize else { return }
                 break
             }
 
@@ -398,7 +434,25 @@ public struct MirageStreamContentView: View {
                     return
                 }
 
-                guard lastSentDisplayResolution != preferredDisplaySize else { return }
+                let latestAcknowledgedPixelSize = currentDesktopAcknowledgedPixelSize()
+                let latestPointScale = desktopPointScale(for: preferredDisplaySize)
+                let latestDecision = desktopResizeRequestDecision(
+                    targetDisplaySize: preferredDisplaySize,
+                    acknowledgedPixelSize: latestAcknowledgedPixelSize,
+                    pointScale: latestPointScale,
+                    mismatchThresholdPoints: desktopResizeConvergenceTolerance
+                )
+                if latestDecision == .skipNoOp {
+                    lastSentDisplayResolution = preferredDisplaySize
+                    if awaitingDesktopResizeAck { finishDesktopResizeAwaitingAck() }
+                    else if isResizing { isResizing = false }
+                    return
+                }
+
+                guard lastSentDisplayResolution != preferredDisplaySize else {
+                    if !awaitingDesktopResizeAck, isResizing { isResizing = false }
+                    return
+                }
                 sentDesktopPostAckCorrection = false
                 beginDesktopResizeAwaitingAck()
                 lastSentDisplayResolution = preferredDisplaySize

@@ -27,6 +27,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
 - Virtual display creation attempts Retina first and can fall back to 1x logical resolution when Retina activation does not validate; display snapshots carry active scale factors so bounds, capture, and input paths follow the active mode.
+- Desktop streaming uses a main-display capture fallback when shared virtual display activation is unavailable, preserving stream startup with physical-display bounds and without shared-display resize orchestration for that session.
 - Virtual display readiness validates HiDPI mode using paired logical and pixel dimensions from `CGDisplayCopyDisplayMode`, while desktop input bounds prefer cached logical display bounds.
 - CGVirtualDisplay settings use `hiDPI=2` when Retina mode is requested; `hiDPI=1` can resolve to non-Retina 1x modes on some hosts.
 - Capture watchdog restart requests are canceled once stream shutdown begins; display-capture stall recovery uses a 1.5-second threshold, while window-capture stall recovery uses an 8-second threshold for extended menu-tracking pauses.

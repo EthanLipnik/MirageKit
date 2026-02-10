@@ -103,11 +103,12 @@ extension SharedVirtualDisplayManager {
         }
 
         // Register this consumer with the target resolution
+        let previousConsumerInfo = activeConsumers[consumer]
         activeConsumers[consumer] = ClientDisplayInfo(
             resolution: targetResolution,
-            windowID: 0,
+            windowID: previousConsumerInfo?.windowID ?? 0,
             colorSpace: colorSpace,
-            acquiredAt: Date()
+            acquiredAt: previousConsumerInfo?.acquiredAt ?? Date()
         )
 
         MirageLogger
@@ -115,55 +116,64 @@ extension SharedVirtualDisplayManager {
                 "\(consumer) acquiring shared display at \(Int(targetResolution.width))x\(Int(targetResolution.height))@\(refreshRate)Hz, color=\(colorSpace.displayName) (requested \(requestedRate)Hz). Consumers: \(activeConsumers.count)"
             )
 
-        // Create display if needed, or resize if resolution differs
-        if sharedDisplay == nil {
-            sharedDisplay = try await createDisplay(
-                resolution: targetResolution,
-                refreshRate: refreshRate,
-                colorSpace: colorSpace
-            )
-        } else if sharedDisplay?.colorSpace != colorSpace {
-            MirageLogger
-                .host(
-                    "Recreating shared display for color space change (\(sharedDisplay?.colorSpace.displayName ?? "Unknown") → \(colorSpace.displayName))"
-                )
-            sharedDisplay = try await recreateDisplay(
-                newResolution: targetResolution,
-                refreshRate: refreshRate,
-                colorSpace: colorSpace
-            )
-        } else {
-            let currentResolution = sharedDisplay!.resolution
-            let needsRefresh = sharedDisplay?.refreshRate != Double(refreshRate)
-            let requiresResize = needsResize(currentResolution: currentResolution, targetResolution: targetResolution)
-
-            if needsRefresh || requiresResize {
-                let desiredResolution = requiresResize ? targetResolution : currentResolution
-                let updated = await updateDisplayInPlace(
-                    newResolution: desiredResolution,
+        do {
+            // Create display if needed, or resize if resolution differs
+            if sharedDisplay == nil {
+                sharedDisplay = try await createDisplay(
+                    resolution: targetResolution,
                     refreshRate: refreshRate,
                     colorSpace: colorSpace
                 )
+            } else if sharedDisplay?.colorSpace != colorSpace {
+                MirageLogger
+                    .host(
+                        "Recreating shared display for color space change (\(sharedDisplay?.colorSpace.displayName ?? "Unknown") → \(colorSpace.displayName))"
+                    )
+                sharedDisplay = try await recreateDisplay(
+                    newResolution: targetResolution,
+                    refreshRate: refreshRate,
+                    colorSpace: colorSpace
+                )
+            } else {
+                let currentResolution = sharedDisplay!.resolution
+                let needsRefresh = sharedDisplay?.refreshRate != Double(refreshRate)
+                let requiresResize = needsResize(currentResolution: currentResolution, targetResolution: targetResolution)
 
-                if !updated {
-                    if needsRefresh {
-                        MirageLogger
-                            .host(
-                                "Recreating shared display for refresh rate change (\(sharedDisplay?.refreshRate ?? 0) → \(Double(refreshRate)))"
-                            )
-                    } else {
-                        MirageLogger
-                            .host(
-                                "Resizing shared display from \(Int(currentResolution.width))x\(Int(currentResolution.height)) to \(Int(targetResolution.width))x\(Int(targetResolution.height))"
-                            )
-                    }
-                    sharedDisplay = try await recreateDisplay(
-                        newResolution: targetResolution,
+                if needsRefresh || requiresResize {
+                    let desiredResolution = requiresResize ? targetResolution : currentResolution
+                    let updated = await updateDisplayInPlace(
+                        newResolution: desiredResolution,
                         refreshRate: refreshRate,
                         colorSpace: colorSpace
                     )
+
+                    if !updated {
+                        if needsRefresh {
+                            MirageLogger
+                                .host(
+                                    "Recreating shared display for refresh rate change (\(sharedDisplay?.refreshRate ?? 0) → \(Double(refreshRate)))"
+                                )
+                        } else {
+                            MirageLogger
+                                .host(
+                                    "Resizing shared display from \(Int(currentResolution.width))x\(Int(currentResolution.height)) to \(Int(targetResolution.width))x\(Int(targetResolution.height))"
+                                )
+                        }
+                        sharedDisplay = try await recreateDisplay(
+                            newResolution: targetResolution,
+                            refreshRate: refreshRate,
+                            colorSpace: colorSpace
+                        )
+                    }
                 }
             }
+        } catch {
+            if let previousConsumerInfo {
+                activeConsumers[consumer] = previousConsumerInfo
+            } else {
+                activeConsumers.removeValue(forKey: consumer)
+            }
+            throw error
         }
 
         notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)

@@ -323,6 +323,16 @@ extension MirageHostService {
     )
     async {
         guard streamID == desktopStreamID, let desktopContext = desktopStreamContext else { return }
+        guard desktopUsesVirtualDisplay else {
+            MirageLogger.host(
+                "Desktop stream resize request #\(requestNumber) ignored while running main-display fallback capture"
+            )
+            let encodedDimensions = await desktopContext.getEncodedDimensions()
+            MirageLogger.host(
+                "Desktop stream fallback dimensions remain \(encodedDimensions.width)x\(encodedDimensions.height)"
+            )
+            return
+        }
 
         do {
             let pixelResolution = virtualDisplayPixelResolution(
@@ -342,6 +352,12 @@ extension MirageHostService {
                                 "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                                 "\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px @\(streamRefreshRate)Hz)"
                         )
+                    await sendDesktopResizeCompletion(
+                        streamID: streamID,
+                        requestNumber: requestNumber,
+                        context: desktopContext,
+                        noOp: true
+                    )
                     return
                 }
             }
@@ -386,26 +402,42 @@ extension MirageHostService {
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px), input bounds: \(inputBounds)"
                 )
 
-            if let clientContext = desktopStreamClientContext {
-                let dimensionToken = await latestDesktopContext.getDimensionToken()
-                let encodedDimensions = await latestDesktopContext.getEncodedDimensions()
-                let updatedTargetFrameRate = await latestDesktopContext.getTargetFrameRate()
-                let codec = await latestDesktopContext.getCodec()
-                let message = DesktopStreamStartedMessage(
-                    streamID: streamID,
-                    width: encodedDimensions.width,
-                    height: encodedDimensions.height,
-                    frameRate: updatedTargetFrameRate,
-                    codec: codec,
-                    displayCount: 1,
-                    dimensionToken: dimensionToken
-                )
-                try? await clientContext.send(.desktopStreamStarted, content: message)
-                MirageLogger.host("Sent desktop resize completion for stream \(streamID) (request #\(requestNumber))")
-            }
+            await sendDesktopResizeCompletion(
+                streamID: streamID,
+                requestNumber: requestNumber,
+                context: latestDesktopContext,
+                noOp: false
+            )
         } catch {
             MirageLogger.error(.host, "Failed to resize desktop stream: \(error)")
         }
+    }
+
+    private func sendDesktopResizeCompletion(
+        streamID: StreamID,
+        requestNumber: UInt64,
+        context: StreamContext,
+        noOp: Bool
+    )
+    async {
+        guard let clientContext = desktopStreamClientContext else { return }
+
+        let dimensionToken = await context.getDimensionToken()
+        let encodedDimensions = await context.getEncodedDimensions()
+        let updatedTargetFrameRate = await context.getTargetFrameRate()
+        let codec = await context.getCodec()
+        let message = DesktopStreamStartedMessage(
+            streamID: streamID,
+            width: encodedDimensions.width,
+            height: encodedDimensions.height,
+            frameRate: updatedTargetFrameRate,
+            codec: codec,
+            displayCount: 1,
+            dimensionToken: dimensionToken
+        )
+        try? await clientContext.send(.desktopStreamStarted, content: message)
+        let suffix = noOp ? ", no-op" : ""
+        MirageLogger.host("Sent desktop resize completion for stream \(streamID) (request #\(requestNumber)\(suffix))")
     }
 
     /// Handle display resolution change from client

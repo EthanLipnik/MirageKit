@@ -7,6 +7,8 @@
 
 import MirageKit
 #if os(iOS) || os(visionOS)
+import AVFAudio
+import Speech
 import UIKit
 #if canImport(GameController)
 import GameController
@@ -122,6 +124,36 @@ public class InputCapturingView: UIView {
 
     /// Apple Pencil behavior mode.
     public var pencilInputMode: MiragePencilInputMode = .drawingTablet
+
+    /// Monotonic toggle token for dictation requests.
+    public var dictationToggleRequestID: UInt64 = 0 {
+        didSet {
+            guard dictationToggleRequestID != oldValue else { return }
+            handleDictationToggleRequest(dictationToggleRequestID)
+        }
+    }
+
+    /// Callback when dictation active state changes.
+    public var onDictationStateChanged: ((Bool) -> Void)?
+
+    /// Callback when dictation fails with a user-facing message.
+    public var onDictationError: ((String) -> Void)?
+
+    /// Dictation behavior selection for latency vs finalization quality.
+    public var dictationMode: MirageDictationMode = .best
+
+    var isDictationActive: Bool = false
+    var lastHandledDictationToggleRequestID: UInt64 = 0
+    var dictationTask: Task<Void, Never>?
+    var dictationFinalizeTask: Task<Void, Never>?
+    var dictationResultTask: Task<Void, Never>?
+    var dictationAudioEngine: AVAudioEngine?
+    var dictationAnalyzer: AnyObject?
+    var dictationAnalyzerInputSink: AnyObject?
+    var dictationRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
+    var dictationRecognitionTask: SFSpeechRecognitionTask?
+    var dictationReservedLocale: Locale?
+    var dictationLastCommittedText: String = ""
 
     // Cursor state from host
     var currentCursorType: MirageCursorType = .arrow
@@ -903,6 +935,7 @@ public class InputCapturingView: UIView {
         isDragging = false
         lastPencilPressure = 0
         clearSoftwareKeyboardState()
+        stopDictation()
         stopTouchScrollDeceleration()
 
         // Suspend rendering to avoid Metal GPU permission errors when backgrounded
@@ -1324,6 +1357,7 @@ public class InputCapturingView: UIView {
     }
 
     deinit {
+        stopDictation()
         stopModifierRefresh()
         stopVirtualCursorDeceleration()
         stopTouchScrollDeceleration()

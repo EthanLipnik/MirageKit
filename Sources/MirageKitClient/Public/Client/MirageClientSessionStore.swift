@@ -21,6 +21,10 @@ public final class MirageClientSessionStore {
     /// Minimum window sizes per session (observable for resize completion detection).
     public var sessionMinSizes: [StreamSessionID: CGSize] = [:]
 
+    /// Monotonic min-size update generation per session.
+    /// Increments for every host min-size update, including no-op value repeats.
+    public var sessionMinSizeUpdateGenerations: [StreamSessionID: UInt64] = [:]
+
     // MARK: - Login Display State
 
     /// Login display stream state (for locked host).
@@ -108,6 +112,7 @@ public final class MirageClientSessionStore {
 
         streamSessions.removeValue(forKey: sessionID)
         sessionMinSizes.removeValue(forKey: sessionID)
+        sessionMinSizeUpdateGenerations.removeValue(forKey: sessionID)
     }
 
     /// Get stream ID for a session.
@@ -137,6 +142,7 @@ public final class MirageClientSessionStore {
 
         // Update observable property for views.
         sessionMinSizes[sessionEntry.key] = CGSize(width: session.minWidth, height: session.minHeight)
+        sessionMinSizeUpdateGenerations[sessionEntry.key, default: 0] += 1
     }
 
     // MARK: - Focus Management

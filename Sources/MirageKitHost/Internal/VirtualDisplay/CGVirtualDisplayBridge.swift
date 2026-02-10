@@ -244,7 +244,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         }
 
         if hiDPI { return profile }
-        return profile == .persistentMainQueue ? profile : nil
+        return profile
     }
 
     private static func storePreferredDescriptorProfile(
@@ -266,7 +266,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     -> [DescriptorAttempt] {
         let defaults: [DescriptorProfile] = hiDPI
             ? [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
-            : [.persistentMainQueue]
+            : [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
         var orderedProfiles: [DescriptorProfile] = []
 
         if let preferred = preferredDescriptorProfile(for: colorSpace, hiDPI: hiDPI) {
@@ -383,7 +383,10 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         hiDPISetting: UInt32,
         requestedLogical: CGSize,
         requestedPixel: CGSize,
-        observed: DisplayModeSizes?
+        observed: DisplayModeSizes?,
+        observedBounds: CGRect,
+        observedPixelDimensions: CGSize,
+        sawOnline: Bool
     )
     -> String {
         let observedLogical = observed?.logical ?? .zero
@@ -391,7 +394,17 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let scale = observedLogical.width > 0 ? observedPixel.width / observedLogical.width : 0
         let scaleText = Double(scale).formatted(.number.precision(.fractionLength(2)))
         let serialText = serial.map(String.init) ?? "unknown"
-        return "Virtual display mode validation failed: displayID=\(displayID), serial=\(serialText), hiDPISetting=\(hiDPISetting), requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observedLogical), observedPixel=\(observedPixel), observedScale=\(scaleText)x"
+        return "Virtual display mode validation failed: displayID=\(displayID), serial=\(serialText), hiDPISetting=\(hiDPISetting), requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observedLogical), observedPixel=\(observedPixel), observedScale=\(scaleText)x, observedBounds=\(observedBounds.size), observedPixelDimensions=\(observedPixelDimensions), online=\(sawOnline)"
+    }
+
+    private static func approximatelyMatches(
+        _ observed: CGSize,
+        expected: CGSize,
+        tolerance: CGFloat = 1.0
+    )
+    -> Bool {
+        abs(observed.width - expected.width) <= tolerance &&
+            abs(observed.height - expected.height) <= tolerance
     }
 
     private static func validateModeActivation(
@@ -402,10 +415,29 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         serial: UInt32?
     )
     -> Bool {
-        let deadline = Date().addingTimeInterval(0.8)
+        let deadline = Date().addingTimeInterval(1.6)
         var lastObserved: DisplayModeSizes?
+        var lastBounds = CGRect.zero
+        var lastPixelDimensions = CGSize.zero
+        var sawOnline = false
 
         while Date() < deadline {
+            let isOnline = isDisplayOnline(displayID)
+            sawOnline = sawOnline || isOnline
+
+            let bounds = CGDisplayBounds(displayID)
+            if bounds.width > 0, bounds.height > 0 {
+                lastBounds = bounds
+            }
+
+            let pixelDimensions = CGSize(
+                width: CGFloat(CGDisplayPixelsWide(displayID)),
+                height: CGFloat(CGDisplayPixelsHigh(displayID))
+            )
+            if pixelDimensions.width > 0, pixelDimensions.height > 0 {
+                lastPixelDimensions = pixelDimensions
+            }
+
             if let observed = currentDisplayModeSizes(displayID),
                observed.logical.width > 0,
                observed.logical.height > 0,
@@ -430,6 +462,24 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 lastObserved = nil
             }
 
+            // Some hosts keep CGDisplayCopyDisplayMode unset during 1x fallback bring-up.
+            // If display geometry is stable and online, allow the 1x path to proceed.
+            if hiDPISetting == hiDPIDisabledSetting, isOnline {
+                let boundsMatch = bounds.width > 0 &&
+                    bounds.height > 0 &&
+                    approximatelyMatches(bounds.size, expected: requestedLogical)
+                let pixelMatch = pixelDimensions.width > 0 &&
+                    pixelDimensions.height > 0 &&
+                    approximatelyMatches(pixelDimensions, expected: requestedPixel)
+
+                if boundsMatch || pixelMatch {
+                    MirageLogger.host(
+                        "Virtual display mode accepted with lenient 1x validation: bounds=\(bounds.size), pixelDimensions=\(pixelDimensions), requested=\(requestedPixel)"
+                    )
+                    return true
+                }
+            }
+
             Thread.sleep(forTimeInterval: 0.05)
         }
 
@@ -441,7 +491,10 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 hiDPISetting: hiDPISetting,
                 requestedLogical: requestedLogical,
                 requestedPixel: requestedPixel,
-                observed: lastObserved
+                observed: lastObserved,
+                observedBounds: lastBounds,
+                observedPixelDimensions: lastPixelDimensions,
+                sawOnline: sawOnline
             )
         )
         return false
@@ -560,7 +613,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                     hiDPI: hiDPI,
                     serial: profile.serial
                 ) else {
-                    MirageLogger.error(.host, "Virtual display Retina activation failed for profile \(profile.label)")
+                    let modeLabel = hiDPI ? "Retina" : "1x"
+                    MirageLogger.error(.host, "Virtual display \(modeLabel) activation failed for profile \(profile.label)")
                     let invalidateSelector = NSSelectorFromString("invalidate")
                     if (display as AnyObject).responds(to: invalidateSelector) {
                         _ = (display as AnyObject).perform(invalidateSelector)
@@ -754,7 +808,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 "Updated virtual display resolution to \(width)x\(height) @\(refreshRate)Hz, hiDPI=\(hiDPI)"
             )
         } else {
-            MirageLogger.error(.host, "Updated virtual display failed Retina activation")
+            let modeLabel = hiDPI ? "Retina" : "1x"
+            MirageLogger.error(.host, "Updated virtual display failed \(modeLabel) activation")
         }
 
         return success

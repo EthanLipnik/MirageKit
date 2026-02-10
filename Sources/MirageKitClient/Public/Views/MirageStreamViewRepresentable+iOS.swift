@@ -54,6 +54,18 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Apple Pencil behavior mode.
     public var pencilInputMode: MiragePencilInputMode
 
+    /// Monotonic toggle token for dictation requests.
+    public var dictationToggleRequestID: UInt64
+
+    /// Callback when dictation active state changes.
+    public var onDictationStateChanged: ((Bool) -> Void)?
+
+    /// Callback when dictation fails with a user-facing message.
+    public var onDictationError: ((String) -> Void)?
+
+    /// Dictation behavior selection for latency vs finalization quality.
+    public var dictationMode: MirageDictationMode
+
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
@@ -75,6 +87,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         directTouchInputMode: MirageDirectTouchInputMode? = nil,
         softwareKeyboardVisible: Bool = false,
         pencilInputMode: MiragePencilInputMode = .drawingTablet,
+        dictationToggleRequestID: UInt64 = 0,
+        onDictationStateChanged: ((Bool) -> Void)? = nil,
+        onDictationError: ((String) -> Void)? = nil,
+        dictationMode: MirageDictationMode = .best,
         cursorLockEnabled: Bool = false,
         maxDrawableSize: CGSize? = nil
     ) {
@@ -92,6 +108,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilInputMode = pencilInputMode
+        self.dictationToggleRequestID = dictationToggleRequestID
+        self.onDictationStateChanged = onDictationStateChanged
+        self.onDictationError = onDictationError
+        self.dictationMode = dictationMode
         self.cursorLockEnabled = cursorLockEnabled
         self.maxDrawableSize = maxDrawableSize
     }
@@ -119,6 +139,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
+            dictationToggleRequestID: dictationToggleRequestID,
+            onDictationStateChanged: onDictationStateChanged,
+            onDictationError: onDictationError,
+            dictationMode: dictationMode,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
@@ -146,6 +170,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
+            dictationToggleRequestID: dictationToggleRequestID,
+            onDictationStateChanged: onDictationStateChanged,
+            onDictationError: onDictationError,
+            dictationMode: dictationMode,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
@@ -198,6 +226,10 @@ public final class MirageStreamViewController: UIViewController {
         directTouchInputMode: MirageDirectTouchInputMode?,
         softwareKeyboardVisible: Bool,
         pencilInputMode: MiragePencilInputMode,
+        dictationToggleRequestID: UInt64,
+        onDictationStateChanged: ((Bool) -> Void)?,
+        onDictationError: ((String) -> Void)?,
+        dictationMode: MirageDictationMode,
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
@@ -214,6 +246,10 @@ public final class MirageStreamViewController: UIViewController {
             (usesVirtualTrackpad ? .dragCursor : .normal)
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
         captureView.pencilInputMode = pencilInputMode
+        captureView.dictationToggleRequestID = dictationToggleRequestID
+        captureView.onDictationStateChanged = onDictationStateChanged
+        captureView.onDictationError = onDictationError
+        captureView.dictationMode = dictationMode
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
         captureView.cursorLockEnabled = cursorLockEnabled

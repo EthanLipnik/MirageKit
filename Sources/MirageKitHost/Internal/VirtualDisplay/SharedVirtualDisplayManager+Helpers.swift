@@ -125,8 +125,21 @@ extension SharedVirtualDisplayManager {
 
                 let sizeMatches = scMatchesLogical || scMatchesPixel || boundsMatchesLogical || boundsMatchesPixel
                 let modeMatches = modeMatchesLogical && modeMatchesPixel
+                let expectsOneX = abs(expectedLogicalResolution.width - expectedPixelResolution.width) <= 1 &&
+                    abs(expectedLogicalResolution.height - expectedPixelResolution.height) <= 1
 
                 if boundsReady, sizeMatches, modeMatches {
+                    return true
+                }
+
+                if expectsOneX, boundsReady, sizeMatches {
+                    MirageLogger
+                        .host(
+                            "Virtual display \(displayID) accepted using lenient 1x validation: " +
+                                "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
+                                "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), " +
+                                "expected=\(expectedPixelResolution)"
+                        )
                     return true
                 }
 
@@ -321,7 +334,7 @@ extension SharedVirtualDisplayManager {
             return managedContext
         }
 
-        throw SharedDisplayError.creationFailed("Virtual display failed Retina activation")
+        throw SharedDisplayError.creationFailed("Virtual display failed activation (Retina + 1x fallback)")
     }
 
     /// Recreate the display at a new resolution

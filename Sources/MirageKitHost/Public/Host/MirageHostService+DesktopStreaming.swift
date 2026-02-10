@@ -117,47 +117,119 @@ extension MirageHostService {
         let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
             for: targetFrameRate ?? 60
         )
-        let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
-            .desktopStream,
-            resolution: virtualDisplayResolution,
-            refreshRate: virtualDisplayRefreshRate,
-            colorSpace: config.colorSpace
-        )
-        logDesktopStartStep("virtual display acquired (\(context.displayID))")
+        var captureDisplay: SCDisplayWrapper
+        var captureResolution: CGSize
 
-        let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
-        logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
-        let captureResolution = context.resolution
+        do {
+            let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+                .desktopStream,
+                resolution: virtualDisplayResolution,
+                refreshRate: virtualDisplayRefreshRate,
+                colorSpace: config.colorSpace
+            )
+            logDesktopStartStep("virtual display acquired (\(context.displayID))")
 
-        desktopVirtualDisplayID = context.displayID
-        var resolvedBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds()
-        if resolvedBounds == nil { resolvedBounds = resolveDesktopDisplayBounds() }
-        guard let bounds = resolvedBounds else {
-            throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
-        }
-        desktopDisplayBounds = bounds
-        desktopUsesVirtualDisplay = true
-        sharedVirtualDisplayGeneration = await SharedVirtualDisplayManager.shared.getDisplayGeneration()
-        sharedVirtualDisplayScaleFactor = max(1.0, context.scaleFactor)
-        logDesktopStartStep("display bounds cached")
+            captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
+            logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
+            captureResolution = context.resolution
 
-        if desktopPrimaryPhysicalDisplayID == nil {
-            let primaryDisplayID = resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
-            desktopPrimaryPhysicalDisplayID = primaryDisplayID
-            desktopPrimaryPhysicalBounds = CGDisplayBounds(primaryDisplayID)
+            desktopVirtualDisplayID = context.displayID
+            var resolvedBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds()
+            if resolvedBounds == nil { resolvedBounds = resolveDesktopDisplayBounds() }
+            guard let bounds = resolvedBounds else {
+                throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
+            }
+            desktopDisplayBounds = bounds
+            desktopUsesVirtualDisplay = true
+            sharedVirtualDisplayGeneration = await SharedVirtualDisplayManager.shared.getDisplayGeneration()
+            sharedVirtualDisplayScaleFactor = max(1.0, context.scaleFactor)
+            logDesktopStartStep("display bounds cached")
+
+            if desktopPrimaryPhysicalDisplayID == nil {
+                let primaryDisplayID = resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
+                desktopPrimaryPhysicalDisplayID = primaryDisplayID
+                desktopPrimaryPhysicalBounds = CGDisplayBounds(primaryDisplayID)
+                MirageLogger
+                    .host(
+                        "Desktop primary physical display: \(primaryDisplayID), bounds=\(desktopPrimaryPhysicalBounds ?? .zero)"
+                    )
+            }
+
+            if mode == .mirrored {
+                // Set up display mirroring so physical displays mirror the virtual display.
+                // This lets the virtual display drive the streamed resolution.
+                await setupDisplayMirroring(targetDisplayID: context.displayID)
+                logDesktopStartStep("display mirroring configured")
+            } else {
+                logDesktopStartStep("display mirroring skipped (secondary display)")
+            }
+
+            if captureDisplay.display.displayID != context.displayID {
+                MirageLogger.error(
+                    .host,
+                    "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
+                )
+            }
             MirageLogger
                 .host(
-                    "Desktop primary physical display: \(primaryDisplayID), bounds=\(desktopPrimaryPhysicalBounds ?? .zero)"
+                    "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), color=\(config.colorSpace.displayName))"
                 )
-        }
+        } catch {
+            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+            desktopVirtualDisplayID = nil
+            desktopUsesVirtualDisplay = false
+            sharedVirtualDisplayGeneration = 0
+            sharedVirtualDisplayScaleFactor = 1.0
+            desktopDisplayBounds = nil
 
-        if mode == .mirrored {
-            // Set up display mirroring so physical displays mirror the virtual display.
-            // This lets the virtual display drive the streamed resolution.
-            await setupDisplayMirroring(targetDisplayID: context.displayID)
-            logDesktopStartStep("display mirroring configured")
-        } else {
-            logDesktopStartStep("display mirroring skipped (secondary display)")
+            MirageLogger.error(
+                .host,
+                "Virtual display acquisition failed for desktop stream; using main display fallback: \(error)"
+            )
+            logDesktopStartStep("virtual display unavailable, falling back")
+
+            do {
+                captureDisplay = try await findMainSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+            } catch {
+                MirageLogger.error(
+                    .host,
+                    "Main SCDisplay fallback lookup failed; trying first available display: \(error)"
+                )
+                let content = try await SCShareableContent.excludingDesktopWindows(
+                    false,
+                    onScreenWindowsOnly: false
+                )
+                guard let anyDisplay = content.displays.first else {
+                    throw MirageError.protocolError("No ScreenCaptureKit display available for fallback capture")
+                }
+                captureDisplay = SCDisplayWrapper(display: anyDisplay)
+                MirageLogger.host(
+                    "Using first available SCDisplay for fallback capture: \(anyDisplay.displayID) (\(anyDisplay.width)x\(anyDisplay.height))"
+                )
+            }
+            logDesktopStartStep("fallback SCDisplay resolved (\(captureDisplay.display.displayID))")
+            captureResolution = CGSize(
+                width: CGFloat(captureDisplay.display.width),
+                height: CGFloat(captureDisplay.display.height)
+            )
+
+            let fallbackDisplayID = captureDisplay.display.displayID
+            let fallbackBounds = CGDisplayBounds(fallbackDisplayID)
+            if fallbackBounds.width > 0, fallbackBounds.height > 0 {
+                desktopDisplayBounds = fallbackBounds
+            } else {
+                desktopDisplayBounds = CGRect(origin: .zero, size: captureResolution)
+            }
+
+            let primaryDisplayID = resolvePrimaryPhysicalDisplayID() ?? fallbackDisplayID
+            desktopPrimaryPhysicalDisplayID = primaryDisplayID
+            desktopPrimaryPhysicalBounds = CGDisplayBounds(primaryDisplayID)
+            logDesktopStartStep("fallback bounds cached")
+
+            MirageLogger
+                .host(
+                    "Desktop capture source: Main Display fallback (display \(fallbackDisplayID), color=\(config.colorSpace.displayName), resolution=\(Int(captureResolution.width))x\(Int(captureResolution.height)))"
+                )
         }
 
         let streamID = nextStreamID
@@ -165,17 +237,6 @@ extension MirageHostService {
         streamStartupBaseTimes[streamID] = desktopStartTime
         streamStartupRegistrationLogged.remove(streamID)
         streamStartupFirstPacketSent.remove(streamID)
-        if captureDisplay.display.displayID != context.displayID {
-            MirageLogger.error(
-                .host,
-                "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
-            )
-        }
-        MirageLogger
-            .host(
-                "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), color=\(config.colorSpace.displayName))"
-            )
-
         let streamContext = StreamContext(
             streamID: streamID,
             windowID: 0,
