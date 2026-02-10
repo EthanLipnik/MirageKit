@@ -10,20 +10,44 @@
 import CryptoKit
 import Foundation
 
+/// Additional app-scoped authentication for signaling requests.
+public struct MirageRemoteSignalingAppAuthentication: Sendable {
+    public let appID: String
+    public let sharedSecret: String
+
+    public init(appID: String, sharedSecret: String) {
+        self.appID = appID
+        self.sharedSecret = sharedSecret
+    }
+}
+
 /// Configuration for the remote signaling service endpoint.
 public struct MirageRemoteSignalingConfiguration: Sendable {
     public let baseURL: URL
     public let requestTimeout: TimeInterval
+    public let appAuthentication: MirageRemoteSignalingAppAuthentication
 
-    public init(baseURL: URL, requestTimeout: TimeInterval = 5) {
+    public init(
+        baseURL: URL,
+        requestTimeout: TimeInterval = 5,
+        appAuthentication: MirageRemoteSignalingAppAuthentication
+    ) {
         self.baseURL = baseURL
         self.requestTimeout = requestTimeout
+        self.appAuthentication = appAuthentication
     }
 
+    /// Placeholder configuration for consumers that have not wired an app-owned endpoint.
+    ///
+    /// App targets should provide an explicit base URL for their own signaling service.
     public static var `default`: MirageRemoteSignalingConfiguration {
         MirageRemoteSignalingConfiguration(
-            baseURL: URL(string: "https://mirage-remote-signaling.workers.dev") ?? URL(fileURLWithPath: "/"),
-            requestTimeout: 5
+            baseURL: URL(string: "https://example.invalid") ?? URL(fileURLWithPath: "/"),
+            requestTimeout: 5,
+            appAuthentication: MirageRemoteSignalingAppAuthentication(
+                appID: "invalid",
+                sharedSecret: "invalid"
+            )
         )
     }
 }
@@ -114,7 +138,7 @@ public final class MirageRemoteSignalingClient {
     private let urlSession: URLSession
 
     public init(
-        configuration: MirageRemoteSignalingConfiguration = .default,
+        configuration: MirageRemoteSignalingConfiguration,
         identityManager: MirageIdentityManager = .shared,
         urlSession: URLSession = .shared
     ) {
@@ -277,6 +301,19 @@ public final class MirageRemoteSignalingClient {
         let nonce = UUID().uuidString.lowercased()
         let timestampMs = MirageIdentitySigning.currentTimestampMs()
         let bodyHash = Self.sha256Hex(bodyData ?? Data("-".utf8))
+        let appAuthentication = configuration.appAuthentication
+        let appAuthPayload = Self.appAuthPayload(
+            method: method,
+            path: path,
+            bodySHA256: bodyHash,
+            appID: appAuthentication.appID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let appSignature = Self.hmacSHA256Base64(
+            payload: appAuthPayload,
+            secret: appAuthentication.sharedSecret
+        )
         let payload = try MirageIdentitySigning.workerRequestPayload(
             method: method,
             path: path,
@@ -292,6 +329,10 @@ public final class MirageRemoteSignalingClient {
         request.httpMethod = method
         request.timeoutInterval = configuration.requestTimeout
         request.setValue(sessionID, forHTTPHeaderField: "x-mirage-session-id")
+        request.setValue(appAuthentication.appID, forHTTPHeaderField: "x-mirage-app-id")
+        request.setValue("\(timestampMs)", forHTTPHeaderField: "x-mirage-app-timestamp-ms")
+        request.setValue(nonce, forHTTPHeaderField: "x-mirage-app-nonce")
+        request.setValue(appSignature, forHTTPHeaderField: "x-mirage-app-signature")
         request.setValue(identity.keyID, forHTTPHeaderField: "x-mirage-key-id")
         request.setValue(identity.publicKey.base64EncodedString(), forHTTPHeaderField: "x-mirage-public-key")
         request.setValue("\(timestampMs)", forHTTPHeaderField: "x-mirage-timestamp-ms")
@@ -327,6 +368,39 @@ public final class MirageRemoteSignalingClient {
             return hex.count == 1 ? "0\(hex)" : hex
         }
         .joined()
+    }
+
+    private static func appAuthPayload(
+        method: String,
+        path: String,
+        bodySHA256: String,
+        appID: String,
+        timestampMs: Int64,
+        nonce: String
+    ) -> Data {
+        let fields = [
+            ("type", "worker-app-auth-v1"),
+            ("method", method.uppercased()),
+            ("path", path),
+            ("bodySHA256", bodySHA256),
+            ("appID", appID),
+            ("timestampMs", "\(timestampMs)"),
+            ("nonce", nonce),
+        ]
+            .sorted { lhs, rhs in
+                lhs.0 < rhs.0
+            }
+            .map { key, value in
+                "\(key)=\(value)"
+            }
+            .joined(separator: "\n")
+        return Data(fields.utf8)
+    }
+
+    private static func hmacSHA256Base64(payload: Data, secret: String) -> String {
+        let key = SymmetricKey(data: Data(secret.utf8))
+        let signature = HMAC<SHA256>.authenticationCode(for: payload, using: key)
+        return Data(signature).base64EncodedString()
     }
 
     private func encodeCandidates(_ candidates: [MirageRemoteCandidate]) -> [[String: Any]] {
