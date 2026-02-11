@@ -120,6 +120,9 @@ public final class MirageDiscovery {
                 if let value = txtRecord.dictionary[key] { txtDict[key] = value }
             }
             capabilities = MirageHostCapabilities.from(txtRecord: txtDict)
+            MirageLogger.discovery(
+                "Host metadata \(hostName): hwm=\(capabilities.hardwareModelIdentifier ?? "nil") hwi=\(capabilities.hardwareIconName ?? "nil") hwf=\(capabilities.hardwareMachineFamily ?? "nil")"
+            )
         }
 
         // Use parsed device ID from TXT record if available, otherwise generate one

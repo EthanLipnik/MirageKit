@@ -24,6 +24,29 @@ extension MirageClientService {
         }
     }
 
+    func handleHostHardwareIcon(_ message: ControlMessage) {
+        do {
+            let hostIcon = try message.decode(HostHardwareIconMessage.self)
+            guard let hostID = connectedHost?.id else {
+                MirageLogger.client("Ignoring host hardware icon payload without a connected host ID")
+                return
+            }
+
+            onHostHardwareIconReceived?(
+                hostID,
+                hostIcon.pngData,
+                hostIcon.iconName,
+                hostIcon.hardwareModelIdentifier,
+                hostIcon.hardwareMachineFamily
+            )
+            MirageLogger.client(
+                "Received host hardware icon payload bytes=\(hostIcon.pngData.count) icon=\(hostIcon.iconName ?? "nil") family=\(hostIcon.hardwareMachineFamily ?? "nil")"
+            )
+        } catch {
+            MirageLogger.error(.client, "Failed to decode host hardware icon: \(error)")
+        }
+    }
+
     func handleAppStreamStarted(_ message: ControlMessage) {
         do {
             let started = try message.decode(AppStreamStartedMessage.self)

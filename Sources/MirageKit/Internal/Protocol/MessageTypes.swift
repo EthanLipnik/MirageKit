@@ -78,6 +78,8 @@ package enum ControlMessageType: UInt8, Codable {
     case menuBarUpdate = 0x90 // Host → Client: Menu structure update
     case menuActionRequest = 0x91 // Client → Host: Execute menu action
     case menuActionResult = 0x92 // Host → Client: Action result
+    case hostHardwareIconRequest = 0x93 // Client -> Host: Request host hardware icon payload
+    case hostHardwareIcon = 0x94 // Host -> Client: Host hardware icon payload
 
     // Desktop streaming (full virtual display mirroring)
     case startDesktopStream = 0xA0 // Client → Host: Start full desktop stream

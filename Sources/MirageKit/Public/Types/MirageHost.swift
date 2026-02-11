@@ -104,6 +104,15 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
     /// Stable identity key identifier for signed handshake verification.
     public let identityKeyID: String?
 
+    /// Host hardware model identifier (for example, MacBookPro18,3).
+    public let hardwareModelIdentifier: String?
+
+    /// Host-resolved CoreTypes hardware icon basename (for example, com.apple.macbookpro-16-2021-silver.icns).
+    public let hardwareIconName: String?
+
+    /// Host machine family hint used for symbol fallback (`macBook`, `iMac`, `macMini`, `macStudio`, `macPro`).
+    public let hardwareMachineFamily: String?
+
     public init(
         maxStreams: Int = 4,
         supportsHEVC: Bool = true,
@@ -112,7 +121,10 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         maxFrameRate: Int = 120,
         protocolVersion: Int = Int(MirageKit.protocolVersion),
         deviceID: UUID? = nil,
-        identityKeyID: String? = nil
+        identityKeyID: String? = nil,
+        hardwareModelIdentifier: String? = nil,
+        hardwareIconName: String? = nil,
+        hardwareMachineFamily: String? = nil
     ) {
         self.maxStreams = maxStreams
         self.supportsHEVC = supportsHEVC
@@ -122,6 +134,9 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         self.protocolVersion = protocolVersion
         self.deviceID = deviceID
         self.identityKeyID = identityKeyID
+        self.hardwareModelIdentifier = hardwareModelIdentifier
+        self.hardwareIconName = hardwareIconName
+        self.hardwareMachineFamily = hardwareMachineFamily
     }
 
     /// Encode to TXT record data for Bonjour
@@ -138,6 +153,9 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         // Add device ID for self-filtering
         if let deviceID { record["did"] = deviceID.uuidString }
         if let identityKeyID { record["ikid"] = identityKeyID }
+        if let hardwareModelIdentifier { record["hwm"] = hardwareModelIdentifier }
+        if let hardwareIconName { record["hwi"] = hardwareIconName }
+        if let hardwareMachineFamily { record["hwf"] = hardwareMachineFamily }
 
         return record
     }
@@ -148,6 +166,9 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         var parsedDeviceID: UUID?
         if let didString = txtRecord["did"] { parsedDeviceID = UUID(uuidString: didString) }
         let parsedIdentityKeyID = txtRecord["ikid"]
+        let parsedHardwareModelIdentifier = txtRecord["hwm"]
+        let parsedHardwareIconName = txtRecord["hwi"]
+        let parsedHardwareMachineFamily = txtRecord["hwf"]
 
         return MirageHostCapabilities(
             maxStreams: Int(txtRecord["maxStreams"] ?? "4") ?? 4,
@@ -156,7 +177,10 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
             // supportsHDR: txtRecord["hdr"] == "1",
             // maxFrameRate and protocolVersion use defaults
             deviceID: parsedDeviceID,
-            identityKeyID: parsedIdentityKeyID
+            identityKeyID: parsedIdentityKeyID,
+            hardwareModelIdentifier: parsedHardwareModelIdentifier,
+            hardwareIconName: parsedHardwareIconName,
+            hardwareMachineFamily: parsedHardwareMachineFamily
         )
     }
 }

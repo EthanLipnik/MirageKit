@@ -25,6 +25,17 @@ public extension MirageClientService {
         MirageLogger.client("App list request sent")
     }
 
+    /// Request the connected host's hardware icon payload.
+    /// - Parameter preferredMaxPixelSize: Preferred max pixel size for the returned PNG.
+    func requestHostHardwareIcon(preferredMaxPixelSize: Int = 512) async throws {
+        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+
+        let request = HostHardwareIconRequestMessage(preferredMaxPixelSize: preferredMaxPixelSize)
+        let message = try ControlMessage(type: .hostHardwareIconRequest, content: request)
+        connection.send(content: message.serialize(), completion: .idempotent)
+        MirageLogger.client("Host hardware icon request sent")
+    }
+
     /// Select an app to stream (streams all of its windows).
     /// - Parameters:
     ///   - bundleIdentifier: Bundle identifier of the app to stream.

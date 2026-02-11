@@ -298,6 +298,12 @@ public final class MirageHostService {
     ) {
         let name = hostName ?? Host.current().localizedName ?? "Mac"
         let identityKeyID = Self.identityKeyID(for: MirageIdentityManager.shared)
+        let hardwareModelIdentifier = Self.hardwareModelIdentifier()
+        let hardwareIconName = Self.hardwareIconName(for: hardwareModelIdentifier)
+        let hardwareMachineFamily = Self.hardwareMachineFamily(
+            modelIdentifier: hardwareModelIdentifier,
+            iconName: hardwareIconName
+        )
         let capabilities = MirageHostCapabilities(
             maxStreams: 4,
             supportsHEVC: true,
@@ -305,7 +311,13 @@ public final class MirageHostService {
             maxFrameRate: 120,
             protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: deviceID,
-            identityKeyID: identityKeyID
+            identityKeyID: identityKeyID,
+            hardwareModelIdentifier: hardwareModelIdentifier,
+            hardwareIconName: hardwareIconName,
+            hardwareMachineFamily: hardwareMachineFamily
+        )
+        MirageLogger.host(
+            "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil")"
         )
         advertisedCapabilities = capabilities
 
@@ -351,9 +363,324 @@ public final class MirageHostService {
             maxFrameRate: advertisedCapabilities.maxFrameRate,
             protocolVersion: advertisedCapabilities.protocolVersion,
             deviceID: advertisedCapabilities.deviceID,
-            identityKeyID: keyID
+            identityKeyID: keyID,
+            hardwareModelIdentifier: advertisedCapabilities.hardwareModelIdentifier,
+            hardwareIconName: advertisedCapabilities.hardwareIconName,
+            hardwareMachineFamily: advertisedCapabilities.hardwareMachineFamily
         )
         Task { await advertiser.updateCapabilities(advertisedCapabilities) }
+    }
+
+    private static func hardwareModelIdentifier() -> String? {
+        var size: size_t = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 1 else {
+            return nil
+        }
+
+        var buffer = [CChar](repeating: 0, count: size)
+        guard sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 else {
+            return nil
+        }
+
+        return String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private struct CoreTypesHostIconEntry {
+        let lowercasedName: String
+        let originalName: String
+        let size: Int
+    }
+
+    private static func hardwareIconName(for modelIdentifier: String?) -> String? {
+        guard let normalizedModel = normalizeModelIdentifier(modelIdentifier) else {
+            return nil
+        }
+        guard let coreTypesPath = coreTypesBundlePath() else {
+            return nil
+        }
+
+        var iconEntries: [CoreTypesHostIconEntry] = []
+        var plistPaths: [String] = []
+        let fileManager = FileManager.default
+
+        if let enumerator = fileManager.enumerator(atPath: coreTypesPath) {
+            for case let relativePath as String in enumerator {
+                let lowercasedPath = relativePath.lowercased()
+
+                if lowercasedPath.hasSuffix(".icns") {
+                    let fullPath = coreTypesPath + "/" + relativePath
+                    let attributes = try? fileManager.attributesOfItem(atPath: fullPath)
+                    let size = (attributes?[.size] as? NSNumber)?.intValue ?? 0
+                    let originalName = (relativePath as NSString).lastPathComponent
+                    iconEntries.append(
+                        CoreTypesHostIconEntry(
+                            lowercasedName: originalName.lowercased(),
+                            originalName: originalName,
+                            size: size
+                        )
+                    )
+                    continue
+                }
+
+                if lowercasedPath.hasSuffix("/info.plist") {
+                    plistPaths.append(coreTypesPath + "/" + relativePath)
+                }
+            }
+        }
+
+        guard !iconEntries.isEmpty else {
+            return nil
+        }
+
+        let metadata = parseCoreTypesMetadata(plistPaths: plistPaths)
+        guard let mappedTypes = metadata.modelToTypeIdentifiers[normalizedModel], !mappedTypes.isEmpty else {
+            return nil
+        }
+
+        let expandedTypes = expandTypeIdentifiers(mappedTypes, conformance: metadata.typeConformanceGraph)
+        guard !expandedTypes.isEmpty else {
+            return nil
+        }
+
+        var best: (name: String, score: Int, size: Int)?
+
+        for icon in iconEntries {
+            var bestTypeScore = 0
+
+            for typeIdentifier in expandedTypes {
+                if icon.lowercasedName == "\(typeIdentifier).icns" {
+                    bestTypeScore = max(bestTypeScore, 6_000)
+                } else if icon.lowercasedName.hasPrefix(typeIdentifier + "-") {
+                    bestTypeScore = max(bestTypeScore, 5_200)
+                } else if icon.lowercasedName.contains(typeIdentifier) {
+                    bestTypeScore = max(bestTypeScore, 4_000)
+                }
+            }
+
+            guard bestTypeScore > 0 else {
+                continue
+            }
+
+            var score = bestTypeScore + min(icon.size / 4_096, 700)
+            if isMacHardwareIconName(icon.lowercasedName) {
+                score += 400
+            }
+
+            if let currentBest = best {
+                if score > currentBest.score || (score == currentBest.score && icon.size > currentBest.size) {
+                    best = (name: icon.originalName, score: score, size: icon.size)
+                }
+            } else {
+                best = (name: icon.originalName, score: score, size: icon.size)
+            }
+        }
+
+        return best?.name
+    }
+
+    private static func hardwareMachineFamily(modelIdentifier: String?, iconName: String?) -> String? {
+        if let iconName {
+            let normalizedIconName = iconName.lowercased()
+            if normalizedIconName.contains("macbook") || normalizedIconName.contains("sidebarlaptop") {
+                return "macBook"
+            }
+            if normalizedIconName.contains("imac") || normalizedIconName.contains("sidebarimac") {
+                return "iMac"
+            }
+            if normalizedIconName.contains("macmini") || normalizedIconName.contains("sidebarmacmini") {
+                return "macMini"
+            }
+            if normalizedIconName.contains("macstudio") {
+                return "macStudio"
+            }
+            if normalizedIconName.contains("macpro") || normalizedIconName.contains("sidebarmacpro") {
+                return "macPro"
+            }
+        }
+
+        if let modelIdentifier {
+            let normalizedModel = modelIdentifier.lowercased()
+            if normalizedModel.contains("macbook") {
+                return "macBook"
+            }
+            if normalizedModel.contains("imac") {
+                return "iMac"
+            }
+            if normalizedModel.contains("macmini") {
+                return "macMini"
+            }
+            if normalizedModel.contains("macstudio") {
+                return "macStudio"
+            }
+            if normalizedModel.contains("macpro") {
+                return "macPro"
+            }
+        }
+
+        guard let machineName = hardwareMachineName()?.lowercased() else {
+            return "macGeneric"
+        }
+        if machineName.contains("macbook") {
+            return "macBook"
+        }
+        if machineName.contains("imac") {
+            return "iMac"
+        }
+        if machineName.contains("mini") {
+            return "macMini"
+        }
+        if machineName.contains("studio") {
+            return "macStudio"
+        }
+        if machineName.contains("pro") {
+            return "macPro"
+        }
+        return "macGeneric"
+    }
+
+    private static func hardwareMachineName() -> String? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
+        process.arguments = ["SPHardwareDataType", "-json"]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+        } catch {
+            return nil
+        }
+
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        guard
+            let jsonObject = try? JSONSerialization.jsonObject(with: outputData),
+            let dictionary = jsonObject as? [String: Any],
+            let hardwareEntries = dictionary["SPHardwareDataType"] as? [[String: Any]],
+            let firstEntry = hardwareEntries.first,
+            let machineName = firstEntry["machine_name"] as? String
+        else {
+            return nil
+        }
+
+        let trimmed = machineName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private static func coreTypesBundlePath() -> String? {
+        if let bundlePath = Bundle(identifier: "com.apple.CoreTypes")?.bundlePath,
+           FileManager.default.fileExists(atPath: bundlePath) {
+            return bundlePath
+        }
+
+        let fallbacks = [
+            "/System/Library/CoreServices/CoreTypes.bundle",
+            "/System/Library/Templates/Data/System/Library/CoreServices/CoreTypes.bundle",
+        ]
+        return fallbacks.first(where: { FileManager.default.fileExists(atPath: $0) })
+    }
+
+    private static func normalizeModelIdentifier(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else { return nil }
+        if let markerIndex = normalized.firstIndex(of: "@") {
+            return String(normalized[..<markerIndex])
+        }
+        return normalized
+    }
+
+    private static func parseStringCollection(_ value: Any?) -> [String] {
+        if let string = value as? String {
+            return [string]
+        }
+        if let strings = value as? [String] {
+            return strings
+        }
+        return []
+    }
+
+    private static func parseCoreTypesMetadata(plistPaths: [String]) -> (
+        modelToTypeIdentifiers: [String: Set<String>],
+        typeConformanceGraph: [String: Set<String>]
+    ) {
+        var modelToTypeIdentifiers: [String: Set<String>] = [:]
+        var typeConformanceGraph: [String: Set<String>] = [:]
+
+        for plistPath in plistPaths {
+            guard
+                let data = FileManager.default.contents(atPath: plistPath),
+                let plistObject = try? PropertyListSerialization.propertyList(from: data, format: nil),
+                let plist = plistObject as? [String: Any],
+                let declarations = plist["UTExportedTypeDeclarations"] as? [[String: Any]]
+            else {
+                continue
+            }
+
+            for declaration in declarations {
+                guard let typeIdentifier = (declaration["UTTypeIdentifier"] as? String)?
+                    .lowercased(), !typeIdentifier.isEmpty else {
+                    continue
+                }
+
+                let conformsTo = parseStringCollection(declaration["UTTypeConformsTo"])
+                    .map { $0.lowercased() }
+                if !conformsTo.isEmpty {
+                    typeConformanceGraph[typeIdentifier, default: []].formUnion(conformsTo)
+                }
+
+                guard let tagSpecification = declaration["UTTypeTagSpecification"] as? [String: Any] else {
+                    continue
+                }
+
+                let modelCodes = parseStringCollection(tagSpecification["com.apple.device-model-code"])
+                    .map { normalizeModelIdentifier($0) }
+                    .compactMap { $0 }
+                guard !modelCodes.isEmpty else {
+                    continue
+                }
+
+                let relatedTypes = Set([typeIdentifier] + conformsTo)
+                for modelCode in modelCodes {
+                    modelToTypeIdentifiers[modelCode, default: []].formUnion(relatedTypes)
+                }
+            }
+        }
+
+        return (modelToTypeIdentifiers, typeConformanceGraph)
+    }
+
+    private static func expandTypeIdentifiers(
+        _ initial: Set<String>,
+        conformance: [String: Set<String>]
+    ) -> Set<String> {
+        var visited = initial
+        var queue = Array(initial)
+
+        while let next = queue.popLast() {
+            for parent in conformance[next, default: []] where !visited.contains(parent) {
+                visited.insert(parent)
+                queue.append(parent)
+            }
+        }
+
+        return visited
+    }
+
+    private static func isMacHardwareIconName(_ lowercasedName: String) -> Bool {
+        lowercasedName.contains("macbook") ||
+            lowercasedName.contains("imac") ||
+            lowercasedName.contains("macmini") ||
+            lowercasedName.contains("macstudio") ||
+            lowercasedName.contains("macpro") ||
+            lowercasedName.contains("sidebarlaptop") ||
+            lowercasedName.contains("sidebarmac")
     }
 
     /// Resolve input bounds for desktop streaming based on physical display size.

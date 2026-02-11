@@ -117,6 +117,9 @@ public final class MirageClientService {
     /// Callback when app list is received
     public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
 
+    /// Callback when host hardware icon payload is received.
+    public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
+
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((String, String, [AppStreamStartedMessage.AppStreamWindow]) -> Void)?
 

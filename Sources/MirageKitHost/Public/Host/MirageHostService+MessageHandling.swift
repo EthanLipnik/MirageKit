@@ -70,6 +70,9 @@ extension MirageHostService {
             .menuActionRequest: { [weak self] message, client, connection in
                 await self?.handleMenuActionRequest(message, from: client, connection: connection)
             },
+            .hostHardwareIconRequest: { [weak self] message, client, connection in
+                await self?.handleHostHardwareIconRequest(message, from: client, connection: connection)
+            },
             .startDesktopStream: { [weak self] message, client, connection in
                 await self?.handleStartDesktopStream(message, from: client, connection: connection)
             },
