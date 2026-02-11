@@ -19,6 +19,7 @@ extension MirageHostService {
         let negotiation: MirageProtocolNegotiation
         let requestNonce: String
         let identity: MirageIdentityEnvelope
+        let pendingControlData: Data
     }
 
     private enum ApprovalOutcome {
@@ -209,7 +210,11 @@ extension MirageHostService {
             MirageLogger.host("Session is \(sessionState), client will show unlock form")
         }
 
-        startReceivingFromClient(connection: connection, client: client)
+        startReceivingFromClient(
+            connection: connection,
+            client: client,
+            initialBuffer: hello.pendingControlData
+        )
     }
 
     /// Receive hello message from a connecting client.
@@ -237,7 +242,7 @@ extension MirageHostService {
             return nil
         }
 
-        guard let (message, _) = ControlMessage.deserialize(from: data) else {
+        guard let (message, consumed) = ControlMessage.deserialize(from: data) else {
             MirageLogger.host("Failed to deserialize hello message")
             return nil
         }
@@ -309,6 +314,13 @@ extension MirageHostService {
             }
             let selectedFeatures = hello.negotiation.supportedFeatures.intersection(mirageSupportedFeatures)
             MirageLogger.host("Received hello from \(hello.deviceName) (\(hello.deviceType.displayName))")
+            let pendingControlData = consumed < data.count ? Data(data.dropFirst(consumed)) : Data()
+            if !pendingControlData.isEmpty {
+                MirageLogger.host(
+                    "Buffered \(pendingControlData.count) control bytes that arrived with hello from \(hello.deviceName)"
+                )
+            }
+
             return ReceivedHello(
                 deviceInfo: MirageDeviceInfo(
                     id: hello.deviceID,
@@ -326,7 +338,8 @@ extension MirageHostService {
                     selectedFeatures: selectedFeatures
                 ),
                 requestNonce: identity.nonce,
-                identity: identity
+                identity: identity,
+                pendingControlData: pendingControlData
             )
         } catch {
             MirageLogger.error(.host, "Failed to decode hello: \(error)")

@@ -269,6 +269,11 @@ public final class MirageCloudKitShareManager {
         record[MirageCloudKitHostInfo.RecordKey.protocolVersion.rawValue] = Int64(capabilities.protocolVersion)
         record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] = identityKeyID
         record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] = identityPublicKey
+        record[MirageCloudKitHostInfo.RecordKey.hardwareModelIdentifier.rawValue] = capabilities.hardwareModelIdentifier
+        record[MirageCloudKitHostInfo.RecordKey.hardwareIconName.rawValue] = capabilities.hardwareIconName
+        record[MirageCloudKitHostInfo.RecordKey.hardwareMachineFamily.rawValue] = capabilities.hardwareMachineFamily
+        // Remove legacy payload field so host records remain metadata-only.
+        record["hardwareIconPNGData"] = nil
         record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] = remoteEnabled ? 1 : 0
         record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] = Date()
 

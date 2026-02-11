@@ -15,8 +15,12 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     /// Continuously receive and handle control messages from a client.
-    func startReceivingFromClient(connection: NWConnection, client: MirageConnectedClient) {
-        var receiveBuffer = Data()
+    func startReceivingFromClient(
+        connection: NWConnection,
+        client: MirageConnectedClient,
+        initialBuffer: Data = Data()
+    ) {
+        var receiveBuffer = initialBuffer
         let bufferLock = NSLock()
         let connectionID = ObjectIdentifier(connection)
 
@@ -105,6 +109,35 @@ extension MirageHostService {
                         receiveNext()
                     }
                 }
+        }
+
+        if !receiveBuffer.isEmpty {
+            bufferLock.lock()
+            var initialMessages: [(message: ControlMessage, isInput: Bool)] = []
+            while let (message, consumed) = ControlMessage.deserialize(from: receiveBuffer) {
+                receiveBuffer.removeFirst(consumed)
+                initialMessages.append((message, message.type == .inputEvent))
+            }
+            bufferLock.unlock()
+
+            for (message, isInput) in initialMessages where isInput {
+                inputQueue.async {
+                    self.handleInputEventFast(message, from: client)
+                }
+            }
+
+            let nonInputMessages = initialMessages.filter { !$0.isInput }.map(\.message)
+            if !nonInputMessages.isEmpty {
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    clientFirstErrorTime.removeValue(forKey: connectionID)
+                    for message in nonInputMessages {
+                        await handleClientMessage(message, from: client, connection: connection)
+                    }
+                    receiveNext()
+                }
+                return
+            }
         }
 
         receiveNext()

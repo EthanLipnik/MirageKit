@@ -114,6 +114,9 @@ public extension MirageCloudKitHostInfo {
         case protocolVersion
         case identityKeyID
         case identityPublicKey
+        case hardwareModelIdentifier
+        case hardwareIconName
+        case hardwareMachineFamily
         case remoteEnabled
         case lastSeen
         case createdAt

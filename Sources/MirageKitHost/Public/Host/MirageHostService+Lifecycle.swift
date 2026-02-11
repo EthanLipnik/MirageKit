@@ -47,6 +47,7 @@ public extension MirageHostService {
 
             state = .advertising(controlPort: controlPort, dataPort: dataPort)
             MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort)")
+            await advertiser.updateCapabilities(advertisedCapabilities)
             await updateRemoteControlListenerState()
 
             // Set up app streaming callbacks

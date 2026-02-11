@@ -202,6 +202,9 @@ public final class MirageCloudKitHostProvider {
             .map(Int.init) ?? Int(MirageKit.protocolVersion)
         let identityKeyID = record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] as? String
         let identityPublicKey = record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] as? Data
+        let hardwareModelIdentifier = record[MirageCloudKitHostInfo.RecordKey.hardwareModelIdentifier.rawValue] as? String
+        let hardwareIconName = record[MirageCloudKitHostInfo.RecordKey.hardwareIconName.rawValue] as? String
+        let hardwareMachineFamily = record[MirageCloudKitHostInfo.RecordKey.hardwareMachineFamily.rawValue] as? String
         let remoteEnabled = (record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] as? Int64 ?? 0) != 0
 
         let capabilities = MirageHostCapabilities(
@@ -211,7 +214,10 @@ public final class MirageCloudKitHostProvider {
             maxFrameRate: maxFrameRate,
             protocolVersion: protocolVersion,
             deviceID: deviceID,
-            identityKeyID: identityKeyID
+            identityKeyID: identityKeyID,
+            hardwareModelIdentifier: hardwareModelIdentifier,
+            hardwareIconName: hardwareIconName,
+            hardwareMachineFamily: hardwareMachineFamily
         )
 
         let lastSeen = record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] as? Date ?? record

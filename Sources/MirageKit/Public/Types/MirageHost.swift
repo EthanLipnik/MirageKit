@@ -164,11 +164,13 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
     public static func from(txtRecord: [String: String]) -> MirageHostCapabilities {
         // Parse device ID if present
         var parsedDeviceID: UUID?
-        if let didString = txtRecord["did"] { parsedDeviceID = UUID(uuidString: didString) }
-        let parsedIdentityKeyID = txtRecord["ikid"]
-        let parsedHardwareModelIdentifier = txtRecord["hwm"]
-        let parsedHardwareIconName = txtRecord["hwi"]
-        let parsedHardwareMachineFamily = txtRecord["hwf"]
+        if let didString = sanitizedTXTValue(txtRecord["did"]) {
+            parsedDeviceID = UUID(uuidString: didString)
+        }
+        let parsedIdentityKeyID = sanitizedTXTValue(txtRecord["ikid"])
+        let parsedHardwareModelIdentifier = sanitizedTXTValue(txtRecord["hwm"])
+        let parsedHardwareIconName = sanitizedTXTValue(txtRecord["hwi"])
+        let parsedHardwareMachineFamily = sanitizedTXTValue(txtRecord["hwf"])
 
         return MirageHostCapabilities(
             maxStreams: Int(txtRecord["maxStreams"] ?? "4") ?? 4,
@@ -182,5 +184,18 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
             hardwareIconName: parsedHardwareIconName,
             hardwareMachineFamily: parsedHardwareMachineFamily
         )
+    }
+
+    private static func sanitizedTXTValue(_ value: String?) -> String? {
+        guard let value else {
+            return nil
+        }
+
+        var cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let nulIndex = cleaned.firstIndex(of: "\u{0}") {
+            cleaned = String(cleaned[..<nulIndex])
+        }
+        cleaned = cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+        return cleaned.isEmpty ? nil : cleaned
     }
 }

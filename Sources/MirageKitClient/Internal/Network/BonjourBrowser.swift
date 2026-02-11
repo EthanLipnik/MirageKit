@@ -9,6 +9,7 @@ import Foundation
 import Network
 import Observation
 import MirageKit
+import CryptoKit
 
 /// Discovers Mirage hosts on the local network via Bonjour
 @Observable
@@ -108,6 +109,7 @@ public final class MirageDiscovery {
         // Extract host info from result
         var hostName = "Unknown Host"
         var capabilities = MirageHostCapabilities()
+        var txtDict: [String: String] = [:]
 
         // Get service name and TXT record
         if case let .service(name, _, _, _) = result.endpoint { hostName = name }
@@ -115,18 +117,17 @@ public final class MirageDiscovery {
         // Parse TXT record for capabilities
         let metadata = result.metadata
         if case let .bonjour(txtRecord) = metadata {
-            var txtDict: [String: String] = [:]
             for key in txtRecord.dictionary.keys {
                 if let value = txtRecord.dictionary[key] { txtDict[key] = value }
             }
             capabilities = MirageHostCapabilities.from(txtRecord: txtDict)
             MirageLogger.discovery(
-                "Host metadata \(hostName): hwm=\(capabilities.hardwareModelIdentifier ?? "nil") hwi=\(capabilities.hardwareIconName ?? "nil") hwf=\(capabilities.hardwareMachineFamily ?? "nil")"
+                "Host metadata \(hostName): did=\(capabilities.deviceID?.uuidString ?? "nil") hwm=\(capabilities.hardwareModelIdentifier ?? "nil") hwi=\(capabilities.hardwareIconName ?? "nil") hwf=\(capabilities.hardwareMachineFamily ?? "nil") keys=\(txtDict.keys.sorted())"
             )
         }
 
-        // Use parsed device ID from TXT record if available, otherwise generate one
-        let hostID = capabilities.deviceID ?? UUID()
+        // Use TXT device ID when available; otherwise derive a stable fallback from endpoint identity.
+        let hostID = capabilities.deviceID ?? fallbackHostID(endpoint: result.endpoint, hostName: hostName)
 
         let host = MirageHost(
             id: hostID,
@@ -138,6 +139,23 @@ public final class MirageDiscovery {
 
         hostsByEndpoint[result.endpoint] = host
         updateHostsList()
+    }
+
+    private func fallbackHostID(endpoint: NWEndpoint, hostName: String) -> UUID {
+        let source = "\(hostName)|\(endpoint.debugDescription)"
+        let digest = SHA256.hash(data: Data(source.utf8))
+        let bytes = Array(digest)
+        var uuidBytes = Array(bytes.prefix(16))
+        uuidBytes[6] = (uuidBytes[6] & 0x0F) | 0x40
+        uuidBytes[8] = (uuidBytes[8] & 0x3F) | 0x80
+
+        let uuid = uuid_t(
+            uuidBytes[0], uuidBytes[1], uuidBytes[2], uuidBytes[3],
+            uuidBytes[4], uuidBytes[5], uuidBytes[6], uuidBytes[7],
+            uuidBytes[8], uuidBytes[9], uuidBytes[10], uuidBytes[11],
+            uuidBytes[12], uuidBytes[13], uuidBytes[14], uuidBytes[15]
+        )
+        return UUID(uuid: uuid)
     }
 
     private func removeHost(for endpoint: NWEndpoint) {

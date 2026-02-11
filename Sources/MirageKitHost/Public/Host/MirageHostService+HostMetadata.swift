@@ -86,31 +86,38 @@ private extension MirageHostService {
             .lowercased()
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        let selectedAsset: CoreTypesIconAsset?
+        var selectedAsset: CoreTypesIconAsset?
 
         if let normalizedPreferredName {
             selectedAsset = iconAssets
                 .filter { $0.lowercasedFilename == normalizedPreferredName }
                 .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
-        } else if let normalizedFamily {
+
+            if selectedAsset == nil {
+                let preferredStem = normalizedPreferredName.replacing(".icns", with: "")
+                selectedAsset = iconAssets
+                    .filter { asset in
+                        let assetStem = asset.lowercasedFilename.replacing(".icns", with: "")
+                        return assetStem.hasPrefix(preferredStem) || preferredStem.hasPrefix(assetStem)
+                    }
+                    .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
+            }
+        }
+
+        if selectedAsset == nil, let normalizedFamily {
             selectedAsset = iconAssets
                 .filter { matchesMachineFamily(normalizedFamily, iconName: $0.lowercasedFilename) }
                 .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
-        } else if let normalizedModel {
+        }
+
+        if selectedAsset == nil, let normalizedModel {
             selectedAsset = iconAssets
                 .filter { $0.lowercasedFilename.contains(normalizedModel) }
                 .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
-        } else {
-            selectedAsset = nil
         }
 
-        let resolvedAsset = selectedAsset
-            ?? iconAssets
-            .filter { isMacHardwareIconFilename($0.lowercasedFilename) }
-            .max(by: { lhs, rhs in lhs.fileSize < rhs.fileSize })
-
-        guard let resolvedAsset,
-              let image = NSImage(contentsOfFile: resolvedAsset.path),
+        guard let selectedAsset,
+              let image = NSImage(contentsOfFile: selectedAsset.path),
               let pngData = pngData(for: image, maxPixelSize: maxPixelSize)
         else {
             return nil
@@ -118,7 +125,7 @@ private extension MirageHostService {
 
         return ResolvedHostHardwareIconPayload(
             pngData: pngData,
-            iconName: resolvedAsset.originalFilename
+            iconName: selectedAsset.originalFilename
         )
     }
 

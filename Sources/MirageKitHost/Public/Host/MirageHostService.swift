@@ -93,6 +93,11 @@ public final class MirageHostService {
     var hostID: UUID = .init()
     let handshakeReplayProtector = MirageReplayProtector()
 
+    /// Current capability payload advertised in Bonjour TXT records.
+    public var currentAdvertisedCapabilities: MirageHostCapabilities {
+        advertisedCapabilities
+    }
+
     // Stream management (internal for extension access)
     var nextStreamID: StreamID = 1
     var streamsByID: [StreamID: StreamContext] = [:]
@@ -299,7 +304,11 @@ public final class MirageHostService {
         let name = hostName ?? Host.current().localizedName ?? "Mac"
         let identityKeyID = Self.identityKeyID(for: MirageIdentityManager.shared)
         let hardwareModelIdentifier = Self.hardwareModelIdentifier()
-        let hardwareIconName = Self.hardwareIconName(for: hardwareModelIdentifier)
+        let hardwareColorCode = Self.hardwareColorCode()
+        let hardwareIconName = Self.hardwareIconName(
+            for: hardwareModelIdentifier,
+            hardwareColorCode: hardwareColorCode
+        )
         let hardwareMachineFamily = Self.hardwareMachineFamily(
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName
@@ -317,7 +326,7 @@ public final class MirageHostService {
             hardwareMachineFamily: hardwareMachineFamily
         )
         MirageLogger.host(
-            "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil")"
+            "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil") color=\(hardwareColorCode?.description ?? "nil")"
         )
         advertisedCapabilities = capabilities
 
@@ -391,7 +400,10 @@ public final class MirageHostService {
         let size: Int
     }
 
-    private static func hardwareIconName(for modelIdentifier: String?) -> String? {
+    private static func hardwareIconName(
+        for modelIdentifier: String?,
+        hardwareColorCode: Int?
+    ) -> String? {
         guard let normalizedModel = normalizeModelIdentifier(modelIdentifier) else {
             return nil
         }
@@ -433,37 +445,85 @@ public final class MirageHostService {
         }
 
         let metadata = parseCoreTypesMetadata(plistPaths: plistPaths)
-        guard let mappedTypes = metadata.modelToTypeIdentifiers[normalizedModel], !mappedTypes.isEmpty else {
-            return nil
-        }
+        let preferredModelTag = hardwareColorCode.map { "\(normalizedModel)@ecolor=\($0)" }
+        let preferredTypes = preferredModelTag.flatMap { metadata.modelTagToTypeIdentifiers[$0] } ?? []
+        let mappedTypes = metadata.modelToTypeIdentifiers[normalizedModel] ?? []
+        let preferredColorHints = preferredColorHints(from: preferredTypes)
+        let expandedPreferredTypes = preferredTypes.isEmpty
+            ? Set<String>()
+            : expandTypeIdentifiers(preferredTypes, conformance: metadata.typeConformanceGraph)
+        let expandedMappedTypes = mappedTypes.isEmpty
+            ? Set<String>()
+            : expandTypeIdentifiers(mappedTypes, conformance: metadata.typeConformanceGraph)
+        let machineFamilyHint = hardwareMachineFamily(modelIdentifier: normalizedModel, iconName: nil)
 
-        let expandedTypes = expandTypeIdentifiers(mappedTypes, conformance: metadata.typeConformanceGraph)
-        guard !expandedTypes.isEmpty else {
-            return nil
+        if preferredTypes.isEmpty, let preferredModelTag {
+            MirageLogger.host(
+                "Host icon color-specific model tag unavailable: \(preferredModelTag), falling back to family/model matching"
+            )
         }
 
         var best: (name: String, score: Int, size: Int)?
 
         for icon in iconEntries {
-            var bestTypeScore = 0
+            let lowercasedName = icon.lowercasedName
+            var score = 0
 
-            for typeIdentifier in expandedTypes {
-                if icon.lowercasedName == "\(typeIdentifier).icns" {
-                    bestTypeScore = max(bestTypeScore, 6_000)
-                } else if icon.lowercasedName.hasPrefix(typeIdentifier + "-") {
-                    bestTypeScore = max(bestTypeScore, 5_200)
-                } else if icon.lowercasedName.contains(typeIdentifier) {
-                    bestTypeScore = max(bestTypeScore, 4_000)
-                }
-            }
+            score = max(
+                score,
+                scoreForTypeMatch(
+                    iconName: lowercasedName,
+                    typeIdentifiers: preferredTypes,
+                    exactWeight: 22_000,
+                    prefixWeight: 20_500,
+                    containsWeight: 18_000
+                )
+            )
+            score = max(
+                score,
+                scoreForTypeMatch(
+                    iconName: lowercasedName,
+                    typeIdentifiers: mappedTypes,
+                    exactWeight: 15_000,
+                    prefixWeight: 13_500,
+                    containsWeight: 11_500
+                )
+            )
+            score = max(
+                score,
+                scoreForTypeMatch(
+                    iconName: lowercasedName,
+                    typeIdentifiers: expandedPreferredTypes,
+                    exactWeight: 9_000,
+                    prefixWeight: 7_800,
+                    containsWeight: 6_600
+                )
+            )
+            score = max(
+                score,
+                scoreForTypeMatch(
+                    iconName: lowercasedName,
+                    typeIdentifiers: expandedMappedTypes,
+                    exactWeight: 5_200,
+                    prefixWeight: 4_300,
+                    containsWeight: 3_500
+                )
+            )
 
-            guard bestTypeScore > 0 else {
+            guard score > 0 else {
                 continue
             }
 
-            var score = bestTypeScore + min(icon.size / 4_096, 700)
+            score += min(icon.size / 4_096, 900)
             if isMacHardwareIconName(icon.lowercasedName) {
-                score += 400
+                score += 500
+            }
+            if let machineFamilyHint,
+               matchesMachineFamilyHint(machineFamilyHint, iconName: lowercasedName) {
+                score += 1_600
+            }
+            if matchesColorHint(iconName: lowercasedName, colorHints: preferredColorHints) {
+                score += 2_100
             }
 
             if let currentBest = best {
@@ -475,7 +535,22 @@ public final class MirageHostService {
             }
         }
 
-        return best?.name
+        if let resolved = best?.name {
+            return resolved
+        }
+
+        if let familyFallback = bestFamilyFallbackIconName(
+            machineFamily: machineFamilyHint,
+            iconEntries: iconEntries,
+            preferredColorHints: preferredColorHints
+        ) {
+            return familyFallback
+        }
+
+        return iconEntries
+            .filter { isMacHardwareIconName($0.lowercasedName) }
+            .max(by: { lhs, rhs in lhs.size < rhs.size })?
+            .originalName
     }
 
     private static func hardwareMachineFamily(modelIdentifier: String?, iconName: String?) -> String? {
@@ -549,16 +624,19 @@ public final class MirageHostService {
 
         do {
             try process.run()
-            process.waitUntilExit()
         } catch {
             return nil
         }
+
+        // Drain stdout before waiting for exit so verbose subprocess output
+        // cannot fill the pipe buffer and block startup.
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
 
         guard process.terminationStatus == 0 else {
             return nil
         }
 
-        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
         guard
             let jsonObject = try? JSONSerialization.jsonObject(with: outputData),
             let dictionary = jsonObject as? [String: Any],
@@ -596,6 +674,16 @@ public final class MirageHostService {
         return normalized
     }
 
+    private static func normalizeModelTagIdentifier(_ value: String?) -> String? {
+        guard let value else { return nil }
+        var normalized = value.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if let nulIndex = normalized.firstIndex(of: "\u{0}") {
+            normalized = String(normalized[..<nulIndex])
+        }
+        guard !normalized.isEmpty else { return nil }
+        return normalized
+    }
+
     private static func parseStringCollection(_ value: Any?) -> [String] {
         if let string = value as? String {
             return [string]
@@ -607,9 +695,11 @@ public final class MirageHostService {
     }
 
     private static func parseCoreTypesMetadata(plistPaths: [String]) -> (
+        modelTagToTypeIdentifiers: [String: Set<String>],
         modelToTypeIdentifiers: [String: Set<String>],
         typeConformanceGraph: [String: Set<String>]
     ) {
+        var modelTagToTypeIdentifiers: [String: Set<String>] = [:]
         var modelToTypeIdentifiers: [String: Set<String>] = [:]
         var typeConformanceGraph: [String: Set<String>] = [:]
 
@@ -639,21 +729,24 @@ public final class MirageHostService {
                     continue
                 }
 
-                let modelCodes = parseStringCollection(tagSpecification["com.apple.device-model-code"])
-                    .map { normalizeModelIdentifier($0) }
+                let rawModelCodes = parseStringCollection(tagSpecification["com.apple.device-model-code"])
+                    .map { normalizeModelTagIdentifier($0) }
                     .compactMap { $0 }
-                guard !modelCodes.isEmpty else {
+                guard !rawModelCodes.isEmpty else {
                     continue
                 }
 
                 let relatedTypes = Set([typeIdentifier] + conformsTo)
-                for modelCode in modelCodes {
-                    modelToTypeIdentifiers[modelCode, default: []].formUnion(relatedTypes)
+                for rawModelCode in rawModelCodes {
+                    modelTagToTypeIdentifiers[rawModelCode, default: []].formUnion(relatedTypes)
+                    if let baseModelCode = normalizeModelIdentifier(rawModelCode) {
+                        modelToTypeIdentifiers[baseModelCode, default: []].formUnion(relatedTypes)
+                    }
                 }
             }
         }
 
-        return (modelToTypeIdentifiers, typeConformanceGraph)
+        return (modelTagToTypeIdentifiers, modelToTypeIdentifiers, typeConformanceGraph)
     }
 
     private static func expandTypeIdentifiers(
@@ -681,6 +774,223 @@ public final class MirageHostService {
             lowercasedName.contains("macpro") ||
             lowercasedName.contains("sidebarlaptop") ||
             lowercasedName.contains("sidebarmac")
+    }
+
+    private static func scoreForTypeMatch(
+        iconName: String,
+        typeIdentifiers: Set<String>,
+        exactWeight: Int,
+        prefixWeight: Int,
+        containsWeight: Int
+    ) -> Int {
+        guard !typeIdentifiers.isEmpty else {
+            return 0
+        }
+
+        var bestScore = 0
+        for typeIdentifier in typeIdentifiers {
+            if iconName == "\(typeIdentifier).icns" {
+                bestScore = max(bestScore, exactWeight)
+            } else if iconName.hasPrefix(typeIdentifier + "-") {
+                bestScore = max(bestScore, prefixWeight)
+            } else if iconName.contains(typeIdentifier) {
+                bestScore = max(bestScore, containsWeight)
+            }
+        }
+
+        return bestScore
+    }
+
+    private static func matchesMachineFamilyHint(_ family: String, iconName: String) -> Bool {
+        switch family.lowercased() {
+        case "macbook":
+            return iconName.contains("macbook") || iconName.contains("sidebarlaptop")
+        case "imac":
+            return iconName.contains("imac") || iconName.contains("sidebarimac")
+        case "macmini":
+            return iconName.contains("macmini") || iconName.contains("sidebarmacmini")
+        case "macstudio":
+            return iconName.contains("macstudio")
+        case "macpro":
+            return iconName.contains("macpro") || iconName.contains("sidebarmacpro")
+        default:
+            return isMacHardwareIconName(iconName)
+        }
+    }
+
+    private static func bestFamilyFallbackIconName(
+        machineFamily: String?,
+        iconEntries: [CoreTypesHostIconEntry],
+        preferredColorHints: Set<String>
+    ) -> String? {
+        guard !iconEntries.isEmpty else {
+            return nil
+        }
+
+        let matching = iconEntries.filter { entry in
+            guard isMacHardwareIconName(entry.lowercasedName) else {
+                return false
+            }
+            guard let machineFamily else {
+                return true
+            }
+            return matchesMachineFamilyHint(machineFamily, iconName: entry.lowercasedName)
+        }
+
+        let bestMatching = matching.max { lhs, rhs in
+            let lhsColor = matchesColorHint(iconName: lhs.lowercasedName, colorHints: preferredColorHints) ? 8_000 : 0
+            let rhsColor = matchesColorHint(iconName: rhs.lowercasedName, colorHints: preferredColorHints) ? 8_000 : 0
+            let lhsScore = lhsColor + lhs.size / 8_192
+            let rhsScore = rhsColor + rhs.size / 8_192
+            if lhsScore == rhsScore {
+                return lhs.size < rhs.size
+            }
+            return lhsScore < rhsScore
+        }
+
+        if let bestMatching {
+            return bestMatching.originalName
+        }
+
+        return iconEntries
+            .filter { isMacHardwareIconName($0.lowercasedName) }
+            .max(by: { lhs, rhs in lhs.size < rhs.size })?
+            .originalName
+    }
+
+    private static func preferredColorHints(from typeIdentifiers: Set<String>) -> Set<String> {
+        guard !typeIdentifiers.isEmpty else {
+            return []
+        }
+
+        let knownColorHints = [
+            "space-black",
+            "space-gray",
+            "silver",
+            "midnight",
+            "starlight",
+            "stardust",
+            "sky-blue",
+            "gold",
+            "rose-gold",
+            "blue",
+        ]
+
+        var hints: Set<String> = []
+        for typeIdentifier in typeIdentifiers {
+            for colorHint in knownColorHints where typeIdentifier.contains(colorHint) {
+                hints.insert(colorHint)
+            }
+        }
+        return hints
+    }
+
+    private static func matchesColorHint(iconName: String, colorHints: Set<String>) -> Bool {
+        guard !colorHints.isEmpty else {
+            return false
+        }
+
+        return colorHints.contains { iconName.contains($0) }
+    }
+
+    private static func hardwareColorCode() -> Int? {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/ioreg")
+        process.arguments = ["-lw0", "-p", "IODeviceTree", "-n", "chosen", "-r"]
+
+        let outputPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = Pipe()
+
+        do {
+            try process.run()
+        } catch {
+            return nil
+        }
+
+        // Drain stdout before waiting for exit so the child cannot block when
+        // writing large IORegistry payloads.
+        let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            return nil
+        }
+
+        guard let output = String(data: outputData, encoding: .utf8) else {
+            return nil
+        }
+
+        return parseHousingColorCode(from: output)
+    }
+
+    private static func parseHousingColorCode(from output: String) -> Int? {
+        let pattern = #""housing-color"\s*=\s*<([0-9A-Fa-f]+)>"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return nil
+        }
+
+        let nsOutput = output as NSString
+        let range = NSRange(location: 0, length: nsOutput.length)
+        guard let match = regex.firstMatch(in: output, range: range), match.numberOfRanges > 1 else {
+            return nil
+        }
+
+        let hexRange = match.range(at: 1)
+        guard hexRange.location != NSNotFound else {
+            return nil
+        }
+
+        let hexString = nsOutput.substring(with: hexRange)
+        let bytes = hexBytes(from: hexString)
+        guard !bytes.isEmpty else {
+            return nil
+        }
+
+        var values: [UInt32] = []
+        let stride = 4
+        let usableLength = bytes.count - (bytes.count % stride)
+        guard usableLength >= stride else {
+            return nil
+        }
+
+        var index = 0
+        while index + 3 < usableLength {
+            let value = UInt32(bytes[index]) |
+                (UInt32(bytes[index + 1]) << 8) |
+                (UInt32(bytes[index + 2]) << 16) |
+                (UInt32(bytes[index + 3]) << 24)
+            values.append(value)
+            index += stride
+        }
+
+        guard let resolved = values.last(where: { $0 != 0 }) else {
+            return nil
+        }
+        return Int(resolved)
+    }
+
+    private static func hexBytes(from value: String) -> [UInt8] {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count.isMultiple(of: 2) else {
+            return []
+        }
+
+        var bytes: [UInt8] = []
+        bytes.reserveCapacity(trimmed.count / 2)
+
+        var index = trimmed.startIndex
+        while index < trimmed.endIndex {
+            let nextIndex = trimmed.index(index, offsetBy: 2)
+            let pair = trimmed[index..<nextIndex]
+            guard let byte = UInt8(pair, radix: 16) else {
+                return []
+            }
+            bytes.append(byte)
+            index = nextIndex
+        }
+
+        return bytes
     }
 
     /// Resolve input bounds for desktop streaming based on physical display size.
