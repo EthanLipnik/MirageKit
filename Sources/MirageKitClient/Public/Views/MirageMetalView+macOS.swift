@@ -198,6 +198,14 @@ public class MirageMetalView: NSView {
         renderScheduler.requestDecodeDrivenTick()
     }
 
+    func allowsSecondaryCatchUpDraw() -> Bool {
+        true
+    }
+
+    func allowsDecodeDrivenTickFallback(now _: CFAbsoluteTime, targetFPS _: Int) -> Bool {
+        true
+    }
+
     @MainActor
     func renderSchedulerTick() {
         guard !renderingSuspended else { return }

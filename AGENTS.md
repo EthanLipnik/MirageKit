@@ -160,6 +160,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Client decode submission in-flight limits are frame-rate aware (60Hz: 2, 120Hz: 3) to bound asynchronous VideoToolbox submission pressure.
 - Client freeze monitoring requests a recovery keyframe after sustained decode stalls and escalates to full stream recovery on repeated stall windows.
 - Client presentation uses custom CAMetalLayer surfaces on iOS, visionOS, and macOS with display-link driven dequeue/present cadence.
+- iOS client render admission is latency-mode aware: `lowestLatency` keeps 60Hz in-flight at 1, `auto` uses 2 with typing/recovery forcing 1, and `smoothest` uses 2 with promotion to 3 only during sustained healthy windows; a render recovery state machine clamps in-flight to 1 during sustained low-FPS/drawable-wait collapse.
 - MirageFrameCache stores bounded per-stream FIFO frame queues with sequence/age metadata for ordered presentation.
 - Render emergency trimming drops oldest queued frames only during sustained backlog conditions and restores queue depth to a safe floor.
 - Adaptive fallback overload handling remains signal-only; automatic bitrate and pixel-format mutation is not applied by client fallback triggers.

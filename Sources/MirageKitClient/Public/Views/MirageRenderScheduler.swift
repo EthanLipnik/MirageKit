@@ -23,6 +23,7 @@ final class MirageRenderScheduler {
     private weak var view: MirageMetalView?
     private var targetFPS: Int = 60
     private var lastTickTime: CFAbsoluteTime = 0
+    private var lastDisplayLinkTickTime: CFAbsoluteTime = 0
 
     private var presentedSequence: UInt64 = 0
     private var lastPresentedDecodeTime: CFAbsoluteTime = 0
@@ -109,6 +110,7 @@ final class MirageRenderScheduler {
 
     func reset() {
         lastTickTime = 0
+        lastDisplayLinkTickTime = 0
         presentedSequence = 0
         lastPresentedDecodeTime = 0
         decodedCount = 0
@@ -142,6 +144,11 @@ final class MirageRenderScheduler {
     func requestDecodeDrivenTick() {
         let now = CFAbsoluteTimeGetCurrent()
         let minInterval = 1.0 / Double(max(1, targetFPS))
+        if lastDisplayLinkTickTime > 0 {
+            let displayLinkDelay = now - lastDisplayLinkTickTime
+            guard displayLinkDelay >= minInterval * 1.1 else { return }
+        }
+        guard view?.allowsDecodeDrivenTickFallback(now: now, targetFPS: targetFPS) ?? true else { return }
         // Skip if we already ticked recently (display-link or decode-driven).
         guard lastTickTime == 0 || now - lastTickTime >= minInterval * 0.95 else { return }
         processTick(now: now)
@@ -155,6 +162,7 @@ final class MirageRenderScheduler {
         if lastTickTime > 0, now - lastTickTime < minInterval * 0.5 {
             return
         }
+        lastDisplayLinkTickTime = now
         processTick(now: now)
     }
 
@@ -188,6 +196,7 @@ final class MirageRenderScheduler {
             return
         }
         lastMacTickTime = now
+        lastDisplayLinkTickTime = now
         processTick(now: now)
     }
     #endif
@@ -214,7 +223,7 @@ final class MirageRenderScheduler {
                     // display-link interval.
                     if targetFPS <= 60 {
                         let backlogAfterPrimaryDraw = MirageFrameCache.shared.queueDepth(for: streamID)
-                        if backlogAfterPrimaryDraw >= 4 {
+                        if backlogAfterPrimaryDraw >= 4, view.allowsSecondaryCatchUpDraw() {
                             view.renderSchedulerTick()
                         }
                     }

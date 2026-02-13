@@ -177,7 +177,8 @@ public struct MirageStreamContentView: View {
                 onDictationError: onDictationError,
                 dictationMode: dictationMode,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
-                maxDrawableSize: maxDrawableSize
+                maxDrawableSize: maxDrawableSize,
+                latencyMode: clientService.latencyMode
             )
             .ignoresSafeArea()
             .blur(radius: isResizing ? 20 : 0)

@@ -37,6 +37,16 @@ public class MirageMetalView: UIView {
         }
     }
 
+    /// Stream latency mode used to tune render admission and scheduling policy.
+    public var latencyMode: MirageStreamLatencyMode = .auto {
+        didSet {
+            guard latencyMode != oldValue else { return }
+            renderStabilityPolicy.reset()
+            applyRenderPolicy(now: CFAbsoluteTimeGetCurrent(), forceLog: true)
+            requestDraw()
+        }
+    }
+
     /// Stream ID used to read from the shared frame cache.
     public var streamID: StreamID? {
         didSet {
@@ -51,9 +61,12 @@ public class MirageMetalView: UIView {
             renderScheduler.reset()
             renderAdmission.reset()
             renderSequenceGate.reset()
+            renderStabilityPolicy.reset()
+            lastRenderPolicyDecision = nil
             drawableRetryTask?.cancel()
             drawableRetryTask = nil
             drawableRetryScheduled = false
+            applyRenderPolicy(now: CFAbsoluteTimeGetCurrent(), forceLog: true)
             requestDraw()
         }
     }
@@ -92,6 +105,8 @@ public class MirageMetalView: UIView {
     private var noDrawableSkipsSinceLog: UInt64 = 0
     private var lastNoDrawableLogTime: CFAbsoluteTime = 0
     private var renderDiagnostics = RenderDiagnostics()
+    private var renderStabilityPolicy = MirageRenderStabilityPolicy()
+    private var lastRenderPolicyDecision: MirageRenderPolicyDecision?
 
     /// Last reported drawable size to avoid redundant callbacks.
     private var lastReportedDrawableSize: CGSize = .zero
@@ -150,7 +165,7 @@ public class MirageMetalView: UIView {
         metalLayer.wantsExtendedDynamicRangeContent = true
         metalLayer.contentsScale = effectiveScale
         metalLayer.allowsNextDrawableTimeout = true
-        metalLayer.maximumDrawableCount = 3
+        metalLayer.maximumDrawableCount = 2
 
         refreshRateMonitor.onOverrideChange = { [weak self] override in
             self?.applyRefreshRateOverride(override)
@@ -259,11 +274,13 @@ public class MirageMetalView: UIView {
         guard !renderingSuspended else { return }
         guard !drawableRetryScheduled else { return }
 
-        let maximumDrawableCount = max(1, metalLayer.maximumDrawableCount)
-        let effectiveCap = effectiveInFlightCap(maximumDrawableCount: maximumDrawableCount)
+        let now = CFAbsoluteTimeGetCurrent()
+        let decision = resolvedRenderPolicyDecision(now: now)
+        applyRenderPolicy(decision: decision, now: now)
+        let effectiveCap = decision.inFlightCap
         guard renderAdmission.tryAcquire(limit: effectiveCap) else {
             renderDiagnostics.skipInFlightCap &+= 1
-            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
+            maybeLogRenderDiagnostics(now: now)
             return
         }
 
@@ -612,15 +629,16 @@ public class MirageMetalView: UIView {
             return
         }
 
+        let count = max(1, Double(drawStatsCount))
+        let fps = count / elapsed
+        let signalDelayAvgMs = (drawStatsSignalDelayTotal / count) * 1000
+        let signalDelayMaxMs = drawStatsSignalDelayMax * 1000
+        let drawableWaitAvgMs = (drawStatsDrawableWaitTotal / count) * 1000
+        let drawableWaitMaxMs = drawStatsDrawableWaitMax * 1000
+        let renderLatencyAvgMs = (drawStatsRenderLatencyTotal / count) * 1000
+        let renderLatencyMaxMs = drawStatsRenderLatencyMax * 1000
+
         if MirageLogger.isEnabled(.renderer) {
-            let count = max(1, Double(drawStatsCount))
-            let fps = count / elapsed
-            let signalDelayAvgMs = (drawStatsSignalDelayTotal / count) * 1000
-            let signalDelayMaxMs = drawStatsSignalDelayMax * 1000
-            let drawableWaitAvgMs = (drawStatsDrawableWaitTotal / count) * 1000
-            let drawableWaitMaxMs = drawStatsDrawableWaitMax * 1000
-            let renderLatencyAvgMs = (drawStatsRenderLatencyTotal / count) * 1000
-            let renderLatencyMaxMs = drawStatsRenderLatencyMax * 1000
 
             let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
             let signalDelayAvgText = signalDelayAvgMs.formatted(.number.precision(.fractionLength(1)))
@@ -637,6 +655,13 @@ public class MirageMetalView: UIView {
                         "renderLatency=\(renderLatencyAvgText)/\(renderLatencyMaxText)ms"
                 )
         }
+
+        updateRenderStability(
+            now: now,
+            renderedFPS: fps,
+            drawableWaitAvgMs: drawableWaitAvgMs,
+            drawableWaitMaxMs: drawableWaitMaxMs
+        )
 
         maybeLogRenderDiagnostics(now: now)
 
@@ -664,8 +689,10 @@ public class MirageMetalView: UIView {
         let drawAttemptFPS = Double(renderDiagnostics.drawAttempts) / safeElapsed
         let renderedFPS = Double(renderDiagnostics.drawRendered) / safeElapsed
 
+        let decision = resolvedRenderPolicyDecision(now: now)
+        applyRenderPolicy(decision: decision, now: now)
         let maximumDrawableCount = max(1, metalLayer.maximumDrawableCount)
-        let effectiveCap = effectiveInFlightCap(maximumDrawableCount: maximumDrawableCount)
+        let effectiveCap = decision.inFlightCap
         let inFlight = renderAdmission.snapshot()
 
         let requestText = requestFPS.formatted(.number.precision(.fractionLength(1)))
@@ -686,12 +713,120 @@ public class MirageMetalView: UIView {
         renderDiagnostics.reset(now: now)
     }
 
-    private func effectiveInFlightCap(maximumDrawableCount: Int? = nil) -> Int {
-        let drawableCount = max(1, maximumDrawableCount ?? metalLayer.maximumDrawableCount)
-        return MirageRenderAdmissionPolicy.effectiveInFlightCap(
+    func allowsSecondaryCatchUpDraw() -> Bool {
+        let decision = resolvedRenderPolicyDecision(now: CFAbsoluteTimeGetCurrent())
+        return decision.allowsSecondaryCatchUpDraw
+    }
+
+    func allowsDecodeDrivenTickFallback(now: CFAbsoluteTime, targetFPS: Int) -> Bool {
+        if targetFPS >= 120 {
+            return true
+        }
+        let decision = resolvedRenderPolicyDecision(now: now)
+        if decision.reason == .recovery || decision.reason == .typing {
+            return true
+        }
+        return latencyMode == .smoothest && decision.reason == .promotion
+    }
+
+    private func updateRenderStability(
+        now: CFAbsoluteTime,
+        renderedFPS: Double,
+        drawableWaitAvgMs: Double,
+        drawableWaitMaxMs: Double
+    ) {
+        let transition = renderStabilityPolicy.evaluate(
+            now: now,
+            latencyMode: latencyMode,
             targetFPS: maxRenderFPS,
-            maximumDrawableCount: drawableCount
+            renderedFPS: renderedFPS,
+            drawableWaitAvgMs: drawableWaitAvgMs
         )
+        let decision = resolvedRenderPolicyDecision(now: now)
+        applyRenderPolicy(decision: decision, now: now)
+
+        if transition.recoveryEntered {
+            logRecoveryTransition(
+                event: "entered",
+                renderedFPS: renderedFPS,
+                drawableWaitAvgMs: drawableWaitAvgMs,
+                drawableWaitMaxMs: drawableWaitMaxMs,
+                decision: decision
+            )
+        } else if transition.recoveryExited {
+            logRecoveryTransition(
+                event: "exited",
+                renderedFPS: renderedFPS,
+                drawableWaitAvgMs: drawableWaitAvgMs,
+                drawableWaitMaxMs: drawableWaitMaxMs,
+                decision: decision
+            )
+        } else if transition.promotionChanged, MirageLogger.isEnabled(.renderer) {
+            let promotionState = renderStabilityPolicy.snapshot().smoothestPromotionActive ? "enabled" : "disabled"
+            MirageLogger.renderer("Render policy smoothest promotion \(promotionState)")
+        }
+    }
+
+    private func logRecoveryTransition(
+        event: String,
+        renderedFPS: Double,
+        drawableWaitAvgMs: Double,
+        drawableWaitMaxMs: Double,
+        decision: MirageRenderPolicyDecision
+    ) {
+        guard MirageLogger.isEnabled(.renderer) else { return }
+        let renderedText = renderedFPS.formatted(.number.precision(.fractionLength(1)))
+        let avgWaitText = drawableWaitAvgMs.formatted(.number.precision(.fractionLength(1)))
+        let maxWaitText = drawableWaitMaxMs.formatted(.number.precision(.fractionLength(1)))
+        let queueDepth = streamID.map { MirageFrameCache.shared.queueDepth(for: $0) } ?? 0
+        MirageLogger
+            .renderer(
+                "Render recovery \(event) mode=\(latencyMode.rawValue) renderedFPS=\(renderedText) " +
+                    "drawableWait=\(avgWaitText)/\(maxWaitText)ms cap=\(decision.inFlightCap) " +
+                    "drawables=\(decision.maximumDrawableCount) queueDepth=\(queueDepth)"
+            )
+    }
+
+    private func typingBurstActive(now: CFAbsoluteTime) -> Bool {
+        guard let streamID else { return false }
+        return MirageFrameCache.shared.isTypingBurstActive(for: streamID, now: now)
+    }
+
+    private func resolvedRenderPolicyDecision(now: CFAbsoluteTime) -> MirageRenderPolicyDecision {
+        MirageRenderAdmissionPolicy.decision(
+            latencyMode: latencyMode,
+            targetFPS: maxRenderFPS,
+            typingBurstActive: typingBurstActive(now: now),
+            recoveryActive: renderStabilityPolicy.snapshot().recoveryActive,
+            smoothestPromotionActive: renderStabilityPolicy.snapshot().smoothestPromotionActive
+        )
+    }
+
+    private func applyRenderPolicy(
+        now: CFAbsoluteTime,
+        forceLog: Bool = false
+    ) {
+        let decision = resolvedRenderPolicyDecision(now: now)
+        applyRenderPolicy(decision: decision, now: now, forceLog: forceLog)
+    }
+
+    private func applyRenderPolicy(
+        decision: MirageRenderPolicyDecision,
+        now _: CFAbsoluteTime,
+        forceLog: Bool = false
+    ) {
+        let previousDecision = lastRenderPolicyDecision
+        if metalLayer.maximumDrawableCount != decision.maximumDrawableCount {
+            metalLayer.maximumDrawableCount = decision.maximumDrawableCount
+        }
+        guard forceLog || previousDecision != decision else { return }
+        lastRenderPolicyDecision = decision
+        guard MirageLogger.isEnabled(.renderer) else { return }
+        MirageLogger
+            .renderer(
+                "Render policy mode=\(latencyMode.rawValue) cap=\(decision.inFlightCap) " +
+                    "drawables=\(decision.maximumDrawableCount) reason=\(decision.reason.rawValue)"
+            )
     }
 
     private func applyRenderPreferences() {
@@ -712,6 +847,7 @@ public class MirageMetalView: UIView {
         maxRenderFPS = clamped
         renderScheduler.updateTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
+        applyRenderPolicy(now: CFAbsoluteTimeGetCurrent(), forceLog: true)
         onRefreshRateOverrideChange?(clamped)
     }
 

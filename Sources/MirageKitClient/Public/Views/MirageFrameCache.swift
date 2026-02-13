@@ -249,6 +249,13 @@ public final class MirageFrameCache: @unchecked Sendable {
         lock.unlock()
     }
 
+    func isTypingBurstActive(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
+        lock.lock()
+        let active = typingBurstActiveLocked(for: streamID, now: now)
+        lock.unlock()
+        return active
+    }
+
     private func typingBurstActiveLocked(for streamID: StreamID, now: CFAbsoluteTime) -> Bool {
         guard let deadline = typingBurstDeadlines[streamID] else { return false }
         if now < deadline { return true }

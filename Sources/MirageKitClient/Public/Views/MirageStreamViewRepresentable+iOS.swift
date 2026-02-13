@@ -75,6 +75,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
+    /// Stream latency mode used to tune render admission and frame pacing.
+    public var latencyMode: MirageStreamLatencyMode
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -96,7 +99,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onDictationError: ((String) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         cursorLockEnabled: Bool = false,
-        maxDrawableSize: CGSize? = nil
+        maxDrawableSize: CGSize? = nil,
+        latencyMode: MirageStreamLatencyMode = .auto
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -119,6 +123,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.dictationMode = dictationMode
         self.cursorLockEnabled = cursorLockEnabled
         self.maxDrawableSize = maxDrawableSize
+        self.latencyMode = latencyMode
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -152,7 +157,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
-            maxDrawableSize: maxDrawableSize
+            maxDrawableSize: maxDrawableSize,
+            latencyMode: latencyMode
         )
         return controller
     }
@@ -184,7 +190,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
-            maxDrawableSize: maxDrawableSize
+            maxDrawableSize: maxDrawableSize,
+            latencyMode: latencyMode
         )
     }
 }
@@ -241,7 +248,8 @@ public final class MirageStreamViewController: UIViewController {
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
-        maxDrawableSize: CGSize?
+        maxDrawableSize: CGSize?,
+        latencyMode: MirageStreamLatencyMode
     ) {
         captureView.onInputEvent = onInputEvent
         captureView.onDrawableMetricsChanged = onDrawableMetricsChanged
@@ -263,6 +271,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorPositionStore = cursorPositionStore
         captureView.cursorLockEnabled = cursorLockEnabled
         captureView.maxDrawableSize = maxDrawableSize
+        captureView.latencyMode = latencyMode
         // Set stream ID for direct frame cache access (bypasses all actor machinery)
         captureView.streamID = streamID
 

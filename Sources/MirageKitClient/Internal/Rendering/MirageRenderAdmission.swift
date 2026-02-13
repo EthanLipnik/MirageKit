@@ -8,13 +8,123 @@
 //
 
 import Foundation
+import MirageKit
+
+enum MirageRenderPolicyReason: String, Equatable {
+    case baseline
+    case typing
+    case recovery
+    case promotion
+}
+
+struct MirageRenderPolicyDecision: Equatable {
+    let inFlightCap: Int
+    let maximumDrawableCount: Int
+    let reason: MirageRenderPolicyReason
+    let allowsSecondaryCatchUpDraw: Bool
+}
 
 enum MirageRenderAdmissionPolicy {
     static func effectiveInFlightCap(targetFPS: Int, maximumDrawableCount: Int) -> Int {
-        // 60Hz streams at 5K frequently exceed one-frame render latency; 3 in-flight
-        // drawables prevents artificial admission stalls when the layer can support it.
         let desiredInFlight = targetFPS >= 120 ? 3 : 3
         return max(1, min(desiredInFlight, maximumDrawableCount))
+    }
+
+    static func decision(
+        latencyMode: MirageStreamLatencyMode,
+        targetFPS: Int,
+        typingBurstActive: Bool,
+        recoveryActive: Bool,
+        smoothestPromotionActive: Bool
+    ) -> MirageRenderPolicyDecision {
+        let normalizedTargetFPS = targetFPS >= 120 ? 120 : 60
+        let maximumDrawableCount = resolvedMaximumDrawableCount(
+            latencyMode: latencyMode,
+            targetFPS: normalizedTargetFPS,
+            smoothestPromotionActive: smoothestPromotionActive
+        )
+        let inFlightChoice = resolvedInFlightCap(
+            latencyMode: latencyMode,
+            targetFPS: normalizedTargetFPS,
+            typingBurstActive: typingBurstActive,
+            recoveryActive: recoveryActive,
+            smoothestPromotionActive: smoothestPromotionActive
+        )
+        let inFlightCap = max(1, min(inFlightChoice.cap, maximumDrawableCount))
+        return MirageRenderPolicyDecision(
+            inFlightCap: inFlightCap,
+            maximumDrawableCount: maximumDrawableCount,
+            reason: inFlightChoice.reason,
+            allowsSecondaryCatchUpDraw: allowsSecondaryCatchUpDraw(
+                latencyMode: latencyMode,
+                targetFPS: normalizedTargetFPS,
+                smoothestPromotionActive: smoothestPromotionActive,
+                reason: inFlightChoice.reason
+            )
+        )
+    }
+
+    private static func resolvedInFlightCap(
+        latencyMode: MirageStreamLatencyMode,
+        targetFPS: Int,
+        typingBurstActive: Bool,
+        recoveryActive: Bool,
+        smoothestPromotionActive: Bool
+    ) -> (cap: Int, reason: MirageRenderPolicyReason) {
+        if recoveryActive {
+            return (1, .recovery)
+        }
+        if targetFPS >= 120 {
+            return (3, .baseline)
+        }
+
+        switch latencyMode {
+        case .lowestLatency:
+            return (1, .baseline)
+        case .auto:
+            if typingBurstActive {
+                return (1, .typing)
+            }
+            return (2, .baseline)
+        case .smoothest:
+            if smoothestPromotionActive {
+                return (3, .promotion)
+            }
+            return (2, .baseline)
+        }
+    }
+
+    private static func resolvedMaximumDrawableCount(
+        latencyMode: MirageStreamLatencyMode,
+        targetFPS: Int,
+        smoothestPromotionActive: Bool
+    ) -> Int {
+        if targetFPS >= 120 {
+            return 3
+        }
+        switch latencyMode {
+        case .lowestLatency, .auto:
+            return 2
+        case .smoothest:
+            return smoothestPromotionActive ? 3 : 2
+        }
+    }
+
+    private static func allowsSecondaryCatchUpDraw(
+        latencyMode: MirageStreamLatencyMode,
+        targetFPS: Int,
+        smoothestPromotionActive: Bool,
+        reason: MirageRenderPolicyReason
+    ) -> Bool {
+        if targetFPS >= 120 {
+            return true
+        }
+        switch latencyMode {
+        case .smoothest:
+            return smoothestPromotionActive && reason == .promotion
+        case .lowestLatency, .auto:
+            return false
+        }
     }
 }
 

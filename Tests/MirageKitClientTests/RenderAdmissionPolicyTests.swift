@@ -13,28 +13,97 @@ import Testing
 #if os(macOS)
 @Suite("Render Admission Policy")
 struct RenderAdmissionPolicyTests {
-    @Test("Cap for 60Hz with two drawables")
-    func capFor60HzWithTwoDrawables() {
+    @Test("Legacy cap API clamps to drawable count")
+    func legacyCapClampsToDrawableCount() {
         let cap = MirageRenderAdmissionPolicy.effectiveInFlightCap(targetFPS: 60, maximumDrawableCount: 2)
         #expect(cap == 2)
     }
 
-    @Test("Cap for 120Hz with two drawables")
-    func capFor120HzWithTwoDrawables() {
-        let cap = MirageRenderAdmissionPolicy.effectiveInFlightCap(targetFPS: 120, maximumDrawableCount: 2)
-        #expect(cap == 2)
+    @Test("Lowest latency at 60Hz keeps one in-flight")
+    func lowestLatency60HzPolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: false
+        )
+        #expect(decision.inFlightCap == 1)
+        #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.reason == .baseline)
+        #expect(!decision.allowsSecondaryCatchUpDraw)
     }
 
-    @Test("Cap for 120Hz with three drawables")
-    func capFor120HzWithThreeDrawables() {
-        let cap = MirageRenderAdmissionPolicy.effectiveInFlightCap(targetFPS: 120, maximumDrawableCount: 3)
-        #expect(cap == 3)
+    @Test("Auto baseline at 60Hz keeps two in-flight")
+    func auto60HzBaselinePolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: false
+        )
+        #expect(decision.inFlightCap == 2)
+        #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.reason == .baseline)
     }
 
-    @Test("Cap for one drawable")
-    func capForOneDrawable() {
-        let cap = MirageRenderAdmissionPolicy.effectiveInFlightCap(targetFPS: 60, maximumDrawableCount: 1)
-        #expect(cap == 1)
+    @Test("Auto typing burst at 60Hz drops to one in-flight")
+    func autoTypingPolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 60,
+            typingBurstActive: true,
+            recoveryActive: false,
+            smoothestPromotionActive: false
+        )
+        #expect(decision.inFlightCap == 1)
+        #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.reason == .typing)
+    }
+
+    @Test("Recovery forces one in-flight for all modes")
+    func recoveryForcesSingleInFlight() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .smoothest,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: true,
+            smoothestPromotionActive: true
+        )
+        #expect(decision.inFlightCap == 1)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.reason == .recovery)
+    }
+
+    @Test("Smoothest promotion enables three drawables and three in-flight")
+    func smoothestPromotionPolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .smoothest,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: true
+        )
+        #expect(decision.inFlightCap == 3)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.reason == .promotion)
+        #expect(decision.allowsSecondaryCatchUpDraw)
+    }
+
+    @Test("120Hz baseline keeps three in-flight")
+    func baseline120HzPolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 120,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: false
+        )
+        #expect(decision.inFlightCap == 3)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.reason == .baseline)
+        #expect(decision.allowsSecondaryCatchUpDraw)
     }
 
     @Test("In-flight counter acquires and releases once")

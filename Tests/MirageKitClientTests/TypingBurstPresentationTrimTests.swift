@@ -65,6 +65,20 @@ struct TypingBurstPresentationTrimTests {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
+    @Test("Typing burst activity expires to baseline window")
+    func typingBurstExpiresBackToBaseline() {
+        let streamID: StreamID = 203
+        MirageFrameCache.shared.clear(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        MirageFrameCache.shared.noteTypingBurstActivity(for: streamID)
+
+        #expect(MirageFrameCache.shared.isTypingBurstActive(for: streamID, now: now + 0.10))
+        #expect(!MirageFrameCache.shared.isTypingBurstActive(for: streamID, now: now + 0.50))
+
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     private func makePixelBuffer() -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(
