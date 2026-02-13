@@ -91,27 +91,6 @@ extension MirageClientService {
         }
     }
 
-    func awaitQualityProbeResult(probeID: UUID, timeout: Duration) async -> QualityProbeResultMessage? {
-        if let pending = qualityProbePendingID, pending != probeID {
-            qualityProbeResultContinuation?.resume(returning: nil)
-            qualityProbeResultContinuation = nil
-        }
-
-        qualityProbePendingID = probeID
-
-        return await withCheckedContinuation { continuation in
-            qualityProbeResultContinuation = continuation
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                try? await Task.sleep(for: timeout)
-                guard let continuation = qualityProbeResultContinuation else { return }
-                continuation.resume(returning: nil)
-                qualityProbeResultContinuation = nil
-                qualityProbePendingID = nil
-            }
-        }
-    }
-
     func sendQualityTestRegistration() async throws {
         guard let udpConnection else {
             throw MirageError.protocolError("No UDP connection")
@@ -151,20 +130,6 @@ extension MirageClientService {
         )
         store.save(record)
         return record
-    }
-
-    func runDecodeProbe(
-        width: Int,
-        height: Int,
-        frameRate: Int,
-        pixelFormat: MiragePixelFormat
-    ) async throws -> Double {
-        try await MirageCodecBenchmark.runDecodeProbe(
-            width: width,
-            height: height,
-            frameRate: frameRate,
-            pixelFormat: pixelFormat
-        )
     }
 
     func runQualityTestStage(

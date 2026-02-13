@@ -246,7 +246,9 @@ extension MirageHostService {
                     displayCount: 1,
                     dimensionToken: dimensionToken
                 )
-                try? await clientContext.send(.desktopStreamStarted, content: message)
+                if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
+                    MirageLogger.error(.host, "Failed to encode desktopStreamStarted update for stream \(streamID)")
+                }
             }
 
             if loginDisplayIsBorrowedStream, loginDisplayStreamID == streamID {
@@ -435,7 +437,10 @@ extension MirageHostService {
             displayCount: 1,
             dimensionToken: dimensionToken
         )
-        try? await clientContext.send(.desktopStreamStarted, content: message)
+        if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
+            MirageLogger.error(.host, "Failed to encode desktop resize completion for stream \(streamID)")
+            return
+        }
         let suffix = noOp ? ", no-op" : ""
         MirageLogger.host("Sent desktop resize completion for stream \(streamID) (request #\(requestNumber)\(suffix))")
     }

@@ -189,7 +189,8 @@ extension MirageHostService {
             name: deviceInfo.name,
             deviceType: deviceInfo.deviceType,
             connectedAt: Date(),
-            identityKeyID: deviceInfo.identityKeyID
+            identityKeyID: deviceInfo.identityKeyID,
+            autoTrustGranted: autoTrustGranted
         )
 
         let clientContext = ClientContext(
@@ -376,12 +377,15 @@ extension MirageHostService {
                 endpoint: deviceInfo.endpoint
             )
 
-            let decision = await trustProvider.evaluateTrust(for: peerIdentity)
+            let trustOutcome = await trustProvider.evaluateTrustOutcome(for: peerIdentity)
 
-            switch decision {
+            switch trustOutcome.decision {
             case .trusted:
-                MirageLogger.host("Connection auto-approved by trust provider for \(deviceInfo.name)")
-                return .accepted(autoTrustGranted: true)
+                MirageLogger.host(
+                    "Connection auto-approved by trust provider for \(deviceInfo.name) " +
+                        "(notice=\(trustOutcome.shouldShowAutoTrustNotice))"
+                )
+                return .accepted(autoTrustGranted: trustOutcome.shouldShowAutoTrustNotice)
 
             case .denied:
                 MirageLogger.host("Connection denied by trust provider for \(deviceInfo.name)")

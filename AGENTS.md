@@ -21,9 +21,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Apple Pencil squeeze triggers a secondary click at the hover location when available, or the latest pointer location.
 - Custom mode: encoder overrides for pixel format, color space, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
-- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing; quality probes use a SwiftUI animated probe scene and a transport probe that sends real encoded frames over UDP.
-- Automatic quality selection uses staged throughput/loss as the bitrate baseline with probe constraints for resolution and pixel-format viability; probe-only fallback applies when staged throughput is unavailable.
-- Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled), and probe transport caps use 98% headroom when transport metrics are present.
+- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
+- Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and pixel-format viability checks.
+- Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled).
 - Host setting `muteLocalAudioWhileStreaming` mutes host output while audio streaming is active and restores prior mute state when audio streaming stops.
 - MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
 - Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows are excluded from display capture.
@@ -112,7 +112,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Remote signaling and STUN preflight helpers: `Sources/MirageKit/Public/Remote/`.
 - Client services, delegates, session stores, metrics, cursor snapshots, and stream views: `Sources/MirageKitClient/Public/`.
 - Host services, delegates, window/input controllers, and host utilities: `Sources/MirageKitHost/Public/`.
-- Quality probe results: `MirageQualityProbeResult` in `Sources/MirageKit/Public/Types/`.
+- Quality probe results are not used.
 
 ## Internal Implementation
 - Shared protocol, logging, and support utilities: `Sources/MirageKit/Internal/`.
@@ -123,8 +123,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Host Lights Out integration: `Sources/MirageKitHost/Public/Host/MirageHostService+LightsOut.swift`.
 
 **Other Modules:**
-- `Sources/MirageKitHost/Internal/Utilities/MirageQualityProbeScene.swift` - SwiftUI animated probe scene for automatic quality testing
-- `Sources/MirageKitClient/Public/Client/MirageClientService+QualityProbeTransport.swift` - Transport probe helpers for automatic quality testing
+- Automatic quality testing no longer includes dedicated probe scene or transport-helper paths.
 - `Sources/MirageKitClient/Public/Client/MirageClientService+QualityTestHelpers.swift` - Quality test helper routines
 
 ## Architecture Patterns
@@ -152,6 +151,8 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Adaptive fallback: automatic mode applies bitrate-only steps first (15% per trigger, 15-second cooldown, 8 Mbps floor) before disruptive reconfiguration.
 - Custom mode recovery: stream parameters remain fixed while stream-health warnings report sustained degradation.
 - Decoder recovery: client enters keyframe-only mode after decode errors or decode-backpressure overload until a fresh keyframe arrives.
+- Reassembler P-frame delivery requires a delivered keyframe anchor and monotonic frame progression, while missing-frame recovery stays decoder-driven through keyframe recovery paths.
+- Presentation catch-up trimming uses oldest-frame age gating to preserve short decode jitter bursts and trims only when latency exceeds the presentation threshold.
 - Decode backpressure recovery performs full stream recovery (decoder reset, reassembler reset/keyframe-only, queue flush, and keyframe request) instead of continuing through stale P-frame references.
 - Adaptive fallback triggers on decode-storm episodes (two decode-threshold events within an 8-second window) in addition to queue-drop overload signals.
 - Client decode submission in-flight limits are frame-rate aware (60Hz: 2, 120Hz: 3) to bound asynchronous VideoToolbox submission pressure.

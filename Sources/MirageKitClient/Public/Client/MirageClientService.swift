@@ -219,7 +219,7 @@ public final class MirageClientService {
     // Track which streams have been registered with the host (prevents duplicate registrations)
     var registeredStreamIDs: Set<StreamID> = []
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
-    let keyframeRequestCooldown: CFAbsoluteTime = 0.75
+    let keyframeRequestCooldown: CFAbsoluteTime = 0.25
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []
@@ -232,23 +232,7 @@ public final class MirageClientService {
     nonisolated(unsafe) var qualityTestActiveTestIDStorage: UUID?
     var qualityTestResultContinuation: CheckedContinuation<QualityTestResultMessage?, Never>?
     var qualityTestPendingTestID: UUID?
-    var qualityProbeResultContinuation: CheckedContinuation<QualityProbeResultMessage?, Never>?
-    var qualityProbePendingID: UUID?
     var pingContinuation: CheckedContinuation<Void, Error>?
-    nonisolated let qualityProbeTransportAccumulator = QualityProbeTransportAccumulator()
-    var qualityProbeTransportStreamID: StreamID?
-    var qualityProbeTransportController: StreamController?
-
-    /// Thread-safe transport probe stream ID for UDP filtering.
-    let qualityProbeTransportLock = NSLock()
-    nonisolated(unsafe) var qualityProbeTransportStreamIDStorage: StreamID?
-
-    nonisolated var qualityProbeTransportStreamIDForFiltering: StreamID? {
-        qualityProbeTransportLock.lock()
-        defer { qualityProbeTransportLock.unlock() }
-        return qualityProbeTransportStreamIDStorage
-    }
-
     /// Thread-safe set of active stream IDs for packet filtering from UDP callback
     let activeStreamIDsLock = NSLock()
     nonisolated(unsafe) var activeStreamIDsStorage: Set<StreamID> = []
@@ -337,16 +321,6 @@ public final class MirageClientService {
             task.cancel()
         }
     }
-
-    /// Thread-safe set of stream IDs where input is blocked (decoder unhealthy)
-    /// Input is blocked when the stream is frozen for a sustained interval.
-    let inputBlockedStreamIDsLock = NSLock()
-    nonisolated(unsafe) var inputBlockedStreamIDsStorage: Set<StreamID> = []
-
-    /// Thread-safe storage for last cursor positions per stream
-    /// Used by sendInputReleaseEvents to avoid jumping cursor to center during decode errors
-    let lastCursorPositionsLock = NSLock()
-    nonisolated(unsafe) var lastCursorPositionsStorage: [StreamID: CGPoint] = [:]
 
     /// Thread-safe snapshot of reassemblers for packet routing from UDP callback
     let reassemblersLock = NSLock()

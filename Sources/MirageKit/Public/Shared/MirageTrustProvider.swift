@@ -36,6 +36,20 @@ public enum MirageTrustDecision: Sendable, Equatable {
     }
 }
 
+/// Trust evaluation metadata used by host connection flows.
+public struct MirageTrustEvaluation: Sendable, Equatable {
+    /// Final trust decision for the incoming peer.
+    public let decision: MirageTrustDecision
+
+    /// Whether the client should present the one-time auto-approval notice.
+    public let shouldShowAutoTrustNotice: Bool
+
+    public init(decision: MirageTrustDecision, shouldShowAutoTrustNotice: Bool) {
+        self.decision = decision
+        self.shouldShowAutoTrustNotice = shouldShowAutoTrustNotice
+    }
+}
+
 // MARK: - Peer Identity
 
 /// Extended device identity with optional iCloud information.
@@ -124,6 +138,16 @@ public protocol MirageTrustProvider: AnyObject, Sendable {
     @MainActor
     func evaluateTrust(for peer: MiragePeerIdentity) async -> MirageTrustDecision
 
+    /// Evaluates trust plus notice metadata for a connecting peer.
+    ///
+    /// Use this when trust sources need different client UX behavior (for example,
+    /// same-account iCloud auto-trust vs. manually persisted local trust).
+    ///
+    /// - Parameter peer: Identity information about the connecting device.
+    /// - Returns: Decision plus one-time auto-trust notice eligibility.
+    @MainActor
+    func evaluateTrustOutcome(for peer: MiragePeerIdentity) async -> MirageTrustEvaluation
+
     /// Grants trust to a peer, persisting the decision.
     ///
     /// Called when the user manually approves a connection with "Always Trust" option.
@@ -138,4 +162,15 @@ public protocol MirageTrustProvider: AnyObject, Sendable {
     /// - Parameter deviceID: Identifier of the device to revoke trust for.
     @MainActor
     func revokeTrust(for deviceID: UUID) async throws
+}
+
+public extension MirageTrustProvider {
+    @MainActor
+    func evaluateTrustOutcome(for peer: MiragePeerIdentity) async -> MirageTrustEvaluation {
+        let decision = await evaluateTrust(for: peer)
+        return MirageTrustEvaluation(
+            decision: decision,
+            shouldShowAutoTrustNotice: decision == .trusted
+        )
+    }
 }

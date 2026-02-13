@@ -22,6 +22,7 @@ import CoreVideo
 final class MirageRenderScheduler {
     private weak var view: MirageMetalView?
     private var targetFPS: Int = 60
+    private var lastTickTime: CFAbsoluteTime = 0
 
     private var presentedSequence: UInt64 = 0
     private var lastPresentedDecodeTime: CFAbsoluteTime = 0
@@ -103,6 +104,7 @@ final class MirageRenderScheduler {
     }
 
     func reset() {
+        lastTickTime = 0
         presentedSequence = 0
         lastPresentedDecodeTime = 0
         decodedCount = 0
@@ -131,9 +133,25 @@ final class MirageRenderScheduler {
         redrawPending = true
     }
 
+    /// Decode-driven fallback tick. This keeps render cadence stable when display-link
+    /// callbacks are throttled or delayed under UI/system load.
+    func requestDecodeDrivenTick() {
+        let now = CFAbsoluteTimeGetCurrent()
+        let minInterval = 1.0 / Double(max(1, targetFPS))
+        // Skip if we already ticked recently (display-link or decode-driven).
+        guard lastTickTime == 0 || now - lastTickTime >= minInterval * 0.95 else { return }
+        processTick(now: now)
+    }
+
     #if os(iOS) || os(visionOS)
     @objc private func handleDisplayLinkTick() {
-        processTick(now: CFAbsoluteTimeGetCurrent())
+        let now = CFAbsoluteTimeGetCurrent()
+        let minInterval = 1.0 / Double(max(1, targetFPS))
+        // Avoid double-driving when decode-driven fallback already ticked this interval.
+        if lastTickTime > 0, now - lastTickTime < minInterval * 0.5 {
+            return
+        }
+        processTick(now: now)
     }
 
     private func applyTargetFPS() {
@@ -168,6 +186,7 @@ final class MirageRenderScheduler {
     #endif
 
     private func processTick(now: CFAbsoluteTime) {
+        lastTickTime = now
         tickCount &+= 1
 
         if let view {
@@ -178,9 +197,20 @@ final class MirageRenderScheduler {
                     lastDecodedSequence = latestSequence
                 }
 
-                if redrawPending || MirageFrameCache.shared.queueDepth(for: streamID) > 0 {
+                let hasUnpresentedFrame = latestSequence > presentedSequence
+                let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
+                if redrawPending || hasUnpresentedFrame || queueDepth > 0 {
                     redrawPending = false
                     view.renderSchedulerTick()
+                    // Catch-up burst for 60Hz streams: if decode runs ahead of display ticks,
+                    // allow one extra draw this tick to close the gap without waiting a full
+                    // display-link interval.
+                    if targetFPS <= 60 {
+                        let backlogAfterPrimaryDraw = MirageFrameCache.shared.queueDepth(for: streamID)
+                        if backlogAfterPrimaryDraw >= 4 {
+                            view.renderSchedulerTick()
+                        }
+                    }
                 }
             } else if redrawPending {
                 redrawPending = false

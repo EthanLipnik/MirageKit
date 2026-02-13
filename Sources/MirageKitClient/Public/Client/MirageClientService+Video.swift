@@ -200,11 +200,6 @@ extension MirageClientService {
                                 payload = wirePayload
                             }
 
-                            if streamID == service.qualityProbeTransportStreamIDForFiltering {
-                                let payloadBytes = min(Int(header.payloadLength), payload.count)
-                                service.recordQualityProbeTransportBytes(payloadBytes)
-                            }
-
                             reassembler.processPacket(payload, header: header)
                         }
                     }

@@ -65,53 +65,60 @@ public final class MirageCloudKitTrustProvider: MirageTrustProvider {
     // MARK: - MirageTrustProvider
 
     public nonisolated func evaluateTrust(for peer: MiragePeerIdentity) async -> MirageTrustDecision {
-        await evaluateTrustOnMain(for: peer)
+        await evaluateTrustOutcomeOnMain(for: peer).decision
+    }
+
+    public nonisolated func evaluateTrustOutcome(for peer: MiragePeerIdentity) async -> MirageTrustEvaluation {
+        await evaluateTrustOutcomeOnMain(for: peer)
     }
 
     @MainActor
-    private func evaluateTrustOnMain(for peer: MiragePeerIdentity) async -> MirageTrustDecision {
+    private func evaluateTrustOutcomeOnMain(for peer: MiragePeerIdentity) async -> MirageTrustEvaluation {
         // Check settings override first
         if requireApprovalForAllConnections {
             MirageLogger.appState("Trust evaluation: approval required by settings for \(peer.name)")
-            return .requiresApproval
+            return MirageTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
         }
 
         guard peer.isIdentityAuthenticated else {
             MirageLogger.appState("Trust evaluation: denied unauthenticated identity for \(peer.name)")
-            return .denied
+            return MirageTrustEvaluation(decision: .denied, shouldShowAutoTrustNotice: false)
         }
         guard let peerIdentityKeyID = peer.identityKeyID else {
             MirageLogger.appState("Trust evaluation: denied missing identity key ID for \(peer.name)")
-            return .denied
+            return MirageTrustEvaluation(decision: .denied, shouldShowAutoTrustNotice: false)
         }
         if let publicKey = peer.identityPublicKey,
            MirageIdentityManager.keyID(for: publicKey) != peerIdentityKeyID {
             MirageLogger.appState("Trust evaluation: denied mismatched key ID for \(peer.name)")
-            return .denied
+            return MirageTrustEvaluation(decision: .denied, shouldShowAutoTrustNotice: false)
         }
 
         // Check if locally trusted (overrides everything)
         if localTrustStore.isTrusted(deviceID: peer.deviceID) {
             MirageLogger.appState("Trust evaluation: device \(peer.name) is locally trusted")
-            return .trusted
+            return MirageTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
         }
 
         // No iCloud identity means we can't auto-trust
         guard let peerUserID = peer.iCloudUserID else {
             MirageLogger.appState("Trust evaluation: no iCloud identity for \(peer.name)")
-            return .requiresApproval
+            return MirageTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
         }
 
         // Check if CloudKit is available
         guard cloudKitManager.isAvailable else {
             MirageLogger.appState("Trust evaluation: CloudKit unavailable, falling back to approval")
-            return .unavailable("iCloud not available")
+            return MirageTrustEvaluation(
+                decision: .unavailable("iCloud not available"),
+                shouldShowAutoTrustNotice: false
+            )
         }
 
         // Check if same iCloud account
         if let myUserID = cloudKitManager.currentUserRecordID, peerUserID == myUserID {
             MirageLogger.appState("Trust evaluation: same iCloud account for \(peer.name)")
-            return .trusted
+            return MirageTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: true)
         }
 
         // Check if peer is a share participant (friend)
@@ -120,15 +127,15 @@ public final class MirageCloudKitTrustProvider: MirageTrustProvider {
             let identityTrusted = await cloudKitManager.isShareParticipantIdentityKeyTrusted(keyID: peerIdentityKeyID)
             if identityTrusted {
                 MirageLogger.appState("Trust evaluation: share participant identity trusted for \(peer.name)")
-                return .trusted
+                return MirageTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
             }
             MirageLogger.appState("Trust evaluation: share participant missing trusted identity key for \(peer.name)")
-            return .requiresApproval
+            return MirageTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
         }
 
         // Unknown user - require approval
         MirageLogger.appState("Trust evaluation: unknown iCloud user, requiring approval for \(peer.name)")
-        return .requiresApproval
+        return MirageTrustEvaluation(decision: .requiresApproval, shouldShowAutoTrustNotice: false)
     }
 
     public nonisolated func grantTrust(to peer: MiragePeerIdentity) async throws {

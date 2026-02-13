@@ -126,9 +126,11 @@ extension MirageClientService {
             approvalWaitTask?.cancel()
             if response.accepted {
                 if response.autoTrustGranted == true {
-                    let noticeHostID = connectedHost?.id ?? response.hostID
-                    let noticeKey = "com.mirage.autotrust.client.\(noticeHostID.uuidString.lowercased()).\(identity.keyID)"
-                    if !UserDefaults.standard.bool(forKey: noticeKey) {
+                    let hostComponent = response.hostID.uuidString.lowercased()
+                    let noticeKey = "com.mirage.autotrust.client.\(hostComponent)"
+                    let legacyNoticeKey = "com.mirage.autotrust.client.\(hostComponent).\(identity.keyID)"
+                    if !UserDefaults.standard.bool(forKey: noticeKey),
+                       !UserDefaults.standard.bool(forKey: legacyNoticeKey) {
                         UserDefaults.standard.set(true, forKey: noticeKey)
                         let hostDisplayName = response.hostName
                             .trimmingCharacters(in: .whitespacesAndNewlines)

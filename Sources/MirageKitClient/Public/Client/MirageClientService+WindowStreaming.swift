@@ -178,9 +178,6 @@ public extension MirageClientService {
             onFirstFrame: { [weak self] in
                 self?.sessionStore.markFirstFrameReceived(for: capturedStreamID)
             },
-            onInputBlockingChanged: { [weak self] isBlocked in
-                self?.setInputBlocked(isBlocked, for: capturedStreamID)
-            },
             onAdaptiveFallbackNeeded: { [weak self] in
                 self?.handleAdaptiveFallbackTrigger(for: capturedStreamID)
             }

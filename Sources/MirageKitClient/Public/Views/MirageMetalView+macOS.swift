@@ -18,9 +18,16 @@ public class MirageMetalView: NSView {
     var streamID: StreamID? {
         didSet {
             guard streamID != oldValue else { return }
+            if let oldValue {
+                MirageClientRenderTrigger.shared.unregister(streamID: oldValue)
+            }
+            if let streamID {
+                MirageClientRenderTrigger.shared.register(view: self, for: streamID)
+            }
             renderState.reset()
             renderScheduler.reset()
-            inFlightRenders = 0
+            renderAdmission.reset()
+            renderSequenceGate.reset()
             drawableRetryTask?.cancel()
             drawableRetryTask = nil
             drawableRetryScheduled = false
@@ -46,9 +53,15 @@ public class MirageMetalView: NSView {
     private lazy var renderScheduler = MirageRenderScheduler(view: self)
 
     private let renderQueue = DispatchQueue(label: "com.mirage.client.render.macos", qos: .userInteractive)
+    private let drawableAcquireQueue = DispatchQueue(
+        label: "com.mirage.client.render.drawable.macos",
+        qos: .userInteractive
+    )
+    private let renderAdmission = MirageRenderAdmissionCounter()
+    private let renderSequenceGate = MirageRenderSequenceGate()
 
     private var renderingSuspended = false
-    private var inFlightRenders: Int = 0
+    private var maxRenderFPS: Int = 60
     private var colorPixelFormat: MTLPixelFormat = .bgr10a2Unorm
 
     private var drawableRetryScheduled = false
@@ -73,10 +86,6 @@ public class MirageMetalView: NSView {
 
     private static let maxDrawableWidth: CGFloat = 5120
     private static let maxDrawableHeight: CGFloat = 2880
-
-    private var maxInFlightDraws: Int {
-        max(1, min(2, metalLayer.maximumDrawableCount - 1))
-    }
 
     private var metalLayer: CAMetalLayer {
         if let layer = layer as? CAMetalLayer {
@@ -159,11 +168,15 @@ public class MirageMetalView: NSView {
     }
 
     deinit {
+        if let streamID {
+            MirageClientRenderTrigger.shared.unregister(streamID: streamID)
+        }
         drawableRetryTask?.cancel()
     }
 
     func suspendRendering() {
         renderingSuspended = true
+        renderAdmission.reset()
         drawableRetryTask?.cancel()
         drawableRetryTask = nil
         drawableRetryScheduled = false
@@ -182,13 +195,21 @@ public class MirageMetalView: NSView {
         renderDiagnostics.drawRequests &+= 1
         maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
         renderScheduler.requestRedraw()
+        renderScheduler.requestDecodeDrivenTick()
     }
 
     @MainActor
     func renderSchedulerTick() {
         guard !renderingSuspended else { return }
         guard !drawableRetryScheduled else { return }
-        guard inFlightRenders < maxInFlightDraws else { return }
+
+        let maximumDrawableCount = max(1, metalLayer.maximumDrawableCount)
+        let effectiveCap = effectiveInFlightCap(maximumDrawableCount: maximumDrawableCount)
+        guard renderAdmission.tryAcquire(limit: effectiveCap) else {
+            renderDiagnostics.skipInFlightCap &+= 1
+            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
+            return
+        }
 
         renderDiagnostics.drawAttempts &+= 1
 
@@ -198,6 +219,7 @@ public class MirageMetalView: NSView {
             } else {
                 renderDiagnostics.skipNoFrame &+= 1
             }
+            _ = renderAdmission.release()
             maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
             return
         }
@@ -208,12 +230,14 @@ public class MirageMetalView: NSView {
 
         guard let pixelBuffer = renderState.currentPixelBuffer else {
             renderDiagnostics.skipNoPixelBuffer &+= 1
+            _ = renderAdmission.release()
             maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
             return
         }
 
         guard let renderer else {
             renderDiagnostics.skipNoRenderer &+= 1
+            _ = renderAdmission.release()
             maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
             return
         }
@@ -224,16 +248,17 @@ public class MirageMetalView: NSView {
         let outputPixelFormat = colorPixelFormat
         let sequence = renderState.currentSequence
         let decodeTime = renderState.currentDecodeTime
+        renderSequenceGate.noteRequested(sequence)
         let streamID = streamID
         let metalLayer = self.metalLayer
+        let renderAdmission = self.renderAdmission
 
-        inFlightRenders &+= 1
-
-        renderQueue.async { [weak self] in
+        drawableAcquireQueue.async { [weak self] in
             guard let self else { return }
             let drawableWaitStart = CFAbsoluteTimeGetCurrent()
             guard let drawable = metalLayer.nextDrawable() else {
                 let wait = max(0, CFAbsoluteTimeGetCurrent() - drawableWaitStart)
+                _ = self.renderAdmission.release()
                 Task { @MainActor [weak self] in
                     self?.handleNoDrawable(signalDelay: signalDelay, drawableWait: wait)
                 }
@@ -241,31 +266,40 @@ public class MirageMetalView: NSView {
             }
 
             let drawableWait = max(0, CFAbsoluteTimeGetCurrent() - drawableWaitStart)
-            renderer.render(
-                pixelBuffer: pixelBuffer,
-                to: drawable,
-                contentRect: contentRect,
-                outputPixelFormat: outputPixelFormat,
-                completion: { [weak self] in
-                    guard let self else { return }
-                    Task { @MainActor [weak self] in
-                        self?.handleRenderCompletion(
-                            startTime: drawStartTime,
-                            signalDelay: signalDelay,
-                            drawableWait: drawableWait,
-                            streamID: streamID,
-                            sequence: sequence,
-                            decodeTime: decodeTime
-                        )
-                    }
+            if self.renderSequenceGate.isStale(sequence) {
+                _ = self.renderAdmission.release()
+                Task { @MainActor [weak self] in
+                    self?.handleStaleDrawableDrop(signalDelay: signalDelay, drawableWait: drawableWait)
                 }
-            )
+                return
+            }
+            self.renderQueue.async { [weak self] in
+                guard let self else {
+                    _ = renderAdmission.release()
+                    return
+                }
+                renderer.render(
+                    pixelBuffer: pixelBuffer,
+                    to: drawable,
+                    contentRect: contentRect,
+                    outputPixelFormat: outputPixelFormat,
+                    completion: { [weak self] wasPresented in
+                        _ = renderAdmission.release()
+                        Task { @MainActor [weak self] in
+                            self?.handleRenderCompletion(
+                                startTime: drawStartTime,
+                                signalDelay: signalDelay,
+                                drawableWait: drawableWait,
+                                streamID: streamID,
+                                sequence: sequence,
+                                decodeTime: decodeTime,
+                                wasPresented: wasPresented
+                            )
+                        }
+                    }
+                )
+            }
         }
-    }
-
-    @MainActor
-    private func finishDraw() {
-        inFlightRenders = max(0, inFlightRenders - 1)
     }
 
     @MainActor
@@ -279,8 +313,20 @@ public class MirageMetalView: NSView {
             drawableWait: drawableWait,
             rendered: false
         )
-        finishDraw()
         scheduleDrawableRetry()
+    }
+
+    @MainActor
+    private func handleStaleDrawableDrop(signalDelay: CFAbsoluteTime, drawableWait: CFAbsoluteTime) {
+        renderDiagnostics.skipStale &+= 1
+        recordDrawCompletion(
+            startTime: CFAbsoluteTimeGetCurrent(),
+            signalDelay: signalDelay,
+            drawableWait: drawableWait,
+            rendered: false
+        )
+        renderState.markNeedsRedraw()
+        renderScheduler.requestRedraw()
     }
 
     @MainActor
@@ -290,20 +336,26 @@ public class MirageMetalView: NSView {
         drawableWait: CFAbsoluteTime,
         streamID: StreamID?,
         sequence: UInt64,
-        decodeTime: CFAbsoluteTime
+        decodeTime: CFAbsoluteTime,
+        wasPresented: Bool
     ) {
-        if let streamID {
-            MirageFrameCache.shared.markPresented(sequence: sequence, for: streamID)
+        if wasPresented {
+            renderSequenceGate.notePresented(sequence)
+            if let streamID {
+                MirageFrameCache.shared.markPresented(sequence: sequence, for: streamID)
+            }
+            renderScheduler.notePresented(sequence: sequence, decodeTime: decodeTime)
+        } else {
+            renderState.markNeedsRedraw()
+            renderScheduler.requestRedraw()
         }
-        renderScheduler.notePresented(sequence: sequence, decodeTime: decodeTime)
 
         recordDrawCompletion(
             startTime: startTime,
             signalDelay: signalDelay,
             drawableWait: drawableWait,
-            rendered: true
+            rendered: wasPresented
         )
-        finishDraw()
     }
 
     @MainActor
@@ -511,6 +563,10 @@ public class MirageMetalView: NSView {
         let drawAttemptFPS = Double(renderDiagnostics.drawAttempts) / safeElapsed
         let renderedFPS = Double(renderDiagnostics.drawRendered) / safeElapsed
 
+        let maximumDrawableCount = max(1, metalLayer.maximumDrawableCount)
+        let effectiveCap = effectiveInFlightCap(maximumDrawableCount: maximumDrawableCount)
+        let inFlight = renderAdmission.snapshot()
+
         let requestText = requestFPS.formatted(.number.precision(.fractionLength(1)))
         let drawAttemptText = drawAttemptFPS.formatted(.number.precision(.fractionLength(1)))
         let renderedText = renderedFPS.formatted(.number.precision(.fractionLength(1)))
@@ -520,10 +576,21 @@ public class MirageMetalView: NSView {
                 "Render diag: drawRequests=\(requestText)fps drawAttempts=\(drawAttemptText)fps " +
                     "rendered=\(renderedText)fps skips(noEntry=\(renderDiagnostics.skipNoEntry) " +
                     "noFrame=\(renderDiagnostics.skipNoFrame) noDrawable=\(renderDiagnostics.skipNoDrawable) " +
-                    "noRenderer=\(renderDiagnostics.skipNoRenderer) noPixelBuffer=\(renderDiagnostics.skipNoPixelBuffer))"
+                    "noRenderer=\(renderDiagnostics.skipNoRenderer) noPixelBuffer=\(renderDiagnostics.skipNoPixelBuffer) " +
+                    "stale=\(renderDiagnostics.skipStale) " +
+                    "cap=\(renderDiagnostics.skipInFlightCap)) admission(inFlight=\(inFlight)/\(effectiveCap) " +
+                    "drawables=\(maximumDrawableCount) target=\(maxRenderFPS))"
             )
 
         renderDiagnostics.reset(now: now)
+    }
+
+    private func effectiveInFlightCap(maximumDrawableCount: Int? = nil) -> Int {
+        let drawableCount = max(1, maximumDrawableCount ?? metalLayer.maximumDrawableCount)
+        return MirageRenderAdmissionPolicy.effectiveInFlightCap(
+            targetFPS: maxRenderFPS,
+            maximumDrawableCount: drawableCount
+        )
     }
 
     private func updateOutputFormatIfNeeded(_ pixelFormatType: OSType) {
@@ -563,6 +630,8 @@ private struct RenderDiagnostics {
     var skipNoDrawable: UInt64 = 0
     var skipNoRenderer: UInt64 = 0
     var skipNoPixelBuffer: UInt64 = 0
+    var skipStale: UInt64 = 0
+    var skipInFlightCap: UInt64 = 0
 
     mutating func reset(now: CFAbsoluteTime) {
         startTime = now
@@ -574,6 +643,8 @@ private struct RenderDiagnostics {
         skipNoDrawable = 0
         skipNoRenderer = 0
         skipNoPixelBuffer = 0
+        skipStale = 0
+        skipInFlightCap = 0
     }
 }
 #endif

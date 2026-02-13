@@ -102,8 +102,10 @@ actor StreamController {
 
     /// Interval for retrying keyframe requests while decoder is unhealthy
     static let keyframeRecoveryInterval: Duration = .seconds(1)
+    /// Minimum spacing for repeated keyframe retries once keyframe-only mode is active.
+    static let keyframeRecoveryRetryInterval: CFAbsoluteTime = 1.0
 
-    /// Duration without decoded frames before input is blocked.
+    /// Duration without decoded frame presentation progress before recovery is requested.
     static let freezeTimeout: CFAbsoluteTime = 5.0
 
     /// Interval for checking freeze state.
@@ -112,7 +114,7 @@ actor StreamController {
     static let freezeRecoveryEscalationThreshold: Int = 2
 
     /// Maximum number of frames buffered for decode before triggering full recovery.
-    static let maxQueuedFrames: Int = 10
+    static let maxQueuedFrames: Int = 24
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
@@ -120,6 +122,8 @@ actor StreamController {
     static let overloadQueueDropThreshold: Int = 12
     static let overloadRecoveryThreshold: Int = 2
     static let decodeStormThreshold: Int = 2
+    static let backpressureRecoveryDropThreshold: Int = 4
+    static let backpressureRecoveryWindow: CFAbsoluteTime = 2.0
     static let backpressureRecoveryCooldown: CFAbsoluteTime = 1.0
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
@@ -185,15 +189,8 @@ actor StreamController {
     /// Called when the first frame is decoded for a stream.
     private(set) var onFirstFrame: (@MainActor @Sendable () -> Void)?
 
-    /// Called when input blocking state changes (true = block input, false = allow input).
-    /// Input is blocked only when the stream is frozen for a sustained period.
-    private(set) var onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)?
-
     /// Called when sustained decode overload should trigger host fallback.
     private(set) var onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)?
-
-    /// Current input blocking state - true when the stream is frozen.
-    var isInputBlocked: Bool = false
 
     /// Set callbacks for stream events
     func setCallbacks(
@@ -202,7 +199,6 @@ actor StreamController {
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
         onFirstFrame: (@MainActor @Sendable () -> Void)? = nil,
-        onInputBlockingChanged: (@MainActor @Sendable (Bool) -> Void)? = nil,
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
@@ -210,7 +206,6 @@ actor StreamController {
         self.onResizeStateChanged = onResizeStateChanged
         self.onFrameDecoded = onFrameDecoded
         self.onFirstFrame = onFirstFrame
-        self.onInputBlockingChanged = onInputBlockingChanged
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
     }
 
@@ -270,6 +265,7 @@ actor StreamController {
                 texture: nil,
                 for: capturedStreamID
             )
+            MirageClientRenderTrigger.shared.requestDraw(for: capturedStreamID)
 
             if metricsTracker.recordDecodedFrame() {
                 Task { [weak self] in

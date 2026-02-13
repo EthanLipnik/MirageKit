@@ -313,7 +313,9 @@ extension HEVCDecoder {
                         }
 
                         if dimensionsMismatch {
-                            self.errorTracker?.requestKeyframeForDimensionChange()
+                            // A keyframe carrying the new dimensions is already in-flight and
+                            // being processed here. Triggering another threshold-based keyframe
+                            // recovery causes an avoidable keyframe-only stall loop during resize.
                             self.onDimensionChange?()
                             self.errorTracker?.clearForDimensionChange()
                         } else if shouldRecreateForErrors {
@@ -330,7 +332,6 @@ extension HEVCDecoder {
                         self.awaitingDimensionChange = false
                         self.expectedDimensions = nil
                         MirageLogger.decoder("Dimension change complete - resuming normal P-frame processing")
-                        self.onInputBlockingChanged?(false)
                     }
                 }
             }

@@ -15,6 +15,43 @@ import Testing
 #if os(macOS)
 @Suite("Frame Reassembler Stale Keyframe")
 struct FrameReassemblerStaleKeyframeTests {
+    @Test("Initial keyframe 0 anchors P-frame delivery")
+    func initialKeyframeZeroDoesNotBlockPFrames() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+
+        let keyframePayload = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            keyframePayload,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframePayload,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        let pFramePayload = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x03])
+        reassembler.processPacket(
+            pFramePayload,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 1,
+                payload: pFramePayload,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+    }
+
     @Test("Delivered keyframe duplicate is dropped without triggering loss")
     func deliveredKeyframeDuplicateDoesNotTriggerLossLoop() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)

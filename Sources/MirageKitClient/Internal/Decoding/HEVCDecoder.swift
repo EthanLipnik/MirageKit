@@ -46,10 +46,6 @@ actor HEVCDecoder {
     /// Handler called when video dimensions change - used to reset reassembler
     var onDimensionChange: (@Sendable () -> Void)?
 
-    /// Handler called when input blocking state changes (true = block input, false = allow input)
-    /// Input should be blocked when decoder is awaiting keyframe or has decode errors
-    var onInputBlockingChanged: (@Sendable (Bool) -> Void)?
-
     /// When true, discard all P-frames and only process keyframes.
     /// Set when client initiates a resize request - P-frames at new dimensions will fail
     /// until we receive a keyframe with the new VPS/SPS/PPS parameter sets.
@@ -72,9 +68,6 @@ actor HEVCDecoder {
 
     // Set handler called when video dimensions change
     // Used to reset the reassembler and discard pending old-dimension fragments
-
-    // Set handler called when input blocking state changes
-    // Input should be blocked when decoder is in a bad state (awaiting keyframe, decode errors)
 
     // Get the current average decode time (ms) from recent samples.
 
@@ -234,9 +227,13 @@ final class FrameReassembler: @unchecked Sendable {
     var pendingFrames: [UInt32: PendingFrame] = [:]
     var lastCompletedFrame: UInt32 = 0
     var lastDeliveredKeyframe: UInt32 = 0
+    /// Tracks whether we have a valid keyframe anchor.
+    /// Frame number 0 is valid, so lastDeliveredKeyframe cannot be used as a sentinel.
+    var hasDeliveredKeyframeAnchor: Bool = false
     var droppedFrameCount: UInt64 = 0
     var awaitingKeyframe: Bool = false
     var awaitingKeyframeSince: CFAbsoluteTime = 0
+    var lastPacketReceivedTime: CFAbsoluteTime = 0
     var currentEpoch: UInt16 = 0
     let keyframeTimeout: TimeInterval = 3.0
 

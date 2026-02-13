@@ -17,19 +17,22 @@ public struct MirageConnectedClient: Identifiable, Sendable {
     public let deviceType: DeviceType
     public let connectedAt: Date
     public let identityKeyID: String?
+    public let autoTrustGranted: Bool
 
     public init(
         id: UUID,
         name: String,
         deviceType: DeviceType,
         connectedAt: Date,
-        identityKeyID: String? = nil
+        identityKeyID: String? = nil,
+        autoTrustGranted: Bool = false
     ) {
         self.id = id
         self.name = name
         self.deviceType = deviceType
         self.connectedAt = connectedAt
         self.identityKeyID = identityKeyID
+        self.autoTrustGranted = autoTrustGranted
     }
 }
 

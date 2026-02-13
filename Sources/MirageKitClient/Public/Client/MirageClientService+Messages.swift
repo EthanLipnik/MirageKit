@@ -43,7 +43,6 @@ extension MirageClientService {
             .hostHardwareIcon: { [weak self] in self?.handleHostHardwareIcon($0) },
             .pong: { [weak self] in self?.handlePong($0) },
             .qualityTestResult: { [weak self] in self?.handleQualityTestResult($0) },
-            .qualityProbeResult: { [weak self] in self?.handleQualityProbeResult($0) },
             .audioStreamStarted: { [weak self] in self?.handleAudioStreamStarted($0) },
             .audioStreamStopped: { [weak self] in self?.handleAudioStreamStopped($0) }
         ]

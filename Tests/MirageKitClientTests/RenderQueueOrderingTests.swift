@@ -146,6 +146,81 @@ struct RenderQueueOrderingTests {
         MirageFrameCache.shared.clear(for: streamB)
     }
 
+    @Test("Presentation dequeue trims backlog to keep depth")
+    func presentationDequeueRespectsKeepDepth() {
+        let streamID: StreamID = 106
+        MirageFrameCache.shared.clear(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        for index in 0 ..< 5 {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now - (0.250 + (Double(index) * 0.005)),
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
+
+        let presented = MirageFrameCache.shared.dequeueForPresentation(for: streamID, catchUpDepth: 2)
+        #expect(presented?.sequence == 4)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
+        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 5)
+
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Presentation dequeue keeps deep recent backlog in FIFO order")
+    func presentationDequeuePreservesDeepRecentBacklog() {
+        let streamID: StreamID = 108
+        MirageFrameCache.shared.clear(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        for index in 0 ..< 7 {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now - (Double(6 - index) * 0.004),
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
+
+        let presented = MirageFrameCache.shared.dequeueForPresentation(for: streamID, catchUpDepth: 2)
+        #expect(presented?.sequence == 1)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 6)
+        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 2)
+
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Presentation dequeue keeps shallow recent backlog in FIFO order")
+    func presentationDequeuePreservesShallowRecentBacklog() {
+        let streamID: StreamID = 107
+        MirageFrameCache.shared.clear(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        for index in 0 ..< 4 {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now - (Double(3 - index) * 0.010),
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
+
+        let presented = MirageFrameCache.shared.dequeueForPresentation(for: streamID, catchUpDepth: 2)
+        #expect(presented?.sequence == 1)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 3)
+        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 2)
+
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     private func makePixelBuffer() -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(

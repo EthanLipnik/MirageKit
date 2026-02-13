@@ -16,6 +16,7 @@ extension StreamController {
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.
+        MirageFrameCache.shared.clear(for: streamID)
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
         reassembler.reset()

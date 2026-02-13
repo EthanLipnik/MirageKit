@@ -381,15 +381,13 @@ final class MetalRenderer {
         to drawable: CAMetalDrawable,
         contentRect: CGRect? = nil,
         colorConversion: ColorConversion,
-        completion: (@Sendable () -> Void)? = nil
+        completion: (@Sendable (_ presented: Bool) -> Void)? = nil
     ) {
         let signpostState = MirageSignpost.beginInterval("Render")
         defer { MirageSignpost.endInterval("Render", signpostState) }
 
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
-            if let completion {
-                Task { @MainActor in completion() }
-            }
+            completion?(false)
             return
         }
 
@@ -400,9 +398,7 @@ final class MetalRenderer {
         renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
 
         guard let encoder = commandBuffer.makeRenderCommandEncoder(descriptor: renderPassDescriptor) else {
-            if let completion {
-                Task { @MainActor in completion() }
-            }
+            completion?(false)
             return
         }
 
@@ -442,9 +438,7 @@ final class MetalRenderer {
         )
         guard let uniformsBuffer = nextUniformsBuffer() else {
             encoder.endEncoding()
-            if let completion {
-                Task { @MainActor in completion() }
-            }
+            completion?(false)
             return
         }
         uniformsBuffer.contents().copyMemory(from: &uniforms, byteCount: MemoryLayout<RenderUniforms>.size)
@@ -468,36 +462,30 @@ final class MetalRenderer {
 
         commandBuffer.present(drawable)
         if let completion {
-            // @unchecked Sendable: guarded by NSLock and only fires onto the main queue.
+            // @unchecked Sendable: guarded by NSLock for once-only callback dispatch.
             final class CompletionOnce: @unchecked Sendable {
                 private let lock = NSLock()
                 private var fired = false
-                private let completion: () -> Void
+                private let completion: (Bool) -> Void
 
-                init(_ completion: @escaping () -> Void) {
+                init(_ completion: @escaping (Bool) -> Void) {
                     self.completion = completion
                 }
 
-                func fire() {
+                func fire(_ presented: Bool) {
                     lock.lock()
                     let shouldFire = !fired
                     if shouldFire { fired = true }
                     lock.unlock()
                     guard shouldFire else { return }
-                    DispatchQueue.main.async { self.completion() }
+                    completion(presented)
                 }
             }
 
             let completionOnce = CompletionOnce(completion)
-            #if os(macOS)
-            // Prefer presentation timing so scheduler release tracks drawable availability.
-            drawable.addPresentedHandler { _ in completionOnce.fire() }
-            // Fall back to GPU completion if presentation callbacks are delayed or skipped.
-            commandBuffer.addCompletedHandler { _ in completionOnce.fire() }
-            #else
-            // iOS/visionOS: use GPU completion timing (addPresentedHandler not available).
-            commandBuffer.addCompletedHandler { _ in completionOnce.fire() }
-            #endif
+            // Completion drives render admission and queue progression. Presentation callbacks
+            // can be suppressed while app focus changes, so do not gate completion on them.
+            commandBuffer.addCompletedHandler { _ in completionOnce.fire(true) }
         }
         commandBuffer.commit()
     }
@@ -508,7 +496,7 @@ final class MetalRenderer {
         to drawable: CAMetalDrawable,
         contentRect: CGRect? = nil,
         outputPixelFormat: MTLPixelFormat = .bgr10a2Unorm,
-        completion: (@Sendable () -> Void)? = nil
+        completion: (@Sendable (_ presented: Bool) -> Void)? = nil
     ) {
         if let ycbcrTextures = createYCbCrTextures(from: pixelBuffer) {
             let conversion = colorConversion(for: pixelBuffer)
@@ -540,9 +528,7 @@ final class MetalRenderer {
         }
 
         guard let texture = createTexture(from: pixelBuffer) else {
-            if let completion {
-                Task { @MainActor in completion() }
-            }
+            completion?(false)
             return
         }
 

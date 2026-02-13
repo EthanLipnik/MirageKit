@@ -48,6 +48,7 @@ extension FrameReassembler {
         let frameNumber = header.frameNumber
         let isKeyframePacket = header.flags.contains(.keyframe)
         lock.lock()
+        lastPacketReceivedTime = CFAbsoluteTimeGetCurrent()
         totalPacketsReceived += 1
 
         // Log stats every 1000 packets
@@ -81,7 +82,7 @@ extension FrameReassembler {
         }
 
         if isKeyframePacket, isStaleKeyframeLocked(frameNumber) {
-            if lastDeliveredKeyframe > 0, frameNumber == lastDeliveredKeyframe {
+            if hasDeliveredKeyframeAnchor, frameNumber == lastDeliveredKeyframe {
                 packetsDiscardedDeliveredKeyframe += 1
             } else {
                 packetsDiscardedOld += 1
@@ -226,7 +227,7 @@ extension FrameReassembler {
             }
         }
 
-        // Check if frame is complete
+        // Check if frame is complete.
         if frame.receivedCount == frame.dataFragmentCount {
             completedFrame = completeFrameLocked(frameNumber: frameNumber, frame: frame)
             completionHandler = onFrameComplete
@@ -266,13 +267,19 @@ extension FrameReassembler {
         let shouldDeliver: Bool
 
         if frame.isKeyframe {
-            // Always deliver keyframes unless a newer keyframe was already delivered
-            shouldDeliver = frameNumber > lastDeliveredKeyframe || lastDeliveredKeyframe == 0
-            if shouldDeliver { lastDeliveredKeyframe = frameNumber }
+            // Always deliver keyframes unless a newer keyframe was already delivered.
+            shouldDeliver = !hasDeliveredKeyframeAnchor || isFrameNewer(frameNumber, than: lastDeliveredKeyframe)
+            if shouldDeliver {
+                lastDeliveredKeyframe = frameNumber
+                hasDeliveredKeyframeAnchor = true
+            }
         } else {
-            // For P-frames: only deliver if newer than last completed frame
-            // and after the last keyframe (decoder needs the reference)
-            shouldDeliver = frameNumber > lastCompletedFrame && frameNumber > lastDeliveredKeyframe
+            // For P-frames: require a delivered keyframe anchor and monotonic progression.
+            // Missing intermediate frames are handled by decoder recovery paths instead of
+            // reassembler-wide blocking, which prevents persistent stalls on a single gap.
+            shouldDeliver = hasDeliveredKeyframeAnchor &&
+                isFrameNewer(frameNumber, than: lastCompletedFrame) &&
+                isFrameNewer(frameNumber, than: lastDeliveredKeyframe)
         }
 
         if shouldDeliver {
@@ -345,6 +352,7 @@ extension FrameReassembler {
         pendingFrames.removeAll()
         lastCompletedFrame = 0
         lastDeliveredKeyframe = 0
+        hasDeliveredKeyframeAnchor = false
         clearAwaitingKeyframe()
         beginAwaitingKeyframe()
         packetsDiscardedAwaitingKeyframe = 0
@@ -356,6 +364,11 @@ extension FrameReassembler {
         // Treat epochs as monotonically increasing with wrap-around semantics.
         // Values in the "forward" half-range are considered newer.
         return diff != 0 && diff < 0x8000
+    }
+
+    private func isFrameNewer(_ incoming: UInt32, than current: UInt32) -> Bool {
+        let diff = incoming &- current
+        return diff != 0 && diff < 0x8000_0000
     }
 
     private func cleanupOldFramesLocked() -> Bool {
@@ -450,6 +463,13 @@ extension FrameReassembler {
         keyframeTimeout
     }
 
+    func latestPacketReceivedTime() -> CFAbsoluteTime {
+        lock.lock()
+        let timestamp = lastPacketReceivedTime
+        lock.unlock()
+        return timestamp
+    }
+
     func reset() {
         lock.lock()
         for frame in pendingFrames.values {
@@ -458,8 +478,10 @@ extension FrameReassembler {
         pendingFrames.removeAll()
         lastCompletedFrame = 0
         lastDeliveredKeyframe = 0
+        hasDeliveredKeyframeAnchor = false
         clearAwaitingKeyframe()
         droppedFrameCount = 0
+        lastPacketReceivedTime = 0
         lock.unlock()
         MirageLogger.log(.frameAssembly, "Reassembler reset for stream \(streamID)")
     }
@@ -477,14 +499,14 @@ extension FrameReassembler {
     }
 
     private func isStaleKeyframeLocked(_ frameNumber: UInt32) -> Bool {
-        guard lastDeliveredKeyframe > 0 else { return false }
+        guard hasDeliveredKeyframeAnchor else { return false }
         if frameNumber == lastDeliveredKeyframe { return true }
         guard frameNumber < lastDeliveredKeyframe else { return false }
         return lastDeliveredKeyframe - frameNumber <= 1000
     }
 
     private func purgeStaleKeyframesLocked() {
-        guard lastDeliveredKeyframe > 0 else { return }
+        guard hasDeliveredKeyframeAnchor else { return }
         let staleFrames = pendingFrames.filter { entry in
             entry.value.isKeyframe && isStaleKeyframeLocked(entry.key)
         }

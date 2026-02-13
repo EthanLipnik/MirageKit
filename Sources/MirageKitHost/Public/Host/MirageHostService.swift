@@ -128,7 +128,6 @@ public final class MirageHostService {
     var qualityTestConnectionsByClientID: [UUID: NWConnection] = [:]
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
     var qualityTestBenchmarkIDsByClientID: [UUID: UUID] = [:]
-    var qualityProbeTasksByClientID: [UUID: Task<Void, Never>] = [:]
 
     // Track first error time per client for graceful disconnect on persistent errors
     // If errors persist past the timeout, disconnect the client.

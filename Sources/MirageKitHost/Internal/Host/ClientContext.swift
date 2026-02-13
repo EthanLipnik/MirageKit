@@ -58,6 +58,15 @@ struct ClientContext {
         }
     }
 
+    /// Queue a control message over TCP without awaiting contentProcessed.
+    /// Returns false when the message cannot be encoded.
+    @discardableResult
+    func sendBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
+        guard let message = try? ControlMessage(type: type, content: content) else { return false }
+        tcpConnection.send(content: message.serialize(), completion: .idempotent)
+        return true
+    }
+
     /// Send video data over UDP
     func sendVideoPacket(_ data: Data) {
         udpConnection?.send(content: data, completion: .idempotent)

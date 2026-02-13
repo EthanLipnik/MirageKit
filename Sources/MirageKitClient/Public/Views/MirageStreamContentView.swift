@@ -151,10 +151,13 @@ public struct MirageStreamContentView: View {
                     handleDrawableMetricsChanged(metrics)
                 },
                 onRefreshRateOverrideChange: { override in
-                    clientService.updateStreamRefreshRateOverride(
-                        streamID: session.streamID,
-                        maxRefreshRate: override
-                    )
+                    Task { @MainActor [clientService] in
+                        await Task.yield()
+                        clientService.updateStreamRefreshRateOverride(
+                            streamID: session.streamID,
+                            maxRefreshRate: override
+                        )
+                    }
                 },
                 cursorStore: clientService.cursorStore,
                 cursorPositionStore: clientService.cursorPositionStore,
@@ -239,7 +242,6 @@ public struct MirageStreamContentView: View {
             if awaitingDesktopResizeAck {
                 finishDesktopResizeAwaitingAck()
             } else {
-                clientService.setInputBlocked(false, for: session.streamID)
                 if isResizing { isResizing = false }
             }
         }
@@ -403,7 +405,9 @@ public struct MirageStreamContentView: View {
                 ? clientService.preferredDesktopDisplayResolution(for: viewSize)
                 : .zero
             let streamScaleReferenceSize = isDesktopStream ? desktopDisplaySize : viewSize
-            scheduleStreamScaleUpdate(for: streamScaleReferenceSize)
+            if !isDesktopStream || !awaitingDesktopResizeAck {
+                scheduleStreamScaleUpdate(for: streamScaleReferenceSize)
+            }
 
             guard isDesktopStream else { return }
 
@@ -470,10 +474,8 @@ public struct MirageStreamContentView: View {
     }
 
     private func beginDesktopResizeAwaitingAck() {
-        let wasAwaiting = awaitingDesktopResizeAck
         awaitingDesktopResizeAck = true
         isResizing = true
-        if !wasAwaiting { clientService.setInputBlocked(true, for: session.streamID) }
         desktopResizeAckTimeoutTask?.cancel()
         desktopResizeAckTimeoutTask = Task { @MainActor in
             do {
@@ -488,13 +490,14 @@ public struct MirageStreamContentView: View {
     }
 
     private func finishDesktopResizeAwaitingAck() {
-        let wasAwaiting = awaitingDesktopResizeAck
         desktopResizeAckTimeoutTask?.cancel()
         desktopResizeAckTimeoutTask = nil
         awaitingDesktopResizeAck = false
         sentDesktopPostAckCorrection = false
-        if wasAwaiting { clientService.setInputBlocked(false, for: session.streamID) }
         if isResizing { isResizing = false }
+        if latestDrawableDisplaySize.width > 0, latestDrawableDisplaySize.height > 0 {
+            scheduleStreamScaleUpdate(for: latestDrawableDisplaySize)
+        }
     }
 
     private func handleResizeAcknowledgement(_ minSize: CGSize?) {

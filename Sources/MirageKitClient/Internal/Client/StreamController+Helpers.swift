@@ -10,6 +10,12 @@
 import CoreGraphics
 import Foundation
 import MirageKit
+#if canImport(UIKit)
+import UIKit
+#endif
+#if canImport(AppKit)
+import AppKit
+#endif
 
 extension StreamController {
     // MARK: - Private Helpers
@@ -25,16 +31,6 @@ extension StreamController {
     func recordDecodedFrame() {
         lastDecodedFrameTime = CFAbsoluteTimeGetCurrent()
         startFreezeMonitorIfNeeded()
-    }
-
-    /// Update input blocking state and notify callback
-    func updateInputBlocking(_ isBlocked: Bool) {
-        guard isInputBlocked != isBlocked else { return }
-        isInputBlocked = isBlocked
-        MirageLogger.client("Input blocking state changed: \(isBlocked ? "BLOCKED" : "allowed") for stream \(streamID)")
-        Task { @MainActor [weak self] in
-            await self?.onInputBlockingChanged?(isBlocked)
-        }
     }
 
     func recordQueueDrop() {
@@ -55,6 +51,12 @@ extension StreamController {
 
     func maybeTriggerBackpressureRecovery(queueDepth: Int) {
         let now = CFAbsoluteTimeGetCurrent()
+        let recentDropCount = queueDropTimestamps.reduce(into: 0) { count, timestamp in
+            if now - timestamp <= Self.backpressureRecoveryWindow {
+                count += 1
+            }
+        }
+        guard recentDropCount >= Self.backpressureRecoveryDropThreshold else { return }
         if lastBackpressureRecoveryTime > 0,
            now - lastBackpressureRecoveryTime < Self.backpressureRecoveryCooldown {
             return
@@ -132,7 +134,8 @@ extension StreamController {
             guard let awaitingDuration = reassembler.awaitingKeyframeDuration(now: now) else { break }
             let timeout = reassembler.keyframeTimeoutSeconds()
             guard awaitingDuration >= timeout else { continue }
-            if lastRecoveryRequestTime > 0, now - lastRecoveryRequestTime < timeout { continue }
+            let retryInterval = min(timeout, Self.keyframeRecoveryRetryInterval)
+            if lastRecoveryRequestTime > 0, now - lastRecoveryRequestTime < retryInterval { continue }
             lastRecoveryRequestTime = now
             await requestKeyframeRecovery(reason: .keyframeRecoveryLoop)
         }
@@ -165,15 +168,19 @@ extension StreamController {
         freezeMonitorTask = nil
     }
 
-    private func evaluateFreezeState() {
+    private func evaluateFreezeState() async {
         guard lastDecodedFrameTime > 0 else { return }
         let now = CFAbsoluteTimeGetCurrent()
+        guard await isApplicationActiveForFreezeMonitoring() else {
+            lastPresentedProgressTime = now
+            consecutiveFreezeRecoveries = 0
+            return
+        }
         let presentationSnapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
         if presentationSnapshot.sequence > lastPresentedSequenceObserved {
             lastPresentedSequenceObserved = presentationSnapshot.sequence
             lastPresentedProgressTime = now
             consecutiveFreezeRecoveries = 0
-            if isInputBlocked { updateInputBlocking(false) }
             return
         }
 
@@ -183,13 +190,28 @@ extension StreamController {
         }
 
         let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
+        let lastPacketTime = reassembler.latestPacketReceivedTime()
+        let hasRecentVideoPacket = lastPacketTime > 0 && now - lastPacketTime <= Self.freezeTimeout
         let stalledPresentation = now - lastPresentedProgressTime > Self.freezeTimeout
-        let isFrozen = stalledPresentation && pendingDepth > 0
-        updateInputBlocking(isFrozen)
+        let isFrozen = stalledPresentation && (pendingDepth > 0 || hasRecentVideoPacket)
         if isFrozen { maybeTriggerFreezeRecovery(now: now) }
         else {
             consecutiveFreezeRecoveries = 0
         }
+    }
+
+    private func isApplicationActiveForFreezeMonitoring() async -> Bool {
+        #if canImport(UIKit)
+        return await MainActor.run {
+            UIApplication.shared.applicationState == .active
+        }
+        #elseif canImport(AppKit)
+        return await MainActor.run {
+            NSApp?.isActive ?? true
+        }
+        #else
+        true
+        #endif
     }
 
     private func maybeTriggerFreezeRecovery(now: CFAbsoluteTime) {

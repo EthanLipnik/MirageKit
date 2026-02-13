@@ -81,9 +81,6 @@ extension MirageHostService {
             },
             .qualityTestRequest: { [weak self] message, client, connection in
                 await self?.handleQualityTestRequest(message, from: client, connection: connection)
-            },
-            .qualityProbeRequest: { [weak self] message, client, connection in
-                await self?.handleQualityProbeRequest(message, from: client, connection: connection)
             }
         ]
     }

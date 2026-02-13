@@ -34,7 +34,7 @@ final class MirageMetalRenderState {
 
     @discardableResult
     func updateFrameIfNeeded(streamID: StreamID?) -> Bool {
-        if let id = streamID, let entry = MirageFrameCache.shared.dequeue(for: id) {
+        if let id = streamID, let entry = MirageFrameCache.shared.dequeueForPresentation(for: id) {
             currentPixelBuffer = entry.pixelBuffer
             currentPixelFormatType = CVPixelBufferGetPixelFormatType(entry.pixelBuffer)
             currentContentRect = entry.contentRect

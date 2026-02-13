@@ -52,57 +52,6 @@ extension MirageHostService {
         qualityTestTasksByClientID[client.id] = task
     }
 
-    func handleQualityProbeRequest(
-        _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
-    ) async {
-        guard let request = try? message.decode(QualityProbeRequestMessage.self) else {
-            MirageLogger.host("Failed to decode quality probe request")
-            return
-        }
-
-        if let task = qualityProbeTasksByClientID[client.id] {
-            task.cancel()
-        }
-
-        let transportConfig = request.transportConfig
-        let transportConnection = transportConfig == nil ? nil : qualityTestConnectionsByClientID[client.id]
-        let maxPacketSize = networkConfig.maxPacketSize
-        let clientName = client.name
-
-        if transportConfig != nil, transportConnection == nil {
-            MirageLogger.host("Transport probe skipped - no UDP registration for client \(clientName)")
-        }
-
-        let task = Task.detached(priority: .userInitiated) { [request, connection, transportConfig, transportConnection, maxPacketSize] in
-            let frameRate = max(1, request.frameRate)
-            let probe = try? await MirageScreenCaptureProbe.runVirtualDisplayProbe(
-                resolution: CGSize(width: request.width, height: request.height),
-                frameRate: frameRate,
-                pixelFormat: request.pixelFormat,
-                targetBitrateBps: request.targetBitrateBps,
-                transportConfig: transportConfig,
-                maxPacketSize: maxPacketSize,
-                transportConnection: transportConnection
-            )
-            let result = QualityProbeResultMessage(
-                probeID: request.probeID,
-                width: request.width,
-                height: request.height,
-                frameRate: frameRate,
-                pixelFormat: request.pixelFormat,
-                encodeMs: probe?.encodeMs,
-                observedBitrateBps: probe?.observedBitrateBps
-            )
-            if let message = try? ControlMessage(type: .qualityProbeResult, content: result) {
-                connection.send(content: message.serialize(), completion: .idempotent)
-            }
-        }
-
-        qualityProbeTasksByClientID[client.id] = task
-    }
-
     private func sendCodecBenchmarkResult(testID: UUID, to connection: NWConnection) async {
         let store = MirageCodecBenchmarkStore()
         let encodeMs = try? await MirageCodecBenchmark.runEncodeBenchmark()

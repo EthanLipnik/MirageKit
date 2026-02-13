@@ -26,10 +26,6 @@ extension HEVCDecoder {
         onDimensionChange = handler
     }
 
-    func setInputBlockingHandler(_ handler: @escaping @Sendable (Bool) -> Void) {
-        onInputBlockingChanged = handler
-    }
-
     func getAverageDecodeTimeMs() -> Double {
         performanceTracker.averageMs()
     }

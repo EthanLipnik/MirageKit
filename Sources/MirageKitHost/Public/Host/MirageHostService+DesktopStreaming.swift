@@ -335,8 +335,12 @@ extension MirageHostService {
             displayCount: 1,
             dimensionToken: dimensionToken
         )
-        try? await clientContext.send(.desktopStreamStarted, content: message)
-        logDesktopStartStep("desktopStreamStarted sent")
+        if clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
+            logDesktopStartStep("desktopStreamStarted queued")
+        } else {
+            MirageLogger.error(.host, "Failed to encode desktopStreamStarted message")
+            logDesktopStartStep("desktopStreamStarted encoding failed")
+        }
 
         MirageLogger
             .host(

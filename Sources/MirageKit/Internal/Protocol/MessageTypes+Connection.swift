@@ -79,7 +79,7 @@ package struct HelloResponseMessage: Codable {
     package let mediaEncryptionEnabled: Bool
     /// Auth token required for UDP registration packets.
     package let udpRegistrationToken: Data
-    /// True when the host trust provider auto-granted this connection.
+    /// True when the host trust provider indicates a one-time auto-trust notice is appropriate.
     package let autoTrustGranted: Bool?
     /// Signed host identity envelope.
     package let identity: MirageIdentityEnvelope

@@ -29,7 +29,6 @@ struct StreamControllerRecoveryTests {
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
             onFirstFrame: nil,
-            onInputBlockingChanged: nil,
             onAdaptiveFallbackNeeded: {
                 fallbackCounter.increment()
             }
@@ -49,7 +48,7 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Backpressure recovery request is debounced")
+    @Test("Backpressure recovery requires sustained drops and is debounced")
     func backpressureRecoveryDebounce() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 2, maxPayloadSize: 1200)
@@ -61,14 +60,27 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
-        await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
+        for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
+            await controller.recordQueueDrop()
+        }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
         try await waitUntil("first backpressure keyframe request") {
             keyframeCounter.value == 1
         }
         #expect(keyframeCounter.value == 1)
 
+        // Additional drops inside cooldown should not trigger another request.
+        for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
+            await controller.recordQueueDrop()
+        }
+        await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(keyframeCounter.value == 1)
+
         try await Task.sleep(for: .milliseconds(1100))
+        for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
+            await controller.recordQueueDrop()
+        }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
         try await waitUntil("second backpressure keyframe request") {
             keyframeCounter.value == 2
@@ -89,7 +101,6 @@ struct StreamControllerRecoveryTests {
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
             onFirstFrame: nil,
-            onInputBlockingChanged: nil,
             onAdaptiveFallbackNeeded: {
                 fallbackCounter.increment()
             }
@@ -122,7 +133,6 @@ struct StreamControllerRecoveryTests {
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
             onFirstFrame: nil,
-            onInputBlockingChanged: nil,
             onAdaptiveFallbackNeeded: nil
         )
 

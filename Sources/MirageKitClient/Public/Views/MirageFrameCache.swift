@@ -63,6 +63,12 @@ public final class MirageFrameCache: @unchecked Sendable {
     private let emergencyOldestAgeMs: Double = 150
     /// Queue depth retained after emergency trimming.
     private let emergencySafeDepth = 4
+    /// Presentation catch-up trim threshold. Keep minor jitter backlogs intact to avoid
+    /// unnecessary frame loss under normal 60Hz decode jitter.
+    private let presentationTrimDepthThreshold = 4
+    /// Presentation catch-up latency ceiling (ms). Age-based trimming protects interaction
+    /// latency if decode bursts accumulate even below the depth threshold.
+    private let presentationTrimOldestAgeMs: Double = 50
     private let emergencyLogInterval: CFAbsoluteTime = 1.0
 
     private init() {}
@@ -164,6 +170,47 @@ public final class MirageFrameCache: @unchecked Sendable {
             lock.unlock()
             return nil
         }
+        let result = queue.entries.removeFirst()
+        streamQueues[streamID] = queue
+        lock.unlock()
+        return result
+    }
+
+    /// Dequeue a frame for real-time presentation.
+    /// When decode outruns presentation and the queue is backlogged, this drops stale entries
+    /// and returns the newest frame to keep interaction latency bounded.
+    func dequeueForPresentation(for streamID: StreamID, catchUpDepth: Int = 2) -> FrameEntry? {
+        lock.lock()
+        guard var queue = streamQueues[streamID], !queue.entries.isEmpty else {
+            lock.unlock()
+            return nil
+        }
+
+        let keepDepth = max(1, catchUpDepth)
+        let depth = queue.entries.count
+        let now = CFAbsoluteTimeGetCurrent()
+        let oldestAgeMs = oldestAgeMsLocked(queue: queue, now: now)
+        let shouldTrimForDepth = depth >= presentationTrimDepthThreshold
+        let shouldTrimForAge = depth > keepDepth && oldestAgeMs >= presentationTrimOldestAgeMs
+        if shouldTrimForAge {
+            let dropCount = max(0, depth - keepDepth)
+            if dropCount > 0 {
+                queue.entries.removeFirst(dropCount)
+                queue.emergencyDropCount &+= UInt64(dropCount)
+                if MirageLogger.isEnabled(.renderer),
+                   queue.lastEmergencyLogTime == 0 || now - queue.lastEmergencyLogTime >= emergencyLogInterval {
+                    queue.lastEmergencyLogTime = now
+                    let ageText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
+                    let reason: String = if shouldTrimForDepth { "age+depth" } else { "age" }
+                    MirageLogger
+                        .renderer(
+                            "Render catch-up trim: dropped=\(dropCount) depth=\(depth) keep=\(keepDepth) " +
+                                "oldest=\(ageText)ms reason=\(reason) stream=\(streamID)"
+                        )
+                }
+            }
+        }
+
         let result = queue.entries.removeFirst()
         streamQueues[streamID] = queue
         lock.unlock()

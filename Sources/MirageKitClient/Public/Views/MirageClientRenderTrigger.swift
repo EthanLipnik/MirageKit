@@ -25,20 +25,20 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
 
     private let lock = NSLock()
     private var views: [StreamID: WeakMetalView] = [:]
+    private var pendingRequests: Set<StreamID> = []
 
     private init() {}
 
-    @MainActor
     func register(view: MirageMetalView, for streamID: StreamID) {
         lock.lock()
         views[streamID] = WeakMetalView(view)
         lock.unlock()
     }
 
-    @MainActor
     func unregister(streamID: StreamID) {
         lock.lock()
         views.removeValue(forKey: streamID)
+        pendingRequests.remove(streamID)
         lock.unlock()
     }
 
@@ -46,16 +46,29 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
         var view: MirageMetalView?
         lock.lock()
         if let resolved = views[streamID]?.value {
+            if pendingRequests.contains(streamID) {
+                lock.unlock()
+                return
+            }
+            pendingRequests.insert(streamID)
             view = resolved
         } else {
             views.removeValue(forKey: streamID)
+            pendingRequests.remove(streamID)
         }
         lock.unlock()
 
         guard let view else { return }
         Task { @MainActor [weak view] in
             view?.requestDraw()
+            self.finishRequest(for: streamID)
         }
+    }
+
+    private func finishRequest(for streamID: StreamID) {
+        lock.lock()
+        pendingRequests.remove(streamID)
+        lock.unlock()
     }
 }
 #endif
