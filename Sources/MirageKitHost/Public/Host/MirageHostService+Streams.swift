@@ -22,7 +22,7 @@ public extension MirageHostService {
         clientDisplayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
         streamScale: CGFloat? = nil,
-        latencyMode: MirageStreamLatencyMode = .smoothest,
+        latencyMode: MirageStreamLatencyMode = .auto,
         targetFrameRate: Int? = nil,
         pixelFormat: MiragePixelFormat? = nil,
         colorSpace: MirageColorSpace? = nil,

@@ -55,6 +55,7 @@ final class HostLightsOutController {
             window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
             window.titleVisibility = .hidden
             window.titlebarAppearsTransparent = true
+            window.sharingType = .none
 
             let view = NSView(frame: CGRect(origin: .zero, size: frame.size))
             view.wantsLayer = true
@@ -139,6 +140,7 @@ final class HostLightsOutController {
         set { emergencyShortcutStore.currentValue = newValue }
     }
     var onEmergencyShortcut: (@MainActor () async -> Void)?
+    var onScreenshotShortcut: (@MainActor () async -> Void)?
 
     var isActive: Bool { target != nil }
 
@@ -208,6 +210,7 @@ final class HostLightsOutController {
             } else {
                 let overlay = Overlay(displayID: displayID, frame: frame, message: messageText)
                 overlays[displayID] = overlay
+                MirageLogger.host("Lights Out: overlay created for display \(displayID) (sharingType=.none)")
             }
         }
 
@@ -424,6 +427,13 @@ final class HostLightsOutController {
             return Unmanaged.passUnretained(event)
         }
 
+        if type == .keyDown, shouldTriggerScreenshotShortcut(event: event) {
+            Task { @MainActor [weak self] in
+                await self?.onScreenshotShortcut?()
+            }
+            return Unmanaged.passUnretained(event)
+        }
+
         if type == .keyDown, shouldTriggerEmergencyShortcut(event: event) {
             Task { @MainActor [weak self] in
                 guard let self else { return }
@@ -484,6 +494,31 @@ final class HostLightsOutController {
         )
         let shortcut = emergencyShortcutStore.currentValue
         return shortcut.matches(keyCode: keyCode, modifiers: modifierFlags)
+    }
+
+    private nonisolated func shouldTriggerScreenshotShortcut(event: CGEvent) -> Bool {
+        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+        if isRepeat { return false }
+
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+        let modifierFlags = MirageModifierFlags(
+            nsEventFlags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
+        )
+        return Self.isScreenshotShortcut(keyCode: keyCode, modifiers: modifierFlags)
+    }
+
+    nonisolated static func isScreenshotShortcut(
+        keyCode: UInt16,
+        modifiers: MirageModifierFlags
+    ) -> Bool {
+        let screenshotKeyCodes: Set<UInt16> = [0x14, 0x15, 0x17] // 3, 4, 5
+        guard screenshotKeyCodes.contains(keyCode) else { return false }
+
+        let required: MirageModifierFlags = [.command, .shift]
+        guard modifiers.isSuperset(of: required) else { return false }
+
+        let allowed: MirageModifierFlags = [.command, .shift, .control, .option, .capsLock]
+        return modifiers.subtracting(allowed).isEmpty
     }
 
     // MARK: - Screen Change Handling

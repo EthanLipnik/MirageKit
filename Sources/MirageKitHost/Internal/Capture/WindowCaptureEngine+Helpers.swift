@@ -37,15 +37,15 @@ extension WindowCaptureEngine {
         switch latencyMode {
         case .lowestLatency:
             depth -= 1
-        case .balanced:
-            break
+        case .auto:
+            depth += 1
         case .smoothest:
             depth += 1
         }
 
         let minDepth: Int = switch latencyMode {
         case .lowestLatency: 2
-        case .balanced: 3
+        case .auto: 4
         case .smoothest: 4
         }
 
@@ -57,8 +57,8 @@ extension WindowCaptureEngine {
         let extra: Int = switch latencyMode {
         case .lowestLatency:
             currentFrameRate >= 120 ? 3 : 2
-        case .balanced:
-            currentFrameRate >= 120 ? 4 : 3
+        case .auto:
+            currentFrameRate >= 120 ? 6 : 5
         case .smoothest:
             currentFrameRate >= 120 ? 6 : 5
         }

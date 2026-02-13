@@ -106,6 +106,7 @@ public extension MirageHostService {
         }
 
         hostAudioMuteController.setMuted(false)
+        cancelLightsOutScreenshotSuspension()
         lightsOutController.deactivate()
 
         // Force release power assertion on full stop

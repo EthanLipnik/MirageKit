@@ -30,7 +30,7 @@ extension MirageHostService {
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
-        latencyMode: MirageStreamLatencyMode = .smoothest,
+        latencyMode: MirageStreamLatencyMode = .auto,
         dataPort _: UInt16?,
         targetFrameRate: Int? = nil
     )

@@ -298,13 +298,13 @@ public struct MirageNetworkConfiguration: Sendable {
 /// Latency preference for stream buffering behavior.
 public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
     case lowestLatency
-    case balanced
+    case auto
     case smoothest
 
     public var displayName: String {
         switch self {
         case .lowestLatency: "Lowest Latency"
-        case .balanced: "Balanced"
+        case .auto: "Auto"
         case .smoothest: "Smoothest"
         }
     }

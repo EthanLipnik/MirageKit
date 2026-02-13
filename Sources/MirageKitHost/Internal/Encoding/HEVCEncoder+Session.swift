@@ -267,8 +267,8 @@ extension HEVCEncoder {
         let frameDelayCount = switch latencyMode {
         case .smoothest:
             2
-        case .balanced:
-            1
+        case .auto:
+            2
         case .lowestLatency:
             0
         }

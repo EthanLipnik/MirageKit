@@ -63,7 +63,7 @@ extension MirageHostService {
             let bitrate = request.bitrate
             let disableResolutionCap = request.disableResolutionCap ?? false
             let streamScale = request.streamScale ?? 1.0
-            let latencyMode = request.latencyMode ?? .smoothest
+            let latencyMode = request.latencyMode ?? .auto
             let audioConfiguration = request.audioConfiguration ?? .default
 
             // Check if app is available for streaming

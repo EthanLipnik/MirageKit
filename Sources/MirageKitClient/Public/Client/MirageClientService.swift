@@ -76,7 +76,7 @@ public final class MirageClientService {
     public var resolutionScale: CGFloat = 1.0
 
     /// Latency preference for stream buffering behavior.
-    public var latencyMode: MirageStreamLatencyMode = .smoothest
+    public var latencyMode: MirageStreamLatencyMode = .auto
 
     /// Enables automatic stream fallback when decode overload persists.
     public var adaptiveFallbackEnabled: Bool = true

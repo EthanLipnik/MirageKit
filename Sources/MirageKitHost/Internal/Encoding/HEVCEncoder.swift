@@ -52,7 +52,7 @@ actor HEVCEncoder {
 
     init(
         configuration: MirageEncoderConfiguration,
-        latencyMode: MirageStreamLatencyMode = .balanced,
+        latencyMode: MirageStreamLatencyMode = .auto,
         inFlightLimit: Int? = nil
     ) {
         self.configuration = configuration

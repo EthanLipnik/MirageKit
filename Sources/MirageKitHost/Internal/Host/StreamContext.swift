@@ -88,6 +88,7 @@ actor StreamContext {
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float
+    var steadyQualityCeiling: Float
     var keyframeQualityFloor: Float
     let compressionQualityCeiling: Float = 0.80
     let qualityFloorFactor: Float = 0.6
@@ -109,6 +110,14 @@ actor StreamContext {
     let qualityRaiseStep: Float = 0.03
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
+    let typingBurstWindow: CFAbsoluteTime = 0.35
+    let typingBurstInFlightLimit = 1
+    let typingBurstQualityCap: Float = 0.62
+    var typingBurstDeadline: CFAbsoluteTime = 0
+    var typingBurstActive = false
+    var typingBurstSavedInFlightLimit: Int?
+    var typingBurstSavedQuality: Float?
+    var typingBurstExpiryTask: Task<Void, Never>?
 
     // Pipeline throughput metrics (interval counters)
     var captureIngressIntervalCount: UInt64 = 0
@@ -234,6 +243,8 @@ actor StreamContext {
 
     /// Latency preference for buffering behavior.
     let latencyMode: MirageStreamLatencyMode
+    /// Aggressive typing burst is active only in auto mode.
+    let supportsTypingBurst: Bool
     /// When true, force low-latency buffering regardless of overrides.
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
@@ -250,12 +261,13 @@ actor StreamContext {
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         additionalFrameFlags: FrameFlags = [],
         disableResolutionCap: Bool = false,
-        latencyMode: MirageStreamLatencyMode = .smoothest
+        latencyMode: MirageStreamLatencyMode = .auto
     ) {
         self.streamID = streamID
         self.windowID = windowID
         self.encoderConfig = encoderConfig
         self.latencyMode = latencyMode
+        supportsTypingBurst = latencyMode == .auto
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
@@ -267,7 +279,7 @@ actor StreamContext {
         captureFrameRate = encoderConfig.targetFrameRate
         self.disableResolutionCap = disableResolutionCap
         activePixelFormat = encoderConfig.pixelFormat
-        let prefersSmoothness = latencyMode == .smoothest
+        let prefersSmoothness = latencyMode == .smoothest || latencyMode == .auto
         let latencySensitive = latencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (encoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
         let bufferDepth = Self.frameBufferDepth(
@@ -296,6 +308,7 @@ actor StreamContext {
         maxEncodeTimeMs = encoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
         let cappedFrameQuality = min(encoderConfig.frameQuality, compressionQualityCeiling)
+        steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = cappedFrameQuality
         qualityFloor = max(0.1, cappedFrameQuality * qualityFloorFactor)
         activeQuality = cappedFrameQuality
@@ -352,10 +365,10 @@ actor StreamContext {
             if frameRate >= 120 { return 6 }
             if frameRate >= 60 { return 5 }
             return 3
-        case .balanced:
-            if frameRate >= 120 { return 4 }
-            if frameRate >= 60 { return 4 }
-            return 2
+        case .auto:
+            if frameRate >= 120 { return 6 }
+            if frameRate >= 60 { return 5 }
+            return 3
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
             if frameRate >= 60 { return 2 }
@@ -375,10 +388,10 @@ actor StreamContext {
             if frameRate >= 120 { return 5 }
             if frameRate >= 60 { return 4 }
             return 2
-        case .balanced:
-            if frameRate >= 120 { return 3 }
-            if frameRate >= 60 { return 3 }
-            return 1
+        case .auto:
+            if frameRate >= 120 { return 5 }
+            if frameRate >= 60 { return 4 }
+            return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
             return 1
@@ -397,8 +410,9 @@ actor StreamContext {
             if frameRate >= 120 { return 4 }
             if frameRate >= 60 { return 3 }
             return 1
-        case .balanced:
-            if frameRate >= 60 { return 2 }
+        case .auto:
+            if frameRate >= 120 { return 4 }
+            if frameRate >= 60 { return 3 }
             return 1
         case .lowestLatency:
             return 1

@@ -70,6 +70,10 @@ public final class MirageFrameCache: @unchecked Sendable {
     /// latency if decode bursts accumulate even below the depth threshold.
     private let presentationTrimOldestAgeMs: Double = 50
     private let emergencyLogInterval: CFAbsoluteTime = 1.0
+    private let typingBurstWindow: CFAbsoluteTime = 0.35
+    private let typingBurstTrimLogInterval: CFAbsoluteTime = 0.5
+    private var typingBurstDeadlines: [StreamID: CFAbsoluteTime] = [:]
+    private var lastTypingBurstTrimLogTime: [StreamID: CFAbsoluteTime] = [:]
 
     private init() {}
 
@@ -190,23 +194,45 @@ public final class MirageFrameCache: @unchecked Sendable {
         let depth = queue.entries.count
         let now = CFAbsoluteTimeGetCurrent()
         let oldestAgeMs = oldestAgeMsLocked(queue: queue, now: now)
-        let shouldTrimForDepth = depth >= presentationTrimDepthThreshold
-        let shouldTrimForAge = depth > keepDepth && oldestAgeMs >= presentationTrimOldestAgeMs
-        if shouldTrimForAge {
-            let dropCount = max(0, depth - keepDepth)
+        let typingBurstActive = typingBurstActiveLocked(for: streamID, now: now)
+        let effectiveKeepDepth = typingBurstActive ? 1 : keepDepth
+
+        if typingBurstActive {
+            let dropCount = max(0, depth - effectiveKeepDepth)
             if dropCount > 0 {
                 queue.entries.removeFirst(dropCount)
                 queue.emergencyDropCount &+= UInt64(dropCount)
-                if MirageLogger.isEnabled(.renderer),
-                   queue.lastEmergencyLogTime == 0 || now - queue.lastEmergencyLogTime >= emergencyLogInterval {
-                    queue.lastEmergencyLogTime = now
-                    let ageText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
-                    let reason: String = if shouldTrimForDepth { "age+depth" } else { "age" }
-                    MirageLogger
-                        .renderer(
-                            "Render catch-up trim: dropped=\(dropCount) depth=\(depth) keep=\(keepDepth) " +
-                                "oldest=\(ageText)ms reason=\(reason) stream=\(streamID)"
-                        )
+                if MirageLogger.isEnabled(.renderer) {
+                    let lastLogTime = lastTypingBurstTrimLogTime[streamID] ?? 0
+                    if lastLogTime == 0 || now - lastLogTime >= typingBurstTrimLogInterval {
+                        lastTypingBurstTrimLogTime[streamID] = now
+                        let ageText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
+                        MirageLogger
+                            .renderer(
+                                "Typing burst trim: dropped=\(dropCount) depth=\(depth) keep=1 oldest=\(ageText)ms stream=\(streamID)"
+                            )
+                    }
+                }
+            }
+        } else {
+            let shouldTrimForDepth = depth >= presentationTrimDepthThreshold
+            let shouldTrimForAge = depth > effectiveKeepDepth && oldestAgeMs >= presentationTrimOldestAgeMs
+            if shouldTrimForAge {
+                let dropCount = max(0, depth - effectiveKeepDepth)
+                if dropCount > 0 {
+                    queue.entries.removeFirst(dropCount)
+                    queue.emergencyDropCount &+= UInt64(dropCount)
+                    if MirageLogger.isEnabled(.renderer),
+                       queue.lastEmergencyLogTime == 0 || now - queue.lastEmergencyLogTime >= emergencyLogInterval {
+                        queue.lastEmergencyLogTime = now
+                        let ageText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
+                        let reason: String = if shouldTrimForDepth { "age+depth" } else { "age" }
+                        MirageLogger
+                            .renderer(
+                                "Render catch-up trim: dropped=\(dropCount) depth=\(depth) keep=\(effectiveKeepDepth) " +
+                                    "oldest=\(ageText)ms reason=\(reason) stream=\(streamID)"
+                            )
+                    }
                 }
             }
         }
@@ -215,6 +241,20 @@ public final class MirageFrameCache: @unchecked Sendable {
         streamQueues[streamID] = queue
         lock.unlock()
         return result
+    }
+
+    func noteTypingBurstActivity(for streamID: StreamID) {
+        lock.lock()
+        typingBurstDeadlines[streamID] = CFAbsoluteTimeGetCurrent() + typingBurstWindow
+        lock.unlock()
+    }
+
+    private func typingBurstActiveLocked(for streamID: StreamID, now: CFAbsoluteTime) -> Bool {
+        guard let deadline = typingBurstDeadlines[streamID] else { return false }
+        if now < deadline { return true }
+        typingBurstDeadlines.removeValue(forKey: streamID)
+        lastTypingBurstTrimLogTime.removeValue(forKey: streamID)
+        return false
     }
 
     func peekLatest(for streamID: StreamID) -> FrameEntry? {
@@ -277,6 +317,8 @@ public final class MirageFrameCache: @unchecked Sendable {
     public func clear(for streamID: StreamID) {
         lock.lock()
         streamQueues.removeValue(forKey: streamID)
+        typingBurstDeadlines.removeValue(forKey: streamID)
+        lastTypingBurstTrimLogTime.removeValue(forKey: streamID)
         lock.unlock()
     }
 

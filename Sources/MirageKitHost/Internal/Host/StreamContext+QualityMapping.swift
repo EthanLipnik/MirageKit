@@ -38,7 +38,8 @@ extension StreamContext {
 
         encoderConfig.frameQuality = cappedFrameQuality
         encoderConfig.keyframeQuality = cappedKeyframeQuality
-        qualityCeiling = cappedFrameQuality
+        steadyQualityCeiling = cappedFrameQuality
+        qualityCeiling = resolvedQualityCeiling()
         qualityFloor = max(0.1, cappedFrameQuality * qualityFloorFactor)
         activeQuality = min(activeQuality, qualityCeiling)
         if activeQuality < qualityFloor { activeQuality = qualityFloor }

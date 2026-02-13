@@ -246,6 +246,11 @@ public final class MirageHostService {
         }
     }
 
+    /// Whether Lights Out is temporarily suspended for an active screenshot session.
+    var lightsOutScreenshotSuspended: Bool = false
+    /// Task that waits for the screenshot session to finish before restoring Lights Out.
+    var lightsOutScreenshotSuspendTask: Task<Void, Never>?
+
     /// Whether host output stays muted while host audio streaming is active.
     public var muteLocalAudioWhileStreaming: Bool = false {
         didSet {
@@ -354,6 +359,9 @@ public final class MirageHostService {
         }
         lightsOutController.emergencyShortcut = lightsOutEmergencyShortcut
         lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
+        lightsOutController.onScreenshotShortcut = { [weak self] in
+            await self?.handleLightsOutScreenshotShortcut()
+        }
 
         registerControlMessageHandlers()
     }

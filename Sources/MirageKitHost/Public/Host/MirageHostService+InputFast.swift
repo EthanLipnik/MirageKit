@@ -42,11 +42,22 @@ extension MirageHostService {
                 }
             }
 
+            if MirageTypingBurstClassifier.shouldTrigger(for: inputMessage.event) {
+                notifyTypingBurst(for: inputMessage.streamID)
+            }
+
             if let handler = onInputEventStorage { handler(inputMessage.event, cacheEntry.window, client) } else {
                 inputController.handleInputEvent(inputMessage.event, window: cacheEntry.window)
             }
         } catch {
             MirageLogger.error(.host, "Failed to decode input event: \(error)")
+        }
+    }
+
+    private nonisolated func notifyTypingBurst(for streamID: StreamID) {
+        Task { @MainActor [weak self] in
+            guard let self, let streamContext = streamsByID[streamID] else { return }
+            await streamContext.noteTypingBurstActivity()
         }
     }
 }

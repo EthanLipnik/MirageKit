@@ -26,7 +26,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled).
 - Host setting `muteLocalAudioWhileStreaming` mutes host output while audio streaming is active and restores prior mute state when audio streaming stops.
 - MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
-- Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows are excluded from display capture.
+- Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows use non-shareable window policy, ScreenCaptureKit display capture excludes the overlay windows, and screenshot hotkeys (`⌘⇧3`, `⌘⇧4`, `⌘⇧5`) temporarily suspend Lights Out until screenshot UI is no longer active.
 - Lights Out emergency shortcut: host service exposes a configurable local shortcut that is matched inside the Lights Out event tap to run emergency recovery (disconnect clients, clear overlays, lock host).
 - Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
 - Client startup retries stream registration until the first UDP packet arrives.
@@ -143,6 +143,8 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Frame rate selection: host follows client refresh rate (120fps when supported) across streams.
 - Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
 - Low-latency backpressure: queue spikes drop frames to keep latency down; recovery keyframes are requested separately.
+- Latency modes: `lowestLatency`, `auto`, and `smoothest`.
+- Auto typing burst: `auto` keeps smooth-mode buffering by default and applies a 350ms text-entry burst for keyDown events without Command/Option/Control; host forces in-flight depth to 1 with a temporary stronger P-frame compression cap, and client presentation trims to newest-frame depth during the burst window.
 - Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
 - Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
 - Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.

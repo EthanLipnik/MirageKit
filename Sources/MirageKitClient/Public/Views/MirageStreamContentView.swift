@@ -271,6 +271,10 @@ public struct MirageStreamContentView: View {
             }
         }
 
+        if MirageTypingBurstClassifier.shouldTrigger(for: event) {
+            MirageFrameCache.shared.noteTypingBurstActivity(for: session.streamID)
+        }
+
         #if os(macOS)
         guard sessionStore.focusedSessionID == session.id else { return }
         #else

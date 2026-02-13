@@ -181,7 +181,7 @@ struct RenderQueueOrderingTests {
             _ = MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: now - (Double(6 - index) * 0.004),
+                decodeTime: now + 1 + (Double(index) * 0.001),
                 metalTexture: nil,
                 texture: nil,
                 for: streamID
@@ -206,7 +206,7 @@ struct RenderQueueOrderingTests {
             _ = MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: now - (Double(3 - index) * 0.010),
+                decodeTime: now + 1 + (Double(index) * 0.001),
                 metalTexture: nil,
                 texture: nil,
                 for: streamID

@@ -407,6 +407,8 @@ extension StreamContext {
     func stop() async {
         guard isRunning else { return }
         isRunning = false
+        typingBurstExpiryTask?.cancel()
+        typingBurstExpiryTask = nil
 
         await captureEngine?.stopCapture()
         captureEngine = nil

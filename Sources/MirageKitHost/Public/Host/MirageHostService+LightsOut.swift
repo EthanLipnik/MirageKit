@@ -11,6 +11,7 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+import AppKit
 import ScreenCaptureKit
 
 @MainActor
@@ -23,6 +24,7 @@ extension MirageHostService {
             await disconnectClient(client)
         }
 
+        cancelLightsOutScreenshotSuspension()
         lightsOutController.deactivate()
         await refreshLightsOutCaptureExclusions()
 
@@ -47,6 +49,12 @@ extension MirageHostService {
             return
         }
 
+        if lightsOutScreenshotSuspended {
+            lightsOutController.deactivate()
+            await refreshLightsOutCaptureExclusions()
+            return
+        }
+
         let hasAppStreams = !activeStreams.isEmpty
         let hasMirroredDesktop = desktopStreamContext != nil && desktopStreamMode == .mirrored
         guard hasAppStreams || hasMirroredDesktop else {
@@ -57,6 +65,19 @@ extension MirageHostService {
 
         lightsOutController.updateTarget(.physicalDisplays)
         await refreshLightsOutCaptureExclusions()
+    }
+
+    func handleLightsOutScreenshotShortcut() async {
+        guard lightsOutController.isActive else { return }
+
+        lightsOutScreenshotSuspended = true
+        lightsOutController.deactivate()
+        await refreshLightsOutCaptureExclusions()
+
+        lightsOutScreenshotSuspendTask?.cancel()
+        lightsOutScreenshotSuspendTask = Task { @MainActor [weak self] in
+            await self?.monitorLightsOutScreenshotSuspension()
+        }
     }
 
     func refreshLightsOutCaptureExclusions() async {
@@ -101,6 +122,63 @@ extension MirageHostService {
         }
 
         return []
+    }
+
+    func cancelLightsOutScreenshotSuspension() {
+        lightsOutScreenshotSuspendTask?.cancel()
+        lightsOutScreenshotSuspendTask = nil
+        lightsOutScreenshotSuspended = false
+    }
+
+    private func monitorLightsOutScreenshotSuspension() async {
+        let pollInterval: Duration = .milliseconds(250)
+        let minimumHold: Duration = .milliseconds(1500)
+        let idleGrace: Duration = .seconds(1)
+        let maxSuspension: Duration = .seconds(120)
+        let clock = ContinuousClock()
+        let startedAt = clock.now
+        var idleSince: ContinuousClock.Instant?
+
+        while !Task.isCancelled {
+            let now = clock.now
+            let elapsed = startedAt.duration(to: now)
+            if elapsed >= maxSuspension {
+                break
+            }
+
+            if isScreenshotCaptureAppRunning() {
+                idleSince = nil
+            } else if elapsed >= minimumHold {
+                if idleSince == nil {
+                    idleSince = now
+                } else if let idleSince, idleSince.duration(to: now) >= idleGrace {
+                    break
+                }
+            }
+
+            do {
+                try await Task.sleep(for: pollInterval)
+            } catch {
+                return
+            }
+        }
+
+        guard !Task.isCancelled else { return }
+        lightsOutScreenshotSuspendTask = nil
+        lightsOutScreenshotSuspended = false
+        await updateLightsOutState()
+    }
+
+    private func isScreenshotCaptureAppRunning() -> Bool {
+        let screenshotBundleIDs: Set<String> = [
+            "com.apple.Screenshot",
+            "com.apple.ScreenCaptureUI",
+        ]
+
+        return NSWorkspace.shared.runningApplications.contains { application in
+            guard let bundleIdentifier = application.bundleIdentifier else { return false }
+            return screenshotBundleIDs.contains(bundleIdentifier)
+        }
     }
 
     func lockHostIfNeeded() {

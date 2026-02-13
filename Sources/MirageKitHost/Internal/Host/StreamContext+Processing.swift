@@ -80,6 +80,16 @@ extension StreamContext {
         lastEncodedPresentationTime = .invalid
         lastSyntheticFrameTime = 0
         lastSyntheticLogTime = 0
+        typingBurstExpiryTask?.cancel()
+        typingBurstExpiryTask = nil
+        let restoredInFlight = typingBurstSavedInFlightLimit ?? minInFlightFrames
+        maxInFlightFrames = min(max(restoredInFlight, minInFlightFrames), maxInFlightFramesCap)
+        typingBurstSavedInFlightLimit = nil
+        typingBurstSavedQuality = nil
+        typingBurstActive = false
+        typingBurstDeadline = 0
+        qualityCeiling = min(steadyQualityCeiling, compressionQualityCeiling)
+        if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
         frameInbox.clear()
     }
 
@@ -370,6 +380,17 @@ extension StreamContext {
     }
 
     func updateInFlightLimitIfNeeded(averageEncodeMs: Double, pendingCount: Int) async {
+        await refreshTypingBurstStateIfNeeded()
+
+        if supportsTypingBurst, typingBurstActive {
+            let forcedLimit = min(max(typingBurstInFlightLimit, 1), maxInFlightFramesCap)
+            if maxInFlightFrames != forcedLimit {
+                maxInFlightFrames = forcedLimit
+                await encoder?.updateInFlightLimit(forcedLimit)
+            }
+            return
+        }
+
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
             let lowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
@@ -387,8 +408,9 @@ extension StreamContext {
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         var desired = maxInFlightFrames
 
-        let increaseThreshold = latencyMode == .smoothest ? 1.02 : 1.10
-        let decreaseThreshold = latencyMode == .smoothest ? 0.90 : 0.80
+        let smoothThresholds = latencyMode == .smoothest || latencyMode == .auto
+        let increaseThreshold = smoothThresholds ? 1.02 : 1.10
+        let decreaseThreshold = smoothThresholds ? 0.90 : 0.80
         if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 { desired = min(maxInFlightFrames + 1, maxInFlightFramesCap) } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
             desired = max(maxInFlightFrames - 1, minInFlightFrames)
         }
@@ -406,11 +428,13 @@ extension StreamContext {
 
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
-        if qualityCeiling > compressionQualityCeiling { qualityCeiling = compressionQualityCeiling }
+        await refreshTypingBurstStateIfNeeded()
+        qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling {
             activeQuality = qualityCeiling
             await encoder.updateQuality(activeQuality)
         }
+        if supportsTypingBurst, typingBurstActive { return }
         let now = CFAbsoluteTimeGetCurrent()
         if lastQualityAdjustmentTime > 0, now - lastQualityAdjustmentTime < qualityAdjustmentCooldown { return }
 
