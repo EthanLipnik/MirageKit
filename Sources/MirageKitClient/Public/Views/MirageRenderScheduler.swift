@@ -98,8 +98,12 @@ final class MirageRenderScheduler {
         #endif
     }
 
+    static func normalizedTargetFPS(_ fps: Int) -> Int {
+        fps >= 120 ? 120 : 60
+    }
+
     func updateTargetFPS(_ fps: Int) {
-        targetFPS = fps >= 120 ? 120 : 60
+        targetFPS = Self.normalizedTargetFPS(fps)
         applyTargetFPS()
     }
 
@@ -156,12 +160,15 @@ final class MirageRenderScheduler {
 
     private func applyTargetFPS() {
         guard let displayLink else { return }
-        let fps = Float(targetFPS)
+        let lockedFPS = Self.normalizedTargetFPS(targetFPS)
+        let fps = Float(lockedFPS)
+        displayLink.preferredFramesPerSecond = lockedFPS
         displayLink.preferredFrameRateRange = CAFrameRateRange(
             minimum: fps,
             maximum: fps,
             preferred: fps
         )
+        view?.applyDisplayRefreshRateLock(lockedFPS)
     }
     #endif
 

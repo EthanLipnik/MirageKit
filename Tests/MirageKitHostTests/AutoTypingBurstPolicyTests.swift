@@ -14,7 +14,7 @@ import Testing
 #if os(macOS)
 @Suite("Auto Typing Burst Policy")
 struct AutoTypingBurstPolicyTests {
-    @Test("Auto mode applies burst overrides and restores baseline on expiry")
+    @Test("Auto mode applies burst overrides and expires without quality rebound")
     func autoModeBurstActivationAndExpiry() async {
         let context = makeContext(latencyMode: .auto)
         let baseline = await context.typingBurstSnapshot()
@@ -26,6 +26,7 @@ struct AutoTypingBurstPolicyTests {
         #expect(abs(active.deadline - 100.35) < 0.0001)
         #expect(active.maxInFlightFrames == 1)
         #expect(abs(active.qualityCeiling - 0.62) < 0.0001)
+        #expect(active.activeQuality <= baseline.activeQuality)
 
         await context.noteTypingBurstActivity(at: 100.2, scheduleExpiry: false)
         let extended = await context.typingBurstSnapshot()
@@ -40,9 +41,52 @@ struct AutoTypingBurstPolicyTests {
         await context.expireTypingBurstIfNeeded(at: 100.56)
         let restored = await context.typingBurstSnapshot()
         #expect(!restored.isActive)
-        #expect(restored.maxInFlightFrames == baseline.maxInFlightFrames)
+        #expect(restored.maxInFlightFrames == 1)
         #expect(abs(restored.qualityCeiling - baseline.qualityCeiling) < 0.0001)
-        #expect(abs(restored.activeQuality - baseline.activeQuality) < 0.0001)
+        #expect(restored.activeQuality <= active.activeQuality + 0.0001)
+    }
+
+    @Test("Auto mode keeps quality monotonic across burst expiry")
+    func autoModeBurstQualityRemainsMonotonic() async {
+        let context = makeContext(latencyMode: .auto)
+
+        await context.noteTypingBurstActivity(at: 400.0, scheduleExpiry: false)
+        let duringBurst = await context.typingBurstSnapshot()
+        #expect(duringBurst.activeQuality <= duringBurst.qualityCeiling + 0.0001)
+
+        await context.noteTypingBurstActivity(at: 400.2, scheduleExpiry: false)
+        await context.expireTypingBurstIfNeeded(at: 400.6)
+        let afterBurst = await context.typingBurstSnapshot()
+        #expect(!afterBurst.isActive)
+        #expect(afterBurst.activeQuality <= duringBurst.activeQuality + 0.0001)
+    }
+
+    @Test("Auto burst expiry restores in-flight to one then allows controlled rise")
+    func autoBurstExpiryUsesLatencyFirstInFlightTarget() async {
+        let context = makeContext(latencyMode: .auto)
+        let budget = 1000.0 / 60.0
+
+        await context.updateInFlightLimitIfNeeded(
+            captureFPS: 60,
+            encodeFPS: 60,
+            averageEncodeMs: budget * 0.7,
+            pendingCount: 0,
+            at: 10.0
+        )
+        await context.updateInFlightLimitIfNeeded(
+            captureFPS: 60,
+            encodeFPS: 60,
+            averageEncodeMs: budget * 0.7,
+            pendingCount: 0,
+            at: 12.1
+        )
+        let raised = await context.typingBurstSnapshot()
+        #expect(raised.maxInFlightFrames == 2)
+
+        await context.noteTypingBurstActivity(at: 20.0, scheduleExpiry: false)
+        await context.expireTypingBurstIfNeeded(at: 20.36)
+        let postBurst = await context.typingBurstSnapshot()
+        #expect(postBurst.maxInFlightFrames == 1)
     }
 
     @Test("Non-auto modes ignore typing burst activity")

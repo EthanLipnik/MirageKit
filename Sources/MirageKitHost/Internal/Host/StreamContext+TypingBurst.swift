@@ -29,8 +29,6 @@ extension StreamContext {
         typingBurstDeadline = now + typingBurstWindow
         if !typingBurstActive {
             typingBurstActive = true
-            typingBurstSavedInFlightLimit = maxInFlightFrames
-            typingBurstSavedQuality = activeQuality
             await applyTypingBurstOverrides(now: now)
             MirageLogger.stream("Auto typing burst started for stream \(streamID)")
         }
@@ -66,9 +64,10 @@ extension StreamContext {
     }
 
     func resolvedQualityCeiling() -> Float {
-        let steadyCeiling = min(steadyQualityCeiling, compressionQualityCeiling)
-        guard supportsTypingBurst, typingBurstActive else { return steadyCeiling }
-        return min(steadyCeiling, typingBurstQualityCap)
+        var ceiling = min(steadyQualityCeiling, compressionQualityCeiling)
+        if autoRecoveryActive { ceiling = min(ceiling, autoRecoveryQualityCap) }
+        if supportsTypingBurst, typingBurstActive { ceiling = min(ceiling, typingBurstQualityCap) }
+        return ceiling
     }
 
     private func scheduleTypingBurstExpiryTask() {
@@ -115,22 +114,14 @@ extension StreamContext {
         typingBurstExpiryTask?.cancel()
         typingBurstExpiryTask = nil
 
-        let restoredInFlight = resolvedTypingBurstRestoreInFlightLimit()
-        typingBurstSavedInFlightLimit = nil
+        let restoredInFlight = resolvedPostTypingBurstInFlightLimit()
         if maxInFlightFrames != restoredInFlight {
             maxInFlightFrames = restoredInFlight
             await encoder?.updateInFlightLimit(restoredInFlight)
         }
 
         qualityCeiling = resolvedQualityCeiling()
-        if let savedQuality = typingBurstSavedQuality {
-            let restoredQuality = min(max(savedQuality, qualityFloor), qualityCeiling)
-            typingBurstSavedQuality = nil
-            if abs(restoredQuality - activeQuality) > 0.0001 {
-                activeQuality = restoredQuality
-                await encoder?.updateQuality(activeQuality)
-            }
-        } else if activeQuality > qualityCeiling {
+        if activeQuality > qualityCeiling {
             activeQuality = qualityCeiling
             await encoder?.updateQuality(activeQuality)
         }
@@ -140,14 +131,14 @@ extension StreamContext {
         lastInFlightAdjustmentTime = now
         lastQualityAdjustmentTime = 0
 
-        MirageLogger.stream("Auto typing burst ended for stream \(streamID)")
+        MirageLogger.stream("Typing burst expired (no quality rebound) for stream \(streamID)")
     }
 
-    private func resolvedTypingBurstRestoreInFlightLimit() -> Int {
-        guard let saved = typingBurstSavedInFlightLimit else {
-            return min(max(minInFlightFrames, 1), maxInFlightFramesCap)
+    func resolvedPostTypingBurstInFlightLimit() -> Int {
+        if latencyMode == .auto {
+            return min(1, maxInFlightFramesCap)
         }
-        return min(max(saved, minInFlightFrames), maxInFlightFramesCap)
+        return min(max(minInFlightFrames, 1), maxInFlightFramesCap)
     }
 }
 #endif

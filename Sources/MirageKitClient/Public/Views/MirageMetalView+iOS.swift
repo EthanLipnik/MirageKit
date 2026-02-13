@@ -74,6 +74,7 @@ public class MirageMetalView: UIView {
 
     private var renderingSuspended = false
     private var maxRenderFPS: Int = 120
+    private var appliedRefreshRateLock: Int = 0
     private var colorPixelFormat: MTLPixelFormat = .bgr10a2Unorm
 
     private var lastScheduledSignalTime: CFAbsoluteTime = 0
@@ -171,6 +172,11 @@ public class MirageMetalView: UIView {
             renderScheduler.stop()
             suspendRendering()
         }
+    }
+
+    override public func didMoveToWindow() {
+        super.didMoveToWindow()
+        applyDisplayRefreshRateLock(maxRenderFPS)
     }
 
     @MainActor deinit {
@@ -705,7 +711,15 @@ public class MirageMetalView: UIView {
         let clamped = override >= 120 ? 120 : 60
         maxRenderFPS = clamped
         renderScheduler.updateTargetFPS(clamped)
+        applyDisplayRefreshRateLock(clamped)
         onRefreshRateOverrideChange?(clamped)
+    }
+
+    func applyDisplayRefreshRateLock(_ fps: Int) {
+        let clamped = fps >= 120 ? 120 : 60
+        guard appliedRefreshRateLock != clamped else { return }
+        appliedRefreshRateLock = clamped
+        MirageLogger.renderer("Applied iOS render refresh lock: \(clamped)Hz")
     }
 
     private func updateOutputFormatIfNeeded(_ pixelFormatType: OSType) {

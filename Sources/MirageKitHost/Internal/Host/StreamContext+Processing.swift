@@ -82,13 +82,16 @@ extension StreamContext {
         lastSyntheticLogTime = 0
         typingBurstExpiryTask?.cancel()
         typingBurstExpiryTask = nil
-        let restoredInFlight = typingBurstSavedInFlightLimit ?? minInFlightFrames
-        maxInFlightFrames = min(max(restoredInFlight, minInFlightFrames), maxInFlightFramesCap)
-        typingBurstSavedInFlightLimit = nil
-        typingBurstSavedQuality = nil
         typingBurstActive = false
         typingBurstDeadline = 0
-        qualityCeiling = min(steadyQualityCeiling, compressionQualityCeiling)
+        autoRecoveryActive = false
+        autoRecoveryLowFPSStreak = 0
+        autoRecoveryHealthyStreak = 0
+        autoRecoveryHoldUntil = 0
+        autoRecoveryCooldownUntil = 0
+        autoInFlightHeadroomStreak = 0
+        maxInFlightFrames = resolvedPostTypingBurstInFlightLimit()
+        qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
         frameInbox.clear()
     }
@@ -346,8 +349,11 @@ extension StreamContext {
         }
 
         await updateInFlightLimitIfNeeded(
+            captureFPS: captureFPS,
+            encodeFPS: encodeFPS,
             averageEncodeMs: encodeAvgMs,
-            pendingCount: pendingCount
+            pendingCount: pendingCount,
+            at: now
         )
 
         captureIngressIntervalCount = 0
@@ -379,8 +385,21 @@ extension StreamContext {
         }
     }
 
-    func updateInFlightLimitIfNeeded(averageEncodeMs: Double, pendingCount: Int) async {
-        await refreshTypingBurstStateIfNeeded()
+    func updateInFlightLimitIfNeeded(
+        captureFPS: Double,
+        encodeFPS: Double,
+        averageEncodeMs: Double,
+        pendingCount: Int,
+        at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    )
+    async {
+        await refreshTypingBurstStateIfNeeded(now: now)
+        await updateAutoRecoveryStateIfNeeded(
+            captureFPS: captureFPS,
+            encodeFPS: encodeFPS,
+            averageEncodeMs: averageEncodeMs,
+            at: now
+        )
 
         if supportsTypingBurst, typingBurstActive {
             let forcedLimit = min(max(typingBurstInFlightLimit, 1), maxInFlightFramesCap)
@@ -388,6 +407,11 @@ extension StreamContext {
                 maxInFlightFrames = forcedLimit
                 await encoder?.updateInFlightLimit(forcedLimit)
             }
+            return
+        }
+
+        if autoRecoveryActive {
+            await enforceAutoRecoveryInFlightLimitIfNeeded()
             return
         }
 
@@ -402,16 +426,25 @@ extension StreamContext {
             return
         }
 
-        let now = CFAbsoluteTimeGetCurrent()
+        if latencyMode == .auto {
+            await updateAutoInFlightLimit(
+                averageEncodeMs: averageEncodeMs,
+                pendingCount: pendingCount,
+                now: now
+            )
+            return
+        }
+
         if lastInFlightAdjustmentTime > 0, now - lastInFlightAdjustmentTime < inFlightAdjustmentCooldown { return }
 
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         var desired = maxInFlightFrames
 
-        let smoothThresholds = latencyMode == .smoothest || latencyMode == .auto
-        let increaseThreshold = smoothThresholds ? 1.02 : 1.10
-        let decreaseThreshold = smoothThresholds ? 0.90 : 0.80
-        if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 { desired = min(maxInFlightFrames + 1, maxInFlightFramesCap) } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
+        let increaseThreshold = latencyMode == .smoothest ? 1.02 : 1.10
+        let decreaseThreshold = latencyMode == .smoothest ? 0.90 : 0.80
+        if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
+            desired = min(maxInFlightFrames + 1, maxInFlightFramesCap)
+        } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
             desired = max(maxInFlightFrames - 1, minInFlightFrames)
         }
 
@@ -424,6 +457,190 @@ extension StreamContext {
         let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
         let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
+    }
+
+    func updateAutoRecoveryStateIfNeeded(
+        captureFPS: Double,
+        encodeFPS: Double,
+        averageEncodeMs: Double,
+        at now: CFAbsoluteTime
+    )
+    async {
+        guard latencyMode == .auto else {
+            autoRecoveryActive = false
+            autoRecoveryLowFPSStreak = 0
+            autoRecoveryHealthyStreak = 0
+            autoRecoveryHoldUntil = 0
+            autoRecoveryCooldownUntil = 0
+            autoInFlightHeadroomStreak = 0
+            return
+        }
+
+        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+        let targetFPS = Double(max(1, currentFrameRate))
+        let lowFPS = encodeFPS < targetFPS * autoRecoveryEntryFPSFactor || captureFPS < targetFPS * autoRecoveryEntryFPSFactor
+        let highEncode = averageEncodeMs > frameBudgetMs * autoRecoveryEntryEncodeFactor
+        let unhealthyWindow = lowFPS || highEncode
+        let healthyWindow = encodeFPS >= targetFPS * autoRecoveryExitFPSFactor &&
+            averageEncodeMs <= frameBudgetMs * autoRecoveryExitEncodeFactor
+
+        if autoRecoveryActive {
+            if now < autoRecoveryHoldUntil {
+                autoRecoveryHealthyStreak = 0
+            } else if healthyWindow {
+                autoRecoveryHealthyStreak += 1
+            } else {
+                autoRecoveryHealthyStreak = 0
+            }
+
+            await enforceAutoRecoveryQualityClampIfNeeded()
+            await enforceAutoRecoveryInFlightLimitIfNeeded()
+
+            guard now >= autoRecoveryHoldUntil,
+                  autoRecoveryHealthyStreak >= autoRecoveryExitWindows else { return }
+            autoRecoveryActive = false
+            autoRecoveryLowFPSStreak = 0
+            autoRecoveryHealthyStreak = 0
+            autoRecoveryHoldUntil = 0
+            autoRecoveryCooldownUntil = now + autoRecoveryCooldown
+            autoInFlightHeadroomStreak = 0
+            qualityCeiling = resolvedQualityCeiling()
+            if activeQuality > qualityCeiling {
+                activeQuality = qualityCeiling
+                await encoder?.updateQuality(activeQuality)
+            }
+            logAutoRecoveryEvent(
+                "exited",
+                captureFPS: captureFPS,
+                encodeFPS: encodeFPS,
+                averageEncodeMs: averageEncodeMs
+            )
+            return
+        }
+
+        autoRecoveryHealthyStreak = 0
+        guard now >= autoRecoveryCooldownUntil else {
+            autoRecoveryLowFPSStreak = 0
+            return
+        }
+
+        if unhealthyWindow {
+            autoRecoveryLowFPSStreak += 1
+        } else {
+            autoRecoveryLowFPSStreak = 0
+            return
+        }
+
+        guard autoRecoveryLowFPSStreak >= autoRecoveryEntryWindows else { return }
+
+        autoRecoveryActive = true
+        autoRecoveryLowFPSStreak = 0
+        autoRecoveryHealthyStreak = 0
+        autoRecoveryHoldUntil = now + autoRecoveryMinHold
+        autoInFlightHeadroomStreak = 0
+        await enforceAutoRecoveryQualityClampIfNeeded()
+        await enforceAutoRecoveryInFlightLimitIfNeeded()
+        logAutoRecoveryEvent(
+            "entered",
+            captureFPS: captureFPS,
+            encodeFPS: encodeFPS,
+            averageEncodeMs: averageEncodeMs
+        )
+    }
+
+    func updateAutoInFlightLimit(
+        averageEncodeMs: Double,
+        pendingCount: Int,
+        now: CFAbsoluteTime
+    )
+    async {
+        let autoCap = min(2, maxInFlightFramesCap)
+        guard autoCap > 0 else { return }
+        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+        let overBudget = averageEncodeMs > frameBudgetMs
+        let hasBacklog = pendingCount > 0
+        let belowBudgetWithHeadroom = averageEncodeMs > 0 && averageEncodeMs <= frameBudgetMs * autoHeadroomIncreaseThreshold
+
+        var desired = min(maxInFlightFrames, autoCap)
+        if overBudget || hasBacklog {
+            desired = 1
+            autoInFlightHeadroomStreak = 0
+        } else if desired <= 1 {
+            if belowBudgetWithHeadroom {
+                autoInFlightHeadroomStreak += 1
+            } else {
+                autoInFlightHeadroomStreak = 0
+            }
+            if autoInFlightHeadroomStreak >= autoHeadroomWindowsToRaise, autoCap >= 2 {
+                desired = 2
+                autoInFlightHeadroomStreak = 0
+            }
+        } else {
+            autoInFlightHeadroomStreak = 0
+        }
+
+        desired = min(max(desired, 1), autoCap)
+        guard desired != maxInFlightFrames else { return }
+        maxInFlightFrames = desired
+        lastInFlightAdjustmentTime = now
+        await encoder?.updateInFlightLimit(desired)
+        let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
+        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.metrics("Auto in-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms, pending=\(pendingCount))")
+    }
+
+    func enforceAutoRecoveryInFlightLimitIfNeeded() async {
+        let forcedLimit = min(1, maxInFlightFramesCap)
+        guard maxInFlightFrames != forcedLimit else { return }
+        maxInFlightFrames = forcedLimit
+        await encoder?.updateInFlightLimit(forcedLimit)
+    }
+
+    func enforceAutoRecoveryQualityClampIfNeeded() async {
+        qualityCeiling = resolvedQualityCeiling()
+        guard activeQuality > qualityCeiling else { return }
+        activeQuality = qualityCeiling
+        await encoder?.updateQuality(activeQuality)
+    }
+
+    func logAutoRecoveryEvent(
+        _ event: String,
+        captureFPS: Double,
+        encodeFPS: Double,
+        averageEncodeMs: Double
+    ) {
+        let captureText = captureFPS.formatted(.number.precision(.fractionLength(1)))
+        let encodeText = encodeFPS.formatted(.number.precision(.fractionLength(1)))
+        let encodeMsText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+        let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.stream(
+            "Auto recovery \(event) for stream \(streamID) " +
+                "(captureFPS=\(captureText), encodeFPS=\(encodeText), avgEncodeMs=\(encodeMsText), inFlight=\(maxInFlightFrames), quality=\(qualityText))"
+        )
+    }
+
+    struct AutoRecoverySnapshot: Sendable, Equatable {
+        let active: Bool
+        let lowFPSStreak: Int
+        let healthyStreak: Int
+        let holdUntil: CFAbsoluteTime
+        let cooldownUntil: CFAbsoluteTime
+        let maxInFlightFrames: Int
+        let qualityCeiling: Float
+        let activeQuality: Float
+    }
+
+    func autoRecoverySnapshot() -> AutoRecoverySnapshot {
+        AutoRecoverySnapshot(
+            active: autoRecoveryActive,
+            lowFPSStreak: autoRecoveryLowFPSStreak,
+            healthyStreak: autoRecoveryHealthyStreak,
+            holdUntil: autoRecoveryHoldUntil,
+            cooldownUntil: autoRecoveryCooldownUntil,
+            maxInFlightFrames: maxInFlightFrames,
+            qualityCeiling: qualityCeiling,
+            activeQuality: activeQuality
+        )
     }
 
     func adjustQualityForQueue(queueBytes: Int) async {
