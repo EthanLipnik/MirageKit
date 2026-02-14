@@ -442,6 +442,8 @@ extension MirageHostService {
             MirageLogger.host("Stopping window stream: \(session.id)")
             await stopStream(session, minimizeWindow: false)
         }
+
+        await restoreStageManagerAfterAppStreamingIfNeeded()
     }
 
     /// Find SCDisplay with retry - faster than fixed sleep

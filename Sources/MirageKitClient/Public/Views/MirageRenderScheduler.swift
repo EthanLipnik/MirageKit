@@ -10,16 +10,17 @@
 import Foundation
 import MirageKit
 
-#if os(iOS) || os(visionOS)
-import QuartzCore
-#endif
-
 #if os(macOS)
 import CoreVideo
 #endif
 
 @MainActor
 final class MirageRenderScheduler {
+    private enum PulseSource {
+        case driver
+        case decodeFallback
+    }
+
     private weak var view: MirageMetalView?
     private var targetFPS: Int = 60
     private var lastTickTime: CFAbsoluteTime = 0
@@ -33,9 +34,11 @@ final class MirageRenderScheduler {
     private var lastLogTime: CFAbsoluteTime = 0
     private var redrawPending = false
     private var lastDecodedSequence: UInt64 = 0
+    private var driverPulseCount: UInt64 = 0
+    private var decodeFallbackPulseCount: UInt64 = 0
 
     #if os(iOS) || os(visionOS)
-    private var displayLink: CADisplayLink?
+    private let renderDriver = MirageRenderDriver()
     #endif
 
     #if os(macOS)
@@ -45,14 +48,18 @@ final class MirageRenderScheduler {
 
     init(view: MirageMetalView) {
         self.view = view
+        #if os(iOS) || os(visionOS)
+        renderDriver.onPulse = { [weak self] now in
+            Task { @MainActor [weak self] in
+                self?.handleDriverPulse(now: now)
+            }
+        }
+        #endif
     }
 
     func start() {
         #if os(iOS) || os(visionOS)
-        guard displayLink == nil else { return }
-        let link = CADisplayLink(target: self, selector: #selector(handleDisplayLinkTick))
-        link.add(to: RunLoop.main, forMode: RunLoop.Mode.common)
-        displayLink = link
+        renderDriver.start()
         applyTargetFPS()
         #elseif os(macOS)
         guard displayLink == nil else { return }
@@ -89,8 +96,7 @@ final class MirageRenderScheduler {
 
     func stop() {
         #if os(iOS) || os(visionOS)
-        displayLink?.invalidate()
-        displayLink = nil
+        renderDriver.stop()
         #elseif os(macOS)
         if let displayLink {
             CVDisplayLinkStop(displayLink)
@@ -118,6 +124,8 @@ final class MirageRenderScheduler {
         tickCount = 0
         lastLogTime = 0
         redrawPending = false
+        driverPulseCount = 0
+        decodeFallbackPulseCount = 0
         #if os(macOS)
         lastMacTickTime = 0
         #endif
@@ -151,31 +159,25 @@ final class MirageRenderScheduler {
         guard view?.allowsDecodeDrivenTickFallback(now: now, targetFPS: targetFPS) ?? true else { return }
         // Skip if we already ticked recently (display-link or decode-driven).
         guard lastTickTime == 0 || now - lastTickTime >= minInterval * 0.95 else { return }
-        processTick(now: now)
+        decodeFallbackPulseCount &+= 1
+        processTick(now: now, source: .decodeFallback)
     }
 
     #if os(iOS) || os(visionOS)
-    @objc private func handleDisplayLinkTick() {
-        let now = CFAbsoluteTimeGetCurrent()
+    private func handleDriverPulse(now: CFAbsoluteTime) {
         let minInterval = 1.0 / Double(max(1, targetFPS))
         // Avoid double-driving when decode-driven fallback already ticked this interval.
         if lastTickTime > 0, now - lastTickTime < minInterval * 0.5 {
             return
         }
+        driverPulseCount &+= 1
         lastDisplayLinkTickTime = now
-        processTick(now: now)
+        processTick(now: now, source: .driver)
     }
 
     private func applyTargetFPS() {
-        guard let displayLink else { return }
         let lockedFPS = Self.normalizedTargetFPS(targetFPS)
-        let fps = Float(lockedFPS)
-        displayLink.preferredFramesPerSecond = lockedFPS
-        displayLink.preferredFrameRateRange = CAFrameRateRange(
-            minimum: fps,
-            maximum: fps,
-            preferred: fps
-        )
+        renderDriver.updateTargetFPS(lockedFPS)
         view?.applyDisplayRefreshRateLock(lockedFPS)
     }
     #endif
@@ -195,13 +197,14 @@ final class MirageRenderScheduler {
         if lastMacTickTime > 0, now - lastMacTickTime < minInterval {
             return
         }
+        driverPulseCount &+= 1
         lastMacTickTime = now
         lastDisplayLinkTickTime = now
-        processTick(now: now)
+        processTick(now: now, source: .driver)
     }
     #endif
 
-    private func processTick(now: CFAbsoluteTime) {
+    private func processTick(now: CFAbsoluteTime, source _: PulseSource) {
         lastTickTime = now
         tickCount &+= 1
 
@@ -223,7 +226,7 @@ final class MirageRenderScheduler {
                     // display-link interval.
                     if targetFPS <= 60 {
                         let backlogAfterPrimaryDraw = MirageFrameCache.shared.queueDepth(for: streamID)
-                        if backlogAfterPrimaryDraw >= 4, view.allowsSecondaryCatchUpDraw() {
+                        if backlogAfterPrimaryDraw >= 3, view.allowsSecondaryCatchUpDraw() {
                             view.renderSchedulerTick()
                         }
                     }
@@ -266,16 +269,21 @@ final class MirageRenderScheduler {
         let presentedText = presentedFPS.formatted(.number.precision(.fractionLength(1)))
         let presentAgeText = presentAgeMs.formatted(.number.precision(.fractionLength(1)))
         let oldestAgeText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
+        let driverPulses = driverPulseCount
+        let decodePulses = decodeFallbackPulseCount
 
         MirageLogger
             .renderer(
                 "Render sync: ticks=\(tickText)fps decoded=\(decodedText)fps presented=\(presentedText)fps " +
-                    "queueDepth=\(queueDepth) oldest=\(oldestAgeText)ms age=\(presentAgeText)ms"
+                    "queueDepth=\(queueDepth) oldest=\(oldestAgeText)ms age=\(presentAgeText)ms " +
+                    "pulse(driver=\(driverPulses) decode=\(decodePulses))"
             )
 
         decodedCount = 0
         presentedCount = 0
         tickCount = 0
+        driverPulseCount = 0
+        decodeFallbackPulseCount = 0
         lastLogTime = now
     }
 }

@@ -105,6 +105,8 @@ public extension MirageHostService {
             await disconnectClient(client)
         }
 
+        await restoreStageManagerAfterAppStreamingIfNeeded(force: true)
+
         hostAudioMuteController.setMuted(false)
         cancelLightsOutScreenshotSuspension()
         lightsOutController.deactivate()
@@ -127,7 +129,9 @@ public extension MirageHostService {
 
         // Stop all window streams for this app
         for windowID in windowIDs {
-            if let stream = activeStreams.first(where: { $0.window.id == windowID }) { await stopStream(stream) }
+            if let stream = activeStreams.first(where: { $0.window.id == windowID }) {
+                await stopStream(stream, updateAppSession: false)
+            }
         }
 
         // Notify client that the app stream has ended
@@ -162,6 +166,7 @@ public extension MirageHostService {
 
         // End the session
         await appStreamManager.endSession(bundleIdentifier: bundleIdentifier)
+        await restoreStageManagerAfterAppStreamingIfNeeded()
 
         MirageLogger.host("Ended app stream for \(bundleIdentifier)")
     }

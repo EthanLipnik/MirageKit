@@ -30,7 +30,7 @@ extension StreamController {
     }
 
     func logMetricsIfNeeded(decodedFPS: Double, receivedFPS: Double, droppedFrames: UInt64) {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         guard MirageLogger.isEnabled(.client) else { return }
         guard lastMetricsLogTime == 0 || now - lastMetricsLogTime > 2.0 else { return }
         let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))

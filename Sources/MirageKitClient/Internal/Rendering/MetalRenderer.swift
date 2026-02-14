@@ -381,6 +381,7 @@ final class MetalRenderer {
         to drawable: CAMetalDrawable,
         contentRect: CGRect? = nil,
         colorConversion: ColorConversion,
+        onScheduled: (@Sendable () -> Void)? = nil,
         completion: (@Sendable (_ presented: Bool) -> Void)? = nil
     ) {
         let signpostState = MirageSignpost.beginInterval("Render")
@@ -461,6 +462,9 @@ final class MetalRenderer {
         }
 
         commandBuffer.present(drawable)
+        if let onScheduled {
+            commandBuffer.addScheduledHandler { _ in onScheduled() }
+        }
         if let completion {
             // @unchecked Sendable: guarded by NSLock for once-only callback dispatch.
             final class CompletionOnce: @unchecked Sendable {
@@ -496,6 +500,7 @@ final class MetalRenderer {
         to drawable: CAMetalDrawable,
         contentRect: CGRect? = nil,
         outputPixelFormat: MTLPixelFormat = .bgr10a2Unorm,
+        onScheduled: (@Sendable () -> Void)? = nil,
         completion: (@Sendable (_ presented: Bool) -> Void)? = nil
     ) {
         if let ycbcrTextures = createYCbCrTextures(from: pixelBuffer) {
@@ -522,6 +527,7 @@ final class MetalRenderer {
                 to: drawable,
                 contentRect: contentRect,
                 colorConversion: conversion,
+                onScheduled: onScheduled,
                 completion: completion
             )
             return
@@ -552,6 +558,7 @@ final class MetalRenderer {
             to: drawable,
             contentRect: contentRect,
             colorConversion: Self.identityConversion,
+            onScheduled: onScheduled,
             completion: completion
         )
     }

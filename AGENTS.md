@@ -28,6 +28,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
 - Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows use non-shareable window policy, ScreenCaptureKit display capture excludes the overlay windows, and screenshot hotkeys (`⌘⇧3`, `⌘⇧4`, `⌘⇧5`) temporarily suspend Lights Out until screenshot UI is no longer active.
 - Lights Out emergency shortcut: host service exposes a configurable local shortcut that is matched inside the Lights Out event tap to run emergency recovery (disconnect clients, clear overlays, lock host).
+- Host app streaming enforces Stage Manager off during active app-stream sessions; when Mirage disables it for streaming, host restores the prior enabled state after the last app-stream session ends.
 - Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
@@ -121,6 +122,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Host audio mute control: `Sources/MirageKitHost/Internal/Audio/HostAudioMuteController.swift`.
 - Host Lights Out support: `Sources/MirageKitHost/Internal/Host/HostLightsOutController.swift`, `Sources/MirageKitHost/Internal/Host/MirageInjectedEventTag.swift`.
 - Host Lights Out integration: `Sources/MirageKitHost/Public/Host/MirageHostService+LightsOut.swift`.
+- Host Stage Manager guardrail: `Sources/MirageKitHost/Internal/Host/HostStageManagerController.swift`, `Sources/MirageKitHost/Public/Host/MirageHostService+StageManager.swift`.
 
 **Other Modules:**
 - Automatic quality testing no longer includes dedicated probe scene or transport-helper paths.

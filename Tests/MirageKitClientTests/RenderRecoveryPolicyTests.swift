@@ -13,6 +13,81 @@ import Testing
 #if os(macOS)
 @Suite("Render Recovery Policy")
 struct RenderRecoveryPolicyTests {
+    @Test("Auto low FPS alone does not enter recovery without pressure")
+    func autoLowFPSWithoutPressureDoesNotEnterRecovery() {
+        var policy = MirageRenderStabilityPolicy()
+
+        let first = policy.evaluate(
+            now: 100,
+            latencyMode: .auto,
+            targetFPS: 60,
+            renderedFPS: 40,
+            drawableWaitAvgMs: 10,
+            hasCapPressure: false
+        )
+        let second = policy.evaluate(
+            now: 102,
+            latencyMode: .auto,
+            targetFPS: 60,
+            renderedFPS: 40,
+            drawableWaitAvgMs: 10,
+            hasCapPressure: false
+        )
+        #expect(!first.recoveryEntered)
+        #expect(!second.recoveryEntered)
+        #expect(!policy.snapshot().recoveryActive)
+    }
+
+    @Test("Auto low FPS with cap pressure enters recovery")
+    func autoLowFPSWithCapPressureEntersRecovery() {
+        var policy = MirageRenderStabilityPolicy()
+
+        _ = policy.evaluate(
+            now: 100,
+            latencyMode: .auto,
+            targetFPS: 60,
+            renderedFPS: 40,
+            drawableWaitAvgMs: 10,
+            hasCapPressure: true
+        )
+        let second = policy.evaluate(
+            now: 102,
+            latencyMode: .auto,
+            targetFPS: 60,
+            renderedFPS: 40,
+            drawableWaitAvgMs: 10,
+            hasCapPressure: true
+        )
+        #expect(second.recoveryEntered)
+        #expect(policy.snapshot().recoveryActive)
+    }
+
+    @Test("Auto typing burst suppresses recovery entry despite pressure")
+    func autoTypingSuppressesRecoveryEntry() {
+        var policy = MirageRenderStabilityPolicy()
+
+        _ = policy.evaluate(
+            now: 100,
+            latencyMode: .auto,
+            targetFPS: 60,
+            renderedFPS: 30,
+            drawableWaitAvgMs: 24,
+            hasCapPressure: true,
+            typingBurstActive: true
+        )
+        let second = policy.evaluate(
+            now: 102,
+            latencyMode: .auto,
+            targetFPS: 60,
+            renderedFPS: 30,
+            drawableWaitAvgMs: 24,
+            hasCapPressure: true,
+            typingBurstActive: true
+        )
+        #expect(!second.recoveryEntered)
+        #expect(!policy.snapshot().recoveryActive)
+    }
+
     @Test("Recovery enters after two degraded windows")
     func entersAfterTwoDegradedWindows() {
         var policy = MirageRenderStabilityPolicy()
@@ -159,7 +234,7 @@ struct RenderRecoveryPolicyTests {
         #expect(policy.snapshot().recoveryActive)
     }
 
-    @Test("Active recovery forces one in-flight cap")
+    @Test("Active recovery keeps throughput-safe in-flight cap")
     func activeRecoveryForcesSingleInFlightCap() {
         var policy = MirageRenderStabilityPolicy()
 
@@ -184,9 +259,10 @@ struct RenderRecoveryPolicyTests {
             targetFPS: 60,
             typingBurstActive: false,
             recoveryActive: policy.snapshot().recoveryActive,
-            smoothestPromotionActive: policy.snapshot().smoothestPromotionActive
+            smoothestPromotionActive: policy.snapshot().smoothestPromotionActive,
+            pressureActive: false
         )
-        #expect(decision.inFlightCap == 1)
+        #expect(decision.inFlightCap == 2)
         #expect(decision.reason == .recovery)
     }
 }

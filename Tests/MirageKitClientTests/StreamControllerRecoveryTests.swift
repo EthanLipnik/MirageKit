@@ -51,7 +51,12 @@ struct StreamControllerRecoveryTests {
     @Test("Backpressure recovery requires sustained drops and is debounced")
     func backpressureRecoveryDebounce() async throws {
         let keyframeCounter = LockedCounter()
-        let controller = StreamController(streamID: 2, maxPayloadSize: 1200)
+        let clock = ManualTimeProvider(start: 1_000)
+        let controller = StreamController(
+            streamID: 2,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -77,7 +82,7 @@ struct StreamControllerRecoveryTests {
         try await Task.sleep(for: .milliseconds(150))
         #expect(keyframeCounter.value == 1)
 
-        try await Task.sleep(for: .milliseconds(1100))
+        clock.advance(by: 1.1)
         for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
             await controller.recordQueueDrop()
         }
@@ -216,6 +221,27 @@ private final class LockedCounter: @unchecked Sendable {
     func increment() {
         lock.lock()
         storage += 1
+        lock.unlock()
+    }
+}
+
+private final class ManualTimeProvider: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value: CFAbsoluteTime
+
+    init(start: CFAbsoluteTime) {
+        value = start
+    }
+
+    var now: CFAbsoluteTime {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
+
+    func advance(by delta: CFAbsoluteTime) {
+        lock.lock()
+        value += delta
         lock.unlock()
     }
 }

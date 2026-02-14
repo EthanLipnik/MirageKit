@@ -41,7 +41,7 @@ public final class MirageFrameCache: @unchecked Sendable {
     }
 
     private struct StreamQueue {
-        var entries: [FrameEntry] = []
+        var entries = MirageRingBuffer<FrameEntry>(minimumCapacity: 16)
         var nextSequence: UInt64 = 0
         var lastPresentedSequence: UInt64 = 0
         var lastPresentedTime: CFAbsoluteTime = 0
@@ -74,6 +74,9 @@ public final class MirageFrameCache: @unchecked Sendable {
     private let typingBurstTrimLogInterval: CFAbsoluteTime = 0.5
     private var typingBurstDeadlines: [StreamID: CFAbsoluteTime] = [:]
     private var lastTypingBurstTrimLogTime: [StreamID: CFAbsoluteTime] = [:]
+    private let lockHoldWarnMs: Double = 1.0
+    private let lockHoldLogInterval: CFAbsoluteTime = 1.0
+    private var lastLockHoldLogTime: [StreamID: CFAbsoluteTime] = [:]
 
     private init() {}
 
@@ -174,7 +177,11 @@ public final class MirageFrameCache: @unchecked Sendable {
             lock.unlock()
             return nil
         }
-        let result = queue.entries.removeFirst()
+        guard let result = queue.entries.popFirst() else {
+            streamQueues[streamID] = queue
+            lock.unlock()
+            return nil
+        }
         streamQueues[streamID] = queue
         lock.unlock()
         return result
@@ -183,8 +190,13 @@ public final class MirageFrameCache: @unchecked Sendable {
     /// Dequeue a frame for real-time presentation.
     /// When decode outruns presentation and the queue is backlogged, this drops stale entries
     /// and returns the newest frame to keep interaction latency bounded.
-    func dequeueForPresentation(for streamID: StreamID, catchUpDepth: Int = 2) -> FrameEntry? {
+    func dequeueForPresentation(
+        for streamID: StreamID,
+        catchUpDepth: Int = 2,
+        preferLatest: Bool = false
+    ) -> FrameEntry? {
         lock.lock()
+        let lockStart = CFAbsoluteTimeGetCurrent()
         guard var queue = streamQueues[streamID], !queue.entries.isEmpty else {
             lock.unlock()
             return nil
@@ -200,7 +212,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         if typingBurstActive {
             let dropCount = max(0, depth - effectiveKeepDepth)
             if dropCount > 0 {
-                queue.entries.removeFirst(dropCount)
+                _ = queue.entries.removeFirst(dropCount)
                 queue.emergencyDropCount &+= UInt64(dropCount)
                 if MirageLogger.isEnabled(.renderer) {
                     let lastLogTime = lastTypingBurstTrimLogTime[streamID] ?? 0
@@ -217,16 +229,25 @@ public final class MirageFrameCache: @unchecked Sendable {
         } else {
             let shouldTrimForDepth = depth >= presentationTrimDepthThreshold
             let shouldTrimForAge = depth > effectiveKeepDepth && oldestAgeMs >= presentationTrimOldestAgeMs
-            if shouldTrimForAge {
+            let shouldTrimForPressure = preferLatest &&
+                depth >= max(presentationTrimDepthThreshold, effectiveKeepDepth + 1)
+            if shouldTrimForAge || shouldTrimForPressure {
                 let dropCount = max(0, depth - effectiveKeepDepth)
                 if dropCount > 0 {
-                    queue.entries.removeFirst(dropCount)
+                    _ = queue.entries.removeFirst(dropCount)
                     queue.emergencyDropCount &+= UInt64(dropCount)
                     if MirageLogger.isEnabled(.renderer),
                        queue.lastEmergencyLogTime == 0 || now - queue.lastEmergencyLogTime >= emergencyLogInterval {
                         queue.lastEmergencyLogTime = now
                         let ageText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
-                        let reason: String = if shouldTrimForDepth { "age+depth" } else { "age" }
+                        let reason: String
+                        if shouldTrimForPressure {
+                            reason = shouldTrimForAge ? "pressure+age" : "pressure"
+                        } else if shouldTrimForDepth {
+                            reason = "age+depth"
+                        } else {
+                            reason = "age"
+                        }
                         MirageLogger
                             .renderer(
                                 "Render catch-up trim: dropped=\(dropCount) depth=\(depth) keep=\(effectiveKeepDepth) " +
@@ -237,8 +258,18 @@ public final class MirageFrameCache: @unchecked Sendable {
             }
         }
 
-        let result = queue.entries.removeFirst()
+        guard let result = queue.entries.popFirst() else {
+            streamQueues[streamID] = queue
+            lock.unlock()
+            return nil
+        }
         streamQueues[streamID] = queue
+        let lockHoldMs = max(0, CFAbsoluteTimeGetCurrent() - lockStart) * 1000
+        maybeLogLockHold(
+            streamID: streamID,
+            holdMs: lockHoldMs,
+            now: now
+        )
         lock.unlock()
         return result
     }
@@ -326,6 +357,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         streamQueues.removeValue(forKey: streamID)
         typingBurstDeadlines.removeValue(forKey: streamID)
         lastTypingBurstTrimLogTime.removeValue(forKey: streamID)
+        lastLockHoldLogTime.removeValue(forKey: streamID)
         lock.unlock()
     }
 
@@ -344,7 +376,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         let keepDepth = min(emergencySafeDepth, queue.entries.count)
         let dropCount = max(0, queue.entries.count - keepDepth)
         guard dropCount > 0 else { return 0 }
-        queue.entries.removeFirst(dropCount)
+        _ = queue.entries.removeFirst(dropCount)
         queue.emergencyDropCount &+= UInt64(dropCount)
 
         if MirageLogger.isEnabled(.renderer),
@@ -363,5 +395,24 @@ public final class MirageFrameCache: @unchecked Sendable {
     private func oldestAgeMsLocked(queue: StreamQueue?, now: CFAbsoluteTime) -> Double {
         guard let decodeTime = queue?.entries.first?.decodeTime else { return 0 }
         return max(0, now - decodeTime) * 1000
+    }
+
+    private func maybeLogLockHold(
+        streamID: StreamID,
+        holdMs: Double,
+        now: CFAbsoluteTime
+    ) {
+        guard holdMs >= lockHoldWarnMs else { return }
+        guard MirageLogger.isEnabled(.renderer) else { return }
+        let lastLogTime = lastLockHoldLogTime[streamID] ?? 0
+        if lastLogTime > 0, now - lastLogTime < lockHoldLogInterval {
+            return
+        }
+        lastLockHoldLogTime[streamID] = now
+        let holdText = holdMs.formatted(.number.precision(.fractionLength(2)))
+        let queueDepth = streamQueues[streamID]?.entries.count ?? 0
+        MirageLogger.renderer(
+            "Frame cache lock hold: stream=\(streamID) hold=\(holdText)ms depth=\(queueDepth)"
+        )
     }
 }

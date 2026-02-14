@@ -29,28 +29,28 @@ extension StreamController {
     }
 
     func recordDecodedFrame() {
-        lastDecodedFrameTime = CFAbsoluteTimeGetCurrent()
+        lastDecodedFrameTime = currentTime()
         startFreezeMonitorIfNeeded()
     }
 
     func recordQueueDrop() {
         queueDropsSinceLastLog += 1
         metricsTracker.recordQueueDrop()
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         queueDropTimestamps.append(now)
         trimOverloadWindow(now: now)
         maybeSignalAdaptiveFallback(now: now)
     }
 
     func recordDecodeThresholdEvent() {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         decodeThresholdTimestamps.append(now)
         trimOverloadWindow(now: now)
         maybeSignalAdaptiveFallback(now: now)
     }
 
     func maybeTriggerBackpressureRecovery(queueDepth: Int) {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         let recentDropCount = queueDropTimestamps.reduce(into: 0) { count, timestamp in
             if now - timestamp <= Self.backpressureRecoveryWindow {
                 count += 1
@@ -69,7 +69,7 @@ extension StreamController {
     }
 
     func requestKeyframeRecovery(reason: RecoveryReason) async {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         if lastRecoveryRequestDispatchTime > 0,
            now - lastRecoveryRequestDispatchTime < Self.recoveryRequestDispatchCooldown {
             return
@@ -130,7 +130,7 @@ extension StreamController {
             } catch {
                 break
             }
-            let now = CFAbsoluteTimeGetCurrent()
+            let now = currentTime()
             guard let awaitingDuration = reassembler.awaitingKeyframeDuration(now: now) else { break }
             let timeout = reassembler.keyframeTimeoutSeconds()
             guard awaitingDuration >= timeout else { continue }
@@ -170,7 +170,7 @@ extension StreamController {
 
     private func evaluateFreezeState() async {
         guard lastDecodedFrameTime > 0 else { return }
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         guard await isApplicationActiveForFreezeMonitoring() else {
             lastPresentedProgressTime = now
             consecutiveFreezeRecoveries = 0

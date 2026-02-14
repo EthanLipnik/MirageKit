@@ -26,12 +26,17 @@ struct RenderAdmissionPolicyTests {
             targetFPS: 60,
             typingBurstActive: false,
             recoveryActive: false,
-            smoothestPromotionActive: false
+            smoothestPromotionActive: false,
+            pressureActive: false
         )
         #expect(decision.inFlightCap == 1)
         #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.presentationKeepDepth == 1)
+        #expect(decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .baseline)
+        #expect(decision.admissionReleaseMode == .completed)
         #expect(!decision.allowsSecondaryCatchUpDraw)
+        #expect(!decision.allowsInFlightCapMicroRetry)
     }
 
     @Test("Auto baseline at 60Hz keeps two in-flight")
@@ -41,39 +46,68 @@ struct RenderAdmissionPolicyTests {
             targetFPS: 60,
             typingBurstActive: false,
             recoveryActive: false,
-            smoothestPromotionActive: false
+            smoothestPromotionActive: false,
+            pressureActive: false
         )
         #expect(decision.inFlightCap == 2)
-        #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.presentationKeepDepth == 2)
+        #expect(decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .baseline)
+        #expect(decision.admissionReleaseMode == .scheduled)
+        #expect(!decision.allowsInFlightCapMicroRetry)
+        #expect(!decision.allowsSecondaryCatchUpDraw)
     }
 
-    @Test("Auto typing burst at 60Hz drops to one in-flight")
+    @Test("Auto baseline keeps 60Hz admission stable under pressure")
+    func auto60HzBaselinePressurePolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: false,
+            pressureActive: true
+        )
+        #expect(decision.inFlightCap == 2)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(!decision.allowsSecondaryCatchUpDraw)
+    }
+
+    @Test("Auto typing burst at 60Hz uses strict latency path")
     func autoTypingPolicy() {
         let decision = MirageRenderAdmissionPolicy.decision(
             latencyMode: .auto,
             targetFPS: 60,
             typingBurstActive: true,
             recoveryActive: false,
-            smoothestPromotionActive: false
+            smoothestPromotionActive: false,
+            pressureActive: true
         )
         #expect(decision.inFlightCap == 1)
         #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.presentationKeepDepth == 1)
+        #expect(!decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .typing)
+        #expect(decision.admissionReleaseMode == .completed)
+        #expect(!decision.allowsInFlightCapMicroRetry)
     }
 
-    @Test("Recovery forces one in-flight for all modes")
-    func recoveryForcesSingleInFlight() {
+    @Test("Recovery clamps to throughput-safe in-flight for non-lowest modes")
+    func recoveryUsesThroughputSafeInFlight() {
         let decision = MirageRenderAdmissionPolicy.decision(
             latencyMode: .smoothest,
             targetFPS: 60,
             typingBurstActive: false,
             recoveryActive: true,
-            smoothestPromotionActive: true
+            smoothestPromotionActive: true,
+            pressureActive: true
         )
-        #expect(decision.inFlightCap == 1)
+        #expect(decision.inFlightCap == 2)
         #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.presentationKeepDepth == 1)
         #expect(decision.reason == .recovery)
+        #expect(decision.admissionReleaseMode == .completed)
     }
 
     @Test("Smoothest promotion enables three drawables and three in-flight")
@@ -83,11 +117,15 @@ struct RenderAdmissionPolicyTests {
             targetFPS: 60,
             typingBurstActive: false,
             recoveryActive: false,
-            smoothestPromotionActive: true
+            smoothestPromotionActive: true,
+            pressureActive: true
         )
         #expect(decision.inFlightCap == 3)
         #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.presentationKeepDepth == 3)
+        #expect(decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .promotion)
+        #expect(decision.admissionReleaseMode == .completed)
         #expect(decision.allowsSecondaryCatchUpDraw)
     }
 
@@ -98,12 +136,17 @@ struct RenderAdmissionPolicyTests {
             targetFPS: 120,
             typingBurstActive: false,
             recoveryActive: false,
-            smoothestPromotionActive: false
+            smoothestPromotionActive: false,
+            pressureActive: false
         )
         #expect(decision.inFlightCap == 3)
         #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.presentationKeepDepth == 3)
+        #expect(!decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .baseline)
+        #expect(decision.admissionReleaseMode == .completed)
         #expect(decision.allowsSecondaryCatchUpDraw)
+        #expect(!decision.allowsInFlightCapMicroRetry)
     }
 
     @Test("In-flight counter acquires and releases once")

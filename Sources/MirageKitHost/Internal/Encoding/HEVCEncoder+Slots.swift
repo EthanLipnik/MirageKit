@@ -29,6 +29,19 @@ extension HEVCEncoder {
         encoderInFlightCount = max(0, encoderInFlightCount - 1)
         encoderInFlightLock.unlock()
     }
+
+    nonisolated func resetEncoderSlots() {
+        encoderInFlightLock.lock()
+        encoderInFlightCount = 0
+        encoderInFlightLock.unlock()
+    }
+
+    nonisolated func encoderInFlightSnapshot() -> Int {
+        encoderInFlightLock.lock()
+        let value = encoderInFlightCount
+        encoderInFlightLock.unlock()
+        return value
+    }
 }
 
 #endif

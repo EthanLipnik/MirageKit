@@ -67,6 +67,7 @@ extension HEVCEncoder {
         // This ensures any in-flight callbacks from old session will be discarded
         sessionVersion += 1
         MirageLogger.encoder("Session version incremented to \(sessionVersion)")
+        resetEncoderSlots()
 
         // Complete and invalidate the old session
         if let session = compressionSession {
@@ -90,6 +91,8 @@ extension HEVCEncoder {
         didLogPixelFormat = false
         baseQuality = min(newConfiguration.frameQuality, compressionQualityCeiling)
         qualityOverrideActive = false
+        sessionVersion += 1
+        resetEncoderSlots()
 
         guard currentWidth > 0, currentHeight > 0 else { return }
 
@@ -150,6 +153,12 @@ extension HEVCEncoder {
         guard currentWidth > 0, currentHeight > 0 else { return }
 
         MirageLogger.encoder("Resetting encoder session (\(currentWidth)x\(currentHeight))")
+        sessionVersion += 1
+        let staleSlots = encoderInFlightSnapshot()
+        if staleSlots > 0 {
+            MirageLogger.encoder("Clearing \(staleSlots) stale encoder slots")
+        }
+        resetEncoderSlots()
 
         // Invalidate the stuck session
         VTCompressionSessionInvalidate(session)

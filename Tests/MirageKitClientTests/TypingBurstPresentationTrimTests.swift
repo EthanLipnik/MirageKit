@@ -65,6 +65,34 @@ struct TypingBurstPresentationTrimTests {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
+    @Test("Pressure-aware presentation favors latest frame without typing burst")
+    func pressureTrimFavorsLatestFrame() {
+        let streamID: StreamID = 204
+        MirageFrameCache.shared.clear(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        for index in 0 ..< 5 {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now + 1 + (Double(index) * 0.001),
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
+
+        let presented = MirageFrameCache.shared.dequeueForPresentation(
+            for: streamID,
+            catchUpDepth: 2,
+            preferLatest: true
+        )
+        #expect(presented?.sequence == 4)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
+
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     @Test("Typing burst activity expires to baseline window")
     func typingBurstExpiresBackToBaseline() {
         let streamID: StreamID = 203
@@ -77,6 +105,34 @@ struct TypingBurstPresentationTrimTests {
         #expect(!MirageFrameCache.shared.isTypingBurstActive(for: streamID, now: now + 0.50))
 
         MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Typing burst uses strict release and returns to scheduled baseline")
+    func typingBurstReleaseModeTransitions() {
+        let typingDecision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 60,
+            typingBurstActive: true,
+            recoveryActive: false,
+            smoothestPromotionActive: false,
+            pressureActive: true
+        )
+        #expect(typingDecision.admissionReleaseMode == .completed)
+        #expect(typingDecision.inFlightCap == 1)
+        #expect(typingDecision.presentationKeepDepth == 1)
+
+        let baselineDecision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: false,
+            pressureActive: false
+        )
+        #expect(baselineDecision.admissionReleaseMode == .scheduled)
+        #expect(baselineDecision.inFlightCap == 2)
+        #expect(baselineDecision.presentationKeepDepth == 2)
+        #expect(baselineDecision.prefersLatestFrameOnPressure)
     }
 
     private func makePixelBuffer() -> CVPixelBuffer {

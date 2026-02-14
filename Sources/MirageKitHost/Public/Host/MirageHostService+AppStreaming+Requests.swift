@@ -81,6 +81,8 @@ extension MirageHostService {
                 return
             }
 
+            await prepareStageManagerForAppStreamingIfNeeded()
+
             // Start the app session
             guard await appStreamManager.startAppSession(
                 bundleIdentifier: app.bundleIdentifier,
@@ -90,6 +92,7 @@ extension MirageHostService {
                 clientName: client.name
             ) != nil else {
                 MirageLogger.host("Failed to start app session for \(app.name)")
+                await restoreStageManagerAfterAppStreamingIfNeeded()
                 return
             }
 
@@ -98,6 +101,7 @@ extension MirageHostService {
             guard launched else {
                 MirageLogger.host("Failed to launch app \(app.name)")
                 await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
+                await restoreStageManagerAfterAppStreamingIfNeeded()
                 return
             }
 
@@ -280,19 +284,22 @@ extension MirageHostService {
 
             // Find the session and cancel cooldown
             if let session = await appStreamManager.getSessionForWindow(request.windowID) {
+                let bundleIdentifier = session.bundleIdentifier
                 await appStreamManager.cancelCooldown(
-                    bundleIdentifier: session.bundleIdentifier,
+                    bundleIdentifier: bundleIdentifier,
                     windowID: request.windowID
                 )
 
                 // Send return to app selection
                 let response = ReturnToAppSelectionMessage(
                     windowID: request.windowID,
-                    bundleIdentifier: session.bundleIdentifier,
+                    bundleIdentifier: bundleIdentifier,
                     message: "Cooldown cancelled"
                 )
                 let responseMessage = try ControlMessage(type: .returnToAppSelection, content: response)
                 connection.send(content: responseMessage.serialize(), completion: .idempotent)
+
+                await endAppSessionIfIdle(bundleIdentifier: bundleIdentifier)
             }
         } catch {
             MirageLogger.error(.host, "Failed to handle cancel cooldown: \(error)")

@@ -260,6 +260,9 @@ public final class MirageHostService {
 
     @ObservationIgnored let lightsOutController = HostLightsOutController()
     @ObservationIgnored let hostAudioMuteController = HostAudioMuteController()
+    @ObservationIgnored var stageManagerController = HostStageManagerController()
+    var appStreamingStageManagerNeedsRestore: Bool = false
+    var appStreamingStageManagerPreparationInProgress: Bool = false
 
     // MARK: - Fast Input Path (bypasses MainActor)
 

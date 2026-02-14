@@ -65,6 +65,8 @@ extension MirageHostService {
             await cleanupSharedVirtualDisplayIfIdle()
             lockHostIfNeeded()
         }
+
+        await restoreStageManagerAfterAppStreamingIfNeeded()
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {

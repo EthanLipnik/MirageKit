@@ -60,19 +60,34 @@ struct MirageRenderStabilityPolicy {
         latencyMode: MirageStreamLatencyMode,
         targetFPS: Int,
         renderedFPS: Double,
-        drawableWaitAvgMs: Double
+        drawableWaitAvgMs: Double,
+        hasCapPressure: Bool = false,
+        typingBurstActive: Bool = false
     ) -> MirageRenderStabilityTransition {
         let normalizedTargetFPS = targetFPS >= 120 ? 120 : 60
         let frameBudgetMs = 1000.0 / Double(normalizedTargetFPS)
-        let degraded = renderedFPS < Double(normalizedTargetFPS) * recoveryEntryFPSFactor ||
-            drawableWaitAvgMs > frameBudgetMs * recoveryEntryDrawableWaitFactor
+        let typingSuppressed = latencyMode == .auto && normalizedTargetFPS <= 60 && typingBurstActive
+        let lowFPS = renderedFPS < Double(normalizedTargetFPS) * recoveryEntryFPSFactor
+        let severeLowFPS = renderedFPS < Double(normalizedTargetFPS) * 0.75
+        let drawablePressure = drawableWaitAvgMs > frameBudgetMs * recoveryEntryDrawableWaitFactor
+        let degraded: Bool = if latencyMode == .auto, normalizedTargetFPS <= 60 {
+            if typingSuppressed {
+                false
+            } else {
+                lowFPS && (drawablePressure || (hasCapPressure && severeLowFPS))
+            }
+        } else {
+            lowFPS || drawablePressure
+        }
         let healthy = renderedFPS >= Double(normalizedTargetFPS) * recoveryExitFPSFactor &&
             drawableWaitAvgMs <= frameBudgetMs * recoveryExitDrawableWaitFactor
 
         var transition = MirageRenderStabilityTransition()
 
         if recoveryActive {
-            if now >= holdUntil, healthy {
+            if typingSuppressed {
+                healthyStreak = 0
+            } else if now >= holdUntil, healthy {
                 healthyStreak += 1
             } else if now >= holdUntil {
                 healthyStreak = 0
@@ -89,7 +104,9 @@ struct MirageRenderStabilityPolicy {
         } else {
             healthyStreak = 0
             if now >= cooldownUntil {
-                if degraded {
+                if typingSuppressed {
+                    lowFPSStreak = 0
+                } else if degraded {
                     lowFPSStreak += 1
                 } else {
                     lowFPSStreak = 0

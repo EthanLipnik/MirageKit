@@ -318,7 +318,12 @@ public extension MirageHostService {
         return effectiveEncoderConfig
     }
 
-    func stopStream(_ session: MirageStreamSession, minimizeWindow: Bool = false) async {
+    func stopStream(
+        _ session: MirageStreamSession,
+        minimizeWindow: Bool = false,
+        updateAppSession: Bool = true
+    )
+    async {
         guard let context = streamsByID[session.id] else { return }
 
         // Clear any stuck modifier state when stream ends
@@ -355,6 +360,10 @@ public extension MirageHostService {
 
         // Minimize the window if requested (after stopping capture so window is restored from virtual display)
         if minimizeWindow { WindowManager.minimizeWindow(windowID) }
+
+        if updateAppSession {
+            await removeStoppedWindowFromAppSessionIfNeeded(windowID: windowID)
+        }
 
         await updateLightsOutState()
 

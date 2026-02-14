@@ -205,7 +205,9 @@ extension MirageHostService {
         }
 
         // Stop the stream for this window
-        if let streamSession = activeStreams.first(where: { $0.id == windowInfo.streamID }) { await stopStream(streamSession, minimizeWindow: false) }
+        if let streamSession = activeStreams.first(where: { $0.id == windowInfo.streamID }) {
+            await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+        }
 
         // Enter cooldown for this window
         await appStreamManager.removeWindowFromSession(
@@ -239,7 +241,7 @@ extension MirageHostService {
         for windowID in windowIDs {
             if let windowInfo = session.windowStreams[windowID],
                let streamSession = activeStreams.first(where: { $0.id == windowInfo.streamID }) {
-                await stopStream(streamSession, minimizeWindow: false)
+                await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
             }
         }
 
@@ -258,6 +260,7 @@ extension MirageHostService {
 
         // End the session
         await appStreamManager.endSession(bundleIdentifier: bundleID)
+        await restoreStageManagerAfterAppStreamingIfNeeded()
 
         MirageLogger.host("App \(bundleID) terminated, ended session")
     }
@@ -275,6 +278,7 @@ extension MirageHostService {
             message: "No new window appeared. Returning to app selection."
         )
         try? await clientContext.send(.returnToAppSelection, content: response)
+        await endAppSessionIfIdle(bundleIdentifier: bundleID)
 
         MirageLogger.host("Cooldown expired for window \(windowID) in app \(bundleID)")
     }

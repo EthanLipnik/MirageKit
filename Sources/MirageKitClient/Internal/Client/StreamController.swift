@@ -139,7 +139,7 @@ actor StreamController {
     var hasReceivedFirstFrame = false
 
     /// Bounded queue of frames waiting to be decoded.
-    var queuedFrames: [FrameData] = []
+    var queuedFrames = MirageRingBuffer<FrameData>(minimumCapacity: 32)
 
     /// Continuation resumed when the decode task is waiting for a frame.
     var dequeueContinuation: CheckedContinuation<FrameData?, Never>?
@@ -168,6 +168,7 @@ actor StreamController {
     var lastFreezeRecoveryTime: CFAbsoluteTime = 0
     var consecutiveFreezeRecoveries: Int = 0
     var freezeMonitorTask: Task<Void, Never>?
+    private let nowProvider: @Sendable () -> CFAbsoluteTime
 
     // MARK: - Callbacks
 
@@ -212,10 +213,19 @@ actor StreamController {
     // MARK: - Initialization
 
     /// Create a new stream controller
-    init(streamID: StreamID, maxPayloadSize: Int) {
+    init(
+        streamID: StreamID,
+        maxPayloadSize: Int,
+        nowProvider: @escaping @Sendable () -> CFAbsoluteTime = CFAbsoluteTimeGetCurrent
+    ) {
         self.streamID = streamID
         decoder = HEVCDecoder()
         reassembler = FrameReassembler(streamID: streamID, maxPayloadSize: maxPayloadSize)
+        self.nowProvider = nowProvider
+    }
+
+    func currentTime() -> CFAbsoluteTime {
+        nowProvider()
     }
 
     /// Start the controller - sets up decoder and reassembler callbacks
@@ -376,7 +386,9 @@ actor StreamController {
     }
 
     private func dequeueFrame() async -> FrameData? {
-        if !queuedFrames.isEmpty { return queuedFrames.removeFirst() }
+        if !queuedFrames.isEmpty {
+            return queuedFrames.popFirst()
+        }
         return await withCheckedContinuation { continuation in
             dequeueContinuation = continuation
         }
@@ -388,15 +400,14 @@ actor StreamController {
             continuation.resume(returning: nil)
         }
         if queuedFrames.isEmpty { return }
-        let frames = queuedFrames
-        queuedFrames.removeAll(keepingCapacity: false)
+        let frames = queuedFrames.drain()
         for frame in frames {
             frame.releaseBuffer()
         }
     }
 
     private func logQueueDropIfNeeded() {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         if now - lastQueueDropLogTime >= Self.queueDropLogInterval {
             lastQueueDropLogTime = now
             let dropped = queueDropsSinceLastLog
@@ -442,7 +453,7 @@ actor StreamController {
     }
 
     private func dispatchMetrics() async {
-        let now = CFAbsoluteTimeGetCurrent()
+        let now = currentTime()
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
         logMetricsIfNeeded(
