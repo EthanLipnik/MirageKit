@@ -54,9 +54,9 @@ struct RenderAdmissionPolicyTests {
         #expect(decision.presentationKeepDepth == 2)
         #expect(decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .baseline)
-        #expect(decision.admissionReleaseMode == .scheduled)
+        #expect(decision.admissionReleaseMode == .completed)
         #expect(!decision.allowsInFlightCapMicroRetry)
-        #expect(!decision.allowsSecondaryCatchUpDraw)
+        #expect(decision.allowsSecondaryCatchUpDraw)
     }
 
     @Test("Auto baseline keeps 60Hz admission stable under pressure")
@@ -101,6 +101,23 @@ struct RenderAdmissionPolicyTests {
             typingBurstActive: false,
             recoveryActive: true,
             smoothestPromotionActive: true,
+            pressureActive: true
+        )
+        #expect(decision.inFlightCap == 2)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.presentationKeepDepth == 1)
+        #expect(decision.reason == .recovery)
+        #expect(decision.admissionReleaseMode == .completed)
+    }
+
+    @Test("Auto recovery keeps baseline admission throughput")
+    func autoRecoveryKeepsBaselineAdmission() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .auto,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: true,
+            smoothestPromotionActive: false,
             pressureActive: true
         )
         #expect(decision.inFlightCap == 2)

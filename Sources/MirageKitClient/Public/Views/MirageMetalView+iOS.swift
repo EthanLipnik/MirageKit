@@ -901,52 +901,23 @@ public class MirageMetalView: UIView {
         renderedFPS: Double,
         drawableWaitAvgMs: Double
     ) {
-        let recoveryActive = renderStabilityPolicy.snapshot().recoveryActive
-        let typingActive = typingBurstActive(now: now)
-        if !recoveryActive {
-            if renderScalePolicy.currentScale < 0.999 {
-                let previousScale = renderScalePolicy.currentScale
-                renderScalePolicy.reset()
-                renderState.markNeedsRedraw()
-                setNeedsLayout()
-                requestDraw()
-                if MirageLogger.isEnabled(.renderer) {
-                    let fromText = previousScale.formatted(.number.precision(.fractionLength(2)))
-                    let toText = renderScalePolicy.currentScale.formatted(.number.precision(.fractionLength(2)))
-                    MirageLogger.renderer(
-                        "Render scale transition mode=\(latencyMode.rawValue) direction=up scale=\(fromText)->\(toText) " +
-                            "degradedStreak=0 healthyStreak=0 nextStepIn=0.00s"
-                    )
-                }
-            }
-            return
-        }
-        if typingActive {
-            return
-        }
+        _ = now
+        _ = renderedFPS
+        _ = drawableWaitAvgMs
+        guard renderScalePolicy.currentScale < 0.999 else { return }
 
-        let transition = renderScalePolicy.evaluate(
-            now: now,
-            latencyMode: latencyMode,
-            targetFPS: maxRenderFPS,
-            renderedFPS: renderedFPS,
-            drawableWaitAvgMs: drawableWaitAvgMs,
-            typingBurstActive: false
-        )
-        guard transition.changed else { return }
+        let previousScale = renderScalePolicy.currentScale
+        renderScalePolicy.reset()
         renderState.markNeedsRedraw()
         setNeedsLayout()
         requestDraw()
 
         guard MirageLogger.isEnabled(.renderer) else { return }
-        let fromText = transition.previousScale.formatted(.number.precision(.fractionLength(2)))
-        let toText = transition.newScale.formatted(.number.precision(.fractionLength(2)))
-        let holdText = transition.secondsUntilNextStep.formatted(.number.precision(.fractionLength(2)))
-        let direction = transition.direction?.rawValue ?? "none"
+        let fromText = previousScale.formatted(.number.precision(.fractionLength(2)))
+        let toText = renderScalePolicy.currentScale.formatted(.number.precision(.fractionLength(2)))
         MirageLogger.renderer(
-            "Render scale transition mode=\(latencyMode.rawValue) direction=\(direction) scale=\(fromText)->\(toText) " +
-                "degradedStreak=\(transition.degradedStreak) healthyStreak=\(transition.healthyStreak) " +
-                "nextStepIn=\(holdText)s"
+            "Render scale transition mode=\(latencyMode.rawValue) direction=up scale=\(fromText)->\(toText) " +
+                "degradedStreak=0 healthyStreak=0 nextStepIn=0.00s"
         )
     }
 

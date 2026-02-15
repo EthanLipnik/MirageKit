@@ -112,7 +112,9 @@ enum MirageRenderAdmissionPolicy {
             case .lowestLatency:
                 return (1, .recovery)
             case .auto:
-                return (1, .recovery)
+                // Auto keeps throughput-focused admission during recovery and relies on
+                // stream-side quality controls instead of presentation-cap collapse.
+                return (2, .recovery)
             case .smoothest:
                 return (2, .recovery)
             }
@@ -161,7 +163,7 @@ enum MirageRenderAdmissionPolicy {
             case .lowestLatency:
                 return 2
             case .auto:
-                return 2
+                return 3
             case .smoothest:
                 return 3
             }
@@ -227,7 +229,10 @@ enum MirageRenderAdmissionPolicy {
         }
         switch latencyMode {
         case .auto:
-            return false
+            // Auto mode allows a second draw only when baseline policy is active and
+            // pressure signals are clear. This helps absorb bursty decode arrivals
+            // without widening in-flight depth under stressed conditions.
+            return reason == .baseline && !pressureActive
         case .smoothest:
             return smoothestPromotionActive && reason == .promotion
         case .lowestLatency:
@@ -248,7 +253,7 @@ enum MirageRenderAdmissionPolicy {
 
     private static func resolvedAdmissionReleaseMode(
         latencyMode: MirageStreamLatencyMode,
-        targetFPS: Int,
+        targetFPS _: Int,
         reason: MirageRenderPolicyReason
     ) -> MirageRenderAdmissionReleaseMode {
         if reason == .typing {
@@ -261,9 +266,6 @@ enum MirageRenderAdmissionPolicy {
             case .auto, .smoothest:
                 return .completed
             }
-        }
-        if targetFPS <= 60, latencyMode == .auto, reason == .baseline {
-            return .scheduled
         }
         return .completed
     }

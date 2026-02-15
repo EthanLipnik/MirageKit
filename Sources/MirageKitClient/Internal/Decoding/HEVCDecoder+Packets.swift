@@ -44,6 +44,7 @@ extension FrameReassembler {
         var completedFrame: CompletedFrame?
         var completionHandler: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
             -> Void)?
+        var shouldSignalFrameLoss = false
 
         let frameNumber = header.frameNumber
         let isKeyframePacket = header.flags.contains(.keyframe)
@@ -229,16 +230,23 @@ extension FrameReassembler {
 
         // Check if frame is complete.
         if frame.receivedCount == frame.dataFragmentCount {
-            completedFrame = completeFrameLocked(frameNumber: frameNumber, frame: frame)
+            let completionResult = completeFrameLocked(frameNumber: frameNumber, frame: frame)
+            completedFrame = completionResult.frame
+            if completionResult.shouldSignalFrameLoss {
+                shouldSignalFrameLoss = true
+            }
             completionHandler = onFrameComplete
         }
 
         // Clean up old pending frames
         let didTimeout = cleanupOldFramesLocked()
-        lock.unlock()
-
         if didTimeout {
             beginAwaitingKeyframe()
+            shouldSignalFrameLoss = true
+        }
+        lock.unlock()
+
+        if shouldSignalFrameLoss {
             if let onFrameLoss { onFrameLoss(streamID) }
         }
 
@@ -262,9 +270,15 @@ extension FrameReassembler {
         let releaseBuffer: @Sendable () -> Void
     }
 
-    private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> CompletedFrame? {
+    private struct FrameCompletionResult {
+        let frame: CompletedFrame?
+        let shouldSignalFrameLoss: Bool
+    }
+
+    private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
         // Frame skipping logic: determine if we should deliver this frame
         let shouldDeliver: Bool
+        var shouldSignalFrameLoss = false
 
         if frame.isKeyframe {
             // Always deliver keyframes unless a newer keyframe was already delivered.
@@ -274,12 +288,33 @@ extension FrameReassembler {
                 hasDeliveredKeyframeAnchor = true
             }
         } else {
-            // For P-frames: require a delivered keyframe anchor and monotonic progression.
-            // Missing intermediate frames are handled by decoder recovery paths instead of
-            // reassembler-wide blocking, which prevents persistent stalls on a single gap.
-            shouldDeliver = hasDeliveredKeyframeAnchor &&
-                isFrameNewer(frameNumber, than: lastCompletedFrame) &&
-                isFrameNewer(frameNumber, than: lastDeliveredKeyframe)
+            // For P-frames: require a delivered keyframe anchor and strict in-order delivery.
+            // Delivering across gaps can push invalid references into VideoToolbox and create
+            // prolonged decode-error/keyframe loops.
+            guard hasDeliveredKeyframeAnchor else {
+                shouldDeliver = false
+                pendingFrames.removeValue(forKey: frameNumber)
+                frame.buffer.release()
+                droppedFrameCount += 1
+                return FrameCompletionResult(frame: nil, shouldSignalFrameLoss: false)
+            }
+            let expectedNextFrame = lastCompletedFrame &+ 1
+            if frameNumber == expectedNextFrame {
+                shouldDeliver = isFrameNewer(frameNumber, than: lastDeliveredKeyframe)
+            } else {
+                shouldDeliver = false
+                if isFrameNewer(frameNumber, than: expectedNextFrame) {
+                    let wasAwaitingKeyframe = awaitingKeyframe
+                    beginAwaitingKeyframe()
+                    if !wasAwaitingKeyframe {
+                        shouldSignalFrameLoss = true
+                        MirageLogger.log(
+                            .frameAssembly,
+                            "Frame gap detected: expected \(expectedNextFrame), received \(frameNumber) - requesting keyframe"
+                        )
+                    }
+                }
+            }
         }
 
         if shouldDeliver {
@@ -301,12 +336,15 @@ extension FrameReassembler {
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
             let buffer = frame.buffer
             let releaseBuffer: @Sendable () -> Void = { buffer.release() }
-            return CompletedFrame(
-                data: output,
-                isKeyframe: frame.isKeyframe,
-                timestamp: frame.timestamp,
-                contentRect: frame.contentRect,
-                releaseBuffer: releaseBuffer
+            return FrameCompletionResult(
+                frame: CompletedFrame(
+                    data: output,
+                    isKeyframe: frame.isKeyframe,
+                    timestamp: frame.timestamp,
+                    contentRect: frame.contentRect,
+                    releaseBuffer: releaseBuffer
+                ),
+                shouldSignalFrameLoss: false
             )
         } else {
             // This frame arrived too late - a newer frame was already delivered
@@ -319,7 +357,7 @@ extension FrameReassembler {
             pendingFrames.removeValue(forKey: frameNumber)
             frame.buffer.release()
             droppedFrameCount += 1
-            return nil
+            return FrameCompletionResult(frame: nil, shouldSignalFrameLoss: shouldSignalFrameLoss)
         }
     }
 

@@ -133,8 +133,9 @@ extension StreamController {
             let now = currentTime()
             guard let awaitingDuration = reassembler.awaitingKeyframeDuration(now: now) else { break }
             let timeout = reassembler.keyframeTimeoutSeconds()
-            guard awaitingDuration >= timeout else { continue }
-            let retryInterval = min(timeout, Self.keyframeRecoveryRetryInterval)
+            let initialRetryDelay = min(timeout, Self.keyframeRecoveryRetryInterval)
+            guard awaitingDuration >= initialRetryDelay else { continue }
+            let retryInterval = Self.keyframeRecoveryRetryInterval
             if lastRecoveryRequestTime > 0, now - lastRecoveryRequestTime < retryInterval { continue }
             lastRecoveryRequestTime = now
             await requestKeyframeRecovery(reason: .keyframeRecoveryLoop)

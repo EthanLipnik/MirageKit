@@ -246,9 +246,7 @@ actor StreamController {
             guard let self else { return }
             Task {
                 await self.recordDecodeThresholdEvent()
-                self.reassembler.enterKeyframeOnlyMode()
-                await self.startKeyframeRecoveryLoopIfNeeded()
-                await self.requestKeyframeRecovery(reason: .decodeErrorThreshold)
+                await self.requestRecovery(reason: .decodeErrorThreshold)
             }
         }
 
