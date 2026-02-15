@@ -184,8 +184,8 @@ Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe 
 ### Input + UI
 
 - Input events are forwarded via `MirageInputEvent` types (mouse, key, scroll, magnify, rotate).
-- iPad clients support Apple Pencil in `mouse` mode or `drawingTablet` mode; Pencil contact forwards pressure and stylus orientation metadata for tablet-aware host apps in both modes.
-- Direct touch supports `normal`, `dragCursor`, and `exclusive` modes; exclusive mode uses one-finger native scroll physics and reserves pointer clicks for Apple Pencil or indirect pointer input.
+- iPad clients always send Apple Pencil as drawing-tablet input with pressure and stylus orientation metadata for tablet-aware host apps.
+- Direct touch supports `normal`, `dragCursor`, and `pencilBased` modes; Pencil-based mode uses one-finger native scroll physics and reserves pointer clicks for Apple Pencil or indirect pointer input.
 - Apple Pencil squeeze emits a secondary click at the hover location when available, or the latest pointer location.
 - `MirageStreamViewRepresentable` renders streams with Metal and exposes drawable size callbacks for resolution sync.
 - `MirageStreamContentView` + `MirageClientSessionStore` coordinate input, focus, and resize UI.

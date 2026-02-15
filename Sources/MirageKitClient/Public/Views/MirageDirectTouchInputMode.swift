@@ -18,13 +18,31 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
     case dragCursor
 
     /// Direct touches only generate smooth native scroll events.
-    case exclusive
+    case pencilBased
 
     public var displayName: String {
         switch self {
         case .normal: "Normal"
         case .dragCursor: "Drag Cursor"
-        case .exclusive: "Exclusive (Scroll Only)"
+        case .pencilBased: "Pencil-based (Scroll Only)"
+        }
+    }
+
+    /// Resolves persisted mode values, including legacy keys.
+    public static func fromPersistedRawValue(
+        _ rawValue: String,
+        enableVirtualTrackpad: Bool
+    ) -> MirageDirectTouchInputMode {
+        if let mode = MirageDirectTouchInputMode(rawValue: rawValue) {
+            return mode
+        }
+        switch rawValue {
+        case "direct":
+            return .normal
+        case "exclusive", "scrollOnly":
+            return .pencilBased
+        default:
+            return enableVirtualTrackpad ? .dragCursor : .normal
         }
     }
 }

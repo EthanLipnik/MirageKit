@@ -682,7 +682,7 @@ public class InputCapturingView: UIView {
                 virtualDragActive = false
                 stopVirtualCursorDeceleration()
                 setVirtualCursorVisible(false)
-            case .exclusive:
+            case .pencilBased:
                 longPressGesture.allowedTouchTypes = indirectTouchTypes
                 scrollGesture.isEnabled = false
                 directRotationGesture.isEnabled = false

@@ -169,10 +169,10 @@ public enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
 
     public var displayName: String {
         switch self {
-        case .p010: "10-bit (P010 input, HEVC 4:2:0)"
-        case .bgr10a2: "10-bit (ARGB2101010 input, HEVC 4:2:2 preferred)"
-        case .bgra8: "8-bit (BGRA input, HEVC 4:2:0)"
-        case .nv12: "8-bit (NV12 input, HEVC 4:2:0)"
+        case .p010: "10-bit (P010)"
+        case .bgr10a2: "10-bit (ARGB2101010)"
+        case .bgra8: "8-bit (BGRA)"
+        case .nv12: "8-bit (NV12)"
         }
     }
 }
