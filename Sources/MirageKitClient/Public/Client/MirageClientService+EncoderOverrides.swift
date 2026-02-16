@@ -35,6 +35,13 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
         }
+        if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
+            request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+            MirageLogger
+                .client(
+                    "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
+                )
+        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -64,6 +71,13 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
         }
+        if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
+            request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+            MirageLogger
+                .client(
+                    "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
+                )
+        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -92,6 +106,13 @@ extension MirageClientService {
             let mbps = Double(bitrate) / 1_000_000.0
             MirageLogger
                 .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
+            request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+            MirageLogger
+                .client(
+                    "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
+                )
         }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true

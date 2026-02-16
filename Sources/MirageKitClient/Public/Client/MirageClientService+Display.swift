@@ -122,6 +122,24 @@ extension MirageClientService {
         #endif
     }
 
+    public func getMainDisplayNativePixelResolution() -> CGSize {
+        #if os(macOS)
+        return getMainDisplayResolution()
+        #elseif os(iOS) || os(visionOS)
+        let metrics = resolvedScreenMetrics()
+        let nativePixels = scaledDisplayResolution(metrics.nativePixelSize)
+        if nativePixels.width > 0, nativePixels.height > 0 { return nativePixels }
+
+        let cachedNativePixels = scaledDisplayResolution(Self.lastKnownScreenNativePixelSize)
+        if cachedNativePixels.width > 0, cachedNativePixels.height > 0 {
+            return cachedNativePixels
+        }
+        return .zero
+        #else
+        return CGSize(width: 2560, height: 1600)
+        #endif
+    }
+
     public func getVirtualDisplayPixelResolution() -> CGSize {
         #if os(iOS) || os(visionOS)
         let displayResolution = getMainDisplayResolution()
@@ -164,6 +182,7 @@ extension MirageClientService {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
 
         let scaledResolution = scaledDisplayResolution(newResolution)
+        let pixelResolution = virtualDisplayPixelResolution(for: scaledResolution)
         let request = DisplayResolutionChangeMessage(
             streamID: streamID,
             displayWidth: Int(scaledResolution.width),
@@ -174,7 +193,8 @@ extension MirageClientService {
         MirageLogger
             .client(
                 "Sending display size change for stream \(streamID): " +
-                    "\(Int(scaledResolution.width))x\(Int(scaledResolution.height)) pts"
+                    "\(Int(scaledResolution.width))x\(Int(scaledResolution.height)) pts " +
+                    "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
             )
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in

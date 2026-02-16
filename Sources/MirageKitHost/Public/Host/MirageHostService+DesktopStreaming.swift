@@ -27,6 +27,7 @@ extension MirageHostService {
         colorSpace: MirageColorSpace?,
         captureQueueDepth: Int?,
         bitrate: Int?,
+        allowRuntimeQualityAdjustment: Bool?,
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
@@ -248,11 +249,15 @@ extension MirageHostService {
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: mediaSecurityByClientID[clientContext.client.id],
             additionalFrameFlags: [.desktopStream],
+            runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
             latencyMode: latencyMode
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         logDesktopStartStep("stream context created (\(streamID))")
+        if allowRuntimeQualityAdjustment == false {
+            MirageLogger.host("Runtime quality adjustment disabled for desktop stream \(streamID)")
+        }
         let metricsClientID = clientContext.client.id
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in
             Task { @MainActor [weak self] in

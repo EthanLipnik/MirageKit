@@ -32,6 +32,16 @@ final class MirageMetalRenderState {
         needsRedraw = true
     }
 
+    /// Drop the currently held frame snapshot so stale sequence retries do not spin.
+    func clearCurrentFrame() {
+        currentPixelBuffer = nil
+        currentPixelFormatType = nil
+        currentContentRect = .zero
+        currentSequence = 0
+        currentDecodeTime = 0
+        needsRedraw = true
+    }
+
     @discardableResult
     func updateFrameIfNeeded(
         streamID: StreamID?,

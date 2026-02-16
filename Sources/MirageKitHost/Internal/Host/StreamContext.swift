@@ -264,6 +264,8 @@ actor StreamContext {
     let useLowLatencyPipeline: Bool
     /// Client-requested stream scale.
     var requestedStreamScale: CGFloat
+    /// When false, runtime quality adjustments remain fixed at derived baseline quality.
+    let runtimeQualityAdjustmentEnabled: Bool
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
 
@@ -275,6 +277,7 @@ actor StreamContext {
         maxPacketSize: Int = mirageDefaultMaxPacketSize,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         additionalFrameFlags: FrameFlags = [],
+        runtimeQualityAdjustmentEnabled: Bool = true,
         disableResolutionCap: Bool = false,
         latencyMode: MirageStreamLatencyMode = .auto
     ) {
@@ -292,6 +295,7 @@ actor StreamContext {
         currentFrameRate = encoderConfig.targetFrameRate
         captureFrameRateOverride = nil
         captureFrameRate = encoderConfig.targetFrameRate
+        self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         self.disableResolutionCap = disableResolutionCap
         activePixelFormat = encoderConfig.pixelFormat
         let prefersSmoothness = latencyMode == .smoothest || latencyMode == .auto

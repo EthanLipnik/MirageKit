@@ -84,6 +84,73 @@ struct MirageKitTests {
         #expect(decodedHello.deviceName == "Test Device")
     }
 
+    @Test("Hello message optional mismatch update flag serialization")
+    func helloOptionalMismatchUpdateFlagSerialization() throws {
+        let hello = HelloMessage(
+            deviceID: UUID(),
+            deviceName: "Mismatch Test",
+            deviceType: .iPad,
+            protocolVersion: Int(MirageKit.protocolVersion),
+            capabilities: MirageHostCapabilities(),
+            negotiation: MirageProtocolNegotiation.clientHello(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                supportedFeatures: mirageSupportedFeatures
+            ),
+            identity: MirageIdentityEnvelope(
+                keyID: "test-key-id",
+                publicKey: Data([0x01, 0x02]),
+                timestampMs: 9_999,
+                nonce: "nonce",
+                signature: Data([0x03, 0x04])
+            ),
+            requestHostUpdateOnProtocolMismatch: true
+        )
+
+        let message = try ControlMessage(type: .hello, content: hello)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: message.serialize()))
+        let decodedHello = try decodedEnvelope.decode(HelloMessage.self)
+        #expect(decodedHello.requestHostUpdateOnProtocolMismatch == true)
+    }
+
+    @Test("Hello response mismatch metadata serialization")
+    func helloResponseMismatchMetadataSerialization() throws {
+        let response = HelloResponseMessage(
+            accepted: false,
+            hostID: UUID(),
+            hostName: "Host",
+            requiresAuth: false,
+            dataPort: 9848,
+            negotiation: MirageProtocolNegotiation.clientHello(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                supportedFeatures: mirageSupportedFeatures
+            ),
+            requestNonce: "request-nonce",
+            mediaEncryptionEnabled: false,
+            udpRegistrationToken: Data(),
+            identity: MirageIdentityEnvelope(
+                keyID: "host-key-id",
+                publicKey: Data([0x10, 0x20]),
+                timestampMs: 10_000,
+                nonce: "host-nonce",
+                signature: Data([0x30, 0x40])
+            ),
+            rejectionReason: .protocolVersionMismatch,
+            protocolMismatchHostVersion: 1,
+            protocolMismatchClientVersion: 2,
+            protocolMismatchUpdateTriggerAccepted: true,
+            protocolMismatchUpdateTriggerMessage: "Update accepted"
+        )
+
+        let envelope = try ControlMessage(type: .helloResponse, content: response)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
+        #expect(decoded.rejectionReason == .protocolVersionMismatch)
+        #expect(decoded.protocolMismatchHostVersion == 1)
+        #expect(decoded.protocolMismatchClientVersion == 2)
+        #expect(decoded.protocolMismatchUpdateTriggerAccepted == true)
+        #expect(decoded.protocolMismatchUpdateTriggerMessage == "Update accepted")
+    }
+
     @Test("Audio control message serialization")
     func audioControlMessageSerialization() throws {
         let started = AudioStreamStartedMessage(
@@ -104,6 +171,50 @@ struct MirageKitTests {
         #expect(decodedStoppedEnvelope.type == .audioStreamStopped)
         let decodedStopped = try decodedStoppedEnvelope.decode(AudioStreamStoppedMessage.self)
         #expect(decodedStopped == stopped)
+    }
+
+    @Test("Host software update control message serialization")
+    func hostSoftwareUpdateControlMessageSerialization() throws {
+        let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
+        let requestEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatusRequest, content: statusRequest)
+        let (decodedRequestEnvelope, _) = try #require(ControlMessage.deserialize(from: requestEnvelope.serialize()))
+        let decodedStatusRequest = try decodedRequestEnvelope.decode(HostSoftwareUpdateStatusRequestMessage.self)
+        #expect(decodedStatusRequest.forceRefresh == true)
+
+        let status = HostSoftwareUpdateStatusMessage(
+            isSparkleAvailable: true,
+            isCheckingForUpdates: false,
+            isInstallInProgress: true,
+            channel: .nightly,
+            currentVersion: "1.2.0",
+            availableVersion: "1.3.0",
+            availableVersionTitle: "Mirage 1.3",
+            lastCheckedAtMs: 1_700_000_000_000
+        )
+        let statusEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: status)
+        let (decodedStatusEnvelope, _) = try #require(ControlMessage.deserialize(from: statusEnvelope.serialize()))
+        let decodedStatus = try decodedStatusEnvelope.decode(HostSoftwareUpdateStatusMessage.self)
+        #expect(decodedStatus.channel == .nightly)
+        #expect(decodedStatus.availableVersion == "1.3.0")
+        #expect(decodedStatus.isInstallInProgress == true)
+
+        let installRequest = HostSoftwareUpdateInstallRequestMessage(trigger: .protocolMismatch)
+        let installRequestEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallRequest, content: installRequest)
+        let (decodedInstallRequestEnvelope, _) = try #require(ControlMessage.deserialize(from: installRequestEnvelope.serialize()))
+        let decodedInstallRequest = try decodedInstallRequestEnvelope.decode(HostSoftwareUpdateInstallRequestMessage.self)
+        #expect(decodedInstallRequest.trigger == .protocolMismatch)
+
+        let installResult = HostSoftwareUpdateInstallResultMessage(
+            accepted: false,
+            message: "Denied",
+            status: status
+        )
+        let installResultEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: installResult)
+        let (decodedInstallResultEnvelope, _) = try #require(ControlMessage.deserialize(from: installResultEnvelope.serialize()))
+        let decodedInstallResult = try decodedInstallResultEnvelope.decode(HostSoftwareUpdateInstallResultMessage.self)
+        #expect(decodedInstallResult.accepted == false)
+        #expect(decodedInstallResult.status?.currentVersion == "1.2.0")
+        #expect(decodedInstallResult.message == "Denied")
     }
 
     @Test("Audio packet header serialization")
@@ -206,6 +317,7 @@ struct MirageKitTests {
         #expect(decoded.maxStreams == 4)
         #expect(decoded.supportsHEVC == true)
         #expect(decoded.maxFrameRate == 120)
+        #expect(decoded.protocolVersion == Int(MirageKit.protocolVersion))
     }
 
     @Test("Stream statistics formatting")

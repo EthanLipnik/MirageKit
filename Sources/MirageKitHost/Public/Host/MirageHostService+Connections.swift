@@ -22,6 +22,22 @@ extension MirageHostService {
         let pendingControlData: Data
     }
 
+    private struct RejectedHello {
+        let deviceInfo: MirageDeviceInfo
+        let requestNonce: String
+        let negotiation: MirageProtocolNegotiation
+        let reason: HelloRejectionReason
+        let protocolMismatchHostVersion: Int?
+        let protocolMismatchClientVersion: Int?
+        let protocolMismatchUpdateTriggerAccepted: Bool?
+        let protocolMismatchUpdateTriggerMessage: String?
+    }
+
+    private enum ReceivedHelloResult {
+        case accepted(ReceivedHello)
+        case rejected(RejectedHello)
+    }
+
     private enum ApprovalOutcome {
         case accepted(autoTrustGranted: Bool)
         case rejected
@@ -106,9 +122,34 @@ extension MirageHostService {
 
         MirageLogger.host("Waiting for hello message from \(endpointDescription)...")
 
-        guard let hello = await receiveHelloMessage(from: connection, endpoint: endpointDescription) else {
+        guard let helloResult = await receiveHelloMessage(from: connection, endpoint: endpointDescription) else {
             MirageLogger.host("Closing connection without valid hello from \(endpointDescription)")
             connection.cancel()
+            return
+        }
+
+        let hello: ReceivedHello
+        switch helloResult {
+        case let .accepted(value):
+            hello = value
+        case let .rejected(rejection):
+            MirageLogger.host(
+                "Sending hello rejection to \(rejection.deviceInfo.name) reason=\(rejection.reason.rawValue)"
+            )
+            sendHelloResponse(
+                accepted: false,
+                to: connection,
+                dataPort: currentDataPort(),
+                negotiation: rejection.negotiation,
+                deviceInfo: rejection.deviceInfo,
+                requestNonce: rejection.requestNonce,
+                rejectionReason: rejection.reason,
+                protocolMismatchHostVersion: rejection.protocolMismatchHostVersion,
+                protocolMismatchClientVersion: rejection.protocolMismatchClientVersion,
+                protocolMismatchUpdateTriggerAccepted: rejection.protocolMismatchUpdateTriggerAccepted,
+                protocolMismatchUpdateTriggerMessage: rejection.protocolMismatchUpdateTriggerMessage,
+                cancelAfterSend: true
+            )
             return
         }
         let deviceInfo = hello.deviceInfo
@@ -130,6 +171,7 @@ extension MirageHostService {
                 negotiation: hello.negotiation,
                 deviceInfo: hello.deviceInfo,
                 requestNonce: hello.requestNonce,
+                rejectionReason: .hostBusy,
                 cancelAfterSend: true
             )
             return
@@ -211,6 +253,7 @@ extension MirageHostService {
         }
         clientsByConnection[ObjectIdentifier(connection)] = clientContext
         clientsByID[client.id] = clientContext
+        peerIdentityByClientID[client.id] = peerIdentity(from: deviceInfo)
         audioConfigurationByClientID[client.id] = .default
 
         connectedClients.append(client)
@@ -233,7 +276,7 @@ extension MirageHostService {
     }
 
     /// Receive hello message from a connecting client.
-    private func receiveHelloMessage(from connection: NWConnection, endpoint: String) async -> ReceivedHello? {
+    private func receiveHelloMessage(from connection: NWConnection, endpoint: String) async -> ReceivedHelloResult? {
         let result: (
             Data?,
             NWConnection.ContentContext?,
@@ -269,30 +312,6 @@ extension MirageHostService {
 
         do {
             let hello = try message.decode(HelloMessage.self)
-            guard hello.protocolVersion == Int(MirageKit.protocolVersion) else {
-                MirageLogger.host(
-                    "Rejected hello from \(hello.deviceName): legacy protocol field \(hello.protocolVersion) unsupported"
-                )
-                return nil
-            }
-            guard hello.negotiation.protocolVersion == Int(MirageKit.protocolVersion) else {
-                MirageLogger.host(
-                    "Rejected hello from \(hello.deviceName): protocol \(hello.negotiation.protocolVersion) unsupported"
-                )
-                return nil
-            }
-            guard hello.negotiation.supportedFeatures.contains(.identityAuthV2) else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): missing identityAuthV2 support")
-                return nil
-            }
-            guard hello.negotiation.supportedFeatures.contains(.udpRegistrationAuthV1) else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): missing udpRegistrationAuthV1 support")
-                return nil
-            }
-            guard hello.negotiation.supportedFeatures.contains(.encryptedMediaV1) else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): missing encryptedMediaV1 support")
-                return nil
-            }
             let identity = hello.identity
             guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
                 MirageLogger.host("Rejected hello from \(hello.deviceName): invalid identity key ID")
@@ -327,7 +346,70 @@ extension MirageHostService {
                 MirageLogger.host("Rejected hello from \(hello.deviceName): signature verification failed")
                 return nil
             }
+
+            let deviceInfo = MirageDeviceInfo(
+                id: hello.deviceID,
+                name: hello.deviceName,
+                deviceType: hello.deviceType,
+                endpoint: endpoint,
+                iCloudUserID: hello.iCloudUserID,
+                identityKeyID: identity.keyID,
+                identityPublicKey: identity.publicKey,
+                isIdentityAuthenticated: true
+            )
             let selectedFeatures = hello.negotiation.supportedFeatures.intersection(mirageSupportedFeatures)
+            let responseNegotiation = MirageProtocolNegotiation(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                supportedFeatures: mirageSupportedFeatures,
+                selectedFeatures: selectedFeatures
+            )
+
+            let hostProtocolVersion = Int(MirageKit.protocolVersion)
+            if hello.protocolVersion != hostProtocolVersion || hello.negotiation.protocolVersion != hostProtocolVersion {
+                let triggerResult = await handleProtocolMismatchUpdateRequestIfNeeded(
+                    hello: hello,
+                    deviceInfo: deviceInfo
+                )
+                MirageLogger.host(
+                    "Rejected hello from \(hello.deviceName): protocol mismatch host=\(hostProtocolVersion) client=\(hello.negotiation.protocolVersion)"
+                )
+                return .rejected(
+                    RejectedHello(
+                        deviceInfo: deviceInfo,
+                        requestNonce: identity.nonce,
+                        negotiation: responseNegotiation,
+                        reason: .protocolVersionMismatch,
+                        protocolMismatchHostVersion: hostProtocolVersion,
+                        protocolMismatchClientVersion: hello.negotiation.protocolVersion,
+                        protocolMismatchUpdateTriggerAccepted: triggerResult?.accepted,
+                        protocolMismatchUpdateTriggerMessage: triggerResult?.message
+                    )
+                )
+            }
+
+            let requiredFeatures: MirageFeatureSet = [
+                .identityAuthV2,
+                .udpRegistrationAuthV1,
+                .encryptedMediaV1,
+            ]
+            guard hello.negotiation.supportedFeatures.contains(requiredFeatures) else {
+                MirageLogger.host(
+                    "Rejected hello from \(hello.deviceName): missing required features \(hello.negotiation.supportedFeatures)"
+                )
+                return .rejected(
+                    RejectedHello(
+                        deviceInfo: deviceInfo,
+                        requestNonce: identity.nonce,
+                        negotiation: responseNegotiation,
+                        reason: .protocolFeaturesMismatch,
+                        protocolMismatchHostVersion: nil,
+                        protocolMismatchClientVersion: nil,
+                        protocolMismatchUpdateTriggerAccepted: nil,
+                        protocolMismatchUpdateTriggerMessage: nil
+                    )
+                )
+            }
+
             MirageLogger.host("Received hello from \(hello.deviceName) (\(hello.deviceType.displayName))")
             let pendingControlData = consumed < data.count ? Data(data.dropFirst(consumed)) : Data()
             if !pendingControlData.isEmpty {
@@ -336,25 +418,14 @@ extension MirageHostService {
                 )
             }
 
-            return ReceivedHello(
-                deviceInfo: MirageDeviceInfo(
-                    id: hello.deviceID,
-                    name: hello.deviceName,
-                    deviceType: hello.deviceType,
-                    endpoint: endpoint,
-                    iCloudUserID: hello.iCloudUserID,
-                    identityKeyID: identity.keyID,
-                    identityPublicKey: identity.publicKey,
-                    isIdentityAuthenticated: true
-                ),
-                negotiation: MirageProtocolNegotiation(
-                    protocolVersion: Int(MirageKit.protocolVersion),
-                    supportedFeatures: mirageSupportedFeatures,
-                    selectedFeatures: selectedFeatures
-                ),
-                requestNonce: identity.nonce,
-                identity: identity,
-                pendingControlData: pendingControlData
+            return .accepted(
+                ReceivedHello(
+                    deviceInfo: deviceInfo,
+                    negotiation: responseNegotiation,
+                    requestNonce: identity.nonce,
+                    identity: identity,
+                    pendingControlData: pendingControlData
+                )
             )
         } catch {
             MirageLogger.error(.host, "Failed to decode hello: \(error)")
@@ -480,6 +551,58 @@ extension MirageHostService {
         return 0
     }
 
+    private func peerIdentity(from deviceInfo: MirageDeviceInfo) -> MiragePeerIdentity {
+        MiragePeerIdentity(
+            deviceID: deviceInfo.id,
+            name: deviceInfo.name,
+            deviceType: deviceInfo.deviceType,
+            iCloudUserID: deviceInfo.iCloudUserID,
+            identityKeyID: deviceInfo.identityKeyID,
+            identityPublicKey: deviceInfo.identityPublicKey,
+            isIdentityAuthenticated: deviceInfo.isIdentityAuthenticated,
+            endpoint: deviceInfo.endpoint
+        )
+    }
+
+    func handleProtocolMismatchUpdateRequestIfNeeded(
+        hello: HelloMessage,
+        deviceInfo: MirageDeviceInfo
+    ) async -> (accepted: Bool, message: String)? {
+        guard hello.requestHostUpdateOnProtocolMismatch == true else {
+            return nil
+        }
+
+        guard let softwareUpdateController else {
+            return (
+                accepted: false,
+                message: "Host update service unavailable."
+            )
+        }
+
+        let peer = peerIdentity(from: deviceInfo)
+        let isAuthorized = await softwareUpdateController.hostService(
+            self,
+            shouldAuthorizeSoftwareUpdateRequestFrom: peer,
+            trigger: .protocolMismatch
+        )
+        guard isAuthorized else {
+            return (
+                accepted: false,
+                message: "Remote update request denied for this device."
+            )
+        }
+
+        let result = await softwareUpdateController.hostService(
+            self,
+            performSoftwareUpdateInstallFor: peer,
+            trigger: .protocolMismatch
+        )
+        return (
+            accepted: result.accepted,
+            message: result.message
+        )
+    }
+
     func reserveSingleClientSlot(for connectionID: ObjectIdentifier) -> Bool {
         if let reservedID = singleClientConnectionID, reservedID != connectionID { return false }
 
@@ -496,6 +619,92 @@ extension MirageHostService {
         if singleClientConnectionID == connectionID { singleClientConnectionID = nil }
     }
 
+    func makeHelloResponseMessage(
+        accepted: Bool,
+        dataPort: UInt16,
+        negotiation: MirageProtocolNegotiation,
+        deviceInfo: MirageDeviceInfo,
+        requestNonce: String,
+        autoTrustGranted: Bool = false,
+        rejectionReason: HelloRejectionReason? = nil,
+        protocolMismatchHostVersion: Int? = nil,
+        protocolMismatchClientVersion: Int? = nil,
+        protocolMismatchUpdateTriggerAccepted: Bool? = nil,
+        protocolMismatchUpdateTriggerMessage: String? = nil
+    )
+    throws -> (response: HelloResponseMessage, mediaSecurity: MirageMediaSecurityContext?) {
+        let hostName = Host.current().localizedName ?? "Mac"
+        guard let identityManager else {
+            throw MirageError.protocolError("Cannot send hello response without identity manager")
+        }
+        let identity = try identityManager.currentIdentity()
+        let timestampMs = MirageIdentitySigning.currentTimestampMs()
+        let nonce = UUID().uuidString.lowercased()
+        let mediaEncryptionEnabled = accepted
+        let udpRegistrationToken = accepted ? MirageMediaSecurity.makeRegistrationToken() : Data()
+        let mediaSecurityContext: MirageMediaSecurityContext?
+        if accepted {
+            guard let clientPublicKey = deviceInfo.identityPublicKey,
+                  let clientKeyID = deviceInfo.identityKeyID else {
+                throw MirageError.protocolError("Cannot derive media key without client identity metadata")
+            }
+            mediaSecurityContext = try MirageMediaSecurity.deriveContext(
+                identityManager: identityManager,
+                peerPublicKey: clientPublicKey,
+                hostID: hostID,
+                clientID: deviceInfo.id,
+                hostKeyID: identity.keyID,
+                clientKeyID: clientKeyID,
+                hostNonce: nonce,
+                clientNonce: requestNonce,
+                udpRegistrationToken: udpRegistrationToken
+            )
+        } else {
+            mediaSecurityContext = nil
+        }
+        let payload = try MirageIdentitySigning.helloResponsePayload(
+            accepted: accepted,
+            hostID: hostID,
+            hostName: hostName,
+            requiresAuth: false,
+            dataPort: dataPort,
+            negotiation: negotiation,
+            requestNonce: requestNonce,
+            mediaEncryptionEnabled: mediaEncryptionEnabled,
+            udpRegistrationToken: udpRegistrationToken,
+            keyID: identity.keyID,
+            publicKey: identity.publicKey,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let signature = try identityManager.sign(payload)
+        let response = HelloResponseMessage(
+            accepted: accepted,
+            hostID: hostID,
+            hostName: hostName,
+            requiresAuth: false,
+            dataPort: dataPort,
+            negotiation: negotiation,
+            requestNonce: requestNonce,
+            mediaEncryptionEnabled: mediaEncryptionEnabled,
+            udpRegistrationToken: udpRegistrationToken,
+            autoTrustGranted: autoTrustGranted,
+            identity: MirageIdentityEnvelope(
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: timestampMs,
+                nonce: nonce,
+                signature: signature
+            ),
+            rejectionReason: rejectionReason,
+            protocolMismatchHostVersion: protocolMismatchHostVersion,
+            protocolMismatchClientVersion: protocolMismatchClientVersion,
+            protocolMismatchUpdateTriggerAccepted: protocolMismatchUpdateTriggerAccepted,
+            protocolMismatchUpdateTriggerMessage: protocolMismatchUpdateTriggerMessage
+        )
+        return (response, mediaSecurityContext)
+    }
+
     @discardableResult
     private func sendHelloResponse(
         accepted: Bool,
@@ -505,82 +714,29 @@ extension MirageHostService {
         deviceInfo: MirageDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
+        rejectionReason: HelloRejectionReason? = nil,
+        protocolMismatchHostVersion: Int? = nil,
+        protocolMismatchClientVersion: Int? = nil,
+        protocolMismatchUpdateTriggerAccepted: Bool? = nil,
+        protocolMismatchUpdateTriggerMessage: String? = nil,
         cancelAfterSend: Bool
     )
     -> (sent: Bool, mediaSecurity: MirageMediaSecurityContext?) {
         do {
-            let hostName = Host.current().localizedName ?? "Mac"
-            guard let identityManager else {
-                MirageLogger.error(.host, "Cannot send hello response without identity manager")
-                connection.cancel()
-                return (false, nil)
-            }
-            let identity = try identityManager.currentIdentity()
-            let timestampMs = MirageIdentitySigning.currentTimestampMs()
-            let nonce = UUID().uuidString.lowercased()
-            let mediaEncryptionEnabled = accepted
-            let udpRegistrationToken = accepted ? MirageMediaSecurity.makeRegistrationToken() : Data()
-            let mediaSecurityContext: MirageMediaSecurityContext?
-            if accepted {
-                guard let clientPublicKey = deviceInfo.identityPublicKey,
-                      let clientKeyID = deviceInfo.identityKeyID else {
-                    MirageLogger.error(.host, "Cannot derive media key without client identity metadata")
-                    return (false, nil)
-                }
-                do {
-                    mediaSecurityContext = try MirageMediaSecurity.deriveContext(
-                        identityManager: identityManager,
-                        peerPublicKey: clientPublicKey,
-                        hostID: hostID,
-                        clientID: deviceInfo.id,
-                        hostKeyID: identity.keyID,
-                        clientKeyID: clientKeyID,
-                        hostNonce: nonce,
-                        clientNonce: requestNonce,
-                        udpRegistrationToken: udpRegistrationToken
-                    )
-                } catch {
-                    MirageLogger.error(.host, "Failed to derive media security context: \(error)")
-                    return (false, nil)
-                }
-            } else {
-                mediaSecurityContext = nil
-            }
-            let payload = try MirageIdentitySigning.helloResponsePayload(
+            let builtResponse = try makeHelloResponseMessage(
                 accepted: accepted,
-                hostID: hostID,
-                hostName: hostName,
-                requiresAuth: false,
                 dataPort: dataPort,
                 negotiation: negotiation,
+                deviceInfo: deviceInfo,
                 requestNonce: requestNonce,
-                mediaEncryptionEnabled: mediaEncryptionEnabled,
-                udpRegistrationToken: udpRegistrationToken,
-                keyID: identity.keyID,
-                publicKey: identity.publicKey,
-                timestampMs: timestampMs,
-                nonce: nonce
-            )
-            let signature = try identityManager.sign(payload)
-            let response = HelloResponseMessage(
-                accepted: accepted,
-                hostID: hostID,
-                hostName: hostName,
-                requiresAuth: false,
-                dataPort: dataPort,
-                negotiation: negotiation,
-                requestNonce: requestNonce,
-                mediaEncryptionEnabled: mediaEncryptionEnabled,
-                udpRegistrationToken: udpRegistrationToken,
                 autoTrustGranted: autoTrustGranted,
-                identity: MirageIdentityEnvelope(
-                    keyID: identity.keyID,
-                    publicKey: identity.publicKey,
-                    timestampMs: timestampMs,
-                    nonce: nonce,
-                    signature: signature
-                )
+                rejectionReason: rejectionReason,
+                protocolMismatchHostVersion: protocolMismatchHostVersion,
+                protocolMismatchClientVersion: protocolMismatchClientVersion,
+                protocolMismatchUpdateTriggerAccepted: protocolMismatchUpdateTriggerAccepted,
+                protocolMismatchUpdateTriggerMessage: protocolMismatchUpdateTriggerMessage
             )
+            let response = builtResponse.response
             let message = try ControlMessage(type: .helloResponse, content: response)
             let data = message.serialize()
 
@@ -590,7 +746,7 @@ extension MirageHostService {
                     if accepted { connection.cancel() }
                 } else if accepted {
                     MirageLogger.host(
-                        "Sent hello response with dataPort \(dataPort), mediaEncryption=\(mediaEncryptionEnabled)"
+                        "Sent hello response with dataPort \(dataPort), mediaEncryption=\(response.mediaEncryptionEnabled)"
                     )
                 } else {
                     MirageLogger.host("Sent rejection hello response")
@@ -598,7 +754,7 @@ extension MirageHostService {
 
                 if cancelAfterSend { connection.cancel() }
             })
-            return (true, mediaSecurityContext)
+            return (true, builtResponse.mediaSecurity)
         } catch {
             MirageLogger.error(.host, "Failed to create hello response: \(error)")
             if cancelAfterSend { connection.cancel() }

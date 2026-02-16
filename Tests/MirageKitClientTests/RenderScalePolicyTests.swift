@@ -123,5 +123,71 @@ struct RenderScalePolicyTests {
         }
         #expect(policy.snapshot().scale == 0.9)
     }
+
+    @Test("Lowest latency downscales under sustained compositor pressure")
+    func lowestLatencyDownscalesAfterSustainedDegrade() {
+        var policy = MirageRenderScalePolicy()
+
+        _ = policy.evaluate(
+            now: 100,
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            renderedFPS: 45,
+            drawableWaitAvgMs: 24,
+            typingBurstActive: false
+        )
+        _ = policy.evaluate(
+            now: 101,
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            renderedFPS: 45,
+            drawableWaitAvgMs: 24,
+            typingBurstActive: false
+        )
+        let third = policy.evaluate(
+            now: 102,
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            renderedFPS: 45,
+            drawableWaitAvgMs: 24,
+            typingBurstActive: false
+        )
+
+        #expect(third.direction == .down)
+        #expect(policy.snapshot().scale == 0.9)
+    }
+
+    @Test("Lowest latency does not downscale on low FPS alone when drawable wait is healthy")
+    func lowestLatencyDoesNotDownscaleOnLowFPSWithoutDrawablePressure() {
+        var policy = MirageRenderScalePolicy()
+
+        _ = policy.evaluate(
+            now: 100,
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            renderedFPS: 42,
+            drawableWaitAvgMs: 1.0,
+            typingBurstActive: false
+        )
+        _ = policy.evaluate(
+            now: 101,
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            renderedFPS: 42,
+            drawableWaitAvgMs: 1.0,
+            typingBurstActive: false
+        )
+        let third = policy.evaluate(
+            now: 102,
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            renderedFPS: 42,
+            drawableWaitAvgMs: 1.0,
+            typingBurstActive: false
+        )
+
+        #expect(third.direction == nil)
+        #expect(policy.snapshot().scale == 1.0)
+    }
 }
 #endif

@@ -11,6 +11,14 @@ import Foundation
 
 // MARK: - Connection Messages
 
+package enum HelloRejectionReason: String, Codable, Sendable {
+    case protocolVersionMismatch
+    case protocolFeaturesMismatch
+    case hostBusy
+    case rejected
+    case unauthorized
+}
+
 package struct MirageIdentityEnvelope: Codable, Sendable {
     package let keyID: String
     package let publicKey: Data
@@ -44,6 +52,8 @@ package struct HelloMessage: Codable {
     package let iCloudUserID: String?
     /// Signed identity envelope proving possession of the account private key.
     package let identity: MirageIdentityEnvelope
+    /// Optional one-shot signal asking the host to trigger a software update when protocol mismatch is detected.
+    package let requestHostUpdateOnProtocolMismatch: Bool?
 
     package init(
         deviceID: UUID,
@@ -53,7 +63,8 @@ package struct HelloMessage: Codable {
         capabilities: MirageHostCapabilities,
         negotiation: MirageProtocolNegotiation,
         iCloudUserID: String? = nil,
-        identity: MirageIdentityEnvelope
+        identity: MirageIdentityEnvelope,
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
     ) {
         self.deviceID = deviceID
         self.deviceName = deviceName
@@ -63,6 +74,7 @@ package struct HelloMessage: Codable {
         self.negotiation = negotiation
         self.iCloudUserID = iCloudUserID
         self.identity = identity
+        self.requestHostUpdateOnProtocolMismatch = requestHostUpdateOnProtocolMismatch
     }
 }
 
@@ -83,6 +95,14 @@ package struct HelloResponseMessage: Codable {
     package let autoTrustGranted: Bool?
     /// Signed host identity envelope.
     package let identity: MirageIdentityEnvelope
+    /// Explicit rejection reason when `accepted` is false.
+    package let rejectionReason: HelloRejectionReason?
+    /// Optional metadata for protocol mismatch handling.
+    package let protocolMismatchHostVersion: Int?
+    package let protocolMismatchClientVersion: Int?
+    /// Optional result when a client requested host update on protocol mismatch.
+    package let protocolMismatchUpdateTriggerAccepted: Bool?
+    package let protocolMismatchUpdateTriggerMessage: String?
 
     package init(
         accepted: Bool,
@@ -95,7 +115,12 @@ package struct HelloResponseMessage: Codable {
         mediaEncryptionEnabled: Bool,
         udpRegistrationToken: Data,
         autoTrustGranted: Bool? = nil,
-        identity: MirageIdentityEnvelope
+        identity: MirageIdentityEnvelope,
+        rejectionReason: HelloRejectionReason? = nil,
+        protocolMismatchHostVersion: Int? = nil,
+        protocolMismatchClientVersion: Int? = nil,
+        protocolMismatchUpdateTriggerAccepted: Bool? = nil,
+        protocolMismatchUpdateTriggerMessage: String? = nil
     ) {
         self.accepted = accepted
         self.hostID = hostID
@@ -108,6 +133,11 @@ package struct HelloResponseMessage: Codable {
         self.udpRegistrationToken = udpRegistrationToken
         self.autoTrustGranted = autoTrustGranted
         self.identity = identity
+        self.rejectionReason = rejectionReason
+        self.protocolMismatchHostVersion = protocolMismatchHostVersion
+        self.protocolMismatchClientVersion = protocolMismatchClientVersion
+        self.protocolMismatchUpdateTriggerAccepted = protocolMismatchUpdateTriggerAccepted
+        self.protocolMismatchUpdateTriggerMessage = protocolMismatchUpdateTriggerMessage
     }
 }
 

@@ -62,10 +62,29 @@ extension StreamController {
             return
         }
         lastBackpressureRecoveryTime = now
-        Task { [weak self] in
-            guard let self else { return }
-            await self.requestRecovery(reason: .decodeBackpressure(queueDepth: queueDepth))
+        MirageLogger.client(
+            "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
+                "continuing without keyframe recovery"
+        )
+    }
+
+    func handleFrameLossSignal() async {
+        // Bootstrap exception: if no frame has ever decoded, request keyframes so startup
+        // does not deadlock on a lost initial keyframe.
+        guard hasReceivedFirstFrame else {
+            MirageLogger.client(
+                "Frame loss detected before first decoded frame for stream \(streamID); " +
+                    "requesting bootstrap keyframe recovery"
+            )
+            reassembler.enterKeyframeOnlyMode()
+            startKeyframeRecoveryLoopIfNeeded()
+            await requestKeyframeRecovery(reason: .frameLoss)
+            return
         }
+
+        MirageLogger.client(
+            "Frame loss detected for stream \(streamID); continuing without keyframe recovery"
+        )
     }
 
     func requestKeyframeRecovery(reason: RecoveryReason) async {
@@ -223,23 +242,10 @@ extension StreamController {
         lastFreezeRecoveryTime = now
         consecutiveFreezeRecoveries &+= 1
 
-        let reason: RecoveryReason = .freezeTimeout
-        if consecutiveFreezeRecoveries >= Self.freezeRecoveryEscalationThreshold {
-            MirageLogger.client(
-                "Freeze recovery escalated to full reset after \(consecutiveFreezeRecoveries) attempts for stream \(streamID)"
-            )
-            Task { [weak self] in
-                guard let self else { return }
-                await self.requestRecovery(reason: reason)
-            }
-            return
-        }
-
-        MirageLogger.client("Freeze recovery requesting keyframe for stream \(streamID)")
-        Task { [weak self] in
-            guard let self else { return }
-            await self.requestKeyframeRecovery(reason: reason)
-        }
+        MirageLogger.client(
+            "Presentation stall detected (attempt \(consecutiveFreezeRecoveries)) for stream \(streamID); " +
+                "continuing without keyframe recovery"
+        )
     }
 
     func setResizeState(_ newState: ResizeState) async {

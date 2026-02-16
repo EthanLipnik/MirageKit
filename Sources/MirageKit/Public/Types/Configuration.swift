@@ -112,6 +112,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var colorSpace: MirageColorSpace?
     public var captureQueueDepth: Int?
     public var bitrate: Int?
+    public var allowRuntimeQualityAdjustment: Bool?
     public var disableResolutionCap: Bool
 
     public init(
@@ -120,6 +121,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         colorSpace: MirageColorSpace? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
+        allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool = false
     ) {
         self.keyFrameInterval = keyFrameInterval
@@ -127,6 +129,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.colorSpace = colorSpace
         self.captureQueueDepth = captureQueueDepth
         self.bitrate = bitrate
+        self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap
     }
 }

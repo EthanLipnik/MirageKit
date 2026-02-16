@@ -48,8 +48,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Backpressure recovery requires sustained drops and is debounced")
-    func backpressureRecoveryDebounce() async throws {
+    @Test("Backpressure threshold does not request keyframe recovery")
+    func backpressureDoesNotRequestKeyframes() async throws {
         let keyframeCounter = LockedCounter()
         let clock = ManualTimeProvider(start: 1_000)
         let controller = StreamController(
@@ -69,28 +69,24 @@ struct StreamControllerRecoveryTests {
             await controller.recordQueueDrop()
         }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
-        try await waitUntil("first backpressure keyframe request") {
-            keyframeCounter.value == 1
-        }
-        #expect(keyframeCounter.value == 1)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(keyframeCounter.value == 0)
 
-        // Additional drops inside cooldown should not trigger another request.
+        // Additional drops inside cooldown should remain no-op.
         for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
             await controller.recordQueueDrop()
         }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
         try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 1)
+        #expect(keyframeCounter.value == 0)
 
         clock.advance(by: 1.1)
         for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
             await controller.recordQueueDrop()
         }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
-        try await waitUntil("second backpressure keyframe request") {
-            keyframeCounter.value == 2
-        }
-        #expect(keyframeCounter.value == 2)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }
@@ -123,8 +119,49 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Present-stall freeze recovery triggers keyframe and escalates on repeated stalls")
-    func presentStallFreezeRecoveryEscalates() async throws {
+    @Test("Frame-loss bootstrap requests keyframe before first decoded frame")
+    func frameLossBootstrapRequestsKeyframe() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 40, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.handleFrameLossSignal()
+        try await waitUntil("bootstrap keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Frame-loss after first decode does not request keyframe recovery")
+    func frameLossAfterFirstDecodeDoesNotRequestKeyframe() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 41, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFrameReceived()
+        await controller.handleFrameLossSignal()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(keyframeCounter.value == 0)
+
+        await controller.stop()
+    }
+
+    @Test("Present-stall monitoring does not request keyframe recovery")
+    func presentStallDoesNotRequestKeyframeRecovery() async throws {
         let streamID: StreamID = 4
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -153,21 +190,8 @@ struct StreamControllerRecoveryTests {
 
         await controller.recordDecodedFrame()
 
-        try await waitUntil(
-            "freeze keyframe recovery trigger",
-            timeout: .seconds(8)
-        ) {
-            keyframeCounter.value >= 1
-        }
-
-        try await waitUntil(
-            "freeze recovery escalation",
-            timeout: .seconds(6)
-        ) {
-            keyframeCounter.value >= 2
-        }
-
-        #expect(keyframeCounter.value >= 2)
+        try await Task.sleep(for: .seconds(7))
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
         MirageFrameCache.shared.clear(for: streamID)

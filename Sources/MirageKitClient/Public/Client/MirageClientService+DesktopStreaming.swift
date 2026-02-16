@@ -43,6 +43,7 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Invalid display resolution")
         }
+        let effectiveDisplayPixelResolution = virtualDisplayPixelResolution(for: effectiveDisplayResolution)
 
         desktopStreamMode = mode
 
@@ -82,7 +83,8 @@ public extension MirageClientService {
 
         MirageLogger
             .client(
-                "Requested desktop stream: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height)) pts"
+                "Requested desktop stream: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height)) pts " +
+                    "(\(Int(effectiveDisplayPixelResolution.width))x\(Int(effectiveDisplayPixelResolution.height)) px)"
             )
     }
 

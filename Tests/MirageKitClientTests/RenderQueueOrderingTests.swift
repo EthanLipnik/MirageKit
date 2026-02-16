@@ -221,6 +221,35 @@ struct RenderQueueOrderingTests {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
+    @Test("Presentation dequeue with preferLatest trims shallow backlog to keep depth")
+    func presentationDequeuePreferLatestTrimsShallowBacklog() {
+        let streamID: StreamID = 109
+        MirageFrameCache.shared.clear(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+
+        for index in 0 ..< 4 {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: now + 1 + (Double(index) * 0.001),
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
+
+        let presented = MirageFrameCache.shared.dequeueForPresentation(
+            for: streamID,
+            catchUpDepth: 2,
+            preferLatest: true
+        )
+        #expect(presented?.sequence == 3)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
+        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 4)
+
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     private func makePixelBuffer() -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
         let status = CVPixelBufferCreate(

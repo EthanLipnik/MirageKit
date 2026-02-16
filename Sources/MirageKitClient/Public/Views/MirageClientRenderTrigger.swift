@@ -50,6 +50,7 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
     private let lock = NSLock()
     private var views: [StreamID: WeakMetalView] = [:]
     private var requestStates: [StreamID: CoalescingState] = [:]
+    private var decodeDrivenRequestsEnabled: [StreamID: Bool] = [:]
 
     private init() {}
 
@@ -59,6 +60,7 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
         if requestStates[streamID] == nil {
             requestStates[streamID] = CoalescingState()
         }
+        decodeDrivenRequestsEnabled[streamID] = true
         lock.unlock()
     }
 
@@ -66,6 +68,18 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
         lock.lock()
         views.removeValue(forKey: streamID)
         requestStates.removeValue(forKey: streamID)
+        decodeDrivenRequestsEnabled.removeValue(forKey: streamID)
+        lock.unlock()
+    }
+
+    func setDecodeDrivenRequestsEnabled(_ enabled: Bool, for streamID: StreamID) {
+        lock.lock()
+        decodeDrivenRequestsEnabled[streamID] = enabled
+        if !enabled {
+            requestStates[streamID] = CoalescingState()
+        } else if requestStates[streamID] == nil {
+            requestStates[streamID] = CoalescingState()
+        }
         lock.unlock()
     }
 
@@ -74,6 +88,12 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
         var shouldDispatch = false
         lock.lock()
         if let resolved = views[streamID]?.value {
+            let requestsEnabled = decodeDrivenRequestsEnabled[streamID] ?? true
+            if !requestsEnabled {
+                requestStates[streamID] = CoalescingState()
+                lock.unlock()
+                return
+            }
             var state = requestStates[streamID] ?? CoalescingState()
             shouldDispatch = state.handleRequest()
             requestStates[streamID] = state
@@ -81,6 +101,7 @@ final class MirageClientRenderTrigger: @unchecked Sendable {
         } else {
             views.removeValue(forKey: streamID)
             requestStates.removeValue(forKey: streamID)
+            decodeDrivenRequestsEnabled.removeValue(forKey: streamID)
         }
         lock.unlock()
 

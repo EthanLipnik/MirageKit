@@ -13,6 +13,62 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    func protocolMismatchInfo(from response: HelloResponseMessage) -> ProtocolMismatchInfo? {
+        guard response.rejectionReason == .protocolVersionMismatch else {
+            return nil
+        }
+        return ProtocolMismatchInfo(
+            reason: mapProtocolMismatchReason(response.rejectionReason),
+            hostProtocolVersion: response.protocolMismatchHostVersion,
+            clientProtocolVersion: response.protocolMismatchClientVersion,
+            hostUpdateTriggerAccepted: response.protocolMismatchUpdateTriggerAccepted,
+            hostUpdateTriggerMessage: response.protocolMismatchUpdateTriggerMessage
+        )
+    }
+
+    func mapProtocolMismatchReason(_ reason: HelloRejectionReason?) -> ProtocolMismatchInfo.Reason {
+        switch reason {
+        case .protocolVersionMismatch:
+            return .protocolVersionMismatch
+        case .protocolFeaturesMismatch:
+            return .protocolFeaturesMismatch
+        case .hostBusy:
+            return .hostBusy
+        case .rejected:
+            return .rejected
+        case .unauthorized:
+            return .unauthorized
+        case .none:
+            return .unknown
+        }
+    }
+
+    func helloRejectionDescription(
+        for response: HelloResponseMessage,
+        mismatchInfo: ProtocolMismatchInfo?
+    ) -> String {
+        if let mismatchInfo {
+            let hostVersion = mismatchInfo.hostProtocolVersion.map(String.init) ?? "unknown"
+            let clientVersion = mismatchInfo.clientProtocolVersion.map(String.init) ?? "unknown"
+            return "Protocol mismatch (host \(hostVersion), client \(clientVersion))."
+        }
+
+        switch response.rejectionReason {
+        case .protocolFeaturesMismatch:
+            return "Protocol feature mismatch."
+        case .hostBusy:
+            return "Host is already connected to another client."
+        case .unauthorized:
+            return "Connection rejected by host authorization policy."
+        case .rejected:
+            return "Connection rejected by host."
+        case .protocolVersionMismatch:
+            return "Protocol mismatch."
+        case .none:
+            return "Connection rejected."
+        }
+    }
+
     func handleHelloResponse(_ message: ControlMessage) async {
         do {
             let response = try message.decode(HelloResponseMessage.self)
@@ -75,56 +131,56 @@ extension MirageClientService {
                 return
             }
 
-            guard response.mediaEncryptionEnabled else {
-                connectionState = .error("Host media encryption disabled")
-                MirageLogger.client("Rejected hello response with media encryption disabled")
-                return
-            }
-            guard response.udpRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
-                connectionState = .error("Invalid UDP registration token")
-                MirageLogger.client(
-                    "Rejected hello response due to invalid UDP registration token length \(response.udpRegistrationToken.count)"
-                )
-                return
-            }
-            let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
-            let localIdentity: MirageAccountIdentity
-            do {
-                localIdentity = try resolvedIdentityManager.currentIdentity()
-            } catch {
-                connectionState = .error("Missing local identity")
-                MirageLogger.client("Failed to load local identity for media key derivation: \(error)")
-                return
-            }
-            let mediaContext: MirageMediaSecurityContext
-            do {
-                mediaContext = try MirageMediaSecurity.deriveContext(
-                    identityManager: resolvedIdentityManager,
-                    peerPublicKey: identity.publicKey,
-                    hostID: response.hostID,
-                    clientID: deviceID,
-                    hostKeyID: identity.keyID,
-                    clientKeyID: localIdentity.keyID,
-                    hostNonce: identity.nonce,
-                    clientNonce: helloNonce,
-                    udpRegistrationToken: response.udpRegistrationToken
-                )
-            } catch {
-                connectionState = .error("Media key derivation failed")
-                MirageLogger.client("Rejected hello response due to media key derivation failure: \(error)")
-                return
-            }
-
-            setMediaSecurityContext(mediaContext)
-            MirageLogger.client(
-                "Media security established (tokenBytes=\(mediaContext.udpRegistrationToken.count), keyBytes=\(mediaContext.sessionKey.count))"
-            )
             connectedHostIdentityKeyID = identity.keyID
             self.pendingHelloNonce = nil
             hasReceivedHelloResponse = true
             isAwaitingManualApproval = false
             approvalWaitTask?.cancel()
             if response.accepted {
+                guard response.mediaEncryptionEnabled else {
+                    connectionState = .error("Host media encryption disabled")
+                    MirageLogger.client("Rejected hello response with media encryption disabled")
+                    return
+                }
+                guard response.udpRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
+                    connectionState = .error("Invalid UDP registration token")
+                    MirageLogger.client(
+                        "Rejected hello response due to invalid UDP registration token length \(response.udpRegistrationToken.count)"
+                    )
+                    return
+                }
+                let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
+                let localIdentity: MirageAccountIdentity
+                do {
+                    localIdentity = try resolvedIdentityManager.currentIdentity()
+                } catch {
+                    connectionState = .error("Missing local identity")
+                    MirageLogger.client("Failed to load local identity for media key derivation: \(error)")
+                    return
+                }
+                let mediaContext: MirageMediaSecurityContext
+                do {
+                    mediaContext = try MirageMediaSecurity.deriveContext(
+                        identityManager: resolvedIdentityManager,
+                        peerPublicKey: identity.publicKey,
+                        hostID: response.hostID,
+                        clientID: deviceID,
+                        hostKeyID: identity.keyID,
+                        clientKeyID: localIdentity.keyID,
+                        hostNonce: identity.nonce,
+                        clientNonce: helloNonce,
+                        udpRegistrationToken: response.udpRegistrationToken
+                    )
+                } catch {
+                    connectionState = .error("Media key derivation failed")
+                    MirageLogger.client("Rejected hello response due to media key derivation failure: \(error)")
+                    return
+                }
+
+                setMediaSecurityContext(mediaContext)
+                MirageLogger.client(
+                    "Media security established (tokenBytes=\(mediaContext.udpRegistrationToken.count), keyBytes=\(mediaContext.sessionKey.count))"
+                )
                 if response.autoTrustGranted == true {
                     let hostComponent = response.hostID.uuidString.lowercased()
                     let noticeKey = "com.mirage.autotrust.client.\(hostComponent)"
@@ -164,8 +220,13 @@ extension MirageClientService {
                 hostDataPort = response.dataPort
                 MirageLogger.client("Received hello response, dataPort: \(hostDataPort)")
             } else {
-                MirageLogger.client("Connection rejected by host")
-                connectionState = .error("Connection rejected")
+                let mismatchInfo = protocolMismatchInfo(from: response)
+                if let mismatchInfo {
+                    onProtocolMismatch?(mismatchInfo)
+                }
+                let rejectionDescription = helloRejectionDescription(for: response, mismatchInfo: mismatchInfo)
+                MirageLogger.client("Connection rejected by host: \(rejectionDescription)")
+                connectionState = .error(rejectionDescription)
             }
         } catch {
             MirageLogger.error(.client, "Failed to decode hello response: \(error)")

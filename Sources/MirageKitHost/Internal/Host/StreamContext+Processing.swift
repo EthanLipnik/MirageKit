@@ -466,6 +466,15 @@ extension StreamContext {
         at now: CFAbsoluteTime
     )
     async {
+        guard runtimeQualityAdjustmentEnabled else {
+            autoRecoveryActive = false
+            autoRecoveryLowFPSStreak = 0
+            autoRecoveryHealthyStreak = 0
+            autoRecoveryHoldUntil = 0
+            autoRecoveryCooldownUntil = 0
+            autoInFlightHeadroomStreak = 0
+            return
+        }
         guard latencyMode == .auto else {
             autoRecoveryActive = false
             autoRecoveryLowFPSStreak = 0
@@ -645,6 +654,7 @@ extension StreamContext {
 
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
+        guard runtimeQualityAdjustmentEnabled else { return }
         await refreshTypingBurstStateIfNeeded()
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling {

@@ -81,6 +81,12 @@ extension MirageHostService {
             },
             .qualityTestRequest: { [weak self] message, client, connection in
                 await self?.handleQualityTestRequest(message, from: client, connection: connection)
+            },
+            .hostSoftwareUpdateStatusRequest: { [weak self] message, client, connection in
+                await self?.handleHostSoftwareUpdateStatusRequest(message, from: client, connection: connection)
+            },
+            .hostSoftwareUpdateInstallRequest: { [weak self] message, client, connection in
+                await self?.handleHostSoftwareUpdateInstallRequest(message, from: client, connection: connection)
             }
         ]
     }
@@ -150,6 +156,7 @@ extension MirageHostService {
             let pixelFormat = request.pixelFormat
             let colorSpace = request.colorSpace
             let bitrate = request.bitrate
+            let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
             let latencyMode = request.latencyMode ?? .auto
@@ -169,6 +176,7 @@ extension MirageHostService {
                 colorSpace: colorSpace,
                 captureQueueDepth: request.captureQueueDepth,
                 bitrate: bitrate,
+                allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration
             )

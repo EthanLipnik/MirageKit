@@ -278,7 +278,7 @@ extension FrameReassembler {
     private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
         // Frame skipping logic: determine if we should deliver this frame
         let shouldDeliver: Bool
-        var shouldSignalFrameLoss = false
+        let shouldSignalFrameLoss = false
 
         if frame.isKeyframe {
             // Always deliver keyframes unless a newer keyframe was already delivered.
@@ -288,9 +288,9 @@ extension FrameReassembler {
                 hasDeliveredKeyframeAnchor = true
             }
         } else {
-            // For P-frames: require a delivered keyframe anchor and strict in-order delivery.
-            // Delivering across gaps can push invalid references into VideoToolbox and create
-            // prolonged decode-error/keyframe loops.
+            // For P-frames: require a delivered keyframe anchor and monotonic forward delivery.
+            // Do not force keyframe recovery on transient frame gaps; allow forward decode and
+            // let decoder error thresholds decide if a real reset is needed.
             guard hasDeliveredKeyframeAnchor else {
                 shouldDeliver = false
                 pendingFrames.removeValue(forKey: frameNumber)
@@ -299,21 +299,13 @@ extension FrameReassembler {
                 return FrameCompletionResult(frame: nil, shouldSignalFrameLoss: false)
             }
             let expectedNextFrame = lastCompletedFrame &+ 1
-            if frameNumber == expectedNextFrame {
-                shouldDeliver = isFrameNewer(frameNumber, than: lastDeliveredKeyframe)
-            } else {
-                shouldDeliver = false
-                if isFrameNewer(frameNumber, than: expectedNextFrame) {
-                    let wasAwaitingKeyframe = awaitingKeyframe
-                    beginAwaitingKeyframe()
-                    if !wasAwaitingKeyframe {
-                        shouldSignalFrameLoss = true
-                        MirageLogger.log(
-                            .frameAssembly,
-                            "Frame gap detected: expected \(expectedNextFrame), received \(frameNumber) - requesting keyframe"
-                        )
-                    }
-                }
+            let isForwardFrame = isFrameNewer(frameNumber, than: lastCompletedFrame)
+            shouldDeliver = isForwardFrame && isFrameNewer(frameNumber, than: lastDeliveredKeyframe)
+            if shouldDeliver, isFrameNewer(frameNumber, than: expectedNextFrame) {
+                MirageLogger.log(
+                    .frameAssembly,
+                    "Frame gap detected: expected \(expectedNextFrame), received \(frameNumber) - continuing forward decode"
+                )
             }
         }
 

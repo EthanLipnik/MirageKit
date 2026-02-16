@@ -171,13 +171,16 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         let parsedHardwareModelIdentifier = sanitizedTXTValue(txtRecord["hwm"])
         let parsedHardwareIconName = sanitizedTXTValue(txtRecord["hwi"])
         let parsedHardwareMachineFamily = sanitizedTXTValue(txtRecord["hwf"])
+        let parsedMaxFrameRate = Int(sanitizedTXTValue(txtRecord["maxFps"]) ?? "120") ?? 120
+        let parsedProtocolVersion = Int(sanitizedTXTValue(txtRecord["proto"]) ?? "1") ?? 1
 
         return MirageHostCapabilities(
             maxStreams: Int(txtRecord["maxStreams"] ?? "4") ?? 4,
             supportsHEVC: txtRecord["hevc"] == "1",
             supportsP3ColorSpace: txtRecord["p3"] == "1",
             // supportsHDR: txtRecord["hdr"] == "1",
-            // maxFrameRate and protocolVersion use defaults
+            maxFrameRate: parsedMaxFrameRate,
+            protocolVersion: parsedProtocolVersion,
             deviceID: parsedDeviceID,
             identityKeyID: parsedIdentityKeyID,
             hardwareModelIdentifier: parsedHardwareModelIdentifier,

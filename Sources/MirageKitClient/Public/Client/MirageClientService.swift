@@ -34,6 +34,90 @@ public final class MirageClientService {
         case customTemporary
     }
 
+    public enum HostSoftwareUpdateChannel: String, Sendable, Codable {
+        case release
+        case nightly
+    }
+
+    public enum HostSoftwareUpdateInstallTrigger: String, Sendable, Codable {
+        case manual
+        case protocolMismatch
+    }
+
+    public struct HostSoftwareUpdateStatus: Sendable, Equatable, Codable {
+        public let isSparkleAvailable: Bool
+        public let isCheckingForUpdates: Bool
+        public let isInstallInProgress: Bool
+        public let channel: HostSoftwareUpdateChannel
+        public let currentVersion: String
+        public let availableVersion: String?
+        public let availableVersionTitle: String?
+        public let lastCheckedAtMs: Int64?
+
+        public init(
+            isSparkleAvailable: Bool,
+            isCheckingForUpdates: Bool,
+            isInstallInProgress: Bool,
+            channel: HostSoftwareUpdateChannel,
+            currentVersion: String,
+            availableVersion: String?,
+            availableVersionTitle: String?,
+            lastCheckedAtMs: Int64?
+        ) {
+            self.isSparkleAvailable = isSparkleAvailable
+            self.isCheckingForUpdates = isCheckingForUpdates
+            self.isInstallInProgress = isInstallInProgress
+            self.channel = channel
+            self.currentVersion = currentVersion
+            self.availableVersion = availableVersion
+            self.availableVersionTitle = availableVersionTitle
+            self.lastCheckedAtMs = lastCheckedAtMs
+        }
+    }
+
+    public struct HostSoftwareUpdateInstallResult: Sendable, Equatable, Codable {
+        public let accepted: Bool
+        public let message: String
+        public let status: HostSoftwareUpdateStatus?
+
+        public init(accepted: Bool, message: String, status: HostSoftwareUpdateStatus?) {
+            self.accepted = accepted
+            self.message = message
+            self.status = status
+        }
+    }
+
+    public struct ProtocolMismatchInfo: Sendable, Equatable, Codable {
+        public enum Reason: String, Sendable, Codable {
+            case protocolVersionMismatch
+            case protocolFeaturesMismatch
+            case hostBusy
+            case rejected
+            case unauthorized
+            case unknown
+        }
+
+        public let reason: Reason
+        public let hostProtocolVersion: Int?
+        public let clientProtocolVersion: Int?
+        public let hostUpdateTriggerAccepted: Bool?
+        public let hostUpdateTriggerMessage: String?
+
+        public init(
+            reason: Reason,
+            hostProtocolVersion: Int?,
+            clientProtocolVersion: Int?,
+            hostUpdateTriggerAccepted: Bool?,
+            hostUpdateTriggerMessage: String?
+        ) {
+            self.reason = reason
+            self.hostProtocolVersion = hostProtocolVersion
+            self.clientProtocolVersion = clientProtocolVersion
+            self.hostUpdateTriggerAccepted = hostUpdateTriggerAccepted
+            self.hostUpdateTriggerMessage = hostUpdateTriggerMessage
+        }
+    }
+
     /// Current connection state
     public internal(set) var connectionState: ConnectionState = .disconnected
     /// Whether the host connection is awaiting manual approval
@@ -121,6 +205,15 @@ public final class MirageClientService {
 
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
+
+    /// Callback when host software update status is received.
+    public var onHostSoftwareUpdateStatus: ((HostSoftwareUpdateStatus) -> Void)?
+
+    /// Callback when host software update install result is received.
+    public var onHostSoftwareUpdateInstallResult: ((HostSoftwareUpdateInstallResult) -> Void)?
+
+    /// Callback when a protocol mismatch rejection includes deterministic mismatch metadata.
+    public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
 
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((String, String, [AppStreamStartedMessage.AppStreamWindow]) -> Void)?
@@ -401,6 +494,11 @@ public final class MirageClientService {
 
     /// UserDefaults key for persisting the device ID
     private static let deviceIDKey = "com.mirage.client.deviceID"
+
+    /// Client protocol version used for hello negotiation.
+    public static var clientProtocolVersion: Int {
+        Int(MirageKit.protocolVersion)
+    }
 
     public init(
         deviceName: String? = nil,

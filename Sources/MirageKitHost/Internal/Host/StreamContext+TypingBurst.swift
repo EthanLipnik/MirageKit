@@ -25,7 +25,7 @@ extension StreamContext {
         scheduleExpiry: Bool = true
     )
     async {
-        guard supportsTypingBurst else { return }
+        guard runtimeQualityAdjustmentEnabled, supportsTypingBurst else { return }
         typingBurstDeadline = now + typingBurstWindow
         if !typingBurstActive {
             typingBurstActive = true
@@ -40,7 +40,7 @@ extension StreamContext {
         expectedDeadline: CFAbsoluteTime? = nil
     )
     async {
-        guard supportsTypingBurst, typingBurstActive else { return }
+        guard runtimeQualityAdjustmentEnabled, supportsTypingBurst, typingBurstActive else { return }
         if let expectedDeadline,
            abs(expectedDeadline - typingBurstDeadline) > 0.0005 {
             return
@@ -65,13 +65,14 @@ extension StreamContext {
 
     func resolvedQualityCeiling() -> Float {
         var ceiling = min(steadyQualityCeiling, compressionQualityCeiling)
+        guard runtimeQualityAdjustmentEnabled else { return ceiling }
         if autoRecoveryActive { ceiling = min(ceiling, autoRecoveryQualityCap) }
         if supportsTypingBurst, typingBurstActive { ceiling = min(ceiling, typingBurstQualityCap) }
         return ceiling
     }
 
     private func scheduleTypingBurstExpiryTask() {
-        guard supportsTypingBurst else { return }
+        guard runtimeQualityAdjustmentEnabled, supportsTypingBurst else { return }
         typingBurstExpiryTask?.cancel()
         let expectedDeadline = typingBurstDeadline
         let waitSeconds = max(0, expectedDeadline - CFAbsoluteTimeGetCurrent())

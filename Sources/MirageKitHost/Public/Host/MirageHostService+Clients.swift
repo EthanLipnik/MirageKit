@@ -45,6 +45,7 @@ extension MirageHostService {
             removedConnectionID = key
         }
         clientsByID.removeValue(forKey: client.id)
+        peerIdentityByClientID.removeValue(forKey: client.id)
         mediaSecurityByClientID.removeValue(forKey: client.id)
         qualityTestConnectionsByClientID.removeValue(forKey: client.id)
         qualityTestBenchmarkIDsByClientID.removeValue(forKey: client.id)

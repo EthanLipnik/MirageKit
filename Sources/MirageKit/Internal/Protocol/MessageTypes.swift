@@ -92,6 +92,10 @@ package enum ControlMessageType: UInt8, Codable {
     // Audio stream lifecycle
     case audioStreamStarted = 0xB0 // Host → Client: Audio stream is active
     case audioStreamStopped = 0xB1 // Host → Client: Audio stream ended
+    case hostSoftwareUpdateStatusRequest = 0xB2 // Client -> Host: Request host software update status
+    case hostSoftwareUpdateStatus = 0xB3 // Host -> Client: Host software update status snapshot
+    case hostSoftwareUpdateInstallRequest = 0xB4 // Client -> Host: Request host software update install
+    case hostSoftwareUpdateInstallResult = 0xB5 // Host -> Client: Host software update install result
 
     /// Errors
     case error = 0xFF

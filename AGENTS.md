@@ -7,6 +7,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - MirageKit license: PolyForm Shield 1.0.0 with the line-of-business notice for dedicated remote window/desktop/secondary display/drawing-tablet streaming.
 - Stream scale: client-provided scale derived from the app's resolution limit; encoder overrides define bitrate targets.
 - Hello handshake includes typed protocol negotiation with feature selection (`MirageProtocolNegotiation`, `MirageFeatureSet`).
+- Hello rejection payloads include explicit rejection reason metadata, and protocol-mismatch rejections include host/client protocol versions plus optional mismatch-trigger update result fields.
 - ProMotion preference: refresh override based on CAMetalLayer display-link cadence, 120 when supported and enabled, otherwise 60.
 - Backpressure: queue-based frame drops.
 - Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
@@ -46,6 +47,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Accepted hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1`; signed hello responses include `mediaEncryptionEnabled` plus a per-session UDP registration token.
 - Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
 - UDP stream/audio/quality registrations carry the per-session token and host registration validates token matches in constant time.
+- Host software update control messages cover status snapshots (`hostSoftwareUpdateStatus`) and install request results (`hostSoftwareUpdateInstallResult`) for connected clients, and the host service routes these requests through a software update controller contract.
 - Remote signaling helpers include signed Worker requests, STUN probes, and host candidate parsing for direct remote readiness.
 - Host remote path runs a dedicated QUIC control listener (`MirageHostService+Remote.swift`) and publishes STUN-derived `hostCandidates` through signed signaling heartbeats.
 - Remote diagnostics logging spans client remote preflight/join/connect, host remote listener and advertise/heartbeat loops, and signaling request outcomes.
@@ -144,7 +146,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Queue limits: packet queue thresholds scale with encoded area and frame rate.
 - Frame rate selection: host follows client refresh rate (120fps when supported) across streams.
 - Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
-- Low-latency backpressure: queue spikes drop frames to keep latency down; recovery keyframes are requested separately.
+- Low-latency backpressure: queue spikes drop frames to keep latency down while preserving forward decode flow without automatic keyframe recovery requests.
 - Latency modes: `lowestLatency`, `auto`, and `smoothest`.
 - Auto typing burst: `auto` keeps smooth-mode buffering by default and applies a 350ms text-entry burst for keyDown events without Command/Option/Control; host forces in-flight depth to 1 with a temporary stronger P-frame compression cap, and client presentation trims to newest-frame depth during the burst window.
 - Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
@@ -154,15 +156,19 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - FEC policy: loss windows prioritize keyframe parity; P-frame parity is enabled only during hard recovery windows.
 - Adaptive fallback: automatic mode applies bitrate-only steps first (15% per trigger, 15-second cooldown, 8 Mbps floor) before disruptive reconfiguration.
 - Custom mode recovery: stream parameters remain fixed while stream-health warnings report sustained degradation.
-- Decoder recovery: client enters keyframe-only mode after decode errors or decode-backpressure overload until a fresh keyframe arrives.
-- Reassembler P-frame delivery requires a delivered keyframe anchor and monotonic frame progression, while missing-frame recovery stays decoder-driven through keyframe recovery paths.
+- Decoder recovery: client enters keyframe-only mode after sustained decode-error thresholds until a fresh keyframe arrives.
+- Reassembler P-frame delivery requires a delivered keyframe anchor and monotonic forward progression; frame gaps continue forward decode without immediate keyframe escalation.
+- Startup bootstrap exception: frame-loss signaling can request keyframe recovery before the first decoded frame so a lost initial keyframe does not stall stream start.
 - Presentation catch-up trimming uses oldest-frame age gating to preserve short decode jitter bursts and trims only when latency exceeds the presentation threshold.
-- Decode backpressure recovery performs full stream recovery (decoder reset, reassembler reset/keyframe-only, queue flush, and keyframe request) instead of continuing through stale P-frame references.
+- Decode backpressure handling logs sustained queue pressure and continues forward decode without forced stream reset or keyframe request.
 - Adaptive fallback triggers on decode-storm episodes (two decode-threshold events within an 8-second window) in addition to queue-drop overload signals.
 - Client decode submission in-flight limits are frame-rate aware (60Hz: 2, 120Hz: 3) to bound asynchronous VideoToolbox submission pressure.
-- Client freeze monitoring requests a recovery keyframe after sustained decode stalls and escalates to full stream recovery on repeated stall windows.
+- Client freeze monitoring records sustained presentation stalls for diagnostics without automatic keyframe recovery requests.
 - Client presentation uses custom CAMetalLayer surfaces on iOS, visionOS, and macOS with display-link driven dequeue/present cadence.
-- iOS client render admission is latency-mode aware: `lowestLatency` keeps 60Hz in-flight at 1, `auto` uses 2 with typing/recovery forcing 1, and `smoothest` uses 2 with promotion to 3 only during sustained healthy windows; a render recovery state machine clamps in-flight to 1 during sustained low-FPS/drawable-wait collapse.
+- iOS lowest-latency presentation is display-link clocked at 60Hz: decode-driven fallback pulses and decode-triggered redraw requests are disabled, secondary same-tick catch-up draws are disabled, and frame dequeue prefers the latest entry to keep decode and presentation cadence aligned.
+- iOS client render admission is latency-mode aware: `lowestLatency` keeps 60Hz at 2 in-flight with 3 drawables, uses scheduled-release admission and cap micro-retry, and applies recovery keep-depth signals without expanding admission depth under sustained pressure; `auto` uses 2 with typing forcing 1, and `smoothest` uses 2 with promotion to 3 only during sustained healthy windows.
+- iOS render scale policy can step drawable scale down/up in `auto` and `lowestLatency` at 60Hz; `auto` considers rendered FPS plus drawable wait, while `lowestLatency` treats sustained drawable-wait pressure as the primary downscale signal.
+- iOS render submission selects frames after drawable acquisition and refreshes stale selections with a latest-frame pass so long drawable waits do not force stale-drop presentation gaps.
 - MirageFrameCache stores bounded per-stream FIFO frame queues with sequence/age metadata for ordered presentation.
 - Render emergency trimming drops oldest queued frames only during sustained backlog conditions and restores queue depth to a safe floor.
 - Adaptive fallback overload handling remains signal-only; automatic bitrate and pixel-format mutation is not applied by client fallback triggers.

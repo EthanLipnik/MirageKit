@@ -68,12 +68,24 @@ struct MirageRenderScalePolicy {
         let normalizedTargetFPS = targetFPS >= 120 ? 120 : 60
         let previousScale = currentScale
         let frameBudgetMs = 1000.0 / Double(normalizedTargetFPS)
-        let degraded = renderedFPS < (Double(normalizedTargetFPS) * downscaleFPSFactor) ||
-            drawableWaitAvgMs > (frameBudgetMs * downscaleDrawableWaitFactor)
-        let healthy = renderedFPS >= (Double(normalizedTargetFPS) * upscaleFPSFactor) &&
-            drawableWaitAvgMs <= (frameBudgetMs * upscaleDrawableWaitFactor)
+        let lowFPS = renderedFPS < (Double(normalizedTargetFPS) * downscaleFPSFactor)
+        let highDrawableWait = drawableWaitAvgMs > (frameBudgetMs * downscaleDrawableWaitFactor)
+        let stableFPS = renderedFPS >= (Double(normalizedTargetFPS) * upscaleFPSFactor)
+        let lowDrawableWait = drawableWaitAvgMs <= (frameBudgetMs * upscaleDrawableWaitFactor)
+        let degraded: Bool
+        let healthy: Bool
+        if latencyMode == .lowestLatency {
+            // Lowest-latency mode treats drawable wait as the primary scaling signal.
+            // Low rendered FPS alone can be scheduler-phase bound and downscaling in that
+            // state reduces quality without improving cadence.
+            degraded = highDrawableWait
+            healthy = lowDrawableWait
+        } else {
+            degraded = lowFPS || highDrawableWait
+            healthy = stableFPS && lowDrawableWait
+        }
 
-        if latencyMode != .auto || normalizedTargetFPS > 60 {
+        if (latencyMode != .auto && latencyMode != .lowestLatency) || normalizedTargetFPS > 60 {
             degradedStreak = 0
             healthyStreak = 0
             if scaleIndex != 0 {

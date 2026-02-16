@@ -63,6 +63,7 @@ public class MirageMetalView: UIView {
     public var latencyMode: MirageStreamLatencyMode = .auto {
         didSet {
             guard latencyMode != oldValue else { return }
+            updateDecodeDrivenTriggerPolicy()
             renderStabilityPolicy.reset()
             renderScalePolicy.reset()
             applyRenderPolicy(now: CFAbsoluteTimeGetCurrent(), forceLog: true)
@@ -80,6 +81,10 @@ public class MirageMetalView: UIView {
             }
             if let streamID {
                 MirageClientRenderTrigger.shared.register(view: self, for: streamID)
+                MirageClientRenderTrigger.shared.setDecodeDrivenRequestsEnabled(
+                    !usesDisplayClockLockedPresentation,
+                    for: streamID
+                )
             }
             renderState.reset()
             renderScheduler.reset()
@@ -91,6 +96,7 @@ public class MirageMetalView: UIView {
             drawableRetryTask?.cancel()
             drawableRetryTask = nil
             drawableRetryScheduled = false
+            drawableAcquisitionPending = false
             admissionRetryTask?.cancel()
             admissionRetryTask = nil
             admissionRetryScheduled = false
@@ -111,6 +117,10 @@ public class MirageMetalView: UIView {
     private lazy var renderScheduler = MirageRenderScheduler(view: self)
 
     private let renderQueue = DispatchQueue(label: "com.mirage.client.render.ios", qos: .userInteractive)
+    private let drawableAcquireQueue = DispatchQueue(
+        label: "com.mirage.client.render.drawable.ios",
+        qos: .userInteractive
+    )
     private let renderAdmission = MirageRenderAdmissionCounter()
     private let renderSequenceGate = MirageRenderSequenceGate()
 
@@ -130,6 +140,7 @@ public class MirageMetalView: UIView {
     private var drawStatsRenderLatencyMax: CFAbsoluteTime = 0
 
     private var drawableRetryScheduled = false
+    private var drawableAcquisitionPending = false
     private var drawableRetryTask: Task<Void, Never>?
     private var admissionRetryScheduled = false
     private var admissionRetryTask: Task<Void, Never>?
@@ -151,11 +162,28 @@ public class MirageMetalView: UIView {
     private static let maxDrawableWidth: CGFloat = 5120
     private static let maxDrawableHeight: CGFloat = 2880
     private static let inFlightCapRetryDelayMs: Int64 = 1
-    private static let inFlightCapRetryMinInterval: CFAbsoluteTime = 0.008
+    private static let inFlightCapRetryMinInterval: CFAbsoluteTime = 0.002
     private static let pressureWindow: CFAbsoluteTime = 0.25
     private static let drawableWaitPressureFactor = 1.30
 
+    private struct RenderSubmission {
+        let pixelBuffer: CVPixelBuffer
+        let contentRect: CGRect
+        let outputPixelFormat: MTLPixelFormat
+        let streamID: StreamID?
+        let sequence: UInt64
+        let decodeTime: CFAbsoluteTime
+    }
+
     private var effectiveScale: CGFloat {
+        #if os(iOS)
+        if let screen = window?.windowScene?.screen ?? window?.screen {
+            let nativeScale = screen.nativeScale
+            if nativeScale > 0 { return nativeScale }
+            let screenScale = screen.scale
+            if screenScale > 0 { return screenScale }
+        }
+        #endif
         let traitScale = traitCollection.displayScale
         if traitScale > 0 { return traitScale }
         return 2.0
@@ -205,6 +233,7 @@ public class MirageMetalView: UIView {
         metalLayer.colorspace = CGColorSpace(name: CGColorSpace.displayP3)
         metalLayer.wantsExtendedDynamicRangeContent = true
         metalLayer.contentsScale = effectiveScale
+        metalLayer.presentsWithTransaction = false
         metalLayer.allowsNextDrawableTimeout = true
         metalLayer.maximumDrawableCount = 3
 
@@ -298,6 +327,7 @@ public class MirageMetalView: UIView {
         drawableRetryTask?.cancel()
         drawableRetryTask = nil
         drawableRetryScheduled = false
+        drawableAcquisitionPending = false
         admissionRetryTask?.cancel()
         admissionRetryTask = nil
         admissionRetryScheduled = false
@@ -326,126 +356,208 @@ public class MirageMetalView: UIView {
     func renderSchedulerTick() {
         guard !renderingSuspended else { return }
         guard !drawableRetryScheduled else { return }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let decision = resolvedRenderPolicyDecision(now: now)
-        applyRenderPolicy(decision: decision, now: now)
-        let effectiveCap = decision.inFlightCap
-        guard renderAdmission.tryAcquire(limit: effectiveCap) else {
-            renderDiagnostics.skipInFlightCap &+= 1
-            capSkipStreak &+= 1
-            lastInFlightCapPressureTime = now
-            scheduleInFlightCapRetry(now: now, decision: decision)
-            maybeLogRenderDiagnostics(now: now)
+        guard !drawableAcquisitionPending else {
+            renderDiagnostics.skipAcquirePending &+= 1
+            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
             return
         }
-        capSkipStreak = 0
 
-        renderDiagnostics.drawAttempts &+= 1
+        let now = CFAbsoluteTimeGetCurrent()
+        let initialDecision = resolvedRenderPolicyDecision(now: now)
+        applyRenderPolicy(decision: initialDecision, now: now)
 
-        let shouldPreferLatestFrame = decision.prefersLatestFrameOnPressure && recentPressureActive(now: now)
+        guard let renderer else {
+            renderDiagnostics.skipNoRenderer &+= 1
+            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
+            return
+        }
+
+        drawableAcquisitionPending = true
+        let drawStartTime = CFAbsoluteTimeGetCurrent()
+        let signalDelay = lastScheduledSignalTime > 0 ? max(0, drawStartTime - lastScheduledSignalTime) : 0
+        let streamID = streamID
+        let metalLayer = self.metalLayer
+        let drawableAcquireQueue = self.drawableAcquireQueue
+        let renderQueue = self.renderQueue
+
+        drawableAcquireQueue.async { [weak self] in
+            let drawableWaitStart = CFAbsoluteTimeGetCurrent()
+            let drawable = metalLayer.nextDrawable()
+            let drawableWait = max(0, CFAbsoluteTimeGetCurrent() - drawableWaitStart)
+
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                self.drawableAcquisitionPending = false
+
+                guard !self.renderingSuspended else {
+                    return
+                }
+
+                guard let drawable else {
+                    self.handleNoDrawable(signalDelay: signalDelay, drawableWait: drawableWait)
+                    return
+                }
+
+                let renderDecisionTime = CFAbsoluteTimeGetCurrent()
+                let decision = self.resolvedRenderPolicyDecision(now: renderDecisionTime)
+                self.applyRenderPolicy(decision: decision, now: renderDecisionTime)
+                let effectiveCap = decision.inFlightCap
+                guard self.renderAdmission.tryAcquire(limit: effectiveCap) else {
+                    self.renderDiagnostics.skipInFlightCap &+= 1
+                    self.capSkipStreak &+= 1
+                    self.lastInFlightCapPressureTime = renderDecisionTime
+                    self.scheduleInFlightCapRetry(now: renderDecisionTime, decision: decision)
+                    self.recordDrawCompletion(
+                        startTime: drawStartTime,
+                        signalDelay: signalDelay,
+                        drawableWait: drawableWait,
+                        rendered: false
+                    )
+                    self.maybeLogRenderDiagnostics(now: renderDecisionTime)
+                    return
+                }
+                self.capSkipStreak = 0
+                self.renderDiagnostics.drawAttempts &+= 1
+
+                let displayClockLocked = self.usesDisplayClockLockedPresentation
+                let shouldPreferLatestFrame = displayClockLocked ||
+                    (decision.prefersLatestFrameOnPressure && self.recentPressureActive(now: renderDecisionTime))
+                let presentationKeepDepth = displayClockLocked ? 1 : decision.presentationKeepDepth
+
+                guard let submission = self.prepareRenderSubmission(
+                    streamID: streamID,
+                    catchUpDepth: presentationKeepDepth,
+                    preferLatestFrame: shouldPreferLatestFrame,
+                    drawablePixelFormat: drawable.texture.pixelFormat
+                ) else {
+                    _ = self.renderAdmission.release()
+                    self.recordDrawCompletion(
+                        startTime: drawStartTime,
+                        signalDelay: signalDelay,
+                        drawableWait: drawableWait,
+                        rendered: false
+                    )
+                    self.maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
+                    return
+                }
+
+                let renderAdmission = self.renderAdmission
+                let admissionReleaseMode = decision.admissionReleaseMode
+                let policyReason = decision.reason
+
+                renderQueue.async { [weak self] in
+                    let releaseGate = MirageRenderAdmissionReleaseGate {
+                        renderAdmission.release()
+                    }
+                    guard self != nil else {
+                        _ = releaseGate.releaseOnce()
+                        return
+                    }
+                    renderer.render(
+                        pixelBuffer: submission.pixelBuffer,
+                        to: drawable,
+                        contentRect: submission.contentRect,
+                        outputPixelFormat: submission.outputPixelFormat,
+                        onScheduled: {
+                            guard admissionReleaseMode == .scheduled else { return }
+                            _ = releaseGate.releaseOnce()
+                        },
+                        completion: { [weak self] wasPresented in
+                            let releasedOnCompletion = releaseGate.releaseOnce()
+                            if admissionReleaseMode == .scheduled, releasedOnCompletion, MirageLogger.isEnabled(.renderer) {
+                                MirageLogger.renderer(
+                                    "Render admission scheduled release fallback fired reason=\(policyReason.rawValue)"
+                                )
+                            }
+                            Task { @MainActor [weak self] in
+                                self?.handleRenderCompletion(
+                                    startTime: drawStartTime,
+                                    signalDelay: signalDelay,
+                                    drawableWait: drawableWait,
+                                    streamID: submission.streamID,
+                                    sequence: submission.sequence,
+                                    decodeTime: submission.decodeTime,
+                                    wasPresented: wasPresented
+                                )
+                            }
+                        }
+                    )
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func prepareRenderSubmission(
+        streamID: StreamID?,
+        catchUpDepth: Int,
+        preferLatestFrame: Bool,
+        drawablePixelFormat: MTLPixelFormat
+    ) -> RenderSubmission? {
         guard renderState.updateFrameIfNeeded(
             streamID: streamID,
-            catchUpDepth: decision.presentationKeepDepth,
-            preferLatest: shouldPreferLatestFrame
+            catchUpDepth: catchUpDepth,
+            preferLatest: preferLatestFrame
         ) else {
             if let streamID, MirageFrameCache.shared.queueDepth(for: streamID) == 0 {
                 renderDiagnostics.skipNoEntry &+= 1
             } else {
                 renderDiagnostics.skipNoFrame &+= 1
             }
-            _ = renderAdmission.release()
-            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
-            return
+            return nil
         }
 
         if let pixelFormatType = renderState.currentPixelFormatType {
             updateOutputFormatIfNeeded(pixelFormatType)
         }
 
-        guard let pixelBuffer = renderState.currentPixelBuffer else {
+        guard var pixelBuffer = renderState.currentPixelBuffer else {
             renderDiagnostics.skipNoPixelBuffer &+= 1
-            _ = renderAdmission.release()
-            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
-            return
+            return nil
         }
 
-        guard let renderer else {
-            renderDiagnostics.skipNoRenderer &+= 1
-            _ = renderAdmission.release()
-            maybeLogRenderDiagnostics(now: CFAbsoluteTimeGetCurrent())
-            return
+        var contentRect = renderState.currentContentRect
+        var sequence = renderState.currentSequence
+        var decodeTime = renderState.currentDecodeTime
+
+        var isStale = renderSequenceGate.noteRequestedAndCheckStale(sequence)
+
+        if isStale {
+            if renderState.updateFrameIfNeeded(
+                streamID: streamID,
+                catchUpDepth: 1,
+                preferLatest: true
+            ) {
+                if let pixelFormatType = renderState.currentPixelFormatType {
+                    updateOutputFormatIfNeeded(pixelFormatType)
+                }
+                if let refreshedPixelBuffer = renderState.currentPixelBuffer {
+                    pixelBuffer = refreshedPixelBuffer
+                    contentRect = renderState.currentContentRect
+                    sequence = renderState.currentSequence
+                    decodeTime = renderState.currentDecodeTime
+                    isStale = renderSequenceGate.noteRequestedAndCheckStale(sequence)
+                }
+            }
         }
 
-        let drawStartTime = CFAbsoluteTimeGetCurrent()
-        let signalDelay = lastScheduledSignalTime > 0 ? max(0, drawStartTime - lastScheduledSignalTime) : 0
-        let contentRect = renderState.currentContentRect
-        let outputPixelFormat = colorPixelFormat
-        let presentedSequence = renderState.currentSequence
-        let presentedDecodeTime = renderState.currentDecodeTime
-        renderSequenceGate.noteRequested(presentedSequence)
-        let streamID = streamID
-        let metalLayer = self.metalLayer
-        let renderAdmission = self.renderAdmission
-        let admissionReleaseMode = decision.admissionReleaseMode
-        let policyReason = decision.reason
-
-        renderQueue.async { [weak self] in
-            let releaseGate = MirageRenderAdmissionReleaseGate {
-                renderAdmission.release()
-            }
-            guard let self else {
-                _ = releaseGate.releaseOnce()
-                return
-            }
-            let drawableWaitStart = CFAbsoluteTimeGetCurrent()
-            guard let drawable = metalLayer.nextDrawable() else {
-                let wait = max(0, CFAbsoluteTimeGetCurrent() - drawableWaitStart)
-                _ = releaseGate.releaseOnce()
-                Task { @MainActor [weak self] in
-                    self?.handleNoDrawable(signalDelay: signalDelay, drawableWait: wait)
-                }
-                return
-            }
-
-            let drawableWait = max(0, CFAbsoluteTimeGetCurrent() - drawableWaitStart)
-            if self.renderSequenceGate.isStale(presentedSequence) {
-                _ = releaseGate.releaseOnce()
-                Task { @MainActor [weak self] in
-                    self?.handleStaleDrawableDrop(signalDelay: signalDelay, drawableWait: drawableWait)
-                }
-                return
-            }
-            renderer.render(
-                pixelBuffer: pixelBuffer,
-                to: drawable,
-                contentRect: contentRect,
-                outputPixelFormat: outputPixelFormat,
-                onScheduled: {
-                    guard admissionReleaseMode == .scheduled else { return }
-                    _ = releaseGate.releaseOnce()
-                },
-                completion: { [weak self] wasPresented in
-                    let releasedOnCompletion = releaseGate.releaseOnce()
-                    if admissionReleaseMode == .scheduled, releasedOnCompletion, MirageLogger.isEnabled(.renderer) {
-                        MirageLogger.renderer(
-                            "Render admission scheduled release fallback fired reason=\(policyReason.rawValue)"
-                        )
-                    }
-                    Task { @MainActor [weak self] in
-                        self?.handleRenderCompletion(
-                            startTime: drawStartTime,
-                            signalDelay: signalDelay,
-                            drawableWait: drawableWait,
-                            streamID: streamID,
-                            sequence: presentedSequence,
-                            decodeTime: presentedDecodeTime,
-                            wasPresented: wasPresented
-                        )
-                    }
-                }
-            )
+        guard !isStale else {
+            renderDiagnostics.skipStale &+= 1
+            renderState.clearCurrentFrame()
+            renderScheduler.requestRedraw()
+            return nil
         }
+
+        return RenderSubmission(
+            pixelBuffer: pixelBuffer,
+            contentRect: contentRect,
+            // Use the acquired drawable's format for this submission to avoid
+            // pipeline/attachment mismatches if layer format changes this tick.
+            outputPixelFormat: drawablePixelFormat,
+            streamID: streamID,
+            sequence: sequence,
+            decodeTime: decodeTime
+        )
     }
 
     @MainActor
@@ -460,19 +572,6 @@ public class MirageMetalView: UIView {
             rendered: false
         )
         scheduleDrawableRetry()
-    }
-
-    @MainActor
-    private func handleStaleDrawableDrop(signalDelay: CFAbsoluteTime, drawableWait: CFAbsoluteTime) {
-        renderDiagnostics.skipStale &+= 1
-        recordDrawCompletion(
-            startTime: CFAbsoluteTimeGetCurrent(),
-            signalDelay: signalDelay,
-            drawableWait: drawableWait,
-            rendered: false
-        )
-        renderState.markNeedsRedraw()
-        renderScheduler.requestRedraw()
     }
 
     @MainActor
@@ -823,6 +922,7 @@ public class MirageMetalView: UIView {
         let maximumDrawableCount = max(1, metalLayer.maximumDrawableCount)
         let effectiveCap = decision.inFlightCap
         let inFlight = renderAdmission.snapshot()
+        let acquisitionPending = drawableAcquisitionPending
 
         let requestText = requestFPS.formatted(.number.precision(.fractionLength(1)))
         let drawAttemptText = drawAttemptFPS.formatted(.number.precision(.fractionLength(1)))
@@ -835,7 +935,9 @@ public class MirageMetalView: UIView {
                     "noFrame=\(renderDiagnostics.skipNoFrame) noDrawable=\(renderDiagnostics.skipNoDrawable) " +
                     "noRenderer=\(renderDiagnostics.skipNoRenderer) noPixelBuffer=\(renderDiagnostics.skipNoPixelBuffer) " +
                     "stale=\(renderDiagnostics.skipStale) " +
-                    "cap=\(renderDiagnostics.skipInFlightCap)) admission(inFlight=\(inFlight)/\(effectiveCap) " +
+                    "cap=\(renderDiagnostics.skipInFlightCap) acquire=\(renderDiagnostics.skipAcquirePending)) " +
+                    "admission(inFlight=\(inFlight)/\(effectiveCap) " +
+                    "acquirePending=\(acquisitionPending) " +
                     "drawables=\(maximumDrawableCount) target=\(maxRenderFPS) scale=\(renderScalePolicy.currentScale) " +
                     "capSkipStreak=\(capSkipStreak))"
             )
@@ -844,6 +946,9 @@ public class MirageMetalView: UIView {
     }
 
     func allowsSecondaryCatchUpDraw() -> Bool {
+        if usesDisplayClockLockedPresentation {
+            return false
+        }
         let decision = resolvedRenderPolicyDecision(now: CFAbsoluteTimeGetCurrent())
         return decision.allowsSecondaryCatchUpDraw
     }
@@ -851,8 +956,25 @@ public class MirageMetalView: UIView {
     func allowsDecodeDrivenTickFallback(now: CFAbsoluteTime, targetFPS: Int) -> Bool {
         _ = now
         _ = targetFPS
+        // Lowest-latency presentation is display-link clocked: decode callbacks mark redraw
+        // pending, and only driver pulses are allowed to present.
+        if usesDisplayClockLockedPresentation {
+            return false
+        }
         // Decode-driven fallback is gated by scheduler display-pulse lateness checks.
         return true
+    }
+
+    private var usesDisplayClockLockedPresentation: Bool {
+        latencyMode == .lowestLatency
+    }
+
+    private func updateDecodeDrivenTriggerPolicy() {
+        guard let streamID else { return }
+        MirageClientRenderTrigger.shared.setDecodeDrivenRequestsEnabled(
+            !usesDisplayClockLockedPresentation,
+            for: streamID
+        )
     }
 
     private func updateRenderStability(
@@ -901,23 +1023,29 @@ public class MirageMetalView: UIView {
         renderedFPS: Double,
         drawableWaitAvgMs: Double
     ) {
-        _ = now
-        _ = renderedFPS
-        _ = drawableWaitAvgMs
-        guard renderScalePolicy.currentScale < 0.999 else { return }
+        let transition = renderScalePolicy.evaluate(
+            now: now,
+            latencyMode: latencyMode,
+            targetFPS: maxRenderFPS,
+            renderedFPS: renderedFPS,
+            drawableWaitAvgMs: drawableWaitAvgMs,
+            typingBurstActive: typingBurstActive(now: now)
+        )
+        guard transition.changed else { return }
 
-        let previousScale = renderScalePolicy.currentScale
-        renderScalePolicy.reset()
         renderState.markNeedsRedraw()
         setNeedsLayout()
         requestDraw()
 
         guard MirageLogger.isEnabled(.renderer) else { return }
-        let fromText = previousScale.formatted(.number.precision(.fractionLength(2)))
-        let toText = renderScalePolicy.currentScale.formatted(.number.precision(.fractionLength(2)))
+        let fromText = transition.previousScale.formatted(.number.precision(.fractionLength(2)))
+        let toText = transition.newScale.formatted(.number.precision(.fractionLength(2)))
+        let directionText = transition.direction?.rawValue ?? "none"
+        let stepDelayText = transition.secondsUntilNextStep.formatted(.number.precision(.fractionLength(2)))
         MirageLogger.renderer(
-            "Render scale transition mode=\(latencyMode.rawValue) direction=up scale=\(fromText)->\(toText) " +
-                "degradedStreak=0 healthyStreak=0 nextStepIn=0.00s"
+            "Render scale transition mode=\(latencyMode.rawValue) direction=\(directionText) " +
+                "scale=\(fromText)->\(toText) degradedStreak=\(transition.degradedStreak) " +
+                "healthyStreak=\(transition.healthyStreak) nextStepIn=\(stepDelayText)s"
         )
     }
 
@@ -1089,6 +1217,7 @@ private struct RenderDiagnostics {
     var skipNoPixelBuffer: UInt64 = 0
     var skipStale: UInt64 = 0
     var skipInFlightCap: UInt64 = 0
+    var skipAcquirePending: UInt64 = 0
 
     mutating func reset(now: CFAbsoluteTime) {
         startTime = now
@@ -1102,6 +1231,7 @@ private struct RenderDiagnostics {
         skipNoPixelBuffer = 0
         skipStale = 0
         skipInFlightCap = 0
+        skipAcquirePending = 0
     }
 }
 #endif

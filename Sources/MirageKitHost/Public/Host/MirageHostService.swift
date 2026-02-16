@@ -50,6 +50,9 @@ public final class MirageHostService {
     /// If the provider returns `.denied`, the connection is rejected immediately.
     public weak var trustProvider: (any MirageTrustProvider)?
 
+    /// Software update controller used for client-initiated host update status and install requests.
+    public weak var softwareUpdateController: (any MirageHostSoftwareUpdateController)?
+
     /// Identity manager for signed handshake envelopes.
     public var identityManager: MirageIdentityManager? = MirageIdentityManager.shared {
         didSet {
@@ -103,6 +106,7 @@ public final class MirageHostService {
     var streamsByID: [StreamID: StreamContext] = [:]
     var clientsByConnection: [ObjectIdentifier: ClientContext] = [:]
     var clientsByID: [UUID: ClientContext] = [:]
+    var peerIdentityByClientID: [UUID: MiragePeerIdentity] = [:]
     var singleClientConnectionID: ObjectIdentifier?
 
     // UDP connections by stream ID (received from client registrations)

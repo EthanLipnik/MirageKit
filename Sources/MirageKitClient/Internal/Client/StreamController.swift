@@ -351,9 +351,7 @@ actor StreamController {
         reassembler.setFrameLossHandler { [weak self] _ in
             guard let self else { return }
             Task {
-                self.reassembler.enterKeyframeOnlyMode()
-                await self.startKeyframeRecoveryLoopIfNeeded()
-                await self.requestKeyframeRecovery(reason: .frameLoss)
+                await self.handleFrameLossSignal()
             }
         }
     }

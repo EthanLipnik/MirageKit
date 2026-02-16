@@ -15,11 +15,11 @@ import Testing
 struct RenderAdmissionPolicyTests {
     @Test("Legacy cap API clamps to drawable count")
     func legacyCapClampsToDrawableCount() {
-        let cap = MirageRenderAdmissionPolicy.effectiveInFlightCap(targetFPS: 60, maximumDrawableCount: 2)
+        let cap = MirageRenderAdmissionPolicy.effectiveInFlightCap(targetFPS: 60, maximumDrawableCount: 3)
         #expect(cap == 2)
     }
 
-    @Test("Lowest latency at 60Hz keeps one in-flight")
+    @Test("Lowest latency at 60Hz keeps two in-flight and enables cap micro-retry")
     func lowestLatency60HzPolicy() {
         let decision = MirageRenderAdmissionPolicy.decision(
             latencyMode: .lowestLatency,
@@ -29,14 +29,50 @@ struct RenderAdmissionPolicyTests {
             smoothestPromotionActive: false,
             pressureActive: false
         )
-        #expect(decision.inFlightCap == 1)
-        #expect(decision.maximumDrawableCount == 2)
+        #expect(decision.inFlightCap == 2)
+        #expect(decision.maximumDrawableCount == 3)
         #expect(decision.presentationKeepDepth == 1)
         #expect(decision.prefersLatestFrameOnPressure)
         #expect(decision.reason == .baseline)
-        #expect(decision.admissionReleaseMode == .completed)
+        #expect(decision.admissionReleaseMode == .scheduled)
         #expect(!decision.allowsSecondaryCatchUpDraw)
-        #expect(!decision.allowsInFlightCapMicroRetry)
+        #expect(decision.allowsInFlightCapMicroRetry)
+    }
+
+    @Test("Lowest latency recovery keeps strict admission while keeping scheduled release")
+    func lowestLatencyRecoveryReleaseMode() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: true,
+            smoothestPromotionActive: false,
+            pressureActive: true
+        )
+        #expect(decision.reason == .recovery)
+        #expect(decision.inFlightCap == 2)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.admissionReleaseMode == .scheduled)
+        #expect(!decision.allowsSecondaryCatchUpDraw)
+        #expect(decision.allowsInFlightCapMicroRetry)
+    }
+
+    @Test("Lowest latency pressure keeps recovery reason without expanding admission cap")
+    func lowestLatencyPressurePromotionPolicy() {
+        let decision = MirageRenderAdmissionPolicy.decision(
+            latencyMode: .lowestLatency,
+            targetFPS: 60,
+            typingBurstActive: false,
+            recoveryActive: false,
+            smoothestPromotionActive: false,
+            pressureActive: true
+        )
+        #expect(decision.reason == .recovery)
+        #expect(decision.inFlightCap == 2)
+        #expect(decision.maximumDrawableCount == 3)
+        #expect(decision.presentationKeepDepth == 1)
+        #expect(decision.admissionReleaseMode == .scheduled)
+        #expect(!decision.allowsSecondaryCatchUpDraw)
     }
 
     @Test("Auto baseline at 60Hz keeps two in-flight")
@@ -211,6 +247,21 @@ struct RenderAdmissionPolicyTests {
 
         #expect(!gate.isStale(1))
         #expect(!gate.isStale(2))
+    }
+
+    @Test("Sequence gate combined request+stale check recovers restart in one step")
+    func sequenceGateCombinedCheckRecoversFromSequenceRestart() {
+        let gate = MirageRenderSequenceGate()
+        gate.noteRequested(5_000)
+        gate.notePresented(5_000)
+
+        // Frame-cache restart: the first low sequence should reset the gate before stale filtering.
+        #expect(!gate.noteRequestedAndCheckStale(1))
+        #expect(!gate.noteRequestedAndCheckStale(2))
+
+        gate.notePresented(2)
+        #expect(gate.noteRequestedAndCheckStale(2))
+        #expect(!gate.noteRequestedAndCheckStale(3))
     }
 }
 #endif

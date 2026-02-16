@@ -229,9 +229,8 @@ public final class MirageFrameCache: @unchecked Sendable {
         } else {
             let shouldTrimForDepth = depth >= presentationTrimDepthThreshold
             let shouldTrimForAge = depth > effectiveKeepDepth && oldestAgeMs >= presentationTrimOldestAgeMs
-            let shouldTrimForPressure = preferLatest &&
-                depth >= max(presentationTrimDepthThreshold, effectiveKeepDepth + 1)
-            if shouldTrimForAge || shouldTrimForPressure {
+            let shouldTrimForPreferLatest = preferLatest && depth > effectiveKeepDepth
+            if shouldTrimForAge || shouldTrimForPreferLatest {
                 let dropCount = max(0, depth - effectiveKeepDepth)
                 if dropCount > 0 {
                     _ = queue.entries.removeFirst(dropCount)
@@ -241,8 +240,8 @@ public final class MirageFrameCache: @unchecked Sendable {
                         queue.lastEmergencyLogTime = now
                         let ageText = oldestAgeMs.formatted(.number.precision(.fractionLength(1)))
                         let reason: String
-                        if shouldTrimForPressure {
-                            reason = shouldTrimForAge ? "pressure+age" : "pressure"
+                        if shouldTrimForPreferLatest {
+                            reason = shouldTrimForAge ? "preferLatest+age" : "preferLatest"
                         } else if shouldTrimForDepth {
                             reason = "age+depth"
                         } else {

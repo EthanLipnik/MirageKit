@@ -36,7 +36,7 @@ extension MirageClientService {
         #endif
     }
 
-    private func controlParameters(for transport: ControlTransport) -> NWParameters {
+    func controlParameters(for transport: ControlTransport) -> NWParameters {
         switch transport {
         case .tcp:
             let parameters = NWParameters.tcp
@@ -60,8 +60,9 @@ extension MirageClientService {
         }
     }
 
-    /// Send hello message with device info to host.
-    private func sendHelloMessage(connection: NWConnection) async throws {
+    func makeHelloMessage(
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
+    ) throws -> (hello: HelloMessage, nonce: String) {
         let negotiation = MirageProtocolNegotiation.clientHello(
             protocolVersion: Int(MirageKit.protocolVersion),
             supportedFeatures: mirageSupportedFeatures
@@ -74,43 +75,55 @@ extension MirageClientService {
             protocolVersion: Int(MirageKit.protocolVersion)
         )
 
-        do {
-            let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
-            let identity = try resolvedIdentityManager.currentIdentity()
-            let timestampMs = MirageIdentitySigning.currentTimestampMs()
-            let nonce = UUID().uuidString.lowercased()
-            let payload = try MirageIdentitySigning.helloPayload(
-                deviceID: deviceID,
-                deviceName: deviceName,
-                deviceType: currentDeviceType,
-                protocolVersion: Int(MirageKit.protocolVersion),
-                capabilities: capabilities,
-                negotiation: negotiation,
-                iCloudUserID: iCloudUserID,
+        let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
+        let identity = try resolvedIdentityManager.currentIdentity()
+        let timestampMs = MirageIdentitySigning.currentTimestampMs()
+        let nonce = UUID().uuidString.lowercased()
+        let payload = try MirageIdentitySigning.helloPayload(
+            deviceID: deviceID,
+            deviceName: deviceName,
+            deviceType: currentDeviceType,
+            protocolVersion: Int(MirageKit.protocolVersion),
+            capabilities: capabilities,
+            negotiation: negotiation,
+            iCloudUserID: iCloudUserID,
+            keyID: identity.keyID,
+            publicKey: identity.publicKey,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let signature = try resolvedIdentityManager.sign(payload)
+        let hello = HelloMessage(
+            deviceID: deviceID,
+            deviceName: deviceName,
+            deviceType: currentDeviceType,
+            protocolVersion: Int(MirageKit.protocolVersion),
+            capabilities: capabilities,
+            negotiation: negotiation,
+            iCloudUserID: iCloudUserID,
+            identity: MirageIdentityEnvelope(
                 keyID: identity.keyID,
                 publicKey: identity.publicKey,
                 timestampMs: timestampMs,
-                nonce: nonce
+                nonce: nonce,
+                signature: signature
+            ),
+            requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+        )
+        return (hello, nonce)
+    }
+
+    /// Send hello message with device info to host.
+    private func sendHelloMessage(
+        connection: NWConnection,
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
+    ) async throws {
+        do {
+            let helloRequest = try makeHelloMessage(
+                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
             )
-            let signature = try resolvedIdentityManager.sign(payload)
-            pendingHelloNonce = nonce
-            let hello = HelloMessage(
-                deviceID: deviceID,
-                deviceName: deviceName,
-                deviceType: currentDeviceType,
-                protocolVersion: Int(MirageKit.protocolVersion),
-                capabilities: capabilities,
-                negotiation: negotiation,
-                iCloudUserID: iCloudUserID,
-                identity: MirageIdentityEnvelope(
-                    keyID: identity.keyID,
-                    publicKey: identity.publicKey,
-                    timestampMs: timestampMs,
-                    nonce: nonce,
-                    signature: signature
-                )
-            )
-            let message = try ControlMessage(type: .hello, content: hello)
+            pendingHelloNonce = helloRequest.nonce
+            let message = try ControlMessage(type: .hello, content: helloRequest.hello)
             let data = message.serialize()
             MirageLogger.client("Sending hello: \(deviceName) (\(currentDeviceType.displayName))")
 

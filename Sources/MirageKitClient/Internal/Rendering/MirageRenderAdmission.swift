@@ -35,7 +35,7 @@ struct MirageRenderPolicyDecision: Equatable {
 
 enum MirageRenderAdmissionPolicy {
     static func effectiveInFlightCap(targetFPS: Int, maximumDrawableCount: Int) -> Int {
-        let desiredInFlight = targetFPS >= 120 ? 3 : 3
+        let desiredInFlight = targetFPS >= 120 ? 3 : 2
         return max(1, min(desiredInFlight, maximumDrawableCount))
     }
 
@@ -110,7 +110,7 @@ enum MirageRenderAdmissionPolicy {
         if recoveryActive {
             switch latencyMode {
             case .lowestLatency:
-                return (1, .recovery)
+                return (2, .recovery)
             case .auto:
                 // Auto keeps throughput-focused admission during recovery and relies on
                 // stream-side quality controls instead of presentation-cap collapse.
@@ -125,7 +125,12 @@ enum MirageRenderAdmissionPolicy {
 
         switch latencyMode {
         case .lowestLatency:
-            return (1, .baseline)
+            if targetFPS <= 60, pressureActive {
+                // Low-latency mode keeps a strict 2-deep admission path at 60Hz to
+                // avoid triple-buffer oscillation under compositor pressure.
+                return (2, .recovery)
+            }
+            return (2, .baseline)
         case .auto:
             if typingBurstActive {
                 return (1, .typing)
@@ -161,7 +166,7 @@ enum MirageRenderAdmissionPolicy {
         if reason == .recovery {
             switch latencyMode {
             case .lowestLatency:
-                return 2
+                return 3
             case .auto:
                 return 3
             case .smoothest:
@@ -170,7 +175,7 @@ enum MirageRenderAdmissionPolicy {
         }
         switch latencyMode {
         case .lowestLatency:
-            return 2
+            return 3
         case .auto:
             return 3
         case .smoothest:
@@ -236,6 +241,8 @@ enum MirageRenderAdmissionPolicy {
         case .smoothest:
             return smoothestPromotionActive && reason == .promotion
         case .lowestLatency:
+            // Lowest-latency mode is display-link clocked at 60Hz. Keep one presentation
+            // attempt per driver pulse so decode and present cadence share the same clock.
             return false
         }
     }
@@ -245,9 +252,11 @@ enum MirageRenderAdmissionPolicy {
         targetFPS: Int,
         reason: MirageRenderPolicyReason
     ) -> Bool {
-        _ = latencyMode
-        _ = targetFPS
-        _ = reason
+        if latencyMode == .lowestLatency, targetFPS <= 60 {
+            // Low-latency mode still keeps tight admission at 60Hz; micro-retry avoids dropping a
+            // full display-link interval when admission releases just after a tick.
+            return true
+        }
         return false
     }
 
@@ -259,13 +268,8 @@ enum MirageRenderAdmissionPolicy {
         if reason == .typing {
             return .completed
         }
-        if reason == .recovery {
-            switch latencyMode {
-            case .lowestLatency:
-                return .completed
-            case .auto, .smoothest:
-                return .completed
-            }
+        if latencyMode == .lowestLatency {
+            return .scheduled
         }
         return .completed
     }
@@ -333,6 +337,25 @@ final class MirageRenderSequenceGate: @unchecked Sendable {
             latestRequestedSequence = sequence
         }
         lock.unlock()
+    }
+
+    /// Atomically records a requested sequence and returns whether it is stale against
+    /// the latest presented sequence.
+    ///
+    /// Use this for submission paths that need restart detection and stale filtering
+    /// in one ordered step so sequence-space resets cannot get stuck in stale-only loops.
+    func noteRequestedAndCheckStale(_ sequence: UInt64) -> Bool {
+        lock.lock()
+        if sequence < latestRequestedSequence || sequence < latestPresentedSequence {
+            latestRequestedSequence = 0
+            latestPresentedSequence = 0
+        }
+        if sequence > latestRequestedSequence {
+            latestRequestedSequence = sequence
+        }
+        let stale = sequence <= latestPresentedSequence
+        lock.unlock()
+        return stale
     }
 
     func notePresented(_ sequence: UInt64) {

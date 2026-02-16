@@ -28,6 +28,7 @@ public extension MirageHostService {
         colorSpace: MirageColorSpace? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
+        allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool = false,
         audioConfiguration: MirageAudioConfiguration? = nil
         // hdr: Bool = false
@@ -96,11 +97,15 @@ public extension MirageHostService {
             streamScale: streamScale ?? 1.0,
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: mediaSecurityByClientID[client.id],
+            runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
             latencyMode: latencyMode
         )
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
+        }
+        if allowRuntimeQualityAdjustment == false {
+            MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
         }
         await context.setMetricsUpdateHandler { [weak self] metrics in
             Task { @MainActor [weak self] in
