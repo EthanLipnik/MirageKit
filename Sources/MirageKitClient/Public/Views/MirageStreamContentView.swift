@@ -153,6 +153,11 @@ public struct MirageStreamContentView: View {
                 onRefreshRateOverrideChange: { override in
                     Task { @MainActor [clientService] in
                         await Task.yield()
+                        do {
+                            try await Task.sleep(for: .milliseconds(1))
+                        } catch {
+                            return
+                        }
                         clientService.updateStreamRefreshRateOverride(
                             streamID: session.streamID,
                             maxRefreshRate: override
@@ -221,10 +226,26 @@ public struct MirageStreamContentView: View {
             }
         }
         .onChange(of: sessionStore.sessionMinSizes[session.id]) { _, minSize in
-            handleResizeAcknowledgement(minSize)
+            Task { @MainActor in
+                await Task.yield()
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
+                    return
+                }
+                handleResizeAcknowledgement(minSize)
+            }
         }
         .onChange(of: sessionStore.sessionMinSizeUpdateGenerations[session.id]) { _, _ in
-            handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
+            Task { @MainActor in
+                await Task.yield()
+                do {
+                    try await Task.sleep(for: .milliseconds(1))
+                } catch {
+                    return
+                }
+                handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
+            }
         }
         .onAppear {
             sessionStore.setFocusedSession(session.id)
@@ -383,6 +404,11 @@ public struct MirageStreamContentView: View {
 
         Task { @MainActor [clientService] in
             await Task.yield()
+            do {
+                try await Task.sleep(for: .milliseconds(1))
+            } catch {
+                return
+            }
             guard allowsResizeEvents else { return }
 
             if session.hasReceivedFirstFrame, !isDesktopStream {
@@ -589,7 +615,37 @@ public struct MirageStreamContentView: View {
         return clientService.clampStreamScale(min(1.0, widthScale, heightScale))
     }
 
+    private func inferredDesktopPointScaleFromAcknowledged(
+        displaySize: CGSize,
+        acknowledgedPixelSize: CGSize
+    ) -> CGFloat? {
+        guard displaySize.width > 0,
+              displaySize.height > 0,
+              acknowledgedPixelSize.width > 0,
+              acknowledgedPixelSize.height > 0 else {
+            return nil
+        }
+
+        let inferredWidthScale = acknowledgedPixelSize.width / displaySize.width
+        let inferredHeightScale = acknowledgedPixelSize.height / displaySize.height
+        guard inferredWidthScale > 0, inferredHeightScale > 0 else { return nil }
+
+        // Accept host-driven scale only when both axes imply the same effective scale.
+        let mismatch = abs(inferredWidthScale - inferredHeightScale)
+        let tolerance = max(0.05, max(inferredWidthScale, inferredHeightScale) * 0.03)
+        guard mismatch <= tolerance else { return nil }
+
+        return max(1.0, (inferredWidthScale + inferredHeightScale) * 0.5)
+    }
+
     private func desktopPointScale(for displaySize: CGSize) -> CGFloat {
+        if let inferredScale = inferredDesktopPointScaleFromAcknowledged(
+            displaySize: displaySize,
+            acknowledgedPixelSize: currentDesktopAcknowledgedPixelSize()
+        ) {
+            return inferredScale
+        }
+
         let basePixels = clientService.virtualDisplayPixelResolution(for: displaySize)
         let widthScale = displaySize.width > 0 ? basePixels.width / displaySize.width : 1.0
         let heightScale = displaySize.height > 0 ? basePixels.height / displaySize.height : 1.0
@@ -612,6 +668,22 @@ public struct MirageStreamContentView: View {
 
         let basePixels = clientService.virtualDisplayPixelResolution(for: basePoints)
         let clampedScale = resolvedDesktopStreamScale(for: displaySize)
+
+        if isDesktopStream,
+           clampedScale >= 0.999,
+           let inferredScale = inferredDesktopPointScaleFromAcknowledged(
+               displaySize: basePoints,
+               acknowledgedPixelSize: currentDesktopAcknowledgedPixelSize()
+           ) {
+            let inferredTargetSize = CGSize(
+                width: alignedEven(basePoints.width * inferredScale),
+                height: alignedEven(basePoints.height * inferredScale)
+            )
+            lastSentEncodedPixelSize = inferredTargetSize
+            streamScaleTask?.cancel()
+            streamScaleTask = nil
+            return
+        }
 
         let rawTargetSize = CGSize(
             width: basePixels.width * clampedScale,

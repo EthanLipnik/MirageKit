@@ -391,6 +391,7 @@ extension StreamContext {
             startupRegistrationLogged = true
             logStartupEvent("UDP registration confirmed")
         }
+        noteLossEvent(reason: "UDP registration warmup", enablePFrameFEC: true)
 
         if let encoder {
             await encoder.resetFrameNumber()

@@ -37,12 +37,12 @@ extension StreamContext {
     func updateQueueLimits() {
         guard currentEncodedSize.width > 0, currentEncodedSize.height > 0 else { return }
         let pixelCount = Double(currentEncodedSize.width * currentEncodedSize.height)
-        let frameRateFactor = currentFrameRate >= 120 ? 0.30 : 0.20
+        let frameRateFactor = currentFrameRate >= 120 ? 0.22 : 0.15
         let pixelBased = Int((pixelCount * frameRateFactor).rounded())
         let bitrateBased: Int
         if let bitrate = encoderConfig.bitrate, bitrate > 0 {
             let bytesPerSecond = Double(bitrate) / 8.0
-            let windowSeconds = currentFrameRate >= 120 ? 0.20 : 0.25
+            let windowSeconds = currentFrameRate >= 120 ? 0.12 : 0.14
             bitrateBased = Int((bytesPerSecond * windowSeconds).rounded())
         } else {
             bitrateBased = 0
@@ -50,7 +50,7 @@ extension StreamContext {
         let computed = max(pixelBased, bitrateBased)
         let clamped = max(minQueuedBytes, min(maxQueuedBytesCap, computed))
         maxQueuedBytes = clamped
-        queuePressureBytes = max(minQueuedBytes, Int(Double(clamped) * 0.75))
+        queuePressureBytes = max(minQueuedBytes, Int(Double(clamped) * 0.60))
     }
 }
 #endif

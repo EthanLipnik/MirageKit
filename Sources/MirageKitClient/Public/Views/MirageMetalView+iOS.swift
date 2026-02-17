@@ -364,7 +364,9 @@ public class MirageMetalView: UIView {
     }
 
     func desiredMaxInFlightDraws() -> Int {
-        maxRenderFPS >= 120 ? 3 : 2
+        // Keep triple buffering at 60Hz on iOS/visionOS to reduce drawable-wait
+        // admission skips that appear as alternating stale-frame stutter.
+        3
     }
 
     private func resetDrawAdmissionState() {

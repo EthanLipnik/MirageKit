@@ -25,7 +25,10 @@ extension MirageClientService {
                 previousStreamID != streamID || !hasController
             desktopStreamID = streamID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
-            refreshRateOverridesByStream[streamID] = getScreenMaxRefreshRate()
+            let screenMaxRefreshRate = getScreenMaxRefreshRate()
+            let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
+            let desiredRefreshRate = max(existingRefreshRate, screenMaxRefreshRate)
+            refreshRateOverridesByStream[streamID] = desiredRefreshRate >= 120 ? 120 : 60
             configureAdaptiveFallbackBaseline(
                 for: streamID,
                 bitrate: pendingDesktopAdaptiveFallbackBitrate,
@@ -61,6 +64,15 @@ extension MirageClientService {
                         if self.udpConnection == nil { try await self.startVideoConnection() }
                         try await self.sendStreamRegistration(streamID: streamID)
                         await self.ensureAudioTransportRegistered(for: streamID)
+                        let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                        try? await self.sendStreamRefreshRateChange(
+                            streamID: streamID,
+                            maxRefreshRate: refreshRate
+                        )
+                        MirageLogger
+                            .client(
+                                "Desktop start: refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
+                            )
                         MirageLogger.client("Registered for desktop stream video \(streamID)")
                         self.startStartupRegistrationRetry(streamID: streamID)
                     } catch {

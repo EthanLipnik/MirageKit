@@ -179,14 +179,18 @@ actor StreamContext {
     // MARK: - Backpressure
 
     /// Packet queue backpressure thresholds (bytes)
-    let minQueuedBytes: Int = 1_000_000
+    let minQueuedBytes: Int = 400_000
     let maxQueuedBytesCap: Int = 8_000_000
     var maxQueuedBytes: Int = 2_000_000
-    var queuePressureBytes: Int = 1_500_000
+    var queuePressureBytes: Int = 1_200_000
     let backpressureLogInterval: CFAbsoluteTime = 1.0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
     var backpressureActive: Bool = false
     nonisolated(unsafe) var backpressureActiveSnapshot: Bool = false
+    var backpressureActivatedAt: CFAbsoluteTime = 0
+    var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
+    let backpressureRecoveryThreshold: CFAbsoluteTime = 0.75
+    let backpressureRecoveryCooldown: CFAbsoluteTime = 2.0
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25
@@ -215,6 +219,7 @@ actor StreamContext {
     nonisolated(unsafe) var lossModeDeadline: CFAbsoluteTime = 0
     nonisolated(unsafe) var lossModePFrameFECDeadline: CFAbsoluteTime = 0
     let lossModeHold: CFAbsoluteTime = 4.0
+    let pFrameFECLossModeHold: CFAbsoluteTime = 8.0
 
     /// Frame rate for cadence and queue limits
     var currentFrameRate: Int

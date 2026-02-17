@@ -197,9 +197,12 @@ extension StreamContext {
 
     func noteLossEvent(reason: String, enablePFrameFEC: Bool = false) {
         let now = CFAbsoluteTimeGetCurrent()
-        let deadline = now + lossModeHold
-        if deadline > lossModeDeadline { lossModeDeadline = deadline }
-        if enablePFrameFEC, deadline > lossModePFrameFECDeadline { lossModePFrameFECDeadline = deadline }
+        let lossDeadline = now + lossModeHold
+        if lossDeadline > lossModeDeadline { lossModeDeadline = lossDeadline }
+        if enablePFrameFEC {
+            let pFrameDeadline = now + pFrameFECLossModeHold
+            if pFrameDeadline > lossModePFrameFECDeadline { lossModePFrameFECDeadline = pFrameDeadline }
+        }
         let pFrameFECRemainderMs = Int(max(0, lossModePFrameFECDeadline - now) * 1000)
         let pFrameFECState = pFrameFECRemainderMs > 0 ? "on(\(pFrameFECRemainderMs)ms)" : "off"
         MirageLogger
@@ -254,7 +257,7 @@ extension StreamContext {
             noteLossEvent(reason: reason, enablePFrameFEC: true)
         } else {
             softRecoveryCount += 1
-            noteLossEvent(reason: reason)
+            noteLossEvent(reason: reason, enablePFrameFEC: true)
         }
         markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()

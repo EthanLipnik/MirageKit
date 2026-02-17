@@ -124,8 +124,9 @@ actor StreamPacketSender {
 
     nonisolated func enqueue(_ item: WorkItem) {
         guard sendContinuation != nil else { return }
+        let accountedBytes = max(0, item.wireBytes)
         queueLock.withLock {
-            queuedBytes += item.wireBytes
+            queuedBytes += accountedBytes
             if item.isKeyframe {
                 dropNonKeyframesUntilKeyframe = true
                 latestKeyframeFrameNumber = item.frameNumber
@@ -135,19 +136,16 @@ actor StreamPacketSender {
     }
 
     private func handle(_ item: WorkItem) async {
+        let accountedBytes = max(0, item.wireBytes)
         let (shouldDropNonKeyframes, newestKeyframe) = queueLock.withLock {
             (dropNonKeyframesUntilKeyframe, latestKeyframeFrameNumber)
         }
         if shouldDropNonKeyframes, !item.isKeyframe {
-            queueLock.withLock {
-                queuedBytes = max(0, queuedBytes - item.wireBytes)
-            }
+            reduceQueuedBytes(accountedBytes)
             return
         }
         if item.isKeyframe, newestKeyframe > 0, item.frameNumber < newestKeyframe {
-            queueLock.withLock {
-                queuedBytes = max(0, queuedBytes - item.wireBytes)
-            }
+            reduceQueuedBytes(accountedBytes)
             MirageLogger.stream("Dropping stale keyframe \(item.frameNumber) (newest \(newestKeyframe))")
             return
         }
@@ -159,27 +157,23 @@ actor StreamPacketSender {
                     if latestKeyframeFrameNumber == item.frameNumber { dropNonKeyframesUntilKeyframe = false }
                 }
             }
-            queueLock.withLock {
-                queuedBytes = max(0, queuedBytes - item.wireBytes)
-            }
+            reduceQueuedBytes(accountedBytes)
             return
         }
 
         if item.isKeyframe { item.onSendStart?() }
-        await fragmentAndSendPackets(item)
+        await fragmentAndSendPackets(item, accountedBytes: accountedBytes)
         if item.isKeyframe {
             item.onSendComplete?()
             queueLock.withLock {
                 if latestKeyframeFrameNumber == item.frameNumber { dropNonKeyframesUntilKeyframe = false }
             }
         }
-        queueLock.withLock {
-            queuedBytes = max(0, queuedBytes - item.wireBytes)
-        }
     }
 
-    private func fragmentAndSendPackets(_ item: WorkItem) async {
+    private func fragmentAndSendPackets(_ item: WorkItem, accountedBytes: Int) async {
         let fragmentStartTime = CFAbsoluteTimeGetCurrent()
+        var remainingQueuedBytes = max(0, accountedBytes)
 
         let maxPayload = maxPayloadSize
         let frameByteCount = max(0, item.frameByteCount)
@@ -202,6 +196,7 @@ actor StreamPacketSender {
                         if latestKeyframeFrameNumber == item.frameNumber { dropNonKeyframesUntilKeyframe = false }
                     }
                 }
+                if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
                 return
             }
 
@@ -284,7 +279,12 @@ actor StreamPacketSender {
                 }
 
                 let packet = packetBuffer.finalize(length: packetLength)
-                let releasePacket: @Sendable () -> Void = { packetBuffer.release() }
+                let accountedPayloadBytes = plainPayload.count
+                remainingQueuedBytes = max(0, remainingQueuedBytes - accountedPayloadBytes)
+                let releasePacket: @Sendable () -> Void = { [weak self] in
+                    packetBuffer.release()
+                    self?.reduceQueuedBytes(accountedPayloadBytes)
+                }
                 onEncodedFrame(packet, header, releasePacket)
             } else if parityFragmentCount > 0 {
                 let parityIndex = fragmentIndex - dataFragmentCount
@@ -377,11 +377,18 @@ actor StreamPacketSender {
                 }
 
                 let packet = packetBuffer.finalize(length: mirageHeaderSize + wirePayload.count)
-                let releasePacket: @Sendable () -> Void = { packetBuffer.release() }
+                let accountedPayloadBytes = maxPayload
+                remainingQueuedBytes = max(0, remainingQueuedBytes - accountedPayloadBytes)
+                let releasePacket: @Sendable () -> Void = { [weak self] in
+                    packetBuffer.release()
+                    self?.reduceQueuedBytes(accountedPayloadBytes)
+                }
                 onEncodedFrame(packet, header, releasePacket)
             }
             currentSequence += 1
         }
+
+        if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
 
         if item.isKeyframe {
             let fragmentDurationMs = (CFAbsoluteTimeGetCurrent() - fragmentStartTime) * 1000
@@ -410,6 +417,13 @@ actor StreamPacketSender {
         let start = blockStart * maxPayload
         let remaining = max(0, frameByteCount - start)
         return min(maxPayload, remaining)
+    }
+
+    private nonisolated func reduceQueuedBytes(_ bytes: Int) {
+        guard bytes > 0 else { return }
+        queueLock.withLock {
+            queuedBytes = max(0, queuedBytes - bytes)
+        }
     }
 
     private func computeParity(

@@ -267,7 +267,10 @@ extension MirageClientService {
             let streamID = started.streamID
             MirageLogger.client("Stream started: \(streamID) for window \(started.windowID)")
 
-            refreshRateOverridesByStream[streamID] = getScreenMaxRefreshRate()
+            let screenMaxRefreshRate = getScreenMaxRefreshRate()
+            let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
+            let desiredRefreshRate = max(existingRefreshRate, screenMaxRefreshRate)
+            refreshRateOverridesByStream[streamID] = desiredRefreshRate >= 120 ? 120 : 60
 
             let dimensionToken = started.dimensionToken
 
@@ -308,6 +311,14 @@ extension MirageClientService {
 
                         try await self.sendStreamRegistration(streamID: streamID)
                         await self.ensureAudioTransportRegistered(for: streamID)
+                        let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                        try? await self.sendStreamRefreshRateChange(
+                            streamID: streamID,
+                            maxRefreshRate: refreshRate
+                        )
+                        MirageLogger.client(
+                            "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
+                        )
                     } catch {
                         MirageLogger.error(.client, "Failed to establish video connection: \(error)")
                         self.registeredStreamIDs.remove(streamID)

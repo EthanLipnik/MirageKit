@@ -74,6 +74,8 @@ extension StreamContext {
         pendingKeyframeRequiresReset = false
         backpressureActive = false
         backpressureActiveSnapshot = false
+        backpressureActivatedAt = 0
+        lastBackpressureRecoveryTime = 0
         lastCapturedFrame = nil
         lastCapturedFrameTime = 0
         lastCapturedDuration = .invalid
@@ -96,6 +98,44 @@ extension StreamContext {
         frameInbox.clear()
     }
 
+    func clearBackpressureState(queueBytes: Int? = nil, log: Bool = true) {
+        let hadBackpressure = backpressureActive || backpressureActiveSnapshot || backpressureActivatedAt > 0
+        backpressureActive = false
+        backpressureActiveSnapshot = false
+        backpressureActivatedAt = 0
+        guard hadBackpressure, log, let queueBytes else { return }
+        let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
+        MirageLogger.stream("Backpressure cleared (queue \(queuedKB)KB)")
+    }
+
+    func triggerBackpressureRecoveryIfNeeded(queueBytes: Int, now: CFAbsoluteTime) async -> Bool {
+        guard backpressureActive else { return false }
+        let activationTime = backpressureActivatedAt > 0 ? backpressureActivatedAt : now
+        if backpressureActivatedAt == 0 { backpressureActivatedAt = now }
+        guard now - activationTime >= backpressureRecoveryThreshold else { return false }
+        if lastBackpressureRecoveryTime > 0, now - lastBackpressureRecoveryTime < backpressureRecoveryCooldown {
+            return false
+        }
+
+        lastBackpressureRecoveryTime = now
+        backpressureActivatedAt = now
+
+        let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
+        MirageLogger.stream("Backpressure recovery: queue reset at \(queuedKB)KB")
+        noteLossEvent(reason: "backpressure recovery", enablePFrameFEC: true)
+
+        await packetSender?.resetQueue(reason: "backpressure recovery")
+        clearBackpressureState(log: false)
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+        _ = queueKeyframe(
+            reason: "Backpressure recovery keyframe",
+            checkInFlight: false,
+            urgent: true
+        )
+        return true
+    }
+
     /// Process pending frames (encodes using HEVC and keeps only the most recent).
     func processPendingFrames() async {
         defer {
@@ -116,6 +156,14 @@ extension StreamContext {
         if dropped > 0 {
             captureDroppedIntervalCount += dropped
             droppedFrameCount += dropped
+        }
+
+        // Capture admission drops can keep this loop alive without enqueued frames.
+        // Re-check sender queue state so backpressure can clear even when we are not
+        // currently processing a frame.
+        if backpressureActive {
+            let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
+            if queueBytes <= queuePressureBytes { clearBackpressureState(queueBytes: queueBytes) }
         }
 
         while inFlightCount < maxInFlightFrames {
@@ -183,9 +231,13 @@ extension StreamContext {
 
             if backpressureActive {
                 if queueBytes <= queuePressureBytes {
-                    backpressureActive = false
-                    backpressureActiveSnapshot = false
-                    MirageLogger.stream("Backpressure cleared (queue \(Int(Double(queueBytes) / 1024.0))KB)")
+                    clearBackpressureState(queueBytes: queueBytes)
+                } else if await triggerBackpressureRecoveryIfNeeded(
+                    queueBytes: queueBytes,
+                    now: CFAbsoluteTimeGetCurrent()
+                ) {
+                    logStreamStatsIfNeeded()
+                    continue
                 } else {
                     backpressureDropIntervalCount += 1
                     droppedFrameCount += 1
@@ -195,6 +247,7 @@ extension StreamContext {
             } else if queueBytes > maxQueuedBytes, !forceKeyframe {
                 backpressureActive = true
                 backpressureActiveSnapshot = true
+                if backpressureActivatedAt == 0 { backpressureActivatedAt = CFAbsoluteTimeGetCurrent() }
                 backpressureDropIntervalCount += 1
                 droppedFrameCount += 1
                 let queuedKB = (Double(queueBytes) / 1024.0).rounded()
@@ -207,9 +260,15 @@ extension StreamContext {
 
             let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
-                idleSkippedCount += 1
-                logStreamStatsIfNeeded()
-                continue
+                if captureMode == .window {
+                    idleSkippedCount += 1
+                    logStreamStatsIfNeeded()
+                    continue
+                }
+                // Display capture can report sustained idle status during fullscreen/menu transitions.
+                // Keep encoding these frames so the client does not enter visible motion freezes.
+                syntheticFrameCount += 1
+                syntheticIntervalCount += 1
             }
 
             setContentRect(frame.info.contentRect)

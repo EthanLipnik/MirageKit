@@ -143,8 +143,16 @@ extension StreamContext {
         let frameInbox = self.frameInbox
         await captureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
-            if snapshot.pending >= max(1, snapshot.capacity - 1) { return true }
-            return self?.backpressureActiveSnapshot ?? false
+            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
+            let backpressure = self?.backpressureActiveSnapshot ?? false
+            guard pendingPressure || backpressure else { return false }
+
+            // Keep the drain loop alive while we are dropping early so stall recovery
+            // and backpressure re-checks can run even when no new frames are enqueued.
+            if frameInbox.scheduleIfNeeded() {
+                Task(priority: .userInitiated) { await self?.processPendingFrames() }
+            }
+            return true
         }
 
         try await captureEngine.startCapture(
@@ -288,8 +296,16 @@ extension StreamContext {
         let frameInbox = self.frameInbox
         await captureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
-            if snapshot.pending >= max(1, snapshot.capacity - 1) { return true }
-            return self?.backpressureActiveSnapshot ?? false
+            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
+            let backpressure = self?.backpressureActiveSnapshot ?? false
+            guard pendingPressure || backpressure else { return false }
+
+            // Keep the drain loop alive while we are dropping early so stall recovery
+            // and backpressure re-checks can run even when no new frames are enqueued.
+            if frameInbox.scheduleIfNeeded() {
+                Task(priority: .userInitiated) { await self?.processPendingFrames() }
+            }
+            return true
         }
 
         try await captureEngine.startDisplayCapture(
@@ -431,8 +447,16 @@ extension StreamContext {
         let frameInbox = self.frameInbox
         await captureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
-            if snapshot.pending >= max(1, snapshot.capacity - 1) { return true }
-            return self?.backpressureActiveSnapshot ?? false
+            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
+            let backpressure = self?.backpressureActiveSnapshot ?? false
+            guard pendingPressure || backpressure else { return false }
+
+            // Keep the drain loop alive while we are dropping early so stall recovery
+            // and backpressure re-checks can run even when no new frames are enqueued.
+            if frameInbox.scheduleIfNeeded() {
+                Task(priority: .userInitiated) { await self?.processPendingFrames() }
+            }
+            return true
         }
 
         let resolvedExcludedWindows = excludedWindows.map(\.window)
