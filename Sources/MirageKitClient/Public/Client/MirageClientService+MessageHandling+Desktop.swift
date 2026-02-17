@@ -29,8 +29,7 @@ extension MirageClientService {
             configureAdaptiveFallbackBaseline(
                 for: streamID,
                 bitrate: pendingDesktopAdaptiveFallbackBitrate,
-                pixelFormat: pendingDesktopAdaptiveFallbackFormat,
-                colorSpace: pendingDesktopAdaptiveFallbackColorSpace
+                bitDepth: pendingDesktopAdaptiveFallbackBitDepth
             )
             if desktopStreamRequestStartTime > 0 {
                 let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStreamRequestStartTime) * 1000)
@@ -110,8 +109,7 @@ extension MirageClientService {
             cancelStartupRegistrationRetry(streamID: streamID)
             clearAdaptiveFallbackState(for: streamID)
             pendingDesktopAdaptiveFallbackBitrate = nil
-            pendingDesktopAdaptiveFallbackFormat = nil
-            pendingDesktopAdaptiveFallbackColorSpace = nil
+            pendingDesktopAdaptiveFallbackBitDepth = nil
 
             Task {
                 if let controller = self.controllersByStream[streamID] {

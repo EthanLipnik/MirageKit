@@ -30,6 +30,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
+    /// Stream latency mode used to tune render dequeue behavior.
+    public var latencyMode: MirageStreamLatencyMode
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -37,7 +40,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
-        maxDrawableSize: CGSize? = nil
+        maxDrawableSize: CGSize? = nil,
+        latencyMode: MirageStreamLatencyMode = .auto
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -46,6 +50,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
         self.maxDrawableSize = maxDrawableSize
+        self.latencyMode = latencyMode
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -74,6 +79,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         context.coordinator.metalView = metalView
         metalView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
         metalView.maxDrawableSize = maxDrawableSize
+        metalView.latencyMode = latencyMode
         metalView.streamID = streamID
 
         wrapper.cursorStore = cursorStore
@@ -110,6 +116,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         if let metalView = context.coordinator.metalView { metalView.streamID = streamID }
         if let metalView = context.coordinator.metalView { metalView.maxDrawableSize = maxDrawableSize }
+        if let metalView = context.coordinator.metalView { metalView.latencyMode = latencyMode }
 
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore

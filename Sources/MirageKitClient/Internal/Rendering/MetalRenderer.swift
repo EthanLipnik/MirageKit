@@ -508,17 +508,11 @@ final class MetalRenderer {
             let pipelineState = pipelineState(for: outputPixelFormat, usesYCbCr: true)
 
             if frameCount % 120 == 0 {
-                let drawableW = drawable.texture.width
-                let drawableH = drawable.texture.height
                 let textureW = ycbcrTextures.luma.width
                 let textureH = ycbcrTextures.luma.height
-                if drawableW != textureW || drawableH != textureH {
-                    MirageLogger
-                        .renderer(
-                            "Dimension mismatch - Drawable: \(drawableW)x\(drawableH), Texture: \(textureW)x\(textureH)"
-                        )
+                if let rect = contentRect, !rect.isEmpty {
+                    MirageLogger.renderer("contentRect: \(rect) (texture: \(textureW)x\(textureH))")
                 }
-                if let rect = contentRect, !rect.isEmpty { MirageLogger.renderer("contentRect: \(rect) (texture: \(textureW)x\(textureH))") }
             }
 
             render(
@@ -539,17 +533,11 @@ final class MetalRenderer {
         }
 
         if frameCount % 120 == 0 {
-            let drawableW = drawable.texture.width
-            let drawableH = drawable.texture.height
             let textureW = texture.width
             let textureH = texture.height
-            if drawableW != textureW || drawableH != textureH {
-                MirageLogger
-                    .renderer(
-                        "Dimension mismatch - Drawable: \(drawableW)x\(drawableH), Texture: \(textureW)x\(textureH)"
-                    )
+            if let rect = contentRect, !rect.isEmpty {
+                MirageLogger.renderer("contentRect: \(rect) (texture: \(textureW)x\(textureH))")
             }
-            if let rect = contentRect, !rect.isEmpty { MirageLogger.renderer("contentRect: \(rect) (texture: \(textureW)x\(textureH))") }
         }
 
         render(

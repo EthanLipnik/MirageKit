@@ -28,23 +28,19 @@ struct EncoderSettingsUpdateModeTests {
         #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: updated) == .bitrateOnly)
     }
 
-    @Test("Format or color change uses full reconfiguration")
-    func formatOrColorRequiresFullReconfiguration() {
+    @Test("Bit depth change uses full reconfiguration")
+    func bitDepthRequiresFullReconfiguration() {
         let current = makeConfiguration()
 
-        let pixelFormatChange = current.withOverrides(pixelFormat: .nv12)
-        #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: pixelFormatChange) == .fullReconfiguration)
-
-        let colorSpaceChange = current.withOverrides(colorSpace: .sRGB)
-        #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: colorSpaceChange) == .fullReconfiguration)
+        let bitDepthChange = current.withOverrides(bitDepth: .eightBit)
+        #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: bitDepthChange) == .fullReconfiguration)
     }
 
     private func makeConfiguration() -> MirageEncoderConfiguration {
         MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
-            colorSpace: .displayP3,
-            pixelFormat: .bgr10a2,
+            bitDepth: .tenBit,
             bitrate: 600_000_000
         )
     }

@@ -66,15 +66,10 @@ public extension MirageClientService {
         } else {
             pendingAdaptiveFallbackBitrateByWindowID.removeValue(forKey: window.id)
         }
-        if let pixelFormat = request.pixelFormat {
-            pendingAdaptiveFallbackFormatByWindowID[window.id] = pixelFormat
+        if let bitDepth = request.bitDepth {
+            pendingAdaptiveFallbackBitDepthByWindowID[window.id] = bitDepth
         } else {
-            pendingAdaptiveFallbackFormatByWindowID.removeValue(forKey: window.id)
-        }
-        if let colorSpace = request.colorSpace {
-            pendingAdaptiveFallbackColorSpaceByWindowID[window.id] = colorSpace
-        } else {
-            pendingAdaptiveFallbackColorSpaceByWindowID.removeValue(forKey: window.id)
+            pendingAdaptiveFallbackBitDepthByWindowID.removeValue(forKey: window.id)
         }
 
         request.streamScale = clampedStreamScale()
@@ -103,13 +98,11 @@ public extension MirageClientService {
             self.streamStartedContinuation = continuation
         }
         let pendingBitrate = pendingAdaptiveFallbackBitrateByWindowID.removeValue(forKey: window.id)
-        let pendingFormat = pendingAdaptiveFallbackFormatByWindowID.removeValue(forKey: window.id)
-        let pendingColorSpace = pendingAdaptiveFallbackColorSpaceByWindowID.removeValue(forKey: window.id)
+        let pendingBitDepth = pendingAdaptiveFallbackBitDepthByWindowID.removeValue(forKey: window.id)
         configureAdaptiveFallbackBaseline(
             for: realStreamID,
             bitrate: pendingBitrate,
-            pixelFormat: pendingFormat,
-            colorSpace: pendingColorSpace
+            bitDepth: pendingBitDepth
         )
 
         MirageLogger.client("Stream started with ID \(realStreamID)")
@@ -143,16 +136,13 @@ public extension MirageClientService {
         let controller = StreamController(streamID: streamID, maxPayloadSize: payloadSize)
         controllersByStream[streamID] = controller
         if adaptiveFallbackBaselineBitrateByStream[streamID] == nil,
-           adaptiveFallbackBaselineFormatByStream[streamID] == nil,
-           adaptiveFallbackBaselineColorSpaceByStream[streamID] == nil,
+           adaptiveFallbackBaselineBitDepthByStream[streamID] == nil,
            (pendingAppAdaptiveFallbackBitrate != nil ||
-                pendingAppAdaptiveFallbackFormat != nil ||
-                pendingAppAdaptiveFallbackColorSpace != nil) {
+                pendingAppAdaptiveFallbackBitDepth != nil) {
             configureAdaptiveFallbackBaseline(
                 for: streamID,
                 bitrate: pendingAppAdaptiveFallbackBitrate,
-                pixelFormat: pendingAppAdaptiveFallbackFormat,
-                colorSpace: pendingAppAdaptiveFallbackColorSpace
+                bitDepth: pendingAppAdaptiveFallbackBitDepth
             )
         }
         adaptiveFallbackLastAppliedTime[streamID] = 0

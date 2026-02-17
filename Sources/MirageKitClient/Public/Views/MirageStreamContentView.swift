@@ -195,7 +195,8 @@ public struct MirageStreamContentView: View {
                 cursorStore: clientService.cursorStore,
                 cursorPositionStore: clientService.cursorPositionStore,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
-                maxDrawableSize: maxDrawableSize
+                maxDrawableSize: maxDrawableSize,
+                latencyMode: clientService.latencyMode
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .blur(radius: isResizing ? 20 : 0)

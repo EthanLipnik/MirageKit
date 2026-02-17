@@ -47,12 +47,10 @@ package struct SelectAppMessage: Codable {
     package let maxRefreshRate: Int
     /// Client-requested keyframe interval in frames
     package var keyFrameInterval: Int?
-    /// Client-requested pixel format (capture + encode)
-    package var pixelFormat: MiragePixelFormat?
-    /// Client-requested color space
-    package var colorSpace: MirageColorSpace?
     /// Client-requested ScreenCaptureKit queue depth
     package var captureQueueDepth: Int?
+    /// Client-requested stream bit depth.
+    package var bitDepth: MirageVideoBitDepth?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
     /// Client-requested runtime quality adaptation behavior on host.
@@ -77,9 +75,8 @@ package struct SelectAppMessage: Codable {
         case displayHeight
         case maxRefreshRate
         case keyFrameInterval
-        case pixelFormat
-        case colorSpace
         case captureQueueDepth
+        case bitDepth
         case bitrate
         case allowRuntimeQualityAdjustment
         case disableResolutionCap
@@ -96,9 +93,8 @@ package struct SelectAppMessage: Codable {
         displayHeight: Int? = nil,
         maxRefreshRate: Int,
         keyFrameInterval: Int? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        colorSpace: MirageColorSpace? = nil,
         captureQueueDepth: Int? = nil,
+        bitDepth: MirageVideoBitDepth? = nil,
         bitrate: Int? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -113,9 +109,8 @@ package struct SelectAppMessage: Codable {
         self.displayHeight = displayHeight
         self.maxRefreshRate = maxRefreshRate
         self.keyFrameInterval = keyFrameInterval
-        self.pixelFormat = pixelFormat
-        self.colorSpace = colorSpace
         self.captureQueueDepth = captureQueueDepth
+        self.bitDepth = bitDepth
         self.bitrate = bitrate
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap

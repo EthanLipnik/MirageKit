@@ -432,10 +432,8 @@ public final class MirageClientService {
 
     var adaptiveFallbackBitrateByStream: [StreamID: Int] = [:]
     var adaptiveFallbackBaselineBitrateByStream: [StreamID: Int] = [:]
-    var adaptiveFallbackCurrentFormatByStream: [StreamID: MiragePixelFormat] = [:]
-    var adaptiveFallbackBaselineFormatByStream: [StreamID: MiragePixelFormat] = [:]
-    var adaptiveFallbackCurrentColorSpaceByStream: [StreamID: MirageColorSpace] = [:]
-    var adaptiveFallbackBaselineColorSpaceByStream: [StreamID: MirageColorSpace] = [:]
+    var adaptiveFallbackBitDepthByStream: [StreamID: MirageVideoBitDepth] = [:]
+    var adaptiveFallbackBaselineBitDepthByStream: [StreamID: MirageVideoBitDepth] = [:]
     var adaptiveFallbackCollapseTimestampsByStream: [StreamID: [CFAbsoluteTime]] = [:]
     var adaptiveFallbackPressureCountByStream: [StreamID: Int] = [:]
     var adaptiveFallbackLastPressureTriggerTimeByStream: [StreamID: CFAbsoluteTime] = [:]
@@ -444,14 +442,11 @@ public final class MirageClientService {
     var adaptiveFallbackLastCollapseTimeByStream: [StreamID: CFAbsoluteTime] = [:]
     var adaptiveFallbackLastAppliedTime: [StreamID: CFAbsoluteTime] = [:]
     var pendingAdaptiveFallbackBitrateByWindowID: [WindowID: Int] = [:]
-    var pendingAdaptiveFallbackFormatByWindowID: [WindowID: MiragePixelFormat] = [:]
-    var pendingAdaptiveFallbackColorSpaceByWindowID: [WindowID: MirageColorSpace] = [:]
+    var pendingAdaptiveFallbackBitDepthByWindowID: [WindowID: MirageVideoBitDepth] = [:]
     var pendingDesktopAdaptiveFallbackBitrate: Int?
-    var pendingDesktopAdaptiveFallbackFormat: MiragePixelFormat?
-    var pendingDesktopAdaptiveFallbackColorSpace: MirageColorSpace?
+    var pendingDesktopAdaptiveFallbackBitDepth: MirageVideoBitDepth?
     var pendingAppAdaptiveFallbackBitrate: Int?
-    var pendingAppAdaptiveFallbackFormat: MiragePixelFormat?
-    var pendingAppAdaptiveFallbackColorSpace: MirageColorSpace?
+    var pendingAppAdaptiveFallbackBitDepth: MirageVideoBitDepth?
     let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     let customAdaptiveFallbackCollapseWindow: CFAbsoluteTime = 20.0
     let customAdaptiveFallbackCollapseThreshold: Int = 2

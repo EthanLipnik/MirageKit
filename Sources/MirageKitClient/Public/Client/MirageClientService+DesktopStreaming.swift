@@ -52,8 +52,6 @@ public extension MirageClientService {
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
             keyFrameInterval: nil,
-            pixelFormat: nil,
-            colorSpace: nil,
             mode: mode,
             bitrate: nil,
             streamScale: clampedStreamScale(),
@@ -73,8 +71,7 @@ public extension MirageClientService {
         } else {
             pendingDesktopAdaptiveFallbackBitrate = nil
         }
-        pendingDesktopAdaptiveFallbackFormat = request.pixelFormat
-        pendingDesktopAdaptiveFallbackColorSpace = request.colorSpace
+        pendingDesktopAdaptiveFallbackBitDepth = request.bitDepth
 
         let message = try ControlMessage(type: .startDesktopStream, content: request)
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()

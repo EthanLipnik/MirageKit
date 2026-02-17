@@ -152,13 +152,13 @@ For ColorSync cleanup guidance, see [If-Your-Computer-Feels-Stuttery.md](If-Your
 
 ### Encoder Overrides
 
-Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe interval, pixel format, color space, capture queue depth, and bitrate). The host applies overrides on top of its `MirageEncoderConfiguration`.
+Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe interval, bit depth, capture queue depth, and bitrate). The host applies overrides on top of its `MirageEncoderConfiguration`.
 
-`MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` that can be used to choose bitrate, pixel format, and resolution limits for your UX.
+`MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` that can be used to choose bitrate, bit depth, and resolution limits for your UX.
 
 ### Encoder Settings
 
-`MirageEncoderConfiguration` lets you control codec, frame rate, encoder quality, and color space.
+`MirageEncoderConfiguration` lets you control codec, frame rate, encoder quality, and stream bit depth.
 
 - Use `.highQuality` or `.balanced` defaults.
 - Use `withOverrides` to apply client-specific intervals or encoder quality.

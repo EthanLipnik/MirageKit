@@ -14,6 +14,7 @@ import MirageKit
 #if os(macOS)
 struct EncoderSettingsSnapshot: Sendable {
     let keyFrameInterval: Int
+    let bitDepth: MirageVideoBitDepth
     let pixelFormat: MiragePixelFormat
     let colorSpace: MirageColorSpace
     let captureQueueDepth: Int?
@@ -86,6 +87,7 @@ extension StreamContext {
     func getEncoderSettings() -> EncoderSettingsSnapshot {
         EncoderSettingsSnapshot(
             keyFrameInterval: encoderConfig.keyFrameInterval,
+            bitDepth: encoderConfig.bitDepth,
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
             captureQueueDepth: encoderConfig.captureQueueDepth,

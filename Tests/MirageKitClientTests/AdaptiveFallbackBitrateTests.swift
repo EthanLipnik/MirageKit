@@ -71,14 +71,14 @@ struct AdaptiveFallbackBitrateTests {
         service.adaptiveFallbackEnabled = true
         service.adaptiveFallbackMode = .automatic
         service.adaptiveFallbackBitrateByStream[streamID] = 20_000_000
-        service.adaptiveFallbackCurrentFormatByStream[streamID] = .p010
+        service.adaptiveFallbackBitDepthByStream[streamID] = .tenBit
         service.adaptiveFallbackLastAppliedTime[streamID] = 0
 
         service.handleAdaptiveFallbackTrigger(for: streamID)
         try await Task.sleep(for: .milliseconds(50))
 
         #expect(service.adaptiveFallbackBitrateByStream[streamID] == 20_000_000)
-        #expect(service.adaptiveFallbackCurrentFormatByStream[streamID] == .p010)
+        #expect(service.adaptiveFallbackBitDepthByStream[streamID] == .tenBit)
         #expect(service.adaptiveFallbackLastAppliedTime[streamID] == 0)
     }
 }

@@ -94,8 +94,7 @@ extension MirageClientService {
             MirageLogger.client("Return to app selection for window: \(returnMsg.windowID)")
             streamingAppBundleID = nil
             pendingAppAdaptiveFallbackBitrate = nil
-            pendingAppAdaptiveFallbackFormat = nil
-            pendingAppAdaptiveFallbackColorSpace = nil
+            pendingAppAdaptiveFallbackBitDepth = nil
             onReturnToAppSelection?(returnMsg)
         } catch {
             MirageLogger.error(.client, "Failed to decode return to app selection: \(error)")
@@ -109,8 +108,7 @@ extension MirageClientService {
             if streamingAppBundleID == terminated.bundleIdentifier {
                 streamingAppBundleID = nil
                 pendingAppAdaptiveFallbackBitrate = nil
-                pendingAppAdaptiveFallbackFormat = nil
-                pendingAppAdaptiveFallbackColorSpace = nil
+                pendingAppAdaptiveFallbackBitDepth = nil
             }
             onAppTerminated?(terminated)
         } catch {

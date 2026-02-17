@@ -252,8 +252,7 @@ struct MirageKitTests {
     func streamEncoderSettingsSerialization() throws {
         let request = StreamEncoderSettingsChangeMessage(
             streamID: 7,
-            pixelFormat: .nv12,
-            colorSpace: .displayP3,
+            bitDepth: .tenBit,
             bitrate: 120_000_000,
             streamScale: 0.75
         )
@@ -266,8 +265,7 @@ struct MirageKitTests {
 
         let decodedRequest = try decodedEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
         #expect(decodedRequest.streamID == 7)
-        #expect(decodedRequest.pixelFormat == .nv12)
-        #expect(decodedRequest.colorSpace == .displayP3)
+        #expect(decodedRequest.bitDepth == .tenBit)
         #expect(decodedRequest.bitrate == 120_000_000)
         let scale = try #require(decodedRequest.streamScale)
         #expect(abs(Double(scale) - 0.75) < 0.0001)

@@ -315,10 +315,8 @@ extension MirageClientService {
         streamStartupFirstPacketReceived.removeAll()
         adaptiveFallbackBitrateByStream.removeAll()
         adaptiveFallbackBaselineBitrateByStream.removeAll()
-        adaptiveFallbackCurrentFormatByStream.removeAll()
-        adaptiveFallbackBaselineFormatByStream.removeAll()
-        adaptiveFallbackCurrentColorSpaceByStream.removeAll()
-        adaptiveFallbackBaselineColorSpaceByStream.removeAll()
+        adaptiveFallbackBitDepthByStream.removeAll()
+        adaptiveFallbackBaselineBitDepthByStream.removeAll()
         adaptiveFallbackCollapseTimestampsByStream.removeAll()
         adaptiveFallbackPressureCountByStream.removeAll()
         adaptiveFallbackLastPressureTriggerTimeByStream.removeAll()
@@ -327,14 +325,11 @@ extension MirageClientService {
         adaptiveFallbackLastCollapseTimeByStream.removeAll()
         adaptiveFallbackLastAppliedTime.removeAll()
         pendingAdaptiveFallbackBitrateByWindowID.removeAll()
-        pendingAdaptiveFallbackFormatByWindowID.removeAll()
-        pendingAdaptiveFallbackColorSpaceByWindowID.removeAll()
+        pendingAdaptiveFallbackBitDepthByWindowID.removeAll()
         pendingDesktopAdaptiveFallbackBitrate = nil
-        pendingDesktopAdaptiveFallbackFormat = nil
-        pendingDesktopAdaptiveFallbackColorSpace = nil
+        pendingDesktopAdaptiveFallbackBitDepth = nil
         pendingAppAdaptiveFallbackBitrate = nil
-        pendingAppAdaptiveFallbackFormat = nil
-        pendingAppAdaptiveFallbackColorSpace = nil
+        pendingAppAdaptiveFallbackBitDepth = nil
         startupPacketPendingLock.withLock {
             startupPacketPendingStorage.removeAll()
         }

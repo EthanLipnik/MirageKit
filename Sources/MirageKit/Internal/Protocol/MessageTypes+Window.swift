@@ -51,12 +51,10 @@ package struct StartStreamMessage: Codable {
     /// Higher values (e.g., 600 = 10 seconds @ 60fps) reduce periodic lag spikes
     /// If nil, host uses default from encoder configuration
     package var keyFrameInterval: Int?
-    /// Client-requested pixel format (capture + encode)
-    package var pixelFormat: MiragePixelFormat?
-    /// Client-requested color space
-    package var colorSpace: MirageColorSpace?
     /// Client-requested ScreenCaptureKit queue depth
     package var captureQueueDepth: Int?
+    /// Client-requested stream bit depth.
+    package var bitDepth: MirageVideoBitDepth?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
     /// Client-requested runtime quality adaptation behavior on host.
@@ -86,9 +84,8 @@ package struct StartStreamMessage: Codable {
         case displayWidth
         case displayHeight
         case keyFrameInterval
-        case pixelFormat
-        case colorSpace
         case captureQueueDepth
+        case bitDepth
         case bitrate
         case allowRuntimeQualityAdjustment
         case disableResolutionCap
@@ -107,9 +104,8 @@ package struct StartStreamMessage: Codable {
         displayWidth: Int? = nil,
         displayHeight: Int? = nil,
         keyFrameInterval: Int? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        colorSpace: MirageColorSpace? = nil,
         captureQueueDepth: Int? = nil,
+        bitDepth: MirageVideoBitDepth? = nil,
         bitrate: Int? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -126,9 +122,8 @@ package struct StartStreamMessage: Codable {
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.keyFrameInterval = keyFrameInterval
-        self.pixelFormat = pixelFormat
-        self.colorSpace = colorSpace
         self.captureQueueDepth = captureQueueDepth
+        self.bitDepth = bitDepth
         self.bitrate = bitrate
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap

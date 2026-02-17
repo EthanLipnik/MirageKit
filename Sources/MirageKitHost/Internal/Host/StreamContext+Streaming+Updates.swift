@@ -25,29 +25,26 @@ extension StreamContext {
         updated: MirageEncoderConfiguration
     )
     -> EncoderSettingsUpdateMode {
-        let pixelFormatChanged = updated.pixelFormat != current.pixelFormat
-        let colorSpaceChanged = updated.colorSpace != current.colorSpace
+        let bitDepthChanged = updated.bitDepth != current.bitDepth
         let bitrateChanged = updated.bitrate != current.bitrate
 
-        guard pixelFormatChanged || colorSpaceChanged || bitrateChanged else {
+        guard bitDepthChanged || bitrateChanged else {
             return .noChange
         }
-        if bitrateChanged, !pixelFormatChanged, !colorSpaceChanged {
+        if bitrateChanged, !bitDepthChanged {
             return .bitrateOnly
         }
         return .fullReconfiguration
     }
 
     func updateEncoderSettings(
-        pixelFormat: MiragePixelFormat?,
-        colorSpace: MirageColorSpace?,
+        bitDepth: MirageVideoBitDepth?,
         bitrate: Int?
     ) async throws {
         guard isRunning else { return }
 
         var updatedConfig = encoderConfig.withOverrides(
-            pixelFormat: pixelFormat,
-            colorSpace: colorSpace,
+            bitDepth: bitDepth,
             bitrate: bitrate
         )
         if let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
@@ -92,7 +89,7 @@ extension StreamContext {
             try await encoder.updateConfiguration(encoderConfig)
             let resolvedPixelFormat = await encoder.getActivePixelFormat()
             activePixelFormat = resolvedPixelFormat
-            encoderConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
+            encoderConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         }
         updateQueueLimits()
         if currentEncodedSize != .zero {
@@ -114,8 +111,7 @@ extension StreamContext {
         let bitrateText = encoderConfig.bitrate.map(String.init) ?? "auto"
         MirageLogger
             .stream(
-                "Encoder settings update applied: format=\(encoderConfig.pixelFormat.displayName), " +
-                    "color=\(encoderConfig.colorSpace.displayName), bitrate=\(bitrateText)"
+                "Encoder settings update applied: bitDepth=\(encoderConfig.bitDepth.displayName), bitrate=\(bitrateText)"
             )
     }
 

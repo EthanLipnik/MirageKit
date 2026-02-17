@@ -103,7 +103,10 @@ actor StreamController {
     /// Interval for retrying keyframe requests while decoder is unhealthy
     static let keyframeRecoveryInterval: Duration = .seconds(1)
     /// Minimum spacing for repeated keyframe retries once keyframe-only mode is active.
-    static let keyframeRecoveryRetryInterval: CFAbsoluteTime = 1.0
+    static let keyframeRecoveryRetryInterval: CFAbsoluteTime = 0.5
+    /// Escalate decode-threshold recovery to a full reset only after repeated failures.
+    static let decodeRecoveryEscalationWindow: CFAbsoluteTime = 8.0
+    static let decodeRecoveryEscalationThreshold: Int = 3
 
     /// Duration without decoded frame presentation progress before recovery is requested.
     static let freezeTimeout: CFAbsoluteTime = 5.0
@@ -153,6 +156,7 @@ actor StreamController {
     var queueDropTimestamps: [CFAbsoluteTime] = []
     var recoveryRequestTimestamps: [CFAbsoluteTime] = []
     var decodeThresholdTimestamps: [CFAbsoluteTime] = []
+    var decodeRecoveryEscalationTimestamps: [CFAbsoluteTime] = []
     var lastRecoveryRequestDispatchTime: CFAbsoluteTime = 0
     var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
@@ -245,8 +249,7 @@ actor StreamController {
         await decoder.setErrorThresholdHandler { [weak self] in
             guard let self else { return }
             Task {
-                await self.recordDecodeThresholdEvent()
-                await self.requestRecovery(reason: .decodeErrorThreshold)
+                await self.handleDecodeErrorThresholdSignal()
             }
         }
 
@@ -273,7 +276,6 @@ actor StreamController {
                 texture: nil,
                 for: capturedStreamID
             )
-            MirageClientRenderTrigger.shared.requestDraw(for: capturedStreamID)
 
             if metricsTracker.recordDecodedFrame() {
                 Task { [weak self] in
@@ -294,6 +296,7 @@ actor StreamController {
         queueDropsSinceLastLog = 0
         lastQueueDropLogTime = 0
         decodeThresholdTimestamps.removeAll(keepingCapacity: false)
+        decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
         lastFreezeRecoveryTime = 0
@@ -396,6 +399,14 @@ actor StreamController {
             continuation.resume(returning: nil)
         }
         if queuedFrames.isEmpty { return }
+        let frames = queuedFrames.drain()
+        for frame in frames {
+            frame.releaseBuffer()
+        }
+    }
+
+    func clearQueuedFramesForRecovery() {
+        guard !queuedFrames.isEmpty else { return }
         let frames = queuedFrames.drain()
         for frame in frames {
             frame.releaseBuffer()

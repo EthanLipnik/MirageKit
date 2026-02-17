@@ -19,7 +19,7 @@ struct HEVCEncoderSlotResetTests {
         let encoder = HEVCEncoder(
             configuration: MirageEncoderConfiguration(
                 targetFrameRate: 60,
-                pixelFormat: .nv12
+                bitDepth: .eightBit
             ),
             latencyMode: .auto,
             inFlightLimit: 2

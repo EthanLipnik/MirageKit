@@ -132,7 +132,7 @@ extension StreamContext {
 
         let resolvedPixelFormat = await encoder.getActivePixelFormat()
         activePixelFormat = resolvedPixelFormat
-        let captureConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let captureEngine = WindowCaptureEngine(
             configuration: captureConfig,
             latencyMode: latencyMode,
@@ -277,7 +277,7 @@ extension StreamContext {
 
         let resolvedPixelFormat = await encoder.getActivePixelFormat()
         activePixelFormat = resolvedPixelFormat
-        let captureConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let captureEngine = WindowCaptureEngine(
             configuration: captureConfig,
             latencyMode: latencyMode,
@@ -420,7 +420,7 @@ extension StreamContext {
 
         let resolvedPixelFormat = await encoder.getActivePixelFormat()
         activePixelFormat = resolvedPixelFormat
-        let captureConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let captureEngine = WindowCaptureEngine(
             configuration: captureConfig,
             latencyMode: latencyMode,

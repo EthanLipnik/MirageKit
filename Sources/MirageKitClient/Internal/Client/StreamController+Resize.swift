@@ -70,6 +70,7 @@ extension StreamController {
     func requestRecovery(reason: RecoveryReason = .manualRecovery) async {
         MirageLogger.client("Starting stream recovery (\(reason.logLabel)) for stream \(streamID)")
         await clearResizeState()
+        decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         MirageFrameCache.shared.clear(for: streamID)
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0

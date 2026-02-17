@@ -24,8 +24,7 @@ public extension MirageHostService {
         streamScale: CGFloat? = nil,
         latencyMode: MirageStreamLatencyMode = .auto,
         targetFrameRate: Int? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        colorSpace: MirageColorSpace? = nil,
+        bitDepth: MirageVideoBitDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
@@ -73,8 +72,7 @@ public extension MirageHostService {
         let effectiveEncoderConfig = resolveEncoderConfiguration(
             keyFrameInterval: keyFrameInterval,
             targetFrameRate: targetFrameRate,
-            pixelFormat: pixelFormat,
-            colorSpace: colorSpace,
+            bitDepth: bitDepth,
             captureQueueDepth: captureQueueDepth,
             bitrate: bitrate
         )
@@ -287,23 +285,20 @@ public extension MirageHostService {
     private func resolveEncoderConfiguration(
         keyFrameInterval: Int?,
         targetFrameRate: Int?,
-        pixelFormat: MiragePixelFormat?,
-        colorSpace: MirageColorSpace?,
+        bitDepth: MirageVideoBitDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?
     ) -> MirageEncoderConfiguration {
         var effectiveEncoderConfig = encoderConfig
-        if keyFrameInterval != nil || pixelFormat != nil ||
-            colorSpace != nil || captureQueueDepth != nil || bitrate != nil {
+        if keyFrameInterval != nil || bitDepth != nil || captureQueueDepth != nil || bitrate != nil {
             effectiveEncoderConfig = encoderConfig.withOverrides(
                 keyFrameInterval: keyFrameInterval,
-                pixelFormat: pixelFormat,
-                colorSpace: colorSpace,
+                bitDepth: bitDepth,
                 captureQueueDepth: captureQueueDepth,
                 bitrate: bitrate
             )
             if let interval = keyFrameInterval { MirageLogger.host("Using client-requested keyframe interval: \(interval) frames") }
-            if let colorSpace { MirageLogger.host("Using client-requested color space: \(colorSpace.displayName)") }
+            if let bitDepth { MirageLogger.host("Using client-requested bit depth: \(bitDepth.displayName)") }
             if let captureQueueDepth { MirageLogger.host("Using client-requested capture queue depth: \(captureQueueDepth)") }
             if let bitrate { MirageLogger.host("Using client-requested bitrate: \(bitrate)") }
         }

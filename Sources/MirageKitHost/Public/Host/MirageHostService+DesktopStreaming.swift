@@ -23,8 +23,7 @@ extension MirageHostService {
         displayResolution: CGSize,
         mode: MirageDesktopStreamMode,
         keyFrameInterval: Int?,
-        pixelFormat: MiragePixelFormat?,
-        colorSpace: MirageColorSpace?,
+        bitDepth: MirageVideoBitDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?,
         allowRuntimeQualityAdjustment: Bool?,
@@ -84,8 +83,7 @@ extension MirageHostService {
         var config = encoderConfig
         config = config.withOverrides(
             keyFrameInterval: keyFrameInterval,
-            pixelFormat: pixelFormat,
-            colorSpace: colorSpace,
+            bitDepth: bitDepth,
             captureQueueDepth: captureQueueDepth,
             bitrate: bitrate
         )

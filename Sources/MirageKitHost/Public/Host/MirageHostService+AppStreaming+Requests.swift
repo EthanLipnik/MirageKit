@@ -58,8 +58,7 @@ extension MirageHostService {
                 )
 
             let keyFrameInterval = request.keyFrameInterval
-            let pixelFormat = request.pixelFormat
-            let colorSpace = request.colorSpace
+            let bitDepth = request.bitDepth
             let bitrate = request.bitrate
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let disableResolutionCap = request.disableResolutionCap ?? false
@@ -142,8 +141,7 @@ extension MirageHostService {
                         streamScale: streamScale,
                         latencyMode: latencyMode,
                         targetFrameRate: targetFrameRate,
-                        pixelFormat: pixelFormat,
-                        colorSpace: colorSpace,
+                        bitDepth: bitDepth,
                         captureQueueDepth: request.captureQueueDepth,
                         bitrate: bitrate,
                         allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,

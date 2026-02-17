@@ -69,8 +69,7 @@ public extension MirageClientService {
             displayHeight: effectiveDisplayResolution.height > 0 ? Int(effectiveDisplayResolution.height) : nil,
             maxRefreshRate: getScreenMaxRefreshRate(),
             keyFrameInterval: nil,
-            pixelFormat: nil,
-            colorSpace: nil,
+            bitDepth: nil,
             bitrate: nil,
             streamScale: clampedStreamScale(),
             latencyMode: latencyMode,
@@ -87,8 +86,7 @@ public extension MirageClientService {
         } else {
             pendingAppAdaptiveFallbackBitrate = nil
         }
-        pendingAppAdaptiveFallbackFormat = request.pixelFormat
-        pendingAppAdaptiveFallbackColorSpace = request.colorSpace
+        pendingAppAdaptiveFallbackBitDepth = request.bitDepth
 
         let message = try ControlMessage(type: .selectApp, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)

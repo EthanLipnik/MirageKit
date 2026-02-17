@@ -30,6 +30,9 @@ extension StreamController {
 
     func recordDecodedFrame() {
         lastDecodedFrameTime = currentTime()
+        if !decodeRecoveryEscalationTimestamps.isEmpty {
+            decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+        }
         startFreezeMonitorIfNeeded()
     }
 
@@ -103,6 +106,40 @@ extension StreamController {
         await MainActor.run {
             handler()
         }
+    }
+
+    func handleDecodeErrorThresholdSignal() async {
+        recordDecodeThresholdEvent()
+
+        let now = currentTime()
+        decodeRecoveryEscalationTimestamps.append(now)
+        trimDecodeRecoveryEscalationWindow(now: now)
+
+        let shouldEscalate = decodeRecoveryEscalationTimestamps.count >= Self.decodeRecoveryEscalationThreshold
+        if shouldEscalate {
+            decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+            MirageLogger.client(
+                "Decode error storm persisted for stream \(streamID); escalating to hard recovery"
+            )
+            await requestRecovery(reason: .decodeErrorThreshold)
+            return
+        }
+
+        await requestSoftRecovery(reason: .decodeErrorThreshold)
+    }
+
+    private func trimDecodeRecoveryEscalationWindow(now: CFAbsoluteTime) {
+        let oldestAllowed = now - Self.decodeRecoveryEscalationWindow
+        decodeRecoveryEscalationTimestamps.removeAll { $0 < oldestAllowed }
+    }
+
+    private func requestSoftRecovery(reason: RecoveryReason) async {
+        MirageLogger.client("Starting soft stream recovery (\(reason.logLabel)) for stream \(streamID)")
+        await clearResizeState()
+        clearQueuedFramesForRecovery()
+        reassembler.enterKeyframeOnlyMode()
+        startKeyframeRecoveryLoopIfNeeded()
+        await requestKeyframeRecovery(reason: reason)
     }
 
     private func trimOverloadWindow(now: CFAbsoluteTime) {

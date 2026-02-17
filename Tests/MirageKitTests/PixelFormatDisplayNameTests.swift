@@ -22,12 +22,12 @@ struct PixelFormatDisplayNameTests {
         #expect(!bgraLabel.localizedStandardContains("4:4:4"))
     }
 
-    @Test("YUV inputs identify 4:2:0 encoding")
-    func yuvInputLabelsIdentify420() {
+    @Test("YUV inputs use concise pixel format labels")
+    func yuvInputLabelsAreConcise() {
         let p010Label = MiragePixelFormat.p010.displayName
         let nv12Label = MiragePixelFormat.nv12.displayName
 
-        #expect(p010Label.localizedStandardContains("4:2:0"))
-        #expect(nv12Label.localizedStandardContains("4:2:0"))
+        #expect(p010Label == "10-bit (P010)")
+        #expect(nv12Label == "8-bit (NV12)")
     }
 }

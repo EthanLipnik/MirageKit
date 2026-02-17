@@ -15,6 +15,33 @@ import Testing
 #if os(macOS)
 @Suite("Stream Controller Recovery")
 struct StreamControllerRecoveryTests {
+    @Test("Decode enqueue signals render listeners through stream store")
+    func decodeEnqueueSignalsRenderListeners() {
+        let streamID: StreamID = 50
+        let owner = NSObject()
+        let signalCounter = LockedCounter()
+
+        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: owner) {
+            signalCounter.increment()
+        }
+        defer {
+            MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: owner)
+            MirageFrameCache.shared.clear(for: streamID)
+        }
+
+        MirageFrameCache.shared.store(
+            makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            metalTexture: nil,
+            texture: nil,
+            for: streamID
+        )
+
+        #expect(signalCounter.value == 1)
+    }
+
     @Test("Overload signal triggers adaptive fallback after queue drops and recovery requests")
     func overloadTriggersAdaptiveFallback() async throws {
         let keyframeCounter = LockedCounter()
@@ -110,13 +137,51 @@ struct StreamControllerRecoveryTests {
         await controller.recordDecodeThresholdEvent()
         try await Task.sleep(for: .milliseconds(50))
         await controller.recordDecodeThresholdEvent()
-        try await waitUntil("decode threshold fallback trigger") {
+        try await waitUntil("decode threshold fallback trigger", timeout: .seconds(5)) {
             fallbackCounter.value == 1
         }
 
         #expect(fallbackCounter.value == 1)
 
         await controller.stop()
+    }
+
+    @Test("Decode threshold recovery is soft-first and escalates to hard reset")
+    func decodeThresholdRecoveryEscalatesAfterRepeatedFailures() async throws {
+        let streamID: StreamID = 44
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        _ = MirageFrameCache.shared.enqueue(
+            makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent(),
+            metalTexture: nil,
+            texture: nil,
+            for: streamID
+        )
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
+
+        await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
+
+        await controller.handleDecodeErrorThresholdSignal()
+        await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(250))
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
+        #expect(keyframeCounter.value >= 3)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
     }
 
     @Test("Frame-loss bootstrap requests keyframe before first decoded frame")

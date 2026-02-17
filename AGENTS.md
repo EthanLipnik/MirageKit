@@ -12,7 +12,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Backpressure: queue-based frame drops.
 - Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
 - Bitrate-derived quality mapping biases low-bitrate streams toward stronger compression, and queue-pressure quality drops accelerate for bitrate-constrained streams.
-- Capture pixel format: 10-bit P010 when supported; NV12 fallback; 4:4:4 formats only when explicitly selected.
+- Capture format follows stream bit depth: 10-bit uses P010 with Display P3, and 8-bit uses NV12 with sRGB.
 - Encode flow: limited in-flight frames; completion-driven next encode.
 - In-flight cap: 120Hz 2 frames; 60Hz 1 frame.
 - Keyframe payload: 4-byte parameter set length prefix; Annex B parameter sets; AVCC frame data.
@@ -20,10 +20,10 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - iPad Apple Pencil input always forwards drawing-tablet pressure and stylus orientation metadata for tablet-aware host apps.
 - iPad direct touch input supports `normal`, `dragCursor`, and `pencilBased` modes; Pencil-based mode routes single-finger touch through native scroll physics while pointer clicks come from Apple Pencil or indirect pointer input.
 - Apple Pencil squeeze triggers a secondary click at the hover location when available, or the latest pointer location.
-- Custom mode: encoder overrides for pixel format, color space, bitrate, and keyframe interval.
+- Custom mode: encoder overrides for bit depth, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
 - Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
-- Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and pixel-format viability checks.
+- Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and bit-depth viability checks.
 - Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled).
 - Host setting `muteLocalAudioWhileStreaming` mutes host output while audio streaming is active and restores prior mute state when audio streaming stops.
 - MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
@@ -164,14 +164,14 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Adaptive fallback triggers on decode-storm episodes (two decode-threshold events within an 8-second window) in addition to queue-drop overload signals.
 - Client decode submission in-flight limits are frame-rate aware (60Hz: 2, 120Hz: 3) to bound asynchronous VideoToolbox submission pressure.
 - Client freeze monitoring records sustained presentation stalls for diagnostics without automatic keyframe recovery requests.
-- Client presentation uses custom CAMetalLayer surfaces on iOS, visionOS, and macOS with display-link driven dequeue/present cadence.
-- iOS lowest-latency presentation is display-link clocked at 60Hz: decode-driven fallback pulses and decode-triggered redraw requests are disabled, secondary same-tick catch-up draws are disabled, and frame dequeue prefers the latest entry to keep decode and presentation cadence aligned.
-- iOS client render admission is latency-mode aware: `lowestLatency` keeps 60Hz at 2 in-flight with 3 drawables, uses scheduled-release admission and cap micro-retry, and applies recovery keep-depth signals without expanding admission depth under sustained pressure; `auto` uses 2 with typing forcing 1, and `smoothest` uses 2 with promotion to 3 only during sustained healthy windows.
-- iOS render scale policy can step drawable scale down/up in `auto` and `lowestLatency` at 60Hz; `auto` considers rendered FPS plus drawable wait, while `lowestLatency` treats sustained drawable-wait pressure as the primary downscale signal.
-- iOS render submission selects frames after drawable acquisition and refreshes stale selections with a latest-frame pass so long drawable waits do not force stale-drop presentation gaps.
-- MirageFrameCache stores bounded per-stream FIFO frame queues with sequence/age metadata for ordered presentation.
-- Render emergency trimming drops oldest queued frames only during sustained backlog conditions and restores queue depth to a safe floor.
-- Adaptive fallback overload handling remains signal-only; automatic bitrate and pixel-format mutation is not applied by client fallback triggers.
+- Client presentation uses one `MirageRenderLoop` per CAMetalLayer view on iOS, visionOS, and macOS with shared mode policy behavior.
+- Decode callbacks enqueue into `MirageRenderStreamStore` per-stream SPSC queues (default capacity 16) with monotonic sequence metadata.
+- `MirageFrameCache` is a compatibility facade over the render stream store and continues exposing presentation snapshot, queue depth/age, and typing-burst state.
+- Lowest Latency mode dequeues newest-first with keep-depth 1 and supports throttled off-cycle wakeups on frame arrival.
+- Auto mode applies lowest-latency dequeue behavior only during the existing 350ms keyboard text-entry burst window and uses smooth cadence behavior outside burst windows.
+- Smoothest mode maintains target present cadence by repeating the newest decoded frame when decode cadence drops; interpolation is not used.
+- Catch-up trimming and emergency trimming apply only under sustained backlog/age thresholds to preserve short decode-jitter bursts.
+- `allowAdaptiveFallback` globally gates client render degradation for `lowestLatency`, `auto`, and `smoothest`; gate-off keeps render scale fixed at 1.0, gate-on enables the 1.0/0.9/0.8/0.7 scale ladder under sustained drawable pressure with upward recovery in healthy windows.
 
 ## Input Handling
 - Host input clears stuck modifiers after 0.5s of modifier inactivity.

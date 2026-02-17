@@ -23,12 +23,10 @@ package struct StartDesktopStreamMessage: Codable {
     package let displayHeight: Int
     /// Client-requested keyframe interval in frames
     package var keyFrameInterval: Int?
-    /// Client-requested pixel format (capture + encode)
-    package var pixelFormat: MiragePixelFormat?
-    /// Client-requested color space
-    package var colorSpace: MirageColorSpace?
     /// Client-requested ScreenCaptureKit queue depth
     package var captureQueueDepth: Int?
+    /// Client-requested stream bit depth.
+    package var bitDepth: MirageVideoBitDepth?
     /// Desktop stream mode (mirrored vs secondary display)
     package var mode: MirageDesktopStreamMode?
     /// Client-requested target bitrate (bits per second)
@@ -57,9 +55,8 @@ package struct StartDesktopStreamMessage: Codable {
         case displayWidth
         case displayHeight
         case keyFrameInterval
-        case pixelFormat
-        case colorSpace
         case captureQueueDepth
+        case bitDepth
         case mode
         case bitrate
         case allowRuntimeQualityAdjustment
@@ -76,9 +73,8 @@ package struct StartDesktopStreamMessage: Codable {
         displayWidth: Int,
         displayHeight: Int,
         keyFrameInterval: Int? = nil,
-        pixelFormat: MiragePixelFormat? = nil,
-        colorSpace: MirageColorSpace? = nil,
         captureQueueDepth: Int? = nil,
+        bitDepth: MirageVideoBitDepth? = nil,
         mode: MirageDesktopStreamMode? = nil,
         bitrate: Int? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
@@ -93,9 +89,8 @@ package struct StartDesktopStreamMessage: Codable {
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
         self.keyFrameInterval = keyFrameInterval
-        self.pixelFormat = pixelFormat
-        self.colorSpace = colorSpace
         self.captureQueueDepth = captureQueueDepth
+        self.bitDepth = bitDepth
         self.mode = mode
         self.bitrate = bitrate
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment

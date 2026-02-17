@@ -121,7 +121,7 @@ flowchart LR
 
 ### Encoder Overrides
 
-`MirageEncoderConfiguration` provides host defaults for codec, frame rate, and encoder settings. Clients can supply `MirageEncoderOverrides` per stream to adjust keyframe interval, pixel format, color space, capture queue depth, and bitrate. For low-latency use cases, combine overrides with `MirageStreamLatencyMode.lowestLatency`.
+`MirageEncoderConfiguration` provides host defaults for codec, frame rate, and encoder settings. Clients can supply `MirageEncoderOverrides` per stream to adjust keyframe interval, bit depth, capture queue depth, and bitrate. For low-latency use cases, combine overrides with `MirageStreamLatencyMode.lowestLatency`.
 
 ### Backpressure
 

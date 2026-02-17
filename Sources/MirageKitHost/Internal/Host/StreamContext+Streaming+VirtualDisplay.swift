@@ -196,7 +196,7 @@ extension StreamContext {
 
         let resolvedPixelFormat = await encoder.getActivePixelFormat()
         activePixelFormat = resolvedPixelFormat
-        let captureConfig = encoderConfig.withOverrides(pixelFormat: resolvedPixelFormat)
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let windowCaptureEngine = WindowCaptureEngine(
             configuration: captureConfig,
             latencyMode: latencyMode,
@@ -307,7 +307,7 @@ extension StreamContext {
 
         await applyDerivedQuality(for: outputSize, logLabel: "Virtual display resize")
 
-        let captureConfig = encoderConfig.withOverrides(pixelFormat: activePixelFormat)
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
         let windowCaptureEngine = WindowCaptureEngine(
             configuration: captureConfig,
             latencyMode: latencyMode,

@@ -17,17 +17,13 @@ extension MirageClientService {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
         }
-        if let pixelFormat = overrides.pixelFormat {
-            request.pixelFormat = pixelFormat
-            MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
-        }
-        if let colorSpace = overrides.colorSpace {
-            request.colorSpace = colorSpace
-            MirageLogger.client("Requesting color space: \(colorSpace.displayName)")
-        }
         if let captureQueueDepth = overrides.captureQueueDepth, captureQueueDepth > 0 {
             request.captureQueueDepth = captureQueueDepth
             MirageLogger.client("Requesting capture queue depth: \(captureQueueDepth)")
+        }
+        if let bitDepth = overrides.bitDepth {
+            request.bitDepth = bitDepth
+            MirageLogger.client("Requesting bit depth: \(bitDepth.displayName)")
         }
         if let bitrate = overrides.bitrate, bitrate > 0 {
             request.bitrate = bitrate
@@ -53,17 +49,13 @@ extension MirageClientService {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
         }
-        if let pixelFormat = overrides.pixelFormat {
-            request.pixelFormat = pixelFormat
-            MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
-        }
-        if let colorSpace = overrides.colorSpace {
-            request.colorSpace = colorSpace
-            MirageLogger.client("Requesting color space: \(colorSpace.displayName)")
-        }
         if let captureQueueDepth = overrides.captureQueueDepth, captureQueueDepth > 0 {
             request.captureQueueDepth = captureQueueDepth
             MirageLogger.client("Requesting capture queue depth: \(captureQueueDepth)")
+        }
+        if let bitDepth = overrides.bitDepth {
+            request.bitDepth = bitDepth
+            MirageLogger.client("Requesting bit depth: \(bitDepth.displayName)")
         }
         if let bitrate = overrides.bitrate, bitrate > 0 {
             request.bitrate = bitrate
@@ -89,17 +81,13 @@ extension MirageClientService {
             request.keyFrameInterval = keyFrameInterval
             MirageLogger.client("Requesting keyframe interval: \(keyFrameInterval) frames")
         }
-        if let pixelFormat = overrides.pixelFormat {
-            request.pixelFormat = pixelFormat
-            MirageLogger.client("Requesting pixel format: \(pixelFormat.displayName)")
-        }
-        if let colorSpace = overrides.colorSpace {
-            request.colorSpace = colorSpace
-            MirageLogger.client("Requesting color space: \(colorSpace.displayName)")
-        }
         if let captureQueueDepth = overrides.captureQueueDepth, captureQueueDepth > 0 {
             request.captureQueueDepth = captureQueueDepth
             MirageLogger.client("Requesting capture queue depth: \(captureQueueDepth)")
+        }
+        if let bitDepth = overrides.bitDepth {
+            request.bitDepth = bitDepth
+            MirageLogger.client("Requesting bit depth: \(bitDepth.displayName)")
         }
         if let bitrate = overrides.bitrate, bitrate > 0 {
             request.bitrate = bitrate

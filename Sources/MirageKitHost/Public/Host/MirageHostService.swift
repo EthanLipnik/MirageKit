@@ -1122,11 +1122,10 @@ public final class MirageHostService {
     ///   - dataPort: Optional UDP port for video data
     ///   - clientDisplayResolution: Client's display resolution for virtual display sizing
     ///   - keyFrameInterval: Optional client-requested keyframe interval (in frames)
-    ///   - colorSpace: Optional color space override for capture and encode
+    ///   - bitDepth: Optional client-requested stream bit depth
     ///   - captureQueueDepth: Optional ScreenCaptureKit queue depth override
     ///   - bitrate: Optional target bitrate (bits per second)
     ///   - targetFrameRate: Optional frame rate override (60/120 based on client capability)
-    ///   - pixelFormat: Optional pixel format override for capture and encode
     // TODO: HDR support - requires proper virtual display EDR configuration
     // ///   - hdr: Whether to enable HDR streaming (Rec. 2020 with PQ transfer function)
 
