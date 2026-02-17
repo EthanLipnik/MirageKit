@@ -104,6 +104,7 @@ public class MirageMetalView: UIView {
     private var diagnosticsDrawableWaitTotalMs: Double = 0
     private var diagnosticsDrawableWaitMaxMs: Double = 0
     private var diagnosticsMaxInFlight: Int = 0
+    private var diagnosticsTargetInFlight: Int = 0
 
     var maxRenderFPS: Int = 60
     var appliedRefreshRateLock: Int = 0
@@ -247,7 +248,9 @@ public class MirageMetalView: UIView {
         metalLayer.contentsScale = effectiveScale
         metalLayer.presentsWithTransaction = false
         metalLayer.allowsNextDrawableTimeout = true
-        metalLayer.maximumDrawableCount = desiredMaxInFlightDraws()
+        let initialTargetInFlight = desiredMaxInFlightDraws()
+        metalLayer.maximumDrawableCount = initialTargetInFlight
+        diagnosticsTargetInFlight = initialTargetInFlight
 
         renderLoop = MirageRenderLoop(delegate: self)
         renderLoop.updateLatencyMode(latencyMode)
@@ -279,7 +282,9 @@ public class MirageMetalView: UIView {
         let canRepeat = decision.allowCadenceRepeat && lastPresentedFrame != nil
         guard queueDepth > 0 || canRepeat else { return }
 
-        let maxInFlightDraws = max(1, min(desiredMaxInFlightDraws(), metalLayer.maximumDrawableCount))
+        let targetInFlight = desiredAdmissionInFlightDraws(for: decision)
+        diagnosticsTargetInFlight = targetInFlight
+        let maxInFlightDraws = max(1, min(targetInFlight, metalLayer.maximumDrawableCount))
         guard let inFlightCount = reserveInFlightSlot(maxInFlightDraws) else {
             diagnosticsAdmissionSkips &+= 1
             emitDiagnosticsIfNeeded()
@@ -299,9 +304,13 @@ public class MirageMetalView: UIView {
         let releaseToken = DrawReleaseToken(release: { [weak self] in
             self?.releaseInFlightSlotAndRequestPendingRedrawIfNeeded()
         })
+        let releaseOnScheduled = shouldReleaseInFlightOnScheduled(for: decision)
 
         let drawableLayer = metalLayer
-        drawableAcquireQueue.async { [weak self] in
+        let onScheduledRelease: (@Sendable () -> Void)? = releaseOnScheduled ? { @Sendable in
+            releaseToken.fire()
+        } : nil
+        let acquireWorkItem = DispatchWorkItem { [weak self] in
             let waitStart = CFAbsoluteTimeGetCurrent()
             let drawable = drawableLayer.nextDrawable()
             let drawableWaitMs = max(0, CFAbsoluteTimeGetCurrent() - waitStart) * 1000
@@ -319,15 +328,13 @@ public class MirageMetalView: UIView {
                 return
             }
 
-            self?.renderQueue.async { [weak self] in
+            let renderWorkItem = DispatchWorkItem { [weak self] in
                 renderer.render(
                     pixelBuffer: frame.pixelBuffer,
                     to: drawable,
                     contentRect: frame.contentRect,
                     outputPixelFormat: outputPixelFormat,
-                    onScheduled: {
-                        releaseToken.fire()
-                    },
+                    onScheduled: onScheduledRelease,
                     completion: { [weak self] wasPresented in
                         releaseToken.fire()
                         Task { @MainActor [weak self] in
@@ -342,7 +349,9 @@ public class MirageMetalView: UIView {
                     }
                 )
             }
+            self?.renderQueue.async(execute: renderWorkItem)
         }
+        drawableAcquireQueue.async(execute: acquireWorkItem)
     }
 
     @MainActor
@@ -364,9 +373,34 @@ public class MirageMetalView: UIView {
     }
 
     func desiredMaxInFlightDraws() -> Int {
-        // Keep triple buffering at 60Hz on iOS/visionOS to reduce drawable-wait
-        // admission skips that appear as alternating stale-frame stutter.
+        // Keep CAMetalLayer drawable count stable to avoid runtime pipeline churn.
         3
+    }
+
+    func desiredAdmissionInFlightDraws(for decision: MirageRenderModeDecision?) -> Int {
+        if maxRenderFPS >= 120 {
+            switch decision?.profile {
+            case .lowestLatency, .autoTyping:
+                return 2
+            default:
+                return 3
+            }
+        }
+
+        switch decision?.profile {
+        case .lowestLatency, .autoTyping:
+            // Keep low-latency modes shallow, but avoid single-frame starvation.
+            return 2
+        default:
+            // Smooth modes keep deeper admission to avoid drawable starvation.
+            return 3
+        }
+    }
+
+    func shouldReleaseInFlightOnScheduled(for _: MirageRenderModeDecision) -> Bool {
+        // Release admission on command scheduling to keep submit cadence high.
+        // Latency bounds are enforced by mode-specific queue trimming (keep-depth/preferLatest).
+        return true
     }
 
     private func resetDrawAdmissionState() {
@@ -491,7 +525,7 @@ public class MirageMetalView: UIView {
         MirageLogger.renderer(
             "Render path stats draw=\(drawText)Hz submit=\(submitText)Hz present=\(presentText)Hz " +
                 "inFlight=\(inFlightCount) maxInFlight=\(diagnosticsMaxInFlight) " +
-                "targetInFlight=\(desiredMaxInFlightDraws()) layerMax=\(metalLayer.maximumDrawableCount) " +
+                "targetInFlight=\(diagnosticsTargetInFlight) layerMax=\(metalLayer.maximumDrawableCount) " +
                 "admissionSkips=\(diagnosticsAdmissionSkips) noDrawable=\(diagnosticsNoDrawable) " +
                 "drawableWait=\(waitAvgText)/\(waitMaxText)ms"
         )
