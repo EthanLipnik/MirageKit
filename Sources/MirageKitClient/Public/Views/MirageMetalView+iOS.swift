@@ -67,7 +67,6 @@ public class MirageMetalView: UIView {
         didSet {
             guard streamID != oldValue else { return }
             resetDrawAdmissionState()
-            lastPresentedFrame = nil
             renderLoop.setStreamID(streamID)
             requestDraw()
         }
@@ -83,7 +82,8 @@ public class MirageMetalView: UIView {
     private let renderQueue = DispatchQueue(label: "com.mirage.client.render.ios", qos: .userInteractive)
     private let drawableAcquireQueue = DispatchQueue(
         label: "com.mirage.client.render.drawable.ios",
-        qos: .userInteractive
+        qos: .userInteractive,
+        attributes: .concurrent
     )
 
     private let drawAdmissionLock = NSLock()
@@ -92,8 +92,6 @@ public class MirageMetalView: UIView {
     private var inFlightDrawCount = 0 // guarded by drawAdmissionLock
     private var pendingDraw = false // guarded by drawAdmissionLock
     private var drawableRetryTask: Task<Void, Never>?
-
-    private var lastPresentedFrame: MirageFrameCache.FrameEntry?
 
     private var diagnosticsWindowStart: CFAbsoluteTime = 0
     private var diagnosticsDrawCalls: UInt64 = 0
@@ -276,8 +274,7 @@ public class MirageMetalView: UIView {
         noteDrawCall()
 
         let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
-        let canRepeat = decision.allowCadenceRepeat && lastPresentedFrame != nil
-        guard queueDepth > 0 || canRepeat else { return }
+        guard queueDepth > 0 else { return }
 
         let maxInFlightDraws = max(1, min(desiredMaxInFlightDraws(), metalLayer.maximumDrawableCount))
         guard let inFlightCount = reserveInFlightSlot(maxInFlightDraws) else {
@@ -286,12 +283,15 @@ public class MirageMetalView: UIView {
             return
         }
 
-        guard let frame = selectFrameForPresentation(streamID: streamID, decision: decision) else {
+        let latestQueuedFrame = MirageFrameCache.shared.peekLatest(for: streamID)
+        if let latestQueuedFrame {
+            updateOutputFormatIfNeeded(CVPixelBufferGetPixelFormatType(latestQueuedFrame.pixelBuffer))
+        } else {
             releaseInFlightSlotAndRequestPendingRedrawIfNeeded()
             return
         }
-        updateOutputFormatIfNeeded(CVPixelBufferGetPixelFormatType(frame.pixelBuffer))
         let outputPixelFormat = colorPixelFormat
+        let presentationPolicy = decision.presentationPolicy
 
         diagnosticsSubmissions &+= 1
         diagnosticsMaxInFlight = max(diagnosticsMaxInFlight, inFlightCount)
@@ -320,6 +320,16 @@ public class MirageMetalView: UIView {
             }
 
             self?.renderQueue.async { [weak self] in
+                let frame = MirageFrameCache.shared.dequeueForPresentation(
+                    for: streamID,
+                    policy: presentationPolicy
+                )
+
+                guard let frame else {
+                    releaseToken.fire()
+                    return
+                }
+
                 renderer.render(
                     pixelBuffer: frame.pixelBuffer,
                     to: drawable,
@@ -354,7 +364,6 @@ public class MirageMetalView: UIView {
     ) {
         if wasPresented {
             diagnosticsPresented &+= 1
-            lastPresentedFrame = frame
             MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
         }
 
@@ -412,26 +421,6 @@ public class MirageMetalView: UIView {
         if shouldRequestRedraw {
             renderLoop.requestRedraw()
         }
-    }
-
-    @MainActor
-    private func selectFrameForPresentation(
-        streamID: StreamID,
-        decision: MirageRenderModeDecision
-    ) -> MirageFrameCache.FrameEntry? {
-        if let frame = MirageFrameCache.shared.dequeueForPresentation(
-            for: streamID,
-            catchUpDepth: decision.presentationKeepDepth,
-            preferLatest: decision.preferLatest
-        ) {
-            return frame
-        }
-
-        if decision.allowCadenceRepeat {
-            return lastPresentedFrame
-        }
-
-        return nil
     }
 
     @MainActor

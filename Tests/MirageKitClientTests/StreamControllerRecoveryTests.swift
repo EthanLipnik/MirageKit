@@ -75,8 +75,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Backpressure threshold does not request keyframe recovery")
-    func backpressureDoesNotRequestKeyframes() async throws {
+    @Test("Backpressure threshold requests low-latency recovery")
+    func backpressureRequestsKeyframes() async throws {
         let keyframeCounter = LockedCounter()
         let clock = ManualTimeProvider(start: 1_000)
         let controller = StreamController(
@@ -96,8 +96,10 @@ struct StreamControllerRecoveryTests {
             await controller.recordQueueDrop()
         }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 0)
+        try await waitUntil("initial backpressure recovery") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
 
         // Additional drops inside cooldown should remain no-op.
         for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
@@ -105,15 +107,17 @@ struct StreamControllerRecoveryTests {
         }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
         try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 0)
+        #expect(keyframeCounter.value == 1)
 
         clock.advance(by: 1.1)
         for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
             await controller.recordQueueDrop()
         }
         await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 0)
+        try await waitUntil("cooldown-expired recovery") {
+            keyframeCounter.value == 2
+        }
+        #expect(keyframeCounter.value == 2)
 
         await controller.stop()
     }
@@ -178,7 +182,8 @@ struct StreamControllerRecoveryTests {
         await controller.handleDecodeErrorThresholdSignal()
         try await Task.sleep(for: .milliseconds(250))
         #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
-        #expect(keyframeCounter.value >= 3)
+        // Recovery requests are cooldown-gated, so threshold storms coalesce requests.
+        #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
         MirageFrameCache.shared.clear(for: streamID)

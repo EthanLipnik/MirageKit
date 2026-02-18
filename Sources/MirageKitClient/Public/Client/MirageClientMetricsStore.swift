@@ -12,6 +12,10 @@ import MirageKit
 public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var decodedFPS: Double
     public var receivedFPS: Double
+    public var presentedFPS: Double
+    public var uniquePresentedFPS: Double
+    public var renderBufferDepth: Int
+    public var decodeHealthy: Bool
     public var clientDroppedFrames: UInt64
     public var hostEncodedFPS: Double
     public var hostIdleFPS: Double
@@ -23,6 +27,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public init(
         decodedFPS: Double = 0,
         receivedFPS: Double = 0,
+        presentedFPS: Double = 0,
+        uniquePresentedFPS: Double = 0,
+        renderBufferDepth: Int = 0,
+        decodeHealthy: Bool = true,
         clientDroppedFrames: UInt64 = 0,
         hostEncodedFPS: Double = 0,
         hostIdleFPS: Double = 0,
@@ -33,6 +41,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     ) {
         self.decodedFPS = decodedFPS
         self.receivedFPS = receivedFPS
+        self.presentedFPS = presentedFPS
+        self.uniquePresentedFPS = uniquePresentedFPS
+        self.renderBufferDepth = renderBufferDepth
+        self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
         self.hostEncodedFPS = hostEncodedFPS
         self.hostIdleFPS = hostIdleFPS
@@ -53,12 +65,20 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         streamID: StreamID,
         decodedFPS: Double,
         receivedFPS: Double,
-        droppedFrames: UInt64
+        droppedFrames: UInt64,
+        presentedFPS: Double,
+        uniquePresentedFPS: Double,
+        renderBufferDepth: Int,
+        decodeHealthy: Bool
     ) {
         lock.lock()
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
         snapshot.decodedFPS = decodedFPS
         snapshot.receivedFPS = receivedFPS
+        snapshot.presentedFPS = presentedFPS
+        snapshot.uniquePresentedFPS = uniquePresentedFPS
+        snapshot.renderBufferDepth = max(0, renderBufferDepth)
+        snapshot.decodeHealthy = decodeHealthy
         snapshot.clientDroppedFrames = droppedFrames
         metricsByStream[streamID] = snapshot
         lock.unlock()

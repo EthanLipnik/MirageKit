@@ -39,7 +39,7 @@ actor HEVCDecoder {
     let performanceTracker = DecodePerformanceTracker()
 
     /// Bounded in-flight decode submissions to avoid decoder saturation spirals.
-    var decodeSubmissionLimit: Int = 2
+    var decodeSubmissionLimit: Int = 1
     var inFlightDecodeSubmissions: Int = 0
     var decodeSubmissionWaiters: [CheckedContinuation<Void, Never>] = []
 

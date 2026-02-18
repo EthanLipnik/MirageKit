@@ -42,7 +42,6 @@ public class MirageMetalView: NSView {
             guard streamID != oldValue else { return }
             inFlightDrawCount = 0
             pendingDraw = false
-            lastPresentedFrame = nil
             renderLoop.setStreamID(streamID)
             requestDraw()
         }
@@ -81,8 +80,6 @@ public class MirageMetalView: NSView {
     private var inFlightDrawCount = 0
     private var pendingDraw = false
     private var drawableRetryTask: Task<Void, Never>?
-
-    private var lastPresentedFrame: MirageFrameCache.FrameEntry?
 
     private var maxRenderFPS: Int = 60
     private var colorPixelFormat: MTLPixelFormat = .bgr10a2Unorm
@@ -221,8 +218,7 @@ public class MirageMetalView: NSView {
         guard let renderer else { return }
 
         let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
-        let canRepeat = decision.allowCadenceRepeat && lastPresentedFrame != nil
-        guard queueDepth > 0 || canRepeat else { return }
+        guard queueDepth > 0 else { return }
 
         let maxInFlightDraws = max(1, min(3, metalLayer.maximumDrawableCount))
         guard inFlightDrawCount < maxInFlightDraws else {
@@ -230,9 +226,10 @@ public class MirageMetalView: NSView {
             return
         }
 
-        guard let frame = selectFrameForPresentation(streamID: streamID, decision: decision) else { return }
-        updateOutputFormatIfNeeded(CVPixelBufferGetPixelFormatType(frame.pixelBuffer))
+        guard let latestQueuedFrame = MirageFrameCache.shared.peekLatest(for: streamID) else { return }
+        updateOutputFormatIfNeeded(CVPixelBufferGetPixelFormatType(latestQueuedFrame.pixelBuffer))
         let outputPixelFormat = colorPixelFormat
+        let presentationPolicy = decision.presentationPolicy
 
         inFlightDrawCount += 1
         let releaseToken = DrawReleaseToken(release: { [weak self] in
@@ -259,6 +256,14 @@ public class MirageMetalView: NSView {
             }
 
             self?.renderQueue.async { [weak self] in
+                guard let frame = MirageFrameCache.shared.dequeueForPresentation(
+                    for: streamID,
+                    policy: presentationPolicy
+                ) else {
+                    releaseToken.fire()
+                    return
+                }
+
                 renderer.render(
                     pixelBuffer: frame.pixelBuffer,
                     to: drawable,
@@ -292,7 +297,6 @@ public class MirageMetalView: NSView {
         wasPresented: Bool
     ) {
         if wasPresented {
-            lastPresentedFrame = frame
             MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
         }
 
@@ -313,26 +317,6 @@ public class MirageMetalView: NSView {
             inFlightDrawCount -= 1
         }
         flushPendingDrawIfNeeded()
-    }
-
-    @MainActor
-    private func selectFrameForPresentation(
-        streamID: StreamID,
-        decision: MirageRenderModeDecision
-    ) -> MirageFrameCache.FrameEntry? {
-        if let frame = MirageFrameCache.shared.dequeueForPresentation(
-            for: streamID,
-            catchUpDepth: decision.presentationKeepDepth,
-            preferLatest: decision.preferLatest
-        ) {
-            return frame
-        }
-
-        if decision.allowCadenceRepeat {
-            return lastPresentedFrame
-        }
-
-        return nil
     }
 
     @MainActor

@@ -12,11 +12,20 @@ import MirageKit
 
 extension HEVCDecoder {
     func setDecodeSubmissionLimit(targetFrameRate: Int) {
-        let desiredLimit = targetFrameRate >= 120 ? 3 : 2
+        let desiredLimit = 1
+        setDecodeSubmissionLimit(limit: desiredLimit, reason: "target \(targetFrameRate)fps")
+    }
+
+    func setDecodeSubmissionLimit(limit: Int, reason: String? = nil) {
+        let desiredLimit = min(max(1, limit), 2)
         guard desiredLimit != decodeSubmissionLimit else { return }
         decodeSubmissionLimit = desiredLimit
         drainDecodeSubmissionWaiters()
-        MirageLogger.decoder("Decode submission limit set to \(desiredLimit) (target \(targetFrameRate)fps)")
+        if let reason {
+            MirageLogger.decoder("Decode submission limit set to \(desiredLimit) (\(reason))")
+        } else {
+            MirageLogger.decoder("Decode submission limit set to \(desiredLimit)")
+        }
     }
 
     func currentDecodeSubmissionLimit() -> Int {

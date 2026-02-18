@@ -162,7 +162,11 @@ public extension MirageClientService {
                     streamID: capturedStreamID,
                     decodedFPS: metrics.decodedFPS,
                     receivedFPS: metrics.receivedFPS,
-                    droppedFrames: metrics.droppedFrames
+                    droppedFrames: metrics.droppedFrames,
+                    presentedFPS: metrics.presentedFPS,
+                    uniquePresentedFPS: metrics.uniquePresentedFPS,
+                    renderBufferDepth: metrics.renderBufferDepth,
+                    decodeHealthy: metrics.decodeHealthy
                 )
             },
             onFirstFrame: { [weak self] in

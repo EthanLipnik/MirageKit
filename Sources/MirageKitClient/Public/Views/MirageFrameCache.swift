@@ -34,6 +34,16 @@ public final class MirageFrameCache: @unchecked Sendable {
         let presentedTime: CFAbsoluteTime
     }
 
+    struct RenderTelemetrySnapshot {
+        let decodeFPS: Double
+        let presentedFPS: Double
+        let uniquePresentedFPS: Double
+        let queueDepth: Int
+        let decodeHealthy: Bool
+        let severeDecodeUnderrun: Bool
+        let targetFPS: Int
+    }
+
     public static let shared = MirageFrameCache()
 
     private let store = MirageRenderStreamStore.shared
@@ -119,13 +129,11 @@ public final class MirageFrameCache: @unchecked Sendable {
 
     func dequeueForPresentation(
         for streamID: StreamID,
-        catchUpDepth: Int = 2,
-        preferLatest: Bool = false
+        policy: MirageRenderPresentationPolicy
     ) -> FrameEntry? {
         guard let frame = store.dequeueForPresentation(
             for: streamID,
-            catchUpDepth: catchUpDepth,
-            preferLatest: preferLatest
+            policy: policy
         ) else {
             return nil
         }
@@ -169,6 +177,23 @@ public final class MirageFrameCache: @unchecked Sendable {
     func presentationSnapshot(for streamID: StreamID) -> PresentationSnapshot {
         let snapshot = store.presentationSnapshot(for: streamID)
         return PresentationSnapshot(sequence: snapshot.sequence, presentedTime: snapshot.presentedTime)
+    }
+
+    func renderTelemetrySnapshot(for streamID: StreamID) -> RenderTelemetrySnapshot {
+        let snapshot = store.renderTelemetrySnapshot(for: streamID)
+        return RenderTelemetrySnapshot(
+            decodeFPS: snapshot.decodeFPS,
+            presentedFPS: snapshot.presentedFPS,
+            uniquePresentedFPS: snapshot.uniquePresentedFPS,
+            queueDepth: snapshot.queueDepth,
+            decodeHealthy: snapshot.decodeHealthy,
+            severeDecodeUnderrun: snapshot.severeDecodeUnderrun,
+            targetFPS: snapshot.targetFPS
+        )
+    }
+
+    func setTargetFPS(_ targetFPS: Int, for streamID: StreamID) {
+        store.setTargetFPS(for: streamID, targetFPS: targetFPS)
     }
 
     public func clear(for streamID: StreamID) {

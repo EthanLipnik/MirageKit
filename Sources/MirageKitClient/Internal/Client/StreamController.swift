@@ -73,6 +73,10 @@ actor StreamController {
         let decodedFPS: Double
         let receivedFPS: Double
         let droppedFrames: UInt64
+        let presentedFPS: Double
+        let uniquePresentedFPS: Double
+        let renderBufferDepth: Int
+        let decodeHealthy: Bool
     }
 
     // MARK: - Properties
@@ -117,7 +121,7 @@ actor StreamController {
     static let freezeRecoveryEscalationThreshold: Int = 2
 
     /// Maximum number of frames buffered for decode before triggering full recovery.
-    static let maxQueuedFrames: Int = 24
+    static let maxQueuedFrames: Int = 8
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
@@ -125,11 +129,15 @@ actor StreamController {
     static let overloadQueueDropThreshold: Int = 12
     static let overloadRecoveryThreshold: Int = 2
     static let decodeStormThreshold: Int = 2
-    static let backpressureRecoveryDropThreshold: Int = 4
+    static let backpressureRecoveryDropThreshold: Int = 1
     static let backpressureRecoveryWindow: CFAbsoluteTime = 2.0
     static let backpressureRecoveryCooldown: CFAbsoluteTime = 1.0
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
+    static let decodeSubmissionStressThreshold: Double = 0.80
+    static let decodeSubmissionHealthyThreshold: Double = 0.95
+    static let decodeSubmissionStressWindows: Int = 2
+    static let decodeSubmissionHealthyWindows: Int = 3
 
     /// Pending resize debounce task
     var resizeDebounceTask: Task<Void, Never>?
@@ -160,6 +168,10 @@ actor StreamController {
     var lastRecoveryRequestDispatchTime: CFAbsoluteTime = 0
     var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
+    var decodeSchedulerTargetFPS: Int = 60
+    var decodeSubmissionStressStreak: Int = 0
+    var decodeSubmissionHealthyStreak: Int = 0
+    var currentDecodeSubmissionLimit: Int = 1
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
@@ -303,6 +315,10 @@ actor StreamController {
         consecutiveFreezeRecoveries = 0
         metricsTracker.reset()
         lastMetricsLogTime = 0
+        decodeSubmissionStressStreak = 0
+        decodeSubmissionHealthyStreak = 0
+        currentDecodeSubmissionLimit = 1
+        await decoder.setDecodeSubmissionLimit(limit: 1, reason: "stream pipeline start")
 
         // Start the frame processing task - single task processes all frames sequentially
         let capturedDecoder = decoder
@@ -463,6 +479,8 @@ actor StreamController {
         let now = currentTime()
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
+        let renderTelemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)
+        await evaluateDecodeSubmissionLimit(decodedFPS: snapshot.decodedFPS)
         logMetricsIfNeeded(
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS,
@@ -471,11 +489,46 @@ actor StreamController {
         let metrics = ClientFrameMetrics(
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS,
-            droppedFrames: droppedFrames
+            droppedFrames: droppedFrames,
+            presentedFPS: renderTelemetry.presentedFPS,
+            uniquePresentedFPS: renderTelemetry.uniquePresentedFPS,
+            renderBufferDepth: renderTelemetry.queueDepth,
+            decodeHealthy: renderTelemetry.decodeHealthy
         )
         let callback = onFrameDecoded
         await MainActor.run {
             callback?(metrics)
+        }
+    }
+
+    func evaluateDecodeSubmissionLimit(decodedFPS: Double) async {
+        let targetFPS = max(1, decodeSchedulerTargetFPS)
+        let ratio = decodedFPS / Double(targetFPS)
+
+        if ratio < Self.decodeSubmissionStressThreshold {
+            decodeSubmissionStressStreak += 1
+            decodeSubmissionHealthyStreak = 0
+        } else if ratio >= Self.decodeSubmissionHealthyThreshold {
+            decodeSubmissionHealthyStreak += 1
+            decodeSubmissionStressStreak = 0
+        } else {
+            decodeSubmissionStressStreak = 0
+            decodeSubmissionHealthyStreak = 0
+        }
+
+        if currentDecodeSubmissionLimit == 1,
+           decodeSubmissionStressStreak >= Self.decodeSubmissionStressWindows {
+            decodeSubmissionStressStreak = 0
+            currentDecodeSubmissionLimit = 2
+            await decoder.setDecodeSubmissionLimit(limit: 2, reason: "decode stress")
+            return
+        }
+
+        if currentDecodeSubmissionLimit == 2,
+           decodeSubmissionHealthyStreak >= Self.decodeSubmissionHealthyWindows {
+            decodeSubmissionHealthyStreak = 0
+            currentDecodeSubmissionLimit = 1
+            await decoder.setDecodeSubmissionLimit(limit: 1, reason: "decode recovered")
         }
     }
 }

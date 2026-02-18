@@ -70,14 +70,14 @@ struct KeyframeRecoveryPolicyTests {
         #expect(constrained.frameQuality <= 0.30)
     }
 
-    @Test("Soft recovery keeps P-frame FEC off and hard recovery enables it")
+    @Test("Recovery requests enable P-frame FEC in loss mode")
     func fecEscalationPolicy() async throws {
         let context = makeContext()
 
         await context.requestKeyframe()
         let softTime = CFAbsoluteTimeGetCurrent()
         #expect(context.resolvedFECBlockSize(isKeyframe: true, now: softTime) == 8)
-        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: softTime) == 0)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: softTime) == 16)
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()

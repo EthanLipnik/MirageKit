@@ -15,6 +15,7 @@ import MirageKit
 final class AudioPlaybackController {
     private let startupBufferSeconds: Double
     private let maxQueuedSeconds: Double
+    private let maxRuntimeExtraDelaySeconds: Double = 0.250
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
@@ -25,6 +26,8 @@ final class AudioPlaybackController {
     private var pendingDurationSeconds: Double = 0
     private var scheduledDurationSeconds: Double = 0
     private var hasStartedPlayback = false
+    private var runtimeExtraDelaySeconds: Double = 0
+    private var isDelayHoldActive = false
     private var isConfigured = false
 #if os(iOS) || os(visionOS)
     private var audioSessionConfigured = false
@@ -45,6 +48,8 @@ final class AudioPlaybackController {
         pendingDurationSeconds = 0
         scheduledDurationSeconds = 0
         hasStartedPlayback = false
+        runtimeExtraDelaySeconds = 0
+        isDelayHoldActive = false
         isConfigured = false
         configuredSampleRate = 0
         configuredChannelCount = 0
@@ -60,28 +65,39 @@ final class AudioPlaybackController {
         return incoming
     }
 
-    func enqueue(_ frame: DecodedPCMFrame) {
-        guard configureIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount) else { return }
+    func setRuntimeExtraDelay(seconds: Double) {
+        let clamped = min(max(0, seconds), maxRuntimeExtraDelaySeconds)
+        guard abs(clamped - runtimeExtraDelaySeconds) > 0.001 else { return }
 
-        if !hasStartedPlayback {
-            pendingFrames.append(frame)
-            pendingDurationSeconds += frame.durationSeconds
-            guard pendingDurationSeconds >= startupBufferSeconds else { return }
-            hasStartedPlayback = true
-            let startupFrames = pendingFrames
-            pendingFrames.removeAll(keepingCapacity: true)
-            pendingDurationSeconds = 0
-            for startupFrame in startupFrames {
-                if scheduledDurationSeconds > maxQueuedSeconds { break }
-                schedule(startupFrame)
+        let previousDelay = runtimeExtraDelaySeconds
+        runtimeExtraDelaySeconds = clamped
+        let requiredBuffered = requiredBufferedSeconds()
+
+        if clamped > previousDelay,
+           hasStartedPlayback,
+           totalBufferedSeconds() < requiredBuffered {
+            if playerNode.isPlaying {
+                playerNode.pause()
             }
-            startPlayerIfNeeded()
-            return
+            isDelayHoldActive = true
+        } else if clamped < previousDelay,
+                  isDelayHoldActive,
+                  totalBufferedSeconds() >= requiredBuffered {
+            isDelayHoldActive = false
         }
 
-        guard scheduledDurationSeconds <= maxQueuedSeconds else { return }
-        schedule(frame)
-        startPlayerIfNeeded()
+        drainPendingFramesIfNeeded()
+    }
+
+    func runtimeExtraDelaySecondsForTesting() -> Double {
+        runtimeExtraDelaySeconds
+    }
+
+    func enqueue(_ frame: DecodedPCMFrame) {
+        guard configureIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount) else { return }
+        pendingFrames.append(frame)
+        pendingDurationSeconds += frame.durationSeconds
+        drainPendingFramesIfNeeded()
     }
 
     private func configureIfNeeded(sampleRate: Int, channelCount: Int) -> Bool {
@@ -124,8 +140,40 @@ final class AudioPlaybackController {
         pendingDurationSeconds = 0
         scheduledDurationSeconds = 0
         hasStartedPlayback = false
+        isDelayHoldActive = false
         isConfigured = true
         return true
+    }
+
+    private func drainPendingFramesIfNeeded() {
+        let requiredBuffered = requiredBufferedSeconds()
+        if !hasStartedPlayback {
+            guard totalBufferedSeconds() >= requiredBuffered else { return }
+            hasStartedPlayback = true
+        }
+
+        if isDelayHoldActive {
+            guard totalBufferedSeconds() >= requiredBuffered else { return }
+            isDelayHoldActive = false
+        }
+
+        while !pendingFrames.isEmpty, scheduledDurationSeconds <= maxQueuedSeconds {
+            let frame = pendingFrames.removeFirst()
+            pendingDurationSeconds = max(0, pendingDurationSeconds - frame.durationSeconds)
+            schedule(frame)
+        }
+
+        if !isDelayHoldActive {
+            startPlayerIfNeeded()
+        }
+    }
+
+    private func requiredBufferedSeconds() -> Double {
+        startupBufferSeconds + runtimeExtraDelaySeconds
+    }
+
+    private func totalBufferedSeconds() -> Double {
+        pendingDurationSeconds + scheduledDurationSeconds
     }
 
     private func schedule(_ frame: DecodedPCMFrame) {
@@ -177,6 +225,7 @@ final class AudioPlaybackController {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.scheduledDurationSeconds = max(0, self.scheduledDurationSeconds - durationSeconds)
+                self.drainPendingFramesIfNeeded()
             }
         }
     }

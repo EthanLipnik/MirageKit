@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Coverage for cadence-repeat behavior without interpolation.
+//  Coverage for decode-synchronous frame selection behavior.
 //
 
 @testable import MirageKitClient
@@ -15,70 +15,60 @@ import Testing
 #if os(macOS)
 @Suite("Render Cadence Smoothing")
 struct RenderCadenceSmoothingTests {
-    @Test("Smoothest repeats latest decoded frame when queue is empty")
-    func smoothestRepeatsLatestFrame() {
+    @Test("Healthy decode presents newest frame without added buffer delay")
+    func healthyDecodePresentsNewestFrame() {
         let streamID: StreamID = 401
         MirageFrameCache.shared.clear(for: streamID)
+        defer { MirageFrameCache.shared.clear(for: streamID) }
 
-        _ = MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: 1,
-            metalTexture: nil,
-            texture: nil,
-            for: streamID
-        )
+        for decodeTime in [1.0, 2.0, 3.0, 4.0, 5.0] {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: decodeTime,
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
 
-        var selector = PresentationSelector()
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
-            targetFPS: 60
-        )
-
-        let first = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-        let second = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-
-        #expect(first == 1)
-        #expect(second == 1)
-
-        MirageFrameCache.shared.clear(for: streamID)
+        let frame = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
+        #expect(frame?.sequence == 5)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
     }
 
-    @Test("Lowest latency does not repeat when queue is empty")
-    func lowestLatencyDoesNotRepeat() {
+    @Test("Stress buffering keeps bounded newest window")
+    func stressBufferKeepsBoundedNewestWindow() {
         let streamID: StreamID = 402
         MirageFrameCache.shared.clear(for: streamID)
+        defer { MirageFrameCache.shared.clear(for: streamID) }
 
-        _ = MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: 1,
-            metalTexture: nil,
-            texture: nil,
-            for: streamID
+        for decodeTime in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
+            _ = MirageFrameCache.shared.enqueue(
+                makePixelBuffer(),
+                contentRect: .zero,
+                decodeTime: decodeTime,
+                metalTexture: nil,
+                texture: nil,
+                for: streamID
+            )
+        }
+
+        let first = MirageFrameCache.shared.dequeueForPresentation(
+            for: streamID,
+            policy: .buffered(maxDepth: 3)
         )
-
-        var selector = PresentationSelector()
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .lowestLatency,
-            typingBurstActive: false,
-            targetFPS: 60
-        )
-
-        let first = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-        let second = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-
-        #expect(first == 1)
-        #expect(second == nil)
-
-        MirageFrameCache.shared.clear(for: streamID)
+        #expect(first?.sequence == 4)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 2)
+        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 5)
+        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 6)
     }
 
-    @Test("Cadence repeat preserves sequence identity")
-    func cadenceRepeatKeepsSameSequence() {
+    @Test("Underflow does not repeat previously presented frames")
+    func underflowDoesNotRepeat() {
         let streamID: StreamID = 403
         MirageFrameCache.shared.clear(for: streamID)
+        defer { MirageFrameCache.shared.clear(for: streamID) }
 
         _ = MirageFrameCache.shared.enqueue(
             makePixelBuffer(),
@@ -89,22 +79,11 @@ struct RenderCadenceSmoothingTests {
             for: streamID
         )
 
-        var selector = PresentationSelector()
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
-            targetFPS: 120
-        )
+        let first = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
+        let second = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
 
-        let first = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-        let repeatA = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-        let repeatB = selector.dequeueOrRepeat(streamID: streamID, decision: decision)
-
-        #expect(first == 1)
-        #expect(repeatA == first)
-        #expect(repeatB == first)
-
-        MirageFrameCache.shared.clear(for: streamID)
+        #expect(first?.sequence == 1)
+        #expect(second == nil)
     }
 
     private func makePixelBuffer() -> CVPixelBuffer {
@@ -123,27 +102,6 @@ struct RenderCadenceSmoothingTests {
             fatalError("Unable to allocate CVPixelBuffer for test")
         }
         return buffer
-    }
-}
-
-private struct PresentationSelector {
-    private var lastSequence: UInt64?
-
-    mutating func dequeueOrRepeat(streamID: StreamID, decision: MirageRenderModeDecision) -> UInt64? {
-        if let frame = MirageFrameCache.shared.dequeueForPresentation(
-            for: streamID,
-            catchUpDepth: decision.presentationKeepDepth,
-            preferLatest: decision.preferLatest
-        ) {
-            lastSequence = frame.sequence
-            return frame.sequence
-        }
-
-        if decision.allowCadenceRepeat {
-            return lastSequence
-        }
-
-        return nil
     }
 }
 #endif

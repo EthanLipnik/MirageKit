@@ -48,6 +48,9 @@ extension StreamController {
     }
 
     func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
-        await decoder.setDecodeSubmissionLimit(targetFrameRate: targetFrameRate)
+        decodeSchedulerTargetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFrameRate)
+        if currentDecodeSubmissionLimit == 1 {
+            await decoder.setDecodeSubmissionLimit(limit: 1, reason: "target refresh update")
+        }
     }
 }

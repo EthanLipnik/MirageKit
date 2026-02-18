@@ -67,8 +67,11 @@ extension StreamController {
         lastBackpressureRecoveryTime = now
         MirageLogger.client(
             "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
-                "continuing without keyframe recovery"
+                "starting low-latency recovery"
         )
+        Task { [weak self] in
+            await self?.requestSoftRecovery(reason: .decodeBackpressure(queueDepth: queueDepth))
+        }
     }
 
     func handleFrameLossSignal() async {

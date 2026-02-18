@@ -14,22 +14,22 @@ import Testing
 #if os(macOS)
 @Suite("HEVC Decoder Submission Limiter")
 struct HEVCDecoderSubmissionLimiterTests {
-    @Test("Submission limit tracks target frame rate")
-    func submissionLimitTracksTargetFrameRate() async {
+    @Test("Submission limit defaults to one and target updates keep baseline")
+    func submissionLimitUsesLatencyFirstBaseline() async {
         let decoder = HEVCDecoder()
-        #expect(await decoder.currentDecodeSubmissionLimit() == 2)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 1)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 120)
-        #expect(await decoder.currentDecodeSubmissionLimit() == 3)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 1)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 60)
-        #expect(await decoder.currentDecodeSubmissionLimit() == 2)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 1)
     }
 
     @Test("Submission limiter enforces cap and releases waiters")
     func submissionLimiterEnforcesCapAndRelease() async throws {
         let decoder = HEVCDecoder()
-        await decoder.setDecodeSubmissionLimit(targetFrameRate: 60)
+        await decoder.setDecodeSubmissionLimit(limit: 2, reason: "test setup")
 
         await decoder.acquireDecodeSubmissionSlot()
         await decoder.acquireDecodeSubmissionSlot()

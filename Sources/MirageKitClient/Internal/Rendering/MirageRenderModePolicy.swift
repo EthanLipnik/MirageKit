@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/16/26.
 //
-//  Latency-mode presentation and degradation policy for client rendering.
+//  Decode-health-driven presentation and degradation policy for client rendering.
 //
 
 import Foundation
@@ -17,29 +17,38 @@ enum MirageRenderModeProfile: String, Sendable, Equatable {
     case smoothest
 }
 
+enum MirageRenderPresentationPolicy: Sendable, Equatable {
+    case latest
+    case buffered(maxDepth: Int)
+}
+
 struct MirageRenderModeDecision: Sendable, Equatable {
     let profile: MirageRenderModeProfile
-    let presentationKeepDepth: Int
-    let preferLatest: Bool
-    let allowCadenceRepeat: Bool
+    let presentationPolicy: MirageRenderPresentationPolicy
+    let decodeHealthy: Bool
     let allowOffCycleWake: Bool
 }
 
 enum MirageRenderModePolicy {
+    static let healthyDecodeRatio = 0.95
+    static let stressedDecodeRatio = 0.80
+    static let maxStressBufferDepth = 3
+
     static func decision(
         latencyMode: MirageStreamLatencyMode,
         typingBurstActive: Bool,
+        decodeHealthy: Bool,
         targetFPS: Int
     ) -> MirageRenderModeDecision {
         let normalizedTarget = normalizedTargetFPS(targetFPS)
+        _ = normalizedTarget
 
         switch latencyMode {
         case .lowestLatency:
             return MirageRenderModeDecision(
                 profile: .lowestLatency,
-                presentationKeepDepth: 1,
-                preferLatest: true,
-                allowCadenceRepeat: false,
+                presentationPolicy: .latest,
+                decodeHealthy: decodeHealthy,
                 allowOffCycleWake: true
             )
 
@@ -47,28 +56,29 @@ enum MirageRenderModePolicy {
             if typingBurstActive {
                 return MirageRenderModeDecision(
                     profile: .autoTyping,
-                    presentationKeepDepth: 1,
-                    preferLatest: true,
-                    allowCadenceRepeat: false,
+                    presentationPolicy: .latest,
+                    decodeHealthy: decodeHealthy,
                     allowOffCycleWake: true
                 )
             }
 
             return MirageRenderModeDecision(
                 profile: .autoSmooth,
-                presentationKeepDepth: normalizedTarget >= 120 ? 3 : 2,
-                preferLatest: false,
-                allowCadenceRepeat: true,
-                allowOffCycleWake: false
+                presentationPolicy: decodeHealthy
+                    ? .latest
+                    : .buffered(maxDepth: maxStressBufferDepth),
+                decodeHealthy: decodeHealthy,
+                allowOffCycleWake: decodeHealthy
             )
 
         case .smoothest:
             return MirageRenderModeDecision(
                 profile: .smoothest,
-                presentationKeepDepth: normalizedTarget >= 120 ? 3 : 2,
-                preferLatest: false,
-                allowCadenceRepeat: true,
-                allowOffCycleWake: false
+                presentationPolicy: decodeHealthy
+                    ? .latest
+                    : .buffered(maxDepth: maxStressBufferDepth),
+                decodeHealthy: decodeHealthy,
+                allowOffCycleWake: decodeHealthy
             )
         }
     }

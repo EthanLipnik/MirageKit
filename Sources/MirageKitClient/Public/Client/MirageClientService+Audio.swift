@@ -87,6 +87,7 @@ extension MirageClientService {
         audioConnection = nil
         audioRegisteredStreamID = nil
         activeAudioStreamMessage = nil
+        audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
         audioPlaybackController.reset()
         Task {
             await audioJitterBuffer.reset()
@@ -159,6 +160,7 @@ extension MirageClientService {
                 guard let self else { return }
                 await self.audioJitterBuffer.reset()
                 await self.audioDecoder.reset()
+                self.audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
                 self.audioPlaybackController.reset()
             }
         } catch {
@@ -254,6 +256,7 @@ extension MirageClientService {
     private func handleAudioPacket(header: AudioPacketHeader, payload: Data) async {
         guard audioConfiguration.enabled else { return }
         if let activeAudioStreamMessage, activeAudioStreamMessage.streamID != header.streamID { return }
+        updateAudioSyncDelay(for: header.streamID)
 
         let encodedFrames = await audioJitterBuffer.ingest(header: header, payload: payload)
         guard !encodedFrames.isEmpty else { return }
@@ -265,6 +268,50 @@ extension MirageClientService {
             }
             audioPlaybackController.enqueue(decodedFrame)
         }
+    }
+
+    private func updateAudioSyncDelay(for streamID: StreamID) {
+        guard let snapshot = metricsStore.snapshot(for: streamID) else {
+            audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+            return
+        }
+
+        let typingBurstActive = MirageFrameCache.shared.isTypingBurstActive(for: streamID)
+        let delaySeconds = Self.resolveAudioSyncDelaySeconds(
+            latencyMode: latencyMode,
+            typingBurstActive: typingBurstActive,
+            snapshot: snapshot,
+            fallbackTargetFPS: getScreenMaxRefreshRate()
+        )
+        audioPlaybackController.setRuntimeExtraDelay(seconds: delaySeconds)
+    }
+
+    nonisolated static func resolveAudioSyncDelaySeconds(
+        latencyMode: MirageStreamLatencyMode,
+        typingBurstActive: Bool,
+        snapshot: MirageClientMetricsSnapshot,
+        fallbackTargetFPS: Int
+    ) -> Double {
+        let bufferingAllowed = switch latencyMode {
+        case .lowestLatency:
+            false
+        case .auto:
+            !typingBurstActive
+        case .smoothest:
+            true
+        }
+
+        guard bufferingAllowed, !snapshot.decodeHealthy else { return 0 }
+
+        let clampedDepth = min(max(0, snapshot.renderBufferDepth), MirageRenderModePolicy.maxStressBufferDepth)
+        let delayedFrames = max(0, clampedDepth - 1)
+        guard delayedFrames > 0 else { return 0 }
+
+        let targetFPS = max(
+            1,
+            snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : fallbackTargetFPS
+        )
+        return Double(delayedFrames) / Double(targetFPS)
     }
 }
 

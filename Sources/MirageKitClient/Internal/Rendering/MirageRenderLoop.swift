@@ -34,6 +34,8 @@ final class MirageRenderLoop: @unchecked Sendable {
         let busySkips: UInt64
         let idleSkips: UInt64
         let queueDepth: Int
+        let decodeFPS: Double
+        let decodeHealthy: Bool
         let pendingRedraw: Bool
     }
 
@@ -97,9 +99,11 @@ final class MirageRenderLoop: @unchecked Sendable {
 
     func setStreamID(_ streamID: StreamID?) {
         let previousStreamID: StreamID?
+        let currentTargetFPS: Int
         lock.lock()
         previousStreamID = self.streamID
         self.streamID = streamID
+        currentTargetFPS = targetFPS
         pendingRedraw = true
         lock.unlock()
 
@@ -108,6 +112,7 @@ final class MirageRenderLoop: @unchecked Sendable {
         }
 
         if let streamID {
+            MirageFrameCache.shared.setTargetFPS(currentTargetFPS, for: streamID)
             MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: self) { [weak self] in
                 self?.handleFrameAvailableSignal()
             }
@@ -122,11 +127,16 @@ final class MirageRenderLoop: @unchecked Sendable {
     }
 
     func updateTargetFPS(_ fps: Int) {
+        let streamID: StreamID?
         let normalized = MirageRenderModePolicy.normalizedTargetFPS(fps)
         lock.lock()
         targetFPS = normalized
+        streamID = self.streamID
         pendingRedraw = true
         lock.unlock()
+        if let streamID {
+            MirageFrameCache.shared.setTargetFPS(normalized, for: streamID)
+        }
         clock.updateTargetFPS(normalized)
     }
 
@@ -200,6 +210,9 @@ final class MirageRenderLoop: @unchecked Sendable {
         let shouldWakeImmediately: Bool
         let decision: MirageRenderModeDecision
         let now = CFAbsoluteTimeGetCurrent()
+        let resolvedStreamID: StreamID?
+        let resolvedLatencyMode: MirageStreamLatencyMode
+        let resolvedTargetFPS: Int
 
         lock.lock()
         guard running else {
@@ -208,25 +221,37 @@ final class MirageRenderLoop: @unchecked Sendable {
         }
 
         pendingRedraw = true
-        let resolvedStreamID = streamID
+        resolvedStreamID = streamID
+        resolvedLatencyMode = latencyMode
+        resolvedTargetFPS = targetFPS
+        lock.unlock()
+
         let typingBurstActive = resolvedStreamID.map {
             MirageRenderStreamStore.shared.isTypingBurstActive(for: $0, now: now)
         } ?? false
+        let telemetry = resolvedStreamID.map {
+            MirageFrameCache.shared.renderTelemetrySnapshot(for: $0)
+        }
 
         decision = MirageRenderModePolicy.decision(
-            latencyMode: latencyMode,
+            latencyMode: resolvedLatencyMode,
             typingBurstActive: typingBurstActive,
-            targetFPS: targetFPS
+            decodeHealthy: telemetry?.decodeHealthy ?? true,
+            targetFPS: resolvedTargetFPS
         )
 
-        if decision.allowOffCycleWake,
-           now - lastOffCycleWakeTime >= offCycleWakeMinInterval(for: targetFPS) {
-            lastOffCycleWakeTime = now
-            shouldWakeImmediately = true
+        if decision.allowOffCycleWake {
+            lock.lock()
+            if now - lastOffCycleWakeTime >= offCycleWakeMinInterval(for: resolvedTargetFPS) {
+                lastOffCycleWakeTime = now
+                shouldWakeImmediately = true
+            } else {
+                shouldWakeImmediately = false
+            }
+            lock.unlock()
         } else {
             shouldWakeImmediately = false
         }
-        lock.unlock()
 
         guard shouldWakeImmediately else { return }
         handlePulse(now: now, source: .frameSignal)
@@ -237,6 +262,9 @@ final class MirageRenderLoop: @unchecked Sendable {
         let shouldDispatch: Bool
         let decision: MirageRenderModeDecision
         let diagnosticsSnapshot: RenderLoopDiagnosticsSnapshot?
+        let queueDepth: Int
+        let decodeFPS: Double
+        let decodeHealthy: Bool
 
         lock.lock()
         guard running else {
@@ -255,19 +283,23 @@ final class MirageRenderLoop: @unchecked Sendable {
         let typingBurstActive = resolvedStreamID.map {
             MirageRenderStreamStore.shared.isTypingBurstActive(for: $0, now: now)
         } ?? false
+        let telemetry = resolvedStreamID.map {
+            MirageFrameCache.shared.renderTelemetrySnapshot(for: $0)
+        }
 
         decision = MirageRenderModePolicy.decision(
             latencyMode: latencyMode,
             typingBurstActive: typingBurstActive,
+            decodeHealthy: telemetry?.decodeHealthy ?? true,
             targetFPS: targetFPS
         )
 
-        let queueDepth = resolvedStreamID.map {
-            MirageRenderStreamStore.shared.queueDepth(for: $0)
-        } ?? 0
+        queueDepth = telemetry?.queueDepth ?? 0
+        decodeFPS = telemetry?.decodeFPS ?? 0
+        decodeHealthy = telemetry?.decodeHealthy ?? true
 
         let hasFrames = queueDepth > 0
-        shouldDraw = pendingRedraw || hasFrames || decision.allowCadenceRepeat
+        shouldDraw = pendingRedraw || hasFrames
         if shouldDraw {
             if drawDispatchScheduled {
                 pendingRedraw = true
@@ -284,7 +316,12 @@ final class MirageRenderLoop: @unchecked Sendable {
             shouldDispatch = false
         }
 
-        diagnosticsSnapshot = maybeCaptureDiagnosticsSnapshot(now: now, queueDepth: queueDepth)
+        diagnosticsSnapshot = maybeCaptureDiagnosticsSnapshot(
+            now: now,
+            queueDepth: queueDepth,
+            decodeFPS: decodeFPS,
+            decodeHealthy: decodeHealthy
+        )
         lock.unlock()
 
         if let diagnosticsSnapshot {
@@ -313,7 +350,9 @@ final class MirageRenderLoop: @unchecked Sendable {
 
     private func maybeCaptureDiagnosticsSnapshot(
         now: CFAbsoluteTime,
-        queueDepth: Int
+        queueDepth: Int,
+        decodeFPS: Double,
+        decodeHealthy: Bool
     ) -> RenderLoopDiagnosticsSnapshot? {
         guard MirageLogger.isEnabled(.renderer) else { return nil }
         if diagnosticsWindowStart == 0 {
@@ -333,6 +372,8 @@ final class MirageRenderLoop: @unchecked Sendable {
             busySkips: diagnosticsBusySkips,
             idleSkips: diagnosticsIdleSkips,
             queueDepth: queueDepth,
+            decodeFPS: decodeFPS,
+            decodeHealthy: decodeHealthy,
             pendingRedraw: pendingRedraw
         )
 
@@ -355,12 +396,14 @@ final class MirageRenderLoop: @unchecked Sendable {
         let displayText = displayHz.formatted(.number.precision(.fractionLength(1)))
         let signalText = signalHz.formatted(.number.precision(.fractionLength(1)))
         let dispatchText = dispatchHz.formatted(.number.precision(.fractionLength(1)))
+        let decodeText = snapshot.decodeFPS.formatted(.number.precision(.fractionLength(1)))
 
         MirageLogger.renderer(
             "Render loop stats target=\(snapshot.targetFPS)Hz display=\(displayText)Hz " +
                 "signal=\(signalText)Hz dispatch=\(dispatchText)Hz " +
                 "busySkips=\(snapshot.busySkips) idleSkips=\(snapshot.idleSkips) " +
-                "queueDepth=\(snapshot.queueDepth) pendingRedraw=\(snapshot.pendingRedraw)"
+                "queueDepth=\(snapshot.queueDepth) decode=\(decodeText)Hz " +
+                "healthy=\(snapshot.decodeHealthy) pendingRedraw=\(snapshot.pendingRedraw)"
         )
     }
 }

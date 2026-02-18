@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Coverage for latency-mode render policy decisions.
+//  Coverage for decode-health-driven render policy decisions.
 //
 
 @testable import MirageKitClient
@@ -13,70 +13,87 @@ import Testing
 
 @Suite("Render Mode Policy")
 struct RenderModePolicyTests {
-    @Test("Lowest latency keeps depth 1 with off-cycle wake")
+    @Test("Lowest latency always presents latest frames")
     func lowestLatencyDecision() {
         let decision = MirageRenderModePolicy.decision(
             latencyMode: .lowestLatency,
             typingBurstActive: false,
+            decodeHealthy: false,
             targetFPS: 60
         )
 
         #expect(decision.profile == .lowestLatency)
-        #expect(decision.presentationKeepDepth == 1)
-        #expect(decision.preferLatest)
-        #expect(!decision.allowCadenceRepeat)
+        #expect(decision.presentationPolicy == .latest)
+        #expect(!decision.decodeHealthy)
         #expect(decision.allowOffCycleWake)
     }
 
-    @Test("Auto typing burst switches to latency-first profile")
+    @Test("Auto typing burst keeps low-latency path even under decode stress")
     func autoTypingBurstDecision() {
         let decision = MirageRenderModePolicy.decision(
             latencyMode: .auto,
             typingBurstActive: true,
+            decodeHealthy: false,
             targetFPS: 60
         )
 
         #expect(decision.profile == .autoTyping)
-        #expect(decision.presentationKeepDepth == 1)
-        #expect(decision.preferLatest)
-        #expect(!decision.allowCadenceRepeat)
+        #expect(decision.presentationPolicy == .latest)
+        #expect(!decision.decodeHealthy)
         #expect(decision.allowOffCycleWake)
     }
 
-    @Test("Auto idle uses smooth cadence behavior")
-    func autoIdleDecision() {
+    @Test("Auto healthy decode uses latest-frame presentation")
+    func autoHealthyDecision() {
         let decision = MirageRenderModePolicy.decision(
             latencyMode: .auto,
             typingBurstActive: false,
+            decodeHealthy: true,
             targetFPS: 60
         )
 
         #expect(decision.profile == .autoSmooth)
-        #expect(decision.presentationKeepDepth == 2)
-        #expect(!decision.preferLatest)
-        #expect(decision.allowCadenceRepeat)
-        #expect(!decision.allowOffCycleWake)
+        #expect(decision.presentationPolicy == .latest)
+        #expect(decision.decodeHealthy)
+        #expect(decision.allowOffCycleWake)
     }
 
-    @Test("Smoothest repeats cadence and scales keep depth by target refresh")
-    func smoothestCadenceDecision() {
-        let decision60 = MirageRenderModePolicy.decision(
-            latencyMode: .smoothest,
+    @Test("Auto decode stress enables bounded buffering")
+    func autoStressDecision() {
+        let decision = MirageRenderModePolicy.decision(
+            latencyMode: .auto,
             typingBurstActive: false,
-            targetFPS: 60
-        )
-        let decision120 = MirageRenderModePolicy.decision(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
+            decodeHealthy: false,
             targetFPS: 120
         )
 
-        #expect(decision60.profile == .smoothest)
-        #expect(decision60.presentationKeepDepth == 2)
-        #expect(decision60.allowCadenceRepeat)
+        #expect(decision.profile == .autoSmooth)
+        #expect(decision.presentationPolicy == .buffered(maxDepth: 3))
+        #expect(!decision.decodeHealthy)
+        #expect(!decision.allowOffCycleWake)
+    }
 
-        #expect(decision120.profile == .smoothest)
-        #expect(decision120.presentationKeepDepth == 3)
-        #expect(decision120.allowCadenceRepeat)
+    @Test("Smoothest only buffers during decode stress")
+    func smoothestDecision() {
+        let healthy = MirageRenderModePolicy.decision(
+            latencyMode: .smoothest,
+            typingBurstActive: false,
+            decodeHealthy: true,
+            targetFPS: 60
+        )
+        let stressed = MirageRenderModePolicy.decision(
+            latencyMode: .smoothest,
+            typingBurstActive: false,
+            decodeHealthy: false,
+            targetFPS: 60
+        )
+
+        #expect(healthy.profile == .smoothest)
+        #expect(healthy.presentationPolicy == .latest)
+        #expect(healthy.allowOffCycleWake)
+
+        #expect(stressed.profile == .smoothest)
+        #expect(stressed.presentationPolicy == .buffered(maxDepth: 3))
+        #expect(!stressed.allowOffCycleWake)
     }
 }

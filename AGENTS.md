@@ -148,7 +148,9 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
 - Low-latency backpressure: queue spikes drop frames to keep latency down while preserving forward decode flow without automatic keyframe recovery requests.
 - Latency modes: `lowestLatency`, `auto`, and `smoothest`.
-- Auto typing burst: `auto` keeps smooth-mode buffering by default and applies a 350ms text-entry burst for keyDown events without Command/Option/Control; host forces in-flight depth to 1 with a temporary stronger P-frame compression cap, and client presentation trims to newest-frame depth during the burst window.
+- Decode-synchronous baseline: all modes present the newest decoded frame without intentional client delay while decode cadence is healthy.
+- Underflow behavior: presentation keeps the current on-screen frame without duplicate draw resubmission.
+- Auto typing burst: `auto` applies a 350ms text-entry burst for keyDown events without Command/Option/Control, forcing newest-first/no-buffer presentation during the burst window.
 - Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
 - Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
 - Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.
@@ -162,15 +164,18 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Presentation catch-up trimming uses oldest-frame age gating to preserve short decode jitter bursts and trims only when latency exceeds the presentation threshold.
 - Decode backpressure handling logs sustained queue pressure and continues forward decode without forced stream reset or keyframe request.
 - Adaptive fallback triggers on decode-storm episodes (two decode-threshold events within an 8-second window) in addition to queue-drop overload signals.
-- Client decode submission in-flight limits are frame-rate aware (60Hz: 2, 120Hz: 3) to bound asynchronous VideoToolbox submission pressure.
+- Client decode submission cap is adaptive (baseline 1, temporary 2 during sustained decode stress, return to 1 after sustained recovery).
 - Client freeze monitoring records sustained presentation stalls for diagnostics without automatic keyframe recovery requests.
 - Client presentation uses one `MirageRenderLoop` per CAMetalLayer view on iOS, visionOS, and macOS with shared mode policy behavior.
-- Decode callbacks enqueue into `MirageRenderStreamStore` per-stream SPSC queues (default capacity 16) with monotonic sequence metadata.
+- iOS/visionOS CAMetalLayer rendering dequeues frames at render submission time after drawable acquisition so drawable waits do not age selected frames.
+- Decode callbacks enqueue into `MirageRenderStreamStore` per-stream SPSC queues (default capacity 24) with monotonic sequence metadata and cadence telemetry.
 - `MirageFrameCache` is a compatibility facade over the render stream store and continues exposing presentation snapshot, queue depth/age, and typing-burst state.
-- Lowest Latency mode dequeues newest-first with keep-depth 1 and supports throttled off-cycle wakeups on frame arrival.
-- Auto mode applies lowest-latency dequeue behavior only during the existing 350ms keyboard text-entry burst window and uses smooth cadence behavior outside burst windows.
-- Smoothest mode maintains target present cadence by repeating the newest decoded frame when decode cadence drops; interpolation is not used.
+- Lowest Latency mode stays newest-first without stress buffering.
+- Auto mode enables bounded stress buffering only while decode health is below target and typing burst is inactive.
+- Smoothest mode enables bounded stress buffering only while decode health is below target.
+- Stress buffering in Auto and Smoothest is capped at depth 3.
 - Catch-up trimming and emergency trimming apply only under sustained backlog/age thresholds to preserve short decode-jitter bursts.
+- Auto and Smoothest apply temporary audio runtime delay while stress buffering is active, and remove it on healthy recovery.
 - `allowAdaptiveFallback` globally gates client render degradation for `lowestLatency`, `auto`, and `smoothest`; gate-off keeps render scale fixed at 1.0, gate-on enables the 1.0/0.9/0.8/0.7 scale ladder under sustained drawable pressure with upward recovery in healthy windows.
 
 ## Input Handling
