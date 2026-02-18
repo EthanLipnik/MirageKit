@@ -134,6 +134,7 @@ actor StreamController {
     static let backpressureRecoveryCooldown: CFAbsoluteTime = 1.0
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
+    static let decodeSubmissionMaximumLimit: Int = 3
     static let decodeSubmissionStressThreshold: Double = 0.80
     static let decodeSubmissionHealthyThreshold: Double = 0.95
     static let decodeSubmissionStressWindows: Int = 2
@@ -169,9 +170,10 @@ actor StreamController {
     var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
     var decodeSchedulerTargetFPS: Int = 60
+    var decodeSubmissionBaselineLimit: Int = 2
     var decodeSubmissionStressStreak: Int = 0
     var decodeSubmissionHealthyStreak: Int = 0
-    var currentDecodeSubmissionLimit: Int = 1
+    var currentDecodeSubmissionLimit: Int = 2
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
@@ -317,8 +319,11 @@ actor StreamController {
         lastMetricsLogTime = 0
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
-        currentDecodeSubmissionLimit = 1
-        await decoder.setDecodeSubmissionLimit(limit: 1, reason: "stream pipeline start")
+        currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
+        await decoder.setDecodeSubmissionLimit(
+            limit: decodeSubmissionBaselineLimit,
+            reason: "stream pipeline start"
+        )
 
         // Start the frame processing task - single task processes all frames sequentially
         let capturedDecoder = decoder
@@ -381,7 +386,7 @@ actor StreamController {
         frameProcessingTask = nil
     }
 
-    private func enqueueFrame(_ frame: FrameData) {
+    private func enqueueFrame(_ frame: FrameData) async {
         if let continuation = dequeueContinuation {
             dequeueContinuation = nil
             continuation.resume(returning: frame)
@@ -392,7 +397,7 @@ actor StreamController {
             let queueDepth = queuedFrames.count
             frame.releaseBuffer()
             recordQueueDrop()
-            maybeTriggerBackpressureRecovery(queueDepth: queueDepth)
+            await maybeTriggerBackpressureRecovery(queueDepth: queueDepth)
             logQueueDropIfNeeded()
             return
         }
@@ -504,6 +509,7 @@ actor StreamController {
     func evaluateDecodeSubmissionLimit(decodedFPS: Double) async {
         let targetFPS = max(1, decodeSchedulerTargetFPS)
         let ratio = decodedFPS / Double(targetFPS)
+        let stressLimit = min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit + 1)
 
         if ratio < Self.decodeSubmissionStressThreshold {
             decodeSubmissionStressStreak += 1
@@ -516,19 +522,22 @@ actor StreamController {
             decodeSubmissionHealthyStreak = 0
         }
 
-        if currentDecodeSubmissionLimit == 1,
+        if currentDecodeSubmissionLimit < stressLimit,
            decodeSubmissionStressStreak >= Self.decodeSubmissionStressWindows {
             decodeSubmissionStressStreak = 0
-            currentDecodeSubmissionLimit = 2
-            await decoder.setDecodeSubmissionLimit(limit: 2, reason: "decode stress")
+            currentDecodeSubmissionLimit = stressLimit
+            await decoder.setDecodeSubmissionLimit(limit: stressLimit, reason: "decode stress")
             return
         }
 
-        if currentDecodeSubmissionLimit == 2,
+        if currentDecodeSubmissionLimit > decodeSubmissionBaselineLimit,
            decodeSubmissionHealthyStreak >= Self.decodeSubmissionHealthyWindows {
             decodeSubmissionHealthyStreak = 0
-            currentDecodeSubmissionLimit = 1
-            await decoder.setDecodeSubmissionLimit(limit: 1, reason: "decode recovered")
+            currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
+            await decoder.setDecodeSubmissionLimit(
+                limit: decodeSubmissionBaselineLimit,
+                reason: "decode recovered"
+            )
         }
     }
 }

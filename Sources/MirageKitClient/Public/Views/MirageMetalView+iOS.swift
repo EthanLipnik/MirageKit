@@ -59,6 +59,7 @@ public class MirageMetalView: UIView {
         didSet {
             guard latencyMode != oldValue else { return }
             renderLoop.updateLatencyMode(latencyMode)
+            metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
             requestDraw()
         }
     }
@@ -102,6 +103,7 @@ public class MirageMetalView: UIView {
     private var diagnosticsDrawableWaitTotalMs: Double = 0
     private var diagnosticsDrawableWaitMaxMs: Double = 0
     private var diagnosticsMaxInFlight: Int = 0
+    private var diagnosticsTargetInFlight: Int = 1
 
     var maxRenderFPS: Int = 60
     var appliedRefreshRateLock: Int = 0
@@ -245,7 +247,7 @@ public class MirageMetalView: UIView {
         metalLayer.contentsScale = effectiveScale
         metalLayer.presentsWithTransaction = false
         metalLayer.allowsNextDrawableTimeout = true
-        metalLayer.maximumDrawableCount = desiredMaxInFlightDraws()
+        metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
 
         renderLoop = MirageRenderLoop(delegate: self)
         renderLoop.updateLatencyMode(latencyMode)
@@ -276,7 +278,9 @@ public class MirageMetalView: UIView {
         let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
         guard queueDepth > 0 else { return }
 
-        let maxInFlightDraws = max(1, min(desiredMaxInFlightDraws(), metalLayer.maximumDrawableCount))
+        let desiredInFlight = desiredMaxInFlightDraws(for: decision)
+        diagnosticsTargetInFlight = desiredInFlight
+        let maxInFlightDraws = max(1, min(desiredInFlight, metalLayer.maximumDrawableCount))
         guard let inFlightCount = reserveInFlightSlot(maxInFlightDraws) else {
             diagnosticsAdmissionSkips &+= 1
             emitDiagnosticsIfNeeded()
@@ -372,10 +376,29 @@ public class MirageMetalView: UIView {
         emitDiagnosticsIfNeeded()
     }
 
-    func desiredMaxInFlightDraws() -> Int {
-        // Keep triple buffering at 60Hz on iOS/visionOS to reduce drawable-wait
-        // admission skips that appear as alternating stale-frame stutter.
-        3
+    func desiredMaxInFlightDraws(for decision: MirageRenderModeDecision? = nil) -> Int {
+        let lowLatencyDepth = 3
+        let smoothDepth = 3
+
+        guard let decision else {
+            switch latencyMode {
+            case .lowestLatency:
+                return lowLatencyDepth
+            case .auto, .smoothest:
+                return smoothDepth
+            }
+        }
+
+        switch decision.profile {
+        case .lowestLatency, .autoTyping:
+            return lowLatencyDepth
+        case .autoSmooth, .smoothest:
+            return smoothDepth
+        }
+    }
+
+    func desiredLayerMaximumDrawableCount() -> Int {
+        max(2, min(3, desiredMaxInFlightDraws()))
     }
 
     private func resetDrawAdmissionState() {
@@ -480,7 +503,7 @@ public class MirageMetalView: UIView {
         MirageLogger.renderer(
             "Render path stats draw=\(drawText)Hz submit=\(submitText)Hz present=\(presentText)Hz " +
                 "inFlight=\(inFlightCount) maxInFlight=\(diagnosticsMaxInFlight) " +
-                "targetInFlight=\(desiredMaxInFlightDraws()) layerMax=\(metalLayer.maximumDrawableCount) " +
+                "targetInFlight=\(diagnosticsTargetInFlight) layerMax=\(metalLayer.maximumDrawableCount) " +
                 "admissionSkips=\(diagnosticsAdmissionSkips) noDrawable=\(diagnosticsNoDrawable) " +
                 "drawableWait=\(waitAvgText)/\(waitMaxText)ms"
         )
@@ -494,6 +517,7 @@ public class MirageMetalView: UIView {
         diagnosticsDrawableWaitTotalMs = 0
         diagnosticsDrawableWaitMaxMs = 0
         diagnosticsMaxInFlight = inFlightCount
+        diagnosticsTargetInFlight = desiredMaxInFlightDraws()
     }
 
 }

@@ -51,6 +51,7 @@ public class MirageMetalView: NSView {
         didSet {
             guard latencyMode != oldValue else { return }
             renderLoop.updateLatencyMode(latencyMode)
+            metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
             requestDraw()
         }
     }
@@ -193,7 +194,7 @@ public class MirageMetalView: NSView {
         metalLayer.pixelFormat = colorPixelFormat
         metalLayer.colorspace = CGColorSpace(name: CGColorSpace.displayP3)
         metalLayer.allowsNextDrawableTimeout = true
-        metalLayer.maximumDrawableCount = 3
+        metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
         metalLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
 
         renderLoop = MirageRenderLoop(delegate: self)
@@ -220,7 +221,7 @@ public class MirageMetalView: NSView {
         let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
         guard queueDepth > 0 else { return }
 
-        let maxInFlightDraws = max(1, min(3, metalLayer.maximumDrawableCount))
+        let maxInFlightDraws = max(1, min(desiredMaxInFlightDraws(for: decision), metalLayer.maximumDrawableCount))
         guard inFlightDrawCount < maxInFlightDraws else {
             pendingDraw = true
             return
@@ -302,6 +303,31 @@ public class MirageMetalView: NSView {
 
         renderLoop.recordDrawResult(drawableWaitMs: drawableWaitMs, rendered: wasPresented)
         flushPendingDrawIfNeeded()
+    }
+
+    private func desiredMaxInFlightDraws(for decision: MirageRenderModeDecision? = nil) -> Int {
+        let lowLatencyDepth = 3
+        let smoothDepth = 3
+
+        guard let decision else {
+            switch latencyMode {
+            case .lowestLatency:
+                return lowLatencyDepth
+            case .auto, .smoothest:
+                return smoothDepth
+            }
+        }
+
+        switch decision.profile {
+        case .lowestLatency, .autoTyping:
+            return lowLatencyDepth
+        case .autoSmooth, .smoothest:
+            return smoothDepth
+        }
+    }
+
+    private func desiredLayerMaximumDrawableCount() -> Int {
+        max(2, min(3, desiredMaxInFlightDraws()))
     }
 
     @MainActor
@@ -408,6 +434,7 @@ public class MirageMetalView: NSView {
     private func applyRenderPreferences() {
         let target = MirageRenderPreferences.proMotionEnabled() ? 120 : 60
         maxRenderFPS = target
+        metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
         renderLoop.updateTargetFPS(target)
         renderLoop.updateAllowDegradationRecovery(MirageRenderPreferences.allowAdaptiveFallback())
         requestDraw()

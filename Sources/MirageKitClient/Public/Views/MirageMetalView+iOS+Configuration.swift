@@ -157,14 +157,18 @@ extension MirageMetalView {
         maxRenderFPS = clamped
         renderLoop.updateTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
-        onRefreshRateOverrideChange?(clamped)
+        if let callback = onRefreshRateOverrideChange {
+            Task { @MainActor in
+                callback(clamped)
+            }
+        }
     }
 
     func applyDisplayRefreshRateLock(_ fps: Int) {
         let clamped = fps >= 120 ? 120 : 60
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
-        metalLayer.maximumDrawableCount = desiredMaxInFlightDraws()
+        metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
 
         guard changed else { return }
         MirageLogger.renderer("Applied iOS render refresh lock: \(clamped)Hz")

@@ -52,7 +52,7 @@ extension StreamController {
         maybeSignalAdaptiveFallback(now: now)
     }
 
-    func maybeTriggerBackpressureRecovery(queueDepth: Int) {
+    func maybeTriggerBackpressureRecovery(queueDepth: Int) async {
         let now = currentTime()
         let recentDropCount = queueDropTimestamps.reduce(into: 0) { count, timestamp in
             if now - timestamp <= Self.backpressureRecoveryWindow {
@@ -69,9 +69,7 @@ extension StreamController {
             "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
                 "starting low-latency recovery"
         )
-        Task { [weak self] in
-            await self?.requestSoftRecovery(reason: .decodeBackpressure(queueDepth: queueDepth))
-        }
+        await requestSoftRecovery(reason: .decodeBackpressure(queueDepth: queueDepth))
     }
 
     func handleFrameLossSignal() async {
