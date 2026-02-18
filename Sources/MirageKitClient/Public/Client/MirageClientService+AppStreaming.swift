@@ -72,7 +72,6 @@ public extension MirageClientService {
             bitDepth: nil,
             bitrate: nil,
             streamScale: clampedStreamScale(),
-            latencyMode: latencyMode,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration
         )
         // TODO: HDR support - requires proper virtual display EDR configuration.

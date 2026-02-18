@@ -49,13 +49,6 @@ public class InputCapturingView: UIView {
         }
     }
 
-    /// Latency mode controls render admission behavior on the Metal view.
-    public var latencyMode: MirageStreamLatencyMode = .auto {
-        didSet {
-            metalView.latencyMode = latencyMode
-        }
-    }
-
     /// Callback when the view decides on a refresh rate override.
     public var onRefreshRateOverrideChange: ((Int) -> Void)? {
         didSet {

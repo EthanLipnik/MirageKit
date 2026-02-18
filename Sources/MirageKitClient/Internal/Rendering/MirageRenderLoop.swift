@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/16/26.
 //
-//  Unified display loop that drives mode-aware presentation.
+//  Dedicated render scheduler that keeps decode-to-render flow off the MainActor.
 //
 
 import Foundation
@@ -12,8 +12,18 @@ import MirageKit
 
 @MainActor
 protocol MirageRenderLoopDelegate: AnyObject {
-    func renderLoopDraw(now: CFAbsoluteTime, decision: MirageRenderModeDecision)
+    func renderLoopDraw(
+        now: CFAbsoluteTime,
+        decision: MirageRenderModeDecision,
+        completion: @escaping @Sendable (MirageRenderDrawOutcome) -> Void
+    )
+
     func renderLoopScaleChanged(_ scale: Double)
+}
+
+struct MirageRenderDrawOutcome: Sendable {
+    let drawableWaitMs: Double
+    let rendered: Bool
 }
 
 final class MirageRenderLoop: @unchecked Sendable {
@@ -23,27 +33,14 @@ final class MirageRenderLoop: @unchecked Sendable {
     }
 
     private let lock = NSLock()
+    private let schedulingQueue = DispatchQueue(label: "com.mirage.client.render.loop", qos: .userInteractive)
     private let clock: MirageRenderClock
-
-    private struct RenderLoopDiagnosticsSnapshot {
-        let elapsed: CFAbsoluteTime
-        let targetFPS: Int
-        let displayPulses: UInt64
-        let frameSignalPulses: UInt64
-        let drawDispatches: UInt64
-        let busySkips: UInt64
-        let idleSkips: UInt64
-        let queueDepth: Int
-        let decodeFPS: Double
-        let decodeHealthy: Bool
-        let pendingRedraw: Bool
-    }
 
     private weak var delegate: MirageRenderLoopDelegate?
     private var streamID: StreamID?
     private var latencyMode: MirageStreamLatencyMode = .auto
     private var targetFPS: Int = 60
-    private var allowDegradationRecovery: Bool = false
+    private var allowDegradationRecovery = false
 
     private var running = false
     private var pendingRedraw = true
@@ -53,18 +50,14 @@ final class MirageRenderLoop: @unchecked Sendable {
     private var scaleController = MirageRenderLoopScaleController()
     private var currentScale: Double = 1.0
 
-    private var diagnosticsWindowStart: CFAbsoluteTime = 0
-    private var diagnosticsDisplayPulses: UInt64 = 0
-    private var diagnosticsFrameSignalPulses: UInt64 = 0
-    private var diagnosticsDrawDispatches: UInt64 = 0
-    private var diagnosticsBusySkips: UInt64 = 0
-    private var diagnosticsIdleSkips: UInt64 = 0
-
     init(delegate: MirageRenderLoopDelegate, clock: MirageRenderClock = MirageRenderClockFactory.make()) {
         self.delegate = delegate
         self.clock = clock
         clock.onPulse = { [weak self] now in
-            self?.handlePulse(now: now, source: .display)
+            guard let self else { return }
+            self.schedulingQueue.async { [weak self] in
+                self?.handlePulse(now: now, source: .display)
+            }
         }
     }
 
@@ -93,6 +86,7 @@ final class MirageRenderLoop: @unchecked Sendable {
         lock.lock()
         running = false
         pendingRedraw = false
+        drawDispatchScheduled = false
         lock.unlock()
         clock.stop()
     }
@@ -152,9 +146,10 @@ final class MirageRenderLoop: @unchecked Sendable {
         pendingRedraw = true
         lock.unlock()
 
-        if notifyScaleReset {
-            Task { @MainActor [weak delegate] in
-                delegate?.renderLoopScaleChanged(1.0)
+        guard notifyScaleReset else { return }
+        dispatchToMain { [weak self] in
+            MainActor.assumeIsolated {
+                self?.delegate?.renderLoopScaleChanged(1.0)
             }
         }
     }
@@ -172,47 +167,12 @@ final class MirageRenderLoop: @unchecked Sendable {
         return value
     }
 
-    func recordDrawResult(
-        drawableWaitMs: Double,
-        rendered: Bool,
-        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
-    ) {
-        let transition: MirageRenderLoopScaleTransition?
-        lock.lock()
-        let frameBudgetMs = 1000.0 / Double(max(1, targetFPS))
-        transition = scaleController.evaluate(
-            now: now,
-            allowDegradation: allowDegradationRecovery,
-            frameBudgetMs: frameBudgetMs,
-            drawableWaitMs: drawableWaitMs
-        )
-        if let transition {
-            currentScale = transition.newScale
-            pendingRedraw = true
-        }
-        lock.unlock()
-
-        guard let transition else { return }
-        Task { @MainActor [weak delegate] in
-            delegate?.renderLoopScaleChanged(transition.newScale)
-        }
-
-        if MirageLogger.isEnabled(.renderer) {
-            let fromText = transition.previousScale.formatted(.number.precision(.fractionLength(2)))
-            let toText = transition.newScale.formatted(.number.precision(.fractionLength(2)))
-            MirageLogger.renderer(
-                "Render scale transition direction=\(transition.direction.rawValue) scale=\(fromText)->\(toText) rendered=\(rendered)"
-            )
-        }
-    }
-
     private func handleFrameAvailableSignal() {
-        let shouldWakeImmediately: Bool
-        let decision: MirageRenderModeDecision
         let now = CFAbsoluteTimeGetCurrent()
         let resolvedStreamID: StreamID?
         let resolvedLatencyMode: MirageStreamLatencyMode
         let resolvedTargetFPS: Int
+        let shouldWakeImmediately: Bool
 
         lock.lock()
         guard running else {
@@ -233,7 +193,7 @@ final class MirageRenderLoop: @unchecked Sendable {
             MirageFrameCache.shared.renderTelemetrySnapshot(for: $0)
         }
 
-        decision = MirageRenderModePolicy.decision(
+        let decision = MirageRenderModePolicy.decision(
             latencyMode: resolvedLatencyMode,
             typingBurstActive: typingBurstActive,
             decodeHealthy: telemetry?.decodeHealthy ?? true,
@@ -254,29 +214,19 @@ final class MirageRenderLoop: @unchecked Sendable {
         }
 
         guard shouldWakeImmediately else { return }
-        handlePulse(now: now, source: .frameSignal)
+        schedulingQueue.async { [weak self] in
+            self?.handlePulse(now: now, source: .frameSignal)
+        }
     }
 
-    private func handlePulse(now: CFAbsoluteTime, source: PulseSource) {
-        let shouldDraw: Bool
+    private func handlePulse(now: CFAbsoluteTime, source _: PulseSource) {
         let shouldDispatch: Bool
         let decision: MirageRenderModeDecision
-        let diagnosticsSnapshot: RenderLoopDiagnosticsSnapshot?
-        let queueDepth: Int
-        let decodeFPS: Double
-        let decodeHealthy: Bool
 
         lock.lock()
         guard running else {
             lock.unlock()
             return
-        }
-
-        switch source {
-        case .display:
-            diagnosticsDisplayPulses &+= 1
-        case .frameSignal:
-            diagnosticsFrameSignalPulses &+= 1
         }
 
         let resolvedStreamID = streamID
@@ -294,46 +244,62 @@ final class MirageRenderLoop: @unchecked Sendable {
             targetFPS: targetFPS
         )
 
-        queueDepth = telemetry?.queueDepth ?? 0
-        decodeFPS = telemetry?.decodeFPS ?? 0
-        decodeHealthy = telemetry?.decodeHealthy ?? true
-
-        let hasFrames = queueDepth > 0
-        shouldDraw = pendingRedraw || hasFrames
+        let hasFrames = (telemetry?.queueDepth ?? 0) > 0
+        let shouldDraw = pendingRedraw || hasFrames
         if shouldDraw {
             if drawDispatchScheduled {
                 pendingRedraw = true
-                diagnosticsBusySkips &+= 1
                 shouldDispatch = false
             } else {
                 pendingRedraw = false
                 drawDispatchScheduled = true
-                diagnosticsDrawDispatches &+= 1
                 shouldDispatch = true
             }
         } else {
-            diagnosticsIdleSkips &+= 1
             shouldDispatch = false
         }
-
-        diagnosticsSnapshot = maybeCaptureDiagnosticsSnapshot(
-            now: now,
-            queueDepth: queueDepth,
-            decodeFPS: decodeFPS,
-            decodeHealthy: decodeHealthy
-        )
         lock.unlock()
 
-        if let diagnosticsSnapshot {
-            emitDiagnostics(diagnosticsSnapshot)
+        guard shouldDispatch else { return }
+        dispatchToMain { [weak self] in
+            MainActor.assumeIsolated {
+                self?.delegate?.renderLoopDraw(now: now, decision: decision) { [weak self] outcome in
+                    guard let self else { return }
+                    self.schedulingQueue.async { [weak self] in
+                        self?.completeDraw(outcome)
+                    }
+                }
+            }
         }
+    }
 
-        guard shouldDraw, shouldDispatch else { return }
+    private func completeDraw(_ outcome: MirageRenderDrawOutcome) {
+        let transition: MirageRenderLoopScaleTransition?
+        let shouldForceRedraw = !outcome.rendered
+        lock.lock()
+        let frameBudgetMs = 1000.0 / Double(max(1, targetFPS))
+        transition = scaleController.evaluate(
+            now: CFAbsoluteTimeGetCurrent(),
+            allowDegradation: allowDegradationRecovery,
+            frameBudgetMs: frameBudgetMs,
+            drawableWaitMs: outcome.drawableWaitMs
+        )
+        if let transition {
+            currentScale = transition.newScale
+            pendingRedraw = true
+        }
+        if shouldForceRedraw {
+            pendingRedraw = true
+        }
+        drawDispatchScheduled = false
+        lock.unlock()
 
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            self.delegate?.renderLoopDraw(now: now, decision: decision)
-            self.clearDrawDispatchScheduledFlag()
+        if let transition {
+            dispatchToMain { [weak self] in
+                MainActor.assumeIsolated {
+                    self?.delegate?.renderLoopScaleChanged(transition.newScale)
+                }
+            }
         }
     }
 
@@ -342,68 +308,14 @@ final class MirageRenderLoop: @unchecked Sendable {
         return 0.5 / fps
     }
 
-    private func clearDrawDispatchScheduledFlag() {
-        lock.lock()
-        drawDispatchScheduled = false
-        lock.unlock()
-    }
-
-    private func maybeCaptureDiagnosticsSnapshot(
-        now: CFAbsoluteTime,
-        queueDepth: Int,
-        decodeFPS: Double,
-        decodeHealthy: Bool
-    ) -> RenderLoopDiagnosticsSnapshot? {
-        guard MirageLogger.isEnabled(.renderer) else { return nil }
-        if diagnosticsWindowStart == 0 {
-            diagnosticsWindowStart = now
-            return nil
+    private func dispatchToMain(_ block: @escaping @Sendable () -> Void) {
+        if Thread.isMainThread {
+            block()
+            return
         }
 
-        let elapsed = now - diagnosticsWindowStart
-        guard elapsed >= 1.0 else { return nil }
-
-        let snapshot = RenderLoopDiagnosticsSnapshot(
-            elapsed: elapsed,
-            targetFPS: targetFPS,
-            displayPulses: diagnosticsDisplayPulses,
-            frameSignalPulses: diagnosticsFrameSignalPulses,
-            drawDispatches: diagnosticsDrawDispatches,
-            busySkips: diagnosticsBusySkips,
-            idleSkips: diagnosticsIdleSkips,
-            queueDepth: queueDepth,
-            decodeFPS: decodeFPS,
-            decodeHealthy: decodeHealthy,
-            pendingRedraw: pendingRedraw
-        )
-
-        diagnosticsWindowStart = now
-        diagnosticsDisplayPulses = 0
-        diagnosticsFrameSignalPulses = 0
-        diagnosticsDrawDispatches = 0
-        diagnosticsBusySkips = 0
-        diagnosticsIdleSkips = 0
-
-        return snapshot
-    }
-
-    private func emitDiagnostics(_ snapshot: RenderLoopDiagnosticsSnapshot) {
-        let seconds = max(0.001, snapshot.elapsed)
-        let displayHz = Double(snapshot.displayPulses) / seconds
-        let signalHz = Double(snapshot.frameSignalPulses) / seconds
-        let dispatchHz = Double(snapshot.drawDispatches) / seconds
-
-        let displayText = displayHz.formatted(.number.precision(.fractionLength(1)))
-        let signalText = signalHz.formatted(.number.precision(.fractionLength(1)))
-        let dispatchText = dispatchHz.formatted(.number.precision(.fractionLength(1)))
-        let decodeText = snapshot.decodeFPS.formatted(.number.precision(.fractionLength(1)))
-
-        MirageLogger.renderer(
-            "Render loop stats target=\(snapshot.targetFPS)Hz display=\(displayText)Hz " +
-                "signal=\(signalText)Hz dispatch=\(dispatchText)Hz " +
-                "busySkips=\(snapshot.busySkips) idleSkips=\(snapshot.idleSkips) " +
-                "queueDepth=\(snapshot.queueDepth) decode=\(decodeText)Hz " +
-                "healthy=\(snapshot.decodeHealthy) pendingRedraw=\(snapshot.pendingRedraw)"
-        )
+        let mainRunLoop = CFRunLoopGetMain()
+        CFRunLoopPerformBlock(mainRunLoop, CFRunLoopMode.commonModes.rawValue, block)
+        CFRunLoopWakeUp(mainRunLoop)
     }
 }

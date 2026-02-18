@@ -24,8 +24,9 @@ private struct ColorConversion {
     let offset: SIMD4<Float>
 }
 
-/// High-performance Metal renderer for decoded video frames
-final class MetalRenderer {
+/// High-performance Metal renderer for decoded video frames.
+/// @unchecked Sendable: renderer usage is serialized by per-view render queues.
+final class MetalRenderer: @unchecked Sendable {
     private let device: MTLDevice
     private let commandQueue: MTLCommandQueue
     private let pipelineState10: MTLRenderPipelineState

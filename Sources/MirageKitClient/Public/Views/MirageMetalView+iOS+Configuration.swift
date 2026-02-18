@@ -4,13 +4,11 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Layout, preference, and color-format helpers for MirageMetalView.
+//  Layout and refresh-rate helpers for MirageMetalView.
 //
 
 import MirageKit
 #if os(iOS) || os(visionOS)
-import CoreVideo
-import Metal
 import QuartzCore
 import UIKit
 
@@ -18,16 +16,20 @@ extension MirageMetalView {
     // MARK: - Metrics / Layout
 
     func reportDrawableMetricsIfChanged() {
-        let drawableSize = metalLayer.drawableSize
+        guard bounds.width > 0, bounds.height > 0 else { return }
+        let pixelSize = cappedDrawableSize(
+            CGSize(
+                width: bounds.width * contentScaleFactor,
+                height: bounds.height * contentScaleFactor
+            )
+        )
+        let drawableSize = pixelSize
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
         guard drawableSize != lastReportedDrawableSize else { return }
 
         lastReportedDrawableSize = drawableSize
         let metrics = currentDrawableMetrics(drawableSize: drawableSize)
-        let callback = onDrawableMetricsChanged
-        Task { @MainActor in
-            callback?(metrics)
-        }
+        onDrawableMetricsChanged?(metrics)
     }
 
     #if os(visionOS)
@@ -142,7 +144,6 @@ extension MirageMetalView {
     func applyRenderPreferences() {
         let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
         refreshRateMonitor.isProMotionEnabled = proMotionEnabled
-        renderLoop.updateAllowDegradationRecovery(MirageRenderPreferences.allowAdaptiveFallback())
         updateFrameRatePreference(proMotionEnabled: proMotionEnabled)
         requestDraw()
     }
@@ -155,23 +156,34 @@ extension MirageMetalView {
     func applyRefreshRateOverride(_ override: Int) {
         let clamped = override >= 120 ? 120 : 60
         maxRenderFPS = clamped
-        renderLoop.updateTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
-        if let callback = onRefreshRateOverrideChange {
-            Task { @MainActor in
-                callback(clamped)
-            }
-        }
+        onRefreshRateOverrideChange?(clamped)
     }
 
     func applyDisplayRefreshRateLock(_ fps: Int) {
         let clamped = fps >= 120 ? 120 : 60
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
-        metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
+        if let displayLink {
+            configureDisplayLinkRate(displayLink, fps: clamped)
+        }
 
         guard changed else { return }
         MirageLogger.renderer("Applied iOS render refresh lock: \(clamped)Hz")
+    }
+
+    func configureDisplayLinkRate(_ displayLink: CADisplayLink, fps: Int) {
+        let clamped = fps >= 120 ? 120 : 60
+        if #available(iOS 15.0, visionOS 1.0, *) {
+            let preferred = Float(clamped)
+            displayLink.preferredFrameRateRange = CAFrameRateRange(
+                minimum: preferred,
+                maximum: preferred,
+                preferred: preferred
+            )
+        } else {
+            displayLink.preferredFramesPerSecond = clamped
+        }
     }
 
     func startObservingPreferences() {
@@ -182,40 +194,6 @@ extension MirageMetalView {
 
     func stopObservingPreferences() {
         preferencesObserver.stop()
-    }
-
-    // MARK: - Color Output
-
-    func updateOutputFormatIfNeeded(_ pixelFormatType: OSType) {
-        let outputPixelFormat: MTLPixelFormat
-        let colorSpace: CGColorSpace?
-        let wantsHDR: Bool
-
-        switch pixelFormatType {
-        case kCVPixelFormatType_32BGRA,
-             kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
-            outputPixelFormat = .bgra8Unorm
-            colorSpace = CGColorSpace(name: CGColorSpace.sRGB)
-            wantsHDR = false
-        case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
-            outputPixelFormat = .bgr10a2Unorm
-            colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
-            wantsHDR = true
-        default:
-            outputPixelFormat = .bgr10a2Unorm
-            colorSpace = CGColorSpace(name: CGColorSpace.displayP3)
-            wantsHDR = true
-        }
-
-        guard colorPixelFormat != outputPixelFormat else { return }
-        colorPixelFormat = outputPixelFormat
-
-        let metalLayer = self.metalLayer
-        metalLayer.pixelFormat = outputPixelFormat
-        metalLayer.colorspace = colorSpace
-        metalLayer.wantsExtendedDynamicRangeContent = wantsHDR
     }
 }
 #endif

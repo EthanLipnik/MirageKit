@@ -91,7 +91,7 @@ extension MirageHostService {
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: loginClientID.flatMap { mediaSecurityByClientID[$0] },
             additionalFrameFlags: [.loginDisplay],
-            latencyMode: .auto
+            latencyMode: .lowestLatency
         )
 
         // Mark the stream as active before awaiting so reentrant state changes can stop it.

@@ -59,8 +59,6 @@ package struct SelectAppMessage: Codable {
     package var disableResolutionCap: Bool?
     /// Client-requested stream scale (0.1-1.0)
     package let streamScale: CGFloat?
-    /// Client latency preference for buffering behavior
-    package let latencyMode: MirageStreamLatencyMode?
     /// Client audio streaming configuration
     package let audioConfiguration: MirageAudioConfiguration?
     // TODO: HDR support - requires proper virtual display EDR configuration
@@ -81,7 +79,6 @@ package struct SelectAppMessage: Codable {
         case allowRuntimeQualityAdjustment
         case disableResolutionCap
         case streamScale
-        case latencyMode
         case audioConfiguration
     }
 
@@ -99,7 +96,6 @@ package struct SelectAppMessage: Codable {
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
-        latencyMode: MirageStreamLatencyMode? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
@@ -115,7 +111,6 @@ package struct SelectAppMessage: Codable {
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
-        self.latencyMode = latencyMode
         self.audioConfiguration = audioConfiguration
     }
 }

@@ -132,8 +132,11 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     }
 
     func dequeue(for streamID: StreamID) -> MirageRenderFrame? {
-        let state = streamStateIfPresent(for: streamID)
-        return state?.queue.dequeue()
+        guard let state = streamStateIfPresent(for: streamID) else { return nil }
+        state.lock.lock()
+        let frame = state.queue.dequeue()
+        state.lock.unlock()
+        return frame
     }
 
     func dequeueForPresentation(
@@ -168,23 +171,34 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     func peekLatest(for streamID: StreamID) -> MirageRenderFrame? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
-        return state.queue.peekLatest()
+        state.lock.lock()
+        let frame = state.queue.peekLatest()
+        state.lock.unlock()
+        return frame
     }
 
     func queueDepth(for streamID: StreamID) -> Int {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
-        return state.queue.snapshot().depth
+        state.lock.lock()
+        let depth = state.queue.snapshot().depth
+        state.lock.unlock()
+        return depth
     }
 
     func oldestAgeMs(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Double {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
+        state.lock.lock()
         let snapshot = state.queue.snapshot()
+        state.lock.unlock()
         return oldestAgeMs(snapshot: snapshot, now: now)
     }
 
     func latestSequence(for streamID: StreamID) -> UInt64 {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
-        return state.queue.snapshot().latestSequence
+        state.lock.lock()
+        let sequence = state.queue.snapshot().latestSequence
+        state.lock.unlock()
+        return sequence
     }
 
     func markPresented(sequence: UInt64, for streamID: StreamID) {

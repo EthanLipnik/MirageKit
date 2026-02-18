@@ -30,7 +30,6 @@ extension MirageHostService {
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
-        latencyMode: MirageStreamLatencyMode = .auto,
         dataPort _: UInt16?,
         targetFrameRate: Int? = nil
     )
@@ -249,7 +248,7 @@ extension MirageHostService {
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
-            latencyMode: latencyMode
+            latencyMode: .lowestLatency
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         logDesktopStartStep("stream context created (\(streamID))")

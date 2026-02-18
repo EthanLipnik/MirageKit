@@ -14,44 +14,82 @@ import CoreVideo
 import Metal
 import QuartzCore
 
-public class MirageMetalView: NSView {
-    // @unchecked Sendable: guarded by NSLock for once-only callback dispatch.
-    private final class DrawReleaseToken: @unchecked Sendable {
-        private let lock = NSLock()
-        private var fired = false
-        private let release: @Sendable () -> Void
+private final class MirageDrawAdmissionState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var renderingSuspended = false
+    private var inFlightDrawCount = 0
+    private var pendingDraw = false
 
-        init(release: @escaping @Sendable () -> Void) {
-            self.release = release
-        }
-
-        func fire() {
-            lock.lock()
-            let shouldFire = !fired
-            if shouldFire { fired = true }
-            lock.unlock()
-            guard shouldFire else { return }
-            release()
-        }
+    func suspend() {
+        lock.lock()
+        renderingSuspended = true
+        inFlightDrawCount = 0
+        pendingDraw = false
+        lock.unlock()
     }
 
+    func resume() {
+        lock.lock()
+        renderingSuspended = false
+        lock.unlock()
+    }
+
+    func isSuspended() -> Bool {
+        lock.lock()
+        let suspended = renderingSuspended
+        lock.unlock()
+        return suspended
+    }
+
+    func reset() {
+        lock.lock()
+        inFlightDrawCount = 0
+        pendingDraw = false
+        lock.unlock()
+    }
+
+    func reserve(maxInFlight: Int) -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        guard inFlightDrawCount < maxInFlight else {
+            pendingDraw = true
+            return false
+        }
+
+        inFlightDrawCount += 1
+        return true
+    }
+
+    func release() -> Bool {
+        lock.lock()
+        defer { lock.unlock() }
+
+        if inFlightDrawCount > 0 {
+            inFlightDrawCount -= 1
+        }
+        guard pendingDraw else { return false }
+        pendingDraw = false
+        return true
+    }
+}
+
+private final class MirageSendableMetalLayer: @unchecked Sendable {
+    let layer: CAMetalLayer
+
+    init(_ layer: CAMetalLayer) {
+        self.layer = layer
+    }
+}
+
+public class MirageMetalView: NSView {
     // MARK: - Public API
 
     var streamID: StreamID? {
         didSet {
             guard streamID != oldValue else { return }
-            inFlightDrawCount = 0
-            pendingDraw = false
+            resetDrawAdmissionState()
             renderLoop.setStreamID(streamID)
-            requestDraw()
-        }
-    }
-
-    public var latencyMode: MirageStreamLatencyMode = .auto {
-        didSet {
-            guard latencyMode != oldValue else { return }
-            renderLoop.updateLatencyMode(latencyMode)
-            metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
             requestDraw()
         }
     }
@@ -72,15 +110,7 @@ public class MirageMetalView: NSView {
     private let preferencesObserver = MirageUserDefaultsObserver()
 
     private let renderQueue = DispatchQueue(label: "com.mirage.client.render.macos", qos: .userInteractive)
-    private let drawableAcquireQueue = DispatchQueue(
-        label: "com.mirage.client.render.drawable.macos",
-        qos: .userInteractive
-    )
-
-    private var renderingSuspended = false
-    private var inFlightDrawCount = 0
-    private var pendingDraw = false
-    private var drawableRetryTask: Task<Void, Never>?
+    private let drawAdmissionState = MirageDrawAdmissionState()
 
     private var maxRenderFPS: Int = 60
     private var colorPixelFormat: MTLPixelFormat = .bgr10a2Unorm
@@ -114,7 +144,6 @@ public class MirageMetalView: NSView {
     }
 
     deinit {
-        drawableRetryTask?.cancel()
         renderLoop.stop()
     }
 
@@ -159,15 +188,11 @@ public class MirageMetalView: NSView {
     // MARK: - Public Controls
 
     func suspendRendering() {
-        renderingSuspended = true
-        inFlightDrawCount = 0
-        pendingDraw = false
-        drawableRetryTask?.cancel()
-        drawableRetryTask = nil
+        drawAdmissionState.suspend()
     }
 
     func resumeRendering() {
-        renderingSuspended = false
+        drawAdmissionState.resume()
         requestDraw()
     }
 
@@ -198,7 +223,7 @@ public class MirageMetalView: NSView {
         metalLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
 
         renderLoop = MirageRenderLoop(delegate: self)
-        renderLoop.updateLatencyMode(latencyMode)
+        renderLoop.updateLatencyMode(.lowestLatency)
 
         applyRenderPreferences()
         startObservingPreferences()
@@ -206,158 +231,124 @@ public class MirageMetalView: NSView {
 
     // MARK: - Draw Path
 
-    @MainActor
     func requestDraw() {
-        guard !renderingSuspended else { return }
+        guard !isRenderingSuspended() else { return }
         renderLoop.requestRedraw()
     }
 
-    @MainActor
-    private func draw(now _: CFAbsoluteTime, decision: MirageRenderModeDecision) {
-        guard !renderingSuspended else { return }
-        guard let streamID else { return }
-        guard let renderer else { return }
-
-        let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
-        guard queueDepth > 0 else { return }
-
-        let maxInFlightDraws = max(1, min(desiredMaxInFlightDraws(for: decision), metalLayer.maximumDrawableCount))
-        guard inFlightDrawCount < maxInFlightDraws else {
-            pendingDraw = true
+    private func draw(
+        now _: CFAbsoluteTime,
+        decision: MirageRenderModeDecision,
+        completion: @escaping @Sendable (MirageRenderDrawOutcome) -> Void
+    ) {
+        guard !isRenderingSuspended() else {
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
             return
         }
 
-        guard let latestQueuedFrame = MirageFrameCache.shared.peekLatest(for: streamID) else { return }
-        updateOutputFormatIfNeeded(CVPixelBufferGetPixelFormatType(latestQueuedFrame.pixelBuffer))
-        let outputPixelFormat = colorPixelFormat
-        let presentationPolicy = decision.presentationPolicy
+        guard let streamID else {
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
+            return
+        }
 
-        inFlightDrawCount += 1
-        let releaseToken = DrawReleaseToken(release: { [weak self] in
-            Task { @MainActor [weak self] in
-                self?.releaseInFlightSlot()
+        guard let renderer else {
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
+            return
+        }
+
+        let queueDepth = MirageFrameCache.shared.queueDepth(for: streamID)
+        guard queueDepth > 0 else {
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
+            return
+        }
+
+        let maxInFlightDraws = max(1, min(desiredMaxInFlightDraws(for: decision), metalLayer.maximumDrawableCount))
+        guard drawAdmissionState.reserve(maxInFlight: maxInFlightDraws) else {
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
+            return
+        }
+
+        guard let latestQueuedFrame = MirageFrameCache.shared.peekLatest(for: streamID) else {
+            if drawAdmissionState.release() {
+                renderLoop.requestRedraw()
             }
-        })
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
+            return
+        }
+        updateOutputFormatIfNeeded(CVPixelBufferGetPixelFormatType(latestQueuedFrame.pixelBuffer))
 
-        let drawableLayer = metalLayer
-        drawableAcquireQueue.async { [weak self] in
+        let presentationPolicy = decision.presentationPolicy
+        let outputPixelFormat = colorPixelFormat
+        let sendableLayer = MirageSendableMetalLayer(metalLayer)
+        let admissionState = drawAdmissionState
+        guard let renderLoop else {
+            if admissionState.release() {
+                self.renderLoop?.requestRedraw()
+            }
+            completion(MirageRenderDrawOutcome(drawableWaitMs: 0, rendered: false))
+            return
+        }
+        let releaseInFlightAndRequestRedraw: @Sendable () -> Void = {
+            if admissionState.release() {
+                renderLoop.requestRedraw()
+            }
+        }
+
+        renderQueue.async {
             let waitStart = CFAbsoluteTimeGetCurrent()
-            let drawable = drawableLayer.nextDrawable()
+            let drawable = sendableLayer.layer.nextDrawable()
             let drawableWaitMs = max(0, CFAbsoluteTimeGetCurrent() - waitStart) * 1000
 
             guard let drawable else {
-                releaseToken.fire()
-                Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    self.renderLoop.recordDrawResult(drawableWaitMs: drawableWaitMs, rendered: false)
-                    self.scheduleDrawableRetry()
-                    self.flushPendingDrawIfNeeded()
-                }
+                releaseInFlightAndRequestRedraw()
+                completion(MirageRenderDrawOutcome(drawableWaitMs: drawableWaitMs, rendered: false))
                 return
             }
 
-            self?.renderQueue.async { [weak self] in
-                guard let frame = MirageFrameCache.shared.dequeueForPresentation(
-                    for: streamID,
-                    policy: presentationPolicy
-                ) else {
-                    releaseToken.fire()
-                    return
-                }
-
-                renderer.render(
-                    pixelBuffer: frame.pixelBuffer,
-                    to: drawable,
-                    contentRect: frame.contentRect,
-                    outputPixelFormat: outputPixelFormat,
-                    onScheduled: {
-                        releaseToken.fire()
-                    },
-                    completion: { [weak self] wasPresented in
-                        releaseToken.fire()
-                        Task { @MainActor [weak self] in
-                            guard let self else { return }
-                            self.completeDraw(
-                                frame: frame,
-                                streamID: streamID,
-                                drawableWaitMs: drawableWaitMs,
-                                wasPresented: wasPresented
-                            )
-                        }
-                    }
-                )
+            guard let frame = MirageFrameCache.shared.dequeueForPresentation(
+                for: streamID,
+                policy: presentationPolicy
+            ) else {
+                releaseInFlightAndRequestRedraw()
+                completion(MirageRenderDrawOutcome(drawableWaitMs: drawableWaitMs, rendered: false))
+                return
             }
-        }
-    }
 
-    @MainActor
-    private func completeDraw(
-        frame: MirageFrameCache.FrameEntry,
-        streamID: StreamID,
-        drawableWaitMs: Double,
-        wasPresented: Bool
-    ) {
-        if wasPresented {
-            MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
+            renderer.render(
+                pixelBuffer: frame.pixelBuffer,
+                to: drawable,
+                contentRect: frame.contentRect,
+                outputPixelFormat: outputPixelFormat,
+                completion: { wasPresented in
+                    if wasPresented {
+                        MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
+                    }
+                    releaseInFlightAndRequestRedraw()
+                    completion(MirageRenderDrawOutcome(drawableWaitMs: drawableWaitMs, rendered: wasPresented))
+                }
+            )
         }
-
-        renderLoop.recordDrawResult(drawableWaitMs: drawableWaitMs, rendered: wasPresented)
-        flushPendingDrawIfNeeded()
     }
 
     private func desiredMaxInFlightDraws(for decision: MirageRenderModeDecision? = nil) -> Int {
-        let lowLatencyDepth = 3
-        let smoothDepth = 3
-
-        guard let decision else {
-            switch latencyMode {
-            case .lowestLatency:
-                return lowLatencyDepth
-            case .auto, .smoothest:
-                return smoothDepth
-            }
-        }
-
-        switch decision.profile {
-        case .lowestLatency, .autoTyping:
-            return lowLatencyDepth
-        case .autoSmooth, .smoothest:
-            return smoothDepth
-        }
+        _ = decision
+        return 3
     }
 
     private func desiredLayerMaximumDrawableCount() -> Int {
         max(2, min(3, desiredMaxInFlightDraws()))
     }
 
-    @MainActor
-    private func flushPendingDrawIfNeeded() {
-        guard pendingDraw else { return }
-        pendingDraw = false
-        renderLoop.requestRedraw()
+    private func isRenderingSuspended() -> Bool {
+        drawAdmissionState.isSuspended()
     }
 
-    @MainActor
-    private func releaseInFlightSlot() {
-        if inFlightDrawCount > 0 {
-            inFlightDrawCount -= 1
-        }
-        flushPendingDrawIfNeeded()
+    private func resetDrawAdmissionState() {
+        drawAdmissionState.reset()
     }
 
-    @MainActor
-    private func scheduleDrawableRetry() {
-        guard drawableRetryTask == nil else { return }
-        drawableRetryTask = Task { @MainActor [weak self] in
-            defer { self?.drawableRetryTask = nil }
-            do {
-                try await Task.sleep(for: .milliseconds(4))
-            } catch {
-                return
-            }
-            guard let self, !self.renderingSuspended else { return }
-            self.renderLoop.requestRedraw()
-        }
+    @objc private func applyScaleLayoutUpdateOnMainThread() {
+        needsLayout = true
     }
 
     // MARK: - Metrics
@@ -369,10 +360,7 @@ public class MirageMetalView: NSView {
 
         lastReportedDrawableSize = drawableSize
         let metrics = currentDrawableMetrics(drawableSize: drawableSize)
-        let callback = onDrawableMetricsChanged
-        Task { @MainActor in
-            callback?(metrics)
-        }
+        onDrawableMetricsChanged?(metrics)
     }
 
     private func currentDrawableMetrics(drawableSize: CGSize) -> MirageDrawableMetrics {
@@ -473,14 +461,20 @@ public class MirageMetalView: NSView {
 }
 
 extension MirageMetalView: MirageRenderLoopDelegate {
-    @MainActor
-    func renderLoopDraw(now: CFAbsoluteTime, decision: MirageRenderModeDecision) {
-        draw(now: now, decision: decision)
+    func renderLoopDraw(
+        now: CFAbsoluteTime,
+        decision: MirageRenderModeDecision,
+        completion: @escaping @Sendable (MirageRenderDrawOutcome) -> Void
+    ) {
+        draw(now: now, decision: decision, completion: completion)
     }
 
-    @MainActor
     func renderLoopScaleChanged(_: Double) {
-        needsLayout = true
+        if Thread.isMainThread {
+            needsLayout = true
+        } else {
+            performSelector(onMainThread: #selector(applyScaleLayoutUpdateOnMainThread), with: nil, waitUntilDone: false)
+        }
     }
 }
 #endif

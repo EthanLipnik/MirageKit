@@ -4,20 +4,14 @@
 //
 //  Created by Ethan Lipnik on 2/13/26.
 //
-//  Coverage for latency-mode cases and typing burst key classification.
+//  Coverage for typing burst key classification.
 //
 
 @testable import MirageKit
 import Testing
 
-@Suite("Latency Mode and Typing Classifier")
+@Suite("Typing Burst Classifier")
 struct LatencyModeTypingClassifierTests {
-    @Test("Latency mode cases are lowest, auto, smoothest")
-    func latencyModeCases() {
-        #expect(MirageStreamLatencyMode.allCases == [.lowestLatency, .auto, .smoothest])
-        #expect(MirageStreamLatencyMode.auto.displayName == "Auto")
-    }
-
     @Test("Plain typing key down triggers burst classifier")
     func plainTypingKeyDownTriggersClassifier() {
         let event = MirageInputEvent.keyDown(

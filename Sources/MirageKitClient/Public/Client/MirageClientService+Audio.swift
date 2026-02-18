@@ -276,10 +276,7 @@ extension MirageClientService {
             return
         }
 
-        let typingBurstActive = MirageFrameCache.shared.isTypingBurstActive(for: streamID)
         let delaySeconds = Self.resolveAudioSyncDelaySeconds(
-            latencyMode: latencyMode,
-            typingBurstActive: typingBurstActive,
             snapshot: snapshot,
             fallbackTargetFPS: getScreenMaxRefreshRate()
         )
@@ -287,31 +284,12 @@ extension MirageClientService {
     }
 
     nonisolated static func resolveAudioSyncDelaySeconds(
-        latencyMode: MirageStreamLatencyMode,
-        typingBurstActive: Bool,
         snapshot: MirageClientMetricsSnapshot,
         fallbackTargetFPS: Int
     ) -> Double {
-        let bufferingAllowed = switch latencyMode {
-        case .lowestLatency:
-            false
-        case .auto:
-            !typingBurstActive
-        case .smoothest:
-            true
-        }
-
-        guard bufferingAllowed, !snapshot.decodeHealthy else { return 0 }
-
-        let clampedDepth = min(max(0, snapshot.renderBufferDepth), MirageRenderModePolicy.maxStressBufferDepth)
-        let delayedFrames = max(0, clampedDepth - 1)
-        guard delayedFrames > 0 else { return 0 }
-
-        let targetFPS = max(
-            1,
-            snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : fallbackTargetFPS
-        )
-        return Double(delayedFrames) / Double(targetFPS)
+        _ = snapshot
+        _ = fallbackTargetFPS
+        return 0
     }
 }
 

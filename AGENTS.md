@@ -3,12 +3,18 @@
 ## Overview
 MirageKit is the Swift Package that implements the core streaming framework for macOS, iOS, and visionOS clients.
 
+## Compatibility and Code Hygiene
+- Internal MirageKit code does not keep backward-compatibility shims for removed behavior.
+- If a function is no longer used, remove it completely: signature, implementation, call sites, related protocol requirements, and tests.
+- Do not keep dead wrappers, no-op adapters, or dormant compatibility helpers in internal modules.
+- Public-facing API compatibility can be preserved intentionally at the package boundary when required, but dead code remains disallowed.
+
 ## Behavior Notes
 - MirageKit license: PolyForm Shield 1.0.0 with the line-of-business notice for dedicated remote window/desktop/secondary display/drawing-tablet streaming.
 - Stream scale: client-provided scale derived from the app's resolution limit; encoder overrides define bitrate targets.
 - Hello handshake includes typed protocol negotiation with feature selection (`MirageProtocolNegotiation`, `MirageFeatureSet`).
 - Hello rejection payloads include explicit rejection reason metadata, and protocol-mismatch rejections include host/client protocol versions plus optional mismatch-trigger update result fields.
-- ProMotion preference: refresh override based on CAMetalLayer display-link cadence, 120 when supported and enabled, otherwise 60.
+- ProMotion preference: refresh override based on client display-link cadence, 120 when supported and enabled, otherwise 60.
 - Backpressure: queue-based frame drops.
 - Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
 - Bitrate-derived quality mapping biases low-bitrate streams toward stronger compression, and queue-pressure quality drops accelerate for bitrate-constrained streams.
@@ -138,8 +144,8 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 
 ## Streaming Pipeline
 - Host: ApplicationScanner → WindowCaptureEngine → MetalFrameDiffer → HEVCEncoder → Network.
-- Client: Network → HEVCDecoder → MirageStreamView (Metal rendering).
-- Client rendering reads frames from `MirageFrameCache` inside Metal views to avoid SwiftUI per-frame churn.
+- Client: Network → HEVCDecoder → MirageStreamView (`AVSampleBufferDisplayLayer` on iOS/visionOS, Metal on macOS).
+- Client rendering reads frames from `MirageFrameCache` inside stream presentation backends to avoid SwiftUI per-frame churn.
 - Stream scaling: capture at `streamScale` output resolution; content rects are in scaled pixel coordinates.
 - Adaptive stream scale: not supported; streams keep the client-selected `streamScale` throughout the session.
 - SCK buffer lifetime: captured frames are copied into a CVPixelBufferPool before encode to avoid retaining SCK buffers.
@@ -147,10 +153,8 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Frame rate selection: host follows client refresh rate (120fps when supported) across streams.
 - Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
 - Low-latency backpressure: queue spikes drop frames to keep latency down while preserving forward decode flow without automatic keyframe recovery requests.
-- Latency modes: `lowestLatency`, `auto`, and `smoothest`.
-- Decode-synchronous baseline: all modes present the newest decoded frame without intentional client delay while decode cadence is healthy.
+- Presentation policy: newest-frame decode-synchronous display with no client-added buffering.
 - Underflow behavior: presentation keeps the current on-screen frame without duplicate draw resubmission.
-- Auto typing burst: `auto` applies a 350ms text-entry burst for keyDown events without Command/Option/Control, forcing newest-first/no-buffer presentation during the burst window.
 - Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
 - Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
 - Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.
@@ -164,19 +168,17 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Presentation catch-up trimming uses oldest-frame age gating to preserve short decode jitter bursts and trims only when latency exceeds the presentation threshold.
 - Decode backpressure handling logs sustained queue pressure and continues forward decode without forced stream reset or keyframe request.
 - Adaptive fallback triggers on decode-storm episodes (two decode-threshold events within an 8-second window) in addition to queue-drop overload signals.
-- Client decode submission cap is adaptive (baseline 1, temporary 2 during sustained decode stress, return to 1 after sustained recovery).
+- Client decode submission cap is adaptive (baseline 2, temporary 3 during sustained decode stress, return to 2 after sustained recovery).
 - Client freeze monitoring records sustained presentation stalls for diagnostics without automatic keyframe recovery requests.
-- Client presentation uses one `MirageRenderLoop` per CAMetalLayer view on iOS, visionOS, and macOS with shared mode policy behavior.
-- iOS/visionOS CAMetalLayer rendering dequeues frames at render submission time after drawable acquisition so drawable waits do not age selected frames.
+- Client presentation uses `AVSampleBufferDisplayLayer` + `CADisplayLink` on iOS/visionOS and `MirageRenderLoop` + `CAMetalLayer` on macOS.
+- macOS render-loop draw dispatch is completion-driven and avoids `Task`/`await` in the client render hot path.
+- iOS/visionOS presentation dequeues newest frames and enqueues display-immediate sample buffers on display-link cadence.
 - Decode callbacks enqueue into `MirageRenderStreamStore` per-stream SPSC queues (default capacity 24) with monotonic sequence metadata and cadence telemetry.
 - `MirageFrameCache` is a compatibility facade over the render stream store and continues exposing presentation snapshot, queue depth/age, and typing-burst state.
-- Lowest Latency mode stays newest-first without stress buffering.
-- Auto mode enables bounded stress buffering only while decode health is below target and typing burst is inactive.
-- Smoothest mode enables bounded stress buffering only while decode health is below target.
-- Stress buffering in Auto and Smoothest is capped at depth 3.
+- macOS presentation uses a fixed low-latency newest-frame policy.
 - Catch-up trimming and emergency trimming apply only under sustained backlog/age thresholds to preserve short decode-jitter bursts.
-- Auto and Smoothest apply temporary audio runtime delay while stress buffering is active, and remove it on healthy recovery.
-- `allowAdaptiveFallback` globally gates client render degradation for `lowestLatency`, `auto`, and `smoothest`; gate-off keeps render scale fixed at 1.0, gate-on enables the 1.0/0.9/0.8/0.7 scale ladder under sustained drawable pressure with upward recovery in healthy windows.
+- Audio runtime extra delay remains at zero.
+- `allowAdaptiveFallback` gates render-scale degradation for the macOS render-loop path; iOS/visionOS sample-buffer presentation keeps fixed scale.
 
 ## Input Handling
 - Host input clears stuck modifiers after 0.5s of modifier inactivity.

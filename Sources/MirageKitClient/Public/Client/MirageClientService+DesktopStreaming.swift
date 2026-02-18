@@ -55,7 +55,6 @@ public extension MirageClientService {
             mode: mode,
             bitrate: nil,
             streamScale: clampedStreamScale(),
-            latencyMode: latencyMode,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             dataPort: nil,
             maxRefreshRate: getScreenMaxRefreshRate()

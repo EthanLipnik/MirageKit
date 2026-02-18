@@ -64,8 +64,6 @@ package struct StartStreamMessage: Codable {
     /// Client-requested stream scale (0.1-1.0)
     /// Applies post-capture downscaling without resizing the host window
     package var streamScale: CGFloat?
-    /// Client latency preference for buffering behavior
-    package var latencyMode: MirageStreamLatencyMode?
     /// Client audio streaming configuration
     package var audioConfiguration: MirageAudioConfiguration?
     /// Client refresh rate override in Hz (60/120 based on client capability).
@@ -90,7 +88,6 @@ package struct StartStreamMessage: Codable {
         case allowRuntimeQualityAdjustment
         case disableResolutionCap
         case streamScale
-        case latencyMode
         case audioConfiguration
         case maxRefreshRate
     }
@@ -110,7 +107,6 @@ package struct StartStreamMessage: Codable {
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
-        latencyMode: MirageStreamLatencyMode? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxRefreshRate: Int = 60
     ) {
@@ -128,7 +124,6 @@ package struct StartStreamMessage: Codable {
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
-        self.latencyMode = latencyMode
         self.audioConfiguration = audioConfiguration
         self.maxRefreshRate = maxRefreshRate
     }

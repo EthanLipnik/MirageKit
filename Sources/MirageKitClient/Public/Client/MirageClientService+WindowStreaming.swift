@@ -73,7 +73,6 @@ public extension MirageClientService {
         }
 
         request.streamScale = clampedStreamScale()
-        request.latencyMode = latencyMode
         request.audioConfiguration = audioConfiguration ?? self.audioConfiguration
         request.maxRefreshRate = getScreenMaxRefreshRate()
 

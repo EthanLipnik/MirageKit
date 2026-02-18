@@ -14,8 +14,8 @@ import Testing
 #if os(macOS)
 @Suite("Audio Sync Delay Policy")
 struct AudioSyncDelayPolicyTests {
-    @Test("Smoothest applies delay from buffered frame depth")
-    func smoothestDelayFromBufferDepth() {
+    @Test("Runtime policy does not add sync delay")
+    func runtimePolicyNoExtraDelay() {
         let snapshot = MirageClientMetricsSnapshot(
             renderBufferDepth: 3,
             decodeHealthy: false,
@@ -23,26 +23,6 @@ struct AudioSyncDelayPolicyTests {
         )
 
         let delay = MirageClientService.resolveAudioSyncDelaySeconds(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
-            snapshot: snapshot,
-            fallbackTargetFPS: 60
-        )
-
-        #expect(delay == (2.0 / 60.0))
-    }
-
-    @Test("Auto typing burst suppresses additional audio delay")
-    func autoTypingBurstSuppressesDelay() {
-        let snapshot = MirageClientMetricsSnapshot(
-            renderBufferDepth: 3,
-            decodeHealthy: false,
-            hostTargetFrameRate: 60
-        )
-
-        let delay = MirageClientService.resolveAudioSyncDelaySeconds(
-            latencyMode: .auto,
-            typingBurstActive: true,
             snapshot: snapshot,
             fallbackTargetFPS: 60
         )
@@ -50,8 +30,8 @@ struct AudioSyncDelayPolicyTests {
         #expect(delay == 0)
     }
 
-    @Test("Healthy decode suppresses additional audio delay")
-    func healthyDecodeSuppressesDelay() {
+    @Test("Healthy decode keeps sync delay at zero")
+    func healthyDecodeNoExtraDelay() {
         let snapshot = MirageClientMetricsSnapshot(
             renderBufferDepth: 3,
             decodeHealthy: true,
@@ -59,8 +39,6 @@ struct AudioSyncDelayPolicyTests {
         )
 
         let delay = MirageClientService.resolveAudioSyncDelaySeconds(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
             snapshot: snapshot,
             fallbackTargetFPS: 60
         )

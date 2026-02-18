@@ -158,7 +158,6 @@ extension MirageHostService {
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
-            let latencyMode = request.latencyMode ?? .auto
             let audioConfiguration = request.audioConfiguration ?? .default
             MirageLogger.host("Frame rate: \(targetFrameRate)fps (client max=\(clientMaxRefreshRate)Hz)")
 
@@ -169,7 +168,6 @@ extension MirageHostService {
                 clientDisplayResolution: clientDisplayResolution,
                 keyFrameInterval: keyFrameInterval,
                 streamScale: requestedScale,
-                latencyMode: latencyMode,
                 targetFrameRate: targetFrameRate,
                 bitDepth: bitDepth,
                 captureQueueDepth: request.captureQueueDepth,
