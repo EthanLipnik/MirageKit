@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import CoreMedia
 import CoreVideo
 import Foundation
 import Metal
@@ -87,6 +88,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         pixelBuffer: CVPixelBuffer,
         contentRect: CGRect,
         decodeTime: CFAbsoluteTime,
+        presentationTime: CMTime,
         metalTexture: CVMetalTexture?,
         texture: MTLTexture?,
         for streamID: StreamID
@@ -102,6 +104,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             contentRect: contentRect,
             sequence: state.nextSequence,
             decodeTime: decodeTime,
+            presentationTime: presentationTime,
             metalTexture: metalTexture,
             texture: texture
         )

@@ -15,7 +15,7 @@ import Testing
 @Suite("HEVC Decoder Submission Limiter")
 struct HEVCDecoderSubmissionLimiterTests {
     @Test("Target refresh updates choose baseline decode submission limits")
-    func submissionLimitUsesLatencyFirstBaseline() async {
+    func submissionLimitUsesThroughputBaseline() async {
         let decoder = HEVCDecoder()
         #expect(await decoder.currentDecodeSubmissionLimit() == 1)
 
@@ -23,7 +23,7 @@ struct HEVCDecoderSubmissionLimiterTests {
         #expect(await decoder.currentDecodeSubmissionLimit() == 3)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 60)
-        #expect(await decoder.currentDecodeSubmissionLimit() == 2)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 3)
     }
 
     @Test("Submission limiter enforces cap and releases waiters")

@@ -17,7 +17,7 @@ extension HEVCDecoder {
     }
 
     nonisolated static func baselineDecodeSubmissionLimit(targetFrameRate: Int) -> Int {
-        targetFrameRate >= 120 ? 3 : 2
+        targetFrameRate >= 60 ? 3 : 2
     }
 
     func setDecodeSubmissionLimit(limit: Int, reason: String? = nil) {

@@ -52,24 +52,17 @@ extension StreamController {
         maybeSignalAdaptiveFallback(now: now)
     }
 
-    func maybeTriggerBackpressureRecovery(queueDepth: Int) async {
+    func maybeLogDecodeBackpressure(queueDepth: Int) {
         let now = currentTime()
-        let recentDropCount = queueDropTimestamps.reduce(into: 0) { count, timestamp in
-            if now - timestamp <= Self.backpressureRecoveryWindow {
-                count += 1
-            }
-        }
-        guard recentDropCount >= Self.backpressureRecoveryDropThreshold else { return }
-        if lastBackpressureRecoveryTime > 0,
-           now - lastBackpressureRecoveryTime < Self.backpressureRecoveryCooldown {
+        if lastBackpressureLogTime > 0,
+           now - lastBackpressureLogTime < Self.backpressureLogCooldown {
             return
         }
-        lastBackpressureRecoveryTime = now
+        lastBackpressureLogTime = now
         MirageLogger.client(
             "Decode backpressure threshold hit (depth \(queueDepth)) for stream \(streamID); " +
-                "starting low-latency recovery"
+                "continuing decode without keyframe recovery"
         )
-        await requestSoftRecovery(reason: .decodeBackpressure(queueDepth: queueDepth))
     }
 
     func handleFrameLossSignal() async {

@@ -248,7 +248,7 @@ extension MirageHostService {
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
-            latencyMode: .lowestLatency
+            latencyMode: .auto
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         logDesktopStartStep("stream context created (\(streamID))")

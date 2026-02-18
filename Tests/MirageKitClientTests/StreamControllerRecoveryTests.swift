@@ -75,8 +75,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Backpressure threshold requests low-latency recovery")
-    func backpressureRequestsKeyframes() async throws {
+    @Test("Backpressure threshold does not request keyframe recovery")
+    func backpressureDoesNotRequestKeyframes() async throws {
         let keyframeCounter = LockedCounter()
         let clock = ManualTimeProvider(start: 1_000)
         let controller = StreamController(
@@ -92,32 +92,22 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
-        for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
-            await controller.recordQueueDrop()
-        }
-        await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
-        try await waitUntil("initial backpressure recovery") {
-            keyframeCounter.value == 1
-        }
-        #expect(keyframeCounter.value == 1)
+        await controller.recordQueueDrop()
+        await controller.maybeLogDecodeBackpressure(queueDepth: 6)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(keyframeCounter.value == 0)
 
         // Additional drops inside cooldown should remain no-op.
-        for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
-            await controller.recordQueueDrop()
-        }
-        await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
+        await controller.recordQueueDrop()
+        await controller.maybeLogDecodeBackpressure(queueDepth: 6)
         try await Task.sleep(for: .milliseconds(150))
-        #expect(keyframeCounter.value == 1)
+        #expect(keyframeCounter.value == 0)
 
         clock.advance(by: 1.1)
-        for _ in 0 ..< StreamController.backpressureRecoveryDropThreshold {
-            await controller.recordQueueDrop()
-        }
-        await controller.maybeTriggerBackpressureRecovery(queueDepth: 6)
-        try await waitUntil("cooldown-expired recovery") {
-            keyframeCounter.value == 2
-        }
-        #expect(keyframeCounter.value == 2)
+        await controller.recordQueueDrop()
+        await controller.maybeLogDecodeBackpressure(queueDepth: 6)
+        try await Task.sleep(for: .milliseconds(150))
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }

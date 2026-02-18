@@ -8,6 +8,7 @@
 //
 
 import CoreVideo
+import CoreMedia
 import Foundation
 import Metal
 import MirageKit
@@ -18,6 +19,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         let contentRect: CGRect
         let sequence: UInt64
         let decodeTime: CFAbsoluteTime
+        let presentationTime: CMTime
         let metalTexture: CVMetalTexture?
         let texture: MTLTexture?
     }
@@ -53,6 +55,7 @@ public final class MirageFrameCache: @unchecked Sendable {
     public func store(
         _ pixelBuffer: CVPixelBuffer,
         contentRect: CGRect,
+        presentationTime: CMTime = .invalid,
         metalTexture: CVMetalTexture?,
         texture: MTLTexture?,
         for streamID: StreamID
@@ -61,6 +64,7 @@ public final class MirageFrameCache: @unchecked Sendable {
             pixelBuffer,
             contentRect: contentRect,
             decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: presentationTime,
             metalTexture: metalTexture,
             texture: texture,
             for: streamID
@@ -72,6 +76,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         _ pixelBuffer: CVPixelBuffer,
         contentRect: CGRect,
         decodeTime: CFAbsoluteTime,
+        presentationTime: CMTime = .invalid,
         metalTexture: CVMetalTexture?,
         texture: MTLTexture?,
         for streamID: StreamID
@@ -80,6 +85,7 @@ public final class MirageFrameCache: @unchecked Sendable {
             pixelBuffer: pixelBuffer,
             contentRect: contentRect,
             decodeTime: decodeTime,
+            presentationTime: presentationTime,
             metalTexture: metalTexture,
             texture: texture,
             for: streamID
@@ -97,6 +103,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         _ pixelBuffer: CVPixelBuffer,
         contentRect: CGRect,
         decodeTime: CFAbsoluteTime,
+        presentationTime: CMTime = .invalid,
         metalTexture: CVMetalTexture?,
         texture: MTLTexture?,
         for streamID: StreamID
@@ -105,6 +112,7 @@ public final class MirageFrameCache: @unchecked Sendable {
             pixelBuffer,
             contentRect: contentRect,
             decodeTime: decodeTime,
+            presentationTime: presentationTime,
             metalTexture: metalTexture,
             texture: texture,
             for: streamID
@@ -116,6 +124,7 @@ public final class MirageFrameCache: @unchecked Sendable {
             pixelBuffer,
             contentRect: contentRect,
             decodeTime: CFAbsoluteTimeGetCurrent(),
+            presentationTime: .invalid,
             metalTexture: nil,
             texture: nil,
             for: streamID
@@ -206,6 +215,7 @@ public final class MirageFrameCache: @unchecked Sendable {
             contentRect: frame.contentRect,
             sequence: frame.sequence,
             decodeTime: frame.decodeTime,
+            presentationTime: frame.presentationTime,
             metalTexture: frame.metalTexture,
             texture: frame.texture
         )

@@ -125,7 +125,7 @@ actor StreamContext {
     let autoRecoveryExitWindows: Int = 2
     let autoRecoveryMinHold: CFAbsoluteTime = 2.0
     let autoRecoveryCooldown: CFAbsoluteTime = 3.0
-    let autoHeadroomIncreaseThreshold: Double = 0.85
+    let autoHeadroomIncreaseThreshold: Double = 0.98
     let autoHeadroomWindowsToRaise: Int = 2
     var autoRecoveryActive = false
     var autoRecoveryLowFPSStreak = 0
@@ -433,7 +433,7 @@ actor StreamContext {
             if frameRate >= 60 { return 3 }
             return 1
         case .auto:
-            return 1
+            return frameRate >= 60 ? 2 : 1
         case .lowestLatency:
             return 1
         }

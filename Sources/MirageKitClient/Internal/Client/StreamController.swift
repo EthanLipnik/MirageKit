@@ -20,7 +20,6 @@ actor StreamController {
 
     enum RecoveryReason: Sendable {
         case decodeErrorThreshold
-        case decodeBackpressure(queueDepth: Int)
         case frameLoss
         case freezeTimeout
         case keyframeRecoveryLoop
@@ -30,8 +29,6 @@ actor StreamController {
             switch self {
             case .decodeErrorThreshold:
                 "decode-error-threshold"
-            case let .decodeBackpressure(queueDepth):
-                "decode-backpressure depth=\(queueDepth)"
             case .frameLoss:
                 "frame-loss"
             case .freezeTimeout:
@@ -120,18 +117,16 @@ actor StreamController {
     static let freezeRecoveryCooldown: CFAbsoluteTime = 3.0
     static let freezeRecoveryEscalationThreshold: Int = 2
 
-    /// Maximum number of frames buffered for decode before triggering full recovery.
-    static let maxQueuedFrames: Int = 8
+    /// Maximum number of compressed frames buffered ahead of decode.
+    static let maxQueuedFrames: Int = 48
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
+    static let backpressureLogCooldown: CFAbsoluteTime = 1.0
     static let overloadWindow: CFAbsoluteTime = 8.0
     static let overloadQueueDropThreshold: Int = 12
     static let overloadRecoveryThreshold: Int = 2
     static let decodeStormThreshold: Int = 2
-    static let backpressureRecoveryDropThreshold: Int = 1
-    static let backpressureRecoveryWindow: CFAbsoluteTime = 2.0
-    static let backpressureRecoveryCooldown: CFAbsoluteTime = 1.0
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
     static let decodeSubmissionMaximumLimit: Int = 3
@@ -167,7 +162,7 @@ actor StreamController {
     var decodeThresholdTimestamps: [CFAbsoluteTime] = []
     var decodeRecoveryEscalationTimestamps: [CFAbsoluteTime] = []
     var lastRecoveryRequestDispatchTime: CFAbsoluteTime = 0
-    var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
+    var lastBackpressureLogTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
     var decodeSchedulerTargetFPS: Int = 60
     var decodeSubmissionBaselineLimit: Int = 2
@@ -279,13 +274,14 @@ actor StreamController {
 
         // Set up frame handler
         let metricsTracker = metricsTracker
-        await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, _: CMTime, contentRect: CGRect) in
+        await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, presentationTime: CMTime, contentRect: CGRect) in
             // Also store in global cache for iOS gesture tracking compatibility
             let decodeTime = CFAbsoluteTimeGetCurrent()
             MirageFrameCache.shared.store(
                 pixelBuffer,
                 contentRect: contentRect,
                 decodeTime: decodeTime,
+                presentationTime: presentationTime,
                 metalTexture: nil,
                 texture: nil,
                 for: capturedStreamID
@@ -395,9 +391,16 @@ actor StreamController {
 
         if queuedFrames.count >= Self.maxQueuedFrames {
             let queueDepth = queuedFrames.count
+            if frame.isKeyframe {
+                clearQueuedFramesForRecovery()
+                queuedFrames.append(frame)
+                maybeLogDecodeBackpressure(queueDepth: queueDepth)
+                return
+            }
+
             frame.releaseBuffer()
             recordQueueDrop()
-            await maybeTriggerBackpressureRecovery(queueDepth: queueDepth)
+            maybeLogDecodeBackpressure(queueDepth: queueDepth)
             logQueueDropIfNeeded()
             return
         }

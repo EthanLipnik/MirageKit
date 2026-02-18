@@ -8,6 +8,7 @@
 //
 
 import CoreGraphics
+import CoreMedia
 import CoreVideo
 import Foundation
 import Metal
@@ -18,6 +19,7 @@ struct MirageRenderFrame: @unchecked Sendable {
     let contentRect: CGRect
     let sequence: UInt64
     let decodeTime: CFAbsoluteTime
+    let presentationTime: CMTime
     let metalTexture: CVMetalTexture?
     let texture: MTLTexture?
 }

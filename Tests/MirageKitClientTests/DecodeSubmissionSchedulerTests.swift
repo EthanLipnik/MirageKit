@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/18/26.
 //
-//  Coverage for adaptive decode submission scheduling (2 -> 3 -> 2).
+//  Coverage for adaptive decode submission scheduling with a 60Hz baseline of 3.
 //
 
 @testable import MirageKitClient
@@ -27,7 +27,7 @@ struct DecodeSubmissionSchedulerTests {
         await controller.stop()
     }
 
-    @Test("Scheduler returns to baseline in-flight slots after sustained recovery")
+    @Test("Scheduler keeps baseline slots after sustained recovery")
     func recoversAfterHealthyWindows() async {
         let controller = StreamController(streamID: 901, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
@@ -40,11 +40,11 @@ struct DecodeSubmissionSchedulerTests {
         }
 
         let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 2)
+        #expect(decoderLimit == 3)
         await controller.stop()
     }
 
-    @Test("Mid-band decode cadence does not toggle baseline submission limit")
+    @Test("Mid-band decode cadence keeps the baseline submission limit")
     func midBandDoesNotToggle() async {
         let controller = StreamController(streamID: 902, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
@@ -54,7 +54,7 @@ struct DecodeSubmissionSchedulerTests {
         }
 
         let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 2)
+        #expect(decoderLimit == 3)
         await controller.stop()
     }
 }

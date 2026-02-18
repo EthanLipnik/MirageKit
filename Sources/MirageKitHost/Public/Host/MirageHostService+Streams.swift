@@ -96,7 +96,7 @@ public extension MirageHostService {
             mediaSecurityContext: mediaSecurityByClientID[client.id],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
-            latencyMode: .lowestLatency
+            latencyMode: .auto
         )
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
