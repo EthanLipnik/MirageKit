@@ -329,6 +329,85 @@ extension StreamContext {
             )
     }
 
+    func hardResetDesktopDisplayCapture(
+        displayWrapper: SCDisplayWrapper,
+        resolution: CGSize
+    )
+    async throws {
+        guard isRunning else { return }
+        guard resolution.width > 0, resolution.height > 0 else { return }
+
+        isResizing = true
+        defer { isResizing = false }
+
+        currentContentRect = .zero
+        dimensionToken &+= 1
+        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
+        advanceEpoch(reason: "desktop resize reset")
+        await packetSender?.bumpGeneration(reason: "desktop resize reset")
+        await packetSender?.resetQueue(reason: "desktop resize reset")
+        resetPipelineStateForReconfiguration(reason: "desktop resize reset")
+
+        baseCaptureSize = resolution
+        streamScale = resolvedStreamScale(
+            for: baseCaptureSize,
+            requestedScale: requestedStreamScale,
+            logLabel: "Resolution cap"
+        )
+        let outputSize = scaledOutputSize(for: baseCaptureSize)
+        let scaledWidth = Int(outputSize.width)
+        let scaledHeight = Int(outputSize.height)
+        guard scaledWidth > 0, scaledHeight > 0 else { return }
+
+        currentCaptureSize = outputSize
+        currentEncodedSize = outputSize
+        captureMode = .display
+        updateQueueLimits()
+
+        await captureEngine?.stopCapture()
+
+        guard let encoder else { throw MirageError.protocolError("Desktop resize reset missing encoder") }
+        try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+        try await encoder.reset()
+        let resolvedPixelFormat = await encoder.getActivePixelFormat()
+        activePixelFormat = resolvedPixelFormat
+
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
+        let restartCaptureEngine = WindowCaptureEngine(
+            configuration: captureConfig,
+            latencyMode: latencyMode,
+            captureFrameRate: captureFrameRate,
+            usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(displayWrapper.display.displayID)
+        )
+        captureEngine = restartCaptureEngine
+        let frameInbox = self.frameInbox
+        await restartCaptureEngine.setAdmissionDropper { [weak self] in
+            let snapshot = frameInbox.pendingSnapshot()
+            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
+            let backpressure = self?.backpressureActiveSnapshot ?? false
+            guard pendingPressure || backpressure else { return false }
+
+            if frameInbox.scheduleIfNeeded() {
+                Task(priority: .userInitiated) { await self?.processPendingFrames() }
+            }
+            return true
+        }
+
+        try await restartCaptureEngine.startDisplayCapture(
+            display: displayWrapper.display,
+            resolution: outputSize,
+            showsCursor: false,
+            onFrame: { [weak self] frame in
+                self?.enqueueCapturedFrame(frame)
+            },
+            onAudio: onCapturedAudioBuffer
+        )
+        await refreshCaptureCadence()
+        await applyDerivedQuality(for: outputSize, logLabel: "Desktop resize reset")
+        await encoder.forceKeyframe()
+        MirageLogger.stream("Desktop display reset complete at \(scaledWidth)x\(scaledHeight)")
+    }
+
     func updateCaptureDisplay(_ displayWrapper: SCDisplayWrapper, resolution: CGSize) async throws {
         guard isRunning else { return }
 

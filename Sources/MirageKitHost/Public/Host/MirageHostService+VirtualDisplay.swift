@@ -13,6 +13,40 @@ import MirageKit
 
 // MARK: - Virtual Display Support
 
+enum DesktopResizeNoOpDecision: Equatable {
+    case noOp
+    case apply
+}
+
+func desktopResizeNoOpDecision(
+    currentResolution: CGSize?,
+    currentRefreshRate: Int?,
+    requestedResolution: CGSize,
+    requestedRefreshRate: Int
+)
+-> DesktopResizeNoOpDecision {
+    guard let currentResolution, let currentRefreshRate else { return .apply }
+    guard requestedResolution.width > 0, requestedResolution.height > 0 else { return .noOp }
+    if currentResolution == requestedResolution, currentRefreshRate == requestedRefreshRate {
+        return .noOp
+    }
+    return .apply
+}
+
+enum DesktopResizeMirroringPlan: Equatable {
+    case suspendAndRestore
+    case unchanged
+}
+
+func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopResizeMirroringPlan {
+    if mode == .mirrored { return .suspendAndRestore }
+    return .unchanged
+}
+
+private enum DesktopResizeTransactionAbort: Error {
+    case streamNoLongerActive
+}
+
 extension MirageHostService {
     private func virtualDisplayScaleFactor(for _: MirageConnectedClient?) -> CGFloat {
         max(1.0, sharedVirtualDisplayScaleFactor)
@@ -334,6 +368,11 @@ extension MirageHostService {
             return
         }
 
+        let mirroringPlan = desktopResizeMirroringPlan(for: desktopStreamMode)
+        var suspendedMirroringDisplayID: CGDirectDisplayID?
+        var shouldRestoreMirroring = false
+        var resizeCompletionContext: StreamContext?
+        var shouldStopDesktopStreamWithError = false
         do {
             let pixelResolution = virtualDisplayPixelResolution(
                 for: logicalResolution,
@@ -341,25 +380,27 @@ extension MirageHostService {
             )
             let targetFrameRate = await desktopContext.getTargetFrameRate()
             let streamRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: targetFrameRate)
-
-            if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
-                let currentResolution = snapshot.resolution
-                let currentRefresh = Int(snapshot.refreshRate.rounded())
-                if currentResolution == pixelResolution, currentRefresh == streamRefreshRate {
-                    MirageLogger
-                        .host(
-                            "Desktop stream resize skipped (already " +
-                                "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
-                                "\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px @\(streamRefreshRate)Hz)"
-                        )
-                    await sendDesktopResizeCompletion(
-                        streamID: streamID,
-                        requestNumber: requestNumber,
-                        context: desktopContext,
-                        noOp: true
+            let preResizeSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot()
+            let noOpDecision = desktopResizeNoOpDecision(
+                currentResolution: preResizeSnapshot?.resolution,
+                currentRefreshRate: preResizeSnapshot.map { Int($0.refreshRate.rounded()) },
+                requestedResolution: pixelResolution,
+                requestedRefreshRate: streamRefreshRate
+            )
+            if noOpDecision == .noOp {
+                MirageLogger
+                    .host(
+                        "Desktop stream resize skipped (already " +
+                            "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
+                            "\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px @\(streamRefreshRate)Hz)"
                     )
-                    return
-                }
+                await sendDesktopResizeCompletion(
+                    streamID: streamID,
+                    requestNumber: requestNumber,
+                    context: desktopContext,
+                    noOp: true
+                )
+                return
             }
 
             MirageLogger
@@ -369,47 +410,95 @@ extension MirageHostService {
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
                 )
 
+            if mirroringPlan == .suspendAndRestore, let displayID = preResizeSnapshot?.displayID {
+                await suspendDisplayMirroringForResize(targetDisplayID: displayID)
+                suspendedMirroringDisplayID = displayID
+                shouldRestoreMirroring = true
+            }
+
             try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                 for: .desktopStream,
                 newResolution: pixelResolution,
                 refreshRate: streamRefreshRate
             )
 
-            guard streamID == desktopStreamID else { return }
+            guard streamID == desktopStreamID else { throw DesktopResizeTransactionAbort.streamNoLongerActive }
 
-            if let displayID = await SharedVirtualDisplayManager.shared.getDisplayID() {
-                if desktopStreamMode == .mirrored {
-                    await setupDisplayMirroring(targetDisplayID: displayID)
-                } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
-                    await disableDisplayMirroring(displayID: displayID)
-                }
+            guard let postResizeSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() else {
+                throw MirageError.protocolError("Missing shared display snapshot after desktop resize")
             }
 
+            sharedVirtualDisplayScaleFactor = max(1.0, postResizeSnapshot.scaleFactor)
+            sharedVirtualDisplayGeneration = postResizeSnapshot.generation
+
+            let effectivePixelResolution = postResizeSnapshot.resolution
+            let activeDisplayID = postResizeSnapshot.displayID
+
             let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
-            guard streamID == desktopStreamID, let latestDesktopContext = desktopStreamContext else { return }
-            try await latestDesktopContext.updateCaptureDisplay(captureDisplay, resolution: pixelResolution)
+            guard streamID == desktopStreamID, let latestDesktopContext = desktopStreamContext else {
+                throw DesktopResizeTransactionAbort.streamNoLongerActive
+            }
+            try await latestDesktopContext.hardResetDesktopDisplayCapture(
+                displayWrapper: captureDisplay,
+                resolution: effectivePixelResolution
+            )
+            if captureDisplay.display.displayID != activeDisplayID {
+                MirageLogger
+                    .host(
+                        "Desktop resize reset captured display \(captureDisplay.display.displayID) while shared display is \(activeDisplayID)"
+                    )
+            }
 
             let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
             let inputBounds = resolvedDesktopInputBounds(
                 physicalBounds: primaryBounds,
-                virtualResolution: pixelResolution
+                virtualResolution: effectivePixelResolution
             )
             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+            if mirroringPlan == .unchanged,
+               !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                await disableDisplayMirroring(displayID: activeDisplayID)
+            }
             MirageLogger
                 .host(
                     "Desktop stream resized to " +
                         "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
-                        "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px), input bounds: \(inputBounds)"
+                        "(\(Int(effectivePixelResolution.width))x\(Int(effectivePixelResolution.height)) px), input bounds: \(inputBounds)"
                 )
+            resizeCompletionContext = latestDesktopContext
+        } catch DesktopResizeTransactionAbort.streamNoLongerActive {
+            MirageLogger.host("Desktop resize transaction #\(requestNumber) aborted because stream is no longer active")
+        } catch {
+            MirageLogger.error(.host, "Failed to resize desktop stream: \(error)")
+            shouldStopDesktopStreamWithError = streamID == desktopStreamID
+        }
 
+        if shouldRestoreMirroring {
+            let restoreDisplayID = await SharedVirtualDisplayManager.shared.getDisplayID() ?? suspendedMirroringDisplayID
+            if let restoreDisplayID {
+                if shouldStopDesktopStreamWithError {
+                    await disableDisplayMirroring(displayID: restoreDisplayID)
+                } else if streamID == desktopStreamID, desktopStreamMode == .mirrored {
+                    await setupDisplayMirroring(targetDisplayID: restoreDisplayID)
+                } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                    await disableDisplayMirroring(displayID: restoreDisplayID)
+                }
+            }
+        }
+
+        if shouldStopDesktopStreamWithError, streamID == desktopStreamID {
+            await stopDesktopStream(reason: .error)
+            return
+        }
+
+        if let resizeCompletionContext,
+           streamID == desktopStreamID {
             await sendDesktopResizeCompletion(
                 streamID: streamID,
                 requestNumber: requestNumber,
-                context: latestDesktopContext,
+                context: resizeCompletionContext,
                 noOp: false
             )
-        } catch {
-            MirageLogger.error(.host, "Failed to resize desktop stream: \(error)")
         }
     }
 

@@ -589,6 +589,51 @@ extension MirageHostService {
             )
     }
 
+    /// Temporarily suspend desktop mirroring before a virtual-display resize.
+    /// This keeps resize transactions deterministic and avoids resize+mirror contention.
+    func suspendDisplayMirroringForResize(targetDisplayID: CGDirectDisplayID) async {
+        let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+        guard !displaysToMirror.isEmpty else { return }
+
+        if desktopMirroringSnapshot.isEmpty {
+            desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
+            MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
+        }
+
+        let mirroredToTarget = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
+        guard !mirroredToTarget.isEmpty else { return }
+
+        var configRef: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
+            MirageLogger.error(.host, "Failed to begin display configuration to suspend mirroring")
+            return
+        }
+
+        var suspendedCount = 0
+        for displayID in mirroredToTarget {
+            let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+            if result == .success {
+                suspendedCount += 1
+            } else {
+                MirageLogger.error(.host, "Failed to suspend mirroring for display \(displayID): \(result)")
+            }
+        }
+
+        guard suspendedCount > 0 else {
+            CGCancelDisplayConfiguration(config)
+            return
+        }
+
+        let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
+        if completeResult != .success {
+            MirageLogger.error(.host, "Failed to complete mirroring suspend: \(completeResult)")
+            return
+        }
+
+        mirroredPhysicalDisplayIDs.removeAll()
+        MirageLogger.host("Temporarily suspended mirroring for \(suspendedCount) displays before resize")
+    }
+
     /// Restore display mirroring to the pre-stream configuration.
     func disableDisplayMirroring(displayID: CGDirectDisplayID) async {
         guard !desktopMirroringSnapshot.isEmpty else {

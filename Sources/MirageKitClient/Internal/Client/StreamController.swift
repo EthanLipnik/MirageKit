@@ -287,13 +287,11 @@ actor StreamController {
                 for: capturedStreamID
             )
 
-            if metricsTracker.recordDecodedFrame() {
-                Task { [weak self] in
-                    await self?.markFirstFrameReceived()
-                }
-            }
+            let firstDecodedFrame = metricsTracker.recordDecodedFrame()
             Task { [weak self] in
-                await self?.recordDecodedFrame()
+                guard let self else { return }
+                if firstDecodedFrame { await self.markFirstFrameReceived() }
+                await self.recordDecodedFrame()
             }
         }
 

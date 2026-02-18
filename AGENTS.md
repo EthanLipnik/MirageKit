@@ -48,6 +48,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Capture restart pacing uses exponential cooldown for repeated restarts (base 3 seconds, 2x multiplier, 18-second cap) and resets the streak after a 20-second stable window.
 - iOS drawable size changes are reported immediately once they exceed the resize tolerance (0.5% or 4px).
 - iOS/visionOS virtual-display sizing derives from native screen metrics (`nativeBounds`, `nativeScale`) while drawable-size callbacks continue to drive live desktop resize transactions.
+- Desktop resize transactions keep a stable stream identity and use `DesktopStreamStartedMessage.dimensionToken` as the authoritative same-stream hard-reset signal.
+- Desktop virtual-display resize executes as a single-owner transaction: mirrored mode suspends host mirroring before shared-display reconfiguration, runs a desktop capture/encoder hard reset, then restores mirroring after completion signaling.
+- Desktop shared-display generation-change rebind skips desktop rebind work while a desktop resize transaction is in flight.
 - Host/client control-message dispatch uses handler registries keyed by `ControlMessageType`.
 - Signed identity handshake v2 requires `identityAuthV2` with canonical payload signatures and replay protection.
 - Accepted hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1`; signed hello responses include `mediaEncryptionEnabled` plus a per-session UDP registration token.

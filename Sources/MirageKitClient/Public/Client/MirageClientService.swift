@@ -154,6 +154,8 @@ public final class MirageClientService {
 
     /// Desktop stream mode (mirrored vs secondary display)
     public internal(set) var desktopStreamMode: MirageDesktopStreamMode?
+    /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
+    var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
 
     /// Stream scale for post-capture downscaling
     /// 1.0 = native resolution, lower values reduce encoded size

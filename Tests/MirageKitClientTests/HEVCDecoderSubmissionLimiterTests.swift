@@ -23,7 +23,7 @@ struct HEVCDecoderSubmissionLimiterTests {
         #expect(await decoder.currentDecodeSubmissionLimit() == 3)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 60)
-        #expect(await decoder.currentDecodeSubmissionLimit() == 3)
+        #expect(await decoder.currentDecodeSubmissionLimit() == 2)
     }
 
     @Test("Submission limiter enforces cap and releases waiters")

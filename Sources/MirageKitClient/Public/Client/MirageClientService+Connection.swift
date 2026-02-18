@@ -330,6 +330,7 @@ extension MirageClientService {
         pendingDesktopAdaptiveFallbackBitDepth = nil
         pendingAppAdaptiveFallbackBitrate = nil
         pendingAppAdaptiveFallbackBitDepth = nil
+        desktopDimensionTokenByStream.removeAll()
         startupPacketPendingLock.withLock {
             startupPacketPendingStorage.removeAll()
         }

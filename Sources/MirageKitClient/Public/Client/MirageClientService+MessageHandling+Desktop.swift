@@ -21,10 +21,32 @@ extension MirageClientService {
             let streamID = started.streamID
             let previousStreamID = desktopStreamID
             let hasController = controllersByStream[streamID] != nil
-            let isInitialStart = desktopStreamRequestStartTime > 0 || previousStreamID == nil ||
-                previousStreamID != streamID || !hasController
+            let previousDimensionToken = desktopDimensionTokenByStream[streamID]
+            let dimensionToken = started.dimensionToken
+            let resetDecision = desktopStreamStartResetDecision(
+                streamID: streamID,
+                previousStreamID: previousStreamID,
+                hasController: hasController,
+                requestStartPending: desktopStreamRequestStartTime > 0,
+                previousDimensionToken: previousDimensionToken,
+                receivedDimensionToken: dimensionToken
+            )
+            let shouldResetController = resetDecision == .resetController
+            if let previousDimensionToken, let dimensionToken, previousDimensionToken != dimensionToken,
+               previousStreamID == streamID, hasController {
+                MirageLogger
+                    .client(
+                        "Desktop stream token advanced \(previousDimensionToken) -> \(dimensionToken); resetting controller"
+                    )
+            }
             desktopStreamID = streamID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
+            if let dimensionToken {
+                desktopDimensionTokenByStream[streamID] = dimensionToken
+            }
+            if let previousStreamID, previousStreamID != streamID {
+                desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
+            }
             let screenMaxRefreshRate = getScreenMaxRefreshRate()
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
             let desiredRefreshRate = max(existingRefreshRate, screenMaxRefreshRate)
@@ -45,10 +67,8 @@ extension MirageClientService {
                 desktopStreamRequestStartTime = 0
             }
 
-            let dimensionToken = started.dimensionToken
-
             Task {
-                if isInitialStart {
+                if shouldResetController {
                     await self.setupControllerForStream(streamID)
                 }
                 self.addActiveStreamID(streamID)
@@ -107,6 +127,7 @@ extension MirageClientService {
             desktopStreamID = nil
             desktopStreamResolution = nil
             desktopStreamMode = nil
+            desktopDimensionTokenByStream.removeValue(forKey: streamID)
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
             cursorPositionStore.clear(streamID: streamID)

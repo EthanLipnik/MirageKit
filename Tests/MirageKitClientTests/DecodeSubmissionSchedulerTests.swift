@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/18/26.
 //
-//  Coverage for adaptive decode submission scheduling with a 60Hz baseline of 3.
+//  Coverage for adaptive decode submission scheduling with a 60Hz baseline of 2.
 //
 
 @testable import MirageKitClient
@@ -17,6 +17,7 @@ struct DecodeSubmissionSchedulerTests {
     func escalatesOnStress() async {
         let controller = StreamController(streamID: 900, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 2)
 
         for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
             await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40)
@@ -31,6 +32,7 @@ struct DecodeSubmissionSchedulerTests {
     func recoversAfterHealthyWindows() async {
         let controller = StreamController(streamID: 901, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 2)
 
         for _ in 0 ..< StreamController.decodeSubmissionStressWindows {
             await controller.evaluateDecodeSubmissionLimit(decodedFPS: 40)
@@ -40,7 +42,7 @@ struct DecodeSubmissionSchedulerTests {
         }
 
         let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 3)
+        #expect(decoderLimit == 2)
         await controller.stop()
     }
 
@@ -48,13 +50,14 @@ struct DecodeSubmissionSchedulerTests {
     func midBandDoesNotToggle() async {
         let controller = StreamController(streamID: 902, maxPayloadSize: 1200)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        #expect(await controller.decoder.currentDecodeSubmissionLimit() == 2)
 
         for _ in 0 ..< 8 {
             await controller.evaluateDecodeSubmissionLimit(decodedFPS: 52)
         }
 
         let decoderLimit = await controller.decoder.currentDecodeSubmissionLimit()
-        #expect(decoderLimit == 3)
+        #expect(decoderLimit == 2)
         await controller.stop()
     }
 }

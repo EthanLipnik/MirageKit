@@ -14,6 +14,23 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+enum DesktopGenerationChangeRebindDecision: Equatable {
+    case skipNoChange
+    case skipResizeInFlight
+    case rebind
+}
+
+func desktopGenerationChangeRebindDecision(
+    previousGeneration: UInt64,
+    newGeneration: UInt64,
+    desktopResizeInFlight: Bool
+)
+-> DesktopGenerationChangeRebindDecision {
+    guard previousGeneration != newGeneration else { return .skipNoChange }
+    guard !desktopResizeInFlight else { return .skipResizeInFlight }
+    return .rebind
+}
+
 @MainActor
 extension MirageHostService {
     func handleSharedDisplayGenerationChange(
@@ -84,11 +101,16 @@ extension MirageHostService {
             }
         }
 
-        await handleDesktopStreamSharedDisplayGenerationChange(newContext: newContext, displayBounds: displayBounds)
+        await handleDesktopStreamSharedDisplayGenerationChange(
+            newContext: newContext,
+            previousGeneration: previousGeneration,
+            displayBounds: displayBounds
+        )
     }
 
     private func handleDesktopStreamSharedDisplayGenerationChange(
         newContext: SharedVirtualDisplayManager.DisplaySnapshot,
+        previousGeneration: UInt64,
         displayBounds: CGRect
     )
     async {
@@ -97,6 +119,19 @@ extension MirageHostService {
 
         desktopDisplayBounds = displayBounds
         sharedVirtualDisplayScaleFactor = max(1.0, newContext.scaleFactor)
+        let rebindDecision = desktopGenerationChangeRebindDecision(
+            previousGeneration: previousGeneration,
+            newGeneration: newContext.generation,
+            desktopResizeInFlight: desktopResizeInFlight
+        )
+        if rebindDecision == .skipResizeInFlight {
+            MirageLogger
+                .host(
+                    "Skipping desktop generation-change rebind during in-flight resize (\(previousGeneration) -> \(newContext.generation))"
+                )
+            return
+        }
+        guard rebindDecision == .rebind else { return }
 
         do {
             if desktopStreamMode == .mirrored {

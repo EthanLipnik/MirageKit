@@ -434,10 +434,7 @@ public struct MirageStreamContentView: View {
             let desktopDisplaySize = isDesktopStream
                 ? clientService.preferredDesktopDisplayResolution(for: viewSize)
                 : .zero
-            let streamScaleReferenceSize = isDesktopStream ? desktopDisplaySize : viewSize
-            if !isDesktopStream || !awaitingDesktopResizeAck {
-                scheduleStreamScaleUpdate(for: streamScaleReferenceSize)
-            }
+            if !isDesktopStream { scheduleStreamScaleUpdate(for: viewSize) }
 
             guard isDesktopStream else { return }
 
@@ -457,8 +454,12 @@ public struct MirageStreamContentView: View {
                 displayResolutionTask?.cancel()
                 displayResolutionTask = nil
                 lastSentDisplayResolution = preferredDisplaySize
-                if awaitingDesktopResizeAck { finishDesktopResizeAwaitingAck() }
-                else if isResizing { isResizing = false }
+                if awaitingDesktopResizeAck {
+                    finishDesktopResizeAwaitingAck()
+                } else {
+                    scheduleStreamScaleUpdate(for: preferredDisplaySize)
+                    if isResizing { isResizing = false }
+                }
                 return
             case .send:
                 guard lastSentDisplayResolution != preferredDisplaySize else { return }
