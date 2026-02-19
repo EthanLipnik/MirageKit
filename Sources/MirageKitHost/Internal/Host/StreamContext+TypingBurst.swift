@@ -25,7 +25,7 @@ extension StreamContext {
         scheduleExpiry: Bool = true
     )
     async {
-        guard runtimeQualityAdjustmentEnabled, supportsTypingBurst else { return }
+        guard supportsTypingBurst else { return }
         typingBurstDeadline = now + typingBurstWindow
         if !typingBurstActive {
             typingBurstActive = true
@@ -40,7 +40,7 @@ extension StreamContext {
         expectedDeadline: CFAbsoluteTime? = nil
     )
     async {
-        guard runtimeQualityAdjustmentEnabled, supportsTypingBurst, typingBurstActive else { return }
+        guard supportsTypingBurst, typingBurstActive else { return }
         if let expectedDeadline,
            abs(expectedDeadline - typingBurstDeadline) > 0.0005 {
             return
@@ -71,7 +71,7 @@ extension StreamContext {
     }
 
     private func scheduleTypingBurstExpiryTask() {
-        guard runtimeQualityAdjustmentEnabled, supportsTypingBurst else { return }
+        guard supportsTypingBurst else { return }
         typingBurstExpiryTask?.cancel()
         let expectedDeadline = typingBurstDeadline
         let waitSeconds = max(0, expectedDeadline - CFAbsoluteTimeGetCurrent())
@@ -96,10 +96,12 @@ extension StreamContext {
             await encoder?.updateInFlightLimit(forcedLimit)
         }
 
-        qualityCeiling = resolvedQualityCeiling()
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
-            await encoder?.updateQuality(activeQuality)
+        if runtimeQualityAdjustmentEnabled {
+            qualityCeiling = resolvedQualityCeiling()
+            if activeQuality > qualityCeiling {
+                activeQuality = qualityCeiling
+                await encoder?.updateQuality(activeQuality)
+            }
         }
 
         qualityOverBudgetCount = 0
@@ -120,10 +122,12 @@ extension StreamContext {
             await encoder?.updateInFlightLimit(restoredInFlight)
         }
 
-        qualityCeiling = resolvedQualityCeiling()
-        if activeQuality > qualityCeiling {
-            activeQuality = qualityCeiling
-            await encoder?.updateQuality(activeQuality)
+        if runtimeQualityAdjustmentEnabled {
+            qualityCeiling = resolvedQualityCeiling()
+            if activeQuality > qualityCeiling {
+                activeQuality = qualityCeiling
+                await encoder?.updateQuality(activeQuality)
+            }
         }
 
         qualityOverBudgetCount = 0

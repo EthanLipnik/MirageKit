@@ -104,6 +104,8 @@ extension MirageHostService {
                         captureQueueDepth: encoderSettings?.captureQueueDepth,
                         bitrate: encoderSettings?.bitrate,
                         latencyMode: encoderSettings?.latencyMode ?? .auto,
+                        lowLatencyHighResolutionCompressionBoost: encoderSettings?
+                            .lowLatencyHighResolutionCompressionBoostEnabled ?? true,
                         disableResolutionCap: disableResolutionCap,
                         audioConfiguration: audioConfiguration
                     )
@@ -160,6 +162,8 @@ extension MirageHostService {
                 captureQueueDepth: encoderSettings?.captureQueueDepth,
                 bitrate: encoderSettings?.bitrate,
                 latencyMode: encoderSettings?.latencyMode ?? .auto,
+                lowLatencyHighResolutionCompressionBoost: encoderSettings?
+                    .lowLatencyHighResolutionCompressionBoostEnabled ?? true,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration
             )

@@ -289,6 +289,7 @@ struct MirageKitTests {
             bitrate: 150_000_000,
             latencyMode: .smoothest,
             allowRuntimeQualityAdjustment: true,
+            lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
@@ -301,6 +302,7 @@ struct MirageKitTests {
         #expect(decoded.latencyMode == .smoothest)
         #expect(decoded.bitDepth == .tenBit)
         #expect(decoded.bitrate == 150_000_000)
+        #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
     }
 
     @Test("Select app request latency mode serialization")
@@ -318,6 +320,7 @@ struct MirageKitTests {
             bitrate: 200_000_000,
             latencyMode: .lowestLatency,
             allowRuntimeQualityAdjustment: false,
+            lowLatencyHighResolutionCompressionBoost: true,
             disableResolutionCap: false,
             streamScale: 0.9,
             audioConfiguration: .default
@@ -328,6 +331,7 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.maxRefreshRate == 120)
+        #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
 
     @Test("Start desktop request latency mode serialization")
@@ -343,6 +347,7 @@ struct MirageKitTests {
             bitrate: 500_000_000,
             latencyMode: .auto,
             allowRuntimeQualityAdjustment: false,
+            lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
@@ -356,6 +361,7 @@ struct MirageKitTests {
         #expect(decoded.latencyMode == .auto)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
+        #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
     }
 
     @Test("Stream metrics validation payload serialization")

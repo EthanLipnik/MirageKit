@@ -12,7 +12,8 @@ import MirageKit
 
 enum MirageBitrateQualityMapper {
     static let frameQualityCeiling: Float = 0.80
-    private static let minimumFrameQuality: Double = 0.08
+    private static let minimumFrameQuality: Double = 0.06
+    private static let keyframeQualityMultiplier: Double = 0.72
 
     private struct Point {
         let bpp: Double
@@ -20,13 +21,13 @@ enum MirageBitrateQualityMapper {
     }
 
     private static let points: [Point] = [
-        Point(bpp: 0.015, quality: 0.10),
-        Point(bpp: 0.03, quality: 0.20),
-        Point(bpp: 0.05, quality: 0.32),
-        Point(bpp: 0.08, quality: 0.50),
-        Point(bpp: 0.12, quality: 0.68),
-        Point(bpp: 0.18, quality: 0.80),
-        Point(bpp: 0.25, quality: 0.92),
+        Point(bpp: 0.015, quality: 0.08),
+        Point(bpp: 0.03, quality: 0.14),
+        Point(bpp: 0.05, quality: 0.23),
+        Point(bpp: 0.08, quality: 0.36),
+        Point(bpp: 0.12, quality: 0.50),
+        Point(bpp: 0.18, quality: 0.66),
+        Point(bpp: 0.25, quality: 0.80),
     ]
 
     static func normalizedTargetBitrate(bitrate: Int?) -> Int? {
@@ -41,26 +42,48 @@ enum MirageBitrateQualityMapper {
         frameRate: Int
     ) -> (frameQuality: Float, keyframeQuality: Float) {
         let defaultFrameQuality = min(Float(0.80), frameQualityCeiling)
-        let defaultKeyframeQuality = max(Float(minimumFrameQuality), min(defaultFrameQuality, defaultFrameQuality * 0.85))
+        let defaultKeyframeQuality = max(
+            Float(minimumFrameQuality),
+            min(defaultFrameQuality, defaultFrameQuality * Float(keyframeQualityMultiplier))
+        )
         guard targetBitrateBps > 0, width > 0, height > 0, frameRate > 0 else {
             return (frameQuality: defaultFrameQuality, keyframeQuality: defaultKeyframeQuality)
         }
 
-        let pixelsPerSecond = Double(width) * Double(height) * Double(frameRate)
-        guard pixelsPerSecond > 0 else {
+        guard let bpp = bitsPerPixelPerFrame(
+            targetBitrateBps: targetBitrateBps,
+            width: width,
+            height: height,
+            frameRate: frameRate
+        ) else {
             return (frameQuality: defaultFrameQuality, keyframeQuality: defaultKeyframeQuality)
         }
 
-        let bpp = Double(targetBitrateBps) / pixelsPerSecond
         let mappedQuality = interpolateQuality(for: bpp) * frameRateCompressionScale(for: frameRate)
         let frameQuality = Float(max(minimumFrameQuality, min(Double(frameQualityCeiling), mappedQuality)))
         let keyframeQuality = Float(
             max(
                 minimumFrameQuality,
-                min(Double(frameQuality), Double(frameQuality) * 0.85)
+                min(Double(frameQuality), Double(frameQuality) * keyframeQualityMultiplier)
             )
         )
         return (frameQuality, keyframeQuality)
+    }
+
+    static func bitsPerPixelPerFrame(
+        targetBitrateBps: Int,
+        width: Int,
+        height: Int,
+        frameRate: Int
+    ) -> Double? {
+        guard targetBitrateBps > 0, width > 0, height > 0, frameRate > 0 else { return nil }
+        let pixelsPerSecond = Double(width) * Double(height) * Double(frameRate)
+        guard pixelsPerSecond > 0 else { return nil }
+        return Double(targetBitrateBps) / pixelsPerSecond
+    }
+
+    static func frameRateScale(frameRate: Int) -> Double {
+        frameRateCompressionScale(for: frameRate)
     }
 
     private static func interpolateQuality(for bpp: Double) -> Double {
@@ -81,8 +104,8 @@ enum MirageBitrateQualityMapper {
     }
 
     private static func frameRateCompressionScale(for frameRate: Int) -> Double {
-        if frameRate >= 120 { return 0.90 }
-        if frameRate >= 90 { return 0.95 }
+        if frameRate >= 120 { return 0.85 }
+        if frameRate >= 90 { return 0.90 }
         return 1.0
     }
 }

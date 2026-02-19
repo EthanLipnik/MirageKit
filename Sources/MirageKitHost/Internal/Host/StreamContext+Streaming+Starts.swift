@@ -365,6 +365,7 @@ extension StreamContext {
         currentEncodedSize = outputSize
         captureMode = .display
         updateQueueLimits()
+        await applyDerivedQuality(for: outputSize, logLabel: "Desktop init")
         let width = max(1, Int(outputSize.width))
         let height = max(1, Int(outputSize.height))
         MirageLogger

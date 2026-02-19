@@ -18,6 +18,7 @@ struct EncoderSettingsSnapshot: Sendable {
     let pixelFormat: MiragePixelFormat
     let colorSpace: MirageColorSpace
     let latencyMode: MirageStreamLatencyMode
+    let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     let captureQueueDepth: Int?
     let bitrate: Int?
 }
@@ -92,6 +93,7 @@ extension StreamContext {
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
             latencyMode: latencyMode,
+            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             captureQueueDepth: encoderConfig.captureQueueDepth,
             bitrate: encoderConfig.bitrate
         )

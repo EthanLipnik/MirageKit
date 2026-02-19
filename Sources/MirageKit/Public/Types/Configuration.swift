@@ -196,6 +196,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var bitrate: Int?
     public var latencyMode: MirageStreamLatencyMode?
     public var allowRuntimeQualityAdjustment: Bool?
+    public var lowLatencyHighResolutionCompressionBoost: Bool?
     public var disableResolutionCap: Bool
 
     public init(
@@ -205,6 +206,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
+        lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool = false
     ) {
         self.keyFrameInterval = keyFrameInterval
@@ -213,6 +215,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+        self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
     }
 }

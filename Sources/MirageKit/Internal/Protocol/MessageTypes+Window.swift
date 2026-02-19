@@ -61,6 +61,8 @@ package struct StartStreamMessage: Codable {
     package var latencyMode: MirageStreamLatencyMode?
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
+    /// Client-requested compression boost for highest-resolution lowest-latency streams.
+    package var lowLatencyHighResolutionCompressionBoost: Bool?
     /// Client-requested override to bypass host/client resolution caps.
     package var disableResolutionCap: Bool?
     /// Client-requested stream scale (0.1-1.0)
@@ -89,6 +91,7 @@ package struct StartStreamMessage: Codable {
         case bitrate
         case latencyMode
         case allowRuntimeQualityAdjustment
+        case lowLatencyHighResolutionCompressionBoost
         case disableResolutionCap
         case streamScale
         case audioConfiguration
@@ -109,6 +112,7 @@ package struct StartStreamMessage: Codable {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
+        lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -127,6 +131,7 @@ package struct StartStreamMessage: Codable {
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
+        self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration

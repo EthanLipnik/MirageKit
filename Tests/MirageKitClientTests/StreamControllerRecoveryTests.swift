@@ -200,8 +200,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Frame-loss after first decode does not request keyframe recovery")
-    func frameLossAfterFirstDecodeDoesNotRequestKeyframe() async throws {
+    @Test("Frame-loss after first decode without starvation does not request keyframe recovery")
+    func frameLossAfterFirstDecodeWithoutStarvationDoesNotRequestKeyframe() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 41, maxPayloadSize: 1200)
 
@@ -220,8 +220,33 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Present-stall monitoring does not request keyframe recovery")
-    func presentStallDoesNotRequestKeyframeRecovery() async throws {
+    @Test("Frame-loss after first decode while keyframe-starved requests recovery keyframe")
+    func frameLossAfterFirstDecodeWithStarvationRequestsKeyframe() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 42, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFrameReceived()
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+
+        await controller.handleFrameLossSignal()
+        try await waitUntil("starved frame-loss keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Present-stall monitoring without keyframe starvation does not request keyframe recovery")
+    func presentStallWithoutStarvationDoesNotRequestKeyframeRecovery() async throws {
         let streamID: StreamID = 4
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -252,6 +277,46 @@ struct StreamControllerRecoveryTests {
 
         try await Task.sleep(for: .seconds(7))
         #expect(keyframeCounter.value == 0)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Present-stall while keyframe-starved escalates from soft request to hard recovery")
+    func presentStallWhileKeyframeStarvedEscalatesRecovery() async throws {
+        let streamID: StreamID = 5
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil,
+            onResizeStateChanged: nil,
+            onFrameDecoded: nil,
+            onFirstFrame: nil,
+            onAdaptiveFallbackNeeded: nil
+        )
+
+        let pixelBuffer = makePixelBuffer()
+        _ = MirageFrameCache.shared.enqueue(
+            pixelBuffer,
+            contentRect: .zero,
+            decodeTime: CFAbsoluteTimeGetCurrent() - 10,
+            metalTexture: nil,
+            texture: nil,
+            for: streamID
+        )
+
+        await controller.recordDecodedFrame()
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+
+        try await Task.sleep(for: .seconds(11))
+        #expect(keyframeCounter.value >= 2)
+        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
 
         await controller.stop()
         MirageFrameCache.shared.clear(for: streamID)

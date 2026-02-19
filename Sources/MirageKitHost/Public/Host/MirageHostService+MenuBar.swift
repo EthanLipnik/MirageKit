@@ -118,6 +118,7 @@ extension MirageHostService {
             try await startDesktopStream(
                 to: clientContext,
                 displayResolution: CGSize(width: request.displayWidth, height: request.displayHeight),
+                clientScaleFactor: request.scaleFactor,
                 mode: request.mode ?? .mirrored,
                 keyFrameInterval: request.keyFrameInterval,
                 bitDepth: request.bitDepth,
@@ -125,6 +126,7 @@ extension MirageHostService {
                 bitrate: request.bitrate,
                 latencyMode: latencyMode,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
+                lowLatencyHighResolutionCompressionBoost: request.lowLatencyHighResolutionCompressionBoost ?? true,
                 disableResolutionCap: request.disableResolutionCap ?? false,
                 streamScale: request.streamScale,
                 audioConfiguration: audioConfiguration,

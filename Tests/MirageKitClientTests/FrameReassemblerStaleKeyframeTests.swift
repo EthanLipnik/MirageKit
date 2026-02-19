@@ -195,12 +195,85 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("P-frame timeout does not force keyframe-only lockout")
+    func pFrameTimeoutDoesNotForceKeyframeLockout() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = LockedCounter()
+        let lossCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let incompletePFrame = Data(repeating: 0xAB, count: 1200)
+        reassembler.processPacket(
+            incompletePFrame,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 1,
+                payload: incompletePFrame,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(700))
+
+        let timeoutProbe = Data(repeating: 0xCD, count: 1200)
+        reassembler.processPacket(
+            timeoutProbe,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 3,
+                payload: timeoutProbe,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 2400
+            )
+        )
+
+        let pFrame2 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
+        reassembler.processPacket(
+            pFrame2,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 2,
+                payload: pFrame2,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+        #expect(lossCounter.value >= 1)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+    }
+
     private func makeHeader(
         flags: FrameFlags,
         frameNumber: UInt32,
         payload: Data,
         fragmentIndex: UInt16,
-        fragmentCount: UInt16
+        fragmentCount: UInt16,
+        frameByteCount: UInt32? = nil
     )
     -> FrameHeader {
         FrameHeader(
@@ -212,7 +285,7 @@ struct FrameReassemblerStaleKeyframeTests {
             fragmentIndex: fragmentIndex,
             fragmentCount: fragmentCount,
             payloadLength: UInt32(payload.count),
-            frameByteCount: UInt32(payload.count),
+            frameByteCount: frameByteCount ?? UInt32(payload.count),
             checksum: crc32(payload),
             contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
             dimensionToken: 0,

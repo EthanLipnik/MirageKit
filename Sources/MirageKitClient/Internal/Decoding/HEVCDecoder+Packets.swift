@@ -239,9 +239,15 @@ extension FrameReassembler {
         }
 
         // Clean up old pending frames
-        let didTimeout = cleanupOldFramesLocked()
-        if didTimeout {
+        let timeoutResult = cleanupOldFramesLocked()
+        if timeoutResult.shouldEnterAwaitingKeyframe {
             beginAwaitingKeyframe()
+            MirageLogger.log(
+                .frameAssembly,
+                "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), keyframe=\(timeoutResult.timedOutKeyframes), anchor=\(hasDeliveredKeyframeAnchor)"
+            )
+        }
+        if timeoutResult.shouldSignalFrameLoss {
             shouldSignalFrameLoss = true
         }
         lock.unlock()
@@ -273,6 +279,17 @@ extension FrameReassembler {
     private struct FrameCompletionResult {
         let frame: CompletedFrame?
         let shouldSignalFrameLoss: Bool
+    }
+
+    private struct TimeoutCleanupResult {
+        let timedOutPFrames: UInt64
+        let timedOutKeyframes: UInt64
+        let staleKeyframes: UInt64
+        let shouldEnterAwaitingKeyframe: Bool
+
+        var shouldSignalFrameLoss: Bool {
+            timedOutPFrames + timedOutKeyframes > 0
+        }
     }
 
     private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
@@ -401,14 +418,15 @@ extension FrameReassembler {
         return diff != 0 && diff < 0x8000_0000
     }
 
-    private func cleanupOldFramesLocked() -> Bool {
+    private func cleanupOldFramesLocked() -> TimeoutCleanupResult {
         let now = Date()
         // P-frame timeout: 500ms - allows time for UDP packet jitter without dropping frames
         let pFrameTimeout: TimeInterval = 0.5
         // Keyframes are 600-900 packets and critical for recovery
         // They need much more time to complete than small P-frames
 
-        var timedOutCount: UInt64 = 0
+        var timedOutPFrameCount: UInt64 = 0
+        var timedOutKeyframeCount: UInt64 = 0
         var staleKeyframeCount: UInt64 = 0
         var framesToRemove: [UInt32] = []
         for (frameNumber, frame) in pendingFrames {
@@ -428,15 +446,28 @@ extension FrameReassembler {
                     .frameAssembly,
                     "Frame \(frameNumber) timed out: \(receivedCount)/\(totalCount) fragments\(isKeyframe ? " (KEYFRAME)" : "")"
                 )
-                timedOutCount += 1
+                if isKeyframe {
+                    timedOutKeyframeCount += 1
+                } else {
+                    timedOutPFrameCount += 1
+                }
             }
             if !shouldKeep { framesToRemove.append(frameNumber) }
         }
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
-        droppedFrameCount += timedOutCount + staleKeyframeCount
-        return timedOutCount > 0 && !awaitingKeyframe
+        droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
+
+        let keyframeAnchorCritical = timedOutPFrameCount > 0 && !hasDeliveredKeyframeAnchor
+        let shouldEnterAwaitingKeyframe = (timedOutKeyframeCount > 0 || keyframeAnchorCritical) && !awaitingKeyframe
+
+        return TimeoutCleanupResult(
+            timedOutPFrames: timedOutPFrameCount,
+            timedOutKeyframes: timedOutKeyframeCount,
+            staleKeyframes: staleKeyframeCount,
+            shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe
+        )
     }
 
     func shouldRequestKeyframe() -> Bool {
@@ -498,6 +529,13 @@ extension FrameReassembler {
         let timestamp = lastPacketReceivedTime
         lock.unlock()
         return timestamp
+    }
+
+    func isAwaitingKeyframe() -> Bool {
+        lock.lock()
+        let awaiting = awaitingKeyframe
+        lock.unlock()
+        return awaiting
     }
 
     func reset() {

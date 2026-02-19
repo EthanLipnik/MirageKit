@@ -42,6 +42,13 @@ extension MirageClientService {
                     "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
                 )
         }
+        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
+            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+            MirageLogger
+                .client(
+                    "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
+                )
+        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -78,6 +85,13 @@ extension MirageClientService {
                     "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
                 )
         }
+        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
+            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+            MirageLogger
+                .client(
+                    "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
+                )
+        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -112,6 +126,13 @@ extension MirageClientService {
             MirageLogger
                 .client(
                     "Requesting runtime quality adjustment: \(allowRuntimeQualityAdjustment ? "enabled" : "disabled")"
+                )
+        }
+        if let lowLatencyHighResolutionCompressionBoost = overrides.lowLatencyHighResolutionCompressionBoost {
+            request.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+            MirageLogger
+                .client(
+                    "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
                 )
         }
         if overrides.disableResolutionCap {

@@ -54,11 +54,16 @@ extension MirageHostService {
 
     func virtualDisplayPixelResolution(
         for logicalResolution: CGSize,
-        client: MirageConnectedClient?
+        client: MirageConnectedClient?,
+        scaleFactorOverride: CGFloat? = nil
     )
     -> CGSize {
         guard logicalResolution.width > 0, logicalResolution.height > 0 else { return logicalResolution }
-        let scale = virtualDisplayScaleFactor(for: client)
+        let scale: CGFloat = if let scaleFactorOverride, scaleFactorOverride > 0 {
+            max(1.0, scaleFactorOverride)
+        } else {
+            virtualDisplayScaleFactor(for: client)
+        }
         let width = CGFloat(StreamContext.alignedEvenPixel(logicalResolution.width * scale))
         let height = CGFloat(StreamContext.alignedEvenPixel(logicalResolution.height * scale))
         return CGSize(width: width, height: height)
@@ -131,6 +136,8 @@ extension MirageHostService {
                 captureQueueDepth: encoderSettings.captureQueueDepth,
                 bitrate: encoderSettings.bitrate,
                 latencyMode: encoderSettings.latencyMode,
+                lowLatencyHighResolutionCompressionBoost: encoderSettings
+                    .lowLatencyHighResolutionCompressionBoostEnabled,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration
             )
@@ -377,7 +384,8 @@ extension MirageHostService {
         do {
             let pixelResolution = virtualDisplayPixelResolution(
                 for: logicalResolution,
-                client: desktopStreamClientContext?.client
+                client: desktopStreamClientContext?.client,
+                scaleFactorOverride: desktopRequestedScaleFactor
             )
             let targetFrameRate = await desktopContext.getTargetFrameRate()
             let streamRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: targetFrameRate)

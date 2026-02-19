@@ -21,6 +21,7 @@ extension MirageHostService {
     func startDesktopStream(
         to clientContext: ClientContext,
         displayResolution: CGSize,
+        clientScaleFactor: CGFloat? = nil,
         mode: MirageDesktopStreamMode,
         keyFrameInterval: Int?,
         bitDepth: MirageVideoBitDepth?,
@@ -28,6 +29,7 @@ extension MirageHostService {
         bitrate: Int?,
         latencyMode: MirageStreamLatencyMode = .auto,
         allowRuntimeQualityAdjustment: Bool?,
+        lowLatencyHighResolutionCompressionBoost: Bool,
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
@@ -57,10 +59,20 @@ extension MirageHostService {
             MirageLogger.host("Desktop start: \(step) (+\(deltaMs)ms)")
         }
 
+        let resolvedClientScaleFactor: CGFloat? = if let clientScaleFactor, clientScaleFactor > 0 {
+            max(1.0, clientScaleFactor)
+        } else {
+            nil
+        }
         let virtualDisplayResolution = virtualDisplayPixelResolution(
             for: displayResolution,
-            client: clientContext.client
+            client: clientContext.client,
+            scaleFactorOverride: resolvedClientScaleFactor
         )
+        if let resolvedClientScaleFactor {
+            let scaleText = Double(resolvedClientScaleFactor).formatted(.number.precision(.fractionLength(3)))
+            MirageLogger.host("Desktop stream client scale factor: \(scaleText)x")
+        }
         MirageLogger
             .host(
                 "Starting desktop stream at " +
@@ -249,6 +261,7 @@ extension MirageHostService {
             mediaSecurityContext: mediaSecurityByClientID[clientContext.client.id],
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
+            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             latencyMode: latencyMode
         )
@@ -256,6 +269,9 @@ extension MirageHostService {
         logDesktopStartStep("stream context created (\(streamID))")
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for desktop stream \(streamID)")
+        }
+        if !lowLatencyHighResolutionCompressionBoost {
+            MirageLogger.host("Low-latency high-res compression boost disabled for desktop stream \(streamID)")
         }
         let metricsClientID = clientContext.client.id
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in
@@ -273,6 +289,7 @@ extension MirageHostService {
         desktopStreamContext = streamContext
         desktopStreamID = streamID
         desktopStreamClientContext = clientContext
+        desktopRequestedScaleFactor = resolvedClientScaleFactor
         streamsByID[streamID] = streamContext
         await activateAudioForClient(
             clientID: clientContext.client.id,
@@ -388,6 +405,7 @@ extension MirageHostService {
         desktopPrimaryPhysicalDisplayID = nil
         desktopPrimaryPhysicalBounds = nil
         desktopUsesVirtualDisplay = false
+        desktopRequestedScaleFactor = nil
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .mirrored
         streamsByID.removeValue(forKey: streamID)

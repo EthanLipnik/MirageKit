@@ -28,6 +28,7 @@ public extension MirageHostService {
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .auto,
         allowRuntimeQualityAdjustment: Bool? = nil,
+        lowLatencyHighResolutionCompressionBoost: Bool = true,
         disableResolutionCap: Bool = false,
         audioConfiguration: MirageAudioConfiguration? = nil
         // hdr: Bool = false
@@ -96,6 +97,7 @@ public extension MirageHostService {
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: mediaSecurityByClientID[client.id],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
+            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             latencyMode: latencyMode
         )
@@ -105,6 +107,9 @@ public extension MirageHostService {
         MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
+        }
+        if !lowLatencyHighResolutionCompressionBoost {
+            MirageLogger.host("Low-latency high-res compression boost disabled for stream \(streamID)")
         }
         await context.setMetricsUpdateHandler { [weak self] metrics in
             Task { @MainActor [weak self] in

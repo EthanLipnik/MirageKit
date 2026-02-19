@@ -38,8 +38,9 @@ extension HEVCEncoder {
     }
 
     func updateFrameRate(_ fps: Int) {
-        guard let session = compressionSession else { return }
         let clamped = max(1, fps)
+        configuration = configuration.withTargetFrameRate(clamped)
+        guard let session = compressionSession else { return }
         setProperty(session, key: kVTCompressionPropertyKey_ExpectedFrameRate, value: clamped as CFNumber)
         let intervalSeconds = max(1.0, Double(configuration.keyFrameInterval) / Double(clamped))
         setProperty(
@@ -47,6 +48,7 @@ extension HEVCEncoder {
             key: kVTCompressionPropertyKey_MaxKeyFrameIntervalDuration,
             value: intervalSeconds as CFNumber
         )
+        applyBitrateSettingsToActiveSession()
     }
 
     func updateInFlightLimit(_ limit: Int) {

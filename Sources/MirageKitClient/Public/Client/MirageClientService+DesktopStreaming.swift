@@ -44,11 +44,31 @@ public extension MirageClientService {
             throw MirageError.protocolError("Invalid display resolution")
         }
         let effectiveDisplayPixelResolution = virtualDisplayPixelResolution(for: effectiveDisplayResolution)
+        let resolvedScaleFactor: CGFloat? = {
+            if let scaleFactor, scaleFactor > 0 {
+                return scaleFactor
+            }
+            guard effectiveDisplayResolution.width > 0,
+                  effectiveDisplayResolution.height > 0,
+                  effectiveDisplayPixelResolution.width > 0,
+                  effectiveDisplayPixelResolution.height > 0 else {
+                return nil
+            }
+            let widthScale = effectiveDisplayPixelResolution.width / effectiveDisplayResolution.width
+            let heightScale = effectiveDisplayPixelResolution.height / effectiveDisplayResolution.height
+            let resolvedScale: CGFloat = if widthScale > 0, heightScale > 0 {
+                (widthScale + heightScale) / 2.0
+            } else {
+                max(widthScale, heightScale)
+            }
+            guard resolvedScale > 0 else { return nil }
+            return resolvedScale
+        }()
 
         desktopStreamMode = mode
 
         var request = StartDesktopStreamMessage(
-            scaleFactor: scaleFactor,
+            scaleFactor: resolvedScaleFactor,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
             keyFrameInterval: nil,
