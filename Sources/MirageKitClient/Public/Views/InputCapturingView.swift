@@ -108,9 +108,6 @@ public class InputCapturingView: UIView {
     /// Callback when software keyboard visibility changes.
     public var onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
 
-    /// Whether input should snap to the dock edge.
-    public var dockSnapEnabled: Bool = false
-
     /// Direct-touch behavior mode for iPad and visionOS clients.
     public var directTouchInputMode: MirageDirectTouchInputMode = .normal {
         didSet {

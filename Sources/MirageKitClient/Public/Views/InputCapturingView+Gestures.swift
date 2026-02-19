@@ -10,8 +10,6 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
-    private static let dockSnapThreshold: CGFloat = 0.98
-
     func setupGestureRecognizers() {
         // Long press gesture for immediate click detection
         // minimumPressDuration=0 fires immediately on touch down
@@ -121,22 +119,11 @@ extension InputCapturingView {
         // Default to center if bounds not ready
         guard bounds.width > 0, bounds.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
 
-        var normalized = CGPoint(
+        let normalized = CGPoint(
             x: point.x / bounds.width,
             y: point.y / bounds.height
         )
-        return applyDockSnap(to: normalized)
-    }
-
-    func applyDockSnap(to normalized: CGPoint) -> CGPoint {
-        guard dockSnapEnabled else { return normalized }
-
-        var snapped = normalized
-        // Snap cursor to bottom edge when in dock trigger zone (bottom 2%)
-        // This allows users to easily open the iPad dock without precise edge targeting
-        if snapped.y >= Self.dockSnapThreshold { snapped.y = 1.0 }
-
-        return snapped
+        return normalized
     }
 
     /// Get combined modifiers from a gesture (at event time) and keyboard state
@@ -651,7 +638,6 @@ extension InputCapturingView {
             x: min(max(position.x, 0.0), 1.0),
             y: min(max(position.y, 0.0), 1.0)
         )
-        clamped = applyDockSnap(to: clamped)
 
         virtualCursorPosition = clamped
         lastCursorPosition = clamped

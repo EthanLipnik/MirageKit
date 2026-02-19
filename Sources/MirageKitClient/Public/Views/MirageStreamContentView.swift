@@ -29,7 +29,6 @@ public struct MirageStreamContentView: View {
     public let onDirectTouchActivity: (() -> Void)?
     public let onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
     public let onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
-    public let dockSnapEnabled: Bool
     public let directTouchInputMode: MirageDirectTouchInputMode
     public let softwareKeyboardVisible: Bool
     public let pencilInputMode: MiragePencilInputMode
@@ -80,7 +79,6 @@ public struct MirageStreamContentView: View {
     ///   - onDirectTouchActivity: Optional callback invoked when direct finger touch input occurs.
     ///   - onHardwareKeyboardPresenceChanged: Optional handler for hardware keyboard availability.
     ///   - onSoftwareKeyboardVisibilityChanged: Optional handler for software keyboard visibility.
-    ///   - dockSnapEnabled: Whether input should snap to the dock edge on iPadOS.
     ///   - usesVirtualTrackpad: Legacy direct-touch behavior flag.
     ///   - directTouchInputMode: Direct-touch behavior mode for iPad and visionOS clients.
     ///   - softwareKeyboardVisible: Whether the software keyboard should be visible.
@@ -103,7 +101,6 @@ public struct MirageStreamContentView: View {
         onDirectTouchActivity: (() -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
-        dockSnapEnabled: Bool = false,
         usesVirtualTrackpad: Bool = false,
         directTouchInputMode: MirageDirectTouchInputMode? = nil,
         softwareKeyboardVisible: Bool = false,
@@ -127,7 +124,6 @@ public struct MirageStreamContentView: View {
         self.onDirectTouchActivity = onDirectTouchActivity
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
-        self.dockSnapEnabled = dockSnapEnabled
         self.directTouchInputMode = directTouchInputMode ??
             (usesVirtualTrackpad ? .dragCursor : .normal)
         self.softwareKeyboardVisible = softwareKeyboardVisible
@@ -172,7 +168,6 @@ public struct MirageStreamContentView: View {
                 onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
                 onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
                 onDirectTouchActivity: onDirectTouchActivity,
-                dockSnapEnabled: dockSnapEnabled,
                 usesVirtualTrackpad: directTouchInputMode == .dragCursor,
                 directTouchInputMode: directTouchInputMode,
                 softwareKeyboardVisible: softwareKeyboardVisible,

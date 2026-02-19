@@ -42,9 +42,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Callback when non-stylus direct touch activity occurs.
     public var onDirectTouchActivity: (() -> Void)?
 
-    /// Whether input should snap to the dock edge.
-    public var dockSnapEnabled: Bool
-
     /// Whether direct touch uses a draggable virtual cursor.
     public var usesVirtualTrackpad: Bool
 
@@ -86,7 +83,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         onDirectTouchActivity: (() -> Void)? = nil,
-        dockSnapEnabled: Bool = false,
         usesVirtualTrackpad: Bool = false,
         directTouchInputMode: MirageDirectTouchInputMode? = nil,
         softwareKeyboardVisible: Bool = false,
@@ -108,7 +104,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         self.onDirectTouchActivity = onDirectTouchActivity
-        self.dockSnapEnabled = dockSnapEnabled
         self.usesVirtualTrackpad = usesVirtualTrackpad
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
@@ -140,7 +135,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
             onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: onDirectTouchActivity,
-            dockSnapEnabled: dockSnapEnabled,
             usesVirtualTrackpad: usesVirtualTrackpad,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
@@ -172,7 +166,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
             onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: onDirectTouchActivity,
-            dockSnapEnabled: dockSnapEnabled,
             usesVirtualTrackpad: usesVirtualTrackpad,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
@@ -229,7 +222,6 @@ public final class MirageStreamViewController: UIViewController {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
-        dockSnapEnabled: Bool,
         usesVirtualTrackpad: Bool,
         directTouchInputMode: MirageDirectTouchInputMode?,
         softwareKeyboardVisible: Bool,
@@ -250,7 +242,6 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         captureView.onDirectTouchActivity = onDirectTouchActivity
-        captureView.dockSnapEnabled = dockSnapEnabled
         captureView.directTouchInputMode = directTouchInputMode ??
             (usesVirtualTrackpad ? .dragCursor : .normal)
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
