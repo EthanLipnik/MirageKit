@@ -346,13 +346,6 @@ extension StreamContext {
         await packetSender.start()
         await packetSender.setTargetBitrateBps(encoderConfig.bitrate)
 
-        let encoder = HEVCEncoder(
-            configuration: encoderConfig,
-            latencyMode: latencyMode,
-            inFlightLimit: maxInFlightFrames
-        )
-        self.encoder = encoder
-
         let captureResolution = resolution ?? CGSize(width: display.width, height: display.height)
         baseCaptureSize = captureResolution
         streamScale = resolvedStreamScale(
@@ -372,6 +365,12 @@ extension StreamContext {
             .stream(
                 "Desktop encoding at \(width)x\(height) (latency=\(latencyMode.displayName), scale=\(streamScale), queue=\(maxQueuedBytes / 1024)KB)"
             )
+        let encoder = HEVCEncoder(
+            configuration: encoderConfig,
+            latencyMode: latencyMode,
+            inFlightLimit: maxInFlightFrames
+        )
+        self.encoder = encoder
         try await encoder.createSession(width: width, height: height)
 
         try await encoder.preheat()

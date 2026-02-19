@@ -90,6 +90,8 @@ extension StreamContext {
     }
 
     private func applyTypingBurstOverrides(now: CFAbsoluteTime) async {
+        await encoder?.updateAutoTypingBurstLowLatency(true)
+
         let forcedLimit = min(max(typingBurstInFlightLimit, 1), maxInFlightFramesCap)
         if maxInFlightFrames != forcedLimit {
             maxInFlightFrames = forcedLimit
@@ -115,6 +117,8 @@ extension StreamContext {
         typingBurstDeadline = 0
         typingBurstExpiryTask?.cancel()
         typingBurstExpiryTask = nil
+
+        await encoder?.updateAutoTypingBurstLowLatency(false)
 
         let restoredInFlight = resolvedPostTypingBurstInFlightLimit()
         if maxInFlightFrames != restoredInFlight {

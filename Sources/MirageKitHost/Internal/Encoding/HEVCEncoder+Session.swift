@@ -16,6 +16,40 @@ import MirageKit
 import ScreenCaptureKit
 
 extension HEVCEncoder {
+    func resolvedSessionLatencyMode() -> MirageStreamLatencyMode {
+        if latencyMode == .auto, autoTypingBurstLowLatencyActive {
+            return .lowestLatency
+        }
+        return latencyMode
+    }
+
+    func frameDelayCount(for mode: MirageStreamLatencyMode) -> Int {
+        switch mode {
+        case .smoothest:
+            2
+        case .auto:
+            2
+        case .lowestLatency:
+            0
+        }
+    }
+
+    func applySessionLatencySettings(_ session: VTCompressionSession, logReason: String? = nil) {
+        let mode = resolvedSessionLatencyMode()
+        let frameDelayCount = frameDelayCount(for: mode)
+        let applied = setProperty(
+            session,
+            key: kVTCompressionPropertyKey_MaxFrameDelayCount,
+            value: NSNumber(value: frameDelayCount)
+        )
+        guard let logReason else { return }
+        let applyText = applied ? "applied" : "not-applied"
+        MirageLogger
+            .encoder(
+                "Encoder latency profile: \(mode.displayName) (\(logReason), maxFrameDelay=\(frameDelayCount), \(applyText))"
+            )
+    }
+
     func createSession(width: Int, height: Int) throws {
         var session: VTCompressionSession?
 
@@ -224,15 +258,36 @@ extension HEVCEncoder {
 
     func applyQualitySettings(_ session: VTCompressionSession, quality: Float, log: Bool) {
         let settings = qualitySettings(for: quality)
-        setProperty(session, key: kVTCompressionPropertyKey_Quality, value: NSNumber(value: settings.quality))
-
-        if let minQP = settings.minQP { setProperty(session, key: kVTCompressionPropertyKey_MinAllowedFrameQP, value: NSNumber(value: minQP)) }
-        if let maxQP = settings.maxQP { setProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: NSNumber(value: maxQP)) }
+        let qualityApplied = setProperty(
+            session,
+            key: kVTCompressionPropertyKey_Quality,
+            value: NSNumber(value: settings.quality)
+        )
+        var minQPApplied = false
+        var maxQPApplied = false
+        if let minQP = settings.minQP {
+            minQPApplied = setProperty(
+                session,
+                key: kVTCompressionPropertyKey_MinAllowedFrameQP,
+                value: NSNumber(value: minQP)
+            )
+        }
+        if let maxQP = settings.maxQP {
+            maxQPApplied = setProperty(
+                session,
+                key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
+                value: NSNumber(value: maxQP)
+            )
+        }
 
         guard log else { return }
         let qualityText = settings.quality.formatted(.number.precision(.fractionLength(2)))
-        if let minQP = settings.minQP, let maxQP = settings.maxQP { MirageLogger.encoder("Encoder quality: \(qualityText), QP \(minQP)-\(maxQP)") } else {
-            MirageLogger.encoder("Encoder quality: \(qualityText)")
+        let qualityState = qualityApplied ? "applied" : "not-applied"
+        if let minQP = settings.minQP, let maxQP = settings.maxQP {
+            let qpState = (minQPApplied && maxQPApplied) ? "applied" : "not-applied"
+            MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState)), QP \(minQP)-\(maxQP) (\(qpState))")
+        } else {
+            MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState))")
         }
     }
 
@@ -281,16 +336,8 @@ extension HEVCEncoder {
         // Disable B-frames for predictable latency (smoothest relies on buffering only).
         setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
-        // Allow limited encoder buffering for smoother throughput in higher-latency modes.
-        let frameDelayCount = switch latencyMode {
-        case .smoothest:
-            2
-        case .auto:
-            2
-        case .lowestLatency:
-            0
-        }
-        if frameDelayCount > 0 { setProperty(session, key: kVTCompressionPropertyKey_MaxFrameDelayCount, value: frameDelayCount as CFNumber) }
+        // Configure encoder buffering policy from the active latency profile.
+        applySessionLatencySettings(session)
 
         // Frame rate
         setProperty(

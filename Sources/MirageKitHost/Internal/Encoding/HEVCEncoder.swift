@@ -27,6 +27,7 @@ actor HEVCEncoder {
     var compressionSession: VTCompressionSession?
     var configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
+    var autoTypingBurstLowLatencyActive = false
     var activePixelFormat: MiragePixelFormat
     var activeProfileLevel: CFString?
     var supportedPropertyKeys: Set<CFString> = []

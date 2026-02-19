@@ -20,11 +20,11 @@ extension StreamContext {
         let drop: Float
     }
 
-    private static let lowLatencyHighResolutionBoostStartPixels: Double = 8_294_400 // 3840x2160
-    private static let lowLatencyHighResolutionBoostFullPixels: Double = 20_000_000 // near 6K desktop
-    private static let lowLatencyHighResolutionBoostMinDrop: Float = 0.06
-    private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.18
-    private static let mapperMinimumQuality: Float = 0.06
+    private static let lowLatencyHighResolutionBoostStartPixels: Double = 4_096_000 // ~2560x1600
+    private static let lowLatencyHighResolutionBoostFullPixels: Double = 10_500_000 // ~5K and above
+    private static let lowLatencyHighResolutionBoostMinDrop: Float = 0.22
+    private static let lowLatencyHighResolutionBoostMaxDrop: Float = 0.56
+    private static let mapperMinimumQuality: Float = 0.05
 
     private func applyLowLatencyHighResolutionCompressionBoost(
         frameQuality: Float,
@@ -56,8 +56,10 @@ extension StreamContext {
             Self.lowLatencyHighResolutionBoostFullPixels - Self.lowLatencyHighResolutionBoostStartPixels
         )
         let progress = max(0.0, min(1.0, (pixelCount - Self.lowLatencyHighResolutionBoostStartPixels) / range))
+        let easedProgress = pow(progress, 0.70)
         let qualityDrop = Self.lowLatencyHighResolutionBoostMinDrop +
-            Float(progress) * (Self.lowLatencyHighResolutionBoostMaxDrop - Self.lowLatencyHighResolutionBoostMinDrop)
+            Float(easedProgress) *
+            (Self.lowLatencyHighResolutionBoostMaxDrop - Self.lowLatencyHighResolutionBoostMinDrop)
 
         let boostedFrameQuality = max(Self.mapperMinimumQuality, frameQuality - qualityDrop)
         let keyframeRatio: Float

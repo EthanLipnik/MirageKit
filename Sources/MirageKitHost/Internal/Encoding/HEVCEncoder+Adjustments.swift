@@ -16,6 +16,15 @@ import MirageKit
 import ScreenCaptureKit
 
 extension HEVCEncoder {
+    func updateAutoTypingBurstLowLatency(_ isActive: Bool) {
+        guard latencyMode == .auto else { return }
+        guard autoTypingBurstLowLatencyActive != isActive else { return }
+        autoTypingBurstLowLatencyActive = isActive
+        guard let session = compressionSession else { return }
+        let reason = isActive ? "auto typing burst start" : "auto typing burst end"
+        applySessionLatencySettings(session, logReason: reason)
+    }
+
     func updateQuality(_ quality: Float) {
         guard let session = compressionSession else { return }
         baseQuality = min(quality, compressionQualityCeiling)

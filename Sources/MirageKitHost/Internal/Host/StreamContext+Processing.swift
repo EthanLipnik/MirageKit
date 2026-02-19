@@ -86,6 +86,9 @@ extension StreamContext {
         typingBurstExpiryTask = nil
         typingBurstActive = false
         typingBurstDeadline = 0
+        if let encoder {
+            Task { await encoder.updateAutoTypingBurstLowLatency(false) }
+        }
         maxInFlightFrames = resolvedPostTypingBurstInFlightLimit()
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
