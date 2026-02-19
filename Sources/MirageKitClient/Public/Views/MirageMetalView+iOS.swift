@@ -164,14 +164,24 @@ public class MirageMetalView: UIView {
     // MARK: - Public Controls
 
     public func suspendRendering() {
-        renderingSuspended = true
-        displayLayer.flushAndRemoveImage()
-        lastEnqueuedSequence = 0
+        suspendRendering(clearCurrentFrame: true)
     }
 
     public func resumeRendering() {
         renderingSuspended = false
         requestDraw()
+    }
+
+    public var hasDisplayLayerFailure: Bool {
+        displayLayer.status == .failed
+    }
+
+    public func suspendRendering(clearCurrentFrame: Bool) {
+        renderingSuspended = true
+        guard clearCurrentFrame else { return }
+        displayLayer.flushAndRemoveImage()
+        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        lastEnqueuedSequence = 0
     }
 
     // MARK: - Setup

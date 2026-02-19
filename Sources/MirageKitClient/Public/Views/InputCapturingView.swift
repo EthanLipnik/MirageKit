@@ -168,6 +168,7 @@ public class InputCapturingView: UIView {
     // nonisolated(unsafe) allows access from deinit for cleanup
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
     private(set) var hardwareKeyboardPresent: Bool = false
+    private var didEnterBackgroundSinceLastActive = false
 
     // Virtual cursor state (direct touch trackpad mode)
     private let virtualCursorView = InputCapturingView.makeCursorEffectView()
@@ -882,7 +883,7 @@ public class InputCapturingView: UIView {
     }
 
     private func setupSceneLifecycleObservers() {
-        // Clear modifiers when app goes to background to prevent stuck modifiers
+        // Clear modifiers and transient input state when app loses focus.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appWillResignActive),
@@ -890,7 +891,15 @@ public class InputCapturingView: UIView {
             object: nil
         )
 
-        // Handle app returning to foreground for stream recovery
+        // Suspend rendering only when the app actually enters background.
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(appDidEnterBackground),
+            name: UIApplication.didEnterBackgroundNotification,
+            object: nil
+        )
+
+        // Handle app returning to active state.
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(appDidBecomeActive),
@@ -940,9 +949,12 @@ public class InputCapturingView: UIView {
         clearSoftwareKeyboardState()
         stopDictation()
         stopTouchScrollDeceleration()
+    }
 
-        // Suspend rendering to avoid Metal GPU permission errors when backgrounded
-        // iOS doesn't allow GPU work from background state
+    @objc
+    private func appDidEnterBackground() {
+        didEnterBackgroundSinceLastActive = true
+        // iOS does not allow foreground rendering work while backgrounded.
         metalView.suspendRendering()
     }
 
@@ -957,8 +969,9 @@ public class InputCapturingView: UIView {
         updateMouseInputHandler()
         #endif
 
-        // Notify SwiftUI layer to trigger stream recovery
-        onBecomeActive?()
+        let shouldRequestRecovery = didEnterBackgroundSinceLastActive || metalView.hasDisplayLayerFailure
+        didEnterBackgroundSinceLastActive = false
+        if shouldRequestRecovery { onBecomeActive?() }
     }
 
     #if canImport(GameController)

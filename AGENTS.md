@@ -178,6 +178,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Client decode submission cap is adaptive (baseline 2, temporary 3 during sustained decode stress, return to 2 after sustained recovery).
 - Client freeze monitoring records sustained presentation stalls for diagnostics without automatic keyframe recovery requests.
 - Client presentation uses `AVSampleBufferDisplayLayer` + `CADisplayLink` on iOS/visionOS and `MirageRenderLoop` + `CAMetalLayer` on macOS.
+- iOS/visionOS lifecycle handling keeps the current frame during inactive transitions and triggers lifecycle-driven stream recovery only after true background returns or display-layer failure.
 - macOS render-loop draw dispatch is completion-driven and avoids `Task`/`await` in the client render hot path.
 - iOS/visionOS presentation dequeues newest frames and enqueues display-immediate sample buffers on display-link cadence.
 - Decode callbacks enqueue into `MirageRenderStreamStore` per-stream SPSC queues (default capacity 24) with monotonic sequence metadata and cadence telemetry.
