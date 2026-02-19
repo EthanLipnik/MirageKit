@@ -15,6 +15,15 @@ import MirageKit
 
 /// Hardware-accelerated HEVC encoder using VideoToolbox
 actor HEVCEncoder {
+    struct RuntimeValidationSnapshot: Sendable {
+        let pixelFormat: MiragePixelFormat
+        let profileName: String?
+        let colorPrimaries: String?
+        let transferFunction: String?
+        let yCbCrMatrix: String?
+        let tenBitDisplayP3Validated: Bool
+    }
+
     var compressionSession: VTCompressionSession?
     var configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode

@@ -17,6 +17,7 @@ struct EncoderSettingsSnapshot: Sendable {
     let bitDepth: MirageVideoBitDepth
     let pixelFormat: MiragePixelFormat
     let colorSpace: MirageColorSpace
+    let latencyMode: MirageStreamLatencyMode
     let captureQueueDepth: Int?
     let bitrate: Int?
 }
@@ -90,6 +91,7 @@ extension StreamContext {
             bitDepth: encoderConfig.bitDepth,
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
+            latencyMode: latencyMode,
             captureQueueDepth: encoderConfig.captureQueueDepth,
             bitrate: encoderConfig.bitrate
         )

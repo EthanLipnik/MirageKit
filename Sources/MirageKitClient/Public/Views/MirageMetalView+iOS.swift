@@ -79,6 +79,9 @@ public class MirageMetalView: UIView {
         let width: Int
         let height: Int
         let pixelFormat: OSType
+        let colorPrimaries: String?
+        let transferFunction: String?
+        let yCbCrMatrix: String?
     }
 
     var displayLayer: AVSampleBufferDisplayLayer {
@@ -372,7 +375,10 @@ public class MirageMetalView: UIView {
         let key = PixelBufferFormatKey(
             width: CVPixelBufferGetWidth(pixelBuffer),
             height: CVPixelBufferGetHeight(pixelBuffer),
-            pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer)
+            pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
+            colorPrimaries: bufferAttachmentString(pixelBuffer, key: kCVImageBufferColorPrimariesKey),
+            transferFunction: bufferAttachmentString(pixelBuffer, key: kCVImageBufferTransferFunctionKey),
+            yCbCrMatrix: bufferAttachmentString(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey)
         )
 
         if key == cachedFormatKey, let cachedFormatDescription {
@@ -393,6 +399,10 @@ public class MirageMetalView: UIView {
         cachedFormatKey = key
         cachedFormatDescription = formatDescription
         return formatDescription
+    }
+
+    private func bufferAttachmentString(_ buffer: CVBuffer, key: CFString) -> String? {
+        CVBufferCopyAttachment(buffer, key, nil) as? String
     }
 
     private func resetPresentationState() {

@@ -240,20 +240,38 @@ extension HEVCEncoder {
         guard let targetBitrate = configuration.bitrate, targetBitrate > 0 else {
             return
         }
-        let windowSeconds: Double = configuration.targetFrameRate >= 120 ? 0.25 : 0.5
-        let bytesPerSecond = max(1, targetBitrate / 8)
+        let rateLimit = Self.dataRateLimit(
+            targetBitrateBps: targetBitrate,
+            targetFrameRate: configuration.targetFrameRate
+        )
         setProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: targetBitrate))
-        let rateLimits: [NSNumber] = [NSNumber(value: bytesPerSecond), NSNumber(value: windowSeconds)]
+        let rateLimits: [NSNumber] = [
+            NSNumber(value: rateLimit.bytes),
+            NSNumber(value: rateLimit.windowSeconds),
+        ]
         setProperty(session, key: kVTCompressionPropertyKey_DataRateLimits, value: rateLimits as CFArray)
 
         let mbps = Double(targetBitrate) / 1_000_000.0
         let bitrateText = mbps.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger.encoder("Encoder bitrate target: \(bitrateText) Mbps")
+        let limitMB = Double(rateLimit.bytes) / 1_000_000.0
+        let limitText = limitMB.formatted(.number.precision(.fractionLength(2)))
+        let windowText = rateLimit.windowSeconds.formatted(.number.precision(.fractionLength(2)))
+        MirageLogger
+            .encoder(
+                "Encoder bitrate target: \(bitrateText) Mbps (rate limit \(limitText) MB/\(windowText)s)"
+            )
     }
 
     func applyBitrateSettingsToActiveSession() {
         guard let session = compressionSession else { return }
         applyBitrateSettings(session)
+    }
+
+    static func dataRateLimit(targetBitrateBps: Int, targetFrameRate: Int) -> (bytes: Int, windowSeconds: Double) {
+        let windowSeconds: Double = targetFrameRate >= 120 ? 0.25 : 0.5
+        let bytesPerSecond = max(1.0, Double(targetBitrateBps) / 8.0)
+        let bytes = max(1, Int((bytesPerSecond * windowSeconds).rounded()))
+        return (bytes: bytes, windowSeconds: windowSeconds)
     }
 
     private func configureSession(_ session: VTCompressionSession) throws {

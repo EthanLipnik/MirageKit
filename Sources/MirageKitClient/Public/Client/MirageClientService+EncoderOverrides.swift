@@ -31,6 +31,10 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
         }
+        if let latencyMode = overrides.latencyMode {
+            request.latencyMode = latencyMode
+            MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -63,6 +67,10 @@ extension MirageClientService {
             MirageLogger
                 .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
         }
+        if let latencyMode = overrides.latencyMode {
+            request.latencyMode = latencyMode
+            MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -94,6 +102,10 @@ extension MirageClientService {
             let mbps = Double(bitrate) / 1_000_000.0
             MirageLogger
                 .client("Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let latencyMode = overrides.latencyMode {
+            request.latencyMode = latencyMode
+            MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
         }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment

@@ -64,21 +64,17 @@ enum MirageRenderModePolicy {
 
             return MirageRenderModeDecision(
                 profile: .autoSmooth,
-                presentationPolicy: decodeHealthy
-                    ? .latest
-                    : .buffered(maxDepth: maxStressBufferDepth),
+                presentationPolicy: .buffered(maxDepth: maxStressBufferDepth),
                 decodeHealthy: decodeHealthy,
-                allowOffCycleWake: decodeHealthy
+                allowOffCycleWake: false
             )
 
         case .smoothest:
             return MirageRenderModeDecision(
                 profile: .smoothest,
-                presentationPolicy: decodeHealthy
-                    ? .latest
-                    : .buffered(maxDepth: maxStressBufferDepth),
+                presentationPolicy: .buffered(maxDepth: maxStressBufferDepth),
                 decodeHealthy: decodeHealthy,
-                allowOffCycleWake: decodeHealthy
+                allowOffCycleWake: false
             )
         }
     }

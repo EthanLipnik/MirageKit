@@ -66,7 +66,6 @@ extension StreamContext {
     func resolvedQualityCeiling() -> Float {
         var ceiling = min(steadyQualityCeiling, compressionQualityCeiling)
         guard runtimeQualityAdjustmentEnabled else { return ceiling }
-        if autoRecoveryActive { ceiling = min(ceiling, autoRecoveryQualityCap) }
         if supportsTypingBurst, typingBurstActive { ceiling = min(ceiling, typingBurstQualityCap) }
         return ceiling
     }
@@ -136,9 +135,6 @@ extension StreamContext {
     }
 
     func resolvedPostTypingBurstInFlightLimit() -> Int {
-        if latencyMode == .auto {
-            return min(1, maxInFlightFramesCap)
-        }
         return min(max(minInFlightFrames, 1), maxInFlightFramesCap)
     }
 }

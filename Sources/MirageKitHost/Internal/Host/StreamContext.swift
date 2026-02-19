@@ -116,23 +116,6 @@ actor StreamContext {
     var typingBurstDeadline: CFAbsoluteTime = 0
     var typingBurstActive = false
     var typingBurstExpiryTask: Task<Void, Never>?
-    let autoRecoveryQualityCap: Float = 0.58
-    let autoRecoveryEntryFPSFactor: Double = 0.85
-    let autoRecoveryEntryEncodeFactor: Double = 1.40
-    let autoRecoveryExitFPSFactor: Double = 0.95
-    let autoRecoveryExitEncodeFactor: Double = 1.05
-    let autoRecoveryEntryWindows: Int = 2
-    let autoRecoveryExitWindows: Int = 2
-    let autoRecoveryMinHold: CFAbsoluteTime = 2.0
-    let autoRecoveryCooldown: CFAbsoluteTime = 3.0
-    let autoHeadroomIncreaseThreshold: Double = 0.98
-    let autoHeadroomWindowsToRaise: Int = 2
-    var autoRecoveryActive = false
-    var autoRecoveryLowFPSStreak = 0
-    var autoRecoveryHealthyStreak = 0
-    var autoRecoveryHoldUntil: CFAbsoluteTime = 0
-    var autoRecoveryCooldownUntil: CFAbsoluteTime = 0
-    var autoInFlightHeadroomStreak = 0
 
     // Pipeline throughput metrics (interval counters)
     var captureIngressIntervalCount: UInt64 = 0
@@ -408,11 +391,9 @@ actor StreamContext {
     -> Int {
         if useLowLatencyPipeline { return frameRate >= 120 ? 2 : 1 }
         switch latencyMode {
-        case .smoothest:
+        case .smoothest, .auto:
             if frameRate >= 120 { return 5 }
             if frameRate >= 60 { return 4 }
-            return 2
-        case .auto:
             return 2
         case .lowestLatency:
             if frameRate >= 120 { return 2 }
@@ -428,12 +409,10 @@ actor StreamContext {
     -> Int {
         if useLowLatencyPipeline { return 1 }
         switch latencyMode {
-        case .smoothest:
+        case .smoothest, .auto:
             if frameRate >= 120 { return 4 }
             if frameRate >= 60 { return 3 }
             return 1
-        case .auto:
-            return frameRate >= 60 ? 2 : 1
         case .lowestLatency:
             return 1
         }

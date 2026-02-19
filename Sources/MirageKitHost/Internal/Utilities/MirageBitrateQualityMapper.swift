@@ -52,7 +52,7 @@ enum MirageBitrateQualityMapper {
         }
 
         let bpp = Double(targetBitrateBps) / pixelsPerSecond
-        let mappedQuality = interpolateQuality(for: bpp)
+        let mappedQuality = interpolateQuality(for: bpp) * frameRateCompressionScale(for: frameRate)
         let frameQuality = Float(max(minimumFrameQuality, min(Double(frameQualityCeiling), mappedQuality)))
         let keyframeQuality = Float(
             max(
@@ -78,5 +78,11 @@ enum MirageBitrateQualityMapper {
         }
 
         return last.quality
+    }
+
+    private static func frameRateCompressionScale(for frameRate: Int) -> Double {
+        if frameRate >= 120 { return 0.90 }
+        if frameRate >= 90 { return 0.95 }
+        return 1.0
     }
 }

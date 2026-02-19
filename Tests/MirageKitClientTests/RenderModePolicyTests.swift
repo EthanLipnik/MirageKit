@@ -43,7 +43,7 @@ struct RenderModePolicyTests {
         #expect(decision.allowOffCycleWake)
     }
 
-    @Test("Auto healthy decode uses latest-frame presentation")
+    @Test("Auto non-typing uses buffered smooth presentation")
     func autoHealthyDecision() {
         let decision = MirageRenderModePolicy.decision(
             latencyMode: .auto,
@@ -53,12 +53,12 @@ struct RenderModePolicyTests {
         )
 
         #expect(decision.profile == .autoSmooth)
-        #expect(decision.presentationPolicy == .latest)
+        #expect(decision.presentationPolicy == .buffered(maxDepth: 3))
         #expect(decision.decodeHealthy)
-        #expect(decision.allowOffCycleWake)
+        #expect(!decision.allowOffCycleWake)
     }
 
-    @Test("Auto decode stress enables bounded buffering")
+    @Test("Auto decode stress stays in bounded buffering mode")
     func autoStressDecision() {
         let decision = MirageRenderModePolicy.decision(
             latencyMode: .auto,
@@ -73,7 +73,7 @@ struct RenderModePolicyTests {
         #expect(!decision.allowOffCycleWake)
     }
 
-    @Test("Smoothest only buffers during decode stress")
+    @Test("Smoothest always uses buffered presentation")
     func smoothestDecision() {
         let healthy = MirageRenderModePolicy.decision(
             latencyMode: .smoothest,
@@ -89,8 +89,8 @@ struct RenderModePolicyTests {
         )
 
         #expect(healthy.profile == .smoothest)
-        #expect(healthy.presentationPolicy == .latest)
-        #expect(healthy.allowOffCycleWake)
+        #expect(healthy.presentationPolicy == .buffered(maxDepth: 3))
+        #expect(!healthy.allowOffCycleWake)
 
         #expect(stressed.profile == .smoothest)
         #expect(stressed.presentationPolicy == .buffered(maxDepth: 3))

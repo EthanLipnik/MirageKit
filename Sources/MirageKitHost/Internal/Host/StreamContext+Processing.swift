@@ -86,12 +86,6 @@ extension StreamContext {
         typingBurstExpiryTask = nil
         typingBurstActive = false
         typingBurstDeadline = 0
-        autoRecoveryActive = false
-        autoRecoveryLowFPSStreak = 0
-        autoRecoveryHealthyStreak = 0
-        autoRecoveryHoldUntil = 0
-        autoRecoveryCooldownUntil = 0
-        autoInFlightHeadroomStreak = 0
         maxInFlightFrames = resolvedPostTypingBurstInFlightLimit()
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
@@ -236,12 +230,12 @@ extension StreamContext {
                     queueBytes: queueBytes,
                     now: CFAbsoluteTimeGetCurrent()
                 ) {
-                    logStreamStatsIfNeeded()
+                    await logStreamStatsIfNeeded()
                     continue
                 } else {
                     backpressureDropIntervalCount += 1
                     droppedFrameCount += 1
-                    logStreamStatsIfNeeded()
+                    await logStreamStatsIfNeeded()
                     continue
                 }
             } else if queueBytes > maxQueuedBytes, !forceKeyframe {
@@ -252,7 +246,7 @@ extension StreamContext {
                 droppedFrameCount += 1
                 let queuedKB = (Double(queueBytes) / 1024.0).rounded()
                 MirageLogger.stream("Backpressure: pausing encode (queue \(Int(queuedKB))KB)")
-                logStreamStatsIfNeeded()
+                await logStreamStatsIfNeeded()
                 continue
             }
 
@@ -262,7 +256,7 @@ extension StreamContext {
             if isIdleFrame {
                 if captureMode == .window {
                     idleSkippedCount += 1
-                    logStreamStatsIfNeeded()
+                    await logStreamStatsIfNeeded()
                     continue
                 }
                 // Display capture can report sustained idle status during fullscreen/menu transitions.
@@ -272,6 +266,7 @@ extension StreamContext {
             }
 
             setContentRect(frame.info.contentRect)
+            enforceCaptureColorAttachments(on: frame.pixelBuffer)
 
             do {
                 guard let encoder else { continue }
@@ -320,7 +315,7 @@ extension StreamContext {
                 MirageLogger.error(.stream, "Encode error: \(error)")
                 continue
             }
-            logStreamStatsIfNeeded()
+            await logStreamStatsIfNeeded()
         }
     }
 
@@ -337,7 +332,7 @@ extension StreamContext {
         if frameInbox.hasPending(), inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
     }
 
-    func logStreamStatsIfNeeded() {
+    func logStreamStatsIfNeeded() async {
         let now = CFAbsoluteTimeGetCurrent()
         let elapsed = now - lastStreamStatsLogTime
         guard lastStreamStatsLogTime == 0 || elapsed > 2.0 else { return }
@@ -349,13 +344,26 @@ extension StreamContext {
         if let metricsUpdateHandler, lastStreamStatsLogTime > 0 {
             let encodedFPS = Double(encodedFrameCount) / elapsed
             let idleEncodedFPS = Double(idleEncodedCount) / elapsed
+            let captureValidation = captureValidationSnapshot()
+            let encoderValidation = await encoder?.runtimeValidationSnapshot()
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
                 idleEncodedFPS: idleEncodedFPS,
                 droppedFrames: droppedFrameCount,
                 activeQuality: activeQuality,
-                targetFrameRate: currentFrameRate
+                targetFrameRate: currentFrameRate,
+                capturePixelFormat: captureValidation?.pixelFormat,
+                captureColorPrimaries: captureValidation?.colorPrimaries,
+                encoderPixelFormat: encoderValidation?.pixelFormat.displayName,
+                encoderProfile: encoderValidation?.profileName,
+                encoderColorPrimaries: encoderValidation?.colorPrimaries,
+                encoderTransferFunction: encoderValidation?.transferFunction,
+                encoderYCbCrMatrix: encoderValidation?.yCbCrMatrix,
+                tenBitDisplayP3Validated: tenBitDisplayP3Validation(
+                    capture: captureValidation,
+                    encoder: encoderValidation
+                )
             )
             metricsUpdateHandler(message)
         }
@@ -364,6 +372,56 @@ extension StreamContext {
         syntheticFrameCount = 0
         idleSkippedCount = 0
         lastStreamStatsLogTime = now
+    }
+
+    private struct CaptureValidationSnapshot: Sendable {
+        let pixelFormat: String
+        let colorPrimaries: String?
+        let transferFunction: String?
+        let yCbCrMatrix: String?
+        let isTenBitP010: Bool
+        let isDisplayP3: Bool?
+    }
+
+    private func captureValidationSnapshot() -> CaptureValidationSnapshot? {
+        guard let pixelBuffer = lastCapturedFrame?.pixelBuffer else { return nil }
+        let pixelFormatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
+        let pixelFormat = HEVCEncoder.fourCCString(pixelFormatType)
+        let isTenBitP010 = pixelFormatType == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange ||
+            pixelFormatType == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+        let colorPrimaries = bufferAttachmentString(pixelBuffer, key: kCVImageBufferColorPrimariesKey)
+        let transferFunction = bufferAttachmentString(pixelBuffer, key: kCVImageBufferTransferFunctionKey)
+        let yCbCrMatrix = bufferAttachmentString(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey)
+        let isDisplayP3: Bool? = {
+            guard let colorPrimaries,
+                  let transferFunction,
+                  let yCbCrMatrix else { return nil }
+            return colorPrimaries == (kCVImageBufferColorPrimaries_P3_D65 as String) &&
+                transferFunction == (kCVImageBufferTransferFunction_sRGB as String) &&
+                yCbCrMatrix == (kCVImageBufferYCbCrMatrix_ITU_R_709_2 as String)
+        }()
+        return CaptureValidationSnapshot(
+            pixelFormat: pixelFormat,
+            colorPrimaries: colorPrimaries,
+            transferFunction: transferFunction,
+            yCbCrMatrix: yCbCrMatrix,
+            isTenBitP010: isTenBitP010,
+            isDisplayP3: isDisplayP3
+        )
+    }
+
+    private func tenBitDisplayP3Validation(
+        capture: CaptureValidationSnapshot?,
+        encoder: HEVCEncoder.RuntimeValidationSnapshot?
+    ) -> Bool? {
+        guard let encoder else { return nil }
+        guard let capture else { return nil }
+        guard let captureIsDisplayP3 = capture.isDisplayP3 else { return nil }
+        return capture.isTenBitP010 && captureIsDisplayP3 && encoder.tenBitDisplayP3Validated
+    }
+
+    private func bufferAttachmentString(_ buffer: CVBuffer, key: CFString) -> String? {
+        CVBufferCopyAttachment(buffer, key, nil) as? String
     }
 
     func logPipelineStatsIfNeeded() async {
@@ -408,8 +466,6 @@ extension StreamContext {
         }
 
         await updateInFlightLimitIfNeeded(
-            captureFPS: captureFPS,
-            encodeFPS: encodeFPS,
             averageEncodeMs: encodeAvgMs,
             pendingCount: pendingCount,
             at: now
@@ -445,20 +501,12 @@ extension StreamContext {
     }
 
     func updateInFlightLimitIfNeeded(
-        captureFPS: Double,
-        encodeFPS: Double,
         averageEncodeMs: Double,
         pendingCount: Int,
         at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     )
     async {
         await refreshTypingBurstStateIfNeeded(now: now)
-        await updateAutoRecoveryStateIfNeeded(
-            captureFPS: captureFPS,
-            encodeFPS: encodeFPS,
-            averageEncodeMs: averageEncodeMs,
-            at: now
-        )
 
         if supportsTypingBurst, typingBurstActive {
             let forcedLimit = min(max(typingBurstInFlightLimit, 1), maxInFlightFramesCap)
@@ -466,11 +514,6 @@ extension StreamContext {
                 maxInFlightFrames = forcedLimit
                 await encoder?.updateInFlightLimit(forcedLimit)
             }
-            return
-        }
-
-        if autoRecoveryActive {
-            await enforceAutoRecoveryInFlightLimitIfNeeded()
             return
         }
 
@@ -485,22 +528,14 @@ extension StreamContext {
             return
         }
 
-        if latencyMode == .auto {
-            await updateAutoInFlightLimit(
-                averageEncodeMs: averageEncodeMs,
-                pendingCount: pendingCount,
-                now: now
-            )
-            return
-        }
-
         if lastInFlightAdjustmentTime > 0, now - lastInFlightAdjustmentTime < inFlightAdjustmentCooldown { return }
 
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         var desired = maxInFlightFrames
 
-        let increaseThreshold = latencyMode == .smoothest ? 1.02 : 1.10
-        let decreaseThreshold = latencyMode == .smoothest ? 0.90 : 0.80
+        let smoothnessFirstMode = latencyMode == .smoothest || latencyMode == .auto
+        let increaseThreshold = smoothnessFirstMode ? 1.02 : 1.10
+        let decreaseThreshold = smoothnessFirstMode ? 0.90 : 0.80
         if averageEncodeMs > frameBudgetMs * increaseThreshold || pendingCount > 0 {
             desired = min(maxInFlightFrames + 1, maxInFlightFramesCap)
         } else if averageEncodeMs < frameBudgetMs * decreaseThreshold, pendingCount == 0 {
@@ -516,199 +551,6 @@ extension StreamContext {
         let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
         let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
-    }
-
-    func updateAutoRecoveryStateIfNeeded(
-        captureFPS: Double,
-        encodeFPS: Double,
-        averageEncodeMs: Double,
-        at now: CFAbsoluteTime
-    )
-    async {
-        guard runtimeQualityAdjustmentEnabled else {
-            autoRecoveryActive = false
-            autoRecoveryLowFPSStreak = 0
-            autoRecoveryHealthyStreak = 0
-            autoRecoveryHoldUntil = 0
-            autoRecoveryCooldownUntil = 0
-            autoInFlightHeadroomStreak = 0
-            return
-        }
-        guard latencyMode == .auto else {
-            autoRecoveryActive = false
-            autoRecoveryLowFPSStreak = 0
-            autoRecoveryHealthyStreak = 0
-            autoRecoveryHoldUntil = 0
-            autoRecoveryCooldownUntil = 0
-            autoInFlightHeadroomStreak = 0
-            return
-        }
-
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-        let targetFPS = Double(max(1, currentFrameRate))
-        let lowFPS = encodeFPS < targetFPS * autoRecoveryEntryFPSFactor || captureFPS < targetFPS * autoRecoveryEntryFPSFactor
-        let highEncode = averageEncodeMs > frameBudgetMs * autoRecoveryEntryEncodeFactor
-        let unhealthyWindow = lowFPS || highEncode
-        let healthyWindow = encodeFPS >= targetFPS * autoRecoveryExitFPSFactor &&
-            averageEncodeMs <= frameBudgetMs * autoRecoveryExitEncodeFactor
-
-        if autoRecoveryActive {
-            if now < autoRecoveryHoldUntil {
-                autoRecoveryHealthyStreak = 0
-            } else if healthyWindow {
-                autoRecoveryHealthyStreak += 1
-            } else {
-                autoRecoveryHealthyStreak = 0
-            }
-
-            await enforceAutoRecoveryQualityClampIfNeeded()
-            await enforceAutoRecoveryInFlightLimitIfNeeded()
-
-            guard now >= autoRecoveryHoldUntil,
-                  autoRecoveryHealthyStreak >= autoRecoveryExitWindows else { return }
-            autoRecoveryActive = false
-            autoRecoveryLowFPSStreak = 0
-            autoRecoveryHealthyStreak = 0
-            autoRecoveryHoldUntil = 0
-            autoRecoveryCooldownUntil = now + autoRecoveryCooldown
-            autoInFlightHeadroomStreak = 0
-            qualityCeiling = resolvedQualityCeiling()
-            if activeQuality > qualityCeiling {
-                activeQuality = qualityCeiling
-                await encoder?.updateQuality(activeQuality)
-            }
-            logAutoRecoveryEvent(
-                "exited",
-                captureFPS: captureFPS,
-                encodeFPS: encodeFPS,
-                averageEncodeMs: averageEncodeMs
-            )
-            return
-        }
-
-        autoRecoveryHealthyStreak = 0
-        guard now >= autoRecoveryCooldownUntil else {
-            autoRecoveryLowFPSStreak = 0
-            return
-        }
-
-        if unhealthyWindow {
-            autoRecoveryLowFPSStreak += 1
-        } else {
-            autoRecoveryLowFPSStreak = 0
-            return
-        }
-
-        guard autoRecoveryLowFPSStreak >= autoRecoveryEntryWindows else { return }
-
-        autoRecoveryActive = true
-        autoRecoveryLowFPSStreak = 0
-        autoRecoveryHealthyStreak = 0
-        autoRecoveryHoldUntil = now + autoRecoveryMinHold
-        autoInFlightHeadroomStreak = 0
-        await enforceAutoRecoveryQualityClampIfNeeded()
-        await enforceAutoRecoveryInFlightLimitIfNeeded()
-        logAutoRecoveryEvent(
-            "entered",
-            captureFPS: captureFPS,
-            encodeFPS: encodeFPS,
-            averageEncodeMs: averageEncodeMs
-        )
-    }
-
-    func updateAutoInFlightLimit(
-        averageEncodeMs: Double,
-        pendingCount: Int,
-        now: CFAbsoluteTime
-    )
-    async {
-        let autoCap = min(2, maxInFlightFramesCap)
-        guard autoCap > 0 else { return }
-        let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
-        let overBudget = averageEncodeMs > frameBudgetMs
-        let hasBacklog = pendingCount > 0
-        let belowBudgetWithHeadroom = averageEncodeMs > 0 && averageEncodeMs <= frameBudgetMs * autoHeadroomIncreaseThreshold
-
-        var desired = min(maxInFlightFrames, autoCap)
-        if overBudget || hasBacklog {
-            desired = 1
-            autoInFlightHeadroomStreak = 0
-        } else if desired <= 1 {
-            if belowBudgetWithHeadroom {
-                autoInFlightHeadroomStreak += 1
-            } else {
-                autoInFlightHeadroomStreak = 0
-            }
-            if autoInFlightHeadroomStreak >= autoHeadroomWindowsToRaise, autoCap >= 2 {
-                desired = 2
-                autoInFlightHeadroomStreak = 0
-            }
-        } else {
-            autoInFlightHeadroomStreak = 0
-        }
-
-        desired = min(max(desired, 1), autoCap)
-        guard desired != maxInFlightFrames else { return }
-        maxInFlightFrames = desired
-        lastInFlightAdjustmentTime = now
-        await encoder?.updateInFlightLimit(desired)
-        let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
-        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger.metrics("Auto in-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms, pending=\(pendingCount))")
-    }
-
-    func enforceAutoRecoveryInFlightLimitIfNeeded() async {
-        let forcedLimit = min(1, maxInFlightFramesCap)
-        guard maxInFlightFrames != forcedLimit else { return }
-        maxInFlightFrames = forcedLimit
-        await encoder?.updateInFlightLimit(forcedLimit)
-    }
-
-    func enforceAutoRecoveryQualityClampIfNeeded() async {
-        qualityCeiling = resolvedQualityCeiling()
-        guard activeQuality > qualityCeiling else { return }
-        activeQuality = qualityCeiling
-        await encoder?.updateQuality(activeQuality)
-    }
-
-    func logAutoRecoveryEvent(
-        _ event: String,
-        captureFPS: Double,
-        encodeFPS: Double,
-        averageEncodeMs: Double
-    ) {
-        let captureText = captureFPS.formatted(.number.precision(.fractionLength(1)))
-        let encodeText = encodeFPS.formatted(.number.precision(.fractionLength(1)))
-        let encodeMsText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-        let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-        MirageLogger.stream(
-            "Auto recovery \(event) for stream \(streamID) " +
-                "(captureFPS=\(captureText), encodeFPS=\(encodeText), avgEncodeMs=\(encodeMsText), inFlight=\(maxInFlightFrames), quality=\(qualityText))"
-        )
-    }
-
-    struct AutoRecoverySnapshot: Sendable, Equatable {
-        let active: Bool
-        let lowFPSStreak: Int
-        let healthyStreak: Int
-        let holdUntil: CFAbsoluteTime
-        let cooldownUntil: CFAbsoluteTime
-        let maxInFlightFrames: Int
-        let qualityCeiling: Float
-        let activeQuality: Float
-    }
-
-    func autoRecoverySnapshot() -> AutoRecoverySnapshot {
-        AutoRecoverySnapshot(
-            active: autoRecoveryActive,
-            lowFPSStreak: autoRecoveryLowFPSStreak,
-            healthyStreak: autoRecoveryHealthyStreak,
-            holdUntil: autoRecoveryHoldUntil,
-            cooldownUntil: autoRecoveryCooldownUntil,
-            maxInFlightFrames: maxInFlightFrames,
-            qualityCeiling: qualityCeiling,
-            activeQuality: activeQuality
-        )
     }
 
     func adjustQualityForQueue(queueBytes: Int) async {

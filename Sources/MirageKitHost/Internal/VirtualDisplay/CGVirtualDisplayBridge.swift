@@ -539,125 +539,169 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let originalMainDisplayID = CGMainDisplayID()
         MirageLogger.host("Original main display ID: \(originalMainDisplayID)")
 
-        let persistentSerial = persistentSerialNumber(for: colorSpace)
-        let descriptorProfiles = descriptorAttempts(
-            persistentSerial: persistentSerial,
-            hiDPI: hiDPI,
-            colorSpace: colorSpace
-        )
+        var serialRetryAttempted = false
+        while true {
+            let persistentSerial = persistentSerialNumber(for: colorSpace)
+            let descriptorProfiles = descriptorAttempts(
+                persistentSerial: persistentSerial,
+                hiDPI: hiDPI,
+                colorSpace: colorSpace
+            )
+            var sawColorSpaceMismatch = false
 
-        for profile in descriptorProfiles {
-            var failedDisplayID: CGDirectDisplayID?
-            var creationResult: VirtualDisplayContext?
+            for profile in descriptorProfiles {
+                var failedDisplayID: CGDirectDisplayID?
+                var creationResult: VirtualDisplayContext?
 
-            autoreleasepool {
-                let descriptor = descriptorClass.init()
-                descriptor.setValue(name, forKey: "name")
-                descriptor.setValue(mirageVendorID, forKey: "vendorID")
-                descriptor.setValue(mirageProductID, forKey: "productID")
-                descriptor.setValue(profile.serial, forKey: "serialNum")
-                descriptor.setValue(UInt32(width), forKey: "maxPixelsWide")
-                descriptor.setValue(UInt32(height), forKey: "maxPixelsHigh")
+                autoreleasepool {
+                    let descriptor = descriptorClass.init()
+                    descriptor.setValue(name, forKey: "name")
+                    descriptor.setValue(mirageVendorID, forKey: "vendorID")
+                    descriptor.setValue(mirageProductID, forKey: "productID")
+                    descriptor.setValue(profile.serial, forKey: "serialNum")
+                    descriptor.setValue(UInt32(width), forKey: "maxPixelsWide")
+                    descriptor.setValue(UInt32(height), forKey: "maxPixelsHigh")
 
-                let widthMM = 25.4 * Double(width) / ppi
-                let heightMM = 25.4 * Double(height) / ppi
-                descriptor.setValue(CGSize(width: widthMM, height: heightMM), forKey: "sizeInMillimeters")
+                    let widthMM = 25.4 * Double(width) / ppi
+                    let heightMM = 25.4 * Double(height) / ppi
+                    descriptor.setValue(CGSize(width: widthMM, height: heightMM), forKey: "sizeInMillimeters")
 
-                switch colorSpace {
-                case .displayP3:
-                    descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
-                    descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
-                    descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
-                    descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
-                case .sRGB:
-                    descriptor.setValue(SRGBPrimaries.red, forKey: "redPrimary")
-                    descriptor.setValue(SRGBPrimaries.green, forKey: "greenPrimary")
-                    descriptor.setValue(SRGBPrimaries.blue, forKey: "bluePrimary")
-                    descriptor.setValue(SRGBPrimaries.whitePoint, forKey: "whitePoint")
-                }
-
-                descriptor.setValue(profile.queue, forKey: "queue")
-
-                MirageLogger.host(
-                    "Creating virtual display '\(name)' at \(width)x\(height) pixels, hiDPI=\(hiDPI), color=\(colorSpace.displayName), profile=\(profile.label), serial=\(profile.serial)"
-                )
-
-                let allocSelector = NSSelectorFromString("alloc")
-                guard let allocatedDisplay = (displayClass as AnyObject).perform(allocSelector)?.takeUnretainedValue() else {
-                    MirageLogger.error(.host, "Failed to allocate CGVirtualDisplay")
-                    return
-                }
-
-                let initSelector = NSSelectorFromString("initWithDescriptor:")
-                guard (allocatedDisplay as AnyObject).responds(to: initSelector) else {
-                    MirageLogger.error(.host, "CGVirtualDisplay doesn't respond to initWithDescriptor:")
-                    return
-                }
-
-                guard let display = (allocatedDisplay as AnyObject).perform(initSelector, with: descriptor)?
-                    .takeRetainedValue() else {
-                    MirageLogger.error(.host, "Failed to create CGVirtualDisplay for profile \(profile.label)")
-                    return
-                }
-
-                let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID
-                failedDisplayID = displayID
-
-                guard activateAndValidateMode(
-                    display: display as AnyObject,
-                    settingsClass: settingsClass,
-                    modeClass: modeClass,
-                    pixelWidth: width,
-                    pixelHeight: height,
-                    refreshRate: refreshRate,
-                    hiDPI: hiDPI,
-                    serial: profile.serial
-                ) else {
-                    let modeLabel = hiDPI ? "Retina" : "1x"
-                    MirageLogger.error(.host, "Virtual display \(modeLabel) activation failed for profile \(profile.label)")
-                    let invalidateSelector = NSSelectorFromString("invalidate")
-                    if (display as AnyObject).responds(to: invalidateSelector) {
-                        _ = (display as AnyObject).perform(invalidateSelector)
+                    switch colorSpace {
+                    case .displayP3:
+                        descriptor.setValue(P3D65Primaries.red, forKey: "redPrimary")
+                        descriptor.setValue(P3D65Primaries.green, forKey: "greenPrimary")
+                        descriptor.setValue(P3D65Primaries.blue, forKey: "bluePrimary")
+                        descriptor.setValue(P3D65Primaries.whitePoint, forKey: "whitePoint")
+                    case .sRGB:
+                        descriptor.setValue(SRGBPrimaries.red, forKey: "redPrimary")
+                        descriptor.setValue(SRGBPrimaries.green, forKey: "greenPrimary")
+                        descriptor.setValue(SRGBPrimaries.blue, forKey: "bluePrimary")
+                        descriptor.setValue(SRGBPrimaries.whitePoint, forKey: "whitePoint")
                     }
-                    return
-                }
 
-                guard let displayID else {
-                    MirageLogger.error(.host, "Failed to get displayID from CGVirtualDisplay for profile \(profile.label)")
-                    let invalidateSelector = NSSelectorFromString("invalidate")
-                    if (display as AnyObject).responds(to: invalidateSelector) {
-                        _ = (display as AnyObject).perform(invalidateSelector)
+                    descriptor.setValue(profile.queue, forKey: "queue")
+
+                    MirageLogger.host(
+                        "Creating virtual display '\(name)' at \(width)x\(height) pixels, hiDPI=\(hiDPI), color=\(colorSpace.displayName), profile=\(profile.label), serial=\(profile.serial)"
+                    )
+
+                    let allocSelector = NSSelectorFromString("alloc")
+                    guard let allocatedDisplay = (displayClass as AnyObject).perform(allocSelector)?
+                        .takeUnretainedValue() else {
+                        MirageLogger.error(.host, "Failed to allocate CGVirtualDisplay")
+                        return
                     }
-                    return
+
+                    let initSelector = NSSelectorFromString("initWithDescriptor:")
+                    guard (allocatedDisplay as AnyObject).responds(to: initSelector) else {
+                        MirageLogger.error(.host, "CGVirtualDisplay doesn't respond to initWithDescriptor:")
+                        return
+                    }
+
+                    guard let display = (allocatedDisplay as AnyObject).perform(initSelector, with: descriptor)?
+                        .takeRetainedValue() else {
+                        MirageLogger.error(.host, "Failed to create CGVirtualDisplay for profile \(profile.label)")
+                        return
+                    }
+
+                    let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID
+                    failedDisplayID = displayID
+
+                    guard activateAndValidateMode(
+                        display: display as AnyObject,
+                        settingsClass: settingsClass,
+                        modeClass: modeClass,
+                        pixelWidth: width,
+                        pixelHeight: height,
+                        refreshRate: refreshRate,
+                        hiDPI: hiDPI,
+                        serial: profile.serial
+                    ) else {
+                        let modeLabel = hiDPI ? "Retina" : "1x"
+                        MirageLogger.error(
+                            .host,
+                            "Virtual display \(modeLabel) activation failed for profile \(profile.label)"
+                        )
+                        let invalidateSelector = NSSelectorFromString("invalidate")
+                        if (display as AnyObject).responds(to: invalidateSelector) {
+                            _ = (display as AnyObject).perform(invalidateSelector)
+                        }
+                        return
+                    }
+
+                    guard let displayID else {
+                        MirageLogger.error(
+                            .host,
+                            "Failed to get displayID from CGVirtualDisplay for profile \(profile.label)"
+                        )
+                        let invalidateSelector = NSSelectorFromString("invalidate")
+                        if (display as AnyObject).responds(to: invalidateSelector) {
+                            _ = (display as AnyObject).perform(invalidateSelector)
+                        }
+                        return
+                    }
+
+                    let colorValidation = displayColorSpaceValidation(
+                        displayID: displayID,
+                        expectedColorSpace: colorSpace
+                    )
+                    if let matches = colorValidation.matches, !matches {
+                        sawColorSpaceMismatch = true
+                        let observed = colorValidation.observedName ?? "unknown"
+                        MirageLogger.error(
+                            .host,
+                            "Virtual display color profile mismatch (expected \(colorSpace.displayName), observed \(observed), profile \(profile.label), serial \(profile.serial))"
+                        )
+                        let invalidateSelector = NSSelectorFromString("invalidate")
+                        if (display as AnyObject).responds(to: invalidateSelector) {
+                            _ = (display as AnyObject).perform(invalidateSelector)
+                        }
+                        return
+                    }
+                    if colorValidation.matches == nil {
+                        let observed = colorValidation.observedName ?? "unknown"
+                        MirageLogger.host(
+                            "Virtual display color profile unresolved (expected \(colorSpace.displayName), observed \(observed), continuing)"
+                        )
+                    }
+
+                    MirageLogger.host("Created virtual display with ID: \(displayID)")
+
+                    configureDisplaySeparation(
+                        virtualDisplayID: displayID,
+                        originalMainDisplayID: originalMainDisplayID,
+                        requestedWidth: width,
+                        requestedHeight: height
+                    )
+
+                    creationResult = VirtualDisplayContext(
+                        display: display as AnyObject,
+                        displayID: displayID,
+                        resolution: CGSize(width: width, height: height),
+                        refreshRate: refreshRate,
+                        colorSpace: colorSpace,
+                        scaleFactor: resolvedScaleFactor(displayID: displayID, hiDPI: hiDPI)
+                    )
                 }
 
-                MirageLogger.host("Created virtual display with ID: \(displayID)")
+                if let creationResult {
+                    storePreferredDescriptorProfile(profile.profile, for: colorSpace)
+                    return creationResult
+                }
 
-                configureDisplaySeparation(
-                    virtualDisplayID: displayID,
-                    originalMainDisplayID: originalMainDisplayID,
-                    requestedWidth: width,
-                    requestedHeight: height
-                )
-
-                creationResult = VirtualDisplayContext(
-                    display: display as AnyObject,
-                    displayID: displayID,
-                    resolution: CGSize(width: width, height: height),
-                    refreshRate: refreshRate,
-                    colorSpace: colorSpace,
-                    scaleFactor: resolvedScaleFactor(displayID: displayID, hiDPI: hiDPI)
-                )
+                if let failedDisplayID,
+                   !teardownFailedDisplay(displayID: failedDisplayID, profileLabel: profile.label) {
+                    return nil
+                }
             }
 
-            if let creationResult {
-                storePreferredDescriptorProfile(profile.profile, for: colorSpace)
-                return creationResult
+            if sawColorSpaceMismatch, !serialRetryAttempted {
+                serialRetryAttempted = true
+                invalidatePersistentSerial(for: colorSpace)
+                MirageLogger.host("Retrying virtual display creation with rotated serial after color mismatch")
+                continue
             }
-
-            if let failedDisplayID, !teardownFailedDisplay(displayID: failedDisplayID, profileLabel: profile.label) {
-                return nil
-            }
+            break
         }
 
         if hiDPI {

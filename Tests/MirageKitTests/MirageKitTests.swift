@@ -5,6 +5,8 @@
 //  Created by Ethan Lipnik on 1/2/26.
 //
 
+import CoreMedia
+import CoreVideo
 @testable import MirageKit
 import Testing
 
@@ -269,6 +271,145 @@ struct MirageKitTests {
         #expect(decodedRequest.bitrate == 120_000_000)
         let scale = try #require(decodedRequest.streamScale)
         #expect(abs(Double(scale) - 0.75) < 0.0001)
+    }
+
+    @Test("Start stream request latency mode serialization")
+    func startStreamLatencyModeSerialization() throws {
+        let request = StartStreamMessage(
+            windowID: 9,
+            dataPort: 5000,
+            scaleFactor: 2.0,
+            pixelWidth: 3840,
+            pixelHeight: 2160,
+            displayWidth: 1920,
+            displayHeight: 1080,
+            keyFrameInterval: 1800,
+            captureQueueDepth: 6,
+            bitDepth: .tenBit,
+            bitrate: 150_000_000,
+            latencyMode: .smoothest,
+            allowRuntimeQualityAdjustment: true,
+            disableResolutionCap: true,
+            streamScale: 1.0,
+            audioConfiguration: .default,
+            maxRefreshRate: 60
+        )
+
+        let envelope = try ControlMessage(type: .startStream, content: request)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
+        #expect(decoded.latencyMode == .smoothest)
+        #expect(decoded.bitDepth == .tenBit)
+        #expect(decoded.bitrate == 150_000_000)
+    }
+
+    @Test("Select app request latency mode serialization")
+    func selectAppLatencyModeSerialization() throws {
+        let request = SelectAppMessage(
+            bundleIdentifier: "com.example.Editor",
+            dataPort: 6000,
+            scaleFactor: 2.0,
+            displayWidth: 1920,
+            displayHeight: 1200,
+            maxRefreshRate: 120,
+            keyFrameInterval: 1800,
+            captureQueueDepth: 4,
+            bitDepth: .tenBit,
+            bitrate: 200_000_000,
+            latencyMode: .lowestLatency,
+            allowRuntimeQualityAdjustment: false,
+            disableResolutionCap: false,
+            streamScale: 0.9,
+            audioConfiguration: .default
+        )
+
+        let envelope = try ControlMessage(type: .selectApp, content: request)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
+        #expect(decoded.latencyMode == .lowestLatency)
+        #expect(decoded.maxRefreshRate == 120)
+    }
+
+    @Test("Start desktop request latency mode serialization")
+    func startDesktopLatencyModeSerialization() throws {
+        let request = StartDesktopStreamMessage(
+            scaleFactor: 2.0,
+            displayWidth: 3008,
+            displayHeight: 1692,
+            keyFrameInterval: 1800,
+            captureQueueDepth: 5,
+            bitDepth: .tenBit,
+            mode: .mirrored,
+            bitrate: 500_000_000,
+            latencyMode: .auto,
+            allowRuntimeQualityAdjustment: false,
+            disableResolutionCap: true,
+            streamScale: 1.0,
+            audioConfiguration: .default,
+            dataPort: 63220,
+            maxRefreshRate: 60
+        )
+
+        let envelope = try ControlMessage(type: .startDesktopStream, content: request)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decoded.latencyMode == .auto)
+        #expect(decoded.displayWidth == 3008)
+        #expect(decoded.displayHeight == 1692)
+    }
+
+    @Test("Stream metrics validation payload serialization")
+    func streamMetricsValidationPayloadSerialization() throws {
+        let metrics = StreamMetricsMessage(
+            streamID: 1,
+            encodedFPS: 58.0,
+            idleEncodedFPS: 0.2,
+            droppedFrames: 12,
+            activeQuality: 0.74,
+            targetFrameRate: 60,
+            capturePixelFormat: "xf20",
+            captureColorPrimaries: kCVImageBufferColorPrimaries_P3_D65 as String,
+            encoderPixelFormat: "10-bit (P010)",
+            encoderProfile: "HEVC Main10 (4:2:0)",
+            encoderColorPrimaries: kCMFormatDescriptionColorPrimaries_P3_D65 as String,
+            encoderTransferFunction: kCMFormatDescriptionTransferFunction_sRGB as String,
+            encoderYCbCrMatrix: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String,
+            tenBitDisplayP3Validated: true
+        )
+
+        let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
+        #expect(decoded.capturePixelFormat == "xf20")
+        #expect(decoded.encoderProfile == "HEVC Main10 (4:2:0)")
+        #expect(decoded.tenBitDisplayP3Validated == true)
+    }
+
+    @Test("Stream metrics validation mismatch serialization")
+    func streamMetricsValidationMismatchSerialization() throws {
+        let metrics = StreamMetricsMessage(
+            streamID: 2,
+            encodedFPS: 42.0,
+            idleEncodedFPS: 0,
+            droppedFrames: 101,
+            activeQuality: 0.68,
+            targetFrameRate: 60,
+            capturePixelFormat: "420v",
+            captureColorPrimaries: kCVImageBufferColorPrimaries_ITU_R_709_2 as String,
+            encoderPixelFormat: "8-bit (NV12)",
+            encoderProfile: "HEVC Main (4:2:0)",
+            encoderColorPrimaries: kCMFormatDescriptionColorPrimaries_ITU_R_709_2 as String,
+            encoderTransferFunction: kCMFormatDescriptionTransferFunction_ITU_R_709_2 as String,
+            encoderYCbCrMatrix: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String,
+            tenBitDisplayP3Validated: false
+        )
+
+        let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
+        #expect(decoded.capturePixelFormat == "420v")
+        #expect(decoded.encoderPixelFormat == "8-bit (NV12)")
+        #expect(decoded.tenBitDisplayP3Validated == false)
     }
 
     @Test("MirageWindow equality")

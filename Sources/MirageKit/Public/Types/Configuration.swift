@@ -194,6 +194,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var bitDepth: MirageVideoBitDepth?
     public var captureQueueDepth: Int?
     public var bitrate: Int?
+    public var latencyMode: MirageStreamLatencyMode?
     public var allowRuntimeQualityAdjustment: Bool?
     public var disableResolutionCap: Bool
 
@@ -202,6 +203,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         bitDepth: MirageVideoBitDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
+        latencyMode: MirageStreamLatencyMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool = false
     ) {
@@ -209,6 +211,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.bitDepth = bitDepth
         self.captureQueueDepth = captureQueueDepth
         self.bitrate = bitrate
+        self.latencyMode = latencyMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap
     }
@@ -402,6 +405,17 @@ public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
         case .lowestLatency: "Lowest Latency"
         case .auto: "Auto"
         case .smoothest: "Smoothest"
+        }
+    }
+
+    public var detailDescription: String {
+        switch self {
+        case .smoothest:
+            "Targets 60Hz continuously, prioritizing visual cadence over interaction latency with deeper buffering and frame hold/repeat when needed."
+        case .lowestLatency:
+            "Minimizes capture to encode to decode to display latency at all times using minimal buffering and immediate latest-frame presentation, even when FPS drops."
+        case .auto:
+            "Uses Smoothest as baseline, then switches to latency-first only during qualifying text-entry key bursts; mouse input and keyboard shortcuts do not trigger."
         }
     }
 }

@@ -135,6 +135,51 @@ extension HEVCEncoder {
         performanceTracker.averageMs()
     }
 
+    func runtimeValidationSnapshot() -> RuntimeValidationSnapshot {
+        let profileName = activeProfileLevel.map(hevcProfileName(for:))
+        let colorPrimaries = sessionStringProperty(kVTCompressionPropertyKey_ColorPrimaries)
+        let transferFunction = sessionStringProperty(kVTCompressionPropertyKey_TransferFunction)
+        let yCbCrMatrix = sessionStringProperty(kVTCompressionPropertyKey_YCbCrMatrix)
+
+        let usesMain10Profile = {
+            guard let activeProfileLevel else { return false }
+            return CFEqual(activeProfileLevel, kVTProfileLevel_HEVC_Main10_AutoLevel) ||
+                CFEqual(activeProfileLevel, kVTProfileLevel_HEVC_Main42210_AutoLevel)
+        }()
+
+        let usesDisplayP3Tags = {
+            guard let colorPrimaries,
+                  let transferFunction,
+                  let yCbCrMatrix else { return false }
+            return colorPrimaries == (kCMFormatDescriptionColorPrimaries_P3_D65 as String) &&
+                transferFunction == (kCMFormatDescriptionTransferFunction_sRGB as String) &&
+                yCbCrMatrix == (kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String)
+        }()
+
+        let validated = activePixelFormat == .p010 && usesMain10Profile && usesDisplayP3Tags
+        return RuntimeValidationSnapshot(
+            pixelFormat: activePixelFormat,
+            profileName: profileName,
+            colorPrimaries: colorPrimaries,
+            transferFunction: transferFunction,
+            yCbCrMatrix: yCbCrMatrix,
+            tenBitDisplayP3Validated: validated
+        )
+    }
+
+    private func sessionStringProperty(_ key: CFString) -> String? {
+        guard let session = compressionSession else { return nil }
+        var value: CFTypeRef?
+        let status = VTSessionCopyProperty(
+            session,
+            key: key,
+            allocator: kCFAllocatorDefault,
+            valueOut: &value
+        )
+        guard status == noErr, let value else { return nil }
+        return value as? String
+    }
+
     func flush() {
         guard let session = compressionSession else { return }
 

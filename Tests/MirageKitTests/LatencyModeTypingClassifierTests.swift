@@ -82,4 +82,14 @@ struct LatencyModeTypingClassifierTests {
         )
         #expect(!MirageTypingBurstClassifier.shouldTrigger(for: event))
     }
+
+    @Test("Mouse events do not trigger burst classifier")
+    func mouseEventsDoNotTriggerClassifier() {
+        let event = MirageInputEvent.mouseMoved(
+            MirageMouseEvent(
+                location: .zero
+            )
+        )
+        #expect(!MirageTypingBurstClassifier.shouldTrigger(for: event))
+    }
 }

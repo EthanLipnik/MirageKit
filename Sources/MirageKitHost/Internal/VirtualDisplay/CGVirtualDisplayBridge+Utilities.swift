@@ -147,6 +147,25 @@ extension CGVirtualDisplayBridge {
         return displays.contains(displayID)
     }
 
+    static func displayColorSpaceValidation(
+        displayID: CGDirectDisplayID,
+        expectedColorSpace: MirageColorSpace
+    ) -> (matches: Bool?, observedName: String?) {
+        let colorSpace = CGDisplayCopyColorSpace(displayID)
+        guard let name = colorSpace.name else {
+            return (matches: nil, observedName: nil)
+        }
+
+        let observed = name as String
+        let expectedName: String = switch expectedColorSpace {
+        case .displayP3:
+            CGColorSpace.displayP3 as String
+        case .sRGB:
+            CGColorSpace.sRGB as String
+        }
+        return (matches: observed == expectedName, observedName: observed)
+    }
+
     /// Returns true if the display is a Mirage-created virtual display.
     static func isMirageDisplay(_ displayID: CGDirectDisplayID) -> Bool {
         CGDisplayVendorNumber(displayID) == mirageVendorID &&

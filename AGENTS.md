@@ -18,7 +18,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Backpressure: queue-based frame drops.
 - Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
 - Bitrate-derived quality mapping biases low-bitrate streams toward stronger compression, and queue-pressure quality drops accelerate for bitrate-constrained streams.
+- VideoToolbox data-rate limits use a window-budget byte cap (0.25s at 120Hz, 0.5s otherwise) so real-time bitrate caps do not overshoot during motion bursts.
 - Capture format follows stream bit depth: 10-bit uses P010 with Display P3, and 8-bit uses NV12 with sRGB.
+- Host capture enforces expected CVBuffer color attachments before encode (Display P3 or sRGB tag set) so encoder color metadata stays consistent with requested bit depth/color space.
 - Encode flow: limited in-flight frames; completion-driven next encode.
 - In-flight cap: 120Hz 2 frames; 60Hz 1 frame.
 - Keyframe payload: 4-byte parameter set length prefix; Annex B parameter sets; AVCC frame data.
@@ -28,6 +30,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Apple Pencil squeeze triggers a secondary click at the hover location when available, or the latest pointer location.
 - Custom mode: encoder overrides for bit depth, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
+- Default `MIRAGE_LOG` categories include `host`, `client`, `appState`, `stream`, `decoder`, and `renderer`; additional categories use explicit `MIRAGE_LOG` overrides.
 - Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
 - Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and bit-depth viability checks.
 - Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled).
@@ -39,6 +42,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
+- Virtual display creation validates the active display color profile name against the requested color space and retries once with rotated deterministic serial when a mismatch is detected.
 - Virtual display creation attempts Retina first and can fall back to 1x logical resolution when Retina activation does not validate; display snapshots carry active scale factors so bounds, capture, and input paths follow the active mode.
 - Desktop streaming uses a main-display capture fallback when shared virtual display activation is unavailable, preserving stream startup with physical-display bounds and without shared-display resize orchestration for that session.
 - Virtual display readiness validates HiDPI mode using paired logical and pixel dimensions from `CGDisplayCopyDisplayMode`, while desktop input bounds prefer cached logical display bounds.

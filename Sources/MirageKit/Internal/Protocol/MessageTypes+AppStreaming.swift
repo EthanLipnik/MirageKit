@@ -53,6 +53,8 @@ package struct SelectAppMessage: Codable {
     package var bitDepth: MirageVideoBitDepth?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
+    /// Client-requested latency preference for host buffering and render behavior.
+    package var latencyMode: MirageStreamLatencyMode?
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested override to bypass host/client resolution caps.
@@ -76,6 +78,7 @@ package struct SelectAppMessage: Codable {
         case captureQueueDepth
         case bitDepth
         case bitrate
+        case latencyMode
         case allowRuntimeQualityAdjustment
         case disableResolutionCap
         case streamScale
@@ -93,6 +96,7 @@ package struct SelectAppMessage: Codable {
         captureQueueDepth: Int? = nil,
         bitDepth: MirageVideoBitDepth? = nil,
         bitrate: Int? = nil,
+        latencyMode: MirageStreamLatencyMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
@@ -108,6 +112,7 @@ package struct SelectAppMessage: Codable {
         self.captureQueueDepth = captureQueueDepth
         self.bitDepth = bitDepth
         self.bitrate = bitrate
+        self.latencyMode = latencyMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale

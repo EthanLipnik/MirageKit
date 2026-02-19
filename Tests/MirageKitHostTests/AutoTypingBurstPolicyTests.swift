@@ -19,6 +19,7 @@ struct AutoTypingBurstPolicyTests {
         let context = makeContext(latencyMode: .auto)
         let baseline = await context.typingBurstSnapshot()
         #expect(!baseline.isActive)
+        #expect(baseline.maxInFlightFrames == 3)
 
         await context.noteTypingBurstActivity(at: 100.0, scheduleExpiry: false)
         let active = await context.typingBurstSnapshot()
@@ -41,7 +42,7 @@ struct AutoTypingBurstPolicyTests {
         await context.expireTypingBurstIfNeeded(at: 100.56)
         let restored = await context.typingBurstSnapshot()
         #expect(!restored.isActive)
-        #expect(restored.maxInFlightFrames == 1)
+        #expect(restored.maxInFlightFrames == baseline.maxInFlightFrames)
         #expect(abs(restored.qualityCeiling - baseline.qualityCeiling) < 0.0001)
         #expect(restored.activeQuality <= active.activeQuality + 0.0001)
     }
@@ -61,32 +62,16 @@ struct AutoTypingBurstPolicyTests {
         #expect(afterBurst.activeQuality <= duringBurst.activeQuality + 0.0001)
     }
 
-    @Test("Auto burst expiry restores in-flight to one then allows controlled rise")
-    func autoBurstExpiryUsesLatencyFirstInFlightTarget() async {
+    @Test("Auto burst expiry restores smooth baseline in-flight target")
+    func autoBurstExpiryRestoresSmoothBaselineTarget() async {
         let context = makeContext(latencyMode: .auto)
-        let budget = 1000.0 / 60.0
-
-        await context.updateInFlightLimitIfNeeded(
-            captureFPS: 60,
-            encodeFPS: 60,
-            averageEncodeMs: budget * 0.7,
-            pendingCount: 0,
-            at: 10.0
-        )
-        await context.updateInFlightLimitIfNeeded(
-            captureFPS: 60,
-            encodeFPS: 60,
-            averageEncodeMs: budget * 0.7,
-            pendingCount: 0,
-            at: 12.1
-        )
-        let raised = await context.typingBurstSnapshot()
-        #expect(raised.maxInFlightFrames == 2)
+        let baseline = await context.typingBurstSnapshot()
+        #expect(baseline.maxInFlightFrames == 3)
 
         await context.noteTypingBurstActivity(at: 20.0, scheduleExpiry: false)
         await context.expireTypingBurstIfNeeded(at: 20.36)
         let postBurst = await context.typingBurstSnapshot()
-        #expect(postBurst.maxInFlightFrames == 1)
+        #expect(postBurst.maxInFlightFrames == baseline.maxInFlightFrames)
     }
 
     @Test("Non-auto modes ignore typing burst activity")

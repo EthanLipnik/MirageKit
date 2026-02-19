@@ -70,6 +70,24 @@ struct KeyframeRecoveryPolicyTests {
         #expect(constrained.frameQuality <= 0.30)
     }
 
+    @Test("Quality mapper biases higher refresh streams toward stronger compression")
+    func highRefreshCompressionBias() {
+        let sixtyHz = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 25_000_000,
+            width: 2560,
+            height: 1440,
+            frameRate: 60
+        )
+        let oneTwentyHz = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 50_000_000,
+            width: 2560,
+            height: 1440,
+            frameRate: 120
+        )
+
+        #expect(oneTwentyHz.frameQuality < sixtyHz.frameQuality)
+    }
+
     @Test("Recovery requests enable P-frame FEC in loss mode")
     func fecEscalationPolicy() async throws {
         let context = makeContext()

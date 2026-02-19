@@ -57,6 +57,8 @@ package struct StartStreamMessage: Codable {
     package var bitDepth: MirageVideoBitDepth?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
+    /// Client-requested latency preference for host buffering and render behavior.
+    package var latencyMode: MirageStreamLatencyMode?
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested override to bypass host/client resolution caps.
@@ -85,6 +87,7 @@ package struct StartStreamMessage: Codable {
         case captureQueueDepth
         case bitDepth
         case bitrate
+        case latencyMode
         case allowRuntimeQualityAdjustment
         case disableResolutionCap
         case streamScale
@@ -104,6 +107,7 @@ package struct StartStreamMessage: Codable {
         captureQueueDepth: Int? = nil,
         bitDepth: MirageVideoBitDepth? = nil,
         bitrate: Int? = nil,
+        latencyMode: MirageStreamLatencyMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
@@ -121,6 +125,7 @@ package struct StartStreamMessage: Codable {
         self.captureQueueDepth = captureQueueDepth
         self.bitDepth = bitDepth
         self.bitrate = bitrate
+        self.latencyMode = latencyMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
@@ -200,6 +205,14 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let droppedFrames: UInt64
     package let activeQuality: Float
     package let targetFrameRate: Int
+    package let capturePixelFormat: String?
+    package let captureColorPrimaries: String?
+    package let encoderPixelFormat: String?
+    package let encoderProfile: String?
+    package let encoderColorPrimaries: String?
+    package let encoderTransferFunction: String?
+    package let encoderYCbCrMatrix: String?
+    package let tenBitDisplayP3Validated: Bool?
 
     package init(
         streamID: StreamID,
@@ -207,7 +220,15 @@ package struct StreamMetricsMessage: Codable, Sendable {
         idleEncodedFPS: Double,
         droppedFrames: UInt64,
         activeQuality: Float,
-        targetFrameRate: Int
+        targetFrameRate: Int,
+        capturePixelFormat: String? = nil,
+        captureColorPrimaries: String? = nil,
+        encoderPixelFormat: String? = nil,
+        encoderProfile: String? = nil,
+        encoderColorPrimaries: String? = nil,
+        encoderTransferFunction: String? = nil,
+        encoderYCbCrMatrix: String? = nil,
+        tenBitDisplayP3Validated: Bool? = nil
     ) {
         self.streamID = streamID
         self.encodedFPS = encodedFPS
@@ -215,5 +236,13 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.droppedFrames = droppedFrames
         self.activeQuality = activeQuality
         self.targetFrameRate = targetFrameRate
+        self.capturePixelFormat = capturePixelFormat
+        self.captureColorPrimaries = captureColorPrimaries
+        self.encoderPixelFormat = encoderPixelFormat
+        self.encoderProfile = encoderProfile
+        self.encoderColorPrimaries = encoderColorPrimaries
+        self.encoderTransferFunction = encoderTransferFunction
+        self.encoderYCbCrMatrix = encoderYCbCrMatrix
+        self.tenBitDisplayP3Validated = tenBitDisplayP3Validated
     }
 }

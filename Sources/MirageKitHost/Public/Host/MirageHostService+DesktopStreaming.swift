@@ -26,6 +26,7 @@ extension MirageHostService {
         bitDepth: MirageVideoBitDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?,
+        latencyMode: MirageStreamLatencyMode = .auto,
         allowRuntimeQualityAdjustment: Bool?,
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
@@ -104,6 +105,7 @@ extension MirageHostService {
         if disableResolutionCap {
             MirageLogger.host("Desktop stream resolution cap disabled")
         }
+        MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
 
         if clampedStreamScale < 1.0 {
             MirageLogger.host(
@@ -248,7 +250,7 @@ extension MirageHostService {
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
-            latencyMode: .auto
+            latencyMode: latencyMode
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         logDesktopStartStep("stream context created (\(streamID))")

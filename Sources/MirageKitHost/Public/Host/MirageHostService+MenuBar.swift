@@ -111,6 +111,8 @@ extension MirageHostService {
                 .host(
                     "Desktop stream frame rate: \(targetFrameRate)fps (client max=\(clientMaxRefreshRate)Hz)"
                 )
+            let latencyMode = request.latencyMode ?? .auto
+            MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
             let audioConfiguration = request.audioConfiguration ?? .default
 
             try await startDesktopStream(
@@ -121,6 +123,7 @@ extension MirageHostService {
                 bitDepth: request.bitDepth,
                 captureQueueDepth: request.captureQueueDepth,
                 bitrate: request.bitrate,
+                latencyMode: latencyMode,
                 allowRuntimeQualityAdjustment: request.allowRuntimeQualityAdjustment,
                 disableResolutionCap: request.disableResolutionCap ?? false,
                 streamScale: request.streamScale,

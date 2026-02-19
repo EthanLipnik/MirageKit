@@ -26,6 +26,7 @@ public extension MirageHostService {
         bitDepth: MirageVideoBitDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
+        latencyMode: MirageStreamLatencyMode = .auto,
         allowRuntimeQualityAdjustment: Bool? = nil,
         disableResolutionCap: Bool = false,
         audioConfiguration: MirageAudioConfiguration? = nil
@@ -96,11 +97,12 @@ public extension MirageHostService {
             mediaSecurityContext: mediaSecurityByClientID[client.id],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             disableResolutionCap: disableResolutionCap,
-            latencyMode: .auto
+            latencyMode: latencyMode
         )
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
         }
+        MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
         if allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
         }

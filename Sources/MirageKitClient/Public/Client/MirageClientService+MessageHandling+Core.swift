@@ -366,7 +366,15 @@ extension MirageClientService {
                 idleEncodedFPS: metrics.idleEncodedFPS,
                 droppedFrames: metrics.droppedFrames,
                 activeQuality: Double(metrics.activeQuality),
-                targetFrameRate: metrics.targetFrameRate
+                targetFrameRate: metrics.targetFrameRate,
+                capturePixelFormat: metrics.capturePixelFormat,
+                captureColorPrimaries: metrics.captureColorPrimaries,
+                encoderPixelFormat: metrics.encoderPixelFormat,
+                encoderProfile: metrics.encoderProfile,
+                encoderColorPrimaries: metrics.encoderColorPrimaries,
+                encoderTransferFunction: metrics.encoderTransferFunction,
+                encoderYCbCrMatrix: metrics.encoderYCbCrMatrix,
+                tenBitDisplayP3Validated: metrics.tenBitDisplayP3Validated
             )
             updateAdaptiveFallbackPressure(
                 streamID: metrics.streamID,

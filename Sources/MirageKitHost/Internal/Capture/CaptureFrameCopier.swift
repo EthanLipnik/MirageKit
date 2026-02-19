@@ -150,7 +150,10 @@ final class CaptureFrameCopier: @unchecked Sendable {
                 let durationMs = (CFAbsoluteTimeGetCurrent() - copyStartTime) * 1000
                 self.recordCopyCompletion(durationMs: durationMs, success: didCopy, usedMetal: false)
                 self.releaseCopySlot()
-                if didCopy { completion(.copied(context.destination)) } else {
+                if didCopy {
+                    self.copyBufferAttachments(from: context.source, to: context.destination)
+                    completion(.copied(context.destination))
+                } else {
                     completion(.unsupported)
                 }
             }
@@ -285,6 +288,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
             releaseCopySlot()
             if buffer.status == .completed {
                 recordCopyCompletion(durationMs: durationMs, success: true, usedMetal: true)
+                copyBufferAttachments(from: source, to: destination)
                 completion(.copied(destination))
             } else {
                 recordCopyCompletion(durationMs: durationMs, success: false, usedMetal: true)
@@ -419,6 +423,15 @@ final class CaptureFrameCopier: @unchecked Sendable {
         }
 
         return true
+    }
+
+    private func copyBufferAttachments(from source: CVBuffer, to destination: CVBuffer) {
+        if let propagated = CVBufferCopyAttachments(source, .shouldPropagate) {
+            CVBufferSetAttachments(destination, propagated, .shouldPropagate)
+        }
+        if let nonPropagated = CVBufferCopyAttachments(source, .shouldNotPropagate) {
+            CVBufferSetAttachments(destination, nonPropagated, .shouldNotPropagate)
+        }
     }
 
     private func ensureMetal() -> Bool {

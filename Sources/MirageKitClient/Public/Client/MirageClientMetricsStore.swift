@@ -22,6 +22,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostDroppedFrames: UInt64
     public var hostActiveQuality: Double
     public var hostTargetFrameRate: Int
+    public var hostCapturePixelFormat: String?
+    public var hostCaptureColorPrimaries: String?
+    public var hostEncoderPixelFormat: String?
+    public var hostEncoderProfile: String?
+    public var hostEncoderColorPrimaries: String?
+    public var hostEncoderTransferFunction: String?
+    public var hostEncoderYCbCrMatrix: String?
+    public var hostTenBitDisplayP3Validated: Bool?
     public var hasHostMetrics: Bool
 
     public init(
@@ -37,6 +45,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostDroppedFrames: UInt64 = 0,
         hostActiveQuality: Double = 0,
         hostTargetFrameRate: Int = 0,
+        hostCapturePixelFormat: String? = nil,
+        hostCaptureColorPrimaries: String? = nil,
+        hostEncoderPixelFormat: String? = nil,
+        hostEncoderProfile: String? = nil,
+        hostEncoderColorPrimaries: String? = nil,
+        hostEncoderTransferFunction: String? = nil,
+        hostEncoderYCbCrMatrix: String? = nil,
+        hostTenBitDisplayP3Validated: Bool? = nil,
         hasHostMetrics: Bool = false
     ) {
         self.decodedFPS = decodedFPS
@@ -51,6 +67,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostDroppedFrames = hostDroppedFrames
         self.hostActiveQuality = hostActiveQuality
         self.hostTargetFrameRate = hostTargetFrameRate
+        self.hostCapturePixelFormat = hostCapturePixelFormat
+        self.hostCaptureColorPrimaries = hostCaptureColorPrimaries
+        self.hostEncoderPixelFormat = hostEncoderPixelFormat
+        self.hostEncoderProfile = hostEncoderProfile
+        self.hostEncoderColorPrimaries = hostEncoderColorPrimaries
+        self.hostEncoderTransferFunction = hostEncoderTransferFunction
+        self.hostEncoderYCbCrMatrix = hostEncoderYCbCrMatrix
+        self.hostTenBitDisplayP3Validated = hostTenBitDisplayP3Validated
         self.hasHostMetrics = hasHostMetrics
     }
 }
@@ -90,7 +114,15 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         idleEncodedFPS: Double,
         droppedFrames: UInt64,
         activeQuality: Double,
-        targetFrameRate: Int
+        targetFrameRate: Int,
+        capturePixelFormat: String?,
+        captureColorPrimaries: String?,
+        encoderPixelFormat: String?,
+        encoderProfile: String?,
+        encoderColorPrimaries: String?,
+        encoderTransferFunction: String?,
+        encoderYCbCrMatrix: String?,
+        tenBitDisplayP3Validated: Bool?
     ) {
         lock.lock()
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
@@ -99,6 +131,14 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostDroppedFrames = droppedFrames
         snapshot.hostActiveQuality = activeQuality
         snapshot.hostTargetFrameRate = targetFrameRate
+        snapshot.hostCapturePixelFormat = capturePixelFormat
+        snapshot.hostCaptureColorPrimaries = captureColorPrimaries
+        snapshot.hostEncoderPixelFormat = encoderPixelFormat
+        snapshot.hostEncoderProfile = encoderProfile
+        snapshot.hostEncoderColorPrimaries = encoderColorPrimaries
+        snapshot.hostEncoderTransferFunction = encoderTransferFunction
+        snapshot.hostEncoderYCbCrMatrix = encoderYCbCrMatrix
+        snapshot.hostTenBitDisplayP3Validated = tenBitDisplayP3Validated
         snapshot.hasHostMetrics = true
         metricsByStream[streamID] = snapshot
         lock.unlock()

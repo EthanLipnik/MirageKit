@@ -144,8 +144,8 @@ public struct MirageLogger: Sendable {
     /// Parse MIRAGE_LOG environment variable
     private static func parseEnvironment() -> Set<LogCategory> {
         guard let envValue = ProcessInfo.processInfo.environment["MIRAGE_LOG"] else {
-            // Default: essential logs only
-            return [.host, .client, .appState]
+            // Default: essential connection + client render/decode lifecycle logs
+            return [.host, .client, .appState, .stream, .decoder, .renderer]
         }
 
         let trimmed = envValue.trimmingCharacters(in: .whitespaces).lowercased()

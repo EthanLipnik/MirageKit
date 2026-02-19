@@ -223,7 +223,6 @@ public class MirageMetalView: NSView {
         metalLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
 
         renderLoop = MirageRenderLoop(delegate: self)
-        renderLoop.updateLatencyMode(.lowestLatency)
 
         applyRenderPreferences()
         startObservingPreferences()
@@ -424,6 +423,7 @@ public class MirageMetalView: NSView {
         maxRenderFPS = target
         metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
         renderLoop.updateTargetFPS(target)
+        renderLoop.updateLatencyMode(MirageRenderPreferences.latencyMode())
         renderLoop.updateAllowDegradationRecovery(MirageRenderPreferences.allowAdaptiveFallback())
         requestDraw()
     }
