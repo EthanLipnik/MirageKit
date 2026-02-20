@@ -125,6 +125,10 @@ extension MirageHostService {
                     "\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px"
             )
         }
+        let capturePressureProfile = resolvedDesktopCapturePressureProfile()
+        MirageLogger.host(
+            "Desktop capture pressure profile: \(capturePressureProfile.rawValue)"
+        )
 
         // Acquire virtual display at the resolved streaming resolution.
         // The 5K cap is applied at the encoding layer, not the virtual display.
@@ -263,6 +267,7 @@ extension MirageHostService {
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
+            capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
@@ -449,6 +454,16 @@ extension MirageHostService {
         await updateLightsOutState()
 
         MirageLogger.host("Desktop stream stopped")
+    }
+
+    func resolvedDesktopCapturePressureProfile() -> WindowCaptureEngine.CapturePressureProfile {
+        #if DEBUG
+        let environmentValue = ProcessInfo.processInfo.environment["MIRAGE_CAPTURE_PRESSURE_PROFILE"]
+        if let parsed = WindowCaptureEngine.CapturePressureProfile.parse(environmentValue) {
+            return parsed
+        }
+        #endif
+        return .baseline
     }
 
     /// Stop all active streams for desktop mode (mutual exclusivity)

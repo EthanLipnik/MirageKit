@@ -164,6 +164,7 @@ extension StreamContext {
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
         let newCaptureEngine = WindowCaptureEngine(
             configuration: captureConfig,
+            capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             captureFrameRate: captureFrameRate
         )

@@ -33,6 +33,7 @@ extension WindowCaptureEngine {
     )
         async throws {
         guard !isCapturing else { throw MirageError.protocolError("Already capturing") }
+        cancelScheduledCaptureRestart(reason: "new_capture_start")
         restartGeneration &+= 1
 
         capturedFrameHandler = onFrame
@@ -139,24 +140,35 @@ extension WindowCaptureEngine {
 
         // Create output handler with windowID for fallback capture during SCK pauses
         let captureRate = effectiveCaptureRate()
+        let stallPolicy = resolvedStallPolicy(windowID: window.windowID, frameRate: captureRate)
+        activeStallPolicy = stallPolicy
+        MirageLogger
+            .capture(
+                "event=stall_policy mode=window softMs=\(Int((stallPolicy.softStallThreshold * 1000).rounded())) " +
+                    "hardMs=\(Int((stallPolicy.hardRestartThreshold * 1000).rounded())) " +
+                    "debounceMs=\(Int((stallPolicy.restartDebounce * 1000).rounded())) " +
+                    "profile=\(capturePressureProfile.rawValue)"
+            )
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
             onAudio: onAudio,
             onKeyframeRequest: { [weak self] reason in
                 self?.enqueueKeyframeRequest(reason)
             },
-            onCaptureStall: { [weak self] reason in
-                self?.enqueueCaptureRestart(reason)
+            onCaptureStall: { [weak self] signal in
+                self?.enqueueCaptureStallSignal(signal)
             },
             shouldDropFrame: admissionDropper,
             windowID: window.windowID,
             usesDetailedMetadata: true,
             tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: captureRate),
-            stallThreshold: stallThreshold(for: captureRate),
+            softStallThreshold: stallPolicy.softStallThreshold,
+            hardRestartThreshold: stallPolicy.hardRestartThreshold,
             expectedFrameRate: Double(captureRate),
             targetFrameRate: currentFrameRate,
-            poolMinimumBufferCount: bufferPoolMinimumCount
+            poolMinimumBufferCount: bufferPoolMinimumCount,
+            capturePressureProfile: capturePressureProfile
         )
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
@@ -175,8 +187,10 @@ extension WindowCaptureEngine {
         }
 
         // Start capturing
+        MirageLogger.capture("event=stream_lifecycle phase=start_attempt mode=window")
         try await stream.startCapture()
         isCapturing = true
+        MirageLogger.capture("event=stream_lifecycle phase=start_success mode=window")
     }
 
     /// Stop capturing
@@ -186,6 +200,7 @@ extension WindowCaptureEngine {
 
     private func stopCapture(clearSessionState: Bool) async {
         if clearSessionState { restartGeneration &+= 1 }
+        cancelScheduledCaptureRestart(reason: clearSessionState ? "capture_stop" : "capture_restart")
         guard isCapturing else {
             if clearSessionState {
                 stream = nil
@@ -206,7 +221,9 @@ extension WindowCaptureEngine {
         isCapturing = false
 
         do {
+            MirageLogger.capture("event=stream_lifecycle phase=stop_attempt mode=\(captureMode == .display ? "display" : "window")")
             try await stream?.stopCapture()
+            MirageLogger.capture("event=stream_lifecycle phase=stop_success mode=\(captureMode == .display ? "display" : "window")")
         } catch {
             MirageLogger.error(.capture, "Error stopping capture: \(error)")
         }
@@ -227,6 +244,7 @@ extension WindowCaptureEngine {
     }
 
     func restartCapture(reason: String) async {
+        cancelScheduledCaptureRestart(reason: "restart_begin")
         guard !isRestarting else { return }
         guard let config = captureSessionConfig, let mode = captureMode else { return }
         guard isCapturing else { return }
@@ -282,20 +300,33 @@ extension WindowCaptureEngine {
         )
         MirageLogger
             .capture(
-                "Restarting capture (\(reason)); streak=\(activeRestartStreak), " +
-                    "escalate=\(shouldEscalateRecovery), nextCooldown=\(Int((nextCooldown * 1000).rounded()))ms"
+                "event=restart_executed reason=\(reason) streak=\(activeRestartStreak) " +
+                    "escalate=\(shouldEscalateRecovery) nextCooldownMs=\(Int((nextCooldown * 1000).rounded()))"
             )
+
+        if mode == .display,
+           let streamOutput {
+            let cancellationGrace = activeStallPolicy.cancellationGrace
+            if streamOutput.isRecentlyRecovered(within: cancellationGrace) {
+                let graceMs = Int((cancellationGrace * 1000).rounded())
+                MirageLogger
+                    .capture(
+                        "event=restart_canceled reason=frames_resumed_before_stop graceMs=\(graceMs) source=\(reason)"
+                    )
+                return
+            }
+        }
 
         await stopCapture(clearSessionState: false)
         guard restartGeneration == self.restartGeneration else {
-            MirageLogger.capture("Capture restart canceled (stream shutdown in progress)")
+            MirageLogger.capture("event=restart_canceled reason=stream_shutdown source=\(reason)")
             return
         }
 
         let resolvedConfig = await resolveCaptureTargetsForRestart(config: config, mode: mode)
         captureSessionConfig = resolvedConfig
         guard restartGeneration == self.restartGeneration else {
-            MirageLogger.capture("Capture restart canceled (stream shutdown in progress)")
+            MirageLogger.capture("event=restart_canceled reason=stream_shutdown source=\(reason)")
             return
         }
 
@@ -331,6 +362,10 @@ extension WindowCaptureEngine {
                 restartStreak: activeRestartStreak,
                 shouldEscalateRecovery: shouldEscalateRecovery
             )
+            MirageLogger
+                .capture(
+                    "event=restart_complete reason=\(reason) streak=\(activeRestartStreak) mode=\(mode == .display ? "display" : "window")"
+                )
         } catch {
             MirageLogger.error(.capture, "Capture restart failed: \(error)")
         }
@@ -356,6 +391,7 @@ extension WindowCaptureEngine {
     )
         async throws {
         guard !isCapturing else { throw MirageError.protocolError("Already capturing") }
+        cancelScheduledCaptureRestart(reason: "new_capture_start")
         restartGeneration &+= 1
 
         capturedFrameHandler = onFrame
@@ -468,23 +504,34 @@ extension WindowCaptureEngine {
 
         // Create output handler
         let captureRate = effectiveCaptureRate()
+        let stallPolicy = resolvedStallPolicy(windowID: 0, frameRate: captureRate)
+        activeStallPolicy = stallPolicy
+        MirageLogger
+            .capture(
+                "event=stall_policy mode=display softMs=\(Int((stallPolicy.softStallThreshold * 1000).rounded())) " +
+                    "hardMs=\(Int((stallPolicy.hardRestartThreshold * 1000).rounded())) " +
+                    "debounceMs=\(Int((stallPolicy.restartDebounce * 1000).rounded())) " +
+                    "profile=\(capturePressureProfile.rawValue)"
+            )
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
             onAudio: onAudio,
             onKeyframeRequest: { [weak self] reason in
                 self?.enqueueKeyframeRequest(reason)
             },
-            onCaptureStall: { [weak self] reason in
-                self?.enqueueCaptureRestart(reason)
+            onCaptureStall: { [weak self] signal in
+                self?.enqueueCaptureStallSignal(signal)
             },
             shouldDropFrame: admissionDropper,
             usesDetailedMetadata: false,
             tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: captureRate),
-            stallThreshold: stallThreshold(for: captureRate),
+            softStallThreshold: stallPolicy.softStallThreshold,
+            hardRestartThreshold: stallPolicy.hardRestartThreshold,
             expectedFrameRate: Double(captureRate),
             targetFrameRate: currentFrameRate,
-            poolMinimumBufferCount: bufferPoolMinimumCount
+            poolMinimumBufferCount: bufferPoolMinimumCount,
+            capturePressureProfile: capturePressureProfile
         )
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
@@ -503,8 +550,10 @@ extension WindowCaptureEngine {
         }
 
         // Start capturing
+        MirageLogger.capture("event=stream_lifecycle phase=start_attempt mode=display")
         try await stream.startCapture()
         isCapturing = true
+        MirageLogger.capture("event=stream_lifecycle phase=start_success mode=display")
 
         MirageLogger.capture("Display capture started for display \(display.displayID)")
     }

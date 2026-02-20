@@ -19,20 +19,35 @@ import AppKit
 import ScreenCaptureKit
 
 extension WindowCaptureEngine {
-    var captureQueueDepth: Int {
-        if let override = configuration.captureQueueDepth, override > 0 {
-            return min(max(1, override), 8)
+    nonisolated static let highResolutionPixelThreshold = 3_840 * 2_160
+
+    nonisolated static func isHighResolutionCapture(width: Int, height: Int) -> Bool {
+        let safeWidth = max(1, width)
+        let safeHeight = max(1, height)
+        return safeWidth * safeHeight >= highResolutionPixelThreshold
+    }
+
+    nonisolated static func resolveCaptureQueueDepth(
+        width: Int,
+        height: Int,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode,
+        profile: CapturePressureProfile,
+        overrideDepth: Int?
+    ) -> Int {
+        if let overrideDepth, overrideDepth > 0 {
+            return min(max(1, overrideDepth), 8)
         }
 
-        let width = max(1, currentWidth)
-        let height = max(1, currentHeight)
-        let pixelCount = max(1, width * height)
+        let safeWidth = max(1, width)
+        let safeHeight = max(1, height)
+        let pixelCount = max(1, safeWidth * safeHeight)
         let basePixels = 1920 * 1080
         let extraPixels = max(0, pixelCount - basePixels)
         let extraDepth = extraPixels / 2_500_000
 
         var depth = 3 + extraDepth
-        if currentFrameRate >= 120 { depth += 1 }
+        if frameRate >= 120 { depth += 1 }
 
         switch latencyMode {
         case .lowestLatency:
@@ -43,26 +58,131 @@ extension WindowCaptureEngine {
             depth += 1
         }
 
-        let minDepth: Int = switch latencyMode {
-        case .lowestLatency: 2
-        case .auto: 4
-        case .smoothest: 4
+        let tunedHighResLowestLatency = profile == .tuned &&
+            latencyMode == .lowestLatency &&
+            isHighResolutionCapture(width: safeWidth, height: safeHeight)
+        if tunedHighResLowestLatency {
+            depth -= frameRate >= 120 ? 2 : 1
         }
 
+        let minDepth: Int = {
+            switch latencyMode {
+            case .lowestLatency:
+                if profile == .tuned,
+                   isHighResolutionCapture(width: safeWidth, height: safeHeight) {
+                    return 1
+                }
+                return 2
+            case .auto:
+                return 4
+            case .smoothest:
+                return 4
+            }
+        }()
+
         depth = max(depth, minDepth)
+
+        if tunedHighResLowestLatency {
+            let tunedCap = frameRate >= 120 ? 7 : 6
+            return min(max(1, depth), tunedCap)
+        }
+
         return min(max(1, depth), 8)
     }
 
-    var bufferPoolMinimumCount: Int {
-        let extra: Int = switch latencyMode {
+    nonisolated static func resolveBufferPoolMinimumCount(
+        queueDepth: Int,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode,
+        profile: CapturePressureProfile,
+        highResolutionCapture: Bool
+    ) -> Int {
+        var extra: Int = switch latencyMode {
         case .lowestLatency:
-            currentFrameRate >= 120 ? 3 : 2
+            frameRate >= 120 ? 3 : 2
         case .auto:
-            currentFrameRate >= 120 ? 6 : 5
+            frameRate >= 120 ? 6 : 5
         case .smoothest:
-            currentFrameRate >= 120 ? 6 : 5
+            frameRate >= 120 ? 6 : 5
         }
-        return max(6, captureQueueDepth + extra)
+
+        var minimum = 6
+        if profile == .tuned,
+           latencyMode == .lowestLatency,
+           highResolutionCapture {
+            if frameRate >= 120 {
+                extra = max(1, extra - 2)
+                minimum = 5
+            } else {
+                extra = max(1, extra - 1)
+                minimum = 4
+            }
+        }
+
+        return max(minimum, queueDepth + extra)
+    }
+
+    nonisolated static func resolveStallPolicy(
+        windowID: CGWindowID,
+        frameRate: Int,
+        configuredSoftStallLimit: CFAbsoluteTime,
+        displayStallThreshold: CFAbsoluteTime = 1.5,
+        windowStallThreshold: CFAbsoluteTime = 8.0
+    ) -> CaptureStallPolicy {
+        let soft = CaptureStreamOutput.resolvedStallLimit(
+            windowID: windowID,
+            configuredStallLimit: configuredSoftStallLimit,
+            displayStallThreshold: displayStallThreshold,
+            windowStallThreshold: windowStallThreshold
+        )
+
+        if windowID == 0 {
+            let hard = min(max(soft * 2.0, soft + 1.5), 8.0)
+            let debounce: CFAbsoluteTime = frameRate >= 120 ? 0.45 : 0.35
+            return CaptureStallPolicy(
+                softStallThreshold: soft,
+                hardRestartThreshold: hard,
+                restartDebounce: debounce,
+                cancellationGrace: 0.30
+            )
+        }
+
+        return CaptureStallPolicy(
+            softStallThreshold: soft,
+            hardRestartThreshold: soft,
+            restartDebounce: 0.05,
+            cancellationGrace: 0.20
+        )
+    }
+
+    func resolvedStallPolicy(windowID: CGWindowID, frameRate: Int) -> CaptureStallPolicy {
+        Self.resolveStallPolicy(
+            windowID: windowID,
+            frameRate: frameRate,
+            configuredSoftStallLimit: stallThreshold(for: frameRate)
+        )
+    }
+
+    var captureQueueDepth: Int {
+        Self.resolveCaptureQueueDepth(
+            width: currentWidth,
+            height: currentHeight,
+            frameRate: currentFrameRate,
+            latencyMode: latencyMode,
+            profile: capturePressureProfile,
+            overrideDepth: configuration.captureQueueDepth
+        )
+    }
+
+    var bufferPoolMinimumCount: Int {
+        let highResolutionCapture = Self.isHighResolutionCapture(width: currentWidth, height: currentHeight)
+        return Self.resolveBufferPoolMinimumCount(
+            queueDepth: captureQueueDepth,
+            frameRate: currentFrameRate,
+            latencyMode: latencyMode,
+            profile: capturePressureProfile,
+            highResolutionCapture: highResolutionCapture
+        )
     }
 
     func updateDisplayRefreshRate(for displayID: CGDirectDisplayID) {

@@ -189,10 +189,13 @@ extension WindowCaptureEngine {
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         let captureRate = effectiveCaptureRate()
+        let stallPolicy = resolvedStallPolicy(windowID: 0, frameRate: captureRate)
+        activeStallPolicy = stallPolicy
         streamOutput?.updateExpectations(
             frameRate: captureRate,
             gapThreshold: frameGapThreshold(for: captureRate),
-            stallThreshold: stallThreshold(for: captureRate),
+            softStallThreshold: stallPolicy.softStallThreshold,
+            hardRestartThreshold: stallPolicy.hardRestartThreshold,
             targetFrameRate: currentFrameRate
         )
 
@@ -254,10 +257,14 @@ extension WindowCaptureEngine {
         try await stream.updateConfiguration(streamConfig)
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
+        let resolvedWindowID = captureSessionConfig?.windowID ?? 0
+        let stallPolicy = resolvedStallPolicy(windowID: resolvedWindowID, frameRate: captureRate)
+        activeStallPolicy = stallPolicy
         streamOutput?.updateExpectations(
             frameRate: captureRate,
             gapThreshold: frameGapThreshold(for: captureRate),
-            stallThreshold: stallThreshold(for: captureRate),
+            softStallThreshold: stallPolicy.softStallThreshold,
+            hardRestartThreshold: stallPolicy.hardRestartThreshold,
             targetFrameRate: currentFrameRate
         )
         MirageLogger.capture("Frame rate updated to \(fps) fps")
@@ -288,10 +295,14 @@ extension WindowCaptureEngine {
         try await stream.updateConfiguration(streamConfig)
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
+        let resolvedWindowID = captureSessionConfig?.windowID ?? 0
+        let stallPolicy = resolvedStallPolicy(windowID: resolvedWindowID, frameRate: captureRate)
+        activeStallPolicy = stallPolicy
         streamOutput?.updateExpectations(
             frameRate: captureRate,
             gapThreshold: frameGapThreshold(for: captureRate),
-            stallThreshold: stallThreshold(for: captureRate),
+            softStallThreshold: stallPolicy.softStallThreshold,
+            hardRestartThreshold: stallPolicy.hardRestartThreshold,
             targetFrameRate: currentFrameRate
         )
         MirageLogger

@@ -258,6 +258,8 @@ actor StreamContext {
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
+    /// Capture pressure profile for SCK buffering/copy behavior.
+    let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
 
     init(
         streamID: StreamID,
@@ -270,6 +272,7 @@ actor StreamContext {
         runtimeQualityAdjustmentEnabled: Bool = true,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
         disableResolutionCap: Bool = false,
+        capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .auto
     ) {
         self.streamID = streamID
@@ -289,6 +292,7 @@ actor StreamContext {
         self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         self.lowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap
+        self.capturePressureProfile = capturePressureProfile
         activePixelFormat = encoderConfig.pixelFormat
         let prefersSmoothness = latencyMode == .smoothest || latencyMode == .auto
         let latencySensitive = latencyMode == .lowestLatency

@@ -135,6 +135,7 @@ extension StreamContext {
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let captureEngine = WindowCaptureEngine(
             configuration: captureConfig,
+            capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             captureFrameRate: captureFrameRate,
             usesDisplayRefreshCadence: false
@@ -288,6 +289,7 @@ extension StreamContext {
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let captureEngine = WindowCaptureEngine(
             configuration: captureConfig,
+            capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             captureFrameRate: captureFrameRate,
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
@@ -439,6 +441,7 @@ extension StreamContext {
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let captureEngine = WindowCaptureEngine(
             configuration: captureConfig,
+            capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             captureFrameRate: captureFrameRate,
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(display.displayID)

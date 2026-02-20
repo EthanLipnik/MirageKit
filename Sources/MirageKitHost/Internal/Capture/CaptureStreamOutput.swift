@@ -23,13 +23,28 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         case fallbackResume
     }
 
+    enum StallStage: String, Sendable {
+        case soft
+        case hard
+    }
+
+    struct StallSignal: Sendable {
+        let stage: StallStage
+        let message: String
+        let gapMs: String
+        let softThresholdMs: String
+        let hardThresholdMs: String
+        let restartEligible: Bool
+    }
+
     private let onFrame: @Sendable (CapturedFrame) -> Void
     private let onAudio: (@Sendable (CapturedAudioBuffer) -> Void)?
     private let onKeyframeRequest: @Sendable (KeyframeRequestReason) -> Void
-    private let onCaptureStall: @Sendable (String) -> Void
+    private let onCaptureStall: @Sendable (StallSignal) -> Void
     private let shouldDropFrame: (@Sendable () -> Bool)?
     private let usesDetailedMetadata: Bool
     private let tracksFrameStatus: Bool
+    private let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     private var frameCount: UInt64 = 0
     private var skippedIdleFrames: UInt64 = 0
 
@@ -50,7 +65,8 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var lastCallbackLogTime: CFAbsoluteTime = 0
     private var audioBufferCount: UInt64 = 0
     private var lastAudioLogTime: CFAbsoluteTime = 0
-    private var stallSignaled: Bool = false
+    private var softStallSignaled: Bool = false
+    private var hardStallSignaled: Bool = false
     private var lastStallTime: CFAbsoluteTime = 0
     private var lastContentRect: CGRect = .zero
     private var statusBurstDeadline: CFAbsoluteTime = 0
@@ -63,9 +79,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var lastDeliveredFrameTime: CFAbsoluteTime = 0
     private var lastCompleteFrameTime: CFAbsoluteTime = 0
     private var frameGapThreshold: CFAbsoluteTime
-    private var stallThreshold: CFAbsoluteTime
+    private var softStallThreshold: CFAbsoluteTime
+    private var hardRestartThreshold: CFAbsoluteTime
     private var expectedFrameRate: Double
     private let expectationLock = NSLock()
+    private let deliveryStateLock = NSLock()
     private var rawFrameWindowCount: UInt64 = 0
     private var rawFrameWindowStartTime: CFAbsoluteTime = 0
 
@@ -100,16 +118,18 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onAudio: (@Sendable (CapturedAudioBuffer) -> Void)? = nil,
         onKeyframeRequest: @escaping @Sendable (KeyframeRequestReason) -> Void,
-        onCaptureStall: @escaping @Sendable (String) -> Void = { _ in },
+        onCaptureStall: @escaping @Sendable (StallSignal) -> Void = { _ in },
         shouldDropFrame: (@Sendable () -> Bool)? = nil,
         windowID: CGWindowID = 0,
         usesDetailedMetadata: Bool = false,
         tracksFrameStatus: Bool = true,
         frameGapThreshold: CFAbsoluteTime = 0.100,
-        stallThreshold: CFAbsoluteTime = 1.0,
+        softStallThreshold: CFAbsoluteTime = 1.0,
+        hardRestartThreshold: CFAbsoluteTime? = nil,
         expectedFrameRate: Double = 0,
         targetFrameRate _: Int = 0,
-        poolMinimumBufferCount: Int = 6
+        poolMinimumBufferCount: Int = 6,
+        capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
     ) {
         self.onFrame = onFrame
         self.onAudio = onAudio
@@ -120,9 +140,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         self.usesDetailedMetadata = usesDetailedMetadata
         self.tracksFrameStatus = tracksFrameStatus
         self.frameGapThreshold = frameGapThreshold
-        self.stallThreshold = stallThreshold
+        self.softStallThreshold = softStallThreshold
+        self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
         self.expectedFrameRate = expectedFrameRate
         self.poolMinimumBufferCount = max(2, poolMinimumBufferCount)
+        self.capturePressureProfile = capturePressureProfile
         frameCopier = CaptureFrameCopier()
         super.init()
         startWatchdogTimer()
@@ -156,15 +178,18 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     func updateExpectations(
         frameRate: Int,
         gapThreshold: CFAbsoluteTime,
-        stallThreshold: CFAbsoluteTime,
+        softStallThreshold: CFAbsoluteTime,
+        hardRestartThreshold: CFAbsoluteTime? = nil,
         targetFrameRate _: Int
     ) {
         expectationLock.withLock {
             expectedFrameRate = Double(frameRate)
             frameGapThreshold = gapThreshold
-            self.stallThreshold = stallThreshold
+            self.softStallThreshold = softStallThreshold
+            self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
         }
-        stallSignaled = false
+        softStallSignaled = false
+        hardStallSignaled = false
         stopWatchdogTimer()
         startWatchdogTimer()
     }
@@ -214,18 +239,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     /// Check if SCK has stopped delivering frames and trigger fallback
     private func checkForFrameGap() {
         let now = CFAbsoluteTimeGetCurrent()
+        let (lastDeliveredFrameTime, lastCompleteFrameTime) = deliveryStateLock.withLock {
+            (self.lastDeliveredFrameTime, self.lastCompleteFrameTime)
+        }
         guard lastDeliveredFrameTime > 0 else { return }
 
-        let (gapThreshold, configuredStallLimit) = expectationLock.withLock {
-            (frameGapThreshold, stallThreshold)
+        let (gapThreshold, configuredSoftStallLimit, configuredHardRestartLimit) = expectationLock.withLock {
+            (frameGapThreshold, softStallThreshold, hardRestartThreshold)
         }
-        let stallLimit = Self.resolvedStallLimit(
+        let softLimit = Self.resolvedStallLimit(
             windowID: windowID,
-            configuredStallLimit: configuredStallLimit,
+            configuredStallLimit: configuredSoftStallLimit,
             displayStallThreshold: displayStallThreshold,
             windowStallThreshold: windowStallThreshold
         )
-        let recentActivityWindow = max(2.0, min(6.0, stallLimit * 2.0))
+        let hardLimit = max(softLimit, configuredHardRestartLimit)
+        let recentActivityWindow = max(2.0, min(6.0, hardLimit * 2.0))
         let anyGap = now - lastDeliveredFrameTime
         let completeGap = lastCompleteFrameTime > 0 ? now - lastCompleteFrameTime : anyGap
         let useCompleteGap = lastCompleteFrameTime > 0 && completeGap <= recentActivityWindow
@@ -235,14 +264,56 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         // SCK has stopped delivering - mark fallback mode
         markFallbackModeForGap()
 
-        if gap > stallLimit, !stallSignaled, now - lastStallTime > stallLimit {
-            stallSignaled = true
-            lastStallTime = now
-            let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
-            let completeGapMs = (completeGap * 1000).formatted(.number.precision(.fractionLength(1)))
-            let anyGapMs = (anyGap * 1000).formatted(.number.precision(.fractionLength(1)))
-            let mode = useCompleteGap ? "content" : "any"
-            onCaptureStall("frame gap \(gapMs)ms (complete \(completeGapMs)ms, any \(anyGapMs)ms, mode=\(mode))")
+        let gapMs = (gap * 1000).formatted(.number.precision(.fractionLength(1)))
+        let softMs = (softLimit * 1000).formatted(.number.precision(.fractionLength(1)))
+        let hardMs = (hardLimit * 1000).formatted(.number.precision(.fractionLength(1)))
+        let completeGapMs = (completeGap * 1000).formatted(.number.precision(.fractionLength(1)))
+        let anyGapMs = (anyGap * 1000).formatted(.number.precision(.fractionLength(1)))
+        let mode = useCompleteGap ? "content" : "any"
+
+        var shouldEmitSoftStall = false
+        if gap > softLimit {
+            deliveryStateLock.withLock {
+                if !softStallSignaled {
+                    softStallSignaled = true
+                    shouldEmitSoftStall = true
+                }
+            }
+        }
+        if shouldEmitSoftStall {
+            onCaptureStall(
+                StallSignal(
+                    stage: .soft,
+                    message: "frame gap \(gapMs)ms (complete \(completeGapMs)ms, any \(anyGapMs)ms, mode=\(mode))",
+                    gapMs: gapMs,
+                    softThresholdMs: softMs,
+                    hardThresholdMs: hardMs,
+                    restartEligible: false
+                )
+            )
+        }
+
+        var shouldEmitHardStall = false
+        if gap > hardLimit {
+            deliveryStateLock.withLock {
+                if !hardStallSignaled, now - lastStallTime > hardLimit {
+                    hardStallSignaled = true
+                    lastStallTime = now
+                    shouldEmitHardStall = true
+                }
+            }
+        }
+        if shouldEmitHardStall {
+            onCaptureStall(
+                StallSignal(
+                    stage: .hard,
+                    message: "frame gap \(gapMs)ms (complete \(completeGapMs)ms, any \(anyGapMs)ms, mode=\(mode))",
+                    gapMs: gapMs,
+                    softThresholdMs: softMs,
+                    hardThresholdMs: hardMs,
+                    restartEligible: true
+                )
+            )
         }
     }
 
@@ -260,12 +331,27 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     private func updateDeliveryState(captureTime: CFAbsoluteTime, isComplete: Bool) {
-        lastDeliveredFrameTime = captureTime
-        stallSignaled = false
+        deliveryStateLock.withLock {
+            lastDeliveredFrameTime = captureTime
+            softStallSignaled = false
+            hardStallSignaled = false
+            if isComplete {
+                lastCompleteFrameTime = captureTime
+            }
+        }
         if isComplete {
-            lastCompleteFrameTime = captureTime
             handleFallbackResumeIfNeeded()
         }
+    }
+
+    func isRecentlyRecovered(within window: CFAbsoluteTime) -> Bool {
+        let graceWindow = max(0, window)
+        let now = CFAbsoluteTimeGetCurrent()
+        let inFallback = fallbackLock.withLock { wasInFallbackMode }
+        guard !inFallback else { return false }
+        let lastDelivered = deliveryStateLock.withLock { lastDeliveredFrameTime }
+        guard lastDelivered > 0 else { return false }
+        return now - lastDelivered <= graceWindow
     }
 
     private func handleFallbackResumeIfNeeded() {
@@ -279,16 +365,17 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         wasInFallbackMode = false
         fallbackLock.unlock()
 
+        let fallbackMs = Int((fallbackDuration * 1000).rounded())
         if fallbackDuration > keyframeThreshold {
             onKeyframeRequest(.fallbackResume)
             MirageLogger
                 .capture(
-                    "SCK resumed after long fallback (\(Int(fallbackDuration * 1000))ms) - scheduling keyframe"
+                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=scheduled"
                 )
         } else {
             MirageLogger
                 .capture(
-                    "SCK resumed after brief fallback (\(Int(fallbackDuration * 1000))ms) - no keyframe needed"
+                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=skipped"
                 )
         }
     }
@@ -675,13 +762,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         if let frameCopier {
-            let inFlightLimit: Int = {
-                // Keep SCK surface ownership bounded so a slow copy backend cannot
-                // starve the capture pipeline for multiple frame intervals.
-                let cap = expectedFrameRate >= 120 ? 6 : 4
-                let baseline = max(2, poolMinimumBufferCount - 4)
-                return min(cap, baseline)
-            }()
+            let inFlightLimit = Self.resolvedCopyInFlightLimit(
+                expectedFrameRate: expectedFrameRate,
+                poolMinimumBufferCount: poolMinimumBufferCount,
+                pressureProfile: capturePressureProfile
+            )
             let scheduleResult = frameCopier.scheduleCopy(
                 pixelBuffer: sourcePixelBuffer,
                 minimumBufferCount: poolMinimumBufferCount,
@@ -713,6 +798,29 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         } else {
             logCopyFallback("Capture copy disabled: dropping frame")
         }
+    }
+
+    nonisolated static func resolvedCopyInFlightLimit(
+        expectedFrameRate: Double,
+        poolMinimumBufferCount: Int,
+        pressureProfile: WindowCaptureEngine.CapturePressureProfile
+    ) -> Int {
+        // Keep SCK surface ownership bounded so a slow copy backend cannot
+        // starve the capture pipeline for multiple frame intervals.
+        let baselineCap = expectedFrameRate >= 120 ? 6 : 4
+        let baselineDepth = max(2, poolMinimumBufferCount - 4)
+        var limit = min(baselineCap, baselineDepth)
+        guard pressureProfile == .tuned else { return limit }
+
+        // Tuned profile tightens ownership in lowest-latency stress paths.
+        // Gate on larger pools so lower-resolution sessions keep baseline behavior.
+        let highPressureCapture = poolMinimumBufferCount >= 10
+        guard highPressureCapture else { return limit }
+
+        let tunedCap = expectedFrameRate >= 120 ? 5 : 3
+        let tunedDepth = max(2, poolMinimumBufferCount - 5)
+        limit = min(tunedCap, tunedDepth)
+        return max(2, limit)
     }
 
     private func logPoolDrop() {

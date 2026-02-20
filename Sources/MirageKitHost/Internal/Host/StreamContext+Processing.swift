@@ -15,29 +15,23 @@ import MirageKit
 extension StreamContext {
     nonisolated func enqueueCapturedFrame(_ frame: CapturedFrame) {
         guard shouldEncodeFrames else { return }
-        Task(priority: .userInitiated) { await self.recordCapturedFrame(frame) }
-        if frame.info.isIdleFrame {
-            Task(priority: .userInitiated) { await self.recordIdleSkip() }
-            return
-        }
+        Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
+        if frame.info.isIdleFrame { return }
         if frameInbox.enqueue(frame) {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
         }
     }
 
-    func recordCapturedFrame(_ frame: CapturedFrame) {
+    func recordCaptureIngress(_ frame: CapturedFrame) {
         captureIngressIntervalCount += 1
         lastCapturedFrameTime = CFAbsoluteTimeGetCurrent()
         lastCapturedFrame = frame
         lastCapturedDuration = frame.duration
+        if frame.info.isIdleFrame { idleSkippedCount += 1 }
         if startupBaseTime > 0, !startupFirstCaptureLogged {
             startupFirstCaptureLogged = true
             logStartupEvent("first captured frame")
         }
-    }
-
-    func recordIdleSkip() {
-        idleSkippedCount += 1
     }
 
     func scheduleProcessingIfNeeded() {
