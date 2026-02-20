@@ -188,8 +188,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             self.softStallThreshold = softStallThreshold
             self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
         }
-        softStallSignaled = false
-        hardStallSignaled = false
+        deliveryStateLock.withLock {
+            softStallSignaled = false
+            hardStallSignaled = false
+        }
         stopWatchdogTimer()
         startWatchdogTimer()
     }
