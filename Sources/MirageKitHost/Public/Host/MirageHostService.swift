@@ -68,7 +68,7 @@ public final class MirageHostService {
     public let windowController = MirageHostWindowController()
 
     /// Input controller for injecting remote input.
-    public let inputController = MirageHostInputController()
+    public nonisolated let inputController = MirageHostInputController()
 
     /// Whether direct remote QUIC control transport is enabled.
     public var remoteTransportEnabled: Bool = false {
@@ -108,6 +108,14 @@ public final class MirageHostService {
     var clientsByID: [UUID: ClientContext] = [:]
     var peerIdentityByClientID: [UUID: MiragePeerIdentity] = [:]
     var singleClientConnectionID: ObjectIdentifier?
+    nonisolated let transportRegistry = HostTransportRegistry()
+    nonisolated let streamRegistry = HostStreamRegistry()
+    nonisolated let receiveLoopsByConnectionID = Locked<[ObjectIdentifier: HostReceiveLoop]>([:])
+    nonisolated let controlWorkersByClientID = Locked<[UUID: SerialWorker]>([:])
+    nonisolated let transportWorker = SerialWorker(
+        label: "com.mirage.host.transport",
+        qos: .userInteractive
+    )
 
     // UDP connections by stream ID (received from client registrations)
     var udpConnectionsByStream: [StreamID: NWConnection] = [:]
@@ -154,7 +162,7 @@ public final class MirageHostService {
     var loginDisplayContext: StreamContext?
     var loginDisplayStreamID: StreamID?
     var loginDisplayResolution: CGSize?
-    let loginDisplayInputState = LoginDisplayInputState()
+    nonisolated let loginDisplayInputState = LoginDisplayInputState()
     var loginDisplayStartInProgress = false
     var loginDisplayStartGeneration: UInt64 = 0
     var loginDisplayIsBorrowedStream = false
@@ -162,13 +170,13 @@ public final class MirageHostService {
     var loginDisplaySharedDisplayConsumerActive = false
     var loginDisplayRetryAttempts: Int = 0
     let loginDisplayRetryLimit: Int = 5
-    let loginDisplayRetryDelay: Duration = .seconds(2)
-    var loginDisplayRetryTask: Task<Void, Never>?
-    var loginDisplayWatchdogTask: Task<Void, Never>?
+    let loginDisplayRetryDelaySeconds: TimeInterval = 2.0
+    var loginDisplayRetryTimer: DispatchSourceTimer?
+    var loginDisplayWatchdogTimer: DispatchSourceTimer?
     var loginDisplayWatchdogGeneration: UInt64 = 0
     var loginDisplayWatchdogStartTime: CFAbsoluteTime = 0
     var lastLoginDisplayRestartTime: CFAbsoluteTime = 0
-    let loginDisplayWatchdogInterval: Duration = .seconds(2)
+    let loginDisplayWatchdogIntervalSeconds: TimeInterval = 2.0
     let loginDisplayWatchdogStartGraceSeconds: CFAbsoluteTime = 4.0
     let loginDisplayWatchdogStaleThresholdSeconds: CFAbsoluteTime = 6.0
     let loginDisplayRestartCooldownSeconds: CFAbsoluteTime = 8.0
@@ -272,11 +280,11 @@ public final class MirageHostService {
     // MARK: - Fast Input Path (bypasses MainActor)
 
     /// High-priority queue for input processing - bypasses MainActor for lowest latency
-    let inputQueue = DispatchQueue(label: "com.mirage.host.input", qos: .userInteractive)
+    nonisolated let inputQueue = DispatchQueue(label: "com.mirage.host.input", qos: .userInteractive)
 
     /// Thread-safe cache of stream info for fast input routing
     /// Uses a dedicated actor to avoid lock issues in async contexts
-    let inputStreamCacheActor = InputStreamCacheActor()
+    nonisolated let inputStreamCacheActor = InputStreamCacheActor()
 
     /// Fast input handler - called on inputQueue, NOT on MainActor
     /// Set this to handle input events with minimal latency

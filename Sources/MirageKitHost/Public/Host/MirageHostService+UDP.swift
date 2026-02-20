@@ -101,6 +101,7 @@ extension MirageHostService {
                     continue
                 }
                 qualityTestConnectionsByClientID[deviceID] = connection
+                transportRegistry.registerQualityConnection(connection, clientID: deviceID)
                 let pathText = connection.currentPath.map(describeNetworkPath) ?? "unknown"
                 MirageLogger.host("Registered quality test UDP connection for device \(deviceID.uuidString) (\(pathText))")
                 continue
@@ -129,6 +130,7 @@ extension MirageHostService {
                     continue
                 }
                 audioConnectionsByClientID[deviceID] = connection
+                transportRegistry.registerAudioConnection(connection, clientID: deviceID)
                 let pathText = connection.currentPath.map(describeNetworkPath) ?? "unknown"
                 MirageLogger.host(
                     "Registered audio UDP connection for device \(deviceID.uuidString), stream \(streamID) (\(pathText))"
@@ -180,6 +182,7 @@ extension MirageHostService {
             }
 
             udpConnectionsByStream[streamID] = connection
+            transportRegistry.registerVideoConnection(connection, streamID: streamID)
 
             MirageLogger.host("UDP connection registered for stream \(streamID)")
 
@@ -189,27 +192,6 @@ extension MirageHostService {
             } else {
                 MirageLogger.host("WARNING: No stream context found for stream \(streamID)")
             }
-        }
-    }
-
-    /// Send video packet for a specific stream.
-    func sendVideoPacketForStream(_ streamID: StreamID, data: Data, onComplete: (@Sendable () -> Void)? = nil) {
-        guard let connection = udpConnectionsByStream[streamID] else {
-            onComplete?()
-            return
-        }
-        if let baseTime = streamStartupBaseTimes[streamID],
-           !streamStartupFirstPacketSent.contains(streamID) {
-            streamStartupFirstPacketSent.insert(streamID)
-            let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
-            MirageLogger.host("Desktop start: first video packet sent for stream \(streamID) (+\(deltaMs)ms)")
-        }
-        if let onComplete {
-            connection.send(content: data, completion: .contentProcessed { _ in
-                onComplete()
-            })
-        } else {
-            connection.send(content: data, completion: .idempotent)
         }
     }
 

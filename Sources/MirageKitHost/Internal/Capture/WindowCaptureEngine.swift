@@ -130,6 +130,18 @@ actor WindowCaptureEngine {
     func setAdmissionDropper(_ dropper: (@Sendable () -> Bool)?) {
         admissionDropper = dropper
     }
+
+    nonisolated func enqueueKeyframeRequest(_ reason: CaptureStreamOutput.KeyframeRequestReason) {
+        Task(priority: .userInitiated) {
+            await self.markKeyframeRequested(reason: reason)
+        }
+    }
+
+    nonisolated func enqueueCaptureRestart(_ reason: String) {
+        Task(priority: .userInitiated) {
+            await self.restartCapture(reason: reason)
+        }
+    }
 }
 
 #endif

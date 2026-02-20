@@ -86,9 +86,7 @@ extension StreamContext {
         typingBurstExpiryTask = nil
         typingBurstActive = false
         typingBurstDeadline = 0
-        if let encoder {
-            Task { await encoder.updateAutoTypingBurstLowLatency(false) }
-        }
+        if let encoder { scheduleEncoderTypingBurstUpdate(encoder, enabled: false) }
         maxInFlightFrames = resolvedPostTypingBurstInFlightLimit()
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
@@ -137,7 +135,7 @@ extension StreamContext {
     func processPendingFrames() async {
         defer {
             frameInbox.markDrainComplete()
-            Task { await self.logPipelineStatsIfNeeded() }
+            schedulePipelineStatsLog()
         }
         if isResizing || !shouldEncodeFrames {
             frameInbox.clear()

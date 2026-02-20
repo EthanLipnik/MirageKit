@@ -143,10 +143,10 @@ extension WindowCaptureEngine {
             onFrame: onFrame,
             onAudio: onAudio,
             onKeyframeRequest: { [weak self] reason in
-                Task { await self?.markKeyframeRequested(reason: reason) }
+                self?.enqueueKeyframeRequest(reason)
             },
             onCaptureStall: { [weak self] reason in
-                Task { await self?.restartCapture(reason: reason) }
+                self?.enqueueCaptureRestart(reason)
             },
             shouldDropFrame: admissionDropper,
             windowID: window.windowID,
@@ -226,7 +226,7 @@ extension WindowCaptureEngine {
         }
     }
 
-    private func restartCapture(reason: String) async {
+    func restartCapture(reason: String) async {
         guard !isRestarting else { return }
         guard let config = captureSessionConfig, let mode = captureMode else { return }
         guard isCapturing else { return }
@@ -472,10 +472,10 @@ extension WindowCaptureEngine {
             onFrame: onFrame,
             onAudio: onAudio,
             onKeyframeRequest: { [weak self] reason in
-                Task { await self?.markKeyframeRequested(reason: reason) }
+                self?.enqueueKeyframeRequest(reason)
             },
             onCaptureStall: { [weak self] reason in
-                Task { await self?.restartCapture(reason: reason) }
+                self?.enqueueCaptureRestart(reason)
             },
             shouldDropFrame: admissionDropper,
             usesDetailedMetadata: false,

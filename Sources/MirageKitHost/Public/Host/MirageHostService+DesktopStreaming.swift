@@ -275,7 +275,7 @@ extension MirageHostService {
         }
         let metricsClientID = clientContext.client.id
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in
-            Task { @MainActor [weak self] in
+            self?.dispatchControlWork(clientID: metricsClientID) { [weak self] in
                 guard let self else { return }
                 guard let clientContext = findClientContext(clientID: metricsClientID) else { return }
                 do {
@@ -291,6 +291,7 @@ extension MirageHostService {
         desktopStreamClientContext = clientContext
         desktopRequestedScaleFactor = resolvedClientScaleFactor
         streamsByID[streamID] = streamContext
+        registerTypingBurstRoute(streamID: streamID, context: streamContext)
         await activateAudioForClient(
             clientID: clientContext.client.id,
             sourceStreamID: streamID,
@@ -333,9 +334,7 @@ extension MirageHostService {
                     releasePacket()
                     return
                 }
-                Task { @MainActor in
-                    self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
-                }
+                sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
             }
         )
         logDesktopStartStep("capture and encoder started")
@@ -409,10 +408,12 @@ extension MirageHostService {
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .mirrored
         streamsByID.removeValue(forKey: streamID)
+        unregisterTypingBurstRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
         streamStartupFirstPacketSent.remove(streamID)
         udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
+        transportRegistry.unregisterVideoConnection(streamID: streamID)
         inputStreamCacheActor.remove(streamID)
         await deactivateAudioSourceIfNeeded(streamID: streamID)
 
@@ -424,8 +425,8 @@ extension MirageHostService {
             loginDisplayWatchdogStartTime = 0
             loginDisplayStartInProgress = false
             loginDisplayStartGeneration &+= 1
-            loginDisplayRetryTask?.cancel()
-            loginDisplayRetryTask = nil
+            loginDisplayRetryTimer?.cancel()
+            loginDisplayRetryTimer = nil
             loginDisplayRetryAttempts = 0
             let sharedConsumerActive = loginDisplaySharedDisplayConsumerActive
             loginDisplaySharedDisplayConsumerActive = false

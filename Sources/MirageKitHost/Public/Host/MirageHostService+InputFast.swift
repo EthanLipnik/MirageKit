@@ -13,7 +13,7 @@ import MirageKit
 #if os(macOS)
 extension MirageHostService {
     /// Fast input event handler - runs on inputQueue, NOT MainActor.
-    func handleInputEventFast(_ message: ControlMessage, from client: MirageConnectedClient) {
+    nonisolated func handleInputEventFast(_ message: ControlMessage, from client: MirageConnectedClient) {
         do {
             let inputMessage = try message.decode(InputEventMessage.self)
 
@@ -55,10 +55,7 @@ extension MirageHostService {
     }
 
     private nonisolated func notifyTypingBurst(for streamID: StreamID) {
-        Task { @MainActor [weak self] in
-            guard let self, let streamContext = streamsByID[streamID] else { return }
-            await streamContext.noteTypingBurstActivity()
-        }
+        streamRegistry.notifyTypingBurst(streamID: streamID)
     }
 }
 #endif

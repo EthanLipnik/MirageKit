@@ -15,7 +15,7 @@ import MirageKit
 
 extension MirageHostService {
     /// Handle input events for the login display
-    func handleLoginDisplayInputEvent(
+    nonisolated func handleLoginDisplayInputEvent(
         _ event: MirageInputEvent,
         loginInfo: (bounds: CGRect, lastCursorPosition: CGPoint, hasCursorPosition: Bool, hasReceivedFocusEvent: Bool)
     ) {
@@ -125,7 +125,7 @@ extension MirageHostService {
     }
 
     /// Post a HID mouse event
-    func postHIDMouseEvent(_ type: CGEventType, event: MirageMouseEvent, location: CGPoint) {
+    nonisolated func postHIDMouseEvent(_ type: CGEventType, event: MirageMouseEvent, location: CGPoint) {
         guard let cgEvent = CGEvent(
             mouseEventSource: nil,
             mouseType: type,
@@ -141,7 +141,7 @@ extension MirageHostService {
     }
 
     /// Post a HID scroll event
-    func postHIDScrollEvent(_ event: MirageScrollEvent, location: CGPoint) {
+    nonisolated func postHIDScrollEvent(_ event: MirageScrollEvent, location: CGPoint) {
         guard let cgEvent = CGEvent(
             scrollWheelEvent2Source: nil,
             units: event.isPrecise ? .pixel : .line,
@@ -159,7 +159,7 @@ extension MirageHostService {
     }
 
     /// Post a HID keyboard event
-    func postHIDKeyEvent(isKeyDown: Bool, event: MirageKeyEvent) {
+    nonisolated func postHIDKeyEvent(isKeyDown: Bool, event: MirageKeyEvent) {
         guard let cgEvent = CGEvent(
             keyboardEventSource: nil,
             virtualKey: CGKeyCode(event.keyCode),
@@ -173,7 +173,7 @@ extension MirageHostService {
     }
 
     /// Post a HID flags changed event (modifier keys)
-    func postHIDFlagsChanged(_ modifiers: MirageModifierFlags) {
+    nonisolated func postHIDFlagsChanged(_ modifiers: MirageModifierFlags) {
         guard let cgEvent = CGEvent(
             keyboardEventSource: nil,
             virtualKey: 0,
@@ -189,7 +189,7 @@ extension MirageHostService {
 
     /// Click to focus the login field before keyboard input.
     /// System-level UIs (login screen, screensaver) require a click to establish focus.
-    func clickToFocusLoginField(at point: CGPoint) {
+    nonisolated func clickToFocusLoginField(at point: CGPoint) {
         loginDisplayInputState.markFocusReceived()
 
         // Click at the center to focus the password field

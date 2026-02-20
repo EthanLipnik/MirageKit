@@ -52,16 +52,16 @@ extension MirageHostService {
                 mediaSecurityContext: mediaSecurityContext
             ) { [weak self] packets, encoded, currentStreamID in
                 guard let self else { return }
-                Task { @MainActor [weak self] in
+                dispatchControlWork(clientID: clientID) { [weak self] in
                     guard let self else { return }
-                    await self.maybeSendAudioStarted(
+                    await maybeSendAudioStarted(
                         clientID: clientID,
                         streamID: currentStreamID,
                         encodedFrame: encoded
                     )
-                    for packet in packets {
-                        self.sendAudioPacketForClient(clientID, data: packet)
-                    }
+                }
+                for packet in packets {
+                    sendAudioPacketForClient(clientID, data: packet)
                 }
             }
             audioPipelinesByClientID[clientID] = pipeline
@@ -131,16 +131,10 @@ extension MirageHostService {
 
     func stopAudioForDisconnectedClient(_ clientID: UUID) async {
         await stopAudioPipeline(for: clientID, reason: .clientRequested)
-        if let connection = audioConnectionsByClientID.removeValue(forKey: clientID) {
-            connection.cancel()
-        }
+        if let connection = audioConnectionsByClientID.removeValue(forKey: clientID) { connection.cancel() }
+        if let connection = transportRegistry.unregisterAudioConnection(clientID: clientID) { connection.cancel() }
         audioConfigurationByClientID.removeValue(forKey: clientID)
         audioSourceStreamByClientID.removeValue(forKey: clientID)
-    }
-
-    func sendAudioPacketForClient(_ clientID: UUID, data: Data) {
-        guard let connection = audioConnectionsByClientID[clientID] else { return }
-        connection.send(content: data, completion: .idempotent)
     }
 
     private func setAudioSourceCaptureHandler(clientID: UUID, streamID: StreamID) async {
@@ -149,9 +143,9 @@ extension MirageHostService {
                 guard let context = streamsByID[active.id] else { continue }
                 await context.setCapturedAudioHandler { [weak self] captured in
                     guard let self else { return }
-                    Task { @MainActor [weak self] in
+                    dispatchControlWork(clientID: clientID) { [weak self] in
                         guard let self else { return }
-                        await self.enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
+                        await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
                     }
                 }
             } else if let context = streamsByID[active.id] {
@@ -162,9 +156,9 @@ extension MirageHostService {
         if let desktopStreamID, desktopStreamID == streamID, let context = streamsByID[desktopStreamID] {
             await context.setCapturedAudioHandler { [weak self] captured in
                 guard let self else { return }
-                Task { @MainActor [weak self] in
+                dispatchControlWork(clientID: clientID) { [weak self] in
                     guard let self else { return }
-                    await self.enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
+                    await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
                 }
             }
         }
@@ -172,9 +166,9 @@ extension MirageHostService {
         if let loginDisplayStreamID, loginDisplayStreamID == streamID, let context = streamsByID[loginDisplayStreamID] {
             await context.setCapturedAudioHandler { [weak self] captured in
                 guard let self else { return }
-                Task { @MainActor [weak self] in
+                dispatchControlWork(clientID: clientID) { [weak self] in
                     guard let self else { return }
-                    await self.enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
+                    await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
                 }
             }
         }
@@ -195,7 +189,7 @@ extension MirageHostService {
         let previousMessage = audioStartedMessageByClientID[clientID]
         audioStartedMessageByClientID[clientID] = message
         guard previousMessage != message else { return }
-        guard audioConnectionsByClientID[clientID] != nil else { return }
+        guard transportRegistry.hasAudioConnection(clientID: clientID) else { return }
         await sendAudioStreamStarted(message, toClientID: clientID)
     }
 

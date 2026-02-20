@@ -421,6 +421,18 @@ actor StreamContext {
             return 1
         }
     }
+
+    nonisolated func schedulePipelineStatsLog() {
+        Task(priority: .utility) {
+            await self.logPipelineStatsIfNeeded()
+        }
+    }
+
+    nonisolated func scheduleEncoderTypingBurstUpdate(_ encoder: HEVCEncoder, enabled: Bool) {
+        Task(priority: .userInitiated) {
+            await encoder.updateAutoTypingBurstLowLatency(enabled)
+        }
+    }
 }
 
 #endif

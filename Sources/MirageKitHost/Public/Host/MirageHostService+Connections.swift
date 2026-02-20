@@ -78,7 +78,7 @@ extension MirageHostService {
     }
 
     /// Check if an error indicates a fatal, unrecoverable connection state.
-    func isFatalConnectionError(_ error: Error) -> Bool {
+    nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
         let nsError = error as NSError
         let fatalPosixCodes = [54, 57, 32, 104]
         if nsError.domain == NSPOSIXErrorDomain, fatalPosixCodes.contains(nsError.code) { return true }

@@ -112,7 +112,7 @@ public extension MirageHostService {
             MirageLogger.host("Low-latency high-res compression boost disabled for stream \(streamID)")
         }
         await context.setMetricsUpdateHandler { [weak self] metrics in
-            Task { @MainActor [weak self] in
+            self?.dispatchControlWork(clientID: client.id) { [weak self] in
                 guard let self else { return }
                 guard let clientContext = findClientContext(clientID: client.id) else { return }
                 do {
@@ -124,6 +124,7 @@ public extension MirageHostService {
         }
 
         streamsByID[streamID] = context
+        registerTypingBurstRoute(streamID: streamID, context: context)
         activeStreams.append(session)
 
         let resolvedAudioConfiguration = audioConfiguration ?? .default
@@ -177,21 +178,25 @@ public extension MirageHostService {
                             releasePacket()
                             return
                         }
-                        Task { @MainActor in
-                            self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
-                        }
+                        sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                     },
                     onContentBoundsChanged: { [weak self] bounds in
                         guard let self else { return }
-                        Task { @MainActor in
-                            await self.sendContentBoundsUpdate(streamID: streamID, bounds: bounds, to: client)
+                        dispatchControlWork(clientID: client.id) { [weak self] in
+                            guard let self else { return }
+                            await sendContentBoundsUpdate(streamID: streamID, bounds: bounds, to: client)
                         }
                     },
                     onNewWindowDetected: { [weak self] newWindow in
                         guard let self else { return }
-                        Task { @MainActor in
+                        dispatchControlWork(clientID: client.id) { [weak self] in
+                            guard let self else { return }
                             // Auto-stream new independent windows to the same client
-                            await self.handleNewIndependentWindow(newWindow, originalStreamID: streamID, client: client)
+                            await handleNewIndependentWindow(
+                                newWindow,
+                                originalStreamID: streamID,
+                                client: client
+                            )
                         }
                     },
                     onVirtualDisplayReady: { [weak self] bounds in
@@ -233,9 +238,7 @@ public extension MirageHostService {
                         releasePacket()
                         return
                     }
-                    Task { @MainActor in
-                        self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
-                    }
+                    sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                 }
             }
         } catch {
@@ -355,6 +358,7 @@ public extension MirageHostService {
 
         await context.stop()
         streamsByID.removeValue(forKey: session.id)
+        unregisterTypingBurstRoute(streamID: session.id)
         activeStreams.removeAll { $0.id == session.id }
         await deactivateAudioSourceIfNeeded(streamID: session.id)
 
@@ -363,6 +367,7 @@ public extension MirageHostService {
 
         // Clean up UDP connection for this stream
         if let udpConnection = udpConnectionsByStream.removeValue(forKey: session.id) { udpConnection.cancel() }
+        transportRegistry.unregisterVideoConnection(streamID: session.id)
 
         // Minimize the window if requested (after stopping capture so window is restored from virtual display)
         if minimizeWindow { WindowManager.minimizeWindow(windowID) }

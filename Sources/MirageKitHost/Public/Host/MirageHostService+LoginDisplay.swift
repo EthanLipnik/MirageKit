@@ -43,8 +43,8 @@ extension MirageHostService {
 
             stopLoginDisplayWatchdog()
             loginDisplayWatchdogStartTime = CFAbsoluteTimeGetCurrent()
-            loginDisplayRetryTask?.cancel()
-            loginDisplayRetryTask = nil
+            loginDisplayRetryTimer?.cancel()
+            loginDisplayRetryTimer = nil
             loginDisplayRetryAttempts = 0
 
             loginDisplayStartGeneration &+= 1
@@ -70,8 +70,8 @@ extension MirageHostService {
         }
 
         loginDisplayStartInProgress = true
-        loginDisplayRetryTask?.cancel()
-        loginDisplayRetryTask = nil
+        loginDisplayRetryTimer?.cancel()
+        loginDisplayRetryTimer = nil
         loginDisplayStartGeneration &+= 1
         let generation = loginDisplayStartGeneration
         if let connectedClient = connectedClients.first,
@@ -103,6 +103,7 @@ extension MirageHostService {
         loginDisplaySharedDisplayConsumerActive = false
 
         streamsByID[streamID] = context
+        registerTypingBurstRoute(streamID: streamID, context: context)
         if let connectedClient = connectedClients.first {
             let configuration = audioConfigurationByClientID[connectedClient.id] ?? .default
             await activateAudioForClient(
@@ -127,7 +128,9 @@ extension MirageHostService {
         func cleanupOwnedStream(disablePowerAssertion: Bool) async {
             await context.stop()
             streamsByID.removeValue(forKey: streamID)
+            unregisterTypingBurstRoute(streamID: streamID)
             udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
+            transportRegistry.unregisterVideoConnection(streamID: streamID)
             await deactivateAudioSourceIfNeeded(streamID: streamID)
             loginDisplayContext = nil
             loginDisplayStreamID = nil
@@ -184,9 +187,7 @@ extension MirageHostService {
                         releasePacket()
                         return
                     }
-                    Task { @MainActor in
-                        self.sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
-                    }
+                    sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
                 }
             )
 
@@ -221,8 +222,8 @@ extension MirageHostService {
         loginDisplayWatchdogStartTime = 0
         loginDisplayStartInProgress = false
         loginDisplayStartGeneration &+= 1
-        loginDisplayRetryTask?.cancel()
-        loginDisplayRetryTask = nil
+        loginDisplayRetryTimer?.cancel()
+        loginDisplayRetryTimer = nil
         loginDisplayRetryAttempts = 0
         let sharedConsumerActive = loginDisplaySharedDisplayConsumerActive
         loginDisplaySharedDisplayConsumerActive = false
@@ -247,7 +248,9 @@ extension MirageHostService {
 
         if !isBorrowed {
             streamsByID.removeValue(forKey: streamID)
+            unregisterTypingBurstRoute(streamID: streamID)
             udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
+            transportRegistry.unregisterVideoConnection(streamID: streamID)
             await deactivateAudioSourceIfNeeded(streamID: streamID)
         }
 
@@ -262,23 +265,30 @@ extension MirageHostService {
     }
 
     func startLoginDisplayWatchdog(streamID: StreamID, context: StreamContext) {
-        loginDisplayWatchdogTask?.cancel()
+        loginDisplayWatchdogTimer?.cancel()
+        loginDisplayWatchdogTimer = nil
         loginDisplayWatchdogGeneration &+= 1
         let generation = loginDisplayWatchdogGeneration
 
-        loginDisplayWatchdogTask = Task { [weak self] in
+        let timer = DispatchSource.makeTimerSource(queue: transportWorker.dispatchQueue)
+        timer.schedule(
+            deadline: .now() + loginDisplayWatchdogIntervalSeconds,
+            repeating: loginDisplayWatchdogIntervalSeconds
+        )
+        timer.setEventHandler { [weak self] in
             guard let self else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: loginDisplayWatchdogInterval)
-                if Task.isCancelled { return }
+            dispatchMainWork { [weak self] in
+                guard let self else { return }
                 await checkLoginDisplayHealth(generation: generation, streamID: streamID, context: context)
             }
         }
+        loginDisplayWatchdogTimer = timer
+        timer.resume()
     }
 
     func stopLoginDisplayWatchdog() {
-        loginDisplayWatchdogTask?.cancel()
-        loginDisplayWatchdogTask = nil
+        loginDisplayWatchdogTimer?.cancel()
+        loginDisplayWatchdogTimer = nil
         loginDisplayWatchdogGeneration &+= 1
     }
 
@@ -380,7 +390,7 @@ extension MirageHostService {
     }
 
     func scheduleLoginDisplayRetry(reason: String) async {
-        guard loginDisplayRetryTask == nil else { return }
+        guard loginDisplayRetryTimer == nil else { return }
         guard sessionState != .active else { return }
         guard !clientsByConnection.isEmpty else { return }
         guard loginDisplayContext == nil else { return }
@@ -394,21 +404,30 @@ extension MirageHostService {
 
         loginDisplayRetryAttempts += 1
         let attempt = loginDisplayRetryAttempts
-        let delay = loginDisplayRetryDelay
+        let delay = loginDisplayRetryDelaySeconds
 
-        MirageLogger.host("Scheduling login display retry \(attempt)/\(loginDisplayRetryLimit) in \(delay) (\(reason))")
+        MirageLogger.host(
+            "Scheduling login display retry \(attempt)/\(loginDisplayRetryLimit) in \(delay)s (\(reason))"
+        )
 
-        loginDisplayRetryTask = Task { @MainActor [weak self] in
+        let timer = DispatchSource.makeTimerSource(queue: transportWorker.dispatchQueue)
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler { [weak self] in
             guard let self else { return }
-            try? await Task.sleep(for: delay)
-            loginDisplayRetryTask = nil
+            dispatchMainWork { [weak self] in
+                guard let self else { return }
+                loginDisplayRetryTimer?.cancel()
+                loginDisplayRetryTimer = nil
 
-            guard sessionState != .active else { return }
-            guard !clientsByConnection.isEmpty else { return }
-            guard loginDisplayContext == nil else { return }
+                guard sessionState != .active else { return }
+                guard !clientsByConnection.isEmpty else { return }
+                guard loginDisplayContext == nil else { return }
 
-            await startLoginDisplayStreamIfNeeded()
+                await startLoginDisplayStreamIfNeeded()
+            }
         }
+        loginDisplayRetryTimer = timer
+        timer.resume()
     }
 
     func provisionalMainDisplayBounds() -> CGRect {

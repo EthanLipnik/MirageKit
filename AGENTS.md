@@ -61,6 +61,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
 - UDP stream/audio/quality registrations carry the per-session token and host registration validates token matches in constant time.
 - Host software update control messages cover status snapshots (`hostSoftwareUpdateStatus`) and install request results (`hostSoftwareUpdateInstallResult`) for connected clients, and the host service routes these requests through a software update controller contract.
+- Host transport send routing uses `HostTransportRegistry` with lock-backed connection maps for video/audio/quality channel access outside main-actor send paths.
+- Host TCP control receive uses `HostReceiveLoop` with immediate receive re-arm, per-client bounded non-input backlog, and coalescing for display/scale/refresh/encoder-setting updates.
+- Login-display watchdog and retry pacing use queue timers (`DispatchSourceTimer`) driven through queue-to-main bridge handlers.
 - Remote signaling helpers include signed Worker requests, STUN probes, and host candidate parsing for direct remote readiness.
 - Host remote path runs a dedicated QUIC control listener (`MirageHostService+Remote.swift`) and publishes STUN-derived `hostCandidates` through signed signaling heartbeats.
 - Remote diagnostics logging spans client remote preflight/join/connect, host remote listener and advertise/heartbeat loops, and signaling request outcomes.
@@ -136,6 +139,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Host capture, encode, virtual display, and host utilities: `Sources/MirageKitHost/Internal/`.
 - Host audio mute control: `Sources/MirageKitHost/Internal/Audio/HostAudioMuteController.swift`.
 - Host Lights Out support: `Sources/MirageKitHost/Internal/Host/HostLightsOutController.swift`, `Sources/MirageKitHost/Internal/Host/MirageInjectedEventTag.swift`.
+- Host queue primitives and registries: `Sources/MirageKitHost/Internal/Host/Locked.swift`, `Sources/MirageKitHost/Internal/Host/SerialWorker.swift`, `Sources/MirageKitHost/Internal/Host/HostTransportRegistry.swift`, `Sources/MirageKitHost/Internal/Host/HostStreamRegistry.swift`, `Sources/MirageKitHost/Internal/Host/HostReceiveLoop.swift`.
 - Host Lights Out integration: `Sources/MirageKitHost/Public/Host/MirageHostService+LightsOut.swift`.
 - Host Stage Manager guardrail: `Sources/MirageKitHost/Internal/Host/HostStageManagerController.swift`, `Sources/MirageKitHost/Public/Host/MirageHostService+StageManager.swift`.
 

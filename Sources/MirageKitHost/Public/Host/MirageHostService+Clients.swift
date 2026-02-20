@@ -43,6 +43,7 @@ extension MirageHostService {
         if let key = clientsByConnection.first(where: { $0.value.client.id == client.id })?.key {
             clientsByConnection.removeValue(forKey: key)
             removedConnectionID = key
+            stopReceiveLoop(connectionID: key)
         }
         clientsByID.removeValue(forKey: client.id)
         peerIdentityByClientID.removeValue(forKey: client.id)
@@ -54,8 +55,14 @@ extension MirageHostService {
         }
 
         if let removedConnectionID, singleClientConnectionID == removedConnectionID { singleClientConnectionID = nil }
+        removeControlWorker(clientID: client.id)
 
         connectedClients.removeAll { $0.id == client.id }
+
+        let removedTransportConnections = transportRegistry.unregisterAllConnections(clientID: client.id)
+        for connection in removedTransportConnections {
+            connection.cancel()
+        }
 
         stopSessionRefreshLoopIfIdle()
         if clientsByConnection.isEmpty {
