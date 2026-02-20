@@ -39,6 +39,49 @@ public final class MirageClientService {
         case nightly
     }
 
+    public enum HostSoftwareUpdateAutomationMode: String, Sendable, Codable {
+        case metadataOnly
+        case autoDownload
+        case autoInstall
+    }
+
+    public enum HostSoftwareUpdateInstallDisposition: String, Sendable, Codable {
+        case idle
+        case checking
+        case updateAvailable
+        case downloading
+        case installing
+        case completed
+        case blocked
+        case failed
+    }
+
+    public enum HostSoftwareUpdateBlockReason: String, Sendable, Codable {
+        case clientUpdatesDisabled
+        case hostUpdaterBusy
+        case unattendedInstallUnsupported
+        case insufficientPermissions
+        case authorizationRequired
+        case serviceUnavailable
+        case policyDenied
+        case unknown
+    }
+
+    public enum HostSoftwareUpdateInstallResultCode: String, Sendable, Codable {
+        case started
+        case alreadyInProgress
+        case noUpdateAvailable
+        case denied
+        case blocked
+        case failed
+        case unavailable
+    }
+
+    public enum HostSoftwareUpdateReleaseNotesFormat: String, Sendable, Codable {
+        case plainText
+        case html
+    }
+
     public enum HostSoftwareUpdateInstallTrigger: String, Sendable, Codable {
         case manual
         case protocolMismatch
@@ -49,9 +92,16 @@ public final class MirageClientService {
         public let isCheckingForUpdates: Bool
         public let isInstallInProgress: Bool
         public let channel: HostSoftwareUpdateChannel
+        public let automationMode: HostSoftwareUpdateAutomationMode?
+        public let installDisposition: HostSoftwareUpdateInstallDisposition?
+        public let lastBlockReason: HostSoftwareUpdateBlockReason?
+        public let lastInstallResultCode: HostSoftwareUpdateInstallResultCode?
         public let currentVersion: String
         public let availableVersion: String?
         public let availableVersionTitle: String?
+        public let releaseNotesSummary: String?
+        public let releaseNotesBody: String?
+        public let releaseNotesFormat: HostSoftwareUpdateReleaseNotesFormat?
         public let lastCheckedAtMs: Int64?
 
         public init(
@@ -59,18 +109,32 @@ public final class MirageClientService {
             isCheckingForUpdates: Bool,
             isInstallInProgress: Bool,
             channel: HostSoftwareUpdateChannel,
+            automationMode: HostSoftwareUpdateAutomationMode?,
+            installDisposition: HostSoftwareUpdateInstallDisposition?,
+            lastBlockReason: HostSoftwareUpdateBlockReason?,
+            lastInstallResultCode: HostSoftwareUpdateInstallResultCode?,
             currentVersion: String,
             availableVersion: String?,
             availableVersionTitle: String?,
+            releaseNotesSummary: String?,
+            releaseNotesBody: String?,
+            releaseNotesFormat: HostSoftwareUpdateReleaseNotesFormat?,
             lastCheckedAtMs: Int64?
         ) {
             self.isSparkleAvailable = isSparkleAvailable
             self.isCheckingForUpdates = isCheckingForUpdates
             self.isInstallInProgress = isInstallInProgress
             self.channel = channel
+            self.automationMode = automationMode
+            self.installDisposition = installDisposition
+            self.lastBlockReason = lastBlockReason
+            self.lastInstallResultCode = lastInstallResultCode
             self.currentVersion = currentVersion
             self.availableVersion = availableVersion
             self.availableVersionTitle = availableVersionTitle
+            self.releaseNotesSummary = releaseNotesSummary
+            self.releaseNotesBody = releaseNotesBody
+            self.releaseNotesFormat = releaseNotesFormat
             self.lastCheckedAtMs = lastCheckedAtMs
         }
     }
@@ -78,11 +142,24 @@ public final class MirageClientService {
     public struct HostSoftwareUpdateInstallResult: Sendable, Equatable, Codable {
         public let accepted: Bool
         public let message: String
+        public let resultCode: HostSoftwareUpdateInstallResultCode?
+        public let blockReason: HostSoftwareUpdateBlockReason?
+        public let remediationHint: String?
         public let status: HostSoftwareUpdateStatus?
 
-        public init(accepted: Bool, message: String, status: HostSoftwareUpdateStatus?) {
+        public init(
+            accepted: Bool,
+            message: String,
+            resultCode: HostSoftwareUpdateInstallResultCode?,
+            blockReason: HostSoftwareUpdateBlockReason?,
+            remediationHint: String?,
+            status: HostSoftwareUpdateStatus?
+        ) {
             self.accepted = accepted
             self.message = message
+            self.resultCode = resultCode
+            self.blockReason = blockReason
+            self.remediationHint = remediationHint
             self.status = status
         }
     }

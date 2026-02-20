@@ -13,14 +13,24 @@ import Testing
 #if os(macOS)
 @Suite("Capture Stall Threshold")
 struct CaptureStallThresholdTests {
-    @Test("Display capture uses 1.5 second stall threshold")
-    func displayCaptureUsesFastThreshold() {
-        let resolved = CaptureStreamOutput.resolvedStallLimit(
+    @Test("Display capture bounds stall threshold to 2-4 seconds")
+    func displayCaptureUsesBoundedThreshold() {
+        let resolvedFromLow = CaptureStreamOutput.resolvedStallLimit(
             windowID: 0,
-            configuredStallLimit: 3.5
+            configuredStallLimit: 1.0
+        )
+        let resolvedMid = CaptureStreamOutput.resolvedStallLimit(
+            windowID: 0,
+            configuredStallLimit: 2.5
+        )
+        let resolvedFromHigh = CaptureStreamOutput.resolvedStallLimit(
+            windowID: 0,
+            configuredStallLimit: 5.0
         )
 
-        #expect(resolved == 1.5)
+        #expect(resolvedFromLow == 2.0)
+        #expect(resolvedMid == 2.5)
+        #expect(resolvedFromHigh == 4.0)
     }
 
     @Test("Window capture keeps extended stall threshold")

@@ -69,6 +69,9 @@ struct HostSoftwareUpdateFlowTests {
         controller.installResult = .init(
             accepted: true,
             message: "Install started.",
+            code: .started,
+            blockReason: nil,
+            remediationHint: nil,
             status: controller.snapshot
         )
 
@@ -111,6 +114,8 @@ struct HostSoftwareUpdateFlowTests {
         #expect(result.accepted == false)
         #expect(result.message == "Remote update request denied for this device.")
         #expect(result.status?.currentVersion == controller.snapshot.currentVersion)
+        #expect(result.resultCode == .denied)
+        #expect(result.blockReason == .policyDenied)
     }
 
     @MainActor
@@ -125,9 +130,16 @@ struct HostSoftwareUpdateFlowTests {
             isCheckingForUpdates: true,
             isInstallInProgress: true,
             channel: .nightly,
+            automationMode: .autoDownload,
+            installDisposition: .installing,
+            lastBlockReason: nil,
+            lastInstallResultCode: .started,
             currentVersion: "1.1.0",
             availableVersion: "1.2.0",
             availableVersionTitle: "Mirage 1.2",
+            releaseNotesSummary: "Host release notes",
+            releaseNotesBody: "<ul><li>Performance improvements</li></ul>",
+            releaseNotesFormat: .html,
             lastCheckedAtMs: 1_700_000_000_000
         )
 
@@ -140,9 +152,12 @@ struct HostSoftwareUpdateFlowTests {
         #expect(status.isCheckingForUpdates == true)
         #expect(status.isInstallInProgress == true)
         #expect(status.channel == .nightly)
+        #expect(status.automationMode == .autoDownload)
+        #expect(status.installDisposition == .installing)
         #expect(status.currentVersion == "1.1.0")
         #expect(status.availableVersion == "1.2.0")
         #expect(status.availableVersionTitle == "Mirage 1.2")
+        #expect(status.releaseNotesFormat == .html)
         #expect(status.lastCheckedAtMs == 1_700_000_000_000)
         #expect(controller.lastStatusForceRefresh == true)
     }
@@ -155,22 +170,39 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
         isCheckingForUpdates: false,
         isInstallInProgress: false,
         channel: .release,
+        automationMode: .metadataOnly,
+        installDisposition: .idle,
+        lastBlockReason: nil,
+        lastInstallResultCode: nil,
         currentVersion: "1.0.0",
         availableVersion: "1.1.0",
         availableVersionTitle: "Mirage 1.1",
+        releaseNotesSummary: nil,
+        releaseNotesBody: nil,
+        releaseNotesFormat: nil,
         lastCheckedAtMs: 1_700_000_000_000
     )
     var installResult = MirageHostSoftwareUpdateInstallResult(
         accepted: true,
         message: "Install started.",
+        code: .started,
+        blockReason: nil,
+        remediationHint: nil,
         status: MirageHostSoftwareUpdateStatusSnapshot(
             isSparkleAvailable: true,
             isCheckingForUpdates: false,
             isInstallInProgress: true,
             channel: .release,
+            automationMode: .autoInstall,
+            installDisposition: .installing,
+            lastBlockReason: nil,
+            lastInstallResultCode: .started,
             currentVersion: "1.0.0",
             availableVersion: "1.1.0",
             availableVersionTitle: "Mirage 1.1",
+            releaseNotesSummary: "Fixes",
+            releaseNotesBody: "Critical bug fixes.",
+            releaseNotesFormat: .plainText,
             lastCheckedAtMs: 1_700_000_000_000
         )
     )

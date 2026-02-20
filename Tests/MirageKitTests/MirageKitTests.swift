@@ -188,9 +188,16 @@ struct MirageKitTests {
             isCheckingForUpdates: false,
             isInstallInProgress: true,
             channel: .nightly,
+            automationMode: .autoDownload,
+            installDisposition: .installing,
+            lastBlockReason: nil,
+            lastInstallResultCode: .started,
             currentVersion: "1.2.0",
             availableVersion: "1.3.0",
             availableVersionTitle: "Mirage 1.3",
+            releaseNotesSummary: "Maintenance release",
+            releaseNotesBody: "<ul><li>Improved reliability</li></ul>",
+            releaseNotesFormat: .html,
             lastCheckedAtMs: 1_700_000_000_000
         )
         let statusEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: status)
@@ -199,6 +206,9 @@ struct MirageKitTests {
         #expect(decodedStatus.channel == .nightly)
         #expect(decodedStatus.availableVersion == "1.3.0")
         #expect(decodedStatus.isInstallInProgress == true)
+        #expect(decodedStatus.automationMode == .autoDownload)
+        #expect(decodedStatus.installDisposition == .installing)
+        #expect(decodedStatus.releaseNotesFormat == .html)
 
         let installRequest = HostSoftwareUpdateInstallRequestMessage(trigger: .protocolMismatch)
         let installRequestEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallRequest, content: installRequest)
@@ -209,6 +219,9 @@ struct MirageKitTests {
         let installResult = HostSoftwareUpdateInstallResultMessage(
             accepted: false,
             message: "Denied",
+            resultCode: .denied,
+            blockReason: .policyDenied,
+            remediationHint: nil,
             status: status
         )
         let installResultEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: installResult)
@@ -217,6 +230,8 @@ struct MirageKitTests {
         #expect(decodedInstallResult.accepted == false)
         #expect(decodedInstallResult.status?.currentVersion == "1.2.0")
         #expect(decodedInstallResult.message == "Denied")
+        #expect(decodedInstallResult.resultCode == .denied)
+        #expect(decodedInstallResult.blockReason == .policyDenied)
     }
 
     @Test("Audio packet header serialization")

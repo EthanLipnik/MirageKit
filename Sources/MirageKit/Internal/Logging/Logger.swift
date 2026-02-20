@@ -61,7 +61,7 @@ public enum LogCategory: String, CaseIterable, Sendable {
     case menuBar // Menu bar streaming
 }
 
-/// Centralized logging for Mirage using Apple's unified logging system (os.Logger)
+/// Centralized logging for Mirage using Apple's unified logging system (`Logger`)
 ///
 /// Logs appear in Console.app under the "com.mirage" subsystem, filtered by category.
 ///
@@ -71,14 +71,14 @@ public enum LogCategory: String, CaseIterable, Sendable {
 /// - `metrics,timing,encoder` - Enable specific categories (comma-separated)
 /// - Not set - Default: essential logs only (host, client, appState)
 public struct MirageLogger: Sendable {
-    /// Subsystem identifier for os.Logger (appears in Console.app)
+    /// Subsystem identifier for the system logger (appears in Console.app)
     private static let subsystem = "com.mirage"
 
-    /// Cached os.Logger instances per category (created lazily)
-    private static let loggers: [LogCategory: os.Logger] = {
-        var result: [LogCategory: os.Logger] = [:]
+    /// Cached system logger instances per category (created lazily)
+    private static let loggers: [LogCategory: Logger] = {
+        var result: [LogCategory: Logger] = [:]
         for category in LogCategory.allCases {
-            result[category] = os.Logger(subsystem: subsystem, category: category.rawValue)
+            result[category] = Logger(subsystem: subsystem, category: category.rawValue)
         }
         return result
     }()
@@ -99,34 +99,126 @@ public struct MirageLogger: Sendable {
 
     /// Log a message if the category is enabled
     /// Uses @autoclosure to avoid string interpolation when logging is disabled
-    public static func log(_ category: LogCategory, _ message: @autoclosure () -> String) {
-        guard enabledCategories.contains(category) else { return }
-        let msg = message()
-        loggers[category]?.info("\(msg, privacy: .public)")
-        record(category: category, level: .info, message: msg)
+    public static func log(
+        _ category: LogCategory,
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            category,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log a debug-level message (lower priority, filtered by default in Console.app)
-    public static func debug(_ category: LogCategory, _ message: @autoclosure () -> String) {
+    public static func debug(
+        _ category: LogCategory,
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
         guard enabledCategories.contains(category) else { return }
-        let msg = message()
-        loggers[category]?.debug("\(msg, privacy: .public)")
-        record(category: category, level: .debug, message: msg)
+        emit(
+            category,
+            level: .debug,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log a message unconditionally (for errors)
     /// Errors are always logged regardless of category enablement
-    public static func error(_ category: LogCategory, _ message: @autoclosure () -> String) {
-        let msg = message()
-        loggers[category]?.error("\(msg, privacy: .public)")
-        record(category: category, level: .error, message: msg)
+    public static func error(
+        _ category: LogCategory,
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        emit(
+            category,
+            level: .error,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log a fault-level message (critical errors that indicate bugs)
-    public static func fault(_ category: LogCategory, _ message: @autoclosure () -> String) {
-        let msg = message()
-        loggers[category]?.fault("\(msg, privacy: .public)")
-        record(category: category, level: .fault, message: msg)
+    public static func fault(
+        _ category: LogCategory,
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        emit(
+            category,
+            level: .fault,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+    }
+
+    private static func logInfo(
+        _ category: LogCategory,
+        message: () -> String,
+        fileID: String,
+        line: UInt,
+        function: String
+    ) {
+        guard enabledCategories.contains(category) else { return }
+        emit(
+            category,
+            level: .info,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+    }
+
+    private static func emit(
+        _ category: LogCategory,
+        level: MirageLogLevel,
+        message: () -> String,
+        fileID: String,
+        line: UInt,
+        function: String
+    ) {
+        let rawMessage = message()
+        let sourceMessage = "\(sourcePrefix(fileID: fileID, line: line, function: function)) \(rawMessage)"
+        let logger = logger(for: category)
+        switch level {
+        case .info:
+            logger.info("\(sourceMessage, privacy: .public)")
+        case .debug:
+            logger.debug("\(sourceMessage, privacy: .public)")
+        case .error:
+            logger.error("\(sourceMessage, privacy: .public)")
+        case .fault:
+            logger.fault("\(sourceMessage, privacy: .public)")
+        }
+        record(category: category, level: level, message: sourceMessage)
+    }
+
+    private static func sourcePrefix(fileID: String, line: UInt, function: String) -> String {
+        "[\(fileID):\(line) \(function)]"
+    }
+
+    private static func logger(for category: LogCategory) -> Logger {
+        loggers[category] ?? Logger(subsystem: subsystem, category: category.rawValue)
     }
 
     private static func record(category: LogCategory, level: MirageLogLevel, message: String) {
@@ -171,67 +263,210 @@ public struct MirageLogger: Sendable {
 /// Convenience functions for common log patterns
 public extension MirageLogger {
     /// Log timing information (frame processing, encoding duration, etc.)
-    static func timing(_ message: @autoclosure () -> String) {
-        log(.timing, message())
+    static func timing(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .timing,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log pipeline throughput metrics
-    static func metrics(_ message: @autoclosure () -> String) {
-        log(.metrics, message())
+    static func metrics(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .metrics,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log capture engine events
-    static func capture(_ message: @autoclosure () -> String) {
-        log(.capture, message())
+    static func capture(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .capture,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log encoder events
-    static func encoder(_ message: @autoclosure () -> String) {
-        log(.encoder, message())
+    static func encoder(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .encoder,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log decoder events
-    static func decoder(_ message: @autoclosure () -> String) {
-        log(.decoder, message())
+    static func decoder(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .decoder,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log client events
-    static func client(_ message: @autoclosure () -> String) {
-        log(.client, message())
+    static func client(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .client,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log host events
-    static func host(_ message: @autoclosure () -> String) {
-        log(.host, message())
+    static func host(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .host,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log app state events
-    static func appState(_ message: @autoclosure () -> String) {
-        log(.appState, message())
+    static func appState(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .appState,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log renderer events
-    static func renderer(_ message: @autoclosure () -> String) {
-        log(.renderer, message())
+    static func renderer(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .renderer,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log stream lifecycle events
-    static func stream(_ message: @autoclosure () -> String) {
-        log(.stream, message())
+    static func stream(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .stream,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log discovery events
-    static func discovery(_ message: @autoclosure () -> String) {
-        log(.discovery, message())
+    static func discovery(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .discovery,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log network events
-    static func network(_ message: @autoclosure () -> String) {
-        log(.network, message())
+    static func network(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .network,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 
     /// Log menu bar passthrough events
-    static func menuBar(_ message: @autoclosure () -> String) {
-        log(.menuBar, message())
+    static func menuBar(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .menuBar,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
     }
 }

@@ -60,7 +60,8 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Accepted hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1`; signed hello responses include `mediaEncryptionEnabled` plus a per-session UDP registration token.
 - Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
 - UDP stream/audio/quality registrations carry the per-session token and host registration validates token matches in constant time.
-- Host software update control messages cover status snapshots (`hostSoftwareUpdateStatus`) and install request results (`hostSoftwareUpdateInstallResult`) for connected clients, and the host service routes these requests through a software update controller contract.
+- Host software update control messages cover status snapshots (`hostSoftwareUpdateStatus`) and install request results (`hostSoftwareUpdateInstallResult`) for connected clients; payloads include typed automation/disposition/block/result fields plus bounded release-notes summary/body/format and optional remediation hints.
+- Host software update message fields for typed status/result metadata are optional on the wire for compatibility and map into public MirageKit client/host software-update enums when present.
 - Host transport send routing uses `HostTransportRegistry` with lock-backed connection maps for video/audio/quality channel access outside main-actor send paths.
 - Host TCP control receive uses `HostReceiveLoop` with immediate receive re-arm, per-client bounded non-input backlog, and coalescing for display/scale/refresh/encoder-setting updates.
 - Login-display watchdog and retry pacing use queue timers (`DispatchSourceTimer`) driven through queue-to-main bridge handlers.

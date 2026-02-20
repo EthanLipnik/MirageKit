@@ -66,9 +66,16 @@ struct ClientSoftwareUpdateHandlingTests {
             isCheckingForUpdates: false,
             isInstallInProgress: true,
             channel: .nightly,
+            automationMode: .metadataOnly,
+            installDisposition: .updateAvailable,
+            lastBlockReason: nil,
+            lastInstallResultCode: .noUpdateAvailable,
             currentVersion: "1.0.0",
             availableVersion: "1.1.0",
             availableVersionTitle: "Mirage 1.1",
+            releaseNotesSummary: "Stability updates",
+            releaseNotesBody: "Fixed regressions.",
+            releaseNotesFormat: .plainText,
             lastCheckedAtMs: 1_700_000_000_000
         )
         let envelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: message)
@@ -79,8 +86,11 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(receivedStatus?.isCheckingForUpdates == false)
         #expect(receivedStatus?.isInstallInProgress == true)
         #expect(receivedStatus?.channel == .nightly)
+        #expect(receivedStatus?.automationMode == .metadataOnly)
+        #expect(receivedStatus?.installDisposition == .updateAvailable)
         #expect(receivedStatus?.currentVersion == "1.0.0")
         #expect(receivedStatus?.availableVersion == "1.1.0")
+        #expect(receivedStatus?.releaseNotesFormat == .plainText)
     }
 
     @MainActor
@@ -97,14 +107,24 @@ struct ClientSoftwareUpdateHandlingTests {
             isCheckingForUpdates: true,
             isInstallInProgress: true,
             channel: .release,
+            automationMode: .autoInstall,
+            installDisposition: .installing,
+            lastBlockReason: nil,
+            lastInstallResultCode: .started,
             currentVersion: "1.0.0",
             availableVersion: "1.1.0",
             availableVersionTitle: "Mirage 1.1",
+            releaseNotesSummary: "Important fixes",
+            releaseNotesBody: "Fixes and tuning.",
+            releaseNotesFormat: .plainText,
             lastCheckedAtMs: 1_700_000_000_000
         )
         let resultMessage = HostSoftwareUpdateInstallResultMessage(
             accepted: true,
             message: "Install started.",
+            resultCode: .started,
+            blockReason: nil,
+            remediationHint: nil,
             status: status
         )
         let envelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: resultMessage)
@@ -113,7 +133,9 @@ struct ClientSoftwareUpdateHandlingTests {
 
         #expect(receivedResult?.accepted == true)
         #expect(receivedResult?.message == "Install started.")
+        #expect(receivedResult?.resultCode == .started)
         #expect(receivedResult?.status?.isInstallInProgress == true)
         #expect(receivedResult?.status?.channel == .release)
+        #expect(receivedResult?.status?.installDisposition == .installing)
     }
 }

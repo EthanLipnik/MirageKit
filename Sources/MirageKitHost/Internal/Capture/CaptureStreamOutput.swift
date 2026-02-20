@@ -185,7 +185,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         windowStallThreshold: CFAbsoluteTime = 8.0
     )
     -> CFAbsoluteTime {
-        if windowID == 0 { return displayStallThreshold }
+        if windowID == 0 {
+            // Display capture can temporarily pause under compositor pressure.
+            // Keep restart responsiveness, but avoid overly eager 1.5s resets.
+            let minDisplayThreshold = max(displayStallThreshold, 2.0)
+            let maxDisplayThreshold: CFAbsoluteTime = 4.0
+            return min(max(configuredStallLimit, minDisplayThreshold), maxDisplayThreshold)
+        }
         return max(configuredStallLimit, windowStallThreshold)
     }
 
@@ -669,7 +675,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         if let frameCopier {
-            let inFlightLimit = expectedFrameRate >= 120 ? 3 : 2
+            let inFlightLimit: Int = {
+                // Keep SCK surface ownership bounded so a slow copy backend cannot
+                // starve the capture pipeline for multiple frame intervals.
+                let cap = expectedFrameRate >= 120 ? 6 : 4
+                let baseline = max(2, poolMinimumBufferCount - 4)
+                return min(cap, baseline)
+            }()
             let scheduleResult = frameCopier.scheduleCopy(
                 pixelBuffer: sourcePixelBuffer,
                 minimumBufferCount: poolMinimumBufferCount,

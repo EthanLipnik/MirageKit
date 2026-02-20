@@ -85,6 +85,9 @@ extension MirageHostService {
             return HostSoftwareUpdateInstallResultMessage(
                 accepted: false,
                 message: "Host update service unavailable.",
+                resultCode: .unavailable,
+                blockReason: .serviceUnavailable,
+                remediationHint: nil,
                 status: fallbackStatus
             )
         }
@@ -94,6 +97,9 @@ extension MirageHostService {
             return HostSoftwareUpdateInstallResultMessage(
                 accepted: false,
                 message: "Missing peer identity metadata.",
+                resultCode: .denied,
+                blockReason: .policyDenied,
+                remediationHint: nil,
                 status: fallbackStatus
             )
         }
@@ -113,6 +119,9 @@ extension MirageHostService {
             return HostSoftwareUpdateInstallResultMessage(
                 accepted: false,
                 message: "Remote update request denied for this device.",
+                resultCode: .denied,
+                blockReason: .policyDenied,
+                remediationHint: nil,
                 status: makeHostSoftwareUpdateStatusMessage(from: snapshot)
             )
         }
@@ -149,14 +158,103 @@ private extension MirageHostService {
             channel = .nightly
         }
 
+        let automationMode: HostSoftwareUpdateAutomationMode
+        switch snapshot.automationMode {
+        case .metadataOnly:
+            automationMode = .metadataOnly
+        case .autoDownload:
+            automationMode = .autoDownload
+        case .autoInstall:
+            automationMode = .autoInstall
+        }
+
+        let installDisposition: HostSoftwareUpdateInstallDisposition
+        switch snapshot.installDisposition {
+        case .idle:
+            installDisposition = .idle
+        case .checking:
+            installDisposition = .checking
+        case .updateAvailable:
+            installDisposition = .updateAvailable
+        case .downloading:
+            installDisposition = .downloading
+        case .installing:
+            installDisposition = .installing
+        case .completed:
+            installDisposition = .completed
+        case .blocked:
+            installDisposition = .blocked
+        case .failed:
+            installDisposition = .failed
+        }
+
+        let lastBlockReason: HostSoftwareUpdateBlockReason?
+        switch snapshot.lastBlockReason {
+        case .none:
+            lastBlockReason = nil
+        case .clientUpdatesDisabled:
+            lastBlockReason = .clientUpdatesDisabled
+        case .hostUpdaterBusy:
+            lastBlockReason = .hostUpdaterBusy
+        case .unattendedInstallUnsupported:
+            lastBlockReason = .unattendedInstallUnsupported
+        case .insufficientPermissions:
+            lastBlockReason = .insufficientPermissions
+        case .authorizationRequired:
+            lastBlockReason = .authorizationRequired
+        case .serviceUnavailable:
+            lastBlockReason = .serviceUnavailable
+        case .policyDenied:
+            lastBlockReason = .policyDenied
+        case .unknown:
+            lastBlockReason = .unknown
+        }
+
+        let lastInstallResultCode: HostSoftwareUpdateInstallResultCode?
+        switch snapshot.lastInstallResultCode {
+        case .none:
+            lastInstallResultCode = nil
+        case .started:
+            lastInstallResultCode = .started
+        case .alreadyInProgress:
+            lastInstallResultCode = .alreadyInProgress
+        case .noUpdateAvailable:
+            lastInstallResultCode = .noUpdateAvailable
+        case .denied:
+            lastInstallResultCode = .denied
+        case .blocked:
+            lastInstallResultCode = .blocked
+        case .failed:
+            lastInstallResultCode = .failed
+        case .unavailable:
+            lastInstallResultCode = .unavailable
+        }
+
+        let releaseNotesFormat: HostSoftwareUpdateReleaseNotesFormat?
+        switch snapshot.releaseNotesFormat {
+        case .none:
+            releaseNotesFormat = nil
+        case .plainText:
+            releaseNotesFormat = .plainText
+        case .html:
+            releaseNotesFormat = .html
+        }
+
         return HostSoftwareUpdateStatusMessage(
             isSparkleAvailable: snapshot.isSparkleAvailable,
             isCheckingForUpdates: snapshot.isCheckingForUpdates,
             isInstallInProgress: snapshot.isInstallInProgress,
             channel: channel,
+            automationMode: automationMode,
+            installDisposition: installDisposition,
+            lastBlockReason: lastBlockReason,
+            lastInstallResultCode: lastInstallResultCode,
             currentVersion: snapshot.currentVersion,
             availableVersion: snapshot.availableVersion,
             availableVersionTitle: snapshot.availableVersionTitle,
+            releaseNotesSummary: snapshot.releaseNotesSummary,
+            releaseNotesBody: snapshot.releaseNotesBody,
+            releaseNotesFormat: releaseNotesFormat,
             lastCheckedAtMs: snapshot.lastCheckedAtMs
         )
     }
@@ -164,9 +262,52 @@ private extension MirageHostService {
     func makeHostSoftwareUpdateInstallResultMessage(
         from result: MirageHostSoftwareUpdateInstallResult
     ) -> HostSoftwareUpdateInstallResultMessage {
-        HostSoftwareUpdateInstallResultMessage(
+        let resultCode: HostSoftwareUpdateInstallResultCode
+        switch result.code {
+        case .started:
+            resultCode = .started
+        case .alreadyInProgress:
+            resultCode = .alreadyInProgress
+        case .noUpdateAvailable:
+            resultCode = .noUpdateAvailable
+        case .denied:
+            resultCode = .denied
+        case .blocked:
+            resultCode = .blocked
+        case .failed:
+            resultCode = .failed
+        case .unavailable:
+            resultCode = .unavailable
+        }
+
+        let blockReason: HostSoftwareUpdateBlockReason?
+        switch result.blockReason {
+        case .none:
+            blockReason = nil
+        case .clientUpdatesDisabled:
+            blockReason = .clientUpdatesDisabled
+        case .hostUpdaterBusy:
+            blockReason = .hostUpdaterBusy
+        case .unattendedInstallUnsupported:
+            blockReason = .unattendedInstallUnsupported
+        case .insufficientPermissions:
+            blockReason = .insufficientPermissions
+        case .authorizationRequired:
+            blockReason = .authorizationRequired
+        case .serviceUnavailable:
+            blockReason = .serviceUnavailable
+        case .policyDenied:
+            blockReason = .policyDenied
+        case .unknown:
+            blockReason = .unknown
+        }
+
+        return HostSoftwareUpdateInstallResultMessage(
             accepted: result.accepted,
             message: result.message,
+            resultCode: resultCode,
+            blockReason: blockReason,
+            remediationHint: result.remediationHint,
             status: makeHostSoftwareUpdateStatusMessage(from: result.status)
         )
     }
@@ -178,9 +319,16 @@ private extension MirageHostService {
             isCheckingForUpdates: false,
             isInstallInProgress: false,
             channel: .release,
+            automationMode: .metadataOnly,
+            installDisposition: .idle,
+            lastBlockReason: nil,
+            lastInstallResultCode: .unavailable,
             currentVersion: appVersion ?? MirageKit.version,
             availableVersion: nil,
             availableVersionTitle: nil,
+            releaseNotesSummary: nil,
+            releaseNotesBody: nil,
+            releaseNotesFormat: nil,
             lastCheckedAtMs: nil
         )
     }

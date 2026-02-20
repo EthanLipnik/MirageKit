@@ -57,6 +57,14 @@ final class CaptureFrameCopier: @unchecked Sendable {
         let destination: CVPixelBuffer
     }
 
+    private struct SourceContext: @unchecked Sendable {
+        let source: CVPixelBuffer
+    }
+
+    private struct CopyBackendState {
+        var metalDisabledUntil: CFAbsoluteTime = 0
+    }
+
     private enum MetalCopyFormat {
         case single(MTLPixelFormat)
         case biPlanar(luma: MTLPixelFormat, chroma: MTLPixelFormat)
@@ -73,6 +81,12 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private var telemetry = CopyTelemetry()
     private var lastTelemetryLogTime: CFAbsoluteTime = 0
     private let telemetryLogInterval: CFAbsoluteTime = 2.0
+    private let backendFallbackDurationDefault: CFAbsoluteTime = 5.0
+    private let backendFallbackDurationOnFailure: CFAbsoluteTime = 15.0
+    private let backendFallbackDurationOnStall: CFAbsoluteTime = 30.0
+    private let metalStallThresholdMs: Double = 80.0
+    private let backendLock = NSLock()
+    private var backendState = CopyBackendState()
     private let metalLock = NSLock()
     private var metalDevice: MTLDevice?
     private var metalQueue: MTLCommandQueue?
@@ -107,51 +121,61 @@ final class CaptureFrameCopier: @unchecked Sendable {
             pixelFormat: pixelFormat,
             minimumBufferCount: max(1, minimumBufferCount)
         )
-        guard ensurePool(config: config) else {
-            recordPoolFailure()
-            return .poolExhausted
-        }
-
-        poolLock.lock()
-        let pool = pool
-        poolLock.unlock()
-        guard let pool else {
-            recordPoolFailure()
-            return .poolExhausted
-        }
-
+        let sourceContext = SourceContext(source: source)
         guard reserveCopySlot(limit: max(1, inFlightLimit)) else {
             recordInFlightLimitDrop()
             return .inFlightLimit
         }
 
-        var destination: CVPixelBuffer?
-        let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destination)
-        guard status == kCVReturnSuccess, let destination else {
-            releaseCopySlot()
-            recordBufferFailure()
-            return .poolExhausted
-        }
-
-        let context = CopyContext(source: source, destination: destination)
-        let copyStartTime = CFAbsoluteTimeGetCurrent()
-        if scheduleMetalCopy(
-            source: context.source,
-            destination: context.destination,
-            startTime: copyStartTime,
-            completion: completion
-        ) {
-            return .scheduled
-        }
-        copyQueue.async { [weak self] in
-            guard let self else { return }
+        copyQueue.async { [self] in
             autoreleasepool {
-                let didCopy = self.copyPixelBufferCPU(source: context.source, destination: context.destination)
+                guard ensurePool(config: config) else {
+                    releaseCopySlot()
+                    recordPoolFailure()
+                    completion(.poolExhausted)
+                    return
+                }
+
+                poolLock.lock()
+                let pool = pool
+                poolLock.unlock()
+                guard let pool else {
+                    releaseCopySlot()
+                    recordPoolFailure()
+                    completion(.poolExhausted)
+                    return
+                }
+
+                var destination: CVPixelBuffer?
+                let status = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destination)
+                guard status == kCVReturnSuccess, let destination else {
+                    releaseCopySlot()
+                    recordBufferFailure()
+                    completion(.poolExhausted)
+                    return
+                }
+
+                let context = CopyContext(source: sourceContext.source, destination: destination)
+                let copyStartTime = CFAbsoluteTimeGetCurrent()
+                let tryMetal = shouldUseMetalCopy(now: copyStartTime)
+                if tryMetal {
+                    if scheduleMetalCopy(
+                        source: context.source,
+                        destination: context.destination,
+                        startTime: copyStartTime,
+                        completion: completion
+                    ) {
+                        return
+                    }
+                    disableMetalCopyTemporarily(reason: "Metal setup unavailable")
+                }
+
+                let didCopy = copyPixelBufferCPU(source: context.source, destination: context.destination)
                 let durationMs = (CFAbsoluteTimeGetCurrent() - copyStartTime) * 1000
-                self.recordCopyCompletion(durationMs: durationMs, success: didCopy, usedMetal: false)
-                self.releaseCopySlot()
+                recordCopyCompletion(durationMs: durationMs, success: didCopy, usedMetal: false)
+                releaseCopySlot()
                 if didCopy {
-                    self.copyBufferAttachments(from: context.source, to: context.destination)
+                    copyBufferAttachments(from: context.source, to: context.destination)
                     completion(.copied(context.destination))
                 } else {
                     completion(.unsupported)
@@ -216,24 +240,25 @@ final class CaptureFrameCopier: @unchecked Sendable {
         completion: @escaping @Sendable (CopyResult) -> Void
     )
     -> Bool {
+        let context = CopyContext(source: source, destination: destination)
         guard ensureMetal() else { return false }
-        guard let format = metalFormat(for: CVPixelBufferGetPixelFormatType(source)) else { return false }
+        guard let format = metalFormat(for: CVPixelBufferGetPixelFormatType(context.source)) else { return false }
         guard let commandQueue = metalQueue, let textureCache = metalTextureCache else { return false }
 
-        let planeCount = CVPixelBufferGetPlaneCount(source)
+        let planeCount = CVPixelBufferGetPlaneCount(context.source)
         let blits: [(source: MTLTexture, destination: MTLTexture)]
 
         switch format {
         case let .single(pixelFormat):
             guard planeCount == 0 else { return false }
             guard let srcTexture = makeTexture(
-                from: source,
+                from: context.source,
                 pixelFormat: pixelFormat,
                 planeIndex: 0,
                 cache: textureCache
             ),
                 let dstTexture = makeTexture(
-                    from: destination,
+                    from: context.destination,
                     pixelFormat: pixelFormat,
                     planeIndex: 0,
                     cache: textureCache
@@ -244,21 +269,26 @@ final class CaptureFrameCopier: @unchecked Sendable {
 
         case let .biPlanar(lumaFormat, chromaFormat):
             guard planeCount == 2 else { return false }
-            guard let srcLuma = makeTexture(from: source, pixelFormat: lumaFormat, planeIndex: 0, cache: textureCache),
+            guard let srcLuma = makeTexture(
+                from: context.source,
+                pixelFormat: lumaFormat,
+                planeIndex: 0,
+                cache: textureCache
+            ),
                   let dstLuma = makeTexture(
-                      from: destination,
+                      from: context.destination,
                       pixelFormat: lumaFormat,
                       planeIndex: 0,
                       cache: textureCache
                   ),
                   let srcChroma = makeTexture(
-                      from: source,
+                      from: context.source,
                       pixelFormat: chromaFormat,
                       planeIndex: 1,
                       cache: textureCache
                   ),
                   let dstChroma = makeTexture(
-                      from: destination,
+                      from: context.destination,
                       pixelFormat: chromaFormat,
                       planeIndex: 1,
                       cache: textureCache
@@ -288,8 +318,8 @@ final class CaptureFrameCopier: @unchecked Sendable {
             releaseCopySlot()
             if buffer.status == .completed {
                 recordCopyCompletion(durationMs: durationMs, success: true, usedMetal: true)
-                copyBufferAttachments(from: source, to: destination)
-                completion(.copied(destination))
+                copyBufferAttachments(from: context.source, to: context.destination)
+                completion(.copied(context.destination))
             } else {
                 recordCopyCompletion(durationMs: durationMs, success: false, usedMetal: true)
                 completion(.unsupported)
@@ -297,6 +327,28 @@ final class CaptureFrameCopier: @unchecked Sendable {
         }
         commandBuffer.commit()
         return true
+    }
+
+    private func shouldUseMetalCopy(now: CFAbsoluteTime) -> Bool {
+        backendLock.withLock {
+            if now >= backendState.metalDisabledUntil { return true }
+            return false
+        }
+    }
+
+    private func disableMetalCopyTemporarily(
+        reason: String,
+        duration: CFAbsoluteTime? = nil
+    ) {
+        let fallbackDuration = max(1.0, duration ?? backendFallbackDurationDefault)
+        let now = CFAbsoluteTimeGetCurrent()
+        let shouldLog = backendLock.withLock { () -> Bool in
+            let wasEnabled = now >= backendState.metalDisabledUntil
+            backendState.metalDisabledUntil = max(backendState.metalDisabledUntil, now + fallbackDuration)
+            return wasEnabled
+        }
+        guard shouldLog else { return }
+        MirageLogger.capture("Capture copy: falling back to CPU for \(Int(fallbackDuration))s (\(reason))")
     }
 
     private func recordInFlightLimitDrop() {
@@ -321,6 +373,19 @@ final class CaptureFrameCopier: @unchecked Sendable {
     }
 
     private func recordCopyCompletion(durationMs: Double, success: Bool, usedMetal: Bool) {
+        if usedMetal {
+            if !success {
+                disableMetalCopyTemporarily(
+                    reason: "Metal copy failed",
+                    duration: backendFallbackDurationOnFailure
+                )
+            } else if durationMs >= metalStallThresholdMs {
+                disableMetalCopyTemporarily(
+                    reason: "Metal copy stall (\(durationMs.formatted(.number.precision(.fractionLength(1))))ms)",
+                    duration: backendFallbackDurationOnStall
+                )
+            }
+        }
         telemetryLock.lock()
         telemetry.copyAttempts += 1
         if usedMetal { telemetry.metalCopies += 1 } else {
