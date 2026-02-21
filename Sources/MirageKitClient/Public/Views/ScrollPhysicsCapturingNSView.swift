@@ -86,6 +86,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var lockedCursorSmoothingTimer: Timer?
     private var cursorLockAnchor: CGPoint = .zero
     private var cursorHidden: Bool = false
+    private var cursorHiddenForTyping: Bool = false
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
 
     /// Size of scrollable area - large enough for extended scrolling before recenter
@@ -211,12 +212,44 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     // MARK: - Cursor Lock
 
-    private func updateCursorLockMode() {
-        if cursorLockEnabled {
+    private var shouldHideSystemCursor: Bool {
+        cursorLockEnabled || cursorHiddenForTyping
+    }
+
+    private func updateSystemCursorVisibility() {
+        if shouldHideSystemCursor {
             if !cursorHidden {
                 NSCursor.hide()
                 cursorHidden = true
             }
+        } else if cursorHidden {
+            NSCursor.unhide()
+            cursorHidden = false
+        }
+    }
+
+    private func updateLockedCursorViewVisibility() {
+        let shouldShow = cursorLockEnabled && lockedCursorVisible && !cursorHiddenForTyping
+        lockedCursorView.isHidden = !shouldShow
+    }
+
+    private func hideCursorForTypingUntilPointerMovement() {
+        guard !cursorHiddenForTyping else { return }
+        cursorHiddenForTyping = true
+        updateSystemCursorVisibility()
+        updateLockedCursorViewVisibility()
+    }
+
+    private func revealCursorAfterPointerMovement() {
+        guard cursorHiddenForTyping else { return }
+        cursorHiddenForTyping = false
+        updateSystemCursorVisibility()
+        updateLockedCursorViewVisibility()
+    }
+
+    private func updateCursorLockMode() {
+        if cursorLockEnabled {
+            updateSystemCursorVisibility()
             CGAssociateMouseAndMouseCursorPosition(0)
             updateCursorLockAnchor()
             warpCursorToAnchor()
@@ -244,16 +277,13 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private func restoreCursorLockIfNeeded() {
         CGAssociateMouseAndMouseCursorPosition(1)
-        if cursorHidden {
-            NSCursor.unhide()
-            cursorHidden = false
-        }
-        lockedCursorView.isHidden = true
+        updateSystemCursorVisibility()
+        updateLockedCursorViewVisibility()
     }
 
     private func setLockedCursorVisible(_ isVisible: Bool) {
         lockedCursorVisible = isVisible
-        lockedCursorView.isHidden = !(cursorLockEnabled && isVisible)
+        updateLockedCursorViewVisibility()
         updateLockedCursorViewPosition()
     }
 
@@ -468,6 +498,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
@@ -485,6 +516,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
@@ -539,6 +571,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func rightMouseDragged(with event: NSEvent) {
+        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
@@ -592,6 +625,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func otherMouseDragged(with event: NSEvent) {
+        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
@@ -618,10 +652,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
             currentModifiers = []
             onMouseEvent?(.flagsChanged(currentModifiers))
         }
+        revealCursorAfterPointerMovement()
         return super.resignFirstResponder()
     }
 
     override func keyDown(with event: NSEvent) {
+        hideCursorForTypingUntilPointerMovement()
         let keyEvent = MirageKeyEvent(
             keyCode: event.keyCode,
             characters: event.characters,
@@ -680,6 +716,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     deinit {
         if let registeredCursorStreamID { MirageCursorUpdateRouter.shared.unregister(streamID: registeredCursorStreamID) }
         MainActor.assumeIsolated {
+            cursorHiddenForTyping = false
             stopLockedCursorSmoothing()
         }
         MainActor.assumeIsolated {

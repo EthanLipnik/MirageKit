@@ -9,6 +9,7 @@
 
 @testable import MirageKitHost
 import MirageKit
+import CoreGraphics
 import Foundation
 import Testing
 
@@ -88,6 +89,39 @@ struct KeyframeRecoveryPolicyTests {
         #expect(oneTwentyHz.frameQuality < sixtyHz.frameQuality)
     }
 
+    @Test("Bitrate-capped 6K streams allow a lower runtime quality floor")
+    func bitrateCappedQualityFloor() async {
+        let context = makeContext(
+            frameRate: 120,
+            bitrate: 120_000_000
+        )
+        let sixKSize = CGSize(width: 6016, height: 3384)
+        await context.updateCaptureSizesIfNeeded(sixKSize)
+        await context.applyDerivedQuality(for: sixKSize, logLabel: nil)
+
+        let floor = await context.qualityFloor
+        #expect(floor < 0.1)
+    }
+
+    @Test("Bitrate-constrained keyframes compress harder when queue pressure rises")
+    func keyframePressureQualityDrop() async {
+        let context = makeContext(
+            frameRate: 120,
+            bitrate: 120_000_000
+        )
+        let sixKSize = CGSize(width: 6016, height: 3384)
+        await context.updateCaptureSizesIfNeeded(sixKSize)
+        await context.applyDerivedQuality(for: sixKSize, logLabel: nil)
+
+        let baseline = await context.keyframeQuality(for: 0)
+        let maxQueuedBytes = await context.maxQueuedBytes
+        let pressured = await context.keyframeQuality(for: maxQueuedBytes)
+        let floor = await context.keyframeQualityFloor
+
+        #expect(pressured < baseline)
+        #expect(pressured >= floor)
+    }
+
     @Test("Recovery requests enable P-frame FEC in loss mode")
     func fecEscalationPolicy() async throws {
         let context = makeContext()
@@ -104,13 +138,16 @@ struct KeyframeRecoveryPolicyTests {
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: hardTime) == 16)
     }
 
-    private func makeContext() -> StreamContext {
+    private func makeContext(
+        frameRate: Int = 60,
+        bitrate: Int = 600_000_000
+    ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
-            targetFrameRate: 60,
+            targetFrameRate: frameRate,
             keyFrameInterval: 1800,
             colorSpace: .displayP3,
             pixelFormat: .bgr10a2,
-            bitrate: 600_000_000
+            bitrate: bitrate
         )
         return StreamContext(
             streamID: 1,

@@ -139,6 +139,7 @@ extension InputCapturingView {
         charactersIgnoringModifiers: String?,
         modifiers: MirageModifierFlags
     ) {
+        hideCursorForTypingUntilPointerMovement()
         let keyDown = MirageKeyEvent(
             keyCode: keyCode,
             characters: characters,

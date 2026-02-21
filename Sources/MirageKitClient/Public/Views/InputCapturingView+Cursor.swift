@@ -10,6 +10,20 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
+    func hideCursorForTypingUntilPointerMovement() {
+        guard !cursorHiddenForTyping else { return }
+        cursorHiddenForTyping = true
+        pointerInteraction?.invalidate()
+        updateLockedCursorViewVisibility()
+    }
+
+    func revealCursorAfterPointerMovement() {
+        guard cursorHiddenForTyping else { return }
+        cursorHiddenForTyping = false
+        pointerInteraction?.invalidate()
+        updateLockedCursorViewVisibility()
+    }
+
     func setupPointerInteraction() {
         // Add pointer interaction for cursor customization
         let interaction = UIPointerInteraction(delegate: self)
@@ -67,7 +81,7 @@ extension InputCapturingView {
 extension InputCapturingView: UIPointerInteractionDelegate {
     public func pointerInteraction(_: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
         // Return appropriate pointer style based on host cursor state
-        if cursorLockEnabled {
+        if cursorLockEnabled || cursorHiddenForTyping {
             return .hidden()
         }
         guard cursorIsVisible else {

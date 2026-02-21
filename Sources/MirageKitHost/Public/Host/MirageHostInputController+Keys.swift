@@ -33,13 +33,18 @@ extension MirageHostInputController {
 
         postEvent(cgEvent)
 
-        // Update per-modifier timestamps for any active modifiers
-        if !event.modifiers.isEmpty {
+        // Refresh timestamps only for modifiers tracked via flagsChanged state.
+        // Shortcut key events can carry temporary modifier flags without implying
+        // a durable held-modifier transition on the host.
+        let trackedModifiers = event.modifiers.intersection(lastSentModifiers)
+        if !trackedModifiers.isEmpty {
             let now = CACurrentMediaTime()
-            for (flag, _) in Self.modifierKeyCodes where event.modifiers.contains(flag) {
+            for (flag, _) in Self.modifierKeyCodes where trackedModifiers.contains(flag) {
                 modifierLastEventTimes[flag] = now
             }
         }
+
+        if !isKeyDown, !event.modifiers.isEmpty { clearUnexpectedSystemModifiers() }
     }
 
     func injectFlagsChanged(_ modifiers: MirageModifierFlags, app _: MirageApplication?) {

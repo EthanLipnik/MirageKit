@@ -66,22 +66,27 @@ extension MirageHostInputController {
             if systemFlags.contains(cgFlag) { actualModifiers.insert(mirageFlag) }
         }
 
-        if !actualModifiers.isEmpty, lastSentModifiers.isEmpty {
-            MirageLogger.host("Clearing unexpected system modifiers: \(actualModifiers)")
+        let unexpectedModifiers = actualModifiers.subtracting(lastSentModifiers)
+        guard !unexpectedModifiers.isEmpty else { return }
 
-            for (flag, keyCode) in Self.modifierKeyCodes where actualModifiers.contains(flag) {
-                if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
-                    keyEvent.flags = actualModifiers.cgEventFlags
-                    postEvent(keyEvent)
-                }
-                actualModifiers.remove(flag)
-            }
+        MirageLogger.host("Clearing unexpected system modifiers: \(unexpectedModifiers)")
 
-            if let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
-                cgEvent.type = .flagsChanged
-                cgEvent.flags = []
-                postEvent(cgEvent)
+        for (flag, keyCode) in Self.modifierKeyCodes where unexpectedModifiers.contains(flag) {
+            // Remove the flag before posting key-up so the event reflects the
+            // post-release modifier state.
+            actualModifiers.remove(flag)
+            if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+                keyEvent.flags = actualModifiers.cgEventFlags
+                postEvent(keyEvent)
             }
+            heldModifierKeyCodes.remove(keyCode)
+            modifierLastEventTimes.removeValue(forKey: flag)
+        }
+
+        if let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
+            cgEvent.type = .flagsChanged
+            cgEvent.flags = lastSentModifiers.cgEventFlags
+            postEvent(cgEvent)
         }
     }
 

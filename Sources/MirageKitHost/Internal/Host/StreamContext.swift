@@ -93,6 +93,11 @@ actor StreamContext {
     let compressionQualityCeiling: Float = 0.80
     let qualityFloorFactor: Float = 0.6
     let keyframeFloorFactor: Float = 0.6
+    let bitrateCappedQualityFloorFactor: Float = 0.38
+    let bitrateCappedKeyframeFloorFactor: Float = 0.28
+    let uncappedQualityFloorMinimum: Float = 0.10
+    let bitrateCappedQualityFloorMinimum: Float = 0.05
+    let bitrateCappedKeyframeFloorMinimum: Float = 0.04
     var pendingKeyframeReason: String?
     var pendingKeyframeDeadline: CFAbsoluteTime = 0
     var isKeyframeEncoding: Bool = false
@@ -325,10 +330,15 @@ actor StreamContext {
         let cappedFrameQuality = min(encoderConfig.frameQuality, compressionQualityCeiling)
         steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = cappedFrameQuality
-        qualityFloor = max(0.1, cappedFrameQuality * qualityFloorFactor)
+        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
+        let runtimeFloorFactor = hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
+        let runtimeFloorMinimum = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
+        qualityFloor = min(cappedFrameQuality, max(runtimeFloorMinimum, cappedFrameQuality * runtimeFloorFactor))
         activeQuality = cappedFrameQuality
         let cappedKeyframeQuality = min(encoderConfig.keyframeQuality, cappedFrameQuality)
-        keyframeQualityFloor = max(0.1, cappedKeyframeQuality * keyframeFloorFactor)
+        let keyframeFloorFactor = hasBitrateCap ? bitrateCappedKeyframeFloorFactor : self.keyframeFloorFactor
+        let keyframeFloorMinimum = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
+        keyframeQualityFloor = min(cappedKeyframeQuality, max(keyframeFloorMinimum, cappedKeyframeQuality * keyframeFloorFactor))
         let cadence = Self.keyframeCadence(
             intervalFrames: encoderConfig.keyFrameInterval,
             frameRate: encoderConfig.targetFrameRate
@@ -360,6 +370,24 @@ actor StreamContext {
     func resolvedCaptureFrameRate(for targetFrameRate: Int) -> Int {
         if let override = captureFrameRateOverride { return override }
         return targetFrameRate
+    }
+
+    func resolvedRuntimeQualityFloor(for qualityCeiling: Float) -> Float {
+        let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
+        guard ceiling > 0 else { return 0 }
+        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
+        let floorFactor = hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
+        let minimumFloor = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
+        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
+    }
+
+    func resolvedRuntimeKeyframeQualityFloor(for qualityCeiling: Float) -> Float {
+        let ceiling = max(0.0, min(compressionQualityCeiling, qualityCeiling))
+        guard ceiling > 0 else { return 0 }
+        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
+        let floorFactor = hasBitrateCap ? bitrateCappedKeyframeFloorFactor : keyframeFloorFactor
+        let minimumFloor = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
+        return min(ceiling, max(minimumFloor, ceiling * floorFactor))
     }
 
     func refreshCaptureCadence() async {

@@ -281,8 +281,47 @@ extension StreamContext {
     }
 
     func keyframeQuality(for queueBytes: Int) -> Float {
-        _ = queueBytes
-        return min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
+        let base = min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
+        var adjusted = base
+
+        if let bpp = bitrateBitsPerPixelPerFrame() {
+            let constrainedStartBPP = 0.085
+            let constrainedEndBPP = 0.030
+            if bpp < constrainedStartBPP {
+                let range = max(0.0001, constrainedStartBPP - constrainedEndBPP)
+                let pressure = max(0.0, min(1.0, (constrainedStartBPP - bpp) / range))
+                let bitrateDrop = Float(0.02 + pressure * 0.10)
+                adjusted -= bitrateDrop
+            }
+        }
+
+        if queueBytes > queuePressureBytes {
+            let range = max(1, maxQueuedBytes - queuePressureBytes)
+            let pressure = max(0.0, min(1.0, Double(queueBytes - queuePressureBytes) / Double(range)))
+            let queueDrop = Float(0.03 + pressure * 0.08)
+            adjusted -= queueDrop
+        }
+
+        let floored = max(keyframeQualityFloor, adjusted)
+        return min(base, floored)
+    }
+
+    private func bitrateBitsPerPixelPerFrame() -> Double? {
+        guard let targetBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+            bitrate: encoderConfig.bitrate
+        ) else {
+            return nil
+        }
+        let referenceSize = currentEncodedSize == .zero ? currentCaptureSize : currentEncodedSize
+        let width = max(2, Int(referenceSize.width.rounded()))
+        let height = max(2, Int(referenceSize.height.rounded()))
+        guard referenceSize.width > 0, referenceSize.height > 0 else { return nil }
+        return MirageBitrateQualityMapper.bitsPerPixelPerFrame(
+            targetBitrateBps: targetBitrate,
+            width: width,
+            height: height,
+            frameRate: currentFrameRate
+        )
     }
 }
 #endif

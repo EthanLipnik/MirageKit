@@ -114,10 +114,10 @@ extension StreamContext {
         encoderConfig.keyframeQuality = cappedKeyframeQuality
         steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = resolvedQualityCeiling()
-        qualityFloor = max(0.1, cappedFrameQuality * qualityFloorFactor)
+        qualityFloor = resolvedRuntimeQualityFloor(for: cappedFrameQuality)
         activeQuality = min(activeQuality, qualityCeiling)
         if activeQuality < qualityFloor { activeQuality = qualityFloor }
-        keyframeQualityFloor = max(0.1, cappedKeyframeQuality * keyframeFloorFactor)
+        keyframeQualityFloor = resolvedRuntimeKeyframeQualityFloor(for: cappedKeyframeQuality)
 
         await encoder?.updateQuality(activeQuality)
 

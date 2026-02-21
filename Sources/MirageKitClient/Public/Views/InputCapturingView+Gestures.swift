@@ -196,6 +196,7 @@ extension InputCapturingView {
             // Track all movement - no threshold, pixel-perfect dragging
             let distance = hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y)
             if distance > 0.0001 { // Any actual movement
+                revealCursorAfterPointerMovement()
                 isDragging = true
                 let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
                 onInputEvent?(.mouseDragged(mouseEvent))
@@ -314,6 +315,7 @@ extension InputCapturingView {
             switch gesture.state {
             case .began:
                 lockedPointerLastHoverLocation = location
+                revealCursorAfterPointerMovement()
                 noteLockedCursorLocalInput()
                 setLockedCursorVisible(true)
                 updateLockedCursorViewPosition()
@@ -326,6 +328,7 @@ extension InputCapturingView {
                 if let lastLocation = lockedPointerLastHoverLocation {
                     let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
                     if translation != .zero {
+                        revealCursorAfterPointerMovement()
                         applyLockedCursorDelta(translation)
                         let eventModifiers = modifiers(from: gesture)
                         let mouseEvent = MirageMouseEvent(
@@ -349,6 +352,7 @@ extension InputCapturingView {
         switch gesture.state {
         case .began,
              .changed:
+            revealCursorAfterPointerMovement()
             if usesVirtualTrackpad {
                 setVirtualCursorVisible(false)
                 updateVirtualCursorPosition(location, updateVisibility: false)
@@ -385,6 +389,7 @@ extension InputCapturingView {
         switch gesture.state {
         case .began,
              .changed:
+            if translation != .zero { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(translation)
             let eventModifiers = modifiers(from: gesture)
             let mouseEvent = MirageMouseEvent(button: .left, location: lockedCursorPosition, modifiers: eventModifiers)

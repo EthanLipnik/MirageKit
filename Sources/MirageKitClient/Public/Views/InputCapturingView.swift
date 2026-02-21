@@ -158,6 +158,7 @@ public class InputCapturingView: UIView {
     // Cursor state from host
     var currentCursorType: MirageCursorType = .arrow
     var cursorIsVisible: Bool = true
+    var cursorHiddenForTyping: Bool = false
     var pointerInteraction: UIPointerInteraction?
     var cursorSequence: UInt64 = 0
     var lastCursorRefreshTime: CFTimeInterval = 0
@@ -485,6 +486,20 @@ public class InputCapturingView: UIView {
     static let keyRepeatInitialDelay: TimeInterval = 0.5
     /// Interval between repeat events (matches macOS default ~30 chars/sec)
     static let keyRepeatInterval: TimeInterval = 0.033
+    /// Active repeat session for intercepted UIKeyCommand shortcuts.
+    var passthroughShortcutRepeatState: PassthroughShortcutRepeatState?
+    /// Timer that polls physical key state for intercepted shortcut repeats.
+    var passthroughShortcutRepeatTimer: Timer?
+    /// Polling interval for intercepted shortcut repeat sessions.
+    static let passthroughShortcutRepeatPollInterval: TimeInterval = 1.0 / 60.0
+
+    struct PassthroughShortcutRepeatState {
+        let keyCode: UInt16
+        let input: String
+        let modifiers: MirageModifierFlags
+        let requiresShift: Bool
+        var nextRepeatDeadline: TimeInterval
+    }
 
     override public init(frame: CGRect) {
         metalView = MirageMetalView(frame: frame, device: nil)
@@ -734,8 +749,13 @@ public class InputCapturingView: UIView {
 
     func setLockedCursorVisible(_ isVisible: Bool) {
         lockedCursorVisible = isVisible
-        lockedCursorView.isHidden = !(cursorLockEnabled && isVisible)
+        updateLockedCursorViewVisibility()
         updateLockedCursorViewPosition()
+    }
+
+    func updateLockedCursorViewVisibility() {
+        let shouldShow = cursorLockEnabled && lockedCursorVisible && !cursorHiddenForTyping
+        lockedCursorView.isHidden = !shouldShow
     }
 
     func updateLockedCursorViewPosition() {
@@ -867,6 +887,7 @@ public class InputCapturingView: UIView {
     private func handleLockedMouseDelta(deltaX: Float, deltaY: Float) {
         guard cursorLockEnabled else { return }
         guard deltaX != 0 || deltaY != 0 else { return }
+        revealCursorAfterPointerMovement()
         _ = refreshModifiersForInput()
         let translation = CGPoint(x: CGFloat(deltaX), y: CGFloat(-deltaY))
         applyLockedCursorDelta(translation)

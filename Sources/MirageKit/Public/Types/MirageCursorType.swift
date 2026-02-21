@@ -87,7 +87,29 @@ public extension MirageCursorType {
         } else if cursorData == NSCursor.contextualMenu.image.tiffRepresentation {
             self = .contextualMenu
         } else if #available(macOS 15.0, *) {
-            if cursorData == NSCursor.frameResize(position: .topRight, directions: .inward).image.tiffRepresentation
+            if cursorData == NSCursor.frameResize(position: .left, directions: .inward).image.tiffRepresentation {
+                self = .resizeRight
+            } else if cursorData == NSCursor.frameResize(position: .left, directions: .outward).image.tiffRepresentation {
+                self = .resizeLeft
+            } else if cursorData == NSCursor.frameResize(position: .right, directions: .inward).image.tiffRepresentation {
+                self = .resizeLeft
+            } else if cursorData == NSCursor.frameResize(position: .right, directions: .outward).image.tiffRepresentation {
+                self = .resizeRight
+            } else if cursorData == NSCursor.frameResize(position: .left, directions: .all).image.tiffRepresentation
+                || cursorData == NSCursor.frameResize(position: .right, directions: .all).image.tiffRepresentation {
+                self = .resizeLeftRight
+            } else if cursorData == NSCursor.frameResize(position: .top, directions: .inward).image.tiffRepresentation {
+                self = .resizeDown
+            } else if cursorData == NSCursor.frameResize(position: .top, directions: .outward).image.tiffRepresentation {
+                self = .resizeUp
+            } else if cursorData == NSCursor.frameResize(position: .bottom, directions: .inward).image.tiffRepresentation {
+                self = .resizeUp
+            } else if cursorData == NSCursor.frameResize(position: .bottom, directions: .outward).image.tiffRepresentation {
+                self = .resizeDown
+            } else if cursorData == NSCursor.frameResize(position: .top, directions: .all).image.tiffRepresentation
+                || cursorData == NSCursor.frameResize(position: .bottom, directions: .all).image.tiffRepresentation {
+                self = .resizeUpDown
+            } else if cursorData == NSCursor.frameResize(position: .topRight, directions: .inward).image.tiffRepresentation
                 || cursorData == NSCursor.frameResize(position: .topRight, directions: .outward).image
                 .tiffRepresentation {
                 self = .resizeNorthEast
@@ -231,39 +253,37 @@ public extension MirageCursorType {
         case .resizeLeft,
              .resizeLeftRight,
              .resizeRight:
-            // Horizontal resize - small shape with left/right arrows
-            let style = UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 4, height: 4), radius: 2))
-            style.accessories = [.arrow(.left), .arrow(.right)]
-            return style
+            // Horizontal resize with native pointer shape and directional accessories.
+            return resizePointerStyle(accessories: [.arrow(.left), .arrow(.right)])
 
         case .resizeDown,
              .resizeUp,
              .resizeUpDown:
-            // Vertical resize - small shape with top/bottom arrows
-            let style = UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 4, height: 4), radius: 2))
-            style.accessories = [.arrow(.top), .arrow(.bottom)]
-            return style
+            // Vertical resize with native pointer shape and directional accessories.
+            return resizePointerStyle(accessories: [.arrow(.top), .arrow(.bottom)])
 
         case .resizeNESW,
              .resizeNorthEast,
              .resizeSouthWest:
-            // NE/SW diagonal resize - arrows pointing topRight and bottomLeft
-            let style = UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 4, height: 4), radius: 2))
-            style.accessories = [.arrow(.topRight), .arrow(.bottomLeft)]
-            return style
+            // NE/SW diagonal resize with native pointer shape and directional accessories.
+            return resizePointerStyle(accessories: [.arrow(.topRight), .arrow(.bottomLeft)])
 
         case .resizeNorthWest,
              .resizeNWSE,
              .resizeSouthEast:
-            // NW/SE diagonal resize - arrows pointing topLeft and bottomRight
-            let style = UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 4, height: 4), radius: 2))
-            style.accessories = [.arrow(.topLeft), .arrow(.bottomRight)]
-            return style
+            // NW/SE diagonal resize with native pointer shape and directional accessories.
+            return resizePointerStyle(accessories: [.arrow(.topLeft), .arrow(.bottomRight)])
 
         case .disappearingItem:
             // Dragging out of bounds - use small fading indicator
             return UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 16, height: 16), radius: 8))
         }
+    }
+
+    private func resizePointerStyle(accessories: [UIPointerAccessory]) -> UIPointerStyle {
+        let style = UIPointerStyle.system()
+        style.accessories = accessories
+        return style
     }
 }
 #endif
