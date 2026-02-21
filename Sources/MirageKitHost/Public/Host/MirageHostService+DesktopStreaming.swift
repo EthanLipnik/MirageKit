@@ -262,7 +262,7 @@ extension MirageHostService {
             encoderConfig: config,
             streamScale: clampedStreamScale,
             maxPacketSize: networkConfig.maxPacketSize,
-            mediaSecurityContext: mediaSecurityByClientID[clientContext.client.id],
+            mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: clientContext.client.id),
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,

@@ -213,6 +213,8 @@ public final class MirageClientService {
     public internal(set) var hostSessionState: HostSessionState?
     /// Selected protocol features from handshake negotiation.
     var negotiatedFeatures: MirageFeatureSet = []
+    /// Whether media payload encryption is active for the current host session.
+    public internal(set) var mediaPayloadEncryptionEnabled: Bool = true
 
     /// Current session token from the host (for unlock requests)
     var currentSessionToken: String?
@@ -360,6 +362,7 @@ public final class MirageClientService {
     var mediaSecurityContext: MirageMediaSecurityContext?
     let mediaSecurityContextLock = NSLock()
     nonisolated(unsafe) var mediaSecurityContextStorage: MirageMediaSecurityContext?
+    nonisolated(unsafe) var mediaSecurityPacketKeyStorage: MirageMediaPacketKey?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
@@ -467,10 +470,17 @@ public final class MirageClientService {
         return mediaSecurityContextStorage
     }
 
+    nonisolated var mediaSecurityPacketKeyForNetworking: MirageMediaPacketKey? {
+        mediaSecurityContextLock.lock()
+        defer { mediaSecurityContextLock.unlock() }
+        return mediaSecurityPacketKeyStorage
+    }
+
     func setMediaSecurityContext(_ context: MirageMediaSecurityContext?) {
         mediaSecurityContext = context
         mediaSecurityContextLock.lock()
         mediaSecurityContextStorage = context
+        mediaSecurityPacketKeyStorage = context.map { MirageMediaSecurity.makePacketKey(context: $0) }
         mediaSecurityContextLock.unlock()
     }
 

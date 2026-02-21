@@ -34,7 +34,7 @@ actor StreamPacketSender {
     }
 
     private let maxPayloadSize: Int
-    private let mediaSecurityContext: MirageMediaSecurityContext?
+    private let mediaSecurityKey: MirageMediaPacketKey?
     private let onEncodedFrame: @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
     private let packetBufferPool: PacketBufferPool
     private let awdlExperimentEnabled = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
@@ -63,7 +63,7 @@ actor StreamPacketSender {
         onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
     ) {
         self.maxPayloadSize = maxPayloadSize
-        self.mediaSecurityContext = mediaSecurityContext
+        mediaSecurityKey = mediaSecurityContext.map { MirageMediaSecurity.makePacketKey(context: $0) }
         self.onEncodedFrame = onEncodedFrame
         packetBufferPool = PacketBufferPool(
             capacity: mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
@@ -224,10 +224,15 @@ actor StreamPacketSender {
                 let end = min(start + maxPayload, frameByteCount)
                 let fragmentSize = end - start
                 guard fragmentSize > 0 else { continue }
-                let plainPayload = item.encodedData.subdata(in: start ..< end)
-                let checksum = CRC32.calculate(plainPayload)
+                let checksum: UInt32 = if mediaSecurityKey == nil {
+                    item.encodedData.withUnsafeBytes { frameBytes in
+                        CRC32.calculate(UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]))
+                    }
+                } else {
+                    0
+                }
                 var payloadFlags = flags
-                if mediaSecurityContext != nil {
+                if mediaSecurityKey != nil {
                     payloadFlags.insert(.encryptedPayload)
                 }
 
@@ -247,15 +252,17 @@ actor StreamPacketSender {
                     epoch: item.epoch
                 )
 
-                let wirePayload: Data
-                if let mediaSecurityContext {
+                let wirePayload: Data?
+                if let mediaSecurityKey {
                     do {
-                        wirePayload = try MirageMediaSecurity.encryptVideoPayload(
-                            plainPayload,
-                            header: header,
-                            context: mediaSecurityContext,
-                            direction: .hostToClient
-                        )
+                        wirePayload = try item.encodedData.withUnsafeBytes { frameBytes in
+                            try MirageMediaSecurity.encryptVideoPayload(
+                                UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]),
+                                header: header,
+                                key: mediaSecurityKey,
+                                direction: .hostToClient
+                            )
+                        }
                     } catch {
                         MirageLogger.error(
                             .stream,
@@ -264,10 +271,11 @@ actor StreamPacketSender {
                         continue
                     }
                 } else {
-                    wirePayload = plainPayload
+                    wirePayload = nil
                 }
 
-                let packetLength = mirageHeaderSize + wirePayload.count
+                let packetPayloadLength = wirePayload?.count ?? fragmentSize
+                let packetLength = mirageHeaderSize + packetPayloadLength
                 await paceIfNeeded(packetBytes: packetLength)
 
                 let packetBuffer = packetBufferPool.acquire()
@@ -282,17 +290,28 @@ actor StreamPacketSender {
                         count: min(packetBytes.count, mirageHeaderSize)
                     )
                     header.serialize(into: headerBuffer)
-                    wirePayload.withUnsafeBytes { payloadBytes in
-                        guard let payloadBase = payloadBytes.baseAddress else { return }
-                        baseAddress.advanced(by: mirageHeaderSize).copyMemory(
-                            from: payloadBase,
-                            byteCount: wirePayload.count
-                        )
+                    if let wirePayload {
+                        wirePayload.withUnsafeBytes { payloadBytes in
+                            guard let payloadBase = payloadBytes.baseAddress else { return }
+                            baseAddress.advanced(by: mirageHeaderSize).copyMemory(
+                                from: payloadBase,
+                                byteCount: wirePayload.count
+                            )
+                        }
+                    } else {
+                        item.encodedData.withUnsafeBytes { frameBytes in
+                            let fragmentBytes = UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end])
+                            guard let fragmentBase = fragmentBytes.baseAddress else { return }
+                            baseAddress.advanced(by: mirageHeaderSize).copyMemory(
+                                from: fragmentBase,
+                                byteCount: fragmentSize
+                            )
+                        }
                     }
                 }
 
                 let packet = packetBuffer.finalize(length: packetLength)
-                let accountedPayloadBytes = plainPayload.count
+                let accountedPayloadBytes = fragmentSize
                 remainingQueuedBytes = max(0, remainingQueuedBytes - accountedPayloadBytes)
                 let releasePacket: @Sendable () -> Void = { [weak self] in
                     packetBuffer.release()
@@ -333,11 +352,11 @@ actor StreamPacketSender {
 
                 var parityFlags = flags
                 parityFlags.insert(.fecParity)
-                if mediaSecurityContext != nil {
+                if mediaSecurityKey != nil {
                     parityFlags.insert(.encryptedPayload)
                 }
 
-                let checksum = CRC32.calculate(parityData)
+                let checksum: UInt32 = mediaSecurityKey == nil ? CRC32.calculate(parityData) : 0
                 let header = FrameHeader(
                     flags: parityFlags,
                     streamID: item.streamID,
@@ -355,14 +374,16 @@ actor StreamPacketSender {
                 )
 
                 let wirePayload: Data
-                if let mediaSecurityContext {
+                if let mediaSecurityKey {
                     do {
-                        wirePayload = try MirageMediaSecurity.encryptVideoPayload(
-                            parityData,
-                            header: header,
-                            context: mediaSecurityContext,
-                            direction: .hostToClient
-                        )
+                        wirePayload = try parityData.withUnsafeBytes { parityBytes in
+                            try MirageMediaSecurity.encryptVideoPayload(
+                                parityBytes,
+                                header: header,
+                                key: mediaSecurityKey,
+                                direction: .hostToClient
+                            )
+                        }
                     } catch {
                         MirageLogger.error(
                             .stream,

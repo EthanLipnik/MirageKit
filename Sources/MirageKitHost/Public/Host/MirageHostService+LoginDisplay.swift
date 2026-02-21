@@ -76,7 +76,10 @@ extension MirageHostService {
         let generation = loginDisplayStartGeneration
         if let connectedClient = connectedClients.first,
            mediaSecurityByClientID[connectedClient.id] == nil {
-            MirageLogger.error(.host, "Cannot start login display without media security context for client \(connectedClient.name)")
+            MirageLogger.error(
+                .host,
+                "Cannot start login display without registration security context for client \(connectedClient.name)"
+            )
             return
         }
 
@@ -89,7 +92,7 @@ extension MirageHostService {
             windowID: 0,
             encoderConfig: encoderConfig,
             maxPacketSize: networkConfig.maxPacketSize,
-            mediaSecurityContext: loginClientID.flatMap { mediaSecurityByClientID[$0] },
+            mediaSecurityContext: loginClientID.flatMap { mediaSecurityContextForMediaPayload(clientID: $0) },
             additionalFrameFlags: [.loginDisplay],
             latencyMode: .auto
         )

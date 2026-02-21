@@ -15,9 +15,22 @@ package enum MirageMediaDirection: UInt8, Sendable {
     case clientToHost = 2
 }
 
+package struct MirageMediaPacketKey {
+    fileprivate let symmetricKey: SymmetricKey
+
+    package init(sessionKeyData: Data) {
+        symmetricKey = SymmetricKey(data: sessionKeyData)
+    }
+}
+
 package struct MirageMediaSecurityContext: Sendable {
     package let sessionKey: Data
     package let udpRegistrationToken: Data
+
+    package init(sessionKey: Data, udpRegistrationToken: Data) {
+        self.sessionKey = sessionKey
+        self.udpRegistrationToken = udpRegistrationToken
+    }
 }
 
 package enum MirageMediaSecurityError: Error {
@@ -31,6 +44,14 @@ package enum MirageMediaSecurity {
     package static let sessionKeyLength = 32
     package static let registrationTokenLength = 32
     package static let authTagLength = mirageMediaAuthTagSize
+
+    package static func makePacketKey(context: MirageMediaSecurityContext) -> MirageMediaPacketKey {
+        makePacketKey(sessionKeyData: context.sessionKey)
+    }
+
+    package static func makePacketKey(sessionKeyData: Data) -> MirageMediaPacketKey {
+        MirageMediaPacketKey(sessionKeyData: sessionKeyData)
+    }
 
     package static func makeRegistrationToken() -> Data {
         let key = SymmetricKey(size: .bits256)
@@ -78,9 +99,26 @@ package enum MirageMediaSecurity {
         context: MirageMediaSecurityContext,
         direction: MirageMediaDirection
     ) throws -> Data {
+        let key = makePacketKey(context: context)
+        return try plaintext.withUnsafeBytes { plaintextBytes in
+            try encryptVideoPayload(
+                plaintextBytes,
+                header: header,
+                key: key,
+                direction: direction
+            )
+        }
+    }
+
+    package static func encryptVideoPayload(
+        _ plaintext: UnsafeRawBufferPointer,
+        header: FrameHeader,
+        key: MirageMediaPacketKey,
+        direction: MirageMediaDirection
+    ) throws -> Data {
         try seal(
             plaintext,
-            keyData: context.sessionKey,
+            key: key.symmetricKey,
             nonce: videoNonce(for: header, direction: direction)
         )
     }
@@ -91,9 +129,23 @@ package enum MirageMediaSecurity {
         context: MirageMediaSecurityContext,
         direction: MirageMediaDirection
     ) throws -> Data {
+        try decryptVideoPayload(
+            wirePayload,
+            header: header,
+            key: makePacketKey(context: context),
+            direction: direction
+        )
+    }
+
+    package static func decryptVideoPayload(
+        _ wirePayload: Data,
+        header: FrameHeader,
+        key: MirageMediaPacketKey,
+        direction: MirageMediaDirection
+    ) throws -> Data {
         try open(
             wirePayload,
-            keyData: context.sessionKey,
+            key: key.symmetricKey,
             nonce: videoNonce(for: header, direction: direction)
         )
     }
@@ -104,9 +156,26 @@ package enum MirageMediaSecurity {
         context: MirageMediaSecurityContext,
         direction: MirageMediaDirection
     ) throws -> Data {
+        let key = makePacketKey(context: context)
+        return try plaintext.withUnsafeBytes { plaintextBytes in
+            try encryptAudioPayload(
+                plaintextBytes,
+                header: header,
+                key: key,
+                direction: direction
+            )
+        }
+    }
+
+    package static func encryptAudioPayload(
+        _ plaintext: UnsafeRawBufferPointer,
+        header: AudioPacketHeader,
+        key: MirageMediaPacketKey,
+        direction: MirageMediaDirection
+    ) throws -> Data {
         try seal(
             plaintext,
-            keyData: context.sessionKey,
+            key: key.symmetricKey,
             nonce: audioNonce(for: header, direction: direction)
         )
     }
@@ -117,9 +186,23 @@ package enum MirageMediaSecurity {
         context: MirageMediaSecurityContext,
         direction: MirageMediaDirection
     ) throws -> Data {
+        try decryptAudioPayload(
+            wirePayload,
+            header: header,
+            key: makePacketKey(context: context),
+            direction: direction
+        )
+    }
+
+    package static func decryptAudioPayload(
+        _ wirePayload: Data,
+        header: AudioPacketHeader,
+        key: MirageMediaPacketKey,
+        direction: MirageMediaDirection
+    ) throws -> Data {
         try open(
             wirePayload,
-            keyData: context.sessionKey,
+            key: key.symmetricKey,
             nonce: audioNonce(for: header, direction: direction)
         )
     }
@@ -135,9 +218,12 @@ package enum MirageMediaSecurity {
         return diff == 0
     }
 
-    private static func seal(_ plaintext: Data, keyData: Data, nonce: ChaChaPoly.Nonce) throws -> Data {
-        let key = SymmetricKey(data: keyData)
-        let sealed = try ChaChaPoly.seal(plaintext, using: key, nonce: nonce)
+    private static func seal(
+        _ plaintext: UnsafeRawBufferPointer,
+        key: SymmetricKey,
+        nonce: ChaChaPoly.Nonce
+    ) throws -> Data {
+        let sealed = try ChaChaPoly.seal(dataView(plaintext), using: key, nonce: nonce)
         var payload = Data()
         payload.reserveCapacity(sealed.ciphertext.count + sealed.tag.count)
         payload.append(sealed.ciphertext)
@@ -145,14 +231,13 @@ package enum MirageMediaSecurity {
         return payload
     }
 
-    private static func open(_ wirePayload: Data, keyData: Data, nonce: ChaChaPoly.Nonce) throws -> Data {
+    private static func open(_ wirePayload: Data, key: SymmetricKey, nonce: ChaChaPoly.Nonce) throws -> Data {
         guard wirePayload.count >= authTagLength else {
             throw MirageMediaSecurityError.invalidEncryptedPayloadLength
         }
         let ciphertextCount = wirePayload.count - authTagLength
         let ciphertext = wirePayload.prefix(ciphertextCount)
         let tag = wirePayload.suffix(authTagLength)
-        let key = SymmetricKey(data: keyData)
         let box = try ChaChaPoly.SealedBox(
             nonce: nonce,
             ciphertext: ciphertext,
@@ -169,50 +254,59 @@ package enum MirageMediaSecurity {
         for header: FrameHeader,
         direction: MirageMediaDirection
     ) throws -> ChaChaPoly.Nonce {
-        var nonce = Data(count: 12)
+        var nonce = [UInt8](repeating: 0, count: 12)
         nonce[0] = 1
         nonce[1] = direction.rawValue
         nonce[2] = 1
         nonce[3] = UInt8(truncatingIfNeeded: header.epoch)
-        withUnsafeBytes(of: header.streamID.littleEndian) {
-            nonce.replaceSubrange(4 ..< 6, with: $0)
-        }
-        withUnsafeBytes(of: header.sequenceNumber.littleEndian) {
-            nonce.replaceSubrange(6 ..< 10, with: $0)
-        }
-        withUnsafeBytes(of: header.fragmentIndex.littleEndian) {
-            nonce.replaceSubrange(10 ..< 12, with: $0)
-        }
-        return try nonceFromData(nonce)
+        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
+        writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
+        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
+        return try nonceFromBytes(nonce)
     }
 
     private static func audioNonce(
         for header: AudioPacketHeader,
         direction: MirageMediaDirection
     ) throws -> ChaChaPoly.Nonce {
-        var nonce = Data(count: 12)
+        var nonce = [UInt8](repeating: 0, count: 12)
         nonce[0] = 1
         nonce[1] = direction.rawValue
         nonce[2] = 2
         nonce[3] = 0
-        withUnsafeBytes(of: header.streamID.littleEndian) {
-            nonce.replaceSubrange(4 ..< 6, with: $0)
-        }
-        withUnsafeBytes(of: header.sequenceNumber.littleEndian) {
-            nonce.replaceSubrange(6 ..< 10, with: $0)
-        }
-        withUnsafeBytes(of: header.fragmentIndex.littleEndian) {
-            nonce.replaceSubrange(10 ..< 12, with: $0)
-        }
-        return try nonceFromData(nonce)
+        writeUInt16LittleEndian(header.streamID, into: &nonce, at: 4)
+        writeUInt32LittleEndian(header.sequenceNumber, into: &nonce, at: 6)
+        writeUInt16LittleEndian(header.fragmentIndex, into: &nonce, at: 10)
+        return try nonceFromBytes(nonce)
     }
 
-    private static func nonceFromData(_ data: Data) throws -> ChaChaPoly.Nonce {
+    private static func nonceFromBytes(_ bytes: [UInt8]) throws -> ChaChaPoly.Nonce {
         do {
-            return try ChaChaPoly.Nonce(data: data)
+            return try ChaChaPoly.Nonce(data: Data(bytes))
         } catch {
             throw MirageMediaSecurityError.invalidNonce
         }
+    }
+
+    private static func writeUInt16LittleEndian(_ value: UInt16, into bytes: inout [UInt8], at offset: Int) {
+        bytes[offset] = UInt8(truncatingIfNeeded: value)
+        bytes[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
+    }
+
+    private static func writeUInt32LittleEndian(_ value: UInt32, into bytes: inout [UInt8], at offset: Int) {
+        bytes[offset] = UInt8(truncatingIfNeeded: value)
+        bytes[offset + 1] = UInt8(truncatingIfNeeded: value >> 8)
+        bytes[offset + 2] = UInt8(truncatingIfNeeded: value >> 16)
+        bytes[offset + 3] = UInt8(truncatingIfNeeded: value >> 24)
+    }
+
+    private static func dataView(_ buffer: UnsafeRawBufferPointer) -> Data {
+        guard buffer.count > 0, let baseAddress = buffer.baseAddress else { return Data() }
+        return Data(
+            bytesNoCopy: UnsafeMutableRawPointer(mutating: baseAddress),
+            count: buffer.count,
+            deallocator: .none
+        )
     }
 
     private static func derivationSalt(

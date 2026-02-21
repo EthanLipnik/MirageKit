@@ -175,7 +175,7 @@ extension MirageClientService {
                             }
                             let payload: Data
                             if header.flags.contains(.encryptedPayload) {
-                                guard let mediaSecurityContext = service.mediaSecurityContextForNetworking else {
+                                guard let mediaPacketKey = service.mediaSecurityPacketKeyForNetworking else {
                                     MirageLogger.error(
                                         .client,
                                         "Dropping encrypted video packet without media security context (stream \(streamID))"
@@ -187,7 +187,7 @@ extension MirageClientService {
                                     payload = try MirageMediaSecurity.decryptVideoPayload(
                                         wirePayload,
                                         header: header,
-                                        context: mediaSecurityContext,
+                                        key: mediaPacketKey,
                                         direction: .hostToClient
                                     )
                                 } catch {

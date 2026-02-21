@@ -13,6 +13,13 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    nonisolated static func shouldAcceptSessionMediaEncryption(
+        mediaEncryptionEnabled: Bool,
+        requireEncryptedMediaOnLocalNetwork: Bool
+    ) -> Bool {
+        mediaEncryptionEnabled || !requireEncryptedMediaOnLocalNetwork
+    }
+
     func protocolMismatchInfo(from response: HelloResponseMessage) -> ProtocolMismatchInfo? {
         guard response.rejectionReason == .protocolVersionMismatch else {
             return nil
@@ -137,9 +144,12 @@ extension MirageClientService {
             isAwaitingManualApproval = false
             approvalWaitTask?.cancel()
             if response.accepted {
-                guard response.mediaEncryptionEnabled else {
-                    connectionState = .error("Host media encryption disabled")
-                    MirageLogger.client("Rejected hello response with media encryption disabled")
+                guard Self.shouldAcceptSessionMediaEncryption(
+                    mediaEncryptionEnabled: response.mediaEncryptionEnabled,
+                    requireEncryptedMediaOnLocalNetwork: networkConfig.requireEncryptedMediaOnLocalNetwork
+                ) else {
+                    connectionState = .error("Host media encryption disabled (client policy blocks unencrypted media)")
+                    MirageLogger.client("Rejected hello response with media encryption disabled by client policy")
                     return
                 }
                 guard response.udpRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
@@ -178,8 +188,9 @@ extension MirageClientService {
                 }
 
                 setMediaSecurityContext(mediaContext)
+                mediaPayloadEncryptionEnabled = response.mediaEncryptionEnabled
                 MirageLogger.client(
-                    "Media security established (tokenBytes=\(mediaContext.udpRegistrationToken.count), keyBytes=\(mediaContext.sessionKey.count))"
+                    "Media session established (encryption=\(response.mediaEncryptionEnabled ? "enabled" : "disabled"), tokenBytes=\(mediaContext.udpRegistrationToken.count), keyBytes=\(mediaContext.sessionKey.count))"
                 )
                 if response.autoTrustGranted == true {
                     let hostComponent = response.hostID.uuidString.lowercased()

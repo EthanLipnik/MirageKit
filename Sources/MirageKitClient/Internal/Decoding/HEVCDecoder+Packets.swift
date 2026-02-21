@@ -119,16 +119,21 @@ extension FrameReassembler {
             return
         }
 
-        // Validate CRC32 checksum to detect corrupted packets
-        let calculatedCRC = CRC32.calculate(data)
-        if calculatedCRC != header.checksum {
-            packetsDiscardedCRC += 1
-            MirageLogger.log(
-                .frameAssembly,
-                "CRC mismatch for frame \(frameNumber) fragment \(header.fragmentIndex) - discarding (expected \(header.checksum), got \(calculatedCRC))"
-            )
-            lock.unlock()
-            return
+        // Validate CRC32 checksum unless encrypted packets explicitly opt into AEAD-only integrity.
+        if mirageShouldValidatePayloadChecksum(
+            isEncrypted: header.flags.contains(.encryptedPayload),
+            checksum: header.checksum
+        ) {
+            let calculatedCRC = CRC32.calculate(data)
+            if calculatedCRC != header.checksum {
+                packetsDiscardedCRC += 1
+                MirageLogger.log(
+                    .frameAssembly,
+                    "CRC mismatch for frame \(frameNumber) fragment \(header.fragmentIndex) - discarding (expected \(header.checksum), got \(calculatedCRC))"
+                )
+                lock.unlock()
+                return
+            }
         }
 
         // Skip old P-frames, but NEVER skip keyframe packets.

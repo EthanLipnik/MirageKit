@@ -157,6 +157,7 @@ extension MirageClientService {
         connectionState = .connecting
         expectedHostIdentityKeyID = host.capabilities.identityKeyID
         connectedHostIdentityKeyID = nil
+        mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
         await handshakeReplayProtector.reset()
         isAwaitingManualApproval = false
@@ -366,6 +367,7 @@ extension MirageClientService {
         approvalWaitTask?.cancel()
         hasReceivedHelloResponse = false
         negotiatedFeatures = []
+        mediaPayloadEncryptionEnabled = true
         desktopStreamID = nil
         desktopStreamResolution = nil
         desktopStreamMode = nil

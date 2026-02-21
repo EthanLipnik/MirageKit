@@ -165,24 +165,10 @@ extension InputCapturingView {
 
         switch gesture.state {
         case .began:
-            // Detect multi-click timing
             let now = CACurrentMediaTime()
-            let timeSinceLastTap = now - lastTapTime
-            let distance = hypot(location.x - lastTapLocation.x, location.y - lastTapLocation.y)
-
-            if timeSinceLastTap < Self.multiClickTimeThreshold, distance < Self.multiClickDistanceThreshold { currentClickCount += 1 } else {
-                currentClickCount = 1
-            }
-
-            lastTapTime = now
-            lastTapLocation = location
+            currentClickCount = nextPrimaryClickCount(at: location, timestamp: now)
             isDragging = false
             lastPanLocation = location
-
-            MirageLogger
-                .client(
-                    "PRESS: normalized=(\(String(format: "%.3f", location.x)), \(String(format: "%.3f", location.y))), clickCount=\(currentClickCount)"
-                )
 
             let mouseEvent = MirageMouseEvent(
                 button: .left,
@@ -197,6 +183,7 @@ extension InputCapturingView {
             let distance = hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y)
             if distance > 0.0001 { // Any actual movement
                 revealCursorAfterPointerMovement()
+                if !isDragging { resetPrimaryClickTracking() }
                 isDragging = true
                 let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
                 onInputEvent?(.mouseDragged(mouseEvent))
@@ -211,6 +198,9 @@ extension InputCapturingView {
                 modifiers: eventModifiers
             )
             onInputEvent?(.mouseUp(mouseEvent))
+            if !isDragging {
+                commitPrimaryClick(at: location, timestamp: CACurrentMediaTime(), clickCount: currentClickCount)
+            }
             isDragging = false
 
         case .cancelled:
@@ -239,28 +229,20 @@ extension InputCapturingView {
             location = normalizedLocation(gesture.location(in: self))
         }
         let now = CACurrentMediaTime()
-
-        // Detect multi-click for right button
-        let timeSinceLastTap = now - lastRightTapTime
-        let distance = hypot(location.x - lastRightTapLocation.x, location.y - lastRightTapLocation.y)
-
-        if timeSinceLastTap < Self.multiClickTimeThreshold, distance < Self.multiClickDistanceThreshold { currentRightClickCount += 1 } else {
-            currentRightClickCount = 1
-        }
-
-        lastRightTapTime = now
-        lastRightTapLocation = location
+        let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
+        currentRightClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
         let mouseEvent = MirageMouseEvent(
             button: .right,
             location: location,
-            clickCount: currentRightClickCount,
+            clickCount: clickCount,
             modifiers: eventModifiers
         )
 
         onInputEvent?(.rightMouseDown(mouseEvent))
         onInputEvent?(.rightMouseUp(mouseEvent))
+        commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
     }
 
     @objc
@@ -394,6 +376,10 @@ extension InputCapturingView {
         case .began,
              .changed:
             if translation != .zero { revealCursorAfterPointerMovement() }
+            if translation != .zero, lockedPointerButtonDown, !lockedPointerDraggedSinceDown {
+                lockedPointerDraggedSinceDown = true
+                resetPrimaryClickTracking()
+            }
             applyLockedCursorDelta(translation)
             let eventModifiers = modifiers(from: gesture)
             let mouseEvent = MirageMouseEvent(button: .left, location: lockedCursorPosition, modifiers: eventModifiers)
@@ -416,16 +402,9 @@ extension InputCapturingView {
         case .began:
             noteLockedCursorLocalInput()
             let now = CACurrentMediaTime()
-            let timeSinceLastTap = now - lastTapTime
-            let distance = hypot(location.x - lastTapLocation.x, location.y - lastTapLocation.y)
-
-            if timeSinceLastTap < Self.multiClickTimeThreshold, distance < Self.multiClickDistanceThreshold { currentClickCount += 1 } else {
-                currentClickCount = 1
-            }
-
-            lastTapTime = now
-            lastTapLocation = location
+            currentClickCount = nextPrimaryClickCount(at: location, timestamp: now)
             lockedPointerButtonDown = true
+            lockedPointerDraggedSinceDown = false
 
             let mouseEvent = MirageMouseEvent(
                 button: .left,
@@ -443,7 +422,11 @@ extension InputCapturingView {
                 modifiers: eventModifiers
             )
             onInputEvent?(.mouseUp(mouseEvent))
+            if gesture.state == .ended, !lockedPointerDraggedSinceDown {
+                commitPrimaryClick(at: location, timestamp: CACurrentMediaTime(), clickCount: currentClickCount)
+            }
             lockedPointerButtonDown = false
+            lockedPointerDraggedSinceDown = false
         default:
             break
         }
@@ -487,6 +470,7 @@ extension InputCapturingView {
         switch gesture.state {
         case .began:
             virtualDragActive = true
+            resetPrimaryClickTracking()
             let mouseEvent = MirageMouseEvent(
                 button: .left,
                 location: virtualCursorPosition,
@@ -516,29 +500,20 @@ extension InputCapturingView {
         setVirtualCursorVisible(true)
 
         let now = CACurrentMediaTime()
-        let timeSinceLastTap = now - lastTapTime
-        let distance = hypot(
-            virtualCursorPosition.x - lastTapLocation.x,
-            virtualCursorPosition.y - lastTapLocation.y
-        )
-
-        if timeSinceLastTap < Self.multiClickTimeThreshold, distance < Self.multiClickDistanceThreshold { currentClickCount += 1 } else {
-            currentClickCount = 1
-        }
-
-        lastTapTime = now
-        lastTapLocation = virtualCursorPosition
+        let clickCount = nextPrimaryClickCount(at: virtualCursorPosition, timestamp: now)
+        currentClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
         let mouseEvent = MirageMouseEvent(
             button: .left,
             location: virtualCursorPosition,
-            clickCount: currentClickCount,
+            clickCount: clickCount,
             modifiers: eventModifiers
         )
 
         onInputEvent?(.mouseDown(mouseEvent))
         onInputEvent?(.mouseUp(mouseEvent))
+        commitPrimaryClick(at: virtualCursorPosition, timestamp: now, clickCount: clickCount)
     }
 
     @objc
@@ -548,29 +523,20 @@ extension InputCapturingView {
         setVirtualCursorVisible(true)
 
         let now = CACurrentMediaTime()
-        let timeSinceLastTap = now - lastRightTapTime
-        let distance = hypot(
-            virtualCursorPosition.x - lastRightTapLocation.x,
-            virtualCursorPosition.y - lastRightTapLocation.y
-        )
-
-        if timeSinceLastTap < Self.multiClickTimeThreshold, distance < Self.multiClickDistanceThreshold { currentRightClickCount += 1 } else {
-            currentRightClickCount = 1
-        }
-
-        lastRightTapTime = now
-        lastRightTapLocation = virtualCursorPosition
+        let clickCount = nextSecondaryClickCount(at: virtualCursorPosition, timestamp: now)
+        currentRightClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
         let mouseEvent = MirageMouseEvent(
             button: .right,
             location: virtualCursorPosition,
-            clickCount: currentRightClickCount,
+            clickCount: clickCount,
             modifiers: eventModifiers
         )
 
         onInputEvent?(.rightMouseDown(mouseEvent))
         onInputEvent?(.rightMouseUp(mouseEvent))
+        commitSecondaryClick(at: virtualCursorPosition, timestamp: now, clickCount: clickCount)
     }
 
     // MARK: - Direct Touch Gesture Handlers

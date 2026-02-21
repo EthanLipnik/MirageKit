@@ -212,6 +212,10 @@ extension MirageHostService {
         } else {
             autoTrustGranted = false
         }
+        let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(for: connection)
+        if mediaEncryptionEnabled && !ClientContext.isPeerToPeerConnection(connection) {
+            MirageLogger.host("Media encryption forced on for non-local or relay session")
+        }
         let responseResult = sendHelloResponse(
             accepted: true,
             to: connection,
@@ -220,6 +224,7 @@ extension MirageHostService {
             deviceInfo: hello.deviceInfo,
             requestNonce: hello.requestNonce,
             autoTrustGranted: autoTrustGranted,
+            mediaEncryptionEnabled: mediaEncryptionEnabled,
             cancelAfterSend: false
         )
         guard responseResult.sent else {
@@ -247,6 +252,10 @@ extension MirageHostService {
             MirageLogger.host(
                 "Media security established for \(client.name) " +
                     "(tokenBytes=\(mediaSecurity.udpRegistrationToken.count), keyBytes=\(mediaSecurity.sessionKey.count))"
+            )
+            mediaEncryptionEnabledByClientID[client.id] = responseResult.mediaEncryptionEnabled
+            MirageLogger.host(
+                "Media payload encryption for \(client.name): \(responseResult.mediaEncryptionEnabled ? "enabled" : "disabled (local opt-in)")"
             )
         } else {
             MirageLogger.error(.host, "Missing media security context for accepted client \(client.name)")
@@ -553,6 +562,20 @@ extension MirageHostService {
         return 0
     }
 
+    func mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: Bool) -> Bool {
+        guard isPeerToPeer else { return true }
+        return networkConfig.requireEncryptedMediaOnLocalNetwork
+    }
+
+    func resolveAcceptedSessionMediaEncryptionPolicy(for connection: NWConnection) -> Bool {
+        mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: ClientContext.isPeerToPeerConnection(connection))
+    }
+
+    func mediaSecurityContextForMediaPayload(clientID: UUID) -> MirageMediaSecurityContext? {
+        guard mediaEncryptionEnabledByClientID[clientID] == true else { return nil }
+        return mediaSecurityByClientID[clientID]
+    }
+
     private func peerIdentity(from deviceInfo: MirageDeviceInfo) -> MiragePeerIdentity {
         MiragePeerIdentity(
             deviceID: deviceInfo.id,
@@ -652,6 +675,7 @@ extension MirageHostService {
         deviceInfo: MirageDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
+        mediaEncryptionEnabled: Bool = true,
         rejectionReason: HelloRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
         protocolMismatchClientVersion: Int? = nil,
@@ -666,7 +690,7 @@ extension MirageHostService {
         let identity = try identityManager.currentIdentity()
         let timestampMs = MirageIdentitySigning.currentTimestampMs()
         let nonce = UUID().uuidString.lowercased()
-        let mediaEncryptionEnabled = accepted
+        let resolvedMediaEncryptionEnabled = accepted && mediaEncryptionEnabled
         let udpRegistrationToken = accepted ? MirageMediaSecurity.makeRegistrationToken() : Data()
         let mediaSecurityContext: MirageMediaSecurityContext?
         if accepted {
@@ -692,16 +716,16 @@ extension MirageHostService {
             accepted: accepted,
             hostID: hostID,
             hostName: hostName,
-            requiresAuth: false,
-            dataPort: dataPort,
-            negotiation: negotiation,
-            requestNonce: requestNonce,
-            mediaEncryptionEnabled: mediaEncryptionEnabled,
-            udpRegistrationToken: udpRegistrationToken,
-            keyID: identity.keyID,
-            publicKey: identity.publicKey,
-            timestampMs: timestampMs,
-            nonce: nonce
+                requiresAuth: false,
+                dataPort: dataPort,
+                negotiation: negotiation,
+                requestNonce: requestNonce,
+                mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
+                udpRegistrationToken: udpRegistrationToken,
+                keyID: identity.keyID,
+                publicKey: identity.publicKey,
+                timestampMs: timestampMs,
+                nonce: nonce
         )
         let signature = try identityManager.sign(payload)
         let response = HelloResponseMessage(
@@ -712,7 +736,7 @@ extension MirageHostService {
             dataPort: dataPort,
             negotiation: negotiation,
             requestNonce: requestNonce,
-            mediaEncryptionEnabled: mediaEncryptionEnabled,
+            mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
             udpRegistrationToken: udpRegistrationToken,
             autoTrustGranted: autoTrustGranted,
             identity: MirageIdentityEnvelope(
@@ -740,6 +764,7 @@ extension MirageHostService {
         deviceInfo: MirageDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
+        mediaEncryptionEnabled: Bool = true,
         rejectionReason: HelloRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
         protocolMismatchClientVersion: Int? = nil,
@@ -747,7 +772,7 @@ extension MirageHostService {
         protocolMismatchUpdateTriggerMessage: String? = nil,
         cancelAfterSend: Bool
     )
-    -> (sent: Bool, mediaSecurity: MirageMediaSecurityContext?) {
+    -> (sent: Bool, mediaSecurity: MirageMediaSecurityContext?, mediaEncryptionEnabled: Bool) {
         do {
             let builtResponse = try makeHelloResponseMessage(
                 accepted: accepted,
@@ -756,6 +781,7 @@ extension MirageHostService {
                 deviceInfo: deviceInfo,
                 requestNonce: requestNonce,
                 autoTrustGranted: autoTrustGranted,
+                mediaEncryptionEnabled: mediaEncryptionEnabled,
                 rejectionReason: rejectionReason,
                 protocolMismatchHostVersion: protocolMismatchHostVersion,
                 protocolMismatchClientVersion: protocolMismatchClientVersion,
@@ -780,11 +806,11 @@ extension MirageHostService {
 
                 if cancelAfterSend { connection.cancel() }
             })
-            return (true, builtResponse.mediaSecurity)
+            return (true, builtResponse.mediaSecurity, builtResponse.response.mediaEncryptionEnabled)
         } catch {
             MirageLogger.error(.host, "Failed to create hello response: \(error)")
             if cancelAfterSend { connection.cancel() }
-            return (false, nil)
+            return (false, nil, false)
         }
     }
 }

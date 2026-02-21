@@ -20,28 +20,46 @@ struct ClientContext {
     /// Check if connection is peer-to-peer (local network, low latency)
     /// Returns true when connected over local WiFi or Ethernet to a local network address
     var isPeerToPeer: Bool {
-        guard let path = tcpConnection.currentPath else { return false }
+        Self.isPeerToPeerConnection(tcpConnection)
+    }
 
-        // Must be on WiFi or Ethernet (not cellular or other interface types)
+    static func isPeerToPeerConnection(_ connection: NWConnection) -> Bool {
+        guard let path = connection.currentPath else { return false }
+
         let isLocalInterface = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
         guard isLocalInterface else { return false }
 
-        // Check if remote endpoint is on local network
-        guard case let .hostPort(host, _) = tcpConnection.endpoint else { return false }
-        let hostString = "\(host)"
+        guard case let .hostPort(host, _) = connection.endpoint else { return false }
+        return isLocalNetworkHost("\(host)")
+    }
 
-        // Check for private IPv4 ranges (RFC 1918) and link-local addresses
-        return hostString.hasPrefix("192.168.") ||
-            hostString.hasPrefix("10.") ||
-            hostString.hasPrefix("172.16.") ||
-            hostString.hasPrefix("172.17.") ||
-            hostString.hasPrefix("172.18.") ||
-            hostString.hasPrefix("172.19.") ||
-            hostString.hasPrefix("172.2") ||
-            hostString.hasPrefix("172.3") ||
-            hostString.hasPrefix("169.254.") || // IPv4 link-local (AWDL/USB tether)
-            hostString.contains(".local") || // mDNS/Bonjour
-            hostString.hasPrefix("fe80:") // IPv6 link-local
+    static func isLocalNetworkHost(_ host: String) -> Bool {
+        let normalized = host.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.contains(".local") { return true }
+        if normalized.hasPrefix("fe80:") || normalized.hasPrefix("[fe80:") { return true }
+
+        guard let octets = parseIPv4Octets(from: normalized) else { return false }
+        let first = octets[0]
+        let second = octets[1]
+
+        if first == 10 { return true }
+        if first == 192 && second == 168 { return true }
+        if first == 172 && (16 ... 31).contains(second) { return true }
+        if first == 169 && second == 254 { return true }
+        return false
+    }
+
+    private static func parseIPv4Octets(from text: String) -> [UInt8]? {
+        let tokens = text.split(separator: ".", omittingEmptySubsequences: false)
+        guard tokens.count == 4 else { return nil }
+        var octets: [UInt8] = []
+        octets.reserveCapacity(4)
+
+        for token in tokens {
+            guard let value = UInt8(token) else { return nil }
+            octets.append(value)
+        }
+        return octets
     }
 
     /// Send a control message over TCP

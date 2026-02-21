@@ -119,8 +119,10 @@ public final class MirageHostService {
 
     // UDP connections by stream ID (received from client registrations)
     var udpConnectionsByStream: [StreamID: NWConnection] = [:]
-    // Per-client media encryption and registration authentication context.
+    // Per-client media registration authentication context.
     var mediaSecurityByClientID: [UUID: MirageMediaSecurityContext] = [:]
+    // Per-client media payload encryption policy.
+    var mediaEncryptionEnabledByClientID: [UUID: Bool] = [:]
     // Audio UDP connections by client ID (single mixed audio stream per client).
     var audioConnectionsByClientID: [UUID: NWConnection] = [:]
     // Active host audio pipelines by client ID.

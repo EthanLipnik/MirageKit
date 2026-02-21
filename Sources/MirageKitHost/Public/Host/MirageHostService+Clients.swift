@@ -48,6 +48,7 @@ extension MirageHostService {
         clientsByID.removeValue(forKey: client.id)
         peerIdentityByClientID.removeValue(forKey: client.id)
         mediaSecurityByClientID.removeValue(forKey: client.id)
+        mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
         qualityTestConnectionsByClientID.removeValue(forKey: client.id)
         qualityTestBenchmarkIDsByClientID.removeValue(forKey: client.id)
         if let task = qualityTestTasksByClientID.removeValue(forKey: client.id) {

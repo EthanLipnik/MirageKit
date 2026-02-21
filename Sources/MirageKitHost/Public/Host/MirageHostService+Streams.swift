@@ -95,7 +95,7 @@ public extension MirageHostService {
             encoderConfig: effectiveEncoderConfig,
             streamScale: streamScale ?? 1.0,
             maxPacketSize: networkConfig.maxPacketSize,
-            mediaSecurityContext: mediaSecurityByClientID[client.id],
+            mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: client.id),
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,

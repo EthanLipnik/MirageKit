@@ -185,6 +185,7 @@ public class InputCapturingView: UIView {
     var lockedCursorVisible: Bool = false
     var lockedCursorTargetVisible: Bool = false
     var lockedPointerButtonDown: Bool = false
+    var lockedPointerDraggedSinceDown: Bool = false
     var lockedCursorLocalInputTime: CFTimeInterval = 0
     private let lockedCursorLocalHoldInterval: CFTimeInterval = 0.12
     private let lockedCursorLerpAlpha: CGFloat = 0.25
@@ -398,6 +399,66 @@ public class InputCapturingView: UIView {
         if isPresent { clearSoftwareKeyboardState() }
     }
 
+    func nextPrimaryClickCount(at location: CGPoint, timestamp: TimeInterval) -> Int {
+        let timeSinceLastTap = timestamp - lastTapTime
+        let distance = clickDistanceInPoints(from: location, to: lastTapLocation)
+
+        guard lastCompletedClickCount > 0,
+              timeSinceLastTap >= 0,
+              timeSinceLastTap < Self.multiClickTimeThreshold,
+              distance < Self.multiClickDistanceThresholdPoints else {
+            return 1
+        }
+
+        return lastCompletedClickCount + 1
+    }
+
+    func commitPrimaryClick(at location: CGPoint, timestamp: TimeInterval, clickCount: Int) {
+        lastTapTime = timestamp
+        lastTapLocation = location
+        lastCompletedClickCount = clickCount
+    }
+
+    func resetPrimaryClickTracking() {
+        lastCompletedClickCount = 0
+        lastTapTime = 0
+    }
+
+    func nextSecondaryClickCount(at location: CGPoint, timestamp: TimeInterval) -> Int {
+        let timeSinceLastTap = timestamp - lastRightTapTime
+        let distance = clickDistanceInPoints(from: location, to: lastRightTapLocation)
+
+        guard lastCompletedRightClickCount > 0,
+              timeSinceLastTap >= 0,
+              timeSinceLastTap < Self.multiClickTimeThreshold,
+              distance < Self.multiClickDistanceThresholdPoints else {
+            return 1
+        }
+
+        return lastCompletedRightClickCount + 1
+    }
+
+    func commitSecondaryClick(at location: CGPoint, timestamp: TimeInterval, clickCount: Int) {
+        lastRightTapTime = timestamp
+        lastRightTapLocation = location
+        lastCompletedRightClickCount = clickCount
+    }
+
+    func resetSecondaryClickTracking() {
+        lastCompletedRightClickCount = 0
+        lastRightTapTime = 0
+    }
+
+    func clickDistanceInPoints(from source: CGPoint, to target: CGPoint) -> CGFloat {
+        guard bounds.width > 0, bounds.height > 0 else {
+            return .greatestFiniteMagnitude
+        }
+
+        let deltaX = (source.x - target.x) * bounds.width
+        let deltaY = (source.y - target.y) * bounds.height
+        return hypot(deltaX, deltaY)
+    }
+
     @discardableResult
     func refreshModifierStateFromHardware() -> Bool {
         #if canImport(GameController)
@@ -435,17 +496,19 @@ public class InputCapturingView: UIView {
     // Double-click detection state (left click)
     var lastTapTime: TimeInterval = 0
     var lastTapLocation: CGPoint = .zero
+    var lastCompletedClickCount: Int = 0
     var currentClickCount: Int = 0
 
     // Double-click detection state (right click)
     var lastRightTapTime: TimeInterval = 0
     var lastRightTapLocation: CGPoint = .zero
+    var lastCompletedRightClickCount: Int = 0
     var currentRightClickCount: Int = 0
 
     /// Maximum time between taps to count as multi-click (in seconds)
     static let multiClickTimeThreshold: TimeInterval = 0.5
-    /// Maximum distance between taps to count as multi-click (in normalized coordinates)
-    static let multiClickDistanceThreshold: CGFloat = 0.05
+    /// Maximum distance between taps to count as multi-click (in view points)
+    static let multiClickDistanceThresholdPoints: CGFloat = 12
 
     /// Scroll physics capturing view for native trackpad momentum/bounce
     var scrollPhysicsView: ScrollPhysicsCapturingView?
@@ -964,6 +1027,8 @@ public class InputCapturingView: UIView {
         // Clear all modifier and key repeat state when app loses focus
         stopAllKeyRepeats()
         resetAllModifiers()
+        resetPrimaryClickTracking()
+        resetSecondaryClickTracking()
         activePencilTouchID = nil
         isDragging = false
         lastPencilPressure = 0
@@ -1051,6 +1116,8 @@ public class InputCapturingView: UIView {
         // Clear all modifier and key repeat state when losing focus
         stopAllKeyRepeats()
         resetAllModifiers()
+        resetPrimaryClickTracking()
+        resetSecondaryClickTracking()
         activePencilTouchID = nil
         isDragging = false
         lastPencilPressure = 0
@@ -1272,26 +1339,20 @@ public class InputCapturingView: UIView {
 
     func sendPencilSecondaryClick(at location: CGPoint) {
         let now = CACurrentMediaTime()
-        let timeSinceLastTap = now - lastRightTapTime
-        let distance = hypot(location.x - lastRightTapLocation.x, location.y - lastRightTapLocation.y)
-
-        if timeSinceLastTap < Self.multiClickTimeThreshold, distance < Self.multiClickDistanceThreshold { currentRightClickCount += 1 } else {
-            currentRightClickCount = 1
-        }
-
-        lastRightTapTime = now
-        lastRightTapLocation = location
+        let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
+        currentRightClickCount = clickCount
 
         let modifiers = currentPencilModifiers()
         let mouseEvent = MirageMouseEvent(
             button: .right,
             location: location,
-            clickCount: currentRightClickCount,
+            clickCount: clickCount,
             modifiers: modifiers
         )
 
         onInputEvent?(.rightMouseDown(mouseEvent))
         onInputEvent?(.rightMouseUp(mouseEvent))
+        commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
     }
 
     func currentPencilModifiers() -> MirageModifierFlags {

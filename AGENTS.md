@@ -58,7 +58,8 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Host/client control-message dispatch uses handler registries keyed by `ControlMessageType`.
 - Signed identity handshake v2 requires `identityAuthV2` with canonical payload signatures and replay protection.
 - Accepted hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1`; signed hello responses include `mediaEncryptionEnabled` plus a per-session UDP registration token.
-- Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
+- Media payload encryption policy is configurable: local peer sessions default to unencrypted payloads unless `requireEncryptedMediaOnLocalNetwork` is enabled, while non-local/remote sessions keep payload encryption; UDP registration token authentication remains required.
+- Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for encrypted UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
 - UDP stream/audio/quality registrations carry the per-session token and host registration validates token matches in constant time.
 - `MIRAGE_AWDL_EXPERIMENT=1` enables AWDL transport stabilization paths while default behavior remains unchanged when unset.
 - AWDL stabilization includes path classification snapshots (`awdl`, `wifi`, `wired`, `unknown`) for control/video/audio transports, proactive registration refresh on ready path transitions, and periodic registration refresh while streams are active.
@@ -203,6 +204,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Host input clears stuck modifiers after 0.5s of modifier inactivity.
 - iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
 - Stylus-backed pointer events bypass pointer smoothing paths to preserve pressure and tilt fidelity.
+- Client multi-click sequencing uses completed-click tracking with a point-distance threshold, and drag paths do not advance the multi-click chain.
 - Client cursor state is read from `MirageClientCursorStore` inside input views to avoid SwiftUI-driven cursor churn.
 - Secondary display cursor position is read from `MirageClientCursorPositionStore` for locked cursor rendering.
 

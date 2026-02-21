@@ -58,6 +58,16 @@ package func miragePayloadSize(maxPacketSize: Int) -> Int {
     return mirageDefaultMaxPacketSize - mirageHeaderSize - mirageMediaAuthTagSize
 }
 
+/// Payload checksum validation contract:
+/// - Unencrypted packets: CRC validation is mandatory.
+/// - Encrypted packets: checksum `0` indicates AEAD-only integrity; non-zero checksums are validated.
+package func mirageShouldValidatePayloadChecksum(
+    isEncrypted: Bool,
+    checksum: UInt32
+) -> Bool {
+    !isEncrypted || checksum != 0
+}
+
 /// Audio frame packet header (47 bytes, fixed size).
 package struct AudioPacketHeader {
     /// Magic number for validation ("MIRA").
@@ -109,6 +119,7 @@ package struct AudioPacketHeader {
     package var samplesPerFrame: UInt16
 
     /// CRC32 checksum for payload bytes.
+    /// Encrypted packets may set `0` to indicate AEAD-only integrity.
     package var checksum: UInt32
 
     package init(
@@ -274,7 +285,8 @@ package struct FrameHeader {
     /// Total encoded frame length in bytes (data only, excludes parity)
     package var frameByteCount: UInt32
 
-    /// CRC32 checksum of payload
+    /// CRC32 checksum of payload.
+    /// Encrypted packets may set `0` to indicate AEAD-only integrity.
     package var checksum: UInt32
 
     /// Content rectangle within the frame buffer (x, y, width, height in pixels)

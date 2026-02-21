@@ -374,6 +374,10 @@ public struct MirageNetworkConfiguration: Sendable {
     /// When enabled, devices can connect directly without needing the same WiFi network.
     public var enablePeerToPeer: Bool
 
+    /// Whether local peer-to-peer sessions require encrypted media payloads.
+    /// Remote or non-local sessions always remain encrypted.
+    public var requireEncryptedMediaOnLocalNetwork: Bool
+
     public init(
         serviceType: String = MirageKit.serviceType,
         controlPort: UInt16 = 0,
@@ -381,7 +385,8 @@ public struct MirageNetworkConfiguration: Sendable {
         enableTLS: Bool = true,
         connectionTimeout: TimeInterval = 10,
         maxPacketSize: Int = mirageDefaultMaxPacketSize,
-        enablePeerToPeer: Bool = true
+        enablePeerToPeer: Bool = true,
+        requireEncryptedMediaOnLocalNetwork: Bool = false
     ) {
         self.serviceType = serviceType
         self.controlPort = controlPort
@@ -390,6 +395,7 @@ public struct MirageNetworkConfiguration: Sendable {
         self.connectionTimeout = connectionTimeout
         self.maxPacketSize = maxPacketSize
         self.enablePeerToPeer = enablePeerToPeer
+        self.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
     }
 
     public static let `default` = MirageNetworkConfiguration()

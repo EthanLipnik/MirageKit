@@ -242,7 +242,7 @@ extension MirageClientService {
                     }
                     let payloadData: Data
                     if header.flags.contains(.encryptedPayload) {
-                        guard let mediaSecurityContext = service.mediaSecurityContextForNetworking else {
+                        guard let mediaPacketKey = service.mediaSecurityPacketKeyForNetworking else {
                             MirageLogger.error(
                                 .client,
                                 "Dropping encrypted audio packet without media security context (stream \(header.streamID))"
@@ -254,7 +254,7 @@ extension MirageClientService {
                             payloadData = try MirageMediaSecurity.decryptAudioPayload(
                                 wirePayload,
                                 header: header,
-                                context: mediaSecurityContext,
+                                key: mediaPacketKey,
                                 direction: .hostToClient
                             )
                         } catch {
@@ -272,9 +272,11 @@ extension MirageClientService {
                     } else {
                         payloadData = wirePayload
                     }
-                    guard CRC32.calculate(payloadData) == header.checksum else {
-                        receiveNext()
-                        return
+                    if Self.shouldValidateAudioChecksum(flags: header.flags, checksum: header.checksum) {
+                        guard CRC32.calculate(payloadData) == header.checksum else {
+                            receiveNext()
+                            return
+                        }
                     }
 
                     Task { @MainActor [weak service] in
@@ -292,6 +294,13 @@ extension MirageClientService {
         }
 
         receiveNext()
+    }
+
+    nonisolated static func shouldValidateAudioChecksum(flags: AudioPacketFlags, checksum: UInt32) -> Bool {
+        mirageShouldValidatePayloadChecksum(
+            isEncrypted: flags.contains(.encryptedPayload),
+            checksum: checksum
+        )
     }
 
     private func handleAudioPacket(header: AudioPacketHeader, payload: Data) async {

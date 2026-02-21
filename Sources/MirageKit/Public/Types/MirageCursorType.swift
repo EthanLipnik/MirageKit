@@ -253,25 +253,25 @@ public extension MirageCursorType {
         case .resizeLeft,
              .resizeLeftRight,
              .resizeRight:
-            // Horizontal resize with native pointer shape and directional accessories.
+            // Horizontal resize with a compact center indicator and directional arrows.
             return resizePointerStyle(accessories: [.arrow(.left), .arrow(.right)])
 
         case .resizeDown,
              .resizeUp,
              .resizeUpDown:
-            // Vertical resize with native pointer shape and directional accessories.
+            // Vertical resize with a compact center indicator and directional arrows.
             return resizePointerStyle(accessories: [.arrow(.top), .arrow(.bottom)])
 
         case .resizeNESW,
              .resizeNorthEast,
              .resizeSouthWest:
-            // NE/SW diagonal resize with native pointer shape and directional accessories.
+            // NE/SW diagonal resize with a compact center indicator and directional arrows.
             return resizePointerStyle(accessories: [.arrow(.topRight), .arrow(.bottomLeft)])
 
         case .resizeNorthWest,
              .resizeNWSE,
              .resizeSouthEast:
-            // NW/SE diagonal resize with native pointer shape and directional accessories.
+            // NW/SE diagonal resize with a compact center indicator and directional arrows.
             return resizePointerStyle(accessories: [.arrow(.topLeft), .arrow(.bottomRight)])
 
         case .disappearingItem:
@@ -281,7 +281,7 @@ public extension MirageCursorType {
     }
 
     private func resizePointerStyle(accessories: [UIPointerAccessory]) -> UIPointerStyle {
-        let style = UIPointerStyle.system()
+        let style = UIPointerStyle(shape: .roundedRect(CGRect(x: 0, y: 0, width: 4, height: 4), radius: 2))
         style.accessories = accessories
         return style
     }
