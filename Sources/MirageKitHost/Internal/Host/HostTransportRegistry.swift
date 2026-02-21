@@ -64,16 +64,16 @@ final class HostTransportRegistry: @unchecked Sendable {
     func sendVideo(
         streamID: StreamID,
         data: Data,
-        onComplete: (@Sendable () -> Void)? = nil
+        onComplete: (@Sendable (NWError?) -> Void)? = nil
     ) {
         guard let connection = state.read({ $0.videoByStream[streamID] }) else {
-            onComplete?()
+            onComplete?(nil)
             return
         }
 
         if let onComplete {
-            connection.send(content: data, completion: .contentProcessed { _ in
-                onComplete()
+            connection.send(content: data, completion: .contentProcessed { error in
+                onComplete(error)
             })
         } else {
             connection.send(content: data, completion: .idempotent)

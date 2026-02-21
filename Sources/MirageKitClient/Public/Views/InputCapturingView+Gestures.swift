@@ -308,14 +308,13 @@ extension InputCapturingView {
         let hoverStylus = stylusHoverEvent(from: gesture)
         let stylusPayload = hoverStylus
         let hoverPressure: CGFloat = stylusPayload == nil ? 1.0 : 0.0
+        let location = gesture.location(in: self)
 
         if cursorLockEnabled {
             guard !usesMouseInputDeltas else { return }
-            let location = gesture.location(in: self)
             switch gesture.state {
             case .began:
                 lockedPointerLastHoverLocation = location
-                revealCursorAfterPointerMovement()
                 noteLockedCursorLocalInput()
                 setLockedCursorVisible(true)
                 updateLockedCursorViewPosition()
@@ -328,7 +327,7 @@ extension InputCapturingView {
                 if let lastLocation = lockedPointerLastHoverLocation {
                     let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
                     if translation != .zero {
-                        revealCursorAfterPointerMovement()
+                        if stylusPayload == nil { revealCursorAfterPointerMovement() }
                         applyLockedCursorDelta(translation)
                         let eventModifiers = modifiers(from: gesture)
                         let mouseEvent = MirageMouseEvent(
@@ -347,26 +346,31 @@ extension InputCapturingView {
             }
             return
         }
-        let location = normalizedLocation(gesture.location(in: self))
+        let normalized = normalizedLocation(location)
+        let pointerMoved: Bool = if let lastCursorPosition {
+            hypot(normalized.x - lastCursorPosition.x, normalized.y - lastCursorPosition.y) > 0.0001
+        } else {
+            false
+        }
 
         switch gesture.state {
         case .began,
              .changed:
-            revealCursorAfterPointerMovement()
+            if pointerMoved, stylusPayload == nil { revealCursorAfterPointerMovement() }
             if usesVirtualTrackpad {
                 setVirtualCursorVisible(false)
-                updateVirtualCursorPosition(location, updateVisibility: false)
+                updateVirtualCursorPosition(normalized, updateVisibility: false)
             }
 
             // Track cursor position for scroll events
-            lastCursorPosition = location
+            lastCursorPosition = normalized
 
             // Only send mouse moved if not dragging (pan gesture handles that)
             if !isDragging {
                 let eventModifiers = modifiers(from: gesture)
                 let mouseEvent = MirageMouseEvent(
                     button: .left,
-                    location: location,
+                    location: normalized,
                     modifiers: eventModifiers,
                     pressure: hoverPressure,
                     stylus: stylusPayload

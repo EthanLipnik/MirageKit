@@ -179,6 +179,12 @@ actor StreamContext {
     var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
     let backpressureRecoveryThreshold: CFAbsoluteTime = 0.75
     let backpressureRecoveryCooldown: CFAbsoluteTime = 2.0
+    var transportSendErrorTimestamps: [CFAbsoluteTime] = []
+    var lastTransportSendErrorRecoveryTime: CFAbsoluteTime = 0
+    let transportSendErrorWindow: CFAbsoluteTime = 1.0
+    let transportSendErrorThreshold: Int = 6
+    let transportSendErrorRecoveryCooldown: CFAbsoluteTime = 2.0
+    var transportSendErrorBursts: UInt64 = 0
 
     /// Keyframe request throttling
     let keyframeRequestCooldown: CFAbsoluteTime = 0.25

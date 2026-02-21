@@ -39,8 +39,12 @@ actor BonjourAdvertiser {
         parameters.serviceClass = .interactiveVideo
         parameters.includePeerToPeer = enablePeerToPeer
 
-        // Enable TCP_NODELAY for low latency
-        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options { tcpOptions.noDelay = true }
+        // Favor low-latency control delivery and quicker dead-peer detection.
+        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
+            tcpOptions.noDelay = true
+            tcpOptions.enableKeepalive = true
+            tcpOptions.keepaliveInterval = 5
+        }
 
         let actualPort: NWEndpoint.Port = port == 0 ? .any : NWEndpoint.Port(rawValue: port)!
 

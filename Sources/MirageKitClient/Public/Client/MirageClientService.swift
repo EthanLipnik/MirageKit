@@ -362,6 +362,19 @@ public final class MirageClientService {
     nonisolated(unsafe) var mediaSecurityContextStorage: MirageMediaSecurityContext?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
+    let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
+    var controlPathSnapshot: MirageNetworkPathSnapshot?
+    var videoPathSnapshot: MirageNetworkPathSnapshot?
+    var audioPathSnapshot: MirageNetworkPathSnapshot?
+    var awdlPathSwitches: UInt64 = 0
+    var registrationRefreshCount: UInt64 = 0
+    var transportRefreshRequests: UInt64 = 0
+    var stallEvents: UInt64 = 0
+    var activeJitterHoldMs: Int = 0
+    var lastAwdlTelemetryLogTime: CFAbsoluteTime = 0
+    var registrationRefreshTask: Task<Void, Never>?
+    let registrationRefreshIntervalMs: UInt64 = 750
+    let registrationRefreshJitterMs: UInt64 = 80
 
     // Video receiving
     var udpConnection: NWConnection?

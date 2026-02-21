@@ -175,6 +175,22 @@ struct MirageKitTests {
         #expect(decodedStopped == stopped)
     }
 
+    @Test("Transport refresh request message serialization")
+    func transportRefreshRequestMessageSerialization() throws {
+        let refresh = TransportRefreshRequestMessage(
+            streamID: 7,
+            reason: "send-error-burst",
+            requestedAtNs: 12_345
+        )
+        let envelope = try ControlMessage(type: .transportRefreshRequest, content: refresh)
+        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        #expect(decodedEnvelope.type == .transportRefreshRequest)
+        let decoded = try decodedEnvelope.decode(TransportRefreshRequestMessage.self)
+        #expect(decoded.streamID == 7)
+        #expect(decoded.reason == "send-error-burst")
+        #expect(decoded.requestedAtNs == 12_345)
+    }
+
     @Test("Host software update control message serialization")
     func hostSoftwareUpdateControlMessageSerialization() throws {
         let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)

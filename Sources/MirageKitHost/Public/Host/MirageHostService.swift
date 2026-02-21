@@ -135,6 +135,10 @@ public final class MirageHostService {
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []
     var streamStartupFirstPacketSent: Set<StreamID> = []
+    let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
+    var mediaPathSnapshotByStreamID: [StreamID: MirageNetworkPathSnapshot] = [:]
+    var sendErrorBursts: UInt64 = 0
+    var transportRefreshRequests: UInt64 = 0
 
     // Quality test connections and tasks
     var qualityTestConnectionsByClientID: [UUID: NWConnection] = [:]

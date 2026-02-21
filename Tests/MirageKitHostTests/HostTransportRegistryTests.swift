@@ -20,7 +20,7 @@ struct HostTransportRegistryTests {
         let registry = HostTransportRegistry()
         let didComplete = Locked(false)
 
-        registry.sendVideo(streamID: 42, data: Data([0x01, 0x02])) {
+        registry.sendVideo(streamID: 42, data: Data([0x01, 0x02])) { _ in
             didComplete.withLock { $0 = true }
         }
 

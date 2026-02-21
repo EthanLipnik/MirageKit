@@ -37,6 +37,7 @@ actor StreamPacketSender {
     private let mediaSecurityContext: MirageMediaSecurityContext?
     private let onEncodedFrame: @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
     private let packetBufferPool: PacketBufferPool
+    private let awdlExperimentEnabled = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     private var sendTask: Task<Void, Never>?
     /// Accessed from encoder callbacks; lifecycle is managed by start/stop.
     private nonisolated(unsafe) var sendContinuation: AsyncStream<WorkItem>.Continuation?
@@ -120,6 +121,18 @@ actor StreamPacketSender {
 
     nonisolated func currentGenerationSnapshot() -> UInt32 {
         generation
+    }
+
+    nonisolated static func shouldDuplicateParameterSetPacket(
+        isExperimentEnabled: Bool,
+        isKeyframe: Bool,
+        fragmentIndex: Int,
+        flags: FrameFlags
+    ) -> Bool {
+        guard isExperimentEnabled else { return false }
+        guard isKeyframe else { return false }
+        guard fragmentIndex == 0 else { return false }
+        return flags.contains(.parameterSet)
     }
 
     nonisolated func enqueue(_ item: WorkItem) {
@@ -286,6 +299,14 @@ actor StreamPacketSender {
                     self?.reduceQueuedBytes(accountedPayloadBytes)
                 }
                 onEncodedFrame(packet, header, releasePacket)
+                if Self.shouldDuplicateParameterSetPacket(
+                    isExperimentEnabled: awdlExperimentEnabled,
+                    isKeyframe: item.isKeyframe,
+                    fragmentIndex: fragmentIndex,
+                    flags: flags
+                ) {
+                    onEncodedFrame(Data(packet), header, {})
+                }
             } else if parityFragmentCount > 0 {
                 let parityIndex = fragmentIndex - dataFragmentCount
                 let blockIndex = parityIndex

@@ -55,7 +55,11 @@ extension MirageClientService {
         let udpConn = NWConnection(to: endpoint, using: params)
         audioConnection = udpConn
         udpConn.pathUpdateHandler = { path in
+            let snapshot = MirageNetworkPathClassifier.classify(path)
             MirageLogger.client("Audio UDP path updated: \(describeAudioNetworkPath(path))")
+            Task { @MainActor [weak service = self] in
+                service?.handleAudioPathUpdate(snapshot)
+            }
         }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -78,6 +82,7 @@ extension MirageClientService {
         MirageLogger.client("Audio UDP connection established")
         if let path = udpConn.currentPath {
             MirageLogger.client("Audio UDP path: \(describeAudioNetworkPath(path))")
+            handleAudioPathUpdate(MirageNetworkPathClassifier.classify(path))
         }
         startReceivingAudio()
     }
@@ -85,6 +90,7 @@ extension MirageClientService {
     func stopAudioConnection() {
         audioConnection?.cancel()
         audioConnection = nil
+        audioPathSnapshot = nil
         audioRegisteredStreamID = nil
         activeAudioStreamMessage = nil
         audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
@@ -121,6 +127,41 @@ extension MirageClientService {
         MirageLogger.client(
             "Audio registration sent for stream \(streamID) (tokenBytes=\(mediaSecurityContext.udpRegistrationToken.count))"
         )
+    }
+
+    func handleAudioPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
+        let previous = audioPathSnapshot
+        audioPathSnapshot = snapshot
+        guard awdlExperimentEnabled else { return }
+        guard MirageClientService.shouldTriggerPathRefresh(previous: previous, current: snapshot) else { return }
+        if let previous, previous.kind != snapshot.kind {
+            awdlPathSwitches &+= 1
+            MirageLogger.client(
+                "Audio path switch \(previous.kind.rawValue) -> \(snapshot.kind.rawValue) (count \(awdlPathSwitches))"
+            )
+        }
+        Task { [weak self] in
+            await self?.refreshTransportRegistrations(reason: "audio-path-change", triggerKeyframe: true)
+        }
+    }
+
+    func refreshAudioRegistration(
+        reason: String,
+        streamFilter: Set<StreamID>? = nil
+    ) async {
+        guard awdlExperimentEnabled else { return }
+        guard audioConfiguration.enabled else { return }
+        guard let streamID = activeAudioStreamMessage?.streamID else { return }
+        if let streamFilter, !streamFilter.contains(streamID) { return }
+
+        do {
+            if audioConnection == nil { try await startAudioConnection() }
+            try await sendAudioRegistration(streamID: streamID)
+            registrationRefreshCount &+= 1
+        } catch {
+            MirageLogger.error(.client, "Audio transport refresh (\(reason)) failed: \(error)")
+            stopAudioConnection()
+        }
     }
 
     func handleAudioStreamStarted(_ message: ControlMessage) {

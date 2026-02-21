@@ -187,7 +187,13 @@ extension MirageHostService {
                         releasePacket()
                         return
                     }
-                    sendVideoPacketForStream(streamID, data: packetData, onComplete: releasePacket)
+                    sendVideoPacketForStream(streamID, data: packetData) { [weak self] error in
+                        releasePacket()
+                        guard let self, let error else { return }
+                        dispatchMainWork {
+                            await self.handleVideoSendError(streamID: streamID, error: error)
+                        }
+                    }
                 }
             )
 

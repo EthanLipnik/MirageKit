@@ -224,6 +224,13 @@ extension MirageClientService {
                     break
                 }
             }
+            connection.pathUpdateHandler = { [weak self] path in
+                let snapshot = MirageNetworkPathClassifier.classify(path)
+                MirageLogger.client("Control path updated: \(snapshot.signature)")
+                Task { @MainActor [weak self] in
+                    self?.handleControlPathUpdate(snapshot)
+                }
+            }
 
             // Send hello message with device info.
             try await sendHelloMessage(connection: connection)
@@ -282,6 +289,7 @@ extension MirageClientService {
         receiveBuffer = Data()
         await transport?.disconnect()
         transport = nil
+        stopRegistrationRefreshLoop()
         connectedHost = nil
         availableWindows = []
         hasReceivedWindowList = false
@@ -313,6 +321,10 @@ extension MirageClientService {
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
+        controlPathSnapshot = nil
+        videoPathSnapshot = nil
+        audioPathSnapshot = nil
+        activeJitterHoldMs = 0
         adaptiveFallbackBitrateByStream.removeAll()
         adaptiveFallbackBaselineBitrateByStream.removeAll()
         adaptiveFallbackBitDepthByStream.removeAll()

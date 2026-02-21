@@ -74,6 +74,7 @@ actor StreamController {
         let uniquePresentedFPS: Double
         let renderBufferDepth: Int
         let decodeHealthy: Bool
+        let activeJitterHoldMs: Int
     }
 
     // MARK: - Properties
@@ -134,6 +135,12 @@ actor StreamController {
     static let decodeSubmissionHealthyThreshold: Double = 0.95
     static let decodeSubmissionStressWindows: Int = 2
     static let decodeSubmissionHealthyWindows: Int = 3
+    static let adaptiveJitterHoldMaxMs: Int = 8
+    static let adaptiveJitterStressThreshold: Double = 0.88
+    static let adaptiveJitterStressWindows: Int = 2
+    static let adaptiveJitterStableWindows: Int = 4
+    static let adaptiveJitterStepUpMs: Int = 2
+    static let adaptiveJitterStepDownMs: Int = 1
 
     /// Pending resize debounce task
     var resizeDebounceTask: Task<Void, Never>?
@@ -174,6 +181,11 @@ actor StreamController {
     var metricsTask: Task<Void, Never>?
     var lastMetricsLogTime: CFAbsoluteTime = 0
     static let metricsDispatchInterval: Duration = .milliseconds(500)
+    let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
+    var awdlTransportActive: Bool = false
+    var adaptiveJitterHoldMs: Int = 0
+    var adaptiveJitterStressStreak: Int = 0
+    var adaptiveJitterStableStreak: Int = 0
 
     var lastDecodedFrameTime: CFAbsoluteTime = 0
     var lastPresentedSequenceObserved: UInt64 = 0
@@ -205,6 +217,8 @@ actor StreamController {
 
     /// Called when sustained decode overload should trigger host fallback.
     private(set) var onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)?
+    /// Called when freeze monitoring records a stall event.
+    private(set) var onStallEvent: (@MainActor @Sendable () -> Void)?
 
     /// Set callbacks for stream events
     func setCallbacks(
@@ -213,7 +227,8 @@ actor StreamController {
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
         onFirstFrame: (@MainActor @Sendable () -> Void)? = nil,
-        onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil
+        onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
+        onStallEvent: (@MainActor @Sendable () -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeEvent = onResizeEvent
@@ -221,6 +236,7 @@ actor StreamController {
         self.onFrameDecoded = onFrameDecoded
         self.onFirstFrame = onFirstFrame
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
+        self.onStallEvent = onStallEvent
     }
 
     // MARK: - Initialization
@@ -407,12 +423,23 @@ actor StreamController {
     }
 
     private func dequeueFrame() async -> FrameData? {
-        if !queuedFrames.isEmpty {
-            return queuedFrames.popFirst()
+        let frame: FrameData? = if !queuedFrames.isEmpty {
+            queuedFrames.popFirst()
+        } else {
+            await withCheckedContinuation { continuation in
+                dequeueContinuation = continuation
+            }
         }
-        return await withCheckedContinuation { continuation in
-            dequeueContinuation = continuation
-        }
+        guard frame != nil else { return nil }
+        await maybeApplyAdaptiveJitterHold()
+        return frame
+    }
+
+    private func maybeApplyAdaptiveJitterHold() async {
+        guard awdlExperimentEnabled, awdlTransportActive else { return }
+        let holdMs = max(0, min(Self.adaptiveJitterHoldMaxMs, adaptiveJitterHoldMs))
+        guard holdMs > 0 else { return }
+        try? await Task.sleep(for: .milliseconds(Int64(holdMs)))
     }
 
     private func finishFrameQueue() {
@@ -486,6 +513,7 @@ actor StreamController {
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
         let renderTelemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)
+        evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
         await evaluateDecodeSubmissionLimit(decodedFPS: snapshot.decodedFPS)
         logMetricsIfNeeded(
             decodedFPS: snapshot.decodedFPS,
@@ -499,7 +527,8 @@ actor StreamController {
             presentedFPS: renderTelemetry.presentedFPS,
             uniquePresentedFPS: renderTelemetry.uniquePresentedFPS,
             renderBufferDepth: renderTelemetry.queueDepth,
-            decodeHealthy: renderTelemetry.decodeHealthy
+            decodeHealthy: renderTelemetry.decodeHealthy,
+            activeJitterHoldMs: adaptiveJitterHoldMs
         )
         let callback = onFrameDecoded
         await MainActor.run {

@@ -143,6 +143,7 @@ extension MirageClientService {
             clearAdaptiveFallbackState(for: streamID)
             pendingDesktopAdaptiveFallbackBitrate = nil
             pendingDesktopAdaptiveFallbackBitDepth = nil
+            activeJitterHoldMs = 0
 
             Task {
                 if let controller = self.controllersByStream[streamID] {

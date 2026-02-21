@@ -341,6 +341,7 @@ extension MirageClientService {
             registeredStreamIDs.remove(streamID)
             clearStreamRefreshRateOverride(streamID: streamID)
             clearAdaptiveFallbackState(for: streamID)
+            activeJitterHoldMs = 0
 
             Task { [weak self] in
                 guard let self else { return }
@@ -434,6 +435,27 @@ extension MirageClientService {
                     refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)
                 }
             }
+        }
+    }
+
+    func handleTransportRefreshRequest(_ message: ControlMessage) {
+        guard awdlExperimentEnabled else { return }
+        do {
+            let request = try message.decode(TransportRefreshRequestMessage.self)
+            transportRefreshRequests &+= 1
+            let streamFilter = request.streamID.map { Set([$0]) }
+            MirageLogger.client(
+                "Host transport refresh request received: reason=\(request.reason), stream=\(request.streamID.map(String.init) ?? "all"), count=\(transportRefreshRequests)"
+            )
+            Task { [weak self] in
+                await self?.refreshTransportRegistrations(
+                    reason: "host-request:\(request.reason)",
+                    triggerKeyframe: true,
+                    streamFilter: streamFilter
+                )
+            }
+        } catch {
+            MirageLogger.error(.client, "Failed to decode transport refresh request: \(error)")
         }
     }
 

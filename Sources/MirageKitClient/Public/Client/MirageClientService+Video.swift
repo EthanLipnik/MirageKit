@@ -40,7 +40,11 @@ extension MirageClientService {
                     let udpConn = NWConnection(to: dataEndpoint, using: params)
                     udpConnection = udpConn
                     udpConn.pathUpdateHandler = { path in
+                        let snapshot = MirageNetworkPathClassifier.classify(path)
                         MirageLogger.client("UDP path updated: \(describeNetworkPath(path))")
+                        Task { @MainActor [weak service = self] in
+                            service?.handleVideoPathUpdate(snapshot)
+                        }
                     }
 
                     try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -80,7 +84,11 @@ extension MirageClientService {
         let udpConn = NWConnection(to: dataEndpoint, using: params)
         udpConnection = udpConn
         udpConn.pathUpdateHandler = { path in
+            let snapshot = MirageNetworkPathClassifier.classify(path)
             MirageLogger.client("UDP path updated: \(describeNetworkPath(path))")
+            Task { @MainActor [weak service = self] in
+                service?.handleVideoPathUpdate(snapshot)
+            }
         }
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -105,8 +113,10 @@ extension MirageClientService {
         MirageLogger.client("UDP connection established to host data port")
         if let path = udpConn.currentPath {
             MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
+            handleVideoPathUpdate(MirageNetworkPathClassifier.classify(path))
         }
         startReceivingVideo()
+        updateRegistrationRefreshLoopState()
     }
 
     /// Start receiving video data from UDP connection.
@@ -217,7 +227,10 @@ extension MirageClientService {
     }
 
     /// Send stream registration to host via UDP.
-    func sendStreamRegistration(streamID: StreamID) async throws {
+    func sendStreamRegistration(
+        streamID: StreamID,
+        markKeyframeCooldown: Bool = true
+    ) async throws {
         guard let udpConn = udpConnection else { throw MirageError.protocolError("No UDP connection") }
         guard let mediaSecurityContext else {
             throw MirageError.protocolError("Missing media security context")
@@ -248,7 +261,9 @@ extension MirageClientService {
             let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
             MirageLogger.client("Desktop start: stream registration sent for stream \(streamID) (+\(deltaMs)ms)")
         }
-        lastKeyframeRequestTime[streamID] = CFAbsoluteTimeGetCurrent()
+        if markKeyframeCooldown {
+            lastKeyframeRequestTime[streamID] = CFAbsoluteTimeGetCurrent()
+        }
     }
 
     func logStartupFirstPacketIfNeeded(streamID: StreamID) {
@@ -265,7 +280,115 @@ extension MirageClientService {
     func stopVideoConnection() {
         udpConnection?.cancel()
         udpConnection = nil
+        videoPathSnapshot = nil
         hostDataPort = 0
+    }
+
+    func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
+        let previous = controlPathSnapshot
+        controlPathSnapshot = snapshot
+        guard awdlExperimentEnabled else { return }
+        guard let previous, previous.signature != snapshot.signature else { return }
+        if previous.kind != snapshot.kind {
+            awdlPathSwitches &+= 1
+            MirageLogger.client(
+                "Control path switch \(previous.kind.rawValue) -> \(snapshot.kind.rawValue) (count \(awdlPathSwitches))"
+            )
+        }
+    }
+
+    func handleVideoPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
+        let previous = videoPathSnapshot
+        videoPathSnapshot = snapshot
+        Task { [weak self] in
+            guard let self else { return }
+            let controllers = Array(controllersByStream.values)
+            for controller in controllers {
+                await controller.setTransportPathKind(snapshot.kind)
+            }
+        }
+        guard awdlExperimentEnabled else { return }
+        guard Self.shouldTriggerPathRefresh(previous: previous, current: snapshot) else { return }
+        if let previous, previous.kind != snapshot.kind {
+            awdlPathSwitches &+= 1
+            MirageLogger.client(
+                "Video path switch \(previous.kind.rawValue) -> \(snapshot.kind.rawValue) (count \(awdlPathSwitches))"
+            )
+        }
+        Task { [weak self] in
+            await self?.refreshTransportRegistrations(reason: "video-path-change", triggerKeyframe: true)
+        }
+    }
+
+    nonisolated static func shouldTriggerPathRefresh(
+        previous: MirageNetworkPathSnapshot?,
+        current: MirageNetworkPathSnapshot
+    ) -> Bool {
+        guard current.isReady else { return false }
+        guard let previous else { return false }
+        return previous.signature != current.signature
+    }
+
+    func refreshTransportRegistrations(
+        reason: String,
+        triggerKeyframe: Bool,
+        streamFilter: Set<StreamID>? = nil
+    ) async {
+        guard awdlExperimentEnabled else { return }
+        guard case .connected = connectionState else { return }
+
+        let activeIDs = activeStreamIDsForFiltering
+        guard !activeIDs.isEmpty else {
+            updateRegistrationRefreshLoopState()
+            return
+        }
+
+        let targetIDs: [StreamID] = {
+            if let streamFilter {
+                return activeIDs.filter { streamFilter.contains($0) }.sorted()
+            }
+            return activeIDs.sorted()
+        }()
+        guard !targetIDs.isEmpty else { return }
+
+        do {
+            if udpConnection == nil { try await startVideoConnection() }
+        } catch {
+            MirageLogger.error(.client, "Transport refresh (\(reason)) failed to start video connection: \(error)")
+            return
+        }
+
+        for streamID in targetIDs {
+            do {
+                try await sendStreamRegistration(
+                    streamID: streamID,
+                    markKeyframeCooldown: false
+                )
+                registrationRefreshCount &+= 1
+                if triggerKeyframe { sendKeyframeRequest(for: streamID) }
+            } catch {
+                MirageLogger.error(
+                    .client,
+                    "Transport refresh (\(reason)) stream registration failed for stream \(streamID): \(error)"
+                )
+            }
+        }
+
+        await refreshAudioRegistration(
+            reason: reason,
+            streamFilter: Set(targetIDs)
+        )
+        logAwdlExperimentTelemetryIfNeeded()
+    }
+
+    func logAwdlExperimentTelemetryIfNeeded() {
+        guard awdlExperimentEnabled else { return }
+        let now = CFAbsoluteTimeGetCurrent()
+        guard lastAwdlTelemetryLogTime == 0 || now - lastAwdlTelemetryLogTime >= 5.0 else { return }
+        lastAwdlTelemetryLogTime = now
+        MirageLogger.metrics(
+            "AWDL telemetry: stalls=\(stallEvents), pathSwitches=\(awdlPathSwitches), registrationRefresh=\(registrationRefreshCount), hostRefreshReq=\(transportRefreshRequests), activeJitterHoldMs=\(activeJitterHoldMs)"
+        )
     }
 
     /// Request a keyframe from the host when decoder encounters errors.
@@ -276,7 +399,12 @@ extension MirageClientService {
         }
 
         let now = CFAbsoluteTimeGetCurrent()
-        if let lastTime = lastKeyframeRequestTime[streamID], now - lastTime < keyframeRequestCooldown {
+        if !Self.shouldSendKeyframeRequest(
+            lastRequestTime: lastKeyframeRequestTime[streamID],
+            now: now,
+            cooldown: keyframeRequestCooldown
+        ) {
+            let lastTime = lastKeyframeRequestTime[streamID] ?? now
             let remaining = Int(((keyframeRequestCooldown - (now - lastTime)) * 1000).rounded())
             MirageLogger.client("Keyframe request skipped (cooldown \(remaining)ms) for stream \(streamID)")
             return
@@ -292,6 +420,15 @@ extension MirageClientService {
         let data = message.serialize()
         connection.send(content: data, completion: .idempotent)
         MirageLogger.client("Sent keyframe request for stream \(streamID)")
+    }
+
+    nonisolated static func shouldSendKeyframeRequest(
+        lastRequestTime: CFAbsoluteTime?,
+        now: CFAbsoluteTime,
+        cooldown: CFAbsoluteTime
+    ) -> Bool {
+        guard let lastRequestTime else { return true }
+        return now - lastRequestTime >= cooldown
     }
 
     /// Request stream recovery by forcing a keyframe.

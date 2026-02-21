@@ -167,16 +167,26 @@ public extension MirageClientService {
                     renderBufferDepth: metrics.renderBufferDepth,
                     decodeHealthy: metrics.decodeHealthy
                 )
+                self.activeJitterHoldMs = metrics.activeJitterHoldMs
+                self.logAwdlExperimentTelemetryIfNeeded()
             },
             onFirstFrame: { [weak self] in
                 self?.sessionStore.markFirstFrameReceived(for: capturedStreamID)
             },
             onAdaptiveFallbackNeeded: { [weak self] in
                 self?.handleAdaptiveFallbackTrigger(for: capturedStreamID)
+            },
+            onStallEvent: { [weak self] in
+                guard let self else { return }
+                self.stallEvents &+= 1
+                self.logAwdlExperimentTelemetryIfNeeded()
             }
         )
 
         await controller.updateDecodeSubmissionLimit(targetFrameRate: getScreenMaxRefreshRate())
+        if let kind = videoPathSnapshot?.kind {
+            await controller.setTransportPathKind(kind)
+        }
         await controller.start()
         await updateReassemblerSnapshot()
 

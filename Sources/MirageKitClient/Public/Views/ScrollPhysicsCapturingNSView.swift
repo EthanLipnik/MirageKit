@@ -498,13 +498,23 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
-        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
+            if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
             location = lockedCursorPosition
         } else {
             location = normalizedLocation(from: event)
+            let movedByDelta = event.deltaX != 0 || event.deltaY != 0
+            let movedByLocation = if let lastMouseLocation {
+                hypot(location.x - lastMouseLocation.x, location.y - lastMouseLocation.y) > 0.0001
+            } else {
+                false
+            }
+            if movedByDelta || movedByLocation {
+                revealCursorAfterPointerMovement()
+            }
+            lastMouseLocation = location
         }
         let mouseEvent = MirageMouseEvent(
             button: .left,
@@ -516,13 +526,22 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
-        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
+            if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
             location = lockedCursorPosition
         } else {
             location = normalizedLocation(from: event)
+            let movedByDelta = event.deltaX != 0 || event.deltaY != 0
+            let movedByLocation = if let lastMouseLocation {
+                hypot(location.x - lastMouseLocation.x, location.y - lastMouseLocation.y) > 0.0001
+            } else {
+                false
+            }
+            if movedByDelta || movedByLocation {
+                revealCursorAfterPointerMovement()
+            }
             lastMouseLocation = location
         }
         let mouseEvent = MirageMouseEvent(
@@ -571,13 +590,23 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func rightMouseDragged(with event: NSEvent) {
-        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
+            if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
             location = lockedCursorPosition
         } else {
             location = normalizedLocation(from: event)
+            let movedByDelta = event.deltaX != 0 || event.deltaY != 0
+            let movedByLocation = if let lastMouseLocation {
+                hypot(location.x - lastMouseLocation.x, location.y - lastMouseLocation.y) > 0.0001
+            } else {
+                false
+            }
+            if movedByDelta || movedByLocation {
+                revealCursorAfterPointerMovement()
+            }
+            lastMouseLocation = location
         }
         let mouseEvent = MirageMouseEvent(
             button: .right,
@@ -625,13 +654,23 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func otherMouseDragged(with event: NSEvent) {
-        revealCursorAfterPointerMovement()
         let location: CGPoint
         if cursorLockEnabled {
+            if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
             location = lockedCursorPosition
         } else {
             location = normalizedLocation(from: event)
+            let movedByDelta = event.deltaX != 0 || event.deltaY != 0
+            let movedByLocation = if let lastMouseLocation {
+                hypot(location.x - lastMouseLocation.x, location.y - lastMouseLocation.y) > 0.0001
+            } else {
+                false
+            }
+            if movedByDelta || movedByLocation {
+                revealCursorAfterPointerMovement()
+            }
+            lastMouseLocation = location
         }
         let mouseEvent = MirageMouseEvent(
             button: MirageMouseButton(rawValue: event.buttonNumber) ?? .middle,
@@ -652,7 +691,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
             currentModifiers = []
             onMouseEvent?(.flagsChanged(currentModifiers))
         }
-        revealCursorAfterPointerMovement()
         return super.resignFirstResponder()
     }
 

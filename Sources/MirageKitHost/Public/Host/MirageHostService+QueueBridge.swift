@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Network
 import MirageKit
 
 #if os(macOS)
@@ -99,7 +100,7 @@ extension MirageHostService {
     nonisolated func sendVideoPacketForStream(
         _ streamID: StreamID,
         data: Data,
-        onComplete: (@Sendable () -> Void)? = nil
+        onComplete: (@Sendable (NWError?) -> Void)? = nil
     ) {
         transportRegistry.sendVideo(streamID: streamID, data: data, onComplete: onComplete)
     }

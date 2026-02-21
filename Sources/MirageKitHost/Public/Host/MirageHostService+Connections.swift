@@ -156,6 +156,8 @@ extension MirageHostService {
 
         let connectionID = ObjectIdentifier(connection)
 
+        await preemptExistingClientIfSuperseded(by: deviceInfo)
+
         guard reserveSingleClientSlot(for: connectionID) else {
             if let activeClient = clientsByConnection.values.first?.client {
                 MirageLogger.host(
@@ -601,6 +603,30 @@ extension MirageHostService {
             accepted: result.accepted,
             message: result.message
         )
+    }
+
+    func shouldPreemptExistingClient(
+        _ existingClient: MirageConnectedClient,
+        for incomingDeviceInfo: MirageDeviceInfo
+    ) -> Bool {
+        if existingClient.id == incomingDeviceInfo.id { return true }
+
+        guard let existingIdentityKeyID = existingClient.identityKeyID,
+              let incomingIdentityKeyID = incomingDeviceInfo.identityKeyID else {
+            return false
+        }
+
+        return existingIdentityKeyID == incomingIdentityKeyID
+    }
+
+    func preemptExistingClientIfSuperseded(by incomingDeviceInfo: MirageDeviceInfo) async {
+        guard let existingClient = clientsByConnection.values.first?.client else { return }
+        guard shouldPreemptExistingClient(existingClient, for: incomingDeviceInfo) else { return }
+
+        MirageLogger.host(
+            "Preempting existing client \(existingClient.name) for reconnect from \(incomingDeviceInfo.name)"
+        )
+        await disconnectClient(existingClient)
     }
 
     func reserveSingleClientSlot(for connectionID: ObjectIdentifier) -> Bool {

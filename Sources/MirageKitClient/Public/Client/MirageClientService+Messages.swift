@@ -46,7 +46,8 @@ extension MirageClientService {
             .audioStreamStarted: { [weak self] in self?.handleAudioStreamStarted($0) },
             .audioStreamStopped: { [weak self] in self?.handleAudioStreamStopped($0) },
             .hostSoftwareUpdateStatus: { [weak self] in self?.handleHostSoftwareUpdateStatus($0) },
-            .hostSoftwareUpdateInstallResult: { [weak self] in self?.handleHostSoftwareUpdateInstallResult($0) }
+            .hostSoftwareUpdateInstallResult: { [weak self] in self?.handleHostSoftwareUpdateInstallResult($0) },
+            .transportRefreshRequest: { [weak self] in self?.handleTransportRefreshRequest($0) }
         ]
     }
 

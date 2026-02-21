@@ -158,3 +158,19 @@ package struct DisconnectMessage: Codable {
         self.message = message
     }
 }
+
+package struct TransportRefreshRequestMessage: Codable, Sendable {
+    package let streamID: StreamID?
+    package let reason: String
+    package let requestedAtNs: UInt64
+
+    package init(
+        streamID: StreamID?,
+        reason: String,
+        requestedAtNs: UInt64 = UInt64(CFAbsoluteTimeGetCurrent() * 1_000_000_000)
+    ) {
+        self.streamID = streamID
+        self.reason = reason
+        self.requestedAtNs = requestedAtNs
+    }
+}

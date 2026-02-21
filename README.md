@@ -175,6 +175,14 @@ Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe 
 - `enablePeerToPeer` turns on AWDL peer-to-peer discovery and connections.
 - `maxPacketSize` controls UDP payload sizing (default stays within IPv6 MTU).
 
+#### Host AWDL Transport Experiment
+
+Host runtime supports an AWDL transport stabilization experiment behind an environment variable:
+
+- `MIRAGE_AWDL_EXPERIMENT=1` enables AWDL path-aware transport refresh and bounded micro-jitter smoothing paths.
+- The experiment path keeps stream quality settings unchanged (resolution, bitrate targets, and bit depth policies remain the same).
+- When the variable is unset, host and client runtime follow default transport behavior.
+
 ### Streaming Modes
 
 - Window streaming captures a specific window using ScreenCaptureKit.

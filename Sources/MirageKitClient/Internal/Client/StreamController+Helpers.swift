@@ -18,7 +18,76 @@ import AppKit
 #endif
 
 extension StreamController {
+    struct AdaptiveJitterState: Sendable, Equatable {
+        var holdMs: Int
+        var stressStreak: Int
+        var stableStreak: Int
+    }
+
     // MARK: - Private Helpers
+
+    func setTransportPathKind(_ kind: MirageNetworkPathKind) {
+        let awdlActive = awdlExperimentEnabled && kind == .awdl
+        guard awdlTransportActive != awdlActive else { return }
+        awdlTransportActive = awdlActive
+        if !awdlActive {
+            adaptiveJitterHoldMs = 0
+            adaptiveJitterStressStreak = 0
+            adaptiveJitterStableStreak = 0
+        }
+    }
+
+    func evaluateAdaptiveJitterHold(receivedFPS: Double) {
+        guard awdlExperimentEnabled, awdlTransportActive else {
+            adaptiveJitterHoldMs = 0
+            adaptiveJitterStressStreak = 0
+            adaptiveJitterStableStreak = 0
+            return
+        }
+
+        let state = Self.nextAdaptiveJitterState(
+            current: AdaptiveJitterState(
+                holdMs: adaptiveJitterHoldMs,
+                stressStreak: adaptiveJitterStressStreak,
+                stableStreak: adaptiveJitterStableStreak
+            ),
+            receivedFPS: receivedFPS,
+            targetFPS: decodeSchedulerTargetFPS
+        )
+        adaptiveJitterHoldMs = state.holdMs
+        adaptiveJitterStressStreak = state.stressStreak
+        adaptiveJitterStableStreak = state.stableStreak
+    }
+
+    nonisolated static func nextAdaptiveJitterState(
+        current: AdaptiveJitterState,
+        receivedFPS: Double,
+        targetFPS: Int
+    ) -> AdaptiveJitterState {
+        var next = current
+        let target = Double(max(1, targetFPS))
+        let stress = receivedFPS < target * Self.adaptiveJitterStressThreshold
+        if stress {
+            next.stressStreak += 1
+            next.stableStreak = 0
+            if next.stressStreak >= Self.adaptiveJitterStressWindows {
+                next.stressStreak = 0
+                next.holdMs = min(
+                    Self.adaptiveJitterHoldMaxMs,
+                    next.holdMs + Self.adaptiveJitterStepUpMs
+                )
+            }
+            return next
+        }
+
+        next.stressStreak = 0
+        next.stableStreak += 1
+        if next.stableStreak >= Self.adaptiveJitterStableWindows {
+            next.stableStreak = 0
+            next.holdMs = max(0, next.holdMs - Self.adaptiveJitterStepDownMs)
+        }
+        return next
+    }
 
     func markFirstFrameReceived() {
         guard !hasReceivedFirstFrame else { return }
@@ -283,6 +352,9 @@ extension StreamController {
         }
         lastFreezeRecoveryTime = now
         consecutiveFreezeRecoveries &+= 1
+        Task { @MainActor [weak self] in
+            await self?.onStallEvent?()
+        }
 
         guard keyframeStarved else {
             let attempt = consecutiveFreezeRecoveries

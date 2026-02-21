@@ -96,6 +96,7 @@ package enum ControlMessageType: UInt8, Codable {
     case hostSoftwareUpdateStatus = 0xB3 // Host -> Client: Host software update status snapshot
     case hostSoftwareUpdateInstallRequest = 0xB4 // Client -> Host: Request host software update install
     case hostSoftwareUpdateInstallResult = 0xB5 // Host -> Client: Host software update install result
+    case transportRefreshRequest = 0xB6 // Host -> Client: Request immediate UDP re-registration
 
     /// Errors
     case error = 0xFF

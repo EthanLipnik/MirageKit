@@ -135,6 +135,10 @@ extension MirageHostService {
                 MirageLogger.host(
                     "Registered audio UDP connection for device \(deviceID.uuidString), stream \(streamID) (\(pathText))"
                 )
+                if let path = connection.currentPath {
+                    let snapshot = MirageNetworkPathClassifier.classify(path)
+                    recordMediaPathSnapshot(streamID: streamID, snapshot: snapshot, channel: "audio")
+                }
                 await handleAudioConnectionRegistered(clientID: deviceID, streamID: streamID)
                 continue
             }
@@ -168,6 +172,10 @@ extension MirageHostService {
 
             let pathText = connection.currentPath.map(describeNetworkPath) ?? "unknown"
             MirageLogger.host("Received video registration for stream \(streamID) client \(deviceID) (\(pathText))")
+            if let path = connection.currentPath {
+                let snapshot = MirageNetworkPathClassifier.classify(path)
+                recordMediaPathSnapshot(streamID: streamID, snapshot: snapshot, channel: "video")
+            }
 
             guard streamsByID[streamID] != nil else {
                 MirageLogger.host("Stream \(streamID) not found, may be pending")
@@ -225,6 +233,19 @@ extension MirageHostService {
             return false
         }
         return true
+    }
+
+    private func recordMediaPathSnapshot(
+        streamID: StreamID,
+        snapshot: MirageNetworkPathSnapshot,
+        channel: String
+    ) {
+        let previous = mediaPathSnapshotByStreamID[streamID]
+        mediaPathSnapshotByStreamID[streamID] = snapshot
+        guard awdlExperimentEnabled else { return }
+        guard let previous, previous.signature != snapshot.signature else { return }
+        let switchText = "\(previous.kind.rawValue) -> \(snapshot.kind.rawValue)"
+        MirageLogger.host("Media path switch (\(channel), stream \(streamID)): \(switchText)")
     }
 }
 
