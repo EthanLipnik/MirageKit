@@ -36,7 +36,7 @@ actor HEVCEncoder {
     var didLogPixelFormat = false
     var baseQuality: Float
     var qualityOverrideActive = false
-    let compressionQualityCeiling: Float = 0.80
+    let compressionQualityCeiling: Float = 0.94
     let performanceTracker = EncodePerformanceTracker()
 
     var isEncoding = false

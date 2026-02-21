@@ -201,6 +201,16 @@ extension MirageHostService {
             sharedVirtualDisplayScaleFactor = 1.0
             desktopDisplayBounds = nil
 
+            if config.colorSpace == .displayP3 {
+                MirageLogger.error(
+                    .host,
+                    "Virtual display acquisition failed for Display P3 desktop stream; main-display fallback is disabled: \(error)"
+                )
+                throw MirageError.protocolError(
+                    "Virtual display acquisition failed for required Display P3 desktop stream: \(error)"
+                )
+            }
+
             MirageLogger.error(
                 .host,
                 "Virtual display acquisition failed for desktop stream; using main display fallback: \(error)"

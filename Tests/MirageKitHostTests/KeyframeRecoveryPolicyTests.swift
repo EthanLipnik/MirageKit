@@ -49,8 +49,51 @@ struct KeyframeRecoveryPolicyTests {
             height: 2880,
             frameRate: 60
         )
-        #expect(mapped.frameQuality <= 0.80)
+        #expect(mapped.frameQuality <= 0.94)
         #expect(mapped.keyframeQuality <= mapped.frameQuality)
+    }
+
+    @Test("High bitrate mapping targets near-lossless quality at 5K60")
+    func highBitrateNearLosslessQuality() {
+        let mapped = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 700_000_000,
+            width: 5120,
+            height: 2880,
+            frameRate: 60
+        )
+        #expect(mapped.frameQuality >= 0.90)
+    }
+
+    @Test("Stream context applies high-bitrate quality mapping at 5K60")
+    func streamContextAppliesHighBitrateQuality() async {
+        let context = makeContext(
+            frameRate: 60,
+            bitrate: 700_000_000
+        )
+        let fiveKSize = CGSize(width: 5120, height: 2880)
+        await context.updateCaptureSizesIfNeeded(fiveKSize)
+        await context.applyDerivedQuality(for: fiveKSize, logLabel: nil)
+
+        let active = await context.activeQuality
+        #expect(active >= 0.90)
+    }
+
+    @Test("Quality mapper does not apply high-bitrate boost through 400 Mbps")
+    func noHighBitrateBoostAtOrBelowThreshold() {
+        let standard = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 400_000_000,
+            width: 5120,
+            height: 2880,
+            frameRate: 60
+        )
+        let boosted = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 700_000_000,
+            width: 5120,
+            height: 2880,
+            frameRate: 60
+        )
+        #expect(standard.frameQuality <= 0.80)
+        #expect(boosted.frameQuality > standard.frameQuality)
     }
 
     @Test("Quality mapper lowers quality for bitrate-constrained streams")
@@ -83,6 +126,24 @@ struct KeyframeRecoveryPolicyTests {
             targetBitrateBps: 50_000_000,
             width: 2560,
             height: 1440,
+            frameRate: 120
+        )
+
+        #expect(oneTwentyHz.frameQuality < sixtyHz.frameQuality)
+    }
+
+    @Test("High-bitrate 5K120 remains more compressed than 5K60")
+    func highBitrateHighRefreshBias() {
+        let sixtyHz = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 700_000_000,
+            width: 5120,
+            height: 2880,
+            frameRate: 60
+        )
+        let oneTwentyHz = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 700_000_000,
+            width: 5120,
+            height: 2880,
             frameRate: 120
         )
 

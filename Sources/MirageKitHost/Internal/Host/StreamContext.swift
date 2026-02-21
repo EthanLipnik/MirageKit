@@ -90,7 +90,7 @@ actor StreamContext {
     var qualityCeiling: Float
     var steadyQualityCeiling: Float
     var keyframeQualityFloor: Float
-    let compressionQualityCeiling: Float = 0.80
+    let compressionQualityCeiling: Float = 0.94
     let qualityFloorFactor: Float = 0.6
     let keyframeFloorFactor: Float = 0.6
     let bitrateCappedQualityFloorFactor: Float = 0.38

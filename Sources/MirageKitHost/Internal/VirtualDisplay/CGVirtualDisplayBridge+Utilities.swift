@@ -15,6 +15,36 @@ import Foundation
 extension CGVirtualDisplayBridge {
     // MARK: - Display Utilities
 
+    private static func expectedColorSpaceNames(for colorSpace: MirageColorSpace) -> Set<String> {
+        switch colorSpace {
+        case .displayP3:
+            return [
+                CGColorSpace.displayP3 as String,
+                CGColorSpace.extendedDisplayP3 as String,
+            ]
+        case .sRGB:
+            return [
+                CGColorSpace.sRGB as String,
+                CGColorSpace.extendedSRGB as String,
+                CGColorSpace.linearSRGB as String,
+            ]
+        }
+    }
+
+    private static func propertyListData(_ propertyList: CFPropertyList?) -> Data? {
+        guard let propertyList else { return nil }
+        guard let data = CFPropertyListCreateData(
+            kCFAllocatorDefault,
+            propertyList,
+            .binaryFormat_v1_0,
+            0,
+            nil
+        ) else {
+            return nil
+        }
+        return data.takeRetainedValue() as Data
+    }
+
     struct DisplayModeSizes: Sendable {
         let logical: CGSize
         let pixel: CGSize
@@ -151,19 +181,55 @@ extension CGVirtualDisplayBridge {
         displayID: CGDirectDisplayID,
         expectedColorSpace: MirageColorSpace
     ) -> (matches: Bool?, observedName: String?) {
-        let colorSpace = CGDisplayCopyColorSpace(displayID)
-        guard let name = colorSpace.name else {
-            return (matches: nil, observedName: nil)
-        }
-
-        let observed = name as String
+        let observedColorSpace = CGDisplayCopyColorSpace(displayID)
         let expectedName: String = switch expectedColorSpace {
         case .displayP3:
             CGColorSpace.displayP3 as String
         case .sRGB:
             CGColorSpace.sRGB as String
         }
-        return (matches: observed == expectedName, observedName: observed)
+        guard let expectedCGColorSpace = CGColorSpace(name: expectedName as CFString) else {
+            return (matches: nil, observedName: nil)
+        }
+
+        if let observedNameCF = observedColorSpace.name {
+            let observedName = observedNameCF as String
+            let matches = expectedColorSpaceNames(for: expectedColorSpace).contains(observedName)
+            return (matches: matches, observedName: observedName)
+        }
+
+        if CFEqual(observedColorSpace, expectedCGColorSpace) {
+            return (matches: true, observedName: "unnamed-equivalent")
+        }
+
+        if let observedICCData = observedColorSpace.copyICCData() as Data?,
+           let expectedICCData = expectedCGColorSpace.copyICCData() as Data?,
+           observedICCData == expectedICCData {
+            return (matches: true, observedName: "icc-match")
+        }
+
+        if let observedPropertyListData = propertyListData(observedColorSpace.copyPropertyList()),
+           let expectedPropertyListData = propertyListData(expectedCGColorSpace.copyPropertyList()),
+           observedPropertyListData == expectedPropertyListData {
+            return (matches: true, observedName: "property-list-match")
+        }
+
+        if observedColorSpace.model == .rgb {
+            let observedWideGamut = observedColorSpace.isWideGamutRGB
+            let expectedWideGamut = expectedColorSpace == .displayP3
+            if observedWideGamut == expectedWideGamut {
+                return (
+                    matches: true,
+                    observedName: observedWideGamut ? "wide-gamut-rgb" : "standard-gamut-rgb"
+                )
+            }
+            return (
+                matches: false,
+                observedName: observedWideGamut ? "wide-gamut-rgb" : "standard-gamut-rgb"
+            )
+        }
+
+        return (matches: nil, observedName: "unknown")
     }
 
     /// Returns true if the display is a Mirage-created virtual display.

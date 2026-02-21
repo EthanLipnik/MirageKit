@@ -18,6 +18,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Backpressure: queue-based frame drops.
 - Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
 - Bitrate-derived quality mapping biases low-bitrate streams toward stronger compression, and queue-pressure quality drops accelerate for bitrate-constrained streams.
+- Bitrate-derived quality mapping keeps a standard 0.80 ceiling through 400 Mbps, scales toward a 0.94 ceiling by 700 Mbps, and targets near-lossless quality at high resolution when bitrate allows.
+- 120Hz quality mapping keeps frame-rate compression bias so high-refresh paths remain latency-first.
+- Quality settings are immutable while a stream is active and apply on the next stream start.
 - VideoToolbox data-rate limits use a window-budget byte cap (0.25s at 120Hz, 0.5s otherwise) so real-time bitrate caps do not overshoot during motion bursts.
 - Capture format follows stream bit depth: 10-bit uses P010 with Display P3, and 8-bit uses NV12 with sRGB.
 - Host capture enforces expected CVBuffer color attachments before encode (Display P3 or sRGB tag set) so encoder color metadata stays consistent with requested bit depth/color space.
@@ -42,9 +45,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
-- Virtual display creation validates the active display color profile name against the requested color space and retries once with rotated deterministic serial when a mismatch is detected.
+- Virtual display creation validates the active display color profile name against the requested color space; Display P3 requests fail closed when profile validation stays unresolved and creation retries once with rotated deterministic serial on color-validation failure.
 - Virtual display creation attempts Retina first and can fall back to 1x logical resolution when Retina activation does not validate; display snapshots carry active scale factors so bounds, capture, and input paths follow the active mode.
-- Desktop streaming uses a main-display capture fallback when shared virtual display activation is unavailable, preserving stream startup with physical-display bounds and without shared-display resize orchestration for that session.
+- Desktop streaming uses a main-display capture fallback when shared virtual display activation is unavailable, preserving stream startup with physical-display bounds and without shared-display resize orchestration for that session; Display P3 desktop streams keep fallback disabled and fail closed when validated virtual-display color setup is unavailable.
 - Virtual display readiness validates HiDPI mode using paired logical and pixel dimensions from `CGDisplayCopyDisplayMode`, while desktop input bounds prefer cached logical display bounds.
 - CGVirtualDisplay settings use `hiDPI=2` when Retina mode is requested; `hiDPI=1` can resolve to non-Retina 1x modes on some hosts.
 - Capture watchdog restart requests are canceled once stream shutdown begins; display-capture stall recovery uses a 1.5-second threshold, while window-capture stall recovery uses an 8-second threshold for extended menu-tracking pauses.
@@ -63,6 +66,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - UDP stream/audio/quality registrations carry the per-session token and host registration validates token matches in constant time.
 - `MIRAGE_AWDL_EXPERIMENT=1` enables AWDL transport stabilization paths while default behavior remains unchanged when unset.
 - AWDL stabilization includes path classification snapshots (`awdl`, `wifi`, `wired`, `unknown`) for control/video/audio transports, proactive registration refresh on ready path transitions, and periodic registration refresh while streams are active.
+- AWDL media transport supports USB-C wired links; path logs can still report `interfaces=wifi` with `available=awdl0(...)` during wired USB-C sessions.
 - Host transport send-error bursts are tracked per stream and can trigger queue reset plus urgent recovery keyframe and host-to-client transport refresh requests through an internal control message.
 - AWDL jitter handling includes bounded adaptive micro-jitter hold at decode dequeue (0-8 ms) with automatic decay after stable windows.
 - AWDL bootstrap hardening duplicates only the keyframe parameter-set fragment packet when experiment mode is enabled.
@@ -177,7 +181,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
 - Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
 - Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.
-- Compression ceiling: frame quality is capped at 0.80 while bitrate targets remain independent.
+- Compression ceiling: frame quality is capped at 0.80 through 400 Mbps and scales up to 0.94 by 700 Mbps while bitrate targets remain independent.
 - FEC policy: loss windows prioritize keyframe parity; P-frame parity is enabled only during hard recovery windows.
 - Adaptive fallback: automatic mode applies bitrate-only steps first (15% per trigger, 15-second cooldown, 8 Mbps floor) before disruptive reconfiguration.
 - Custom mode recovery: stream parameters remain fixed while stream-health warnings report sustained degradation.

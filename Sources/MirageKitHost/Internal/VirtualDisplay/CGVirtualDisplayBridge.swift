@@ -41,6 +41,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     private static let serialSchemeVersion = 3
     private static let hiDPIDisabledSetting: UInt32 = 0
     private static let hiDPIEnabledSetting: UInt32 = 2
+    private static let colorValidationAttempts = 6
+    private static let colorValidationDelaySeconds: TimeInterval = 0.06
 
     private enum SerialSlot: Int {
         case primary = 0
@@ -304,6 +306,24 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         }
     }
 
+    private static func validatedDisplayColorSpace(
+        displayID: CGDirectDisplayID,
+        expectedColorSpace: MirageColorSpace
+    ) -> (matches: Bool?, observedName: String?) {
+        var latest: (matches: Bool?, observedName: String?) = (matches: nil, observedName: nil)
+        for attempt in 0 ..< colorValidationAttempts {
+            latest = displayColorSpaceValidation(
+                displayID: displayID,
+                expectedColorSpace: expectedColorSpace
+            )
+            if latest.matches == true { return latest }
+            if attempt < colorValidationAttempts - 1 {
+                Thread.sleep(forTimeInterval: colorValidationDelaySeconds)
+            }
+        }
+        return latest
+    }
+
     private static func activateAndValidateMode(
         display: AnyObject,
         settingsClass: NSObject.Type,
@@ -547,7 +567,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 hiDPI: hiDPI,
                 colorSpace: colorSpace
             )
-            var sawColorSpaceMismatch = false
+            let requiresStrictColorValidation = colorSpace == .displayP3
+            var sawColorValidationFailure = false
 
             for profile in descriptorProfiles {
                 var failedDisplayID: CGDirectDisplayID?
@@ -641,12 +662,18 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         return
                     }
 
-                    let colorValidation = displayColorSpaceValidation(
+                    let colorValidation = validatedDisplayColorSpace(
                         displayID: displayID,
                         expectedColorSpace: colorSpace
                     )
+                    if colorValidation.matches == true {
+                        let observed = colorValidation.observedName ?? "unknown"
+                        MirageLogger.host(
+                            "Virtual display color profile validated (expected \(colorSpace.displayName), observed \(observed), profile \(profile.label), serial \(profile.serial))"
+                        )
+                    }
                     if let matches = colorValidation.matches, !matches {
-                        sawColorSpaceMismatch = true
+                        sawColorValidationFailure = true
                         let observed = colorValidation.observedName ?? "unknown"
                         MirageLogger.error(
                             .host,
@@ -660,9 +687,22 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                     }
                     if colorValidation.matches == nil {
                         let observed = colorValidation.observedName ?? "unknown"
-                        MirageLogger.host(
-                            "Virtual display color profile unresolved (expected \(colorSpace.displayName), observed \(observed), continuing)"
-                        )
+                        if requiresStrictColorValidation {
+                            sawColorValidationFailure = true
+                            MirageLogger.error(
+                                .host,
+                                "Virtual display color profile unresolved after retries (expected \(colorSpace.displayName), observed \(observed), profile \(profile.label), serial \(profile.serial))"
+                            )
+                            let invalidateSelector = NSSelectorFromString("invalidate")
+                            if (display as AnyObject).responds(to: invalidateSelector) {
+                                _ = (display as AnyObject).perform(invalidateSelector)
+                            }
+                            return
+                        } else {
+                            MirageLogger.host(
+                                "Virtual display color profile unresolved (expected \(colorSpace.displayName), observed \(observed), continuing)"
+                            )
+                        }
                     }
 
                     MirageLogger.host("Created virtual display with ID: \(displayID)")
@@ -695,10 +735,10 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 }
             }
 
-            if sawColorSpaceMismatch, !serialRetryAttempted {
+            if sawColorValidationFailure, !serialRetryAttempted {
                 serialRetryAttempted = true
                 invalidatePersistentSerial(for: colorSpace)
-                MirageLogger.host("Retrying virtual display creation with rotated serial after color mismatch")
+                MirageLogger.host("Retrying virtual display creation with rotated serial after color validation failure")
                 continue
             }
             break
