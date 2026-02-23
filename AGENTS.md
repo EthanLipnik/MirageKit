@@ -43,6 +43,10 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Lights Out emergency shortcut: host service exposes a configurable local shortcut that is matched inside the Lights Out event tap to run emergency recovery (disconnect clients, clear overlays, lock host).
 - Host app streaming enforces Stage Manager off during active app-stream sessions; when Mirage disables it for streaming, host restores the prior enabled state after the last app-stream session ends.
 - Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
+- Bootstrap metadata types (`MirageBootstrapMetadata`, `MirageBootstrapEndpoint`, `MirageWakeOnLANInfo`) model wake/unlock capability publication in CloudKit host records.
+- Wake/unlock runtime contracts include `MirageWakeOnLANClient` and `MirageSSHBootstrapClient`; default SSH bootstrap uses a SwiftNIO+NIOSSH password-auth session probe (`/usr/bin/true`) for cross-platform SSH unlock reachability checks.
+- Bootstrap endpoint ordering/dedupe uses `MirageBootstrapEndpointResolver` with deterministic priority (`user`, `auto`, `lastSeen`).
+- Bootstrap daemon handoff uses line-delimited control protocol payloads (`MirageBootstrapControlRequest`, `MirageBootstrapControlResponse`) and host runtime helpers (`MirageHostBootstrapUnlockService`, `MirageHostBootstrapControlServer`, `MirageHostBootstrapDaemonStateMachine`).
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
 - Virtual display creation validates the active display color profile name against the requested color space; Display P3 requests fail closed when profile validation stays unresolved and creation retries once with rotated deterministic serial on color-validation failure.
@@ -99,6 +103,7 @@ MirageKit/
 │  ├─ MirageKit/ (shared)
 │  │  ├─ Public/
 │  │  │  ├─ CloudKit/
+│  │  │  ├─ Bootstrap/
 │  │  │  ├─ Remote/
 │  │  │  ├─ Input/
 │  │  │  ├─ Shared/
@@ -139,6 +144,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 
 ## Public API
 - Shared types, input events, trust, and CloudKit helpers: `Sources/MirageKit/Public/`.
+- Bootstrap metadata and wake/unlock runtime interfaces: `Sources/MirageKit/Public/Bootstrap/`.
 - Remote signaling and STUN preflight helpers: `Sources/MirageKit/Public/Remote/`.
 - Client services, delegates, session stores, metrics, cursor snapshots, and stream views: `Sources/MirageKitClient/Public/`.
 - Host services, delegates, window/input controllers, and host utilities: `Sources/MirageKitHost/Public/`.
@@ -154,6 +160,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Host queue primitives and registries: `Sources/MirageKitHost/Internal/Host/Locked.swift`, `Sources/MirageKitHost/Internal/Host/SerialWorker.swift`, `Sources/MirageKitHost/Internal/Host/HostTransportRegistry.swift`, `Sources/MirageKitHost/Internal/Host/HostStreamRegistry.swift`, `Sources/MirageKitHost/Internal/Host/HostReceiveLoop.swift`.
 - Host Lights Out integration: `Sources/MirageKitHost/Public/Host/MirageHostService+LightsOut.swift`.
 - Host Stage Manager guardrail: `Sources/MirageKitHost/Internal/Host/HostStageManagerController.swift`, `Sources/MirageKitHost/Public/Host/MirageHostService+StageManager.swift`.
+- Host bootstrap daemon shared config and control helpers live under `Sources/MirageKitHost/Public/Host/` and stay consumable by both host app and standalone daemon target.
 
 **Other Modules:**
 - Automatic quality testing no longer includes dedicated probe scene or transport-helper paths.
@@ -236,6 +243,8 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Build: `swift build --package-path MirageKit`.
 - Test: `swift test --package-path MirageKit`.
 - CI: `.github/workflows/ci.yml` runs `swift build` and `swift test` on `macos-26` with `DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer`.
+- MirageKit package dependencies include `swift-nio` and `swift-nio-ssh` for SSH bootstrap runtime support.
+- Bootstrap API/runtime edits are validated with package tests and host workspace integration build (`xcodebuild -project Mirage.xcodeproj -scheme 'Mirage Host' -configuration Debug -destination 'platform=macOS' build`).
 
 ## Coding Style and Naming
 - Use 4 spaces for indentation and keep line wrapping consistent with surrounding code.

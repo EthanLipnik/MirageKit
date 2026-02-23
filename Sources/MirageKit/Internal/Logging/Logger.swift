@@ -59,6 +59,10 @@ public enum LogCategory: String, CaseIterable, Sendable {
     case accessibility // Accessibility permission
     case windowActivator // Window activation
     case menuBar // Menu bar streaming
+    case bootstrap // Client wake/unlock bootstrap orchestration
+    case ssh // SSH bootstrap transport
+    case wol // Wake-on-LAN transport
+    case bootstrapHandoff = "bootstrap_handoff" // Bootstrap-to-normal-connect handoff
 }
 
 /// Centralized logging for Mirage using Apple's unified logging system (`Logger`)
@@ -463,6 +467,70 @@ public extension MirageLogger {
     ) {
         logInfo(
             .menuBar,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+    }
+
+    /// Log bootstrap orchestration events
+    static func bootstrap(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .bootstrap,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+    }
+
+    /// Log SSH bootstrap events
+    static func ssh(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .ssh,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+    }
+
+    /// Log Wake-on-LAN events
+    static func wol(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .wol,
+            message: message,
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+    }
+
+    /// Log bootstrap handoff events
+    static func bootstrapHandoff(
+        _ message: @autoclosure () -> String,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        logInfo(
+            .bootstrapHandoff,
             message: message,
             fileID: fileID,
             line: line,

@@ -53,6 +53,9 @@ public struct MirageCloudKitHostInfo: Identifiable, Hashable, Sendable {
     /// Whether the host opted into remote connectivity.
     public let remoteEnabled: Bool
 
+    /// Optional host bootstrap metadata for wake/unlock recovery.
+    public let bootstrapMetadata: MirageBootstrapMetadata?
+
     /// Creates a CloudKit host info instance.
     ///
     /// - Parameters:
@@ -75,7 +78,8 @@ public struct MirageCloudKitHostInfo: Identifiable, Hashable, Sendable {
         recordID: String,
         identityKeyID: String? = nil,
         identityPublicKey: Data? = nil,
-        remoteEnabled: Bool = false
+        remoteEnabled: Bool = false,
+        bootstrapMetadata: MirageBootstrapMetadata? = nil
     ) {
         self.id = id
         self.name = name
@@ -88,6 +92,7 @@ public struct MirageCloudKitHostInfo: Identifiable, Hashable, Sendable {
         self.identityKeyID = identityKeyID
         self.identityPublicKey = identityPublicKey
         self.remoteEnabled = remoteEnabled
+        self.bootstrapMetadata = bootstrapMetadata
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -118,6 +123,7 @@ public extension MirageCloudKitHostInfo {
         case hardwareIconName
         case hardwareMachineFamily
         case remoteEnabled
+        case bootstrapMetadataBlob
         case lastSeen
         case createdAt
     }

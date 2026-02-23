@@ -277,6 +277,10 @@ public final class MirageCloudKitHostProvider {
         let hardwareIconName = record[MirageCloudKitHostInfo.RecordKey.hardwareIconName.rawValue] as? String
         let hardwareMachineFamily = record[MirageCloudKitHostInfo.RecordKey.hardwareMachineFamily.rawValue] as? String
         let remoteEnabled = (record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] as? Int64 ?? 0) != 0
+        let bootstrapMetadataBlob = record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] as? Data
+        let bootstrapMetadata = bootstrapMetadataBlob.flatMap {
+            try? JSONDecoder().decode(MirageBootstrapMetadata.self, from: $0)
+        }
 
         let capabilities = MirageHostCapabilities(
             maxStreams: maxStreams,
@@ -305,7 +309,8 @@ public final class MirageCloudKitHostProvider {
             recordID: record.recordID.recordName,
             identityKeyID: identityKeyID,
             identityPublicKey: identityPublicKey,
-            remoteEnabled: remoteEnabled
+            remoteEnabled: remoteEnabled,
+            bootstrapMetadata: bootstrapMetadata
         )
     }
 

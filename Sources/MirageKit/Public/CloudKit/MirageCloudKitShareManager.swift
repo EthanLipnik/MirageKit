@@ -201,7 +201,8 @@ public final class MirageCloudKitShareManager {
         capabilities: MirageHostCapabilities,
         identityKeyID: String? = nil,
         identityPublicKey: Data? = nil,
-        remoteEnabled: Bool = false
+        remoteEnabled: Bool = false,
+        bootstrapMetadata: MirageBootstrapMetadata? = nil
     )
     async throws {
         MirageLogger.appState("ShareManager: registerHost called for '\(name)' (deviceID: \(deviceID))")
@@ -275,6 +276,12 @@ public final class MirageCloudKitShareManager {
         // Remove legacy payload field so host records remain metadata-only.
         record["hardwareIconPNGData"] = nil
         record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] = remoteEnabled ? 1 : 0
+        if let bootstrapMetadata {
+            record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = try? JSONEncoder()
+                .encode(bootstrapMetadata)
+        } else {
+            record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = nil
+        }
         record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] = Date()
 
         do {
