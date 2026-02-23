@@ -15,6 +15,13 @@ public struct MirageTrustedDevice: Identifiable, Codable, Equatable {
     public let deviceType: DeviceType
     public let trustedAt: Date
 
+    /// Creates a persisted trusted-device entry.
+    ///
+    /// - Parameters:
+    ///   - id: Device identifier used during handshake.
+    ///   - name: Display name shown in trust UI.
+    ///   - deviceType: Platform type.
+    ///   - trustedAt: Time the trust decision was granted.
     public init(id: UUID, name: String, deviceType: DeviceType, trustedAt: Date) {
         self.id = id
         self.name = name
@@ -26,6 +33,10 @@ public struct MirageTrustedDevice: Identifiable, Codable, Equatable {
 /// Stores trusted devices with persistence to UserDefaults.
 @Observable
 @MainActor
+/// UserDefaults-backed trust persistence for manually trusted devices.
+///
+/// This type stores local trust grants and is commonly combined with a custom
+/// ``MirageTrustProvider`` implementation for auto-trust policies.
 public final class MirageTrustStore {
     /// Trusted devices (persisted to UserDefaults).
     public private(set) var trustedDevices: [MirageTrustedDevice] = []

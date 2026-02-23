@@ -17,6 +17,13 @@ public struct MirageStunProbeResult: Sendable {
     public let mappedPort: UInt16?
     public let failureReason: String?
 
+    /// Creates a STUN probe result.
+    ///
+    /// - Parameters:
+    ///   - reachable: Whether a valid STUN binding response was received.
+    ///   - mappedAddress: Public mapped IP address from XOR-MAPPED-ADDRESS when available.
+    ///   - mappedPort: Public mapped UDP port when available.
+    ///   - failureReason: Diagnostic reason when probe is unreachable.
     public init(
         reachable: Bool,
         mappedAddress: String? = nil,
@@ -33,6 +40,21 @@ public struct MirageStunProbeResult: Sendable {
 /// STUN probe entry point for remote preflight.
 public enum MirageStunProbe {
     /// Sends a STUN binding request and parses XOR-MAPPED-ADDRESS if available.
+    ///
+    /// - Parameters:
+    ///   - host: STUN server hostname.
+    ///   - port: STUN server UDP port.
+    ///   - localPort: Optional fixed local UDP port.
+    ///   - timeout: Connect/send/receive timeout budget.
+    /// - Returns: Reachability and mapped endpoint diagnostics.
+    ///
+    /// Example:
+    /// ```swift
+    /// let result = await MirageStunProbe.run()
+    /// if result.reachable {
+    ///     print("Mapped endpoint: \(result.mappedAddress ?? "?"):\(result.mappedPort ?? 0)")
+    /// }
+    /// ```
     public static func run(
         host: String = "stun.cloudflare.com",
         port: UInt16 = 3478,

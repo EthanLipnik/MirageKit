@@ -44,6 +44,11 @@ public struct MirageTrustEvaluation: Sendable, Equatable {
     /// Whether the client should present the one-time auto-approval notice.
     public let shouldShowAutoTrustNotice: Bool
 
+    /// Creates trust decision metadata for connection approval flows.
+    ///
+    /// - Parameters:
+    ///   - decision: Trust decision for the connecting peer.
+    ///   - shouldShowAutoTrustNotice: Whether clients should show a one-time auto-trust notice.
     public init(decision: MirageTrustDecision, shouldShowAutoTrustNotice: Bool) {
         self.decision = decision
         self.shouldShowAutoTrustNotice = shouldShowAutoTrustNotice
@@ -82,6 +87,17 @@ public struct MiragePeerIdentity: Sendable {
     /// Network endpoint description (IP address or hostname).
     public let endpoint: String
 
+    /// Creates a peer identity payload used by trust providers.
+    ///
+    /// - Parameters:
+    ///   - deviceID: Unique peer device identifier.
+    ///   - name: Peer display name.
+    ///   - deviceType: Peer platform classification.
+    ///   - iCloudUserID: Optional iCloud user identifier.
+    ///   - identityKeyID: Optional handshake identity key identifier.
+    ///   - identityPublicKey: Optional handshake identity public key bytes.
+    ///   - isIdentityAuthenticated: Whether handshake identity verification succeeded.
+    ///   - endpoint: Human-readable endpoint description.
     public init(
         deviceID: UUID,
         name: String,
@@ -165,6 +181,9 @@ public protocol MirageTrustProvider: AnyObject, Sendable {
 }
 
 public extension MirageTrustProvider {
+    /// Default trust outcome adapter built from ``evaluateTrust(for:)``.
+    ///
+    /// Custom providers can override this to control notice behavior independently from trust decision.
     @MainActor
     func evaluateTrustOutcome(for peer: MiragePeerIdentity) async -> MirageTrustEvaluation {
         let decision = await evaluateTrust(for: peer)

@@ -15,6 +15,11 @@ public struct MirageRemoteSignalingAppAuthentication: Sendable {
     public let appID: String
     public let sharedSecret: String
 
+    /// Creates app-scoped credentials used to sign Worker requests.
+    ///
+    /// - Parameters:
+    ///   - appID: Public application identifier expected by signaling.
+    ///   - sharedSecret: Shared secret used for HMAC request authentication.
     public init(appID: String, sharedSecret: String) {
         self.appID = appID
         self.sharedSecret = sharedSecret
@@ -27,6 +32,12 @@ public struct MirageRemoteSignalingConfiguration: Sendable {
     public let requestTimeout: TimeInterval
     public let appAuthentication: MirageRemoteSignalingAppAuthentication
 
+    /// Creates signaling client configuration.
+    ///
+    /// - Parameters:
+    ///   - baseURL: Worker base URL used for all signaling endpoints.
+    ///   - requestTimeout: Per-request URLSession timeout in seconds.
+    ///   - appAuthentication: App-level authentication material.
     public init(
         baseURL: URL,
         requestTimeout: TimeInterval = 5,
@@ -63,6 +74,12 @@ public struct MirageRemoteCandidate: Sendable, Codable, Hashable {
     public let address: String
     public let port: UInt16
 
+    /// Creates a remote host candidate.
+    ///
+    /// - Parameters:
+    ///   - transport: Transport protocol used for direct connection.
+    ///   - address: Candidate hostname or IP.
+    ///   - port: Candidate listening port.
     public init(
         transport: MirageRemoteCandidateTransport,
         address: String,
@@ -84,6 +101,16 @@ public struct MirageRemotePresenceStatus: Sendable {
     public let lastHostSeen: Date?
     public let lastClientSeen: Date?
 
+    /// Creates a remote presence snapshot.
+    ///
+    /// - Parameters:
+    ///   - exists: Whether the session exists in signaling.
+    ///   - remoteEnabled: Whether host remote mode is enabled.
+    ///   - hostCandidates: Candidates currently published by host heartbeats.
+    ///   - lockedToClientKeyID: Optional current lock owner identity key.
+    ///   - expiresAt: Session expiry timestamp.
+    ///   - lastHostSeen: Last successful host heartbeat time.
+    ///   - lastClientSeen: Last successful client join/heartbeat time.
     public init(
         exists: Bool,
         remoteEnabled: Bool,
@@ -110,6 +137,7 @@ public enum MirageRemoteSignalingError: LocalizedError, Sendable {
     case invalidPayload
     case http(statusCode: Int, errorCode: String?, detail: String?)
 
+    /// Human-readable error text for UI and diagnostics.
     public var errorDescription: String? {
         switch self {
         case .invalidConfiguration:
@@ -137,6 +165,12 @@ public final class MirageRemoteSignalingClient {
     private let identityManager: MirageIdentityManager
     private let urlSession: URLSession
 
+    /// Creates a signed remote signaling client.
+    ///
+    /// - Parameters:
+    ///   - configuration: Endpoint and request-signing configuration.
+    ///   - identityManager: Identity provider used for key-based request signatures.
+    ///   - urlSession: Session used for HTTP requests.
     public init(
         configuration: MirageRemoteSignalingConfiguration,
         identityManager: MirageIdentityManager = .shared,
@@ -150,6 +184,14 @@ public final class MirageRemoteSignalingClient {
     /// Ensures a host session is advertised in signaling.
     ///
     /// On an existing session this updates liveness through heartbeat.
+    /// - Parameters:
+    ///   - sessionID: Signaling session identifier.
+    ///   - hostID: Host device identifier.
+    ///   - remoteEnabled: Whether the host currently allows remote join.
+    ///   - hostCandidates: Direct-connect candidates to publish.
+    ///   - ttlSeconds: Session time-to-live used by signaling.
+    ///
+    /// - Note: If the session already exists, this method falls back to ``hostHeartbeat(sessionID:remoteEnabled:hostCandidates:ttlSeconds:)``.
     public func advertiseHostSession(
         sessionID: String,
         hostID: UUID,
@@ -181,6 +223,8 @@ public final class MirageRemoteSignalingClient {
     }
 
     /// Sends a host heartbeat to maintain presence.
+    ///
+    /// Call this periodically while the host listener is active.
     public func hostHeartbeat(
         sessionID: String,
         remoteEnabled: Bool? = nil,
@@ -208,6 +252,8 @@ public final class MirageRemoteSignalingClient {
     }
 
     /// Closes a host signaling session.
+    ///
+    /// Use this when the host stops remote listening or shuts down.
     public func closeHostSession(sessionID: String) async throws {
         let body = ["role": "host"]
         let bodyData = try JSONSerialization.data(withJSONObject: body)
@@ -220,6 +266,8 @@ public final class MirageRemoteSignalingClient {
     }
 
     /// Joins a host session and reserves the single-client signaling lock.
+    ///
+    /// - Parameter sessionID: Session identifier to join.
     public func joinSession(sessionID: String) async throws {
         _ = try await sendSignedRequest(
             sessionID: sessionID,
@@ -230,6 +278,8 @@ public final class MirageRemoteSignalingClient {
     }
 
     /// Releases a joined client lock for a session.
+    ///
+    /// - Parameter sessionID: Session identifier to release.
     public func leaveSession(sessionID: String) async throws {
         let body: [String: Any] = ["role": "client"]
         let bodyData = try JSONSerialization.data(withJSONObject: body)
@@ -242,6 +292,16 @@ public final class MirageRemoteSignalingClient {
     }
 
     /// Fetches remote presence state for a host session.
+    ///
+    /// - Parameter sessionID: Session identifier to query.
+    /// - Returns: Snapshot describing session existence, lock ownership, and candidate metadata.
+    ///
+    /// Example:
+    /// ```swift
+    /// let presence = try await client.fetchPresence(sessionID: sessionID)
+    /// guard presence.exists, presence.remoteEnabled else { return }
+    /// let candidates = presence.hostCandidates
+    /// ```
     public func fetchPresence(sessionID: String) async throws -> MirageRemotePresenceStatus {
         let (_, data) = try await sendSignedRequest(
             sessionID: sessionID,

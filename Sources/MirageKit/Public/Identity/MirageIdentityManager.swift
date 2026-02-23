@@ -19,6 +19,11 @@ public struct MirageAccountIdentity: Sendable, Equatable {
     /// Raw representation of the signing public key.
     public let publicKey: Data
 
+    /// Creates a public identity descriptor.
+    ///
+    /// - Parameters:
+    ///   - keyID: Stable digest-derived identifier for the public key.
+    ///   - publicKey: Raw P-256 signing public key bytes.
     public init(keyID: String, publicKey: Data) {
         self.keyID = keyID
         self.publicKey = publicKey
@@ -31,6 +36,7 @@ public struct MirageAccountIdentity: Sendable, Equatable {
 /// across the user's iCloud Keychain environment.
 @MainActor
 public final class MirageIdentityManager {
+    /// Shared singleton used by default across Mirage services.
     public static let shared = MirageIdentityManager()
 
     private let service: String
@@ -116,6 +122,11 @@ public final class MirageIdentityManager {
     /// Verifies a signature against a payload and raw public key bytes.
     ///
     /// - Returns: `true` when the signature is valid.
+    /// - Parameters:
+    ///   - signature: DER-encoded ECDSA signature.
+    ///   - payload: Canonical payload bytes originally signed.
+    ///   - publicKey: Raw P-256 signing public key bytes.
+    /// - Returns: `true` when the signature is valid for the payload.
     public nonisolated static func verify(signature: Data, payload: Data, publicKey: Data) -> Bool {
         guard let key = try? P256.Signing.PublicKey(rawRepresentation: publicKey),
               let parsed = try? P256.Signing.ECDSASignature(derRepresentation: signature) else {
@@ -125,6 +136,9 @@ public final class MirageIdentityManager {
     }
 
     /// Computes a stable key identifier from the provided public key.
+    ///
+    /// - Parameter publicKey: Raw public key bytes.
+    /// - Returns: Lowercase hexadecimal SHA-256 digest string.
     public nonisolated static func keyID(for publicKey: Data) -> String {
         let digest = SHA256.hash(data: publicKey)
         return digest.map { byte in
@@ -230,6 +244,7 @@ public enum MirageIdentityError: LocalizedError, Sendable {
     case keychainDeleteFailed(status: OSStatus)
     case invalidKeyData
 
+    /// Human-readable error text for diagnostics and user-visible failures.
     public var errorDescription: String? {
         switch self {
         case let .keychainReadFailed(status):

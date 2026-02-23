@@ -18,6 +18,9 @@ public enum MirageBootstrapControlError: LocalizedError, Sendable, Equatable {
     case protocolViolation(String)
     case unlockRejected(String)
 
+    /// A user-presentable reason for the failure.
+    ///
+    /// Prefer matching the enum case in code when you need deterministic behavior.
     public var errorDescription: String? {
         switch self {
         case .invalidEndpoint:
@@ -43,6 +46,11 @@ public struct MirageBootstrapControlResult: Sendable, Equatable {
     /// Whether unlock reached an active session.
     public var isSessionActive: Bool { state == .active }
 
+    /// Creates a daemon control result.
+    ///
+    /// - Parameters:
+    ///   - state: Host session state observed by the daemon after processing the request.
+    ///   - message: Optional host-provided diagnostic text suitable for logs or UI.
     public init(state: HostSessionState, message: String?) {
         self.state = state
         self.message = message
@@ -51,12 +59,32 @@ public struct MirageBootstrapControlResult: Sendable, Equatable {
 
 /// Cross-platform client contract for daemon handoff and login completion.
 public protocol MirageBootstrapControlClient: Sendable {
+    /// Requests the daemon's current session state without attempting unlock.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Target endpoint selected from bootstrap metadata.
+    ///   - controlPort: TCP port where the bootstrap daemon control server listens.
+    ///   - timeout: End-to-end timeout for connect, request, and response.
+    /// - Returns: Current daemon-observed host state and an optional message.
+    /// - Throws: ``MirageBootstrapControlError`` when the request fails or times out.
     func requestStatus(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
         timeout: Duration
     ) async throws -> MirageBootstrapControlResult
 
+    /// Requests unlock completion through the bootstrap daemon.
+    ///
+    /// Use this after an SSH pre-login step succeeds and the lock/login UI is present.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Target endpoint selected from bootstrap metadata.
+    ///   - controlPort: TCP port where the bootstrap daemon control server listens.
+    ///   - username: Optional username for login-window unlock flows.
+    ///   - password: Account password used by host-side unlock logic.
+    ///   - timeout: End-to-end timeout for connect, request, and response.
+    /// - Returns: Updated host state and optional daemon message.
+    /// - Throws: ``MirageBootstrapControlError`` for transport/protocol errors and rejected unlock attempts.
     func requestUnlock(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
@@ -68,8 +96,26 @@ public protocol MirageBootstrapControlClient: Sendable {
 
 /// Default bootstrap control client based on a single line-delimited TCP request/response.
 public struct MirageDefaultBootstrapControlClient: MirageBootstrapControlClient {
+    /// Creates the default TCP line-delimited JSON control client.
+    ///
+    /// Example:
+    /// ```swift
+    /// let client = MirageDefaultBootstrapControlClient()
+    /// let result = try await client.requestStatus(
+    ///     endpoint: endpoint,
+    ///     controlPort: 9849,
+    ///     timeout: .seconds(2)
+    /// )
+    /// ```
     public init() {}
 
+    /// Sends a `.status` control operation to the daemon.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Bootstrap endpoint chosen for control handoff.
+    ///   - controlPort: Daemon control TCP port.
+    ///   - timeout: Request timeout.
+    /// - Returns: Current daemon-reported session state.
     public func requestStatus(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
@@ -91,6 +137,17 @@ public struct MirageDefaultBootstrapControlClient: MirageBootstrapControlClient 
         )
     }
 
+    /// Sends an `.unlock` control operation to the daemon.
+    ///
+    /// - Note: Newline-only passwords are rejected before any network request is sent.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Bootstrap endpoint chosen for control handoff.
+    ///   - controlPort: Daemon control TCP port.
+    ///   - username: Optional login user for multi-user login windows.
+    ///   - password: Credential value sent to the daemon.
+    ///   - timeout: Request timeout.
+    /// - Returns: Updated daemon-reported state after unlock attempt.
     public func requestUnlock(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,

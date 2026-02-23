@@ -28,6 +28,12 @@ public struct MirageBootstrapEndpoint: Codable, Hashable, Sendable {
     /// Source of the endpoint.
     public let source: MirageBootstrapEndpointSource
 
+    /// Creates a bootstrap endpoint candidate.
+    ///
+    /// - Parameters:
+    ///   - host: IP address or host name reachable by the client.
+    ///   - port: Port used for SSH or daemon control, depending on context.
+    ///   - source: Source that produced the endpoint (`user`, `auto`, or `lastSeen`).
     public init(
         host: String,
         port: UInt16,
@@ -46,6 +52,13 @@ public struct MirageWakeOnLANInfo: Codable, Hashable, Sendable {
     /// Broadcast targets where magic packets should be sent.
     public let broadcastAddresses: [String]
 
+    /// Creates Wake-on-LAN metadata.
+    ///
+    /// - Parameters:
+    ///   - macAddress: Target NIC MAC address.
+    ///   - broadcastAddresses: UDP broadcast destinations where packets are sent.
+    ///
+    /// - Note: Broadcast addresses are typically subnet broadcasts such as `192.168.1.255`.
     public init(macAddress: String, broadcastAddresses: [String]) {
         self.macAddress = macAddress
         self.broadcastAddresses = broadcastAddresses
@@ -76,6 +89,32 @@ public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
     /// Wake-on-LAN metadata when available.
     public let wakeOnLAN: MirageWakeOnLANInfo?
 
+    /// Creates host bootstrap capability metadata.
+    ///
+    /// - Parameters:
+    ///   - version: Metadata version. Keep default unless you are migrating schema.
+    ///   - enabled: Whether host bootstrap is enabled by user policy.
+    ///   - supportsPreloginDaemon: Whether daemon handoff APIs are available.
+    ///   - supportsAutomaticUnlock: Whether host can complete unlock after SSH stage.
+    ///   - endpoints: Candidate endpoints for bootstrap connection attempts.
+    ///   - sshPort: Preferred SSH port.
+    ///   - controlPort: Preferred daemon control port.
+    ///   - sshHostKeyFingerprint: Optional pinned SSH host key fingerprint.
+    ///   - wakeOnLAN: Optional Wake-on-LAN payload data.
+    ///
+    /// Example:
+    /// ```swift
+    /// let metadata = MirageBootstrapMetadata(
+    ///     enabled: true,
+    ///     supportsPreloginDaemon: true,
+    ///     supportsAutomaticUnlock: true,
+    ///     endpoints: [.init(host: "192.168.1.10", port: 22, source: .auto)],
+    ///     sshPort: 22,
+    ///     controlPort: 9849,
+    ///     sshHostKeyFingerprint: "SHA256:...",
+    ///     wakeOnLAN: .init(macAddress: "AA:BB:CC:DD:EE:FF", broadcastAddresses: ["192.168.1.255"])
+    /// )
+    /// ```
     public init(
         version: Int = MirageBootstrapMetadata.currentVersion,
         enabled: Bool,

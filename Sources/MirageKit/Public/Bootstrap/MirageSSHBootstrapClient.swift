@@ -23,6 +23,9 @@ public struct MirageSSHBootstrapResult: Sendable, Equatable {
     /// Whether target reported successful volume unlock.
     public let unlocked: Bool
 
+    /// Creates an SSH bootstrap result.
+    ///
+    /// - Parameter unlocked: `true` when the target accepted credentials and unlock succeeded.
     public init(unlocked: Bool) {
         self.unlocked = unlocked
     }
@@ -36,6 +39,7 @@ public enum MirageSSHBootstrapError: LocalizedError, Sendable, Equatable {
     case timedOut
     case invalidEndpoint
 
+    /// Human-readable error text for UI and diagnostics.
     public var errorDescription: String? {
         switch self {
         case .unsupported:
@@ -54,6 +58,16 @@ public enum MirageSSHBootstrapError: LocalizedError, Sendable, Equatable {
 
 /// Cross-platform SSH client contract for pre-login bootstrap.
 public protocol MirageSSHBootstrapClient: Sendable {
+    /// Attempts a pre-login unlock over SSH.
+    ///
+    /// - Parameters:
+    ///   - endpoint: Host endpoint to contact.
+    ///   - username: Account username used for SSH authentication.
+    ///   - password: Account password used for SSH authentication.
+    ///   - expectedHostKeyFingerprint: Optional pinned host key fingerprint (`SHA256:...`).
+    ///   - timeout: End-to-end timeout for connection and auth probe.
+    /// - Returns: Unlock status returned by the SSH bootstrap implementation.
+    /// - Throws: ``MirageSSHBootstrapError`` on auth, transport, or timeout failures.
     func unlockVolumeOverSSH(
         endpoint: MirageBootstrapEndpoint,
         username: String,
@@ -67,8 +81,15 @@ public protocol MirageSSHBootstrapClient: Sendable {
 ///
 /// Platforms can inject a concrete implementation where available.
 public struct MirageDefaultSSHBootstrapClient: MirageSSHBootstrapClient {
+    /// Creates the default SSH bootstrap client.
+    ///
+    /// This implementation uses SwiftNIO/NIOSSH when those dependencies are available at build time.
     public init() {}
 
+    /// Executes the default SSH unlock probe.
+    ///
+    /// The default implementation authenticates and runs `/usr/bin/true` to validate credentials
+    /// and host reachability before returning `unlocked = true`.
     public func unlockVolumeOverSSH(
         endpoint: MirageBootstrapEndpoint,
         username: String,

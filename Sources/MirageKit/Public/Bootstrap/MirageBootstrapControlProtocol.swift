@@ -28,6 +28,16 @@ public struct MirageBootstrapControlRequest: Codable, Sendable {
     /// Password for unlock operations.
     public let password: String?
 
+    /// Creates a bootstrap daemon control request payload.
+    ///
+    /// - Parameters:
+    ///   - version: Protocol version expected by both client and daemon.
+    ///   - requestID: Correlation token echoed by the daemon response.
+    ///   - operation: Requested operation (`status` or `unlock`).
+    ///   - username: Optional login name for unlock flows.
+    ///   - password: Optional login password for unlock flows.
+    ///
+    /// - Note: For `.status`, both `username` and `password` are typically `nil`.
     public init(
         version: Int = 1,
         requestID: UUID = UUID(),
@@ -62,6 +72,17 @@ public struct MirageBootstrapControlResponse: Codable, Sendable {
     /// Cooldown before retry is allowed.
     public let retryAfterSeconds: Int?
 
+    /// Creates a daemon control response payload.
+    ///
+    /// - Parameters:
+    ///   - version: Protocol version returned by the daemon.
+    ///   - requestID: Request correlation ID, matching the originating request.
+    ///   - success: Whether the daemon completed the operation.
+    ///   - state: Host session state observed after processing.
+    ///   - message: Optional diagnostic string for display or logs.
+    ///   - canRetry: Whether the same request can be safely retried.
+    ///   - retriesRemaining: Optional bounded retry budget.
+    ///   - retryAfterSeconds: Optional cooldown before retrying.
     public init(
         version: Int = 1,
         requestID: UUID,

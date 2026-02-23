@@ -16,6 +16,7 @@ public enum MirageWakeOnLANError: LocalizedError, Sendable {
     case noBroadcastTargets
     case sendFailed(String)
 
+    /// Human-readable error text for diagnostics and UI.
     public var errorDescription: String? {
         switch self {
         case .invalidMACAddress:
@@ -30,6 +31,13 @@ public enum MirageWakeOnLANError: LocalizedError, Sendable {
 
 /// Sends Wake-on-LAN magic packets to configured broadcast targets.
 public protocol MirageWakeOnLANClient: Sendable {
+    /// Sends one or more magic packets to wake a host.
+    ///
+    /// - Parameters:
+    ///   - wakeInfo: Target MAC and broadcast address metadata.
+    ///   - retries: Additional retry attempts after the initial send.
+    ///   - retryDelay: Delay between retry attempts.
+    /// - Throws: ``MirageWakeOnLANError`` when packet construction or sending fails.
     func sendMagicPacket(
         _ wakeInfo: MirageWakeOnLANInfo,
         retries: Int,
@@ -39,8 +47,23 @@ public protocol MirageWakeOnLANClient: Sendable {
 
 /// Default Wake-on-LAN sender used by bootstrap coordinator.
 public final class MirageDefaultWakeOnLANClient: MirageWakeOnLANClient {
+    /// Creates the default UDP-based Wake-on-LAN sender.
     public init() {}
 
+    /// Sends Wake-on-LAN magic packets to all configured broadcast targets.
+    ///
+    /// - Parameters:
+    ///   - wakeInfo: Contains the target MAC address and broadcast destinations.
+    ///   - retries: Number of retries after the first attempt.
+    ///   - retryDelay: Delay used between attempts.
+    ///
+    /// Example:
+    /// ```swift
+    /// let client = MirageDefaultWakeOnLANClient()
+    /// try await client.sendMagicPacket(
+    ///     .init(macAddress: "AA:BB:CC:DD:EE:FF", broadcastAddresses: ["192.168.1.255"])
+    /// )
+    /// ```
     public func sendMagicPacket(
         _ wakeInfo: MirageWakeOnLANInfo,
         retries: Int = 2,
@@ -101,7 +124,11 @@ public final class MirageDefaultWakeOnLANClient: MirageWakeOnLANClient {
         }
     }
 
-    /// Builds standard WOL magic packet for a MAC address.
+    /// Builds a standard Wake-on-LAN magic packet for a MAC address.
+    ///
+    /// - Parameter macAddress: MAC value in `AA:BB:CC:DD:EE:FF`, `AA-BB-...`, or compact hex format.
+    /// - Returns: Packet payload containing `FF` preamble plus 16 MAC repetitions.
+    /// - Throws: ``MirageWakeOnLANError/invalidMACAddress`` when the address cannot be parsed.
     public static func magicPacketData(for macAddress: String) throws -> Data {
         let separators = CharacterSet(charactersIn: ":-.")
         let compact = macAddress.unicodeScalars.filter { !separators.contains($0) }

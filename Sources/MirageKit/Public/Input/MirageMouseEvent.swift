@@ -31,6 +31,16 @@ public struct MirageMouseEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a pointer event.
+    ///
+    /// - Parameters:
+    ///   - button: Logical button associated with the event.
+    ///   - location: Normalized coordinates in host stream space (`0...1`).
+    ///   - clickCount: Click sequence count for multi-click interactions.
+    ///   - modifiers: Active keyboard modifiers.
+    ///   - pressure: Pressure scalar used by force/stylus paths.
+    ///   - stylus: Optional stylus orientation data for tablet-aware apps.
+    ///   - timestamp: Event creation time.
     public init(
         button: MirageMouseButton = .left,
         location: CGPoint,
@@ -77,6 +87,17 @@ public struct MirageScrollEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a scroll event.
+    ///
+    /// - Parameters:
+    ///   - deltaX: Horizontal scroll delta.
+    ///   - deltaY: Vertical scroll delta.
+    ///   - location: Optional cursor location where scroll should be injected.
+    ///   - phase: Gesture phase for physical scroll.
+    ///   - momentumPhase: Gesture phase for momentum/inertial scroll.
+    ///   - modifiers: Active keyboard modifiers.
+    ///   - isPrecise: Indicates trackpad/high-resolution scroll input.
+    ///   - timestamp: Event creation time.
     public init(
         deltaX: CGFloat,
         deltaY: CGFloat,
@@ -109,6 +130,12 @@ public struct MirageMagnifyEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a magnify gesture event.
+    ///
+    /// - Parameters:
+    ///   - magnification: Scale delta, where positive values zoom in.
+    ///   - phase: Gesture lifecycle phase.
+    ///   - timestamp: Event creation time.
     public init(
         magnification: CGFloat,
         phase: MirageScrollPhase = .none,
@@ -131,6 +158,12 @@ public struct MirageRotateEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a rotate gesture event.
+    ///
+    /// - Parameters:
+    ///   - rotation: Rotation delta in degrees.
+    ///   - phase: Gesture lifecycle phase.
+    ///   - timestamp: Event creation time.
     public init(
         rotation: CGFloat,
         phase: MirageScrollPhase = .none,
@@ -160,6 +193,15 @@ public struct MirageResizeEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a legacy resize event from point size plus client scale.
+    ///
+    /// - Parameters:
+    ///   - windowID: Target window identifier.
+    ///   - newSize: Desired host window size in points.
+    ///   - scaleFactor: Client display scale used to derive exact pixel size.
+    ///   - timestamp: Event creation time.
+    ///
+    /// - Note: Prefer ``MiragePixelResizeEvent`` for exact pixel contracts.
     public init(
         windowID: WindowID,
         newSize: CGSize,
@@ -202,6 +244,16 @@ public struct MirageRelativeResizeEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a relative resize event.
+    ///
+    /// - Parameters:
+    ///   - windowID: Target window identifier.
+    ///   - aspectRatio: Desired width-to-height ratio.
+    ///   - relativeScale: Relative target area usage (`0.01...1.0` after clamping).
+    ///   - clientScreenSize: Client screen size in points.
+    ///   - pixelWidth: Exact requested encoded pixel width.
+    ///   - pixelHeight: Exact requested encoded pixel height.
+    ///   - timestamp: Event creation time.
     public init(
         windowID: WindowID,
         aspectRatio: CGFloat,
@@ -237,6 +289,13 @@ public struct MiragePixelResizeEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a pixel-accurate resize event.
+    ///
+    /// - Parameters:
+    ///   - windowID: Target window identifier.
+    ///   - pixelWidth: Exact requested pixel width.
+    ///   - pixelHeight: Exact requested pixel height.
+    ///   - timestamp: Event creation time.
     public init(
         windowID: WindowID,
         pixelWidth: Int,

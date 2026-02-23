@@ -9,6 +9,10 @@
 
 import Foundation
 
+/// Deterministically orders and deduplicates bootstrap endpoints.
+///
+/// Use this before trying wake/unlock bootstrap connection attempts so retries follow a stable,
+/// user-first order across launches.
 public enum MirageBootstrapEndpointResolver {
     /// Resolve endpoint candidates in deterministic priority order.
     ///
@@ -18,6 +22,12 @@ public enum MirageBootstrapEndpointResolver {
     /// 3. `lastSeen`
     ///
     /// Duplicate host:port pairs are removed case-insensitively.
+    /// Returns an ordered endpoint list with duplicate host/port pairs removed.
+    ///
+    /// - Parameter endpoints: Raw endpoint candidates from metadata, user settings, and cache.
+    /// - Returns: Endpoints sorted by source priority and lexical host/port tiebreakers.
+    ///
+    /// - SeeAlso: ``MirageBootstrapEndpoint``, ``MirageBootstrapEndpointSource``
     public static func resolve(
         _ endpoints: [MirageBootstrapEndpoint]
     ) -> [MirageBootstrapEndpoint] {

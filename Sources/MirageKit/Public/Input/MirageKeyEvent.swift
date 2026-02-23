@@ -27,6 +27,15 @@ public struct MirageKeyEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
+    /// Creates a keyboard event payload.
+    ///
+    /// - Parameters:
+    ///   - keyCode: Platform key code in macOS virtual key space.
+    ///   - characters: Text produced with active modifiers applied.
+    ///   - charactersIgnoringModifiers: Text produced without modifier transformation.
+    ///   - modifiers: Active modifier flags at event time.
+    ///   - isRepeat: Whether this event comes from key-repeat behavior.
+    ///   - timestamp: Event creation time.
     public init(
         keyCode: UInt16,
         characters: String? = nil,

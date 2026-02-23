@@ -95,16 +95,26 @@ public enum MirageInputEvent: Codable, Sendable {
 public struct MirageModifierFlags: OptionSet, Codable, Sendable, Hashable {
     public let rawValue: UInt
 
+    /// Creates a modifier flag set from a raw bitmask.
+    ///
+    /// - Parameter rawValue: Bitfield containing one or more ``MirageModifierFlags`` values.
     public init(rawValue: UInt) {
         self.rawValue = rawValue
     }
 
+    /// Caps Lock key modifier.
     public static let capsLock = MirageModifierFlags(rawValue: 1 << 0)
+    /// Shift key modifier.
     public static let shift = MirageModifierFlags(rawValue: 1 << 1)
+    /// Control key modifier.
     public static let control = MirageModifierFlags(rawValue: 1 << 2)
+    /// Option/Alt key modifier.
     public static let option = MirageModifierFlags(rawValue: 1 << 3)
+    /// Command key modifier.
     public static let command = MirageModifierFlags(rawValue: 1 << 4)
+    /// Numeric keypad modifier.
     public static let numericPad = MirageModifierFlags(rawValue: 1 << 5)
+    /// Function (`Fn`) modifier.
     public static let function = MirageModifierFlags(rawValue: 1 << 6)
 }
 
@@ -116,6 +126,11 @@ public enum MirageMouseButton: Int, Codable, Sendable {
     case button3 = 3
     case button4 = 4
 
+    /// Maps an integer button index into a canonical button enum.
+    ///
+    /// Values above `3` collapse to ``button4``.
+    ///
+    /// - Parameter buttonNumber: Input device button number.
     public init(buttonNumber: Int) {
         switch buttonNumber {
         case 0: self = .left

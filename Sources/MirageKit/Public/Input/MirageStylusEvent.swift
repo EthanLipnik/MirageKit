@@ -33,6 +33,16 @@ public struct MirageStylusEvent: Codable, Sendable, Hashable {
     /// Whether this metadata represents a hover sample instead of contact.
     public let isHovering: Bool
 
+    /// Creates stylus metadata for pointer injection.
+    ///
+    /// - Parameters:
+    ///   - altitudeAngle: Pen altitude in radians (`0` parallel, `pi/2` perpendicular).
+    ///   - azimuthAngle: Pen azimuth in client-space radians.
+    ///   - tiltX: Horizontal tilt component.
+    ///   - tiltY: Vertical tilt component.
+    ///   - rollAngle: Optional barrel roll in radians.
+    ///   - zOffset: Optional normalized hover distance.
+    ///   - isHovering: Whether sample was captured while hovering.
     public init(
         altitudeAngle: CGFloat,
         azimuthAngle: CGFloat,
