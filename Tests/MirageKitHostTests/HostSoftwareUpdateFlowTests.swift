@@ -44,7 +44,7 @@ struct HostSoftwareUpdateFlowTests {
             protocolMismatchUpdateTriggerMessage: "Update request accepted."
         )
         let envelope = try ControlMessage(type: .helloResponse, content: response)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
 
         #expect(!decoded.accepted)

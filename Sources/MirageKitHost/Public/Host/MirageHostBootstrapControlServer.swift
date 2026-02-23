@@ -33,11 +33,17 @@ public enum MirageHostBootstrapControlServerError: LocalizedError, Sendable {
 /// Host-side control server used by the pre-login bootstrap daemon.
 public actor MirageHostBootstrapControlServer {
     private let unlockService: MirageHostBootstrapUnlockService
+    private let controlAuthSecret: String
+    private let replayProtector = MirageReplayProtector()
     private let queue = DispatchQueue(label: "com.mirage.bootstrap.control", qos: .userInitiated)
     private var listener: NWListener?
 
-    public init(unlockService: MirageHostBootstrapUnlockService) {
+    public init(
+        unlockService: MirageHostBootstrapUnlockService,
+        controlAuthSecret: String
+    ) {
         self.unlockService = unlockService
+        self.controlAuthSecret = controlAuthSecret.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     public func start(port: UInt16) async throws {
@@ -76,7 +82,10 @@ public actor MirageHostBootstrapControlServer {
         defer { connection.cancel() }
 
         do {
-            let requestLine = try await receiveLine(over: connection, maxBytes: 64 * 1024)
+            let requestLine = try await receiveLine(
+                over: connection,
+                maxBytes: MirageControlMessageLimits.maxBootstrapControlLineBytes
+            )
             let request = try JSONDecoder().decode(MirageBootstrapControlRequest.self, from: requestLine)
             let response = await process(request: request)
             try await send(response: response, over: connection)
@@ -90,25 +99,60 @@ public actor MirageHostBootstrapControlServer {
     }
 
     private func process(request: MirageBootstrapControlRequest) async -> MirageBootstrapControlResponse {
-        if request.version != 1 {
-            let state = await unlockService.currentState()
+        let state = await unlockService.currentState()
+
+        guard !controlAuthSecret.isEmpty else {
             return MirageBootstrapControlResponse(
-                version: 1,
                 requestID: request.requestID,
                 success: false,
                 state: state,
-                message: "Unsupported control protocol version \(request.version).",
+                message: "Bootstrap control auth is unavailable on host.",
                 canRetry: false,
                 retriesRemaining: nil,
                 retryAfterSeconds: nil
             )
         }
 
+        let auth = request.auth
+
+        guard auth.keyID == MirageIdentityManager.keyID(for: auth.publicKey) else {
+            return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Invalid auth key ID.")
+        }
+
+        let encryptedPayloadSHA256 = MirageBootstrapControlSecurity.payloadSHA256Hex(request.encryptedUnlockPayload?.combined)
+        let canonicalPayload: Data
+        do {
+            canonicalPayload = try MirageBootstrapControlSecurity.canonicalPayload(
+                requestID: request.requestID,
+                operation: request.operation,
+                encryptedPayloadSHA256: encryptedPayloadSHA256,
+                keyID: auth.keyID,
+                timestampMs: auth.timestampMs,
+                nonce: auth.nonce
+            )
+        } catch {
+            return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Canonical payload failed.")
+        }
+
+        guard MirageIdentityManager.verify(
+            signature: auth.signature,
+            payload: canonicalPayload,
+            publicKey: auth.publicKey
+        ) else {
+            return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Invalid auth signature.")
+        }
+
+        let replayValid = await replayProtector.validate(
+            timestampMs: auth.timestampMs,
+            nonce: auth.nonce
+        )
+        guard replayValid else {
+            return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Replay protection rejected request.")
+        }
+
         switch request.operation {
         case .status:
-            let state = await unlockService.currentState()
             return MirageBootstrapControlResponse(
-                version: 1,
                 requestID: request.requestID,
                 success: true,
                 state: state,
@@ -119,12 +163,55 @@ public actor MirageHostBootstrapControlServer {
             )
 
         case .unlock:
+            guard let encryptedPayload = request.encryptedUnlockPayload else {
+                return MirageBootstrapControlResponse(
+                    requestID: request.requestID,
+                    success: false,
+                    state: state,
+                    message: "Missing encrypted unlock payload.",
+                    canRetry: false,
+                    retriesRemaining: nil,
+                    retryAfterSeconds: nil
+                )
+            }
+            if encryptedPayload.combined.count > MirageControlMessageLimits.maxBootstrapCredentialCiphertextBytes {
+                return MirageBootstrapControlResponse(
+                    requestID: request.requestID,
+                    success: false,
+                    state: state,
+                    message: "Encrypted unlock payload is too large.",
+                    canRetry: false,
+                    retriesRemaining: nil,
+                    retryAfterSeconds: nil
+                )
+            }
+
+            let credentials: MirageBootstrapUnlockCredentials
+            do {
+                credentials = try MirageBootstrapControlSecurity.decryptUnlockCredentials(
+                    encryptedPayload,
+                    sharedSecret: controlAuthSecret,
+                    requestID: request.requestID,
+                    timestampMs: auth.timestampMs,
+                    nonce: auth.nonce
+                )
+            } catch {
+                return MirageBootstrapControlResponse(
+                    requestID: request.requestID,
+                    success: false,
+                    state: state,
+                    message: "Failed to decrypt unlock payload.",
+                    canRetry: false,
+                    retriesRemaining: nil,
+                    retryAfterSeconds: nil
+                )
+            }
+
             let result = await unlockService.attemptUnlock(
-                username: request.username,
-                password: request.password ?? ""
+                username: credentials.username,
+                password: credentials.password
             )
             return MirageBootstrapControlResponse(
-                version: 1,
                 requestID: request.requestID,
                 success: result.success,
                 state: result.state,
@@ -134,6 +221,22 @@ public actor MirageHostBootstrapControlServer {
                 retryAfterSeconds: result.retryAfterSeconds
             )
         }
+    }
+
+    private func unauthorizedResponse(
+        state: HostSessionState,
+        requestID: UUID,
+        detail: String
+    ) -> MirageBootstrapControlResponse {
+        MirageBootstrapControlResponse(
+            requestID: requestID,
+            success: false,
+            state: state,
+            message: "Unauthorized bootstrap control request (\(detail))",
+            canRetry: false,
+            retriesRemaining: nil,
+            retryAfterSeconds: nil
+        )
     }
 
     private func send(response: MirageBootstrapControlResponse, over connection: NWConnection) async throws {
@@ -167,7 +270,7 @@ public actor MirageHostBootstrapControlServer {
             buffer.append(chunk)
 
             if let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                return buffer[..<newlineIndex]
+                return Data(buffer[..<newlineIndex])
             }
 
             if buffer.count > maxBytes {

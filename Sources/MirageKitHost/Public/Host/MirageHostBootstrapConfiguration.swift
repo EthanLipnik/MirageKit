@@ -24,6 +24,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
     public var sshPort: Int
     public var controlPort: Int
     public var sshHostKeyFingerprint: String
+    public var controlAuthSecret: String
     public var autoEndpoints: [MirageBootstrapEndpoint]
     public var wakeOnLANMACAddress: String
     public var wakeOnLANBroadcasts: [String]
@@ -37,6 +38,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         sshPort: Int = 22,
         controlPort: Int = 9851,
         sshHostKeyFingerprint: String = "",
+        controlAuthSecret: String = Self.makeDefaultControlAuthSecret(),
         autoEndpoints: [MirageBootstrapEndpoint] = [],
         wakeOnLANMACAddress: String = "",
         wakeOnLANBroadcasts: [String] = [],
@@ -49,6 +51,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         self.sshPort = sshPort
         self.controlPort = controlPort
         self.sshHostKeyFingerprint = sshHostKeyFingerprint
+        self.controlAuthSecret = controlAuthSecret
         self.autoEndpoints = autoEndpoints
         self.wakeOnLANMACAddress = wakeOnLANMACAddress
         self.wakeOnLANBroadcasts = wakeOnLANBroadcasts
@@ -63,6 +66,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         case sshPort
         case controlPort
         case sshHostKeyFingerprint
+        case controlAuthSecret
         case autoEndpoints
         case wakeOnLANMACAddress
         case wakeOnLANBroadcasts
@@ -78,6 +82,8 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         sshPort = try container.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
         controlPort = try container.decodeIfPresent(Int.self, forKey: .controlPort) ?? 9851
         sshHostKeyFingerprint = try container.decodeIfPresent(String.self, forKey: .sshHostKeyFingerprint) ?? ""
+        controlAuthSecret = try container.decodeIfPresent(String.self, forKey: .controlAuthSecret) ??
+            Self.makeDefaultControlAuthSecret()
         autoEndpoints = try container.decodeIfPresent([MirageBootstrapEndpoint].self, forKey: .autoEndpoints) ?? []
         wakeOnLANMACAddress = try container.decodeIfPresent(String.self, forKey: .wakeOnLANMACAddress) ?? ""
         wakeOnLANBroadcasts = try container.decodeIfPresent([String].self, forKey: .wakeOnLANBroadcasts) ?? []
@@ -115,6 +121,8 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
 
         let fingerprint = sshHostKeyFingerprint
             .trimmingCharacters(in: .whitespacesAndNewlines)
+        let controlSecret = controlAuthSecret
+            .trimmingCharacters(in: .whitespacesAndNewlines)
 
         return MirageBootstrapMetadata(
             enabled: enabled,
@@ -124,8 +132,14 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             sshPort: UInt16(clamping: sshPort),
             controlPort: UInt16(clamping: controlPort),
             sshHostKeyFingerprint: fingerprint.isEmpty ? nil : fingerprint,
+            controlAuthSecret: controlSecret.isEmpty ? nil : controlSecret,
             wakeOnLAN: wakeInfo
         )
+    }
+
+    public static func makeDefaultControlAuthSecret() -> String {
+        let bytes = (0 ..< 32).map { _ in UInt8.random(in: .min ... .max) }
+        return Data(bytes).base64EncodedString()
     }
 }
 

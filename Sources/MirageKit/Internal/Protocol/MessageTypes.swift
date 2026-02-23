@@ -129,31 +129,72 @@ package struct ControlMessage: Codable {
         return data
     }
 
-    package static func deserialize(from data: Data) -> (ControlMessage, Int)? {
-        guard data.count >= 5 else { return nil }
+    package static func deserialize(from data: Data, offset: Int = 0) -> ControlMessageParseResult {
+        guard offset >= 0 else {
+            return .invalidFrame(reason: "Negative control frame offset \(offset)")
+        }
+        guard offset <= data.count else {
+            return .invalidFrame(reason: "Control frame offset \(offset) exceeds buffer \(data.count)")
+        }
+        let remaining = data.count - offset
+        guard remaining >= 5 else { return .needMoreData }
 
-        // Use index-relative access for Data that might be a slice
-        let startIdx = data.startIndex
+        let startIdx = data.index(data.startIndex, offsetBy: offset)
         let typeByte = data[startIdx]
         guard let type = ControlMessageType(rawValue: typeByte) else {
-            MirageLogger.error(.client, "Unknown control message type byte: 0x\(String(format: "%02X", typeByte))")
-            return nil
+            return .invalidFrame(reason: "Unknown control message type byte: 0x\(String(format: "%02X", typeByte))")
         }
 
-        // Read length from bytes 1-4 (after the type byte)
-        let lengthBytes = data[data.index(startIdx, offsetBy: 1) ..< data.index(startIdx, offsetBy: 5)]
-        let length = lengthBytes.withUnsafeBytes { ptr in
+        let lengthStart = data.index(startIdx, offsetBy: 1)
+        let lengthEnd = data.index(startIdx, offsetBy: 5)
+        let lengthBytes = data[lengthStart ..< lengthEnd]
+        let payloadLength = lengthBytes.withUnsafeBytes { ptr in
             UInt32(littleEndian: ptr.loadUnaligned(fromByteOffset: 0, as: UInt32.self))
         }
 
-        let totalLength = 5 + Int(length)
-        guard data.count >= totalLength else { return nil }
+        let payloadLimit = maxPayloadBytes(for: type)
+        let payloadLengthInt = Int(payloadLength)
+        if payloadLengthInt > payloadLimit {
+            return .invalidFrame(
+                reason: "Control payload exceeds limit for \(type): \(payloadLengthInt) > \(payloadLimit)"
+            )
+        }
+        if payloadLengthInt > MirageControlMessageLimits.maxPayloadBytes,
+           payloadLimit < payloadLengthInt {
+            return .invalidFrame(
+                reason: "Control payload exceeds global limit: \(payloadLengthInt) > \(MirageControlMessageLimits.maxPayloadBytes)"
+            )
+        }
 
-        // Extract payload using proper indices
+        let totalLength = 5 + payloadLengthInt
+        if totalLength > MirageControlMessageLimits.maxFrameBytes {
+            return .invalidFrame(
+                reason: "Control frame exceeds max bytes: \(totalLength) > \(MirageControlMessageLimits.maxFrameBytes)"
+            )
+        }
+
+        guard remaining >= totalLength else { return .needMoreData }
+
         let payloadStart = data.index(startIdx, offsetBy: 5)
         let payloadEnd = data.index(startIdx, offsetBy: totalLength)
         let payload = Data(data[payloadStart ..< payloadEnd])
-
-        return (ControlMessage(type: type, payload: payload), totalLength)
+        return .success(message: ControlMessage(type: type, payload: payload), bytesConsumed: totalLength)
     }
+
+    private static func maxPayloadBytes(for type: ControlMessageType) -> Int {
+        switch type {
+        case .appList:
+            MirageControlMessageLimits.maxAppListPayloadBytes
+        case .hostHardwareIcon:
+            MirageControlMessageLimits.maxHostHardwareIconPayloadBytes
+        default:
+            MirageControlMessageLimits.maxPayloadBytes
+        }
+    }
+}
+
+package enum ControlMessageParseResult {
+    case success(message: ControlMessage, bytesConsumed: Int)
+    case needMoreData
+    case invalidFrame(reason: String)
 }

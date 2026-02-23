@@ -13,18 +13,19 @@ import Network
 /// Control-channel runtime failures for daemon handoff.
 public enum MirageBootstrapControlError: LocalizedError, Sendable, Equatable {
     case invalidEndpoint
+    case missingAuthSecret
     case timedOut
     case connectionFailed(String)
     case protocolViolation(String)
     case unlockRejected(String)
 
     /// A user-presentable reason for the failure.
-    ///
-    /// Prefer matching the enum case in code when you need deterministic behavior.
     public var errorDescription: String? {
         switch self {
         case .invalidEndpoint:
             "Bootstrap control endpoint is invalid."
+        case .missingAuthSecret:
+            "Bootstrap control requires an auth secret from host metadata."
         case .timedOut:
             "Bootstrap control request timed out."
         case let .connectionFailed(detail):
@@ -46,11 +47,6 @@ public struct MirageBootstrapControlResult: Sendable, Equatable {
     /// Whether unlock reached an active session.
     public var isSessionActive: Bool { state == .active }
 
-    /// Creates a daemon control result.
-    ///
-    /// - Parameters:
-    ///   - state: Host session state observed by the daemon after processing the request.
-    ///   - message: Optional host-provided diagnostic text suitable for logs or UI.
     public init(state: HostSessionState, message: String?) {
         self.state = state
         self.message = message
@@ -59,35 +55,17 @@ public struct MirageBootstrapControlResult: Sendable, Equatable {
 
 /// Cross-platform client contract for daemon handoff and login completion.
 public protocol MirageBootstrapControlClient: Sendable {
-    /// Requests the daemon's current session state without attempting unlock.
-    ///
-    /// - Parameters:
-    ///   - endpoint: Target endpoint selected from bootstrap metadata.
-    ///   - controlPort: TCP port where the bootstrap daemon control server listens.
-    ///   - timeout: End-to-end timeout for connect, request, and response.
-    /// - Returns: Current daemon-observed host state and an optional message.
-    /// - Throws: ``MirageBootstrapControlError`` when the request fails or times out.
     func requestStatus(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
+        controlAuthSecret: String,
         timeout: Duration
     ) async throws -> MirageBootstrapControlResult
 
-    /// Requests unlock completion through the bootstrap daemon.
-    ///
-    /// Use this after an SSH pre-login step succeeds and the lock/login UI is present.
-    ///
-    /// - Parameters:
-    ///   - endpoint: Target endpoint selected from bootstrap metadata.
-    ///   - controlPort: TCP port where the bootstrap daemon control server listens.
-    ///   - username: Optional username for login-window unlock flows.
-    ///   - password: Account password used by host-side unlock logic.
-    ///   - timeout: End-to-end timeout for connect, request, and response.
-    /// - Returns: Updated host state and optional daemon message.
-    /// - Throws: ``MirageBootstrapControlError`` for transport/protocol errors and rejected unlock attempts.
     func requestUnlock(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
+        controlAuthSecret: String,
         username: String?,
         password: String,
         timeout: Duration
@@ -96,34 +74,19 @@ public protocol MirageBootstrapControlClient: Sendable {
 
 /// Default bootstrap control client based on a single line-delimited TCP request/response.
 public struct MirageDefaultBootstrapControlClient: MirageBootstrapControlClient {
-    /// Creates the default TCP line-delimited JSON control client.
-    ///
-    /// Example:
-    /// ```swift
-    /// let client = MirageDefaultBootstrapControlClient()
-    /// let result = try await client.requestStatus(
-    ///     endpoint: endpoint,
-    ///     controlPort: 9849,
-    ///     timeout: .seconds(2)
-    /// )
-    /// ```
     public init() {}
 
-    /// Sends a `.status` control operation to the daemon.
-    ///
-    /// - Parameters:
-    ///   - endpoint: Bootstrap endpoint chosen for control handoff.
-    ///   - controlPort: Daemon control TCP port.
-    ///   - timeout: Request timeout.
-    /// - Returns: Current daemon-reported session state.
     public func requestStatus(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
+        controlAuthSecret: String,
         timeout: Duration
     )
     async throws -> MirageBootstrapControlResult {
-        let request = MirageBootstrapControlRequest(
-            operation: .status
+        let request = try await makeAuthenticatedRequest(
+            operation: .status,
+            controlAuthSecret: controlAuthSecret,
+            encryptedUnlockPayload: nil
         )
         let response = try await sendRequest(
             request,
@@ -137,20 +100,10 @@ public struct MirageDefaultBootstrapControlClient: MirageBootstrapControlClient 
         )
     }
 
-    /// Sends an `.unlock` control operation to the daemon.
-    ///
-    /// - Note: Newline-only passwords are rejected before any network request is sent.
-    ///
-    /// - Parameters:
-    ///   - endpoint: Bootstrap endpoint chosen for control handoff.
-    ///   - controlPort: Daemon control TCP port.
-    ///   - username: Optional login user for multi-user login windows.
-    ///   - password: Credential value sent to the daemon.
-    ///   - timeout: Request timeout.
-    /// - Returns: Updated daemon-reported state after unlock attempt.
     public func requestUnlock(
         endpoint: MirageBootstrapEndpoint,
         controlPort: UInt16,
+        controlAuthSecret: String,
         username: String?,
         password: String,
         timeout: Duration
@@ -161,11 +114,29 @@ public struct MirageDefaultBootstrapControlClient: MirageBootstrapControlClient 
             throw MirageBootstrapControlError.protocolViolation("Unlock password is empty.")
         }
 
-        let request = MirageBootstrapControlRequest(
-            operation: .unlock,
+        let requestID = UUID()
+        let timestampMs = MirageIdentitySigning.currentTimestampMs()
+        let nonce = UUID().uuidString.lowercased()
+        let credentials = MirageBootstrapUnlockCredentials(
             username: username,
             password: trimmedPassword
         )
+        let encryptedPayload = try MirageBootstrapControlSecurity.encryptUnlockCredentials(
+            credentials,
+            sharedSecret: controlAuthSecret,
+            requestID: requestID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let request = try await makeAuthenticatedRequest(
+            operation: .unlock,
+            controlAuthSecret: controlAuthSecret,
+            encryptedUnlockPayload: encryptedPayload,
+            requestID: requestID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+
         let response = try await sendRequest(
             request,
             endpoint: endpoint,
@@ -185,6 +156,53 @@ public struct MirageDefaultBootstrapControlClient: MirageBootstrapControlClient 
 }
 
 private extension MirageDefaultBootstrapControlClient {
+    func makeAuthenticatedRequest(
+        operation: MirageBootstrapControlOperation,
+        controlAuthSecret: String,
+        encryptedUnlockPayload: MirageBootstrapEncryptedUnlockPayload?,
+        requestID: UUID = UUID(),
+        timestampMs: Int64 = MirageIdentitySigning.currentTimestampMs(),
+        nonce: String = UUID().uuidString.lowercased()
+    ) async throws -> MirageBootstrapControlRequest {
+        let trimmedSecret = controlAuthSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSecret.isEmpty else {
+            throw MirageBootstrapControlError.missingAuthSecret
+        }
+        guard nonce.utf8.count <= MirageControlMessageLimits.maxReplayNonceLength else {
+            throw MirageBootstrapControlError.protocolViolation("Bootstrap control nonce is too long.")
+        }
+
+        let identity = try await MainActor.run {
+            try MirageIdentityManager.shared.currentIdentity()
+        }
+        let encryptedSHA256 = MirageBootstrapControlSecurity.payloadSHA256Hex(encryptedUnlockPayload?.combined)
+        let payload = try MirageBootstrapControlSecurity.canonicalPayload(
+            requestID: requestID,
+            operation: operation,
+            encryptedPayloadSHA256: encryptedSHA256,
+            keyID: identity.keyID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let signature = try await MainActor.run {
+            try MirageIdentityManager.shared.sign(payload)
+        }
+        let auth = MirageBootstrapControlAuthEnvelope(
+            keyID: identity.keyID,
+            publicKey: identity.publicKey,
+            timestampMs: timestampMs,
+            nonce: nonce,
+            signature: signature
+        )
+
+        return MirageBootstrapControlRequest(
+            requestID: requestID,
+            operation: operation,
+            auth: auth,
+            encryptedUnlockPayload: encryptedUnlockPayload
+        )
+    }
+
     func sendRequest(
         _ request: MirageBootstrapControlRequest,
         endpoint: MirageBootstrapEndpoint,
@@ -241,7 +259,10 @@ private extension MirageDefaultBootstrapControlClient {
         payload.append(0x0A)
         try await send(data: payload, over: connection)
 
-        let line = try await receiveLine(over: connection, maxBytes: 32 * 1024)
+        let line = try await receiveLine(
+            over: connection,
+            maxBytes: MirageControlMessageLimits.maxBootstrapControlLineBytes
+        )
         let response = try JSONDecoder().decode(MirageBootstrapControlResponse.self, from: line)
         guard response.requestID == request.requestID else {
             throw MirageBootstrapControlError.protocolViolation("Mismatched response request ID.")
@@ -294,7 +315,7 @@ private extension MirageDefaultBootstrapControlClient {
             buffer.append(chunk)
 
             if let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                return buffer[..<newlineIndex]
+                return Data(buffer[..<newlineIndex])
             }
 
             if buffer.count > maxBytes {
@@ -342,8 +363,7 @@ private extension MirageDefaultBootstrapControlClient {
 
 private final class ReadyContinuationBox: @unchecked Sendable {
     private let lock = NSLock()
-    private var completed = false
-    private let continuation: CheckedContinuation<Void, Error>
+    private var continuation: CheckedContinuation<Void, Error>?
 
     init(continuation: CheckedContinuation<Void, Error>) {
         self.continuation = continuation
@@ -351,12 +371,16 @@ private final class ReadyContinuationBox: @unchecked Sendable {
 
     func complete(_ result: Result<Void, Error>) {
         lock.lock()
-        defer { lock.unlock() }
-        guard !completed else { return }
-        completed = true
+        guard let continuation else {
+            lock.unlock()
+            return
+        }
+        self.continuation = nil
+        lock.unlock()
+
         switch result {
         case .success:
-            continuation.resume(returning: ())
+            continuation.resume()
         case let .failure(error):
             continuation.resume(throwing: error)
         }

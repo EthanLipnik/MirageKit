@@ -71,7 +71,13 @@ extension MirageHostService {
             // Check if app is available for streaming
             guard await appStreamManager.isAppAvailableForStreaming(request.bundleIdentifier) else {
                 MirageLogger.host("App \(request.bundleIdentifier) is not available for streaming")
-                // TODO: Send error response
+                let error = ErrorMessage(
+                    code: .windowNotFound,
+                    message: "App is unavailable for streaming: \(request.bundleIdentifier)"
+                )
+                if let response = try? ControlMessage(type: .error, content: error) {
+                    connection.send(content: response.serialize(), completion: .idempotent)
+                }
                 return
             }
 
@@ -80,6 +86,13 @@ extension MirageHostService {
             guard let app = apps
                 .first(where: { $0.bundleIdentifier.lowercased() == request.bundleIdentifier.lowercased() }) else {
                 MirageLogger.host("App \(request.bundleIdentifier) not found")
+                let error = ErrorMessage(
+                    code: .windowNotFound,
+                    message: "App not found: \(request.bundleIdentifier)"
+                )
+                if let response = try? ControlMessage(type: .error, content: error) {
+                    connection.send(content: response.serialize(), completion: .idempotent)
+                }
                 return
             }
 

@@ -38,6 +38,7 @@ public enum MirageSSHBootstrapError: LocalizedError, Sendable, Equatable {
     case authenticationFailed
     case timedOut
     case invalidEndpoint
+    case missingHostKeyFingerprint
 
     /// Human-readable error text for UI and diagnostics.
     public var errorDescription: String? {
@@ -52,6 +53,8 @@ public enum MirageSSHBootstrapError: LocalizedError, Sendable, Equatable {
             "SSH bootstrap timed out."
         case .invalidEndpoint:
             "SSH bootstrap endpoint is invalid."
+        case .missingHostKeyFingerprint:
+            "SSH bootstrap requires a pinned host key fingerprint."
         }
     }
 }
@@ -64,7 +67,7 @@ public protocol MirageSSHBootstrapClient: Sendable {
     ///   - endpoint: Host endpoint to contact.
     ///   - username: Account username used for SSH authentication.
     ///   - password: Account password used for SSH authentication.
-    ///   - expectedHostKeyFingerprint: Optional pinned host key fingerprint (`SHA256:...`).
+    ///   - expectedHostKeyFingerprint: Pinned host key fingerprint (`SHA256:...`).
     ///   - timeout: End-to-end timeout for connection and auth probe.
     /// - Returns: Unlock status returned by the SSH bootstrap implementation.
     /// - Throws: ``MirageSSHBootstrapError`` on auth, transport, or timeout failures.
@@ -72,7 +75,7 @@ public protocol MirageSSHBootstrapClient: Sendable {
         endpoint: MirageBootstrapEndpoint,
         username: String,
         password: String,
-        expectedHostKeyFingerprint: String?,
+        expectedHostKeyFingerprint: String,
         timeout: Duration
     ) async throws -> MirageSSHBootstrapResult
 }
@@ -94,13 +97,15 @@ public struct MirageDefaultSSHBootstrapClient: MirageSSHBootstrapClient {
         endpoint: MirageBootstrapEndpoint,
         username: String,
         password: String,
-        expectedHostKeyFingerprint: String? = nil,
+        expectedHostKeyFingerprint: String,
         timeout: Duration
     )
     async throws -> MirageSSHBootstrapResult {
         let host = endpoint.host.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !host.isEmpty else { throw MirageSSHBootstrapError.invalidEndpoint }
         guard endpoint.port > 0 else { throw MirageSSHBootstrapError.invalidEndpoint }
+        let fingerprint = expectedHostKeyFingerprint.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !fingerprint.isEmpty else { throw MirageSSHBootstrapError.missingHostKeyFingerprint }
 
 #if canImport(NIOConcurrencyHelpers) && canImport(NIOCore) && canImport(NIOPosix) && canImport(NIOSSH)
         let timeoutNanoseconds = Self.timeoutNanoseconds(timeout)
@@ -113,7 +118,7 @@ public struct MirageDefaultSSHBootstrapClient: MirageSSHBootstrapClient {
                     port: Int(endpoint.port),
                     username: username,
                     password: password,
-                    expectedHostKeyFingerprint: expectedHostKeyFingerprint
+                    expectedHostKeyFingerprint: fingerprint
                 )
             }
             group.addTask {
@@ -140,14 +145,14 @@ private extension MirageDefaultSSHBootstrapClient {
         port: Int,
         username: String,
         password: String,
-        expectedHostKeyFingerprint: String?
+        expectedHostKeyFingerprint: String
     ) async throws -> MirageSSHBootstrapResult {
         let eventLoopGroup = MultiThreadedEventLoopGroup(numberOfThreads: 1)
         let authDelegate = SinglePasswordAuthenticationDelegate(
             username: username,
             password: password
         )
-        let serverAuthDelegate = HostKeyValidationDelegate(
+        let serverAuthDelegate = try HostKeyValidationDelegate(
             expectedFingerprint: expectedHostKeyFingerprint
         )
 
@@ -262,19 +267,17 @@ private extension MirageDefaultSSHBootstrapClient {
 }
 
 private final class HostKeyValidationDelegate: NIOSSHClientServerAuthenticationDelegate, @unchecked Sendable {
-    private let expectedFingerprint: String?
+    private let expectedFingerprint: String
 
-    init(expectedFingerprint: String?) {
-        self.expectedFingerprint = Self.normalizedFingerprint(expectedFingerprint)
+    init(expectedFingerprint: String) throws {
+        guard let normalized = Self.normalizedFingerprint(expectedFingerprint) else {
+            throw MirageSSHBootstrapError.missingHostKeyFingerprint
+        }
+        self.expectedFingerprint = normalized
     }
 
     func validateHostKey(hostKey: NIOSSHPublicKey, validationCompletePromise: EventLoopPromise<Void>) {
         do {
-            guard let expectedFingerprint else {
-                validationCompletePromise.succeed(())
-                return
-            }
-
             let receivedFingerprint = try Self.fingerprint(for: hostKey)
             guard receivedFingerprint == expectedFingerprint else {
                 throw MirageSSHBootstrapError.connectionFailed(

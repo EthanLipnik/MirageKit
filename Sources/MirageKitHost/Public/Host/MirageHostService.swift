@@ -360,6 +360,7 @@ public final class MirageHostService {
         advertiser = BonjourAdvertiser(
             serviceName: name,
             capabilities: capabilities,
+            serviceType: networkConfiguration.serviceType,
             enablePeerToPeer: networkConfiguration.enablePeerToPeer
         )
         encoderConfig = encoderConfiguration

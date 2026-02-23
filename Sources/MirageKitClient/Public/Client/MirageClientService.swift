@@ -349,7 +349,6 @@ public final class MirageClientService {
     public let cursorStore = MirageClientCursorStore()
 
     var networkConfig: MirageNetworkConfiguration
-    var transport: HybridTransport?
     var connection: NWConnection?
     var connectedHost: MirageHost?
     /// Stable device identifier for the client, persisted in UserDefaults.

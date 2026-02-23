@@ -137,8 +137,13 @@ private extension MirageClientService {
 
             if let data, !data.isEmpty {
                 buffer.append(data)
-                if let (message, _) = ControlMessage.deserialize(from: buffer) {
+                switch ControlMessage.deserialize(from: buffer) {
+                case let .success(message, _):
                     return message
+                case .needMoreData:
+                    break
+                case let .invalidFrame(reason):
+                    throw MirageError.protocolError("Invalid control frame: \(reason)")
                 }
             }
 

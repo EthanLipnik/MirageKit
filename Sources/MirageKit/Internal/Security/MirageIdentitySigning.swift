@@ -95,6 +95,25 @@ package enum MirageIdentitySigning {
         ])
     }
 
+    package static func bootstrapControlPayload(
+        requestID: UUID,
+        operationRawValue: String,
+        encryptedPayloadSHA256: String,
+        keyID: String,
+        timestampMs: Int64,
+        nonce: String
+    ) throws -> Data {
+        try canonicalData([
+            ("type", "bootstrap-control"),
+            ("requestID", requestID.uuidString.lowercased()),
+            ("operation", operationRawValue),
+            ("encryptedPayloadSHA256", encryptedPayloadSHA256),
+            ("keyID", keyID),
+            ("timestampMs", "\(timestampMs)"),
+            ("nonce", nonce),
+        ])
+    }
+
     package static func currentTimestampMs() -> Int64 {
         Int64(Date().timeIntervalSince1970 * 1000)
     }

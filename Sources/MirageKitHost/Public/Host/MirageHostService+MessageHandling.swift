@@ -269,7 +269,7 @@ extension MirageHostService {
 
     private func handleInputEventMessage(_ message: ControlMessage, from client: MirageConnectedClient) async {
         do {
-            let inputMessage = try message.decode(InputEventMessage.self)
+            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
             if case let .windowResize(resizeEvent) = inputMessage.event {
                 MirageLogger
                     .host(

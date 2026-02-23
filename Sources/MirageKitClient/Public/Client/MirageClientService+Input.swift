@@ -17,7 +17,7 @@ public extension MirageClientService {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
 
         let inputMessage = InputEventMessage(streamID: streamID, event: event)
-        let message = try ControlMessage(type: .inputEvent, content: inputMessage)
+        let message = try ControlMessage(type: .inputEvent, payload: inputMessage.serializePayload())
         let data = message.serialize()
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -35,7 +35,7 @@ public extension MirageClientService {
 
         do {
             let inputMessage = InputEventMessage(streamID: streamID, event: event)
-            let message = try ControlMessage(type: .inputEvent, content: inputMessage)
+            let message = try ControlMessage(type: .inputEvent, payload: inputMessage.serializePayload())
             let data = message.serialize()
             connection.send(content: data, completion: .idempotent)
         } catch {

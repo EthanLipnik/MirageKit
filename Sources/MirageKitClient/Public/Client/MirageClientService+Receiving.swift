@@ -51,38 +51,70 @@ extension MirageClientService {
     }
 
     private func processReceivedData() {
-        // Try to parse complete messages from the buffer.
-        while !receiveBuffer.isEmpty {
-            // Check if this looks like a control message (first byte should be a valid type).
-            let firstByte = receiveBuffer[receiveBuffer.startIndex]
+        var parseOffset = 0
 
-            // Check if it might be video data (starts with MIRG magic: 0x4D 0x49 0x52 0x47).
-            if firstByte == 0x4D, receiveBuffer.count >= 4 {
-                let magic = receiveBuffer.prefix(4)
+        while parseOffset < receiveBuffer.count {
+            let frameStart = receiveBuffer.index(receiveBuffer.startIndex, offsetBy: parseOffset)
+            let remaining = receiveBuffer.count - parseOffset
+            let firstByte = receiveBuffer[frameStart]
+
+            // Detect and reject video packets accidentally sent over the control channel.
+            if firstByte == 0x4D, remaining >= 4 {
+                let magicEnd = receiveBuffer.index(frameStart, offsetBy: 4)
+                let magic = receiveBuffer[frameStart ..< magicEnd]
                 if magic.elementsEqual([0x4D, 0x49, 0x52, 0x47]) {
-                    MirageLogger.client("Warning: Received video data on TCP control channel, discarding")
-                    // Discard this data - it shouldn't be on TCP.
-                    receiveBuffer.removeAll()
+                    MirageLogger.client("Protocol violation: received video data on TCP control channel")
+                    receiveBuffer.removeAll(keepingCapacity: false)
+                    Task {
+                        await handleDisconnect(
+                            reason: "Invalid control-channel payload",
+                            state: .error("Invalid control-channel payload"),
+                            notifyDelegate: true
+                        )
+                    }
                     return
                 }
             }
 
-            guard let (message, bytesConsumed) = ControlMessage.deserialize(from: receiveBuffer) else {
-                // Not enough data for a complete message, or invalid data.
-                // App list with icons can be very large (10MB+), so use a generous limit.
-                if receiveBuffer.count > 50_000_000 {
-                    MirageLogger.client("Buffer overflow with invalid data, clearing")
-                    receiveBuffer.removeAll()
+            switch ControlMessage.deserialize(from: receiveBuffer, offset: parseOffset) {
+            case let .success(message, bytesConsumed):
+                parseOffset += bytesConsumed
+                MirageLogger.client("Received message type: \(message.type)")
+                Task {
+                    await routeControlMessage(message)
+                }
+            case .needMoreData:
+                if parseOffset > 0 {
+                    receiveBuffer.removeSubrange(0 ..< parseOffset)
+                }
+                if receiveBuffer.count > MirageControlMessageLimits.maxReceiveBufferBytes {
+                    MirageLogger.client("Control receive buffer overflow (\(receiveBuffer.count) bytes)")
+                    receiveBuffer.removeAll(keepingCapacity: false)
+                    Task {
+                        await handleDisconnect(
+                            reason: "Control receive buffer overflow",
+                            state: .error("Control receive buffer overflow"),
+                            notifyDelegate: true
+                        )
+                    }
+                }
+                return
+            case let .invalidFrame(reason):
+                MirageLogger.client("Protocol violation while parsing control frame: \(reason)")
+                receiveBuffer.removeAll(keepingCapacity: false)
+                Task {
+                    await handleDisconnect(
+                        reason: "Invalid control frame",
+                        state: .error("Invalid control frame"),
+                        notifyDelegate: true
+                    )
                 }
                 return
             }
+        }
 
-            receiveBuffer.removeFirst(bytesConsumed)
-            MirageLogger.client("Received message type: \(message.type)")
-
-            Task {
-                await routeControlMessage(message)
-            }
+        if parseOffset > 0 {
+            receiveBuffer.removeSubrange(0 ..< parseOffset)
         }
     }
 }

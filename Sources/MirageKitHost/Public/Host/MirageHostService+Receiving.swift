@@ -64,6 +64,16 @@ extension MirageHostService {
                             .host,
                             "Client \(client.name) persistent receive errors - disconnecting: \(error)"
                         )
+                    case let .protocolViolation(reason):
+                        MirageLogger.error(
+                            .host,
+                            "Client \(client.name) protocol violation - disconnecting: \(reason)"
+                        )
+                    case let .receiveBufferOverflow(limit):
+                        MirageLogger.error(
+                            .host,
+                            "Client \(client.name) control receive buffer exceeded \(limit) bytes - disconnecting"
+                        )
                     }
 
                     if self.clientsByID[client.id] != nil {

@@ -15,7 +15,7 @@ extension MirageHostService {
     /// Fast input event handler - runs on inputQueue, NOT MainActor.
     nonisolated func handleInputEventFast(_ message: ControlMessage, from client: MirageConnectedClient) {
         do {
-            let inputMessage = try message.decode(InputEventMessage.self)
+            let inputMessage = try InputEventMessage.deserializePayload(message.payload)
 
             if let loginInfo = loginDisplayInputState.getInfo(for: inputMessage.streamID) {
                 handleLoginDisplayInputEvent(inputMessage.event, loginInfo: loginInfo)

@@ -360,12 +360,6 @@ public struct MirageNetworkConfiguration: Sendable {
     /// Data channel port (UDP) - 0 for auto-assign
     public var dataPort: UInt16
 
-    /// Whether to enable TLS encryption
-    public var enableTLS: Bool
-
-    /// Connection timeout in seconds
-    public var connectionTimeout: TimeInterval
-
     /// Maximum UDP packet size (Mirage header + payload).
     /// Keep <= 1232 to stay under IPv6 minimum MTU once IP/UDP headers are added.
     public var maxPacketSize: Int
@@ -382,8 +376,6 @@ public struct MirageNetworkConfiguration: Sendable {
         serviceType: String = MirageKit.serviceType,
         controlPort: UInt16 = 0,
         dataPort: UInt16 = 0,
-        enableTLS: Bool = true,
-        connectionTimeout: TimeInterval = 10,
         maxPacketSize: Int = mirageDefaultMaxPacketSize,
         enablePeerToPeer: Bool = true,
         requireEncryptedMediaOnLocalNetwork: Bool = false
@@ -391,8 +383,6 @@ public struct MirageNetworkConfiguration: Sendable {
         self.serviceType = serviceType
         self.controlPort = controlPort
         self.dataPort = dataPort
-        self.enableTLS = enableTLS
-        self.connectionTimeout = connectionTimeout
         self.maxPacketSize = maxPacketSize
         self.enablePeerToPeer = enablePeerToPeer
         self.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork

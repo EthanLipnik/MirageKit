@@ -288,8 +288,6 @@ extension MirageClientService {
         pendingHelloNonce = nil
         setMediaSecurityContext(nil)
         receiveBuffer = Data()
-        await transport?.disconnect()
-        transport = nil
         stopRegistrationRefreshLoop()
         connectedHost = nil
         availableWindows = []

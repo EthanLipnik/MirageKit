@@ -35,11 +35,11 @@ struct PencilInputSerializationTests {
         )
         let input = MirageInputEvent.mouseDragged(mouseEvent)
         let envelope = InputEventMessage(streamID: 42, event: input)
-        let message = try ControlMessage(type: .inputEvent, content: envelope)
+        let message = try ControlMessage(type: .inputEvent, payload: envelope.serializePayload())
 
         let serialized = message.serialize()
-        let (deserialized, _) = try #require(ControlMessage.deserialize(from: serialized))
-        let decodedEnvelope = try deserialized.decode(InputEventMessage.self)
+        let (deserialized, _) = try requireParsedControlMessage(from: serialized)
+        let decodedEnvelope = try InputEventMessage.deserializePayload(deserialized.payload)
 
         guard case let .mouseDragged(decodedMouseEvent) = decodedEnvelope.event else {
             Issue.record("Expected mouseDragged event")
@@ -75,5 +75,21 @@ struct PencilInputSerializationTests {
         let decoded = try JSONDecoder().decode(MirageMouseEvent.self, from: data)
         #expect(decoded.stylus == nil)
         #expect(abs(decoded.pressure - legacyMouseEvent.pressure) < 0.0001)
+    }
+
+    @Test("Input payload decoder supports legacy JSON envelope")
+    func legacyJSONEnvelopeDecode() throws {
+        let event = MirageInputEvent.flagsChanged([.shift, .option])
+        let legacyEnvelope = InputEventMessage(streamID: 7, event: event)
+        let legacyJSONPayload = try JSONEncoder().encode(legacyEnvelope)
+        let decoded = try InputEventMessage.deserializePayload(legacyJSONPayload)
+
+        #expect(decoded.streamID == 7)
+        guard case let .flagsChanged(flags) = decoded.event else {
+            Issue.record("Expected flagsChanged event from legacy JSON envelope")
+            return
+        }
+        #expect(flags.contains(.shift))
+        #expect(flags.contains(.option))
     }
 }

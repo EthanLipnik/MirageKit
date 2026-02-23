@@ -78,12 +78,53 @@ struct MirageKitTests {
         let message = try ControlMessage(type: .hello, content: hello)
         let data = message.serialize()
 
-        let (deserialized, consumed) = try #require(ControlMessage.deserialize(from: data))
+        let (deserialized, consumed) = try requireParsedControlMessage(from: data)
         #expect(consumed == data.count)
         #expect(deserialized.type == ControlMessageType.hello)
 
         let decodedHello = try deserialized.decode(HelloMessage.self)
         #expect(decodedHello.deviceName == "Test Device")
+    }
+
+    @Test("Control parser rejects unknown control type")
+    func controlParserRejectsUnknownControlType() {
+        var data = Data([0x06])
+        withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
+
+        switch ControlMessage.deserialize(from: data) {
+        case .invalidFrame:
+            break
+        default:
+            Issue.record("Expected invalidFrame for unknown control message type.")
+        }
+    }
+
+    @Test("Control parser returns needMoreData for truncated payload")
+    func controlParserReturnsNeedMoreDataForTruncatedPayload() {
+        var data = Data([ControlMessageType.hello.rawValue])
+        withUnsafeBytes(of: UInt32(8).littleEndian) { data.append(contentsOf: $0) }
+        data.append(contentsOf: [0x01, 0x02, 0x03])
+
+        switch ControlMessage.deserialize(from: data) {
+        case .needMoreData:
+            break
+        default:
+            Issue.record("Expected needMoreData for truncated payload.")
+        }
+    }
+
+    @Test("Control parser rejects oversized app list payload")
+    func controlParserRejectsOversizedAppListPayload() {
+        var data = Data([ControlMessageType.appList.rawValue])
+        let oversizedLength = UInt32(MirageControlMessageLimits.maxAppListPayloadBytes + 1)
+        withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
+
+        switch ControlMessage.deserialize(from: data) {
+        case .invalidFrame:
+            break
+        default:
+            Issue.record("Expected invalidFrame for oversized appList payload.")
+        }
     }
 
     @Test("Hello message optional mismatch update flag serialization")
@@ -109,7 +150,7 @@ struct MirageKitTests {
         )
 
         let message = try ControlMessage(type: .hello, content: hello)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: message.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: message.serialize())
         let decodedHello = try decodedEnvelope.decode(HelloMessage.self)
         #expect(decodedHello.requestHostUpdateOnProtocolMismatch == true)
     }
@@ -144,7 +185,7 @@ struct MirageKitTests {
         )
 
         let envelope = try ControlMessage(type: .helloResponse, content: response)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
         #expect(decoded.rejectionReason == .protocolVersionMismatch)
         #expect(decoded.protocolMismatchHostVersion == 1)
@@ -162,14 +203,14 @@ struct MirageKitTests {
             channelCount: 2
         )
         let startedEnvelope = try ControlMessage(type: .audioStreamStarted, content: started)
-        let (decodedStartedEnvelope, _) = try #require(ControlMessage.deserialize(from: startedEnvelope.serialize()))
+        let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
         #expect(decodedStartedEnvelope.type == .audioStreamStarted)
         let decodedStarted = try decodedStartedEnvelope.decode(AudioStreamStartedMessage.self)
         #expect(decodedStarted == started)
 
         let stopped = AudioStreamStoppedMessage(streamID: 42, reason: .sourceStopped)
         let stoppedEnvelope = try ControlMessage(type: .audioStreamStopped, content: stopped)
-        let (decodedStoppedEnvelope, _) = try #require(ControlMessage.deserialize(from: stoppedEnvelope.serialize()))
+        let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
         #expect(decodedStoppedEnvelope.type == .audioStreamStopped)
         let decodedStopped = try decodedStoppedEnvelope.decode(AudioStreamStoppedMessage.self)
         #expect(decodedStopped == stopped)
@@ -183,7 +224,7 @@ struct MirageKitTests {
             requestedAtNs: 12_345
         )
         let envelope = try ControlMessage(type: .transportRefreshRequest, content: refresh)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         #expect(decodedEnvelope.type == .transportRefreshRequest)
         let decoded = try decodedEnvelope.decode(TransportRefreshRequestMessage.self)
         #expect(decoded.streamID == 7)
@@ -195,7 +236,7 @@ struct MirageKitTests {
     func hostSoftwareUpdateControlMessageSerialization() throws {
         let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
         let requestEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatusRequest, content: statusRequest)
-        let (decodedRequestEnvelope, _) = try #require(ControlMessage.deserialize(from: requestEnvelope.serialize()))
+        let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
         let decodedStatusRequest = try decodedRequestEnvelope.decode(HostSoftwareUpdateStatusRequestMessage.self)
         #expect(decodedStatusRequest.forceRefresh == true)
 
@@ -217,7 +258,7 @@ struct MirageKitTests {
             lastCheckedAtMs: 1_700_000_000_000
         )
         let statusEnvelope = try ControlMessage(type: .hostSoftwareUpdateStatus, content: status)
-        let (decodedStatusEnvelope, _) = try #require(ControlMessage.deserialize(from: statusEnvelope.serialize()))
+        let (decodedStatusEnvelope, _) = try requireParsedControlMessage(from: statusEnvelope.serialize())
         let decodedStatus = try decodedStatusEnvelope.decode(HostSoftwareUpdateStatusMessage.self)
         #expect(decodedStatus.channel == .nightly)
         #expect(decodedStatus.availableVersion == "1.3.0")
@@ -228,7 +269,7 @@ struct MirageKitTests {
 
         let installRequest = HostSoftwareUpdateInstallRequestMessage(trigger: .protocolMismatch)
         let installRequestEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallRequest, content: installRequest)
-        let (decodedInstallRequestEnvelope, _) = try #require(ControlMessage.deserialize(from: installRequestEnvelope.serialize()))
+        let (decodedInstallRequestEnvelope, _) = try requireParsedControlMessage(from: installRequestEnvelope.serialize())
         let decodedInstallRequest = try decodedInstallRequestEnvelope.decode(HostSoftwareUpdateInstallRequestMessage.self)
         #expect(decodedInstallRequest.trigger == .protocolMismatch)
 
@@ -241,7 +282,7 @@ struct MirageKitTests {
             status: status
         )
         let installResultEnvelope = try ControlMessage(type: .hostSoftwareUpdateInstallResult, content: installResult)
-        let (decodedInstallResultEnvelope, _) = try #require(ControlMessage.deserialize(from: installResultEnvelope.serialize()))
+        let (decodedInstallResultEnvelope, _) = try requireParsedControlMessage(from: installResultEnvelope.serialize())
         let decodedInstallResult = try decodedInstallResultEnvelope.decode(HostSoftwareUpdateInstallResultMessage.self)
         #expect(decodedInstallResult.accepted == false)
         #expect(decodedInstallResult.status?.currentVersion == "1.2.0")
@@ -292,7 +333,7 @@ struct MirageKitTests {
 
         let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
         let serialized = message.serialize()
-        let (decodedEnvelope, consumed) = try #require(ControlMessage.deserialize(from: serialized))
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: serialized)
         #expect(consumed == serialized.count)
         #expect(decodedEnvelope.type == .streamEncoderSettingsChange)
 
@@ -328,7 +369,7 @@ struct MirageKitTests {
         )
 
         let envelope = try ControlMessage(type: .startStream, content: request)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
         #expect(decoded.latencyMode == .smoothest)
         #expect(decoded.bitDepth == .tenBit)
@@ -358,7 +399,7 @@ struct MirageKitTests {
         )
 
         let envelope = try ControlMessage(type: .selectApp, content: request)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.maxRefreshRate == 120)
@@ -387,7 +428,7 @@ struct MirageKitTests {
         )
 
         let envelope = try ControlMessage(type: .startDesktopStream, content: request)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decoded.latencyMode == .auto)
         #expect(decoded.displayWidth == 3008)
@@ -415,7 +456,7 @@ struct MirageKitTests {
         )
 
         let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
         #expect(decoded.capturePixelFormat == "xf20")
         #expect(decoded.encoderProfile == "HEVC Main10 (4:2:0)")
@@ -442,7 +483,7 @@ struct MirageKitTests {
         )
 
         let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
-        let (decodedEnvelope, _) = try #require(ControlMessage.deserialize(from: envelope.serialize()))
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
         #expect(decoded.capturePixelFormat == "420v")
         #expect(decoded.encoderPixelFormat == "8-bit (NV12)")

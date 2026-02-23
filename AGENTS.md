@@ -46,7 +46,8 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Bootstrap metadata types (`MirageBootstrapMetadata`, `MirageBootstrapEndpoint`, `MirageWakeOnLANInfo`) model wake/unlock capability publication in CloudKit host records.
 - Wake/unlock runtime contracts include `MirageWakeOnLANClient` and `MirageSSHBootstrapClient`; default SSH bootstrap uses a SwiftNIO+NIOSSH password-auth session probe (`/usr/bin/true`) for cross-platform SSH unlock reachability checks.
 - Bootstrap endpoint ordering/dedupe uses `MirageBootstrapEndpointResolver` with deterministic priority (`user`, `auto`, `lastSeen`).
-- Bootstrap daemon handoff uses line-delimited control protocol payloads (`MirageBootstrapControlRequest`, `MirageBootstrapControlResponse`) and host runtime helpers (`MirageHostBootstrapUnlockService`, `MirageHostBootstrapControlServer`, `MirageHostBootstrapDaemonStateMachine`).
+- Bootstrap daemon handoff uses line-delimited control payloads (`MirageBootstrapControlRequest`, `MirageBootstrapControlResponse`) with signed identity envelopes, encrypted unlock credentials, and host `controlAuthSecret`.
+- SSH bootstrap unlock paths require a pinned host-key fingerprint.
 - Client startup retries stream registration until the first UDP packet arrives.
 - Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
 - Virtual display creation validates the active display color profile name against the requested color space; Display P3 requests fail closed when profile validation stays unresolved and creation retries once with rotated deterministic serial on color-validation failure.
@@ -63,7 +64,10 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Desktop virtual-display resize executes as a single-owner transaction: mirrored mode suspends host mirroring before shared-display reconfiguration, runs a desktop capture/encoder hard reset, then restores mirroring after completion signaling.
 - Desktop shared-display generation-change rebind skips desktop rebind work while a desktop resize transaction is in flight.
 - Host/client control-message dispatch uses handler registries keyed by `ControlMessageType`.
+- Control-frame parsing uses typed outcomes (`success`, `needMoreData`, `invalidFrame`) with global/per-type payload limits and fail-closed disconnects on invalid frames.
 - Signed identity handshake v2 requires `identityAuthV2` with canonical payload signatures and replay protection.
+- Replay protection applies nonce-length limits and strict bounded eviction.
+- Hello receive paths buffer until one complete hello frame is present and enforce a dedicated hello-frame byte cap.
 - Accepted hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1`; signed hello responses include `mediaEncryptionEnabled` plus a per-session UDP registration token.
 - Media payload encryption policy is configurable: local peer sessions default to unencrypted payloads unless `requireEncryptedMediaOnLocalNetwork` is enabled, while non-local/remote sessions keep payload encryption; UDP registration token authentication remains required.
 - Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for encrypted UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
@@ -78,8 +82,10 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Host software update message fields for typed status/result metadata are optional on the wire for compatibility and map into public MirageKit client/host software-update enums when present.
 - Host transport send routing uses `HostTransportRegistry` with lock-backed connection maps for video/audio/quality channel access outside main-actor send paths.
 - Host TCP control receive uses `HostReceiveLoop` with immediate receive re-arm, per-client bounded non-input backlog, and coalescing for display/scale/refresh/encoder-setting updates.
+- Input-event control payloads use a compact binary codec with JSON envelope fallback for legacy peers.
 - Login-display watchdog and retry pacing use queue timers (`DispatchSourceTimer`) driven through queue-to-main bridge handlers.
 - Remote signaling helpers include signed Worker requests, STUN probes, and host candidate parsing for direct remote readiness.
+- Remote signaling endpoint validation accepts `https` URLs only.
 - Host remote path runs a dedicated QUIC control listener (`MirageHostService+Remote.swift`) and publishes STUN-derived `hostCandidates` through signed signaling heartbeats.
 - Remote diagnostics logging spans client remote preflight/join/connect, host remote listener and advertise/heartbeat loops, and signaling request outcomes.
 
@@ -223,7 +229,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 - Service type: `_mirage._tcp` (Bonjour).
 - Control port: 9847; Data port: 9848.
 - Protocol version: 1.
-- Hybrid transport with TLS encryption.
+- TCP control framing plus UDP media transport with token-authenticated registrations; media payload encryption follows session policy.
 - UDP packet sizing: `MirageNetworkConfiguration.maxPacketSize` caps Mirage header + payload to avoid IPv6 fragmentation; `StreamContext` uses it for frame fragmentation.
 - `StreamPacketSender` sends bounded bursts and tracks queued bytes for backpressure.
 - Quality feedback messages: none.

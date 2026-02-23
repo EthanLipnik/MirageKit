@@ -68,7 +68,7 @@ public struct MirageWakeOnLANInfo: Codable, Hashable, Sendable {
 /// Bootstrap capability metadata stored with host records.
 public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
     /// Metadata version for forward-compatible decoding.
-    public static let currentVersion = 1
+    public static let currentVersion = 2
 
     /// Metadata schema version.
     public let version: Int
@@ -86,6 +86,8 @@ public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
     public let controlPort: UInt16?
     /// Optional pinned SSH host key fingerprint (`SHA256:...`) for bootstrap trust.
     public let sshHostKeyFingerprint: String?
+    /// Shared secret used by the authenticated bootstrap daemon control protocol.
+    public let controlAuthSecret: String?
     /// Wake-on-LAN metadata when available.
     public let wakeOnLAN: MirageWakeOnLANInfo?
 
@@ -100,6 +102,7 @@ public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
     ///   - sshPort: Preferred SSH port.
     ///   - controlPort: Preferred daemon control port.
     ///   - sshHostKeyFingerprint: Optional pinned SSH host key fingerprint.
+    ///   - controlAuthSecret: Shared secret for authenticated bootstrap daemon control requests.
     ///   - wakeOnLAN: Optional Wake-on-LAN payload data.
     ///
     /// Example:
@@ -112,6 +115,7 @@ public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
     ///     sshPort: 22,
     ///     controlPort: 9849,
     ///     sshHostKeyFingerprint: "SHA256:...",
+    ///     controlAuthSecret: "base64-secret",
     ///     wakeOnLAN: .init(macAddress: "AA:BB:CC:DD:EE:FF", broadcastAddresses: ["192.168.1.255"])
     /// )
     /// ```
@@ -124,6 +128,7 @@ public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
         sshPort: UInt16?,
         controlPort: UInt16?,
         sshHostKeyFingerprint: String? = nil,
+        controlAuthSecret: String? = nil,
         wakeOnLAN: MirageWakeOnLANInfo?
     ) {
         self.version = version
@@ -134,6 +139,7 @@ public struct MirageBootstrapMetadata: Codable, Hashable, Sendable {
         self.sshPort = sshPort
         self.controlPort = controlPort
         self.sshHostKeyFingerprint = sshHostKeyFingerprint
+        self.controlAuthSecret = controlAuthSecret
         self.wakeOnLAN = wakeOnLAN
     }
 }

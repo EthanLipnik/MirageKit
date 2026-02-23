@@ -354,7 +354,7 @@ public final class MirageRemoteSignalingClient {
         bodyData: Data?
     )
     async throws -> (HTTPURLResponse, Data) {
-        guard configuration.baseURL.scheme == "https" || configuration.baseURL.scheme == "http" else {
+        guard configuration.baseURL.scheme == "https" else {
             throw MirageRemoteSignalingError.invalidConfiguration
         }
         let identity = try identityManager.currentIdentity()

@@ -288,34 +288,62 @@ extension MirageHostService {
 
     /// Receive hello message from a connecting client.
     private func receiveHelloMessage(from connection: NWConnection, endpoint: String) async -> ReceivedHelloResult? {
-        let result: (
-            Data?,
-            NWConnection.ContentContext?,
-            Bool,
-            NWError?
-        ) = await withCheckedContinuation { continuation in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, context, isComplete, error in
-                continuation.resume(returning: (data, context, isComplete, error))
+        var receiveBuffer = Data()
+        var helloMessage: ControlMessage?
+        var helloBytesConsumed = 0
+
+        while helloMessage == nil {
+            switch ControlMessage.deserialize(from: receiveBuffer) {
+            case let .success(message, consumed):
+                helloMessage = message
+                helloBytesConsumed = consumed
+            case let .invalidFrame(reason):
+                MirageLogger.error(.host, "Rejected hello frame from \(endpoint): \(reason)")
+                return nil
+            case .needMoreData:
+                break
+            }
+
+            if helloMessage != nil {
+                break
+            }
+
+            if receiveBuffer.count > MirageControlMessageLimits.maxHelloFrameBytes {
+                MirageLogger.error(
+                    .host,
+                    "Rejected hello frame from \(endpoint): exceeded \(MirageControlMessageLimits.maxHelloFrameBytes) bytes"
+                )
+                return nil
+            }
+
+            let result: (
+                Data?,
+                NWConnection.ContentContext?,
+                Bool,
+                NWError?
+            ) = await withCheckedContinuation { continuation in
+                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, context, isComplete, error in
+                    continuation.resume(returning: (data, context, isComplete, error))
+                }
+            }
+
+            let (data, _, isComplete, error) = result
+            if let error {
+                MirageLogger.error(.host, "Error receiving hello: \(error)")
+                return nil
+            }
+
+            if let data, !data.isEmpty {
+                receiveBuffer.append(data)
+            }
+
+            if isComplete {
+                MirageLogger.host("Connection closed before hello frame was complete")
+                return nil
             }
         }
 
-        let (data, _, _, error) = result
-
-        if let error {
-            MirageLogger.error(.host, "Error receiving hello: \(error)")
-            return nil
-        }
-
-        guard let data, !data.isEmpty else {
-            MirageLogger.host("No data received for hello")
-            return nil
-        }
-
-        guard let (message, consumed) = ControlMessage.deserialize(from: data) else {
-            MirageLogger.host("Failed to deserialize hello message")
-            return nil
-        }
-
+        guard let message = helloMessage else { return nil }
         guard message.type == .hello else {
             MirageLogger.host("Expected hello message, got \(message.type)")
             return nil
@@ -326,14 +354,6 @@ extension MirageHostService {
             let identity = hello.identity
             guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
                 MirageLogger.host("Rejected hello from \(hello.deviceName): invalid identity key ID")
-                return nil
-            }
-            let replayValid = await handshakeReplayProtector.validate(
-                timestampMs: identity.timestampMs,
-                nonce: identity.nonce
-            )
-            guard replayValid else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): replay protection failed")
                 return nil
             }
             let signedPayload = try MirageIdentitySigning.helloPayload(
@@ -355,6 +375,14 @@ extension MirageHostService {
                 publicKey: identity.publicKey
             ) else {
                 MirageLogger.host("Rejected hello from \(hello.deviceName): signature verification failed")
+                return nil
+            }
+            let replayValid = await handshakeReplayProtector.validate(
+                timestampMs: identity.timestampMs,
+                nonce: identity.nonce
+            )
+            guard replayValid else {
+                MirageLogger.host("Rejected hello from \(hello.deviceName): replay protection failed")
                 return nil
             }
 
@@ -422,7 +450,9 @@ extension MirageHostService {
             }
 
             MirageLogger.host("Received hello from \(hello.deviceName) (\(hello.deviceType.displayName))")
-            let pendingControlData = consumed < data.count ? Data(data.dropFirst(consumed)) : Data()
+            let pendingControlData = helloBytesConsumed < receiveBuffer.count
+                ? Data(receiveBuffer.dropFirst(helloBytesConsumed))
+                : Data()
             if !pendingControlData.isEmpty {
                 MirageLogger.host(
                     "Buffered \(pendingControlData.count) control bytes that arrived with hello from \(hello.deviceName)"

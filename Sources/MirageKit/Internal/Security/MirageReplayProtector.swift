@@ -11,40 +11,63 @@ import Foundation
 
 package actor MirageReplayProtector {
     private var nonces: [String: Int64] = [:]
+    private var nonceOrder: [String] = []
     private let allowedClockSkewMs: Int64
     private let maxEntries: Int
+    private let maxNonceLength: Int
 
     package init(
         allowedClockSkewMs: Int64 = 60_000,
-        maxEntries: Int = 4_096
+        maxEntries: Int = 4_096,
+        maxNonceLength: Int = MirageControlMessageLimits.maxReplayNonceLength
     ) {
         self.allowedClockSkewMs = allowedClockSkewMs
         self.maxEntries = maxEntries
+        self.maxNonceLength = max(16, maxNonceLength)
     }
 
     package func validate(timestampMs: Int64, nonce: String) -> Bool {
+        if nonce.isEmpty || nonce.utf8.count > maxNonceLength { return false }
         let nowMs = Self.currentTimestampMs()
         let delta = nowMs - timestampMs
         if delta > allowedClockSkewMs || delta < -allowedClockSkewMs { return false }
         if nonces[nonce] != nil { return false }
 
         nonces[nonce] = timestampMs
+        nonceOrder.append(nonce)
+        enforceBoundedSize()
         prune(nowMs: nowMs)
         return true
     }
 
     package func reset() {
         nonces.removeAll(keepingCapacity: true)
+        nonceOrder.removeAll(keepingCapacity: true)
     }
 
     private func prune(nowMs: Int64) {
-        if nonces.count > maxEntries {
-            let minimumAllowed = nowMs - allowedClockSkewMs
-            nonces = nonces.filter { $0.value >= minimumAllowed }
-        }
-
         let cutoff = nowMs - allowedClockSkewMs * 2
-        nonces = nonces.filter { $0.value >= cutoff }
+
+        if nonces.isEmpty { return }
+        var keptOrder: [String] = []
+        keptOrder.reserveCapacity(nonceOrder.count)
+        for nonce in nonceOrder {
+            guard let timestamp = nonces[nonce], timestamp >= cutoff else {
+                nonces.removeValue(forKey: nonce)
+                continue
+            }
+            keptOrder.append(nonce)
+        }
+        nonceOrder = keptOrder
+
+        enforceBoundedSize()
+    }
+
+    private func enforceBoundedSize() {
+        while nonceOrder.count > maxEntries {
+            let evicted = nonceOrder.removeFirst()
+            nonces.removeValue(forKey: evicted)
+        }
     }
 
     private static func currentTimestampMs() -> Int64 {

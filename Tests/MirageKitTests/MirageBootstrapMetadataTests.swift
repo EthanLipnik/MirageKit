@@ -118,7 +118,7 @@ struct MirageBootstrapMetadataTests {
                 endpoint: MirageBootstrapEndpoint(host: "   ", port: 22, source: .auto),
                 username: "user",
                 password: "password",
-                expectedHostKeyFingerprint: nil,
+                expectedHostKeyFingerprint: "SHA256:test-fingerprint",
                 timeout: .seconds(1)
             )
             Issue.record("Expected invalid endpoint rejection.")
@@ -134,17 +134,50 @@ struct MirageBootstrapMetadataTests {
         }
     }
 
+    @Test("SSH bootstrap rejects missing host fingerprint")
+    func sshBootstrapRejectsMissingHostFingerprint() async {
+        let client = MirageDefaultSSHBootstrapClient()
+        do {
+            _ = try await client.unlockVolumeOverSSH(
+                endpoint: MirageBootstrapEndpoint(host: "127.0.0.1", port: 22, source: .auto),
+                username: "user",
+                password: "password",
+                expectedHostKeyFingerprint: "   ",
+                timeout: .seconds(1)
+            )
+            Issue.record("Expected missing host-key fingerprint rejection.")
+        } catch let error as MirageSSHBootstrapError {
+            switch error {
+            case .missingHostKeyFingerprint:
+                break
+            default:
+                Issue.record("Expected missingHostKeyFingerprint, got \(error.localizedDescription)")
+            }
+        } catch {
+            Issue.record("Expected MirageSSHBootstrapError, got \(error.localizedDescription)")
+        }
+    }
+
     @Test("Bootstrap control protocol codable roundtrip")
     func bootstrapControlProtocolCodableRoundtrip() throws {
+        let auth = MirageBootstrapControlAuthEnvelope(
+            keyID: "test-key-id",
+            publicKey: Data([0x01, 0x02, 0x03]),
+            timestampMs: 1_700_000_000_000,
+            nonce: "test-nonce",
+            signature: Data([0xAA, 0xBB, 0xCC])
+        )
+        let encrypted = MirageBootstrapEncryptedUnlockPayload(combined: Data([0x10, 0x20, 0x30]))
         let request = MirageBootstrapControlRequest(
             operation: .unlock,
-            username: "ethan",
-            password: "redacted-password"
+            auth: auth,
+            encryptedUnlockPayload: encrypted
         )
         let requestData = try JSONEncoder().encode(request)
         let decodedRequest = try JSONDecoder().decode(MirageBootstrapControlRequest.self, from: requestData)
         #expect(decodedRequest.operation == .unlock)
-        #expect(decodedRequest.username == "ethan")
+        #expect(decodedRequest.auth == auth)
+        #expect(decodedRequest.encryptedUnlockPayload == encrypted)
         #expect(decodedRequest.requestID == request.requestID)
 
         let response = MirageBootstrapControlResponse(

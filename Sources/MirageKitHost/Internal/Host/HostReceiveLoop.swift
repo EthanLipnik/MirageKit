@@ -17,6 +17,8 @@ final class HostReceiveLoop: @unchecked Sendable {
         case complete
         case fatalError(NWError)
         case persistentError(NWError)
+        case protocolViolation(String)
+        case receiveBufferOverflow(Int)
     }
 
     private enum QueueEntry {
@@ -45,6 +47,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     ) -> Void
     private let clientName: String
     private let maxControlBacklog: Int
+    private let maxReceiveBufferBytes: Int
     private let errorTimeoutSeconds: CFAbsoluteTime
     private let state = Locked(State())
 
@@ -57,6 +60,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         connection: NWConnection,
         clientName: String,
         maxControlBacklog: Int = 256,
+        maxReceiveBufferBytes: Int = MirageControlMessageLimits.maxReceiveBufferBytes,
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
@@ -65,6 +69,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     ) {
         self.clientName = clientName
         self.maxControlBacklog = max(8, maxControlBacklog)
+        self.maxReceiveBufferBytes = max(8 * 1024, maxReceiveBufferBytes)
         self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
         self.onInputMessage = onInputMessage
         self.dispatchControlMessage = dispatchControlMessage
@@ -78,6 +83,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     init(
         clientName: String,
         maxControlBacklog: Int = 256,
+        maxReceiveBufferBytes: Int = MirageControlMessageLimits.maxReceiveBufferBytes,
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         receiveChunk: @escaping @Sendable (
             @escaping @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void
@@ -89,6 +95,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     ) {
         self.clientName = clientName
         self.maxControlBacklog = max(8, maxControlBacklog)
+        self.maxReceiveBufferBytes = max(8 * 1024, maxReceiveBufferBytes)
         self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
         self.receiveChunk = receiveChunk
         self.onInputMessage = onInputMessage
@@ -130,9 +137,15 @@ final class HostReceiveLoop: @unchecked Sendable {
             }
 
             if let data, !data.isEmpty {
-                self.state.withLock { state in
+                let bufferOverflowed = self.state.withLock { state in
                     state.firstErrorTime = nil
                     state.receiveBuffer.append(data)
+                    return state.receiveBuffer.count > self.maxReceiveBufferBytes
+                }
+                if bufferOverflowed {
+                    self.stop()
+                    self.onTerminal(.receiveBufferOverflow(self.maxReceiveBufferBytes))
+                    return
                 }
                 self.parseBufferedMessages()
                 self.scheduleNextControlIfNeeded()
@@ -179,16 +192,36 @@ final class HostReceiveLoop: @unchecked Sendable {
     private func parseBufferedMessages() {
         var inputMessages: [ControlMessage] = []
         var controlMessages: [ControlMessage] = []
+        var violationReason: String?
 
         state.withLock { state in
-            while let (message, consumed) = ControlMessage.deserialize(from: state.receiveBuffer) {
-                state.receiveBuffer.removeFirst(consumed)
-                if message.type == .inputEvent {
-                    inputMessages.append(message)
-                } else {
-                    controlMessages.append(message)
+            var parseOffset = 0
+            while true {
+                switch ControlMessage.deserialize(from: state.receiveBuffer, offset: parseOffset) {
+                case let .success(message, consumed):
+                    parseOffset += consumed
+                    if message.type == .inputEvent {
+                        inputMessages.append(message)
+                    } else {
+                        controlMessages.append(message)
+                    }
+                case .needMoreData:
+                    if parseOffset > 0 {
+                        state.receiveBuffer.removeSubrange(0 ..< parseOffset)
+                    }
+                    return
+                case let .invalidFrame(reason):
+                    violationReason = reason
+                    state.receiveBuffer.removeAll(keepingCapacity: false)
+                    return
                 }
             }
+        }
+
+        if let violationReason {
+            stop()
+            onTerminal(.protocolViolation(violationReason))
+            return
         }
 
         for message in inputMessages {

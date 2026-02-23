@@ -4,9 +4,10 @@
 //
 //  Created by Codex on 2/21/26.
 //
-//  Line-based JSON protocol used for host bootstrap daemon handoff.
+//  Authenticated line-based JSON protocol used for host bootstrap daemon handoff.
 //
 
+import CryptoKit
 import Foundation
 
 /// Bootstrap control operation kind.
@@ -15,48 +16,71 @@ public enum MirageBootstrapControlOperation: String, Codable, Sendable {
     case unlock
 }
 
+/// Signed bootstrap control request envelope.
+public struct MirageBootstrapControlAuthEnvelope: Codable, Sendable, Equatable {
+    /// Identity key identifier for the signing key.
+    public let keyID: String
+    /// Raw P-256 signing public key.
+    public let publicKey: Data
+    /// Millisecond timestamp used for replay protection.
+    public let timestampMs: Int64
+    /// Per-request nonce.
+    public let nonce: String
+    /// DER-encoded signature over canonical request bytes.
+    public let signature: Data
+
+    public init(
+        keyID: String,
+        publicKey: Data,
+        timestampMs: Int64,
+        nonce: String,
+        signature: Data
+    ) {
+        self.keyID = keyID
+        self.publicKey = publicKey
+        self.timestampMs = timestampMs
+        self.nonce = nonce
+        self.signature = signature
+    }
+}
+
+/// Encrypted unlock credentials payload for bootstrap control.
+public struct MirageBootstrapEncryptedUnlockPayload: Codable, Sendable, Equatable {
+    /// ChaCha20-Poly1305 combined payload (`ciphertext + auth tag + nonce` wrapper omitted).
+    public let combined: Data
+
+    public init(combined: Data) {
+        self.combined = combined
+    }
+}
+
 /// Bootstrap control request payload sent to host bootstrap daemon.
 public struct MirageBootstrapControlRequest: Codable, Sendable {
-    /// Protocol schema version.
-    public let version: Int
     /// Correlation identifier for request/response matching.
     public let requestID: UUID
     /// Operation to execute.
     public let operation: MirageBootstrapControlOperation
-    /// Username for unlock operations when login screen requires it.
-    public let username: String?
-    /// Password for unlock operations.
-    public let password: String?
+    /// Signed request authentication envelope.
+    public let auth: MirageBootstrapControlAuthEnvelope
+    /// Encrypted credentials payload for unlock operations.
+    public let encryptedUnlockPayload: MirageBootstrapEncryptedUnlockPayload?
 
     /// Creates a bootstrap daemon control request payload.
-    ///
-    /// - Parameters:
-    ///   - version: Protocol version expected by both client and daemon.
-    ///   - requestID: Correlation token echoed by the daemon response.
-    ///   - operation: Requested operation (`status` or `unlock`).
-    ///   - username: Optional login name for unlock flows.
-    ///   - password: Optional login password for unlock flows.
-    ///
-    /// - Note: For `.status`, both `username` and `password` are typically `nil`.
     public init(
-        version: Int = 1,
         requestID: UUID = UUID(),
         operation: MirageBootstrapControlOperation,
-        username: String? = nil,
-        password: String? = nil
+        auth: MirageBootstrapControlAuthEnvelope,
+        encryptedUnlockPayload: MirageBootstrapEncryptedUnlockPayload? = nil
     ) {
-        self.version = version
         self.requestID = requestID
         self.operation = operation
-        self.username = username
-        self.password = password
+        self.auth = auth
+        self.encryptedUnlockPayload = encryptedUnlockPayload
     }
 }
 
 /// Bootstrap control response payload returned by host bootstrap daemon.
 public struct MirageBootstrapControlResponse: Codable, Sendable {
-    /// Protocol schema version.
-    public let version: Int
     /// Correlation identifier for request/response matching.
     public let requestID: UUID
     /// Whether the requested operation succeeded.
@@ -73,18 +97,7 @@ public struct MirageBootstrapControlResponse: Codable, Sendable {
     public let retryAfterSeconds: Int?
 
     /// Creates a daemon control response payload.
-    ///
-    /// - Parameters:
-    ///   - version: Protocol version returned by the daemon.
-    ///   - requestID: Request correlation ID, matching the originating request.
-    ///   - success: Whether the daemon completed the operation.
-    ///   - state: Host session state observed after processing.
-    ///   - message: Optional diagnostic string for display or logs.
-    ///   - canRetry: Whether the same request can be safely retried.
-    ///   - retriesRemaining: Optional bounded retry budget.
-    ///   - retryAfterSeconds: Optional cooldown before retrying.
     public init(
-        version: Int = 1,
         requestID: UUID,
         success: Bool,
         state: HostSessionState,
@@ -93,7 +106,6 @@ public struct MirageBootstrapControlResponse: Codable, Sendable {
         retriesRemaining: Int?,
         retryAfterSeconds: Int?
     ) {
-        self.version = version
         self.requestID = requestID
         self.success = success
         self.state = state
@@ -101,5 +113,108 @@ public struct MirageBootstrapControlResponse: Codable, Sendable {
         self.canRetry = canRetry
         self.retriesRemaining = retriesRemaining
         self.retryAfterSeconds = retryAfterSeconds
+    }
+}
+
+/// Decrypted unlock credentials for daemon unlock requests.
+public struct MirageBootstrapUnlockCredentials: Codable, Sendable, Equatable {
+    public let username: String?
+    public let password: String
+
+    public init(username: String?, password: String) {
+        self.username = username
+        self.password = password
+    }
+}
+
+package enum MirageBootstrapControlSecurity {
+    private static let keyContext = Data("mirage-bootstrap-control".utf8)
+
+    package static func canonicalPayload(
+        requestID: UUID,
+        operation: MirageBootstrapControlOperation,
+        encryptedPayloadSHA256: String,
+        keyID: String,
+        timestampMs: Int64,
+        nonce: String
+    ) throws -> Data {
+        try MirageIdentitySigning.bootstrapControlPayload(
+            requestID: requestID,
+            operationRawValue: operation.rawValue,
+            encryptedPayloadSHA256: encryptedPayloadSHA256,
+            keyID: keyID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+    }
+
+    package static func payloadSHA256Hex(_ data: Data?) -> String {
+        let digest = SHA256.hash(data: data ?? Data("-".utf8))
+        return digest.map { byte in
+            let hex = String(byte, radix: 16)
+            return hex.count == 1 ? "0\(hex)" : hex
+        }
+        .joined()
+    }
+
+    package static func encryptUnlockCredentials(
+        _ credentials: MirageBootstrapUnlockCredentials,
+        sharedSecret: String,
+        requestID: UUID,
+        timestampMs: Int64,
+        nonce: String
+    ) throws -> MirageBootstrapEncryptedUnlockPayload {
+        let plaintext = try JSONEncoder().encode(credentials)
+        let key = try deriveEncryptionKey(
+            sharedSecret: sharedSecret,
+            requestID: requestID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let sealed = try ChaChaPoly.seal(plaintext, using: key)
+        return MirageBootstrapEncryptedUnlockPayload(combined: sealed.combined)
+    }
+
+    package static func decryptUnlockCredentials(
+        _ payload: MirageBootstrapEncryptedUnlockPayload,
+        sharedSecret: String,
+        requestID: UUID,
+        timestampMs: Int64,
+        nonce: String
+    ) throws -> MirageBootstrapUnlockCredentials {
+        let key = try deriveEncryptionKey(
+            sharedSecret: sharedSecret,
+            requestID: requestID,
+            timestampMs: timestampMs,
+            nonce: nonce
+        )
+        let sealed = try ChaChaPoly.SealedBox(combined: payload.combined)
+        let plaintext = try ChaChaPoly.open(sealed, using: key)
+        return try JSONDecoder().decode(MirageBootstrapUnlockCredentials.self, from: plaintext)
+    }
+
+    private static func deriveEncryptionKey(
+        sharedSecret: String,
+        requestID: UUID,
+        timestampMs: Int64,
+        nonce: String
+    ) throws -> SymmetricKey {
+        let trimmedSecret = sharedSecret.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSecret.isEmpty else {
+            throw MirageError.protocolError("Bootstrap control secret is empty")
+        }
+        guard nonce.utf8.count <= MirageControlMessageLimits.maxReplayNonceLength else {
+            throw MirageError.protocolError("Bootstrap control nonce is too long")
+        }
+
+        let secretData = Data(trimmedSecret.utf8)
+        let saltText = "\(requestID.uuidString.lowercased())|\(timestampMs)|\(nonce)"
+        let salt = Data(SHA256.hash(data: Data(saltText.utf8)))
+        return HKDF<SHA256>.deriveKey(
+            inputKeyMaterial: SymmetricKey(data: secretData),
+            salt: salt,
+            info: keyContext,
+            outputByteCount: 32
+        )
     }
 }
