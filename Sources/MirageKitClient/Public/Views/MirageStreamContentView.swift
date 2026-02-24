@@ -194,6 +194,7 @@ public struct MirageStreamContentView: View {
                 cursorStore: clientService.cursorStore,
                 cursorPositionStore: clientService.cursorPositionStore,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
+                inputEnabled: macOSInputEnabled,
                 maxDrawableSize: maxDrawableSize
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -273,7 +274,17 @@ public struct MirageStreamContentView: View {
         #endif
     }
 
+    private var canSendInputToHost: Bool {
+        guard case .connected = clientService.connectionState else { return false }
+        return clientService.activeStreams.contains { $0.id == session.streamID }
+    }
+
+    private var macOSInputEnabled: Bool {
+        canSendInputToHost && sessionStore.focusedSessionID == session.id
+    }
+
     private func sendInputEvent(_ event: MirageInputEvent) {
+        guard canSendInputToHost else { return }
         onInputActivity?(event)
 
         if case let .keyDown(keyEvent) = event {

@@ -27,6 +27,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
+    /// Whether input capture should actively process mouse/keyboard events.
+    public var inputEnabled: Bool
+
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
@@ -37,6 +40,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
+        inputEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil
     ) {
         self.streamID = streamID
@@ -45,6 +49,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
+        self.inputEnabled = inputEnabled
         self.maxDrawableSize = maxDrawableSize
     }
 
@@ -79,6 +84,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
         wrapper.cursorLockEnabled = cursorLockEnabled
+        wrapper.inputEnabled = inputEnabled
         wrapper.streamID = streamID
 
         // Configure scroll callback for native trackpad physics
@@ -115,6 +121,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
             wrapper.cursorLockEnabled = cursorLockEnabled
+            wrapper.inputEnabled = inputEnabled
             wrapper.streamID = streamID
         }
     }

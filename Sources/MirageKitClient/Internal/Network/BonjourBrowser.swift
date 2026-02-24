@@ -24,6 +24,9 @@ public final class MirageDiscovery {
     /// Whether peer-to-peer WiFi discovery is enabled
     public var enablePeerToPeer: Bool = true
 
+    /// Callback invoked whenever discovered hosts changes.
+    public var onHostsChanged: (([MirageHost]) -> Void)?
+
     private var browser: NWBrowser?
     private let serviceType: String
     private var hostsByEndpoint: [NWEndpoint: MirageHost] = [:]
@@ -165,6 +168,7 @@ public final class MirageDiscovery {
 
     private func updateHostsList() {
         discoveredHosts = Array(hostsByEndpoint.values).sorted { $0.name < $1.name }
+        onHostsChanged?(discoveredHosts)
     }
 
     /// Force refresh the hosts list
@@ -172,6 +176,7 @@ public final class MirageDiscovery {
         stopDiscovery()
         hostsByEndpoint.removeAll()
         discoveredHosts.removeAll()
+        onHostsChanged?(discoveredHosts)
         startDiscovery()
     }
 }

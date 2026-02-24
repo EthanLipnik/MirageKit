@@ -44,6 +44,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
         didSet {
             guard cursorLockEnabled != oldValue else { return }
             updateCursorLockMode()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
+    /// Whether event handling is enabled for this capture view.
+    var inputEnabled: Bool = true {
+        didSet {
+            guard inputEnabled != oldValue else { return }
+            handleInputActivityStateChange()
         }
     }
 
@@ -68,6 +77,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Last known mouse location (normalized) for scroll events
     private var lastMouseLocation: CGPoint?
+    private var lastForwardedMouseMoveLocation: CGPoint?
+    private var lastForwardedMouseMoveTime: CFTimeInterval = 0
+    private let mouseMoveForwardInterval: CFTimeInterval = 1.0 / 120.0
 
     /// Locked cursor view for secondary display mode
     private let lockedCursorView = NSView(frame: .zero)
@@ -162,6 +174,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
         )
     }
 
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        handleInputActivityStateChange()
+    }
+
     private func setupLockedCursorView() {
         lockedCursorView.wantsLayer = true
         lockedCursorView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.25).cgColor
@@ -184,11 +201,30 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if documentView.frame.size.width != scrollableSize || documentView.frame.size.height != scrollableSize { documentView.frame = NSRect(x: 0, y: 0, width: scrollableSize, height: scrollableSize) }
 
         recenterIfNeeded(force: lastScrollPosition == .zero)
-        if cursorLockEnabled {
+        if cursorLockEnabled, isInputProcessingActive {
             updateCursorLockAnchor()
             warpCursorToAnchor()
         }
         updateLockedCursorViewPosition()
+    }
+
+    private var isInputProcessingActive: Bool {
+        inputEnabled && window != nil
+    }
+
+    private func handleInputActivityStateChange() {
+        if isInputProcessingActive {
+            updateCursorLockMode()
+        } else {
+            stopLockedCursorSmoothing()
+            cursorHiddenForTyping = false
+            restoreCursorLockIfNeeded()
+            lockedCursorView.isHidden = true
+        }
+
+        lastForwardedMouseMoveLocation = nil
+        lastForwardedMouseMoveTime = 0
+        updateTrackingAreas()
     }
 
     /// Center the scroll view's content offset
@@ -248,6 +284,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func updateCursorLockMode() {
+        guard isInputProcessingActive else {
+            stopLockedCursorSmoothing()
+            restoreCursorLockIfNeeded()
+            return
+        }
+
         if cursorLockEnabled {
             updateSystemCursorVisibility()
             CGAssociateMouseAndMouseCursorPosition(0)
@@ -371,7 +413,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func handleLockedCursorSmoothing() {
-        guard cursorLockEnabled else {
+        guard isInputProcessingActive, cursorLockEnabled else {
             stopLockedCursorSmoothing()
             return
         }
@@ -380,7 +422,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func refreshLockedCursorIfNeeded(force: Bool = false) -> Bool {
-        guard cursorLockEnabled, let cursorPositionStore, let streamID else { return false }
+        guard isInputProcessingActive, cursorLockEnabled, let cursorPositionStore, let streamID else { return false }
         let now = CACurrentMediaTime()
         if !force, now - lastLockedCursorRefreshTime < lockedCursorRefreshInterval { return false }
         lastLockedCursorRefreshTime = now
@@ -392,6 +434,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     func refreshCursorUpdates(force: Bool) {
+        guard isInputProcessingActive else { return }
         let updatedFromPosition = refreshLockedCursorIfNeeded(force: force)
         guard cursorLockEnabled else { return }
         if !updatedFromPosition, let cursorStore, let streamID,
@@ -422,6 +465,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Override scrollWheel to capture phases and handle momentum
     override func scrollWheel(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
+
         // Extract phases from NSEvent
         let phase = MirageScrollPhase(from: event.phase)
         let momentumPhase = MirageScrollPhase(from: event.momentumPhase)
@@ -462,6 +507,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     // MARK: - Mouse Event Handling
 
     override func mouseDown(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             noteLockedCursorLocalInput()
@@ -480,6 +526,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             noteLockedCursorLocalInput()
@@ -498,6 +545,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
@@ -526,14 +574,16 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func mouseMoved(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
+
         let location: CGPoint
+        let movedByDelta = event.deltaX != 0 || event.deltaY != 0
         if cursorLockEnabled {
-            if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
+            if movedByDelta { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
             location = lockedCursorPosition
         } else {
             location = normalizedLocation(from: event)
-            let movedByDelta = event.deltaX != 0 || event.deltaY != 0
             let movedByLocation = if let lastMouseLocation {
                 hypot(location.x - lastMouseLocation.x, location.y - lastMouseLocation.y) > 0.0001
             } else {
@@ -544,6 +594,19 @@ final class ScrollPhysicsCapturingNSView: NSView {
             }
             lastMouseLocation = location
         }
+
+        let movedByLocation = if let previousLocation = lastForwardedMouseMoveLocation {
+            hypot(location.x - previousLocation.x, location.y - previousLocation.y) > 0.0001
+        } else {
+            true
+        }
+        guard movedByDelta || movedByLocation else { return }
+
+        let now = CACurrentMediaTime()
+        guard now - lastForwardedMouseMoveTime >= mouseMoveForwardInterval else { return }
+        lastForwardedMouseMoveTime = now
+        lastForwardedMouseMoveLocation = location
+
         let mouseEvent = MirageMouseEvent(
             button: .left,
             location: location,
@@ -554,6 +617,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func rightMouseDown(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             noteLockedCursorLocalInput()
@@ -572,6 +636,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func rightMouseUp(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             noteLockedCursorLocalInput()
@@ -590,6 +655,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func rightMouseDragged(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
@@ -618,6 +684,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func otherMouseDown(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             noteLockedCursorLocalInput()
@@ -636,6 +703,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func otherMouseUp(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             noteLockedCursorLocalInput()
@@ -654,6 +722,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func otherMouseDragged(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let location: CGPoint
         if cursorLockEnabled {
             if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
@@ -695,6 +764,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func keyDown(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         hideCursorForTypingUntilPointerMovement()
         let keyEvent = MirageKeyEvent(
             keyCode: event.keyCode,
@@ -707,6 +777,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func keyUp(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         let keyEvent = MirageKeyEvent(
             keyCode: event.keyCode,
             characters: event.characters,
@@ -718,6 +789,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     override func flagsChanged(with event: NSEvent) {
+        guard isInputProcessingActive else { return }
         currentModifiers = MirageModifierFlags(nsEventFlags: event.modifierFlags)
         onMouseEvent?(.flagsChanged(currentModifiers))
     }
@@ -740,6 +812,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
         for area in trackingAreas {
             removeTrackingArea(area)
         }
+
+        guard isInputProcessingActive else { return }
 
         // Add new tracking area for the entire view
         let trackingArea = NSTrackingArea(
