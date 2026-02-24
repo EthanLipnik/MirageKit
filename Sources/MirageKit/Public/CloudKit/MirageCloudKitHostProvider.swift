@@ -110,7 +110,7 @@ public final class MirageCloudKitHostProvider {
             ownHosts = hosts.sorted { $0.name < $1.name }
             MirageLogger.appState("Fetched \(hosts.count) own hosts from CloudKit")
         } catch {
-            MirageLogger.error(.appState, "Failed to fetch own hosts: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to fetch own hosts: ")
             lastError = error
         }
     }
@@ -145,14 +145,14 @@ public final class MirageCloudKitHostProvider {
                         }
                     }
                 } catch {
-                    MirageLogger.error(.appState, "Failed to fetch hosts from zone \(zone.zoneID.zoneName): \(error)")
+                    MirageLogger.error(.appState, error: error, message: "Failed to fetch hosts from zone \(zone.zoneID.zoneName): ")
                 }
             }
 
             sharedHosts = hosts.sorted { $0.name < $1.name }
             MirageLogger.appState("Fetched \(hosts.count) shared hosts from CloudKit")
         } catch {
-            MirageLogger.error(.appState, "Failed to enumerate shared zones: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to enumerate shared zones: ")
             lastError = error
         }
     }

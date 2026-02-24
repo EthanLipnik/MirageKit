@@ -141,7 +141,7 @@ final class MetalFrameDiffer: @unchecked Sendable {
             }
             computePipeline = try device.makeComputePipelineState(function: function)
         } catch {
-            MirageLogger.error(.capture, "Failed to create Metal compute pipeline: \(error)")
+            MirageLogger.error(.capture, error: error, message: "Failed to create Metal compute pipeline: ")
             return nil
         }
 

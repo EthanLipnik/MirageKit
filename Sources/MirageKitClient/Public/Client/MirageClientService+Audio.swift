@@ -20,7 +20,7 @@ extension MirageClientService {
             if audioConnection == nil { try await startAudioConnection() }
             try await sendAudioRegistration(streamID: streamID)
         } catch {
-            MirageLogger.error(.client, "Failed to establish audio transport: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to establish audio transport: ")
             stopAudioConnection()
         }
     }
@@ -159,7 +159,7 @@ extension MirageClientService {
             try await sendAudioRegistration(streamID: streamID)
             registrationRefreshCount &+= 1
         } catch {
-            MirageLogger.error(.client, "Audio transport refresh (\(reason)) failed: \(error)")
+            MirageLogger.error(.client, error: error, message: "Audio transport refresh (\(reason)) failed: ")
             stopAudioConnection()
         }
     }
@@ -185,7 +185,7 @@ extension MirageClientService {
                 await self.ensureAudioTransportRegistered(for: started.streamID)
             }
         } catch {
-            MirageLogger.error(.client, "Failed to decode audioStreamStarted: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode audioStreamStarted: ")
         }
     }
 
@@ -205,7 +205,7 @@ extension MirageClientService {
                 self.audioPlaybackController.reset()
             }
         } catch {
-            MirageLogger.error(.client, "Failed to decode audioStreamStopped: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode audioStreamStopped: ")
         }
     }
 
@@ -285,7 +285,7 @@ extension MirageClientService {
                 }
 
                 if let error {
-                    MirageLogger.error(.client, "Audio UDP receive error: \(error)")
+                    MirageLogger.error(.client, error: error, message: "Audio UDP receive error: ")
                     return
                 }
 

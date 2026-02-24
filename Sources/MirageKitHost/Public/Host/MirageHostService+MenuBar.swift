@@ -50,7 +50,7 @@ extension MirageHostService {
             let response = try ControlMessage(type: .menuActionResult, content: result)
             connection.send(content: response.serialize(), completion: .idempotent)
         } catch {
-            MirageLogger.error(.menuBar, "Failed to handle menu action request: \(error)")
+            MirageLogger.error(.menuBar, error: error, message: "Failed to handle menu action request: ")
         }
     }
 
@@ -134,7 +134,7 @@ extension MirageHostService {
                 targetFrameRate: targetFrameRate
             )
         } catch {
-            MirageLogger.error(.host, "Failed to handle desktop stream request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
         }
     }
 
@@ -152,7 +152,7 @@ extension MirageHostService {
 
             await stopDesktopStream(reason: .clientRequested)
         } catch {
-            MirageLogger.error(.host, "Failed to handle stop desktop stream: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle stop desktop stream: ")
         }
     }
 }

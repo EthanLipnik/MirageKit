@@ -91,7 +91,7 @@ extension MirageHostService {
             try await clientContext.send(.contentBoundsUpdate, content: message)
             MirageLogger.host("Sent content bounds update for stream \(streamID): \(bounds)")
         } catch {
-            MirageLogger.error(.host, "Failed to send content bounds update: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to send content bounds update: ")
         }
     }
 
@@ -143,7 +143,7 @@ extension MirageHostService {
             )
             MirageLogger.host("Auto-started stream for new independent window \(window.id)")
         } catch {
-            MirageLogger.error(.host, "Failed to auto-start stream for new window: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to auto-start stream for new window: ")
         }
     }
 
@@ -165,7 +165,7 @@ extension MirageHostService {
             try await context.updateStreamScale(clampedScale)
             await sendStreamScaleUpdate(streamID: streamID)
         } catch {
-            MirageLogger.error(.host, "Failed to update stream scale: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to update stream scale: ")
         }
     }
 
@@ -203,7 +203,7 @@ extension MirageHostService {
                         )
                 }
             } catch {
-                MirageLogger.error(.host, "Failed to update desktop stream refresh rate: \(error)")
+                MirageLogger.error(.host, error: error, message: "Failed to update desktop stream refresh rate: ")
             }
             return
         }
@@ -230,7 +230,7 @@ extension MirageHostService {
                     .host("Stream refresh override pending: requested \(targetFrameRate)fps, applied \(appliedRate)fps")
             }
         } catch {
-            MirageLogger.error(.host, "Failed to update stream refresh rate: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to update stream refresh rate: ")
         }
     }
 
@@ -262,7 +262,7 @@ extension MirageHostService {
                 MirageLogger.host("Encoder settings update applied without stream resize notification (bitrate only)")
             }
         } catch {
-            MirageLogger.error(.host, "Failed to apply encoder settings update: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to apply encoder settings update: ")
         }
     }
 
@@ -478,7 +478,7 @@ extension MirageHostService {
         } catch DesktopResizeTransactionAbort.streamNoLongerActive {
             MirageLogger.host("Desktop resize transaction #\(requestNumber) aborted because stream is no longer active")
         } catch {
-            MirageLogger.error(.host, "Failed to resize desktop stream: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to resize desktop stream: ")
             shouldStopDesktopStreamWithError = streamID == desktopStreamID
         }
 
@@ -583,7 +583,7 @@ extension MirageHostService {
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
                 )
         } catch {
-            MirageLogger.error(.host, "Failed to update virtual display resolution: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to update virtual display resolution: ")
         }
     }
 }

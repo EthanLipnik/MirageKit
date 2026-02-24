@@ -182,7 +182,7 @@ extension MirageHostService {
                 audioConfiguration: audioConfiguration
             )
         } catch {
-            MirageLogger.error(.host, "Failed to handle startStream: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle startStream: ")
         }
     }
 
@@ -200,7 +200,7 @@ extension MirageHostService {
                 newResolution: baseResolution
             )
         } catch {
-            MirageLogger.error(.host, "Failed to handle displayResolutionChange: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle displayResolutionChange: ")
         }
     }
 
@@ -211,7 +211,7 @@ extension MirageHostService {
                 .host("Client requested stream scale change for stream \(request.streamID): \(request.streamScale)")
             await handleStreamScaleChange(streamID: request.streamID, streamScale: request.streamScale)
         } catch {
-            MirageLogger.error(.host, "Failed to handle streamScaleChange: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle streamScaleChange: ")
         }
     }
 
@@ -228,7 +228,7 @@ extension MirageHostService {
                 forceDisplayRefresh: request.forceDisplayRefresh ?? false
             )
         } catch {
-            MirageLogger.error(.host, "Failed to handle streamRefreshRateChange: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle streamRefreshRateChange: ")
         }
     }
 
@@ -244,7 +244,7 @@ extension MirageHostService {
                 )
             await handleStreamEncoderSettingsChange(request)
         } catch {
-            MirageLogger.error(.host, "Failed to handle streamEncoderSettingsChange: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle streamEncoderSettingsChange: ")
         }
     }
 
@@ -287,7 +287,7 @@ extension MirageHostService {
                 MirageLogger.host("No session found for stream \(inputMessage.streamID)")
             }
         } catch {
-            MirageLogger.error(.host, "Failed to decode input event: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to decode input event: ")
         }
     }
 

@@ -118,7 +118,7 @@ public extension MirageHostService {
                 do {
                     try await clientContext.send(.streamMetricsUpdate, content: metrics)
                 } catch {
-                    MirageLogger.error(.host, "Failed to send stream metrics: \(error)")
+                    MirageLogger.error(.host, error: error, message: "Failed to send stream metrics: ")
                 }
             }
         }
@@ -255,7 +255,7 @@ public extension MirageHostService {
             }
         } catch {
             // Capture failed (likely permission issue) - clean up and rethrow
-            MirageLogger.error(.host, "Failed to start capture: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to start capture: ")
             await context.stop()
             streamsByID.removeValue(forKey: streamID)
             activeStreams.removeAll { $0.id == streamID }
@@ -458,7 +458,7 @@ public extension MirageHostService {
                         .host("Encoding at scaled resolution: \(encodedDimensions.width)x\(encodedDimensions.height)")
                 }
             } catch {
-                MirageLogger.error(.host, "Failed to update stream dimensions: \(error)")
+                MirageLogger.error(.host, error: error, message: "Failed to update stream dimensions: ")
             }
         }
     }
@@ -521,7 +521,7 @@ public extension MirageHostService {
                 MirageLogger.host("Capture resolution updated to \(width)x\(height)")
             }
         } catch {
-            MirageLogger.error(.host, "Failed to update capture resolution: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to update capture resolution: ")
         }
     }
 }

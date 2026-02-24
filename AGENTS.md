@@ -34,6 +34,8 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Custom mode: encoder overrides for bit depth, bitrate, and keyframe interval.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
 - Default `MIRAGE_LOG` categories include `host`, `client`, `appState`, `stream`, `decoder`, and `renderer`; additional categories use explicit `MIRAGE_LOG` overrides.
+- Diagnostics fanout is public and app-agnostic through `MirageDiagnostics` with multi-sink registration, structured error events, and context-provider snapshots.
+- MirageKit diagnostics payloads stay structured and sanitized (technical fields only); app-layer crash reporters own transport and vendor-specific policy.
 - Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
 - Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and bit-depth viability checks.
 - Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled).
@@ -113,6 +115,7 @@ MirageKit/
 │  │  │  ├─ Remote/
 │  │  │  ├─ Input/
 │  │  │  ├─ Shared/
+│  │  │  ├─ Diagnostics/
 │  │  │  └─ Types/
 │  │  └─ Internal/
 │  │     ├─ Logging/
@@ -150,6 +153,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 
 ## Public API
 - Shared types, input events, trust, and CloudKit helpers: `Sources/MirageKit/Public/`.
+- Diagnostics hooks and structured diagnostics primitives: `Sources/MirageKit/Public/Diagnostics/`.
 - Bootstrap metadata and wake/unlock runtime interfaces: `Sources/MirageKit/Public/Bootstrap/`.
 - Remote signaling and STUN preflight helpers: `Sources/MirageKit/Public/Remote/`.
 - Client services, delegates, session stores, metrics, cursor snapshots, and stream views: `Sources/MirageKitClient/Public/`.
@@ -158,6 +162,7 @@ Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
 
 ## Internal Implementation
 - Shared protocol, logging, and support utilities: `Sources/MirageKit/Internal/`.
+- `MirageLogger` forwards log and structured error/fault events into `MirageDiagnostics` sinks.
 - Shared path classification utility: `Sources/MirageKit/Internal/Utilities/MirageNetworkPathClassifier.swift`.
 - Client decode, render, and transport: `Sources/MirageKitClient/Internal/`.
 - Host capture, encode, virtual display, and host utilities: `Sources/MirageKitHost/Internal/`.

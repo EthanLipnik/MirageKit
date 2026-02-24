@@ -225,7 +225,7 @@ extension WindowCaptureEngine {
             try await stream?.stopCapture()
             MirageLogger.capture("event=stream_lifecycle phase=stop_success mode=\(captureMode == .display ? "display" : "window")")
         } catch {
-            MirageLogger.error(.capture, "Error stopping capture: \(error)")
+            MirageLogger.error(.capture, error: error, message: "Error stopping capture: ")
         }
 
         stream = nil
@@ -367,7 +367,7 @@ extension WindowCaptureEngine {
                     "event=restart_complete reason=\(reason) streak=\(activeRestartStreak) mode=\(mode == .display ? "display" : "window")"
                 )
         } catch {
-            MirageLogger.error(.capture, "Capture restart failed: \(error)")
+            MirageLogger.error(.capture, error: error, message: "Capture restart failed: ")
         }
     }
 

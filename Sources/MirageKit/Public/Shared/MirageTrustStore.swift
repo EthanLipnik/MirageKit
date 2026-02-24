@@ -67,7 +67,7 @@ public final class MirageTrustStore {
             MirageLogger.appState("Loaded \(trustedDevices.count) trusted devices")
         } catch {
             isLoading = false
-            MirageLogger.error(.appState, "Failed to load trusted devices: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to load trusted devices: ")
         }
     }
 
@@ -78,7 +78,7 @@ public final class MirageTrustStore {
             UserDefaults.standard.set(data, forKey: trustedDevicesKey)
             MirageLogger.appState("Saved \(trustedDevices.count) trusted devices")
         } catch {
-            MirageLogger.error(.appState, "Failed to save trusted devices: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to save trusted devices: ")
         }
     }
 

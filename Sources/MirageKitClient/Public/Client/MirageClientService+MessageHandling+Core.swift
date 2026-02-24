@@ -240,7 +240,7 @@ extension MirageClientService {
                 connectionState = .error(rejectionDescription)
             }
         } catch {
-            MirageLogger.error(.client, "Failed to decode hello response: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode hello response: ")
         }
     }
 
@@ -255,7 +255,7 @@ extension MirageClientService {
             availableWindows = windowList.windows
             delegate?.clientService(self, didUpdateWindowList: windowList.windows)
         } catch {
-            MirageLogger.error(.client, "Failed to decode window list: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode window list: ")
         }
     }
 
@@ -331,7 +331,7 @@ extension MirageClientService {
                             "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
                         )
                     } catch {
-                        MirageLogger.error(.client, "Failed to establish video connection: \(error)")
+                        MirageLogger.error(.client, error: error, message: "Failed to establish video connection: ")
                         self.registeredStreamIDs.remove(streamID)
                     }
                 }
@@ -466,7 +466,7 @@ extension MirageClientService {
                 )
             }
         } catch {
-            MirageLogger.error(.client, "Failed to decode transport refresh request: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode transport refresh request: ")
         }
     }
 
@@ -529,7 +529,7 @@ extension MirageClientService {
                 requiresUsername: update.requiresUsername
             )
         } catch {
-            MirageLogger.error(.client, "Failed to decode session state update: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode session state update: ")
         }
     }
 
@@ -550,7 +550,7 @@ extension MirageClientService {
                 retryAfterSeconds: response.retryAfterSeconds
             )
         } catch {
-            MirageLogger.error(.client, "Failed to decode unlock response: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode unlock response: ")
         }
     }
 
@@ -585,7 +585,7 @@ extension MirageClientService {
                         await self.ensureAudioTransportRegistered(for: streamID)
                         MirageLogger.client("Registered for login display video stream \(streamID)")
                     } catch {
-                        MirageLogger.error(.client, "Failed to establish video connection for login display: \(error)")
+                        MirageLogger.error(.client, error: error, message: "Failed to establish video connection for login display: ")
                         self.registeredStreamIDs.remove(streamID)
                     }
                 }
@@ -599,7 +599,7 @@ extension MirageClientService {
                 requiresUsername: ready.requiresUsername
             )
         } catch {
-            MirageLogger.error(.client, "Failed to decode login display ready: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode login display ready: ")
         }
     }
 
@@ -634,7 +634,7 @@ extension MirageClientService {
 
             delegate?.clientService(self, loginDisplayDidStop: streamID, newState: stopped.newState)
         } catch {
-            MirageLogger.error(.client, "Failed to decode login display stopped: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode login display stopped: ")
         }
     }
 }

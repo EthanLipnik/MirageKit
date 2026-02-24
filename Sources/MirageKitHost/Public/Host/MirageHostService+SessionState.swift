@@ -72,7 +72,7 @@ extension MirageHostService {
         do {
             try await clientContext.send(.sessionStateUpdate, content: message)
         } catch {
-            MirageLogger.error(.host, "Failed to send session state: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to send session state: ")
         }
     }
 
@@ -82,7 +82,7 @@ extension MirageHostService {
             try await clientContext.send(.windowList, content: windowList)
             MirageLogger.host("Sent window list with \(availableWindows.count) windows")
         } catch {
-            MirageLogger.error(.host, "Failed to send window list: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to send window list: ")
         }
     }
 

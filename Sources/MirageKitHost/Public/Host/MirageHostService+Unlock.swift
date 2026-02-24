@@ -64,7 +64,7 @@ extension MirageHostService {
         do {
             request = try message.decode(UnlockRequestMessage.self)
         } catch {
-            MirageLogger.error(.host, "Failed to decode unlock request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to decode unlock request: ")
             let response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,

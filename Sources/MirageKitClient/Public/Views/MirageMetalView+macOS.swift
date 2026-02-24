@@ -211,7 +211,7 @@ public class MirageMetalView: NSView {
         do {
             renderer = try MetalRenderer(device: device)
         } catch {
-            MirageLogger.error(.renderer, "Failed to create renderer: \(error)")
+            MirageLogger.error(.renderer, error: error, message: "Failed to create renderer: ")
         }
 
         metalLayer.device = device

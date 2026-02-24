@@ -140,7 +140,7 @@ extension MirageClientService {
 
             MirageLogger.client("Hello sent successfully")
         } catch {
-            MirageLogger.error(.client, "Failed to send hello message: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to send hello message: ")
             throw error
         }
     }
@@ -241,7 +241,7 @@ extension MirageClientService {
             startReceiving()
         } catch {
             pendingConnection?.cancel()
-            MirageLogger.error(.client, "Connection failed: \(error)")
+            MirageLogger.error(.client, error: error, message: "Connection failed: ")
             await handleDisconnect(
                 reason: error.localizedDescription,
                 state: .disconnected,

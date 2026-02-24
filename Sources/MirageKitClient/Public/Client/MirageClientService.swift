@@ -501,7 +501,7 @@ public final class MirageClientService {
                     try await self.sendStreamRegistration(streamID: streamID)
                     self.sendKeyframeRequest(for: streamID)
                 } catch {
-                    MirageLogger.error(.client, "Startup registration retry failed: \(error)")
+                    MirageLogger.error(.client, error: error, message: "Startup registration retry failed: ")
                 }
             }
         }
@@ -556,6 +556,7 @@ public final class MirageClientService {
     let adaptiveFallbackBitrateStep: Double = 0.85
     let adaptiveRestoreBitrateStep: Double = 1.10
     let adaptiveFallbackBitrateFloorBps: Int = 8_000_000
+    nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
 
     public enum ConnectionState: Equatable {
         case disconnected
@@ -621,6 +622,68 @@ public final class MirageClientService {
         identityManager = MirageIdentityManager.shared
         self.sessionStore.clientService = self
         registerControlMessageHandlers()
+        registerDiagnosticsContextProvider()
+    }
+
+    deinit {
+        guard let diagnosticsContextProviderToken else { return }
+        Task {
+            await MirageDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
+        }
+    }
+
+    private func registerDiagnosticsContextProvider() {
+        Task { [weak self] in
+            guard let self else { return }
+            diagnosticsContextProviderToken = await MirageDiagnostics.registerContextProvider { [weak self] in
+                guard let self else { return [:] }
+                return await MainActor.run { self.makeDiagnosticsContextSnapshot() }
+            }
+        }
+    }
+
+    private func makeDiagnosticsContextSnapshot() -> MirageDiagnosticsContext {
+        [
+            "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
+            "client.awaitingManualApproval": .bool(isAwaitingManualApproval),
+            "client.mediaPayloadEncryptionEnabled": .bool(mediaPayloadEncryptionEnabled),
+            "client.availableWindowsCount": .int(availableWindows.count),
+            "client.activeStreamsCount": .int(activeStreams.count),
+            "client.availableAppsCount": .int(availableApps.count),
+            "client.hasReceivedWindowList": .bool(hasReceivedWindowList),
+            "client.hasReceivedAppList": .bool(hasReceivedAppList),
+            "client.desktopStreamActive": .bool(desktopStreamID != nil),
+            "client.loginDisplayStreamActive": .bool(loginDisplayStreamID != nil),
+            "client.adaptiveFallbackMode": .string(diagnosticsAdaptiveFallbackModeName(adaptiveFallbackMode)),
+            "client.maxRefreshRateOverride": maxRefreshRateOverride.map(MirageDiagnosticsValue.int) ?? .null,
+            "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null
+        ]
+    }
+
+    private static func diagnosticsConnectionStateName(_ state: ConnectionState) -> String {
+        switch state {
+        case .disconnected:
+            return "disconnected"
+        case .connecting:
+            return "connecting"
+        case .connected:
+            return "connected"
+        case .reconnecting:
+            return "reconnecting"
+        case .error:
+            return "error"
+        }
+    }
+
+    private func diagnosticsAdaptiveFallbackModeName(_ mode: AdaptiveFallbackMode) -> String {
+        switch mode {
+        case .disabled:
+            return "disabled"
+        case .automatic:
+            return "automatic"
+        case .customTemporary:
+            return "customTemporary"
+        }
     }
 
     #if os(iOS) || os(visionOS)

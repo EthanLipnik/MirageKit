@@ -50,7 +50,7 @@ extension MirageHostService {
                 inputController.handleInputEvent(inputMessage.event, window: cacheEntry.window)
             }
         } catch {
-            MirageLogger.error(.host, "Failed to decode input event: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to decode input event: ")
         }
     }
 

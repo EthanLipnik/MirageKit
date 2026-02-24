@@ -329,7 +329,7 @@ extension MirageHostService {
 
             let (data, _, isComplete, error) = result
             if let error {
-                MirageLogger.error(.host, "Error receiving hello: \(error)")
+                MirageLogger.error(.host, error: error, message: "Error receiving hello: ")
                 return nil
             }
 
@@ -469,7 +469,7 @@ extension MirageHostService {
                 )
             )
         } catch {
-            MirageLogger.error(.host, "Failed to decode hello: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to decode hello: ")
             return nil
         }
     }
@@ -824,7 +824,7 @@ extension MirageHostService {
 
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error {
-                    MirageLogger.error(.host, "Failed to send hello response: \(error)")
+                    MirageLogger.error(.host, error: error, message: "Failed to send hello response: ")
                     if accepted { connection.cancel() }
                 } else if accepted {
                     MirageLogger.host(
@@ -838,7 +838,7 @@ extension MirageHostService {
             })
             return (true, builtResponse.mediaSecurity, builtResponse.response.mediaEncryptionEnabled)
         } catch {
-            MirageLogger.error(.host, "Failed to create hello response: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to create hello response: ")
             if cancelAfterSend { connection.cancel() }
             return (false, nil, false)
         }

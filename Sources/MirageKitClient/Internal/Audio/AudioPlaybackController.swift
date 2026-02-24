@@ -130,7 +130,7 @@ final class AudioPlaybackController {
         do {
             try engine.start()
         } catch {
-            MirageLogger.error(.client, "Audio playback engine failed to start: \(error)")
+            MirageLogger.error(.client, error: error, message: "Audio playback engine failed to start: ")
             return false
         }
 
@@ -245,7 +245,7 @@ final class AudioPlaybackController {
             audioSessionConfigured = true
             return true
         } catch {
-            MirageLogger.error(.client, "Audio session setup failed: \(error)")
+            MirageLogger.error(.client, error: error, message: "Audio session setup failed: ")
             return false
         }
     }

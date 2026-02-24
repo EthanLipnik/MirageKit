@@ -103,7 +103,7 @@ public final class MirageCloudKitManager {
                 lastError = error
                 isAvailable = false
                 isInitialized = true
-                MirageLogger.error(.appState, "CloudKit container creation failed: \(error)")
+                MirageLogger.error(.appState, error: error, message: "CloudKit container creation failed: ")
                 return
             }
         }
@@ -173,7 +173,7 @@ public final class MirageCloudKitManager {
             lastError = error
             isAvailable = false
             isInitialized = true
-            MirageLogger.error(.appState, "CloudKit initialization failed: \(error.localizedDescription)")
+            MirageLogger.error(.appState, error: error, message: "CloudKit initialization failed: ")
             if let ckError = error as? CKError {
                 MirageLogger.error(
                     .appState,
@@ -244,7 +244,7 @@ public final class MirageCloudKitManager {
             MirageLogger.appState("Registered device in CloudKit: \(deviceName)")
         } catch {
             // Don't treat registration failures as critical
-            MirageLogger.error(.appState, "Failed to register device in CloudKit: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to register device in CloudKit: ")
         }
     }
 
@@ -296,7 +296,7 @@ public final class MirageCloudKitManager {
 
             return false
         } catch {
-            MirageLogger.error(.appState, "Failed to check share participants: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to check share participants: ")
             return false
         }
     }
@@ -345,7 +345,7 @@ public final class MirageCloudKitManager {
                 savePolicy: .changedKeys
             )
         } catch {
-            MirageLogger.error(.appState, "Failed to register identity in CloudKit: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to register identity in CloudKit: ")
         }
     }
 
@@ -383,7 +383,7 @@ public final class MirageCloudKitManager {
                 }
             }
         } catch {
-            MirageLogger.error(.appState, "Failed to enumerate shared zones for identity trust: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to enumerate shared zones for identity trust: ")
         }
 
         return false

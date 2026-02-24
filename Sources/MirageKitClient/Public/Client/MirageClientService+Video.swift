@@ -215,7 +215,7 @@ extension MirageClientService {
                     }
 
                     if let error {
-                        MirageLogger.error(.client, "UDP receive error: \(error)")
+                        MirageLogger.error(.client, error: error, message: "UDP receive error: ")
                         return
                     }
 
@@ -354,7 +354,7 @@ extension MirageClientService {
         do {
             if udpConnection == nil { try await startVideoConnection() }
         } catch {
-            MirageLogger.error(.client, "Transport refresh (\(reason)) failed to start video connection: \(error)")
+            MirageLogger.error(.client, error: error, message: "Transport refresh (\(reason)) failed to start video connection: ")
             return
         }
 
@@ -450,7 +450,7 @@ extension MirageClientService {
                 if udpConnection == nil { try await startVideoConnection() }
                 try await sendStreamRegistration(streamID: streamID)
             } catch {
-                MirageLogger.error(.client, "Stream recovery registration failed: \(error)")
+                MirageLogger.error(.client, error: error, message: "Stream recovery registration failed: ")
                 stopVideoConnection()
             }
         }
@@ -674,7 +674,7 @@ extension MirageClientService {
                         .formatted(.number.precision(.fractionLength(1)))
                     MirageLogger.client("Adaptive restore bitrate step \(fromMbps) → \(toMbps) Mbps for stream \(streamID)")
                 } catch {
-                    MirageLogger.error(.client, "Failed to restore bitrate for stream \(streamID): \(error)")
+                    MirageLogger.error(.client, error: error, message: "Failed to restore bitrate for stream \(streamID): ")
                 }
             }
             return
@@ -700,7 +700,7 @@ extension MirageClientService {
                             "Adaptive restore bit depth step \(currentBitDepth.displayName) → \(nextBitDepth.displayName) for stream \(streamID)"
                         )
                 } catch {
-                    MirageLogger.error(.client, "Failed to restore bit depth for stream \(streamID): \(error)")
+                    MirageLogger.error(.client, error: error, message: "Failed to restore bit depth for stream \(streamID): ")
                 }
             }
         }
@@ -742,7 +742,7 @@ extension MirageClientService {
                     .formatted(.number.precision(.fractionLength(1)))
                 MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) → \(toMbps) Mbps for stream \(streamID)")
             } catch {
-                MirageLogger.error(.client, "Failed to apply adaptive fallback for stream \(streamID): \(error)")
+                MirageLogger.error(.client, error: error, message: "Failed to apply adaptive fallback for stream \(streamID): ")
             }
         }
     }
@@ -786,7 +786,7 @@ extension MirageClientService {
                     let nextName = nextBitDepth.displayName
                     MirageLogger.client("Adaptive fallback bit depth step \(currentName) → \(nextName) for stream \(streamID)")
                 } catch {
-                    MirageLogger.error(.client, "Failed to apply fallback bit depth for stream \(streamID): \(error)")
+                    MirageLogger.error(.client, error: error, message: "Failed to apply fallback bit depth for stream \(streamID): ")
                 }
             }
             return
@@ -819,7 +819,7 @@ extension MirageClientService {
                     .formatted(.number.precision(.fractionLength(1)))
                 MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) → \(toMbps) Mbps for stream \(streamID)")
             } catch {
-                MirageLogger.error(.client, "Failed to apply adaptive fallback for stream \(streamID): \(error)")
+                MirageLogger.error(.client, error: error, message: "Failed to apply adaptive fallback for stream \(streamID): ")
             }
         }
     }

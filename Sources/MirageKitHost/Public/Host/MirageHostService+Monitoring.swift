@@ -98,7 +98,7 @@ extension MirageHostService {
             try await clientContext.send(.cursorUpdate, content: message)
             MirageLogger.host("Cursor update sent: \(cursorType) (visible: \(isVisible))")
         } catch {
-            MirageLogger.error(.host, "Failed to send cursor update: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to send cursor update: ")
         }
     }
 
@@ -119,7 +119,7 @@ extension MirageHostService {
         do {
             try await clientContext.send(.cursorPositionUpdate, content: message)
         } catch {
-            MirageLogger.error(.host, "Failed to send cursor position update: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to send cursor position update: ")
         }
     }
 
@@ -160,7 +160,7 @@ extension MirageHostService {
                 await context.requestKeyframe()
                 MirageLogger.host("Window \(windowID) active - restored to \(targetFrameRate) fps with keyframe")
             } catch {
-                MirageLogger.error(.host, "Failed to restore frame rate for window \(windowID): \(error)")
+                MirageLogger.error(.host, error: error, message: "Failed to restore frame rate for window \(windowID): ")
             }
         } else {
             // Window became inactive - throttle to 1 fps
@@ -168,7 +168,7 @@ extension MirageHostService {
                 try await context.updateFrameRate(1)
                 MirageLogger.host("Window \(windowID) inactive - throttled to 1 fps")
             } catch {
-                MirageLogger.error(.host, "Failed to throttle window \(windowID): \(error)")
+                MirageLogger.error(.host, error: error, message: "Failed to throttle window \(windowID): ")
             }
         }
     }

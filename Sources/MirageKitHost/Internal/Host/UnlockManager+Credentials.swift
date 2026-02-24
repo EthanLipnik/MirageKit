@@ -46,7 +46,7 @@ extension UnlockManager {
         do {
             try process.run()
         } catch {
-            MirageLogger.error(.host, "Failed to run dscl: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to run dscl: ")
             return .failedToRun(error.localizedDescription)
         }
 

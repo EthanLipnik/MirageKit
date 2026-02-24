@@ -112,7 +112,7 @@ extension MirageHostService {
                 }
             } catch {
                 if attempt == attempts {
-                    MirageLogger.error(.host, "Failed to resolve Lights Out exclusion windows: \(error)")
+                    MirageLogger.error(.host, error: error, message: "Failed to resolve Lights Out exclusion windows: ")
                     return []
                 }
             }
@@ -199,7 +199,7 @@ extension MirageHostService {
                 try task.run()
                 task.waitUntilExit()
             } catch {
-                MirageLogger.error(.host, "Failed to lock host session: \(error)")
+                MirageLogger.error(.host, error: error, message: "Failed to lock host session: ")
             }
         }
     }

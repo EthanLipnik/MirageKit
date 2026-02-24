@@ -39,7 +39,7 @@ public extension MirageClientService {
             let data = message.serialize()
             connection.send(content: data, completion: .idempotent)
         } catch {
-            MirageLogger.error(.client, "Failed to send input: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to send input: ")
         }
     }
 }

@@ -241,7 +241,7 @@ extension StreamContext {
                         didResetEncoder = true
                         lastEncoderResetTime = now
                     } catch {
-                        MirageLogger.error(.stream, "Encoder reset failed: \(error)")
+                        MirageLogger.error(.stream, error: error, message: "Encoder reset failed: ")
                     }
                 } else {
                     let remainingSeconds = (encoderResetCooldown - (now - lastEncoderResetTime))
@@ -359,7 +359,7 @@ extension StreamContext {
             } catch {
                 encodeErrorIntervalCount += 1
                 droppedFrameCount += 1
-                MirageLogger.error(.stream, "Encode error: \(error)")
+                MirageLogger.error(.stream, error: error, message: "Encode error: ")
                 continue
             }
             await logStreamStatsIfNeeded()

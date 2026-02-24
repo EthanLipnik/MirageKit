@@ -139,7 +139,7 @@ extension MirageHostService {
 
                     MirageLogger.host("Redirected cooldown window \(cooldownWindowID) to new window \(windowID)")
                 } catch {
-                    MirageLogger.error(.host, "Failed to start stream for redirected window: \(error)")
+                    MirageLogger.error(.host, error: error, message: "Failed to start stream for redirected window: ")
                 }
                 return
             }
@@ -197,7 +197,7 @@ extension MirageHostService {
 
             MirageLogger.host("Added new window \(windowID) to app stream \(bundleID)")
         } catch {
-            MirageLogger.error(.host, "Failed to start stream for new window: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to start stream for new window: ")
         }
     }
 

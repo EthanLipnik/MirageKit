@@ -35,7 +35,7 @@ extension MirageHostService {
 
             sendPendingAppListRequestIfPossible()
         } catch {
-            MirageLogger.error(.host, "Failed to handle app list request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle app list request: ")
         }
     }
 
@@ -190,7 +190,7 @@ extension MirageHostService {
                         isResizable: isResizable
                     ))
                 } catch {
-                    MirageLogger.error(.host, "Failed to start stream for window \(window.id): \(error)")
+                    MirageLogger.error(.host, error: error, message: "Failed to start stream for window \(window.id): ")
                 }
             }
 
@@ -208,7 +208,7 @@ extension MirageHostService {
 
             MirageLogger.host("Started streaming \(app.name) with \(streamedWindows.count) windows")
         } catch {
-            MirageLogger.error(.host, "Failed to handle select app: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle select app: ")
         }
     }
 
@@ -248,7 +248,7 @@ extension MirageHostService {
                 MirageLogger.host("Closed window \(request.windowID)")
             }
         } catch {
-            MirageLogger.error(.host, "Failed to handle close window request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle close window request: ")
         }
     }
 
@@ -266,7 +266,7 @@ extension MirageHostService {
                 // TODO: Add encoder throttling when StreamContext supports setTargetFrameRate
             }
         } catch {
-            MirageLogger.error(.host, "Failed to handle stream paused: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle stream paused: ")
         }
     }
 
@@ -284,7 +284,7 @@ extension MirageHostService {
                 // TODO: Restore frame rate when StreamContext supports setTargetFrameRate
             }
         } catch {
-            MirageLogger.error(.host, "Failed to handle stream resumed: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle stream resumed: ")
         }
     }
 
@@ -318,7 +318,7 @@ extension MirageHostService {
                 await endAppSessionIfIdle(bundleIdentifier: bundleIdentifier)
             }
         } catch {
-            MirageLogger.error(.host, "Failed to handle cancel cooldown: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle cancel cooldown: ")
         }
     }
 
@@ -371,7 +371,7 @@ extension MirageHostService {
                 try await clientContext.send(.appList, content: response)
                 MirageLogger.host("Sent \(apps.count) apps to \(clientContext.client.name)")
             } catch {
-                MirageLogger.error(.host, "Failed to handle app list request: \(error)")
+                MirageLogger.error(.host, error: error, message: "Failed to handle app list request: ")
                 return
             }
 

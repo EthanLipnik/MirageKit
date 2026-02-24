@@ -48,7 +48,7 @@ extension MirageHostService {
             let port = try await startRemoteControlListenerIfNeeded()
             MirageLogger.host("Remote QUIC listener active on port \(port)")
         } catch {
-            MirageLogger.error(.host, "Failed to start remote QUIC listener: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to start remote QUIC listener: ")
         }
     }
 

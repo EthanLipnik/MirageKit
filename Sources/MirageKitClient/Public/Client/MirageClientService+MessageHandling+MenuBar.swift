@@ -25,7 +25,7 @@ extension MirageClientService {
             }
             onMenuBarUpdate?(update.streamID, update.menuBar)
         } catch {
-            MirageLogger.error(.menuBar, "Failed to decode menu bar update: \(error)")
+            MirageLogger.error(.menuBar, error: error, message: "Failed to decode menu bar update: ")
         }
     }
 
@@ -35,7 +35,7 @@ extension MirageClientService {
             MirageLogger.log(.menuBar, "Menu action result for stream \(result.streamID): \(result.success)")
             onMenuActionResult?(result.streamID, result.success, result.errorMessage)
         } catch {
-            MirageLogger.error(.menuBar, "Failed to decode menu action result: \(error)")
+            MirageLogger.error(.menuBar, error: error, message: "Failed to decode menu action result: ")
         }
     }
 }

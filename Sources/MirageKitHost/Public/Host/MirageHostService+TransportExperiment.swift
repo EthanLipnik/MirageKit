@@ -49,7 +49,7 @@ extension MirageHostService {
                 "Sent transport refresh request for stream \(streamID) (\(reason), count \(transportRefreshRequests))"
             )
         } catch {
-            MirageLogger.error(.host, "Failed to send transport refresh request for stream \(streamID): \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to send transport refresh request for stream \(streamID): ")
         }
     }
 

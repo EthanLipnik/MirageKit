@@ -296,7 +296,7 @@ extension MirageHostService {
                 do {
                     try await clientContext.send(.streamMetricsUpdate, content: metrics)
                 } catch {
-                    MirageLogger.error(.host, "Failed to send desktop stream metrics: \(error)")
+                    MirageLogger.error(.host, error: error, message: "Failed to send desktop stream metrics: ")
                 }
             }
         }

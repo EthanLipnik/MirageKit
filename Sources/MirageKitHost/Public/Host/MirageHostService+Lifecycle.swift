@@ -62,7 +62,7 @@ public extension MirageHostService {
                     }
                 }
         } catch {
-            MirageLogger.error(.host, "Failed to start: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to start: ")
             state = .error(error.localizedDescription)
             throw error
         }

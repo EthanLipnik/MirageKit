@@ -20,7 +20,7 @@ extension MirageClientService {
             hasReceivedAppList = true
             onAppListReceived?(appList.apps)
         } catch {
-            MirageLogger.error(.client, "Failed to decode app list: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode app list: ")
         }
     }
 
@@ -43,7 +43,7 @@ extension MirageClientService {
                 "Received host hardware icon payload bytes=\(hostIcon.pngData.count) icon=\(hostIcon.iconName ?? "nil") family=\(hostIcon.hardwareMachineFamily ?? "nil")"
             )
         } catch {
-            MirageLogger.error(.client, "Failed to decode host hardware icon: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode host hardware icon: ")
         }
     }
 
@@ -54,7 +54,7 @@ extension MirageClientService {
             streamingAppBundleID = started.bundleIdentifier
             onAppStreamStarted?(started.bundleIdentifier, started.appName, started.windows)
         } catch {
-            MirageLogger.error(.client, "Failed to decode app stream started: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode app stream started: ")
         }
     }
 
@@ -64,7 +64,7 @@ extension MirageClientService {
             MirageLogger.client("Window added to stream: \(added.windowID)")
             onWindowAddedToStream?(added)
         } catch {
-            MirageLogger.error(.client, "Failed to decode window added: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode window added: ")
         }
     }
 
@@ -74,7 +74,7 @@ extension MirageClientService {
             MirageLogger.client("Window cooldown started: \(cooldown.windowID) for \(cooldown.durationSeconds)s")
             onWindowCooldownStarted?(cooldown)
         } catch {
-            MirageLogger.error(.client, "Failed to decode cooldown started: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode cooldown started: ")
         }
     }
 
@@ -84,7 +84,7 @@ extension MirageClientService {
             MirageLogger.client("Window cooldown cancelled, new window: \(cancelled.newWindowID)")
             onWindowCooldownCancelled?(cancelled)
         } catch {
-            MirageLogger.error(.client, "Failed to decode cooldown cancelled: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode cooldown cancelled: ")
         }
     }
 
@@ -97,7 +97,7 @@ extension MirageClientService {
             pendingAppAdaptiveFallbackBitDepth = nil
             onReturnToAppSelection?(returnMsg)
         } catch {
-            MirageLogger.error(.client, "Failed to decode return to app selection: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode return to app selection: ")
         }
     }
 
@@ -112,7 +112,7 @@ extension MirageClientService {
             }
             onAppTerminated?(terminated)
         } catch {
-            MirageLogger.error(.client, "Failed to decode app terminated: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode app terminated: ")
         }
     }
 }

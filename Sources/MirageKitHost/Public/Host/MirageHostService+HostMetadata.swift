@@ -47,7 +47,7 @@ extension MirageHostService {
             try await clientContext.send(.hostHardwareIcon, content: response)
             MirageLogger.host("Sent host hardware icon payload bytes=\(payload.pngData.count) icon=\(payload.iconName)")
         } catch {
-            MirageLogger.error(.host, "Failed to handle host hardware icon request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle host hardware icon request: ")
         }
     }
 }

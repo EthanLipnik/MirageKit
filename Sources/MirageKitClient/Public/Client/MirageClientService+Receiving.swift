@@ -25,7 +25,7 @@ extension MirageClientService {
                 }
 
                 if let error {
-                    MirageLogger.error(.client, "Receive error: \(error)")
+                    MirageLogger.error(.client, error: error, message: "Receive error: ")
                     await handleDisconnect(
                         reason: error.localizedDescription,
                         state: .error(error.localizedDescription),

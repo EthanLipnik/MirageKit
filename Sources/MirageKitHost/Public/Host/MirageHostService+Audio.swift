@@ -217,7 +217,7 @@ extension MirageHostService {
         do {
             try await clientContext.send(.audioStreamStarted, content: message)
         } catch {
-            MirageLogger.error(.host, "Failed sending audioStreamStarted: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed sending audioStreamStarted: ")
         }
     }
 
@@ -226,7 +226,7 @@ extension MirageHostService {
         do {
             try await clientContext.send(.audioStreamStopped, content: message)
         } catch {
-            MirageLogger.error(.host, "Failed sending audioStreamStopped: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed sending audioStreamStopped: ")
         }
     }
 }

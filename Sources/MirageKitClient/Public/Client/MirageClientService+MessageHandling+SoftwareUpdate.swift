@@ -17,7 +17,7 @@ extension MirageClientService {
             let statusMessage = try message.decode(HostSoftwareUpdateStatusMessage.self)
             onHostSoftwareUpdateStatus?(mapHostSoftwareUpdateStatus(statusMessage))
         } catch {
-            MirageLogger.error(.client, "Failed to decode host software update status: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode host software update status: ")
         }
     }
 
@@ -26,7 +26,7 @@ extension MirageClientService {
             let installResultMessage = try message.decode(HostSoftwareUpdateInstallResultMessage.self)
             onHostSoftwareUpdateInstallResult?(mapHostSoftwareUpdateInstallResult(installResultMessage))
         } catch {
-            MirageLogger.error(.client, "Failed to decode host software update install result: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode host software update install result: ")
         }
     }
 

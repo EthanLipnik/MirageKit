@@ -116,7 +116,7 @@ public final class MirageCloudKitShareManager {
             MirageLogger.appState("ShareManager: Setup complete")
         } catch {
             lastError = error
-            MirageLogger.error(.appState, "ShareManager: Failed to setup: \(error.localizedDescription)")
+            MirageLogger.error(.appState, error: error, message: "ShareManager: Failed to setup: ")
             if let ckError = error as? CKError {
                 MirageLogger.error(
                     .appState,
@@ -154,7 +154,7 @@ public final class MirageCloudKitShareManager {
             // No existing record - will create when sharing
             MirageLogger.appState("No existing host record found")
         } catch {
-            MirageLogger.error(.appState, "Failed to fetch host record: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to fetch host record: ")
         }
     }
 
@@ -248,7 +248,7 @@ public final class MirageCloudKitShareManager {
                 }
             }
         } catch {
-            MirageLogger.error(.appState, "Failed to query existing host record: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to query existing host record: ")
         }
 
         // Create or update record
@@ -301,7 +301,7 @@ public final class MirageCloudKitShareManager {
                 )
             }
         } catch {
-            MirageLogger.error(.appState, "Failed to register host in CloudKit: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to register host in CloudKit: ")
             throw error
         }
     }
@@ -341,7 +341,7 @@ public final class MirageCloudKitShareManager {
             _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
             MirageLogger.appState("Updated host lastSeen timestamp")
         } catch {
-            MirageLogger.error(.appState, "Failed to update lastSeen: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to update lastSeen: ")
         }
     }
 
@@ -415,7 +415,7 @@ public final class MirageCloudKitShareManager {
             activeShare = share
             MirageLogger.appState("Found existing share with \(share?.participants.count ?? 0) participants")
         } catch {
-            MirageLogger.error(.appState, "Failed to fetch share: \(error)")
+            MirageLogger.error(.appState, error: error, message: "Failed to fetch share: ")
         }
     }
 

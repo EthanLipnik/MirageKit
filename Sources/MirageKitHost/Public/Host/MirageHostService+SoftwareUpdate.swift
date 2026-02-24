@@ -33,7 +33,7 @@ extension MirageHostService {
             try await clientContext.send(.hostSoftwareUpdateStatus, content: status)
             MirageLogger.host("Sent host software update status to \(client.name)")
         } catch {
-            MirageLogger.error(.host, "Failed to handle host software update status request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle host software update status request: ")
         }
     }
 
@@ -56,7 +56,7 @@ extension MirageHostService {
                 "Handled host software update install request from \(client.name): accepted=\(result.accepted)"
             )
         } catch {
-            MirageLogger.error(.host, "Failed to handle host software update install request: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to handle host software update install request: ")
         }
     }
 

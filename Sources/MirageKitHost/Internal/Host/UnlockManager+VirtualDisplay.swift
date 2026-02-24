@@ -39,7 +39,7 @@ extension UnlockManager {
                 )
             }
         } catch {
-            MirageLogger.error(.host, "Failed to acquire shared virtual display for unlock: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to acquire shared virtual display for unlock: ")
         }
     }
 

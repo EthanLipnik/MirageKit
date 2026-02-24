@@ -308,6 +308,7 @@ public final class MirageHostService {
         -> Void)?
     typealias ControlMessageHandler = @MainActor (ControlMessage, MirageConnectedClient, NWConnection) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
+    nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
 
     public enum HostState: Equatable {
         case idle
@@ -387,6 +388,56 @@ public final class MirageHostService {
         }
 
         registerControlMessageHandlers()
+        registerDiagnosticsContextProvider()
+    }
+
+    deinit {
+        guard let diagnosticsContextProviderToken else { return }
+        Task {
+            await MirageDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
+        }
+    }
+
+    private func registerDiagnosticsContextProvider() {
+        Task { [weak self] in
+            guard let self else { return }
+            diagnosticsContextProviderToken = await MirageDiagnostics.registerContextProvider { [weak self] in
+                guard let self else { return [:] }
+                return await MainActor.run { self.makeDiagnosticsContextSnapshot() }
+            }
+        }
+    }
+
+    private func makeDiagnosticsContextSnapshot() -> MirageDiagnosticsContext {
+        [
+            "host.state": .string(Self.diagnosticsHostStateName(state)),
+            "host.sessionState": .string(String(describing: sessionState)),
+            "host.remoteUnlockEnabled": .bool(remoteUnlockEnabled),
+            "host.remoteTransportEnabled": .bool(remoteTransportEnabled),
+            "host.lightsOutEnabled": .bool(lightsOutEnabled),
+            "host.lockHostOnDisconnect": .bool(lockHostOnDisconnect),
+            "host.connectedClientsCount": .int(connectedClients.count),
+            "host.activeStreamsCount": .int(activeStreams.count),
+            "host.availableWindowsCount": .int(availableWindows.count),
+            "host.desktopStreamActive": .bool(desktopStreamID != nil),
+            "host.loginDisplayStreamActive": .bool(loginDisplayStreamID != nil),
+            "host.desktopResizeInFlight": .bool(desktopResizeInFlight),
+            "host.hasSharedVirtualDisplayBounds": .bool(sharedVirtualDisplayBounds != nil),
+            "host.windowVirtualDisplayCount": .int(windowsUsingVirtualDisplay.count)
+        ]
+    }
+
+    private static func diagnosticsHostStateName(_ state: HostState) -> String {
+        switch state {
+        case .idle:
+            return "idle"
+        case .starting:
+            return "starting"
+        case .advertising:
+            return "advertising"
+        case .error:
+            return "error"
+        }
     }
 
     private static func identityKeyID(for manager: MirageIdentityManager?) -> String? {

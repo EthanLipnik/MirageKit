@@ -15,30 +15,6 @@ public enum MirageLogLevel: String, Sendable {
     case fault
 }
 
-public struct MirageLogEntry: Sendable {
-    public let date: Date
-    public let category: LogCategory
-    public let level: MirageLogLevel
-    public let message: String
-}
-
-public protocol MirageLogSink: Sendable {
-    func record(_ entry: MirageLogEntry) async
-}
-
-actor MirageLogSinkStore {
-    static let shared = MirageLogSinkStore()
-    private var sink: MirageLogSink?
-
-    func setSink(_ sink: MirageLogSink?) {
-        self.sink = sink
-    }
-
-    func record(_ entry: MirageLogEntry) async {
-        await sink?.record(entry)
-    }
-}
-
 /// Log categories for Mirage
 /// Use MIRAGE_LOG environment variable to enable: "all", "none", or comma-separated list
 public enum LogCategory: String, CaseIterable, Sendable {
@@ -90,12 +66,6 @@ public struct MirageLogger: Sendable {
     /// Enabled log categories (evaluated once at startup from env var)
     public static let enabledCategories: Set<LogCategory> = parseEnvironment()
 
-    public static func setLogSink(_ sink: MirageLogSink?) {
-        Task {
-            await MirageLogSinkStore.shared.setSink(sink)
-        }
-    }
-
     /// Check if a category is enabled
     public static func isEnabled(_ category: LogCategory) -> Bool {
         enabledCategories.contains(category)
@@ -138,8 +108,8 @@ public struct MirageLogger: Sendable {
         )
     }
 
-    /// Log a message unconditionally (for errors)
-    /// Errors are always logged regardless of category enablement
+    /// Log a message unconditionally (for errors).
+    /// Errors are always logged regardless of category enablement.
     public static func error(
         _ category: LogCategory,
         _ message: @autoclosure () -> String,
@@ -157,7 +127,34 @@ public struct MirageLogger: Sendable {
         )
     }
 
-    /// Log a fault-level message (critical errors that indicate bugs)
+    /// Log and report a structured non-fatal error.
+    public static func error(
+        _ category: LogCategory,
+        error: Error,
+        message: String? = nil,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        emit(
+            category,
+            level: .error,
+            message: {
+                if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return message
+                }
+                let metadata = MirageDiagnosticsErrorMetadata(error: error)
+                return "type=\(metadata.typeName) domain=\(metadata.domain) code=\(metadata.code)"
+            },
+            fileID: fileID,
+            line: line,
+            function: function,
+            underlyingError: error,
+            errorSource: .logger
+        )
+    }
+
+    /// Log a fault-level message (critical errors that indicate bugs).
     public static func fault(
         _ category: LogCategory,
         _ message: @autoclosure () -> String,
@@ -172,6 +169,33 @@ public struct MirageLogger: Sendable {
             fileID: fileID,
             line: line,
             function: function
+        )
+    }
+
+    /// Log and report a structured fault.
+    public static func fault(
+        _ category: LogCategory,
+        error: Error,
+        message: String? = nil,
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        emit(
+            category,
+            level: .fault,
+            message: {
+                if let message, !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                    return message
+                }
+                let metadata = MirageDiagnosticsErrorMetadata(error: error)
+                return "type=\(metadata.typeName) domain=\(metadata.domain) code=\(metadata.code)"
+            },
+            fileID: fileID,
+            line: line,
+            function: function,
+            underlyingError: error,
+            errorSource: .logger
         )
     }
 
@@ -199,7 +223,9 @@ public struct MirageLogger: Sendable {
         message: () -> String,
         fileID: String,
         line: UInt,
-        function: String
+        function: String,
+        underlyingError: Error? = nil,
+        errorSource: MirageDiagnosticsErrorSource = .logger
     ) {
         let rawMessage = message()
         let sourceMessage = "\(sourcePrefix(fileID: fileID, line: line, function: function)) \(rawMessage)"
@@ -214,7 +240,36 @@ public struct MirageLogger: Sendable {
         case .fault:
             logger.fault("\(sourceMessage, privacy: .public)")
         }
-        record(category: category, level: level, message: sourceMessage)
+
+        let now = Date()
+        MirageDiagnostics.record(log: MirageDiagnosticsLogEvent(
+            date: now,
+            category: category,
+            level: level,
+            message: sourceMessage,
+            fileID: fileID,
+            line: line,
+            function: function
+        ))
+
+        switch level {
+        case .error,
+             .fault:
+            MirageDiagnostics.record(error: MirageDiagnosticsErrorEvent(
+                date: now,
+                category: category,
+                severity: level == .fault ? .fault : .error,
+                source: errorSource,
+                message: sourceMessage,
+                fileID: fileID,
+                line: line,
+                function: function,
+                metadata: underlyingError.map(MirageDiagnosticsErrorMetadata.init(error:))
+            ))
+        case .info,
+             .debug:
+            break
+        }
     }
 
     private static func sourcePrefix(fileID: String, line: UInt, function: String) -> String {
@@ -223,18 +278,6 @@ public struct MirageLogger: Sendable {
 
     private static func logger(for category: LogCategory) -> Logger {
         loggers[category] ?? Logger(subsystem: subsystem, category: category.rawValue)
-    }
-
-    private static func record(category: LogCategory, level: MirageLogLevel, message: String) {
-        if Task.isCancelled { return }
-        Task {
-            await MirageLogSinkStore.shared.record(MirageLogEntry(
-                date: Date(),
-                category: category,
-                level: level,
-                message: message
-            ))
-        }
     }
 
     /// Parse MIRAGE_LOG environment variable

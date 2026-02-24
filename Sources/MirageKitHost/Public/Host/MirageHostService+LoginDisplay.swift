@@ -216,7 +216,7 @@ extension MirageHostService {
 
             await broadcastLoginDisplayReady()
         } catch {
-            MirageLogger.error(.host, "Failed to start login display stream: \(error)")
+            MirageLogger.error(.host, error: error, message: "Failed to start login display stream: ")
             await cleanupOwnedStream(disablePowerAssertion: true)
             await scheduleLoginDisplayRetry(reason: "start failed: \(error.localizedDescription)")
         }

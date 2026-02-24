@@ -350,7 +350,7 @@ actor StreamController {
                         contentRect: frame.contentRect
                     )
                 } catch {
-                    MirageLogger.error(.client, "Decode error: \(error)")
+                    MirageLogger.error(.client, error: error, message: "Decode error: ")
                 }
             }
         }

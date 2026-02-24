@@ -63,7 +63,7 @@ public actor MirageHostBootstrapControlServer {
             case .ready:
                 MirageLogger.bootstrapHandoff("Bootstrap control server listening on \(port)")
             case let .failed(error):
-                MirageLogger.error(.bootstrapHandoff, "Bootstrap control listener failed: \(error)")
+                MirageLogger.error(.bootstrapHandoff, error: error, message: "Bootstrap control listener failed: ")
             default:
                 break
             }
@@ -94,7 +94,7 @@ public actor MirageHostBootstrapControlServer {
                 stop()
             }
         } catch {
-            MirageLogger.error(.bootstrapHandoff, "Bootstrap control request handling failed: \(error.localizedDescription)")
+            MirageLogger.error(.bootstrapHandoff, error: error, message: "Bootstrap control request handling failed: ")
         }
     }
 

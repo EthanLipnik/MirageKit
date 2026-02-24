@@ -96,7 +96,7 @@ extension MirageClientService {
                         MirageLogger.client("Registered for desktop stream video \(streamID)")
                         self.startStartupRegistrationRetry(streamID: streamID)
                     } catch {
-                        MirageLogger.error(.client, "Failed to establish video connection for desktop stream: \(error)")
+                        MirageLogger.error(.client, error: error, message: "Failed to establish video connection for desktop stream: ")
                         self.registeredStreamIDs.remove(streamID)
                         self.clearStartupPacketPending(streamID)
                         self.cancelStartupRegistrationRetry(streamID: streamID)
@@ -114,7 +114,7 @@ extension MirageClientService {
             sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
             onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
         } catch {
-            MirageLogger.error(.client, "Failed to decode desktop stream started: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream started: ")
         }
     }
 
@@ -155,7 +155,7 @@ extension MirageClientService {
 
             onDesktopStreamStopped?(streamID, stopped.reason)
         } catch {
-            MirageLogger.error(.client, "Failed to decode desktop stream stopped: \(error)")
+            MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream stopped: ")
         }
     }
 }

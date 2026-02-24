@@ -458,7 +458,7 @@ extension StreamContext {
         do {
             try await captureEngine.updateExcludedWindows(resolvedWindows)
         } catch {
-            MirageLogger.error(.stream, "Failed to update display capture exclusions: \(error)")
+            MirageLogger.error(.stream, error: error, message: "Failed to update display capture exclusions: ")
         }
     }
 
