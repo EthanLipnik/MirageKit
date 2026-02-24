@@ -27,6 +27,9 @@ public final class MirageDiscovery {
     /// Callback invoked whenever discovered hosts changes.
     public var onHostsChanged: (([MirageHost]) -> Void)?
 
+    /// Additional host-change observers keyed by registration token.
+    private var hostsChangedObservers: [UUID: ([MirageHost]) -> Void] = [:]
+
     private var browser: NWBrowser?
     private let serviceType: String
     private var hostsByEndpoint: [NWEndpoint: MirageHost] = [:]
@@ -168,7 +171,7 @@ public final class MirageDiscovery {
 
     private func updateHostsList() {
         discoveredHosts = Array(hostsByEndpoint.values).sorted { $0.name < $1.name }
-        onHostsChanged?(discoveredHosts)
+        notifyHostsChanged()
     }
 
     /// Force refresh the hosts list
@@ -176,7 +179,27 @@ public final class MirageDiscovery {
         stopDiscovery()
         hostsByEndpoint.removeAll()
         discoveredHosts.removeAll()
-        onHostsChanged?(discoveredHosts)
+        notifyHostsChanged()
         startDiscovery()
+    }
+
+    /// Registers an observer that is invoked whenever discovered hosts changes.
+    @discardableResult
+    public func addHostsChangedObserver(_ observer: @escaping ([MirageHost]) -> Void) -> UUID {
+        let token = UUID()
+        hostsChangedObservers[token] = observer
+        return token
+    }
+
+    /// Removes a previously-registered host-change observer.
+    public func removeHostsChangedObserver(_ token: UUID) {
+        hostsChangedObservers.removeValue(forKey: token)
+    }
+
+    private func notifyHostsChanged() {
+        onHostsChanged?(discoveredHosts)
+        for observer in hostsChangedObservers.values {
+            observer(discoveredHosts)
+        }
     }
 }
