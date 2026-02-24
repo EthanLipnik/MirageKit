@@ -62,6 +62,7 @@ extension StreamContext {
         let encoder = HEVCEncoder(
             configuration: encoderConfig,
             latencyMode: latencyMode,
+            performanceMode: performanceMode,
             inFlightLimit: maxInFlightFrames
         )
         self.encoder = encoder
@@ -217,6 +218,7 @@ extension StreamContext {
         let encoder = HEVCEncoder(
             configuration: encoderConfig,
             latencyMode: latencyMode,
+            performanceMode: performanceMode,
             inFlightLimit: maxInFlightFrames
         )
         self.encoder = encoder
@@ -370,6 +372,7 @@ extension StreamContext {
         let encoder = HEVCEncoder(
             configuration: encoderConfig,
             latencyMode: latencyMode,
+            performanceMode: performanceMode,
             inFlightLimit: maxInFlightFrames
         )
         self.encoder = encoder

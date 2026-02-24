@@ -28,6 +28,7 @@ extension MirageHostService {
         captureQueueDepth: Int?,
         bitrate: Int?,
         latencyMode: MirageStreamLatencyMode = .auto,
+        performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool?,
         lowLatencyHighResolutionCompressionBoost: Bool,
         disableResolutionCap: Bool,
@@ -125,7 +126,11 @@ extension MirageHostService {
                     "\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px"
             )
         }
-        let capturePressureProfile = resolvedDesktopCapturePressureProfile()
+        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {
+            .tuned
+        } else {
+            resolvedDesktopCapturePressureProfile()
+        }
         MirageLogger.host(
             "Desktop capture pressure profile: \(capturePressureProfile.rawValue)"
         )
@@ -278,14 +283,16 @@ extension MirageHostService {
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
             capturePressureProfile: capturePressureProfile,
-            latencyMode: latencyMode
+            latencyMode: latencyMode,
+            performanceMode: performanceMode
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         logDesktopStartStep("stream context created (\(streamID))")
-        if allowRuntimeQualityAdjustment == false {
+        MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
+        if performanceMode != .game, allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for desktop stream \(streamID)")
         }
-        if !lowLatencyHighResolutionCompressionBoost {
+        if performanceMode != .game, !lowLatencyHighResolutionCompressionBoost {
             MirageLogger.host("Low-latency high-res compression boost disabled for desktop stream \(streamID)")
         }
         let metricsClientID = clientContext.client.id

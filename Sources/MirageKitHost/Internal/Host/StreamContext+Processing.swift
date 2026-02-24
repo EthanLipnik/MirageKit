@@ -391,6 +391,12 @@ extension StreamContext {
         if let metricsUpdateHandler, lastStreamStatsLogTime > 0 {
             let encodedFPS = Double(encodedFrameCount) / elapsed
             let idleEncodedFPS = Double(idleEncodedCount) / elapsed
+            let averageEncodeMs = await encoder?.getAverageEncodeTimeMs()
+            let resolvedAverageEncodeMs: Double? = if let averageEncodeMs, averageEncodeMs > 0 {
+                averageEncodeMs
+            } else {
+                nil
+            }
             let captureValidation = captureValidationSnapshot()
             let encoderValidation = await encoder?.runtimeValidationSnapshot()
             let message = StreamMetricsMessage(
@@ -400,6 +406,9 @@ extension StreamContext {
                 droppedFrames: droppedFrameCount,
                 activeQuality: activeQuality,
                 targetFrameRate: currentFrameRate,
+                averageEncodeMs: resolvedAverageEncodeMs,
+                usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
+                encoderGPURegistryID: encoderValidation?.encoderGPURegistryID,
                 capturePixelFormat: captureValidation?.pixelFormat,
                 captureColorPrimaries: captureValidation?.colorPrimaries,
                 encoderPixelFormat: encoderValidation?.pixelFormat.displayName,
@@ -517,6 +526,11 @@ extension StreamContext {
             pendingCount: pendingCount,
             at: now
         )
+        await evaluateGameModeDeficitWindowIfNeeded(
+            encodedFPS: encodeFPS,
+            averageEncodeMs: encodeAvgMs,
+            at: now
+        )
 
         captureIngressIntervalCount = 0
         captureIntervalCount = 0
@@ -600,6 +614,84 @@ extension StreamContext {
         MirageLogger.metrics("In-flight depth set to \(desired) (encode \(avgText)ms, budget \(budgetText)ms)")
     }
 
+    func evaluateGameModeDeficitWindowIfNeeded(
+        encodedFPS: Double,
+        averageEncodeMs: Double,
+        at now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    )
+    async {
+        guard performanceMode == .game else { return }
+        guard averageEncodeMs > 0 else { return }
+
+        let targetFPS = Double(max(1, currentFrameRate))
+        let frameBudgetMs = 1000.0 / targetFPS
+        let fpsThreshold = targetFPS * gameModeTargetFPSScale
+        let encodeThreshold = frameBudgetMs * gameModeTargetEncodeScale
+
+        let fpsDeficit = encodedFPS < fpsThreshold
+        let encodeDeficit = averageEncodeMs > encodeThreshold
+        let deficit = fpsDeficit && encodeDeficit
+
+        if now - gameModeStreamStartTime >= gameModeWarmupSeconds, deficit {
+            let encodedText = encodedFPS.formatted(.number.precision(.fractionLength(2)))
+            let targetText = targetFPS.formatted(.number.precision(.fractionLength(2)))
+            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(2)))
+            let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(2)))
+            MirageLogger
+                .metrics(
+                    "event=target_miss mode=game stream=\(streamID) stage=\(gameModeStage.logName) " +
+                        "encodedFPS=\(encodedText) targetFPS=\(targetText) avgEncodeMs=\(avgText) budgetMs=\(budgetText)"
+                )
+        }
+
+        if deficit {
+            gameModeConsecutiveDeficitWindows += 1
+        } else {
+            gameModeConsecutiveDeficitWindows = 0
+            return
+        }
+
+        guard gameModeConsecutiveDeficitWindows >= gameModeDeficitWindowFailuresRequired else { return }
+        gameModeConsecutiveDeficitWindows = 0
+        await advanceGameModeStage(encodedFPS: encodedFPS, averageEncodeMs: averageEncodeMs)
+    }
+
+    private func advanceGameModeStage(encodedFPS: Double, averageEncodeMs: Double) async {
+        if gameModeStage == .stage3Emergency { return }
+        let priorStage = gameModeStage
+        let nextStage: GameModeStage = switch gameModeStage {
+        case .baseline:
+            .stage1FrameRate60
+        case .stage1FrameRate60:
+            .stage2EightBit
+        case .stage2EightBit:
+            .stage3Emergency
+        case .stage3Emergency:
+            .stage3Emergency
+        }
+        guard nextStage != priorStage else { return }
+        gameModeStage = nextStage
+
+        let applied: Bool = switch nextStage {
+        case .stage1FrameRate60:
+            await applyGameModeStage1FrameRateOverride()
+        case .stage2EightBit:
+            await applyGameModeStage2BitDepthOverride()
+        case .stage3Emergency:
+            await applyGameModeStage3EmergencyOverride()
+        case .baseline:
+            false
+        }
+
+        let encodedText = encodedFPS.formatted(.number.precision(.fractionLength(2)))
+        let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(2)))
+        MirageLogger
+            .metrics(
+                "event=game_mode_stage_transition stream=\(streamID) from=\(priorStage.logName) to=\(nextStage.logName) " +
+                    "applied=\(applied) encodedFPS=\(encodedText) avgEncodeMs=\(avgText)"
+            )
+    }
+
     func adjustQualityForQueue(queueBytes: Int) async {
         guard let encoder else { return }
         guard runtimeQualityAdjustmentEnabled else { return }
@@ -621,6 +713,15 @@ extension StreamContext {
         let queuePressured = queueBytes > queuePressureBytes
         let highPressure = queueBytes > maxQueuedBytes
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
+        let baseDropThreshold = gameModeAggressiveQualityDropEnabled
+            ? gameModeAggressiveQualityDropThreshold
+            : qualityDropThreshold
+        let baseDropStep = gameModeAggressiveQualityDropEnabled
+            ? gameModeAggressiveQualityDropStep
+            : qualityDropStep
+        let baseHighPressureDropStep = gameModeAggressiveQualityDropEnabled
+            ? gameModeAggressiveQualityDropStepHighPressure
+            : qualityDropStepHighPressure
 
         if encodeOverBudget || queuePressured {
             qualityUnderBudgetCount = 0
@@ -628,16 +729,18 @@ extension StreamContext {
             let dropThreshold: Int = if bitrateConstrained && highPressure {
                 1
             } else if bitrateConstrained && queuePressured {
-                max(1, qualityDropThreshold - 1)
+                max(1, baseDropThreshold - 1)
             } else {
-                qualityDropThreshold
+                baseDropThreshold
             }
             let step: Float = if highPressure {
-                bitrateConstrained ? (qualityDropStepHighPressure + 0.03) : qualityDropStepHighPressure
+                bitrateConstrained
+                    ? (baseHighPressureDropStep + 0.03)
+                    : baseHighPressureDropStep
             } else if bitrateConstrained && queuePressured {
-                qualityDropStep + 0.01
+                baseDropStep + 0.01
             } else {
-                qualityDropStep
+                baseDropStep
             }
             if qualityOverBudgetCount >= dropThreshold {
                 let next = max(qualityFloor, activeQuality - step)

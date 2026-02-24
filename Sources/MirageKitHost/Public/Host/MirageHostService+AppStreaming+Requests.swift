@@ -61,12 +61,14 @@ extension MirageHostService {
             let bitDepth = request.bitDepth
             let bitrate = request.bitrate
             let latencyMode = request.latencyMode ?? .auto
+            let performanceMode = request.performanceMode ?? .standard
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? true
             let disableResolutionCap = request.disableResolutionCap ?? false
             let streamScale = request.streamScale ?? 1.0
             let audioConfiguration = request.audioConfiguration ?? .default
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
+            MirageLogger.host("Performance mode: \(performanceMode.displayName)")
 
             // Check if app is available for streaming
             guard await appStreamManager.isAppAvailableForStreaming(request.bundleIdentifier) else {
@@ -159,6 +161,7 @@ extension MirageHostService {
                         captureQueueDepth: request.captureQueueDepth,
                         bitrate: bitrate,
                         latencyMode: latencyMode,
+                        performanceMode: performanceMode,
                         allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
                         lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
                         disableResolutionCap: disableResolutionCap,

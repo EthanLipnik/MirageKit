@@ -136,6 +136,7 @@ extension MirageHostService {
                 captureQueueDepth: encoderSettings.captureQueueDepth,
                 bitrate: encoderSettings.bitrate,
                 latencyMode: encoderSettings.latencyMode,
+                performanceMode: encoderSettings.performanceMode,
                 lowLatencyHighResolutionCompressionBoost: encoderSettings
                     .lowLatencyHighResolutionCompressionBoostEnabled,
                 disableResolutionCap: disableResolutionCap,

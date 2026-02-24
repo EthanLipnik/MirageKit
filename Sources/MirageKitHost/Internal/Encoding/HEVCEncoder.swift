@@ -18,6 +18,8 @@ actor HEVCEncoder {
     struct RuntimeValidationSnapshot: Sendable {
         let pixelFormat: MiragePixelFormat
         let profileName: String?
+        let usingHardwareEncoder: Bool?
+        let encoderGPURegistryID: UInt64?
         let colorPrimaries: String?
         let transferFunction: String?
         let yCbCrMatrix: String?
@@ -27,9 +29,12 @@ actor HEVCEncoder {
     var compressionSession: VTCompressionSession?
     var configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
+    let performanceMode: MirageStreamPerformanceMode
     var autoTypingBurstLowLatencyActive = false
     var activePixelFormat: MiragePixelFormat
     var activeProfileLevel: CFString?
+    var usingHardwareEncoder: Bool?
+    var encoderGPURegistryID: UInt64?
     var supportedPropertyKeys: Set<CFString> = []
     var didQuerySupportedProperties = false
     var loggedUnsupportedKeys: Set<CFString> = []
@@ -63,10 +68,12 @@ actor HEVCEncoder {
     init(
         configuration: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode = .auto,
+        performanceMode: MirageStreamPerformanceMode = .standard,
         inFlightLimit: Int? = nil
     ) {
         self.configuration = configuration
         self.latencyMode = latencyMode
+        self.performanceMode = performanceMode
         activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1
         encoderInFlightLimit = max(1, inFlightLimit ?? defaultLimit)

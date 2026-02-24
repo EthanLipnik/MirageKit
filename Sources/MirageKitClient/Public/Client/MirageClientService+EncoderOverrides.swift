@@ -35,6 +35,10 @@ extension MirageClientService {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
         }
+        if let performanceMode = overrides.performanceMode {
+            request.performanceMode = performanceMode
+            MirageLogger.client("Requesting performance mode: \(performanceMode.displayName)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -78,6 +82,10 @@ extension MirageClientService {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
         }
+        if let performanceMode = overrides.performanceMode {
+            request.performanceMode = performanceMode
+            MirageLogger.client("Requesting performance mode: \(performanceMode.displayName)")
+        }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
             MirageLogger
@@ -120,6 +128,10 @@ extension MirageClientService {
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode
             MirageLogger.client("Requesting latency mode: \(latencyMode.displayName)")
+        }
+        if let performanceMode = overrides.performanceMode {
+            request.performanceMode = performanceMode
+            MirageLogger.client("Requesting performance mode: \(performanceMode.displayName)")
         }
         if let allowRuntimeQualityAdjustment = overrides.allowRuntimeQualityAdjustment {
             request.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment

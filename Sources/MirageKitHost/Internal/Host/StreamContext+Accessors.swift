@@ -18,7 +18,10 @@ struct EncoderSettingsSnapshot: Sendable {
     let pixelFormat: MiragePixelFormat
     let colorSpace: MirageColorSpace
     let latencyMode: MirageStreamLatencyMode
+    let performanceMode: MirageStreamPerformanceMode
+    let runtimeQualityAdjustmentEnabled: Bool
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
+    let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     let captureQueueDepth: Int?
     let bitrate: Int?
 }
@@ -93,10 +96,21 @@ extension StreamContext {
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
             latencyMode: latencyMode,
+            performanceMode: performanceMode,
+            runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
+            capturePressureProfile: capturePressureProfile,
             captureQueueDepth: encoderConfig.captureQueueDepth,
             bitrate: encoderConfig.bitrate
         )
+    }
+
+    func getPerformanceMode() -> MirageStreamPerformanceMode {
+        performanceMode
+    }
+
+    func getGameModeStage() -> GameModeStage {
+        gameModeStage
     }
 }
 #endif

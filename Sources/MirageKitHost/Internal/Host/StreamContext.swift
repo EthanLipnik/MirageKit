@@ -31,6 +31,26 @@ actor StreamContext {
         case display
     }
 
+    enum GameModeStage: Int, Sendable {
+        case baseline
+        case stage1FrameRate60
+        case stage2EightBit
+        case stage3Emergency
+
+        var logName: String {
+            switch self {
+            case .baseline:
+                "baseline"
+            case .stage1FrameRate60:
+                "stage1_force60hz"
+            case .stage2EightBit:
+                "stage2_force8bit"
+            case .stage3Emergency:
+                "stage3_emergency"
+            }
+        }
+    }
+
     var captureMode: CaptureMode = .window
     /// Max payload size per UDP packet (excludes Mirage header).
     nonisolated let maxPayloadSize: Int
@@ -257,6 +277,8 @@ actor StreamContext {
 
     /// Latency preference for buffering behavior.
     let latencyMode: MirageStreamLatencyMode
+    /// Performance profile requested by the client and resolved by host policy.
+    let performanceMode: MirageStreamPerformanceMode
     /// Aggressive typing burst is active only in auto mode.
     let supportsTypingBurst: Bool
     /// When true, force low-latency buffering regardless of overrides.
@@ -271,6 +293,25 @@ actor StreamContext {
     let disableResolutionCap: Bool
     /// Capture pressure profile for SCK buffering/copy behavior.
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
+    /// Current game-mode staged override progression.
+    var gameModeStage: GameModeStage = .baseline
+    /// Consecutive game-mode deficit windows.
+    var gameModeConsecutiveDeficitWindows: Int = 0
+    let gameModeDeficitWindowFailuresRequired: Int = 3
+    let gameModeWarmupSeconds: CFAbsoluteTime = 5.0
+    let gameModeTargetFPSScale: Double = 0.97
+    let gameModeTargetEncodeScale: Double = 1.02
+    var gameModeStreamStartTime: CFAbsoluteTime = 0
+    var gameModeAggressiveQualityDropEnabled: Bool = false
+    let gameModeAggressiveQualityDropThreshold: Int = 1
+    let gameModeAggressiveQualityDropStep: Float = 0.04
+    let gameModeAggressiveQualityDropStepHighPressure: Float = 0.09
+
+    nonisolated static let gameModeBaselineKeyframeIntervalFrames: Int = 7_200
+    nonisolated static let gameModeBaselineBitrateCapBps: Int = 280_000_000
+    nonisolated static let gameModeEmergencyBitrateCapBps: Int = 180_000_000
+    nonisolated static let canonical6KWidth: Int = 6_016
+    nonisolated static let canonical6KHeight: Int = 3_384
 
     init(
         streamID: StreamID,
@@ -284,46 +325,69 @@ actor StreamContext {
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
         disableResolutionCap: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .auto
+        latencyMode: MirageStreamLatencyMode = .auto,
+        performanceMode: MirageStreamPerformanceMode = .standard
     ) {
+        var resolvedEncoderConfig = encoderConfig
+        var resolvedLatencyMode = latencyMode
+        var resolvedRuntimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
+        var resolvedLowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
+        var resolvedCapturePressureProfile = capturePressureProfile
+        if performanceMode == .game {
+            resolvedLatencyMode = .lowestLatency
+            resolvedRuntimeQualityAdjustmentEnabled = true
+            resolvedLowLatencyHighResolutionCompressionBoostEnabled = true
+            resolvedCapturePressureProfile = .tuned
+            resolvedEncoderConfig.captureQueueDepth = nil
+            resolvedEncoderConfig.keyFrameInterval = Self.gameModeBaselineKeyframeIntervalFrames
+            let baselineBitrateCap = Self.gameModeBaselineBitrateCapBps
+            let initialBitrate = min(resolvedEncoderConfig.bitrate ?? baselineBitrateCap, baselineBitrateCap)
+            let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+                bitrate: initialBitrate
+            ) ?? initialBitrate
+            resolvedEncoderConfig.bitrate = normalizedBitrate
+        }
+
         self.streamID = streamID
         self.windowID = windowID
-        self.encoderConfig = encoderConfig
-        self.latencyMode = latencyMode
-        supportsTypingBurst = latencyMode == .auto
+        self.encoderConfig = resolvedEncoderConfig
+        self.latencyMode = resolvedLatencyMode
+        self.performanceMode = performanceMode
+        supportsTypingBurst = resolvedLatencyMode == .auto
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
         baseFrameFlags = additionalFrameFlags
         maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
         self.mediaSecurityContext = mediaSecurityContext
-        currentFrameRate = encoderConfig.targetFrameRate
+        currentFrameRate = resolvedEncoderConfig.targetFrameRate
         captureFrameRateOverride = nil
-        captureFrameRate = encoderConfig.targetFrameRate
-        self.runtimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
-        self.lowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
+        captureFrameRate = resolvedEncoderConfig.targetFrameRate
+        self.runtimeQualityAdjustmentEnabled = resolvedRuntimeQualityAdjustmentEnabled
+        self.lowLatencyHighResolutionCompressionBoostEnabled =
+            resolvedLowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap
-        self.capturePressureProfile = capturePressureProfile
-        activePixelFormat = encoderConfig.pixelFormat
-        let prefersSmoothness = latencyMode == .smoothest || latencyMode == .auto
-        let latencySensitive = latencyMode == .lowestLatency
-        useLowLatencyPipeline = latencySensitive || (encoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
+        self.capturePressureProfile = resolvedCapturePressureProfile
+        activePixelFormat = resolvedEncoderConfig.pixelFormat
+        let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
+        let latencySensitive = resolvedLatencyMode == .lowestLatency
+        useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
         let bufferDepth = Self.frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
-            frameRate: encoderConfig.targetFrameRate,
-            latencyMode: latencyMode
+            frameRate: resolvedEncoderConfig.targetFrameRate,
+            latencyMode: resolvedLatencyMode
         )
         let minInFlight = Self.minInFlightFrames(
             useLowLatencyPipeline: useLowLatencyPipeline,
-            frameRate: encoderConfig.targetFrameRate,
-            latencyMode: latencyMode
+            frameRate: resolvedEncoderConfig.targetFrameRate,
+            latencyMode: resolvedLatencyMode
         )
         let inFlightCap = min(
             bufferDepth,
             Self.inFlightCap(
                 useLowLatencyPipeline: useLowLatencyPipeline,
-                frameRate: encoderConfig.targetFrameRate,
-                latencyMode: latencyMode
+                frameRate: resolvedEncoderConfig.targetFrameRate,
+                latencyMode: resolvedLatencyMode
             )
         )
         maxInFlightFramesCap = max(1, inFlightCap)
@@ -331,26 +395,39 @@ actor StreamContext {
         maxInFlightFrames = min(minInFlight, maxInFlightFramesCap)
         frameBufferDepth = bufferDepth
         frameInbox = StreamFrameInbox(capacity: bufferDepth)
-        maxEncodeTimeMs = encoderConfig.targetFrameRate >= 120 ? 900 : 600
+        maxEncodeTimeMs = resolvedEncoderConfig.targetFrameRate >= 120 ? 900 : 600
         shouldEncodeFrames = false
-        let cappedFrameQuality = min(encoderConfig.frameQuality, compressionQualityCeiling)
+        let cappedFrameQuality = min(resolvedEncoderConfig.frameQuality, compressionQualityCeiling)
         steadyQualityCeiling = cappedFrameQuality
         qualityCeiling = cappedFrameQuality
-        let hasBitrateCap = (encoderConfig.bitrate ?? 0) > 0
+        let hasBitrateCap = (resolvedEncoderConfig.bitrate ?? 0) > 0
         let runtimeFloorFactor = hasBitrateCap ? bitrateCappedQualityFloorFactor : qualityFloorFactor
         let runtimeFloorMinimum = hasBitrateCap ? bitrateCappedQualityFloorMinimum : uncappedQualityFloorMinimum
         qualityFloor = min(cappedFrameQuality, max(runtimeFloorMinimum, cappedFrameQuality * runtimeFloorFactor))
         activeQuality = cappedFrameQuality
-        let cappedKeyframeQuality = min(encoderConfig.keyframeQuality, cappedFrameQuality)
+        let cappedKeyframeQuality = min(resolvedEncoderConfig.keyframeQuality, cappedFrameQuality)
         let keyframeFloorFactor = hasBitrateCap ? bitrateCappedKeyframeFloorFactor : self.keyframeFloorFactor
         let keyframeFloorMinimum = hasBitrateCap ? bitrateCappedKeyframeFloorMinimum : uncappedQualityFloorMinimum
         keyframeQualityFloor = min(cappedKeyframeQuality, max(keyframeFloorMinimum, cappedKeyframeQuality * keyframeFloorFactor))
         let cadence = Self.keyframeCadence(
-            intervalFrames: encoderConfig.keyFrameInterval,
-            frameRate: encoderConfig.targetFrameRate
+            intervalFrames: resolvedEncoderConfig.keyFrameInterval,
+            frameRate: resolvedEncoderConfig.targetFrameRate
         )
         keyframeIntervalSeconds = cadence.interval
         keyframeMaxIntervalSeconds = cadence.maxInterval
+        gameModeStreamStartTime = CFAbsoluteTimeGetCurrent()
+
+        if performanceMode == .game {
+            let bitrateText = String(resolvedEncoderConfig.bitrate ?? 0)
+            MirageLogger
+                .stream(
+                    "event=game_mode_baseline stream=\(streamID) latency=\(resolvedLatencyMode.rawValue) " +
+                        "runtimeQuality=\(resolvedRuntimeQualityAdjustmentEnabled) lowLatencyBoost=\(resolvedLowLatencyHighResolutionCompressionBoostEnabled) " +
+                        "captureProfile=\(resolvedCapturePressureProfile.rawValue) keyframeInterval=\(resolvedEncoderConfig.keyFrameInterval) " +
+                        "bitrate=\(bitrateText) targetFPS=\(resolvedEncoderConfig.targetFrameRate) " +
+                        "bitDepth=\(resolvedEncoderConfig.bitDepth.rawValue)"
+                )
+        }
     }
 
     func setStartupBaseTime(_ baseTime: CFAbsoluteTime, label: String) {

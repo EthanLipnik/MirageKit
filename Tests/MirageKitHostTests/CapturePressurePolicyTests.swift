@@ -103,4 +103,50 @@ struct CaptureStallPolicyTests {
         #expect(policy.hardRestartThreshold == policy.softStallThreshold)
     }
 }
+
+@Suite("Capture Cadence Gate")
+struct CaptureCadenceGateTests {
+    @Test("60 Hz target drops oversupply frames from 120 Hz cadence")
+    func dropsOversupplyFramesBeforeCopy() {
+        let targetFPS = 60.0
+        let cadence120 = 1.0 / 120.0
+        var lastAdmitted: CFAbsoluteTime? = nil
+
+        let firstDrop = CaptureStreamOutput.shouldDropForTargetCadence(
+            lastAdmittedTime: lastAdmitted,
+            captureTime: 0.0,
+            targetFrameRate: targetFPS,
+            isIdleFrame: false
+        )
+        #expect(firstDrop == false)
+        lastAdmitted = 0.0
+
+        let secondDrop = CaptureStreamOutput.shouldDropForTargetCadence(
+            lastAdmittedTime: lastAdmitted,
+            captureTime: cadence120,
+            targetFrameRate: targetFPS,
+            isIdleFrame: false
+        )
+        #expect(secondDrop == true)
+
+        let thirdDrop = CaptureStreamOutput.shouldDropForTargetCadence(
+            lastAdmittedTime: lastAdmitted,
+            captureTime: cadence120 * 2.0,
+            targetFrameRate: targetFPS,
+            isIdleFrame: false
+        )
+        #expect(thirdDrop == false)
+    }
+
+    @Test("Idle frames bypass cadence gate for continuity")
+    func idleFramesBypassCadenceGate() {
+        let shouldDropIdle = CaptureStreamOutput.shouldDropForTargetCadence(
+            lastAdmittedTime: 10.0,
+            captureTime: 10.001,
+            targetFrameRate: 60.0,
+            isIdleFrame: true
+        )
+        #expect(shouldDropIdle == false)
+    }
+}
 #endif

@@ -195,6 +195,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var captureQueueDepth: Int?
     public var bitrate: Int?
     public var latencyMode: MirageStreamLatencyMode?
+    public var performanceMode: MirageStreamPerformanceMode?
     public var allowRuntimeQualityAdjustment: Bool?
     public var lowLatencyHighResolutionCompressionBoost: Bool?
     public var disableResolutionCap: Bool
@@ -205,6 +206,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
+        performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool = false
@@ -214,6 +216,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.captureQueueDepth = captureQueueDepth
         self.bitrate = bitrate
         self.latencyMode = latencyMode
+        self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
@@ -415,6 +418,19 @@ public enum MirageStreamLatencyMode: String, Sendable, CaseIterable, Codable {
             "Minimizes capture to encode to decode to display latency at all times using minimal buffering and immediate latest-frame presentation, even when FPS drops."
         case .auto:
             "Uses Smoothest as baseline, then switches to latency-first only during qualifying text-entry key bursts; mouse input and keyboard shortcuts do not trigger."
+        }
+    }
+}
+
+/// Performance profile for host-side stream throughput behavior.
+public enum MirageStreamPerformanceMode: String, Sendable, CaseIterable, Codable {
+    case standard
+    case game
+
+    public var displayName: String {
+        switch self {
+        case .standard: "Standard"
+        case .game: "Game Mode"
         }
     }
 }

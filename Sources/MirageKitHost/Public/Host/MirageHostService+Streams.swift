@@ -27,6 +27,7 @@ public extension MirageHostService {
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .auto,
+        performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = true,
         disableResolutionCap: Bool = false,
@@ -89,6 +90,11 @@ public extension MirageHostService {
         // }
 
         // Create stream context with capture and encoding
+        let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {
+            .tuned
+        } else {
+            .baseline
+        }
         let context = StreamContext(
             streamID: streamID,
             windowID: window.id,
@@ -99,16 +105,21 @@ public extension MirageHostService {
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
-            latencyMode: latencyMode
+            capturePressureProfile: capturePressureProfile,
+            latencyMode: latencyMode,
+            performanceMode: performanceMode
         )
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")
         }
-        MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
-        if allowRuntimeQualityAdjustment == false {
+        MirageLogger.host("Performance mode for stream \(streamID): \(performanceMode.displayName)")
+        if performanceMode != .game {
+            MirageLogger.host("Latency mode for stream \(streamID): \(latencyMode.displayName)")
+        }
+        if performanceMode != .game, allowRuntimeQualityAdjustment == false {
             MirageLogger.host("Runtime quality adjustment disabled for stream \(streamID)")
         }
-        if !lowLatencyHighResolutionCompressionBoost {
+        if performanceMode != .game, !lowLatencyHighResolutionCompressionBoost {
             MirageLogger.host("Low-latency high-res compression boost disabled for stream \(streamID)")
         }
         await context.setMetricsUpdateHandler { [weak self] metrics in

@@ -360,6 +360,7 @@ struct MirageKitTests {
             bitDepth: .tenBit,
             bitrate: 150_000_000,
             latencyMode: .smoothest,
+            performanceMode: .game,
             allowRuntimeQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -372,6 +373,7 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
         #expect(decoded.latencyMode == .smoothest)
+        #expect(decoded.performanceMode == .game)
         #expect(decoded.bitDepth == .tenBit)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
@@ -391,6 +393,7 @@ struct MirageKitTests {
             bitDepth: .tenBit,
             bitrate: 200_000_000,
             latencyMode: .lowestLatency,
+            performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: true,
             disableResolutionCap: false,
@@ -402,6 +405,7 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.latencyMode == .lowestLatency)
+        #expect(decoded.performanceMode == .game)
         #expect(decoded.maxRefreshRate == 120)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
@@ -418,6 +422,7 @@ struct MirageKitTests {
             mode: .mirrored,
             bitrate: 500_000_000,
             latencyMode: .auto,
+            performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
@@ -431,9 +436,23 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decoded.latencyMode == .auto)
+        #expect(decoded.performanceMode == .game)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
+    }
+
+    @Test("Start stream request omits performance mode when unset")
+    func startStreamPerformanceModeDefaultSerialization() throws {
+        let request = StartStreamMessage(
+            windowID: 11,
+            maxRefreshRate: 60
+        )
+
+        let envelope = try ControlMessage(type: .startStream, content: request)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
+        #expect(decoded.performanceMode == nil)
     }
 
     @Test("Stream metrics validation payload serialization")
@@ -445,6 +464,9 @@ struct MirageKitTests {
             droppedFrames: 12,
             activeQuality: 0.74,
             targetFrameRate: 60,
+            averageEncodeMs: 13.2,
+            usingHardwareEncoder: true,
+            encoderGPURegistryID: 12345,
             capturePixelFormat: "xf20",
             captureColorPrimaries: kCVImageBufferColorPrimaries_P3_D65 as String,
             encoderPixelFormat: "10-bit (P010)",
@@ -458,6 +480,9 @@ struct MirageKitTests {
         let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
+        #expect(decoded.averageEncodeMs == 13.2)
+        #expect(decoded.usingHardwareEncoder == true)
+        #expect(decoded.encoderGPURegistryID == 12345)
         #expect(decoded.capturePixelFormat == "xf20")
         #expect(decoded.encoderProfile == "HEVC Main10 (4:2:0)")
         #expect(decoded.tenBitDisplayP3Validated == true)
@@ -485,6 +510,9 @@ struct MirageKitTests {
         let envelope = try ControlMessage(type: .streamMetricsUpdate, content: metrics)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
+        #expect(decoded.averageEncodeMs == nil)
+        #expect(decoded.usingHardwareEncoder == nil)
+        #expect(decoded.encoderGPURegistryID == nil)
         #expect(decoded.capturePixelFormat == "420v")
         #expect(decoded.encoderPixelFormat == "8-bit (NV12)")
         #expect(decoded.tenBitDisplayP3Validated == false)

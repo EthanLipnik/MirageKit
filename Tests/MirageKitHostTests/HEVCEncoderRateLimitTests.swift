@@ -10,6 +10,7 @@
 @testable import MirageKitHost
 import MirageKit
 import Testing
+import VideoToolbox
 
 #if os(macOS)
 @Suite("HEVC Encoder Rate Limits")
@@ -56,6 +57,24 @@ struct HEVCEncoderRateLimitTests {
         )
         #expect(refreshedLimit.windowSeconds == 0.25)
         #expect(refreshedLimit.bytes == 2_500_000)
+    }
+
+    @Test("Standard encoder specification keeps baseline hardware requirements")
+    func standardEncoderSpecification() {
+        let spec = HEVCEncoder.encoderSpecification(for: .standard)
+
+        #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] == nil)
+    }
+
+    @Test("Game-mode encoder specification enables low-latency rate control")
+    func gameModeEncoderSpecification() {
+        let spec = HEVCEncoder.encoderSpecification(for: .game)
+
+        #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] as? Bool == true)
     }
 }
 #endif

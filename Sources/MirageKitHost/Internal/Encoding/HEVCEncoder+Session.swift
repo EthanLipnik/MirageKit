@@ -16,6 +16,19 @@ import MirageKit
 import ScreenCaptureKit
 
 extension HEVCEncoder {
+    nonisolated static func encoderSpecification(
+        for performanceMode: MirageStreamPerformanceMode
+    ) -> [CFString: Any] {
+        var spec: [CFString: Any] = [
+            kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
+            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
+        ]
+        if performanceMode == .game {
+            spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true
+        }
+        return spec
+    }
+
     func resolvedSessionLatencyMode() -> MirageStreamLatencyMode {
         if latencyMode == .auto, autoTypingBurstLowLatencyActive {
             return .lowestLatency
@@ -61,10 +74,7 @@ extension HEVCEncoder {
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
         ] as CFDictionary
 
-        let baseSpec: [CFString: Any] = [
-            kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
-            kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
-        ]
+        let baseSpec = Self.encoderSpecification(for: performanceMode)
 
         var status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
@@ -129,6 +139,9 @@ extension HEVCEncoder {
         if let activeProfileLevel {
             MirageLogger.encoder("Encoder profile: \(hevcProfileName(for: activeProfileLevel))")
         }
+        if performanceMode == .game {
+            MirageLogger.encoder("Encoder spec: game mode low-latency rate control requested")
+        }
     }
 
     private func qualitySettings(for quality: Float) -> QualitySettings {
@@ -159,6 +172,9 @@ extension HEVCEncoder {
     }
 
     private func logHardwareStatus(_ session: VTCompressionSession) {
+        usingHardwareEncoder = nil
+        encoderGPURegistryID = nil
+
         var hw: CFTypeRef?
         let hwStatus = VTSessionCopyProperty(
             session,
@@ -166,8 +182,8 @@ extension HEVCEncoder {
             allocator: kCFAllocatorDefault,
             valueOut: &hw
         )
-        if hwStatus == noErr, let value = hw, let boolValue = value as? Bool { MirageLogger.encoder("Using hardware encoder: \(boolValue)") } else {
-            MirageLogger.encoder("Using hardware encoder: (unknown, status \(hwStatus))")
+        if hwStatus == noErr, let value = hw, let boolValue = value as? Bool {
+            usingHardwareEncoder = boolValue
         }
 
         var gpu: CFTypeRef?
@@ -177,9 +193,28 @@ extension HEVCEncoder {
             allocator: kCFAllocatorDefault,
             valueOut: &gpu
         )
-        if gpuStatus == noErr, let value = gpu, let registry = value as? NSNumber { MirageLogger.encoder("Encoder GPU registry ID: \(registry)") } else if gpuStatus == noErr {
-            MirageLogger.encoder("Encoder GPU registry ID: nil (built-in encoder or software)")
+        if gpuStatus == noErr,
+           let value = gpu,
+           let registry = value as? NSNumber {
+            encoderGPURegistryID = registry.uint64Value
         }
+
+        let usingHardwareText: String = if let usingHardwareEncoder {
+            String(usingHardwareEncoder)
+        } else {
+            "unknown(status=\(hwStatus))"
+        }
+        let gpuText: String = if let encoderGPURegistryID {
+            String(encoderGPURegistryID)
+        } else if gpuStatus == noErr {
+            "nil"
+        } else {
+            "unknown(status=\(gpuStatus))"
+        }
+
+        MirageLogger.encoder(
+            "event=hardware_encoder_status usingHardware=\(usingHardwareText) gpuRegistryID=\(gpuText)"
+        )
     }
 
     static func fourCCString(_ value: OSType) -> String {
@@ -372,6 +407,7 @@ extension HEVCEncoder {
             value: kCFBooleanTrue
         )
         MirageLogger.encoder("Prioritizing encoding speed over quality")
+        applyGameModeThroughputSettings(session)
 
         // Apply base quality setting - lower values reduce size for all frames
         let requestedQuality = configuration.frameQuality
@@ -437,6 +473,38 @@ extension HEVCEncoder {
 
         // Prepare for encoding
         VTCompressionSessionPrepareToEncodeFrames(session)
+    }
+
+    private func applyGameModeThroughputSettings(_ session: VTCompressionSession) {
+        guard performanceMode == .game else { return }
+
+        // Keep HEVC on the highest-throughput path for sustained high-resolution encoding.
+        let powerPreferenceApplied = setProperty(
+            session,
+            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
+            value: kCFBooleanFalse
+        )
+        let referenceBuffersApplied = setProperty(
+            session,
+            key: kVTCompressionPropertyKey_ReferenceBufferCount,
+            value: NSNumber(value: 1)
+        )
+        let openGOPApplied = setProperty(
+            session,
+            key: kVTCompressionPropertyKey_AllowOpenGOP,
+            value: kCFBooleanFalse
+        )
+        let temporalCompressionApplied = setProperty(
+            session,
+            key: kVTCompressionPropertyKey_AllowTemporalCompression,
+            value: kCFBooleanTrue
+        )
+
+        MirageLogger.encoder(
+            "event=encoder_game_mode_tuning maximizePowerEfficiency=false(\(powerPreferenceApplied)) " +
+                "referenceBuffers=1(\(referenceBuffersApplied)) allowOpenGOP=false(\(openGOPApplied)) " +
+                "allowTemporalCompression=true(\(temporalCompressionApplied))"
+        )
     }
 }
 

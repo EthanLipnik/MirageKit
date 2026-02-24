@@ -171,6 +171,8 @@ extension HEVCEncoder {
         return RuntimeValidationSnapshot(
             pixelFormat: activePixelFormat,
             profileName: profileName,
+            usingHardwareEncoder: usingHardwareEncoder,
+            encoderGPURegistryID: encoderGPURegistryID,
             colorPrimaries: colorPrimaries,
             transferFunction: transferFunction,
             yCbCrMatrix: yCbCrMatrix,

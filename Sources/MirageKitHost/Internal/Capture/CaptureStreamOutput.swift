@@ -82,10 +82,14 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var softStallThreshold: CFAbsoluteTime
     private var hardRestartThreshold: CFAbsoluteTime
     private var expectedFrameRate: Double
+    private var targetFrameRate: Double
     private let expectationLock = NSLock()
     private let deliveryStateLock = NSLock()
     private var rawFrameWindowCount: UInt64 = 0
     private var rawFrameWindowStartTime: CFAbsoluteTime = 0
+    private var lastCadenceAdmittedTime: CFAbsoluteTime = 0
+    private var cadenceDropCount: UInt64 = 0
+    private var lastCadenceLogTime: CFAbsoluteTime = 0
 
     // Menu tracking/alerts can pause window capture for several seconds.
     // Use a longer stall threshold for window-based capture to avoid restart loops.
@@ -127,7 +131,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         softStallThreshold: CFAbsoluteTime = 1.0,
         hardRestartThreshold: CFAbsoluteTime? = nil,
         expectedFrameRate: Double = 0,
-        targetFrameRate _: Int = 0,
+        targetFrameRate: Int = 0,
         poolMinimumBufferCount: Int = 6,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
     ) {
@@ -143,6 +147,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         self.softStallThreshold = softStallThreshold
         self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
         self.expectedFrameRate = expectedFrameRate
+        self.targetFrameRate = Double(max(0, targetFrameRate))
         self.poolMinimumBufferCount = max(2, poolMinimumBufferCount)
         self.capturePressureProfile = capturePressureProfile
         frameCopier = CaptureFrameCopier()
@@ -180,13 +185,15 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         gapThreshold: CFAbsoluteTime,
         softStallThreshold: CFAbsoluteTime,
         hardRestartThreshold: CFAbsoluteTime? = nil,
-        targetFrameRate _: Int
+        targetFrameRate: Int
     ) {
         expectationLock.withLock {
             expectedFrameRate = Double(frameRate)
+            self.targetFrameRate = Double(max(0, targetFrameRate))
             frameGapThreshold = gapThreshold
             self.softStallThreshold = softStallThreshold
             self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
+            lastCadenceAdmittedTime = 0
         }
         deliveryStateLock.withLock {
             softStallSignaled = false
@@ -202,6 +209,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         wasInFallbackMode = false
         fallbackStartTime = 0
         fallbackLock.unlock()
+        expectationLock.withLock {
+            lastCadenceAdmittedTime = 0
+        }
         MirageLogger.capture("Reset fallback state for resize")
     }
 
@@ -750,6 +760,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         frameInfo: CapturedFrameInfo,
         captureTime: CFAbsoluteTime
     ) {
+        if shouldDropForTargetCadence(captureTime: captureTime, isIdleFrame: frameInfo.isIdleFrame) {
+            logCadenceDrop()
+            return
+        }
+
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let duration = CMSampleBufferGetDuration(sampleBuffer)
         let emitFrame: @Sendable (CVPixelBuffer) -> Void = { [onFrame] pixelBuffer in
@@ -825,6 +840,20 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         return max(2, limit)
     }
 
+    nonisolated static func shouldDropForTargetCadence(
+        lastAdmittedTime: CFAbsoluteTime?,
+        captureTime: CFAbsoluteTime,
+        targetFrameRate: Double,
+        isIdleFrame: Bool
+    ) -> Bool {
+        guard !isIdleFrame else { return false }
+        guard targetFrameRate > 0 else { return false }
+        guard let lastAdmittedTime else { return false }
+        let expectedInterval = 1.0 / targetFrameRate
+        let elapsed = captureTime - lastAdmittedTime
+        return elapsed < expectedInterval * 0.92
+    }
+
     private func logPoolDrop() {
         poolLogLock.withLock {
             poolDropCount += 1
@@ -869,6 +898,39 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             guard !loggedCopyFallback else { return }
             loggedCopyFallback = true
             MirageLogger.capture(message)
+        }
+    }
+
+    private func shouldDropForTargetCadence(captureTime: CFAbsoluteTime, isIdleFrame: Bool) -> Bool {
+        return expectationLock.withLock {
+            let lastAdmitted: CFAbsoluteTime? = lastCadenceAdmittedTime > 0 ? lastCadenceAdmittedTime : nil
+            let shouldDrop = Self.shouldDropForTargetCadence(
+                lastAdmittedTime: lastAdmitted,
+                captureTime: captureTime,
+                targetFrameRate: targetFrameRate,
+                isIdleFrame: isIdleFrame
+            )
+            if shouldDrop { return true }
+            lastCadenceAdmittedTime = captureTime
+            return false
+        }
+    }
+
+    private func logCadenceDrop() {
+        poolLogLock.withLock {
+            cadenceDropCount += 1
+            guard MirageLogger.isEnabled(.capture) else { return }
+            let now = CFAbsoluteTimeGetCurrent()
+            if lastCadenceLogTime == 0 || now - lastCadenceLogTime > 2.0 {
+                let targetFPS = expectationLock.withLock {
+                    Int(targetFrameRate.rounded())
+                }
+                MirageLogger.capture(
+                    "Capture cadence gate: dropped \(cadenceDropCount) frames (target \(targetFPS)fps)"
+                )
+                cadenceDropCount = 0
+                lastCadenceLogTime = now
+            }
         }
     }
 }

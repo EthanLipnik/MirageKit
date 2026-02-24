@@ -21,6 +21,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Bitrate-derived quality mapping keeps a standard 0.80 ceiling through 400 Mbps, scales toward a 0.94 ceiling by 700 Mbps, and targets near-lossless quality at high resolution when bitrate allows.
 - 120Hz quality mapping keeps frame-rate compression bias so high-refresh paths remain latency-first.
 - Quality settings are immutable while a stream is active and apply on the next stream start.
+- Streaming performance mode supports `standard` and opt-in `game`; mode selection is carried on desktop/window/app stream-start requests.
 - VideoToolbox data-rate limits use a window-budget byte cap (0.25s at 120Hz, 0.5s otherwise) so real-time bitrate caps do not overshoot during motion bursts.
 - Capture format follows stream bit depth: 10-bit uses P010 with Display P3, and 8-bit uses NV12 with sRGB.
 - Host capture enforces expected CVBuffer color attachments before encode (Display P3 or sRGB tag set) so encoder color metadata stays consistent with requested bit depth/color space.
@@ -32,6 +33,9 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - iPad direct touch input supports `normal`, `dragCursor`, and `pencilBased` modes; Pencil-based mode routes single-finger touch through native scroll physics while pointer clicks come from Apple Pencil or indirect pointer input.
 - Apple Pencil squeeze triggers a secondary click at the hover location when available, or the latest pointer location.
 - Custom mode: encoder overrides for bit depth, bitrate, and keyframe interval.
+- Game Mode baseline policy applies host-side runtime overrides: latency-first mode behavior, runtime quality adaptation enabled, high-res low-latency compression boost enabled, tuned capture pressure profile with capture-queue-depth request ignored, long keyframe cadence, and bitrate-cap clamping.
+- Game Mode HEVC encoder session tuning requests low-latency rate control at VideoToolbox session creation and applies throughput-first properties (`maximizePowerEfficiency=false`, `referenceBufferCount=1`, `allowOpenGOP=false`, `allowTemporalCompression=true`) when supported.
+- Game Mode sustained-deficit handling evaluates 2-second windows and advances staged overrides after three consecutive dual-deficit windows (`encodedFPS < targetFPS * 0.97` and `avgEncodeMs > frameBudgetMs * 1.02`): 120Hz to 60Hz, then 10-bit to 8-bit, then emergency bitrate cap plus aggressive queue-pressure quality steps; active streams do not restore stages in-session.
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
 - Default `MIRAGE_LOG` categories include `host`, `client`, `appState`, `stream`, `decoder`, and `renderer`; additional categories use explicit `MIRAGE_LOG` overrides.
 - Diagnostics fanout is public and app-agnostic through `MirageDiagnostics` with multi-sink registration, structured error events, and context-provider snapshots.
@@ -78,6 +82,8 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - AWDL stabilization includes path classification snapshots (`awdl`, `wifi`, `wired`, `unknown`) for control/video/audio transports, proactive registration refresh on ready path transitions, and periodic registration refresh while streams are active.
 - AWDL media transport supports USB-C wired links; path logs can still report `interfaces=wifi` with `available=awdl0(...)` during wired USB-C sessions.
 - Host transport send-error bursts are tracked per stream and can trigger queue reset plus urgent recovery keyframe and host-to-client transport refresh requests through an internal control message.
+- Desktop capture admission includes a target-cadence time gate before frame copy for non-idle content frames so high-refresh capture sources do not overfeed lower encode cadence targets; idle continuity behavior remains active for display streams.
+- Host stream metrics include host encode telemetry fields `hostAverageEncodeMs`, `hostUsingHardwareEncoder`, and `hostEncoderGPURegistryID`; host logs structured hardware-encoder status at encoder session creation and reconfiguration.
 - AWDL jitter handling includes bounded adaptive micro-jitter hold at decode dequeue (0-8 ms) with automatic decay after stable windows.
 - AWDL bootstrap hardening duplicates only the keyframe parameter-set fragment packet when experiment mode is enabled.
 - Host software update control messages cover status snapshots (`hostSoftwareUpdateStatus`) and install request results (`hostSoftwareUpdateInstallResult`) for connected clients; payloads include typed automation/disposition/block/result fields plus bounded release-notes summary/body/format and optional remediation hints.

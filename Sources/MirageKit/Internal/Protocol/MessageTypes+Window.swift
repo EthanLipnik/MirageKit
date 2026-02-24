@@ -59,6 +59,8 @@ package struct StartStreamMessage: Codable {
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
     package var latencyMode: MirageStreamLatencyMode?
+    /// Client-requested host performance profile.
+    package var performanceMode: MirageStreamPerformanceMode?
     /// Client-requested runtime quality adaptation behavior on host.
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
@@ -90,6 +92,7 @@ package struct StartStreamMessage: Codable {
         case bitDepth
         case bitrate
         case latencyMode
+        case performanceMode
         case allowRuntimeQualityAdjustment
         case lowLatencyHighResolutionCompressionBoost
         case disableResolutionCap
@@ -111,6 +114,7 @@ package struct StartStreamMessage: Codable {
         bitDepth: MirageVideoBitDepth? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
+        performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
@@ -130,6 +134,7 @@ package struct StartStreamMessage: Codable {
         self.bitDepth = bitDepth
         self.bitrate = bitrate
         self.latencyMode = latencyMode
+        self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.disableResolutionCap = disableResolutionCap
@@ -210,6 +215,9 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let droppedFrames: UInt64
     package let activeQuality: Float
     package let targetFrameRate: Int
+    package let averageEncodeMs: Double?
+    package let usingHardwareEncoder: Bool?
+    package let encoderGPURegistryID: UInt64?
     package let capturePixelFormat: String?
     package let captureColorPrimaries: String?
     package let encoderPixelFormat: String?
@@ -226,6 +234,9 @@ package struct StreamMetricsMessage: Codable, Sendable {
         droppedFrames: UInt64,
         activeQuality: Float,
         targetFrameRate: Int,
+        averageEncodeMs: Double? = nil,
+        usingHardwareEncoder: Bool? = nil,
+        encoderGPURegistryID: UInt64? = nil,
         capturePixelFormat: String? = nil,
         captureColorPrimaries: String? = nil,
         encoderPixelFormat: String? = nil,
@@ -241,6 +252,9 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.droppedFrames = droppedFrames
         self.activeQuality = activeQuality
         self.targetFrameRate = targetFrameRate
+        self.averageEncodeMs = averageEncodeMs
+        self.usingHardwareEncoder = usingHardwareEncoder
+        self.encoderGPURegistryID = encoderGPURegistryID
         self.capturePixelFormat = capturePixelFormat
         self.captureColorPrimaries = captureColorPrimaries
         self.encoderPixelFormat = encoderPixelFormat

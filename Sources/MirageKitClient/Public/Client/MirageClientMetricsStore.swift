@@ -22,6 +22,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostDroppedFrames: UInt64
     public var hostActiveQuality: Double
     public var hostTargetFrameRate: Int
+    public var hostAverageEncodeMs: Double?
+    public var hostUsingHardwareEncoder: Bool?
+    public var hostEncoderGPURegistryID: UInt64?
     public var hostCapturePixelFormat: String?
     public var hostCaptureColorPrimaries: String?
     public var hostEncoderPixelFormat: String?
@@ -45,6 +48,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostDroppedFrames: UInt64 = 0,
         hostActiveQuality: Double = 0,
         hostTargetFrameRate: Int = 0,
+        hostAverageEncodeMs: Double? = nil,
+        hostUsingHardwareEncoder: Bool? = nil,
+        hostEncoderGPURegistryID: UInt64? = nil,
         hostCapturePixelFormat: String? = nil,
         hostCaptureColorPrimaries: String? = nil,
         hostEncoderPixelFormat: String? = nil,
@@ -67,6 +73,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostDroppedFrames = hostDroppedFrames
         self.hostActiveQuality = hostActiveQuality
         self.hostTargetFrameRate = hostTargetFrameRate
+        self.hostAverageEncodeMs = hostAverageEncodeMs
+        self.hostUsingHardwareEncoder = hostUsingHardwareEncoder
+        self.hostEncoderGPURegistryID = hostEncoderGPURegistryID
         self.hostCapturePixelFormat = hostCapturePixelFormat
         self.hostCaptureColorPrimaries = hostCaptureColorPrimaries
         self.hostEncoderPixelFormat = hostEncoderPixelFormat
@@ -115,6 +124,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         droppedFrames: UInt64,
         activeQuality: Double,
         targetFrameRate: Int,
+        averageEncodeMs: Double?,
+        usingHardwareEncoder: Bool?,
+        encoderGPURegistryID: UInt64?,
         capturePixelFormat: String?,
         captureColorPrimaries: String?,
         encoderPixelFormat: String?,
@@ -131,6 +143,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostDroppedFrames = droppedFrames
         snapshot.hostActiveQuality = activeQuality
         snapshot.hostTargetFrameRate = targetFrameRate
+        snapshot.hostAverageEncodeMs = averageEncodeMs
+        snapshot.hostUsingHardwareEncoder = usingHardwareEncoder
+        snapshot.hostEncoderGPURegistryID = encoderGPURegistryID
         snapshot.hostCapturePixelFormat = capturePixelFormat
         snapshot.hostCaptureColorPrimaries = captureColorPrimaries
         snapshot.hostEncoderPixelFormat = encoderPixelFormat
