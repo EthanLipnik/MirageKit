@@ -686,6 +686,24 @@ public final class MirageClientService {
         }
     }
 
+    /// Applies runtime network-policy updates used by discovery and hello validation.
+    /// Existing connections keep their current transport/path settings until reconnect.
+    public func updateNetworkPolicy(
+        enablePeerToPeer: Bool,
+        requireEncryptedMediaOnLocalNetwork: Bool
+    ) {
+        guard networkConfig.enablePeerToPeer != enablePeerToPeer ||
+            networkConfig.requireEncryptedMediaOnLocalNetwork != requireEncryptedMediaOnLocalNetwork else {
+            return
+        }
+
+        networkConfig.enablePeerToPeer = enablePeerToPeer
+        networkConfig.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
+        MirageLogger.client(
+            "Updated network policy (p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
+        )
+    }
+
     #if os(iOS) || os(visionOS)
     /// Cached drawable size from the Metal view.
     public static var lastKnownViewSize: CGSize = .zero

@@ -39,6 +39,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
 - Default `MIRAGE_LOG` categories include `host`, `client`, `appState`, `stream`, `decoder`, and `renderer`; additional categories use explicit `MIRAGE_LOG` overrides.
 - Diagnostics fanout is public and app-agnostic through `MirageDiagnostics` with multi-sink registration, structured error events, and context-provider snapshots.
+- Instrumentation fanout is public and app-agnostic through `MirageInstrumentation` with multi-sink registration; app-layer targets own vendor-specific signal transport (for example TelemetryDeck, custom logs, or feature hooks).
 - MirageKit diagnostics payloads stay structured and sanitized (technical fields only); app-layer crash reporters own transport and vendor-specific policy.
 - Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
 - Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and bit-depth viability checks.

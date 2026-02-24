@@ -14,6 +14,8 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     public func disconnectClient(_ client: MirageConnectedClient) async {
+        MirageInstrumentation.record(.hostClientDisconnected)
+
         // Clear any stuck modifier state from this client's session
         inputController.clearAllModifiers()
 

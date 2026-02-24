@@ -310,6 +310,7 @@ public extension MirageHostService {
         if let app = updatedWindow.application { await startMenuBarMonitoring(streamID: streamID, app: app, client: client) }
 
         await updateLightsOutState()
+        MirageInstrumentation.record(.hostStreamWindowStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
 
         return session
     }

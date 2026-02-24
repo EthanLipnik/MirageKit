@@ -274,9 +274,16 @@ public struct MirageStreamContentView: View {
         #endif
     }
 
+    private var isCurrentStreamActive: Bool {
+        if clientService.desktopStreamID == session.streamID { return true }
+        if clientService.loginDisplayStreamID == session.streamID { return true }
+        if clientService.activeStreams.contains(where: { $0.id == session.streamID }) { return true }
+        return clientService.activeStreamIDsForFiltering.contains(session.streamID)
+    }
+
     private var canSendInputToHost: Bool {
         guard case .connected = clientService.connectionState else { return false }
-        return clientService.activeStreams.contains { $0.id == session.streamID }
+        return isCurrentStreamActive
     }
 
     private var macOSInputEnabled: Bool {
@@ -284,9 +291,6 @@ public struct MirageStreamContentView: View {
     }
 
     private func sendInputEvent(_ event: MirageInputEvent) {
-        guard canSendInputToHost else { return }
-        onInputActivity?(event)
-
         if case let .keyDown(keyEvent) = event {
             if isDesktopStream, desktopExitShortcut.matches(keyEvent) {
                 onExitDesktopStream?()
@@ -297,6 +301,9 @@ public struct MirageStreamContentView: View {
                 return
             }
         }
+
+        guard canSendInputToHost else { return }
+        onInputActivity?(event)
 
         if MirageTypingBurstClassifier.shouldTrigger(for: event) {
             MirageFrameCache.shared.noteTypingBurstActivity(for: session.streamID)

@@ -82,12 +82,14 @@ extension MirageClientService {
             guard let pendingHelloNonce else {
                 connectionState = .error("Invalid handshake state")
                 MirageLogger.client("Rejected hello response without pending nonce")
+                recordHelloValidationFailure(.missingPendingNonce)
                 return
             }
             let helloNonce = pendingHelloNonce
             guard response.requestNonce == pendingHelloNonce else {
                 connectionState = .error("Invalid handshake nonce")
                 MirageLogger.client("Rejected hello response with mismatched nonce")
+                recordHelloValidationFailure(.mismatchedNonce)
                 return
             }
 
@@ -95,6 +97,7 @@ extension MirageClientService {
             guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
                 connectionState = .error("Invalid host identity key")
                 MirageLogger.client("Rejected hello response with invalid host key ID")
+                recordHelloValidationFailure(.invalidHostKeyID)
                 return
             }
             let replayValid = await handshakeReplayProtector.validate(
@@ -104,6 +107,7 @@ extension MirageClientService {
             guard replayValid else {
                 connectionState = .error("Replay detected")
                 MirageLogger.client("Rejected hello response due to replay protection")
+                recordHelloValidationFailure(.replayDetected)
                 return
             }
             let signedPayload = try MirageIdentitySigning.helloResponsePayload(
@@ -128,6 +132,7 @@ extension MirageClientService {
             ) else {
                 connectionState = .error("Host signature invalid")
                 MirageLogger.client("Rejected hello response with invalid host signature")
+                recordHelloValidationFailure(.invalidHostSignature)
                 return
             }
             if let expectedHostIdentityKeyID, expectedHostIdentityKeyID != identity.keyID {
@@ -135,6 +140,7 @@ extension MirageClientService {
                 MirageLogger.client(
                     "Rejected hello response due to host key mismatch expected=\(expectedHostIdentityKeyID) actual=\(identity.keyID)"
                 )
+                recordHelloValidationFailure(.hostIdentityMismatch)
                 return
             }
 
@@ -150,6 +156,7 @@ extension MirageClientService {
                 ) else {
                     connectionState = .error("Host media encryption disabled (client policy blocks unencrypted media)")
                     MirageLogger.client("Rejected hello response with media encryption disabled by client policy")
+                    recordHelloValidationFailure(.mediaEncryptionRequired)
                     return
                 }
                 guard response.udpRegistrationToken.count == MirageMediaSecurity.registrationTokenLength else {
@@ -157,6 +164,7 @@ extension MirageClientService {
                     MirageLogger.client(
                         "Rejected hello response due to invalid UDP registration token length \(response.udpRegistrationToken.count)"
                     )
+                    recordHelloValidationFailure(.invalidUDPRegistrationToken)
                     return
                 }
                 let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
@@ -166,6 +174,7 @@ extension MirageClientService {
                 } catch {
                     connectionState = .error("Missing local identity")
                     MirageLogger.client("Failed to load local identity for media key derivation: \(error)")
+                    recordHelloValidationFailure(.missingLocalIdentity)
                     return
                 }
                 let mediaContext: MirageMediaSecurityContext
@@ -184,6 +193,7 @@ extension MirageClientService {
                 } catch {
                     connectionState = .error("Media key derivation failed")
                     MirageLogger.client("Rejected hello response due to media key derivation failure: \(error)")
+                    recordHelloValidationFailure(.mediaKeyDerivationFailed)
                     return
                 }
 
@@ -213,6 +223,7 @@ extension MirageClientService {
                     MirageLogger.client(
                         "Protocol mismatch host=\(response.negotiation.protocolVersion), client=\(MirageKit.protocolVersion)"
                     )
+                    recordHelloValidationFailure(.protocolVersionMismatch)
                     return
                 }
                 let requiredFeatures: MirageFeatureSet = [
@@ -225,11 +236,13 @@ extension MirageClientService {
                     MirageLogger.client(
                         "Rejected hello response missing required features \(response.negotiation.selectedFeatures)"
                     )
+                    recordHelloValidationFailure(.protocolFeaturesMismatch)
                     return
                 }
                 negotiatedFeatures = response.negotiation.selectedFeatures
                 hostDataPort = response.dataPort
                 MirageLogger.client("Received hello response, dataPort: \(hostDataPort)")
+                MirageInstrumentation.record(.clientHelloAccepted)
             } else {
                 let mismatchInfo = protocolMismatchInfo(from: response)
                 if let mismatchInfo {
@@ -238,9 +251,11 @@ extension MirageClientService {
                 let rejectionDescription = helloRejectionDescription(for: response, mismatchInfo: mismatchInfo)
                 MirageLogger.client("Connection rejected by host: \(rejectionDescription)")
                 connectionState = .error(rejectionDescription)
+                MirageInstrumentation.record(.clientHelloRejected(helloRejectionReason(response.rejectionReason)))
             }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode hello response: ")
+            MirageInstrumentation.record(.clientHelloDecodeFailed)
         }
     }
 
@@ -540,6 +555,8 @@ extension MirageClientService {
         do {
             let response = try message.decode(UnlockResponseMessage.self)
             MirageLogger.client("Unlock response: success=\(response.success)")
+            let unlockOutcome: MirageUnlockResponseStepOutcome = response.success ? .success : .failure
+            MirageInstrumentation.record(.clientUnlockResponse(unlockOutcome))
             if response.success {
                 hostSessionState = response.newState
                 if let token = response.newSessionToken { currentSessionToken = token }
@@ -638,6 +655,27 @@ extension MirageClientService {
             delegate?.clientService(self, loginDisplayDidStop: streamID, newState: stopped.newState)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode login display stopped: ")
+        }
+    }
+
+    private func recordHelloValidationFailure(_ reason: MirageClientHelloValidationStepReason) {
+        MirageInstrumentation.record(.clientHelloInvalid(reason))
+    }
+
+    private func helloRejectionReason(_ reason: HelloRejectionReason?) -> MirageHelloRejectionStepReason {
+        switch reason {
+        case .protocolVersionMismatch:
+            return .protocolVersionMismatch
+        case .protocolFeaturesMismatch:
+            return .protocolFeaturesMismatch
+        case .hostBusy:
+            return .hostBusy
+        case .rejected:
+            return .rejected
+        case .unauthorized:
+            return .unauthorized
+        case .none:
+            return .unknown
         }
     }
 }

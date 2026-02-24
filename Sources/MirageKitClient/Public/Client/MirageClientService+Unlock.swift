@@ -31,6 +31,7 @@ public extension MirageClientService {
         let message = try ControlMessage(type: .unlockRequest, content: request)
         let data = message.serialize()
 
+        MirageInstrumentation.record(.clientUnlockRequested)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             connection.send(content: data, completion: .contentProcessed { error in
                 if let error { continuation.resume(throwing: error) } else {

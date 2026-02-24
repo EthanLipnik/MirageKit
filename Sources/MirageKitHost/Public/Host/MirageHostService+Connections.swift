@@ -88,6 +88,7 @@ extension MirageHostService {
 
     func handleNewConnection(_ connection: NWConnection) async {
         MirageLogger.host("New client connection")
+        MirageInstrumentation.record(.hostConnectionIncoming)
 
         connection.start(queue: .global(qos: .userInitiated))
 
@@ -133,6 +134,7 @@ extension MirageHostService {
         case let .accepted(value):
             hello = value
         case let .rejected(rejection):
+            MirageInstrumentation.record(.hostHelloRejected(.init(name: rejection.reason.rawValue)))
             MirageLogger.host(
                 "Sending hello rejection to \(rejection.deviceInfo.name) reason=\(rejection.reason.rawValue)"
             )
@@ -159,6 +161,7 @@ extension MirageHostService {
         await preemptExistingClientIfSuperseded(by: deviceInfo)
 
         guard reserveSingleClientSlot(for: connectionID) else {
+            MirageInstrumentation.record(.hostHelloRejected(.hostBusy))
             if let activeClient = clientsByConnection.values.first?.client {
                 MirageLogger.host(
                     "Rejecting \(deviceInfo.name); host already has active client \(activeClient.name)"
@@ -188,19 +191,23 @@ extension MirageHostService {
 
         switch approvalOutcome {
         case let .accepted(autoTrustGranted):
+            MirageInstrumentation.record(.hostConnectionApprovalResult(.accepted))
             MirageLogger.host(
                 "Connection approved (\(autoTrustGranted ? "auto-trust" : "manual approval")), sending hello response..."
             )
             break
         case .rejected:
+            MirageInstrumentation.record(.hostConnectionApprovalResult(.rejected))
             MirageLogger.host("Connection rejected")
             connection.cancel()
             return
         case .connectionClosed:
+            MirageInstrumentation.record(.hostConnectionApprovalResult(.connectionClosed))
             MirageLogger.host("Connection closed while awaiting approval")
             connection.cancel()
             return
         case .timedOut:
+            MirageInstrumentation.record(.hostConnectionApprovalResult(.timedOut))
             MirageLogger.host("Connection approval timed out after \(Int(connectionApprovalTimeoutSeconds))s")
             connection.cancel()
             return
@@ -232,6 +239,7 @@ extension MirageHostService {
             connection.cancel()
             return
         }
+        MirageInstrumentation.record(.hostHelloAccepted)
 
         let client = MirageConnectedClient(
             id: deviceInfo.id,
@@ -269,6 +277,7 @@ extension MirageHostService {
 
         connectedClients.append(client)
         delegate?.hostService(self, didConnectClient: client)
+        MirageInstrumentation.record(.hostClientConnected)
 
         startSessionRefreshLoopIfNeeded()
         await refreshSessionStateIfNeeded()
@@ -450,6 +459,7 @@ extension MirageHostService {
             }
 
             MirageLogger.host("Received hello from \(hello.deviceName) (\(hello.deviceType.displayName))")
+            MirageInstrumentation.record(.hostHelloReceived)
             let pendingControlData = helloBytesConsumed < receiveBuffer.count
                 ? Data(receiveBuffer.dropFirst(helloBytesConsumed))
                 : Data()

@@ -394,6 +394,7 @@ extension MirageHostService {
             .host(
                 "Desktop stream started: streamID=\(streamID), resolution=\(encodedDimensions.width)x\(encodedDimensions.height)"
             )
+        MirageInstrumentation.record(.hostStreamDesktopStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
     }
 
     /// Stop the desktop stream

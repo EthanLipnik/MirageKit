@@ -52,4 +52,23 @@ struct ClientMediaEncryptionPolicyTests {
         #expect(service.mediaSecurityContextForNetworking == nil)
         #expect(service.mediaSecurityPacketKeyForNetworking == nil)
     }
+
+    @MainActor
+    @Test("Client updates network policy at runtime")
+    func clientNetworkPolicyRuntimeUpdate() {
+        let service = MirageClientService(
+            networkConfiguration: MirageNetworkConfiguration(
+                enablePeerToPeer: true,
+                requireEncryptedMediaOnLocalNetwork: true
+            )
+        )
+
+        service.updateNetworkPolicy(
+            enablePeerToPeer: false,
+            requireEncryptedMediaOnLocalNetwork: false
+        )
+
+        #expect(service.networkConfig.enablePeerToPeer == false)
+        #expect(service.networkConfig.requireEncryptedMediaOnLocalNetwork == false)
+    }
 }

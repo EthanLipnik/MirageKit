@@ -123,6 +123,7 @@ extension MirageClientService {
                 requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
             )
             pendingHelloNonce = helloRequest.nonce
+            MirageInstrumentation.record(.clientHelloSent)
             let message = try ControlMessage(type: .hello, content: helloRequest.hello)
             let data = message.serialize()
             MirageLogger.client("Sending hello: \(deviceName) (\(currentDeviceType.displayName))")
@@ -153,6 +154,7 @@ extension MirageClientService {
     async throws {
         guard connectionState.canConnect else { throw MirageError.protocolError("Already connected or connecting") }
 
+        MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name) using \(controlTransport)...")
         connectionState = .connecting
         expectedHostIdentityKeyID = host.capabilities.identityKeyID
@@ -197,6 +199,7 @@ extension MirageClientService {
             }
 
             MirageLogger.client("Connected to \(host.name)")
+            MirageInstrumentation.record(.clientConnectionEstablished)
             connectionState = .connected(host: host.name)
 
             // Store connection for receiving messages.
@@ -242,6 +245,7 @@ extension MirageClientService {
         } catch {
             pendingConnection?.cancel()
             MirageLogger.error(.client, error: error, message: "Connection failed: ")
+            MirageInstrumentation.record(.clientConnectionFailed)
             await handleDisconnect(
                 reason: error.localizedDescription,
                 state: .disconnected,
@@ -277,6 +281,8 @@ extension MirageClientService {
         if case .disconnected = connectionState { return }
 
         if case .error = connectionState, case .error = state { return }
+
+        MirageInstrumentation.record(.clientConnectionDisconnected)
 
         let sessions = activeStreams
         let storedSessions = sessionStore.activeSessions
@@ -386,4 +392,5 @@ extension MirageClientService {
             }
         }
     }
+
 }

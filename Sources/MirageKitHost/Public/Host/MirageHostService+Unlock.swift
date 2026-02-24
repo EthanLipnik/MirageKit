@@ -22,6 +22,7 @@ extension MirageHostService {
     )
     async {
         MirageLogger.host("Received unlock request from \(client.name)")
+        MirageInstrumentation.record(.hostUnlockRequested)
 
         guard let clientContext = clientsByConnection[ObjectIdentifier(connection)] else {
             MirageLogger.error(.host, "No client context for unlock request")
@@ -30,6 +31,7 @@ extension MirageHostService {
 
         // Check if remote unlock is enabled
         guard remoteUnlockEnabled else {
+            MirageInstrumentation.record(.hostUnlockRejected(.remoteUnlockDisabled))
             let response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,
@@ -46,6 +48,7 @@ extension MirageHostService {
         // Ask delegate if this client is authorized to unlock
         let isAuthorized = delegate?.hostService(self, shouldAllowUnlockFrom: client) ?? true
         guard isAuthorized else {
+            MirageInstrumentation.record(.hostUnlockRejected(.notAuthorized))
             let response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,
@@ -65,6 +68,7 @@ extension MirageHostService {
             request = try message.decode(UnlockRequestMessage.self)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to decode unlock request: ")
+            MirageInstrumentation.record(.hostUnlockRejected(.invalidRequestFormat))
             let response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,
@@ -80,6 +84,7 @@ extension MirageHostService {
 
         // Validate session token
         guard request.sessionToken == currentSessionToken else {
+            MirageInstrumentation.record(.hostUnlockRejected(.sessionTokenExpired))
             let response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,
@@ -110,6 +115,7 @@ extension MirageHostService {
         let response: UnlockResponseMessage
         switch result {
         case .success:
+            MirageInstrumentation.record(.hostUnlockSucceeded)
             response = UnlockResponseMessage(
                 success: true,
                 newState: .active,
@@ -125,6 +131,7 @@ extension MirageHostService {
             await sendWindowList(to: clientContext)
 
         case let .failure(code, errorMessage):
+            MirageInstrumentation.record(.hostUnlockFailed(.init(name: code.rawValue)))
             response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,
