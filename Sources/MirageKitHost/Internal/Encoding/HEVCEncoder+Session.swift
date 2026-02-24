@@ -29,6 +29,67 @@ extension HEVCEncoder {
         return spec
     }
 
+    private struct GameModeRateControlPolicy {
+        let realTime = true
+        let allowFrameReordering = false
+        let referenceBufferCount = 1
+        let expectedFrameRate: Int
+        let dataRateWindowSeconds: Double
+        let allowTemporalCompression = true
+
+        init(targetFrameRate: Int) {
+            let clampedFrameRate = max(1, targetFrameRate)
+            expectedFrameRate = clampedFrameRate
+            dataRateWindowSeconds = 1.0 / Double(clampedFrameRate)
+        }
+    }
+
+    private enum PropertyApplyOutcome: String {
+        case applied
+        case unsupported
+        case failed
+
+        var appliedBool: Bool { self == .applied }
+    }
+
+    private struct GameModePolicyStatus {
+        var applied: [String] = []
+        var unsupported: [String] = []
+        var failed: [String] = []
+
+        mutating func record(_ property: String, outcome: PropertyApplyOutcome) {
+            switch outcome {
+            case .applied:
+                applied.append(property)
+            case .unsupported:
+                unsupported.append(property)
+            case .failed:
+                failed.append(property)
+            }
+        }
+
+        private func joined(_ values: [String]) -> String {
+            if values.isEmpty { return "none" }
+            return values.sorted().joined(separator: ",")
+        }
+
+        var appliedText: String { joined(applied) }
+        var unsupportedText: String { joined(unsupported) }
+        var failedText: String { joined(failed) }
+    }
+
+    private enum GameModeBitrateStrategy: String {
+        case constantBitRate
+        case averageBitRateOnly
+        case averageBitRateDataRateLimits
+        case none
+    }
+
+    private struct GameModeBitrateResult {
+        let strategy: GameModeBitrateStrategy
+        let windowSeconds: Double?
+    }
+
     func resolvedSessionLatencyMode() -> MirageStreamLatencyMode {
         if latencyMode == .auto, autoTypingBurstLowLatencyActive {
             return .lowestLatency
@@ -116,9 +177,10 @@ extension HEVCEncoder {
 
         guard status == noErr, let session else { throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
 
+        hardwareStatusRefreshAttempts = 0
         loadSupportedProperties(session)
         try configureSession(session)
-        logHardwareStatus(session)
+        logHardwareStatus(session, reason: "session_create")
         compressionSession = session
 
         // Store dimensions for reset
@@ -171,7 +233,15 @@ extension HEVCEncoder {
         loggedUnsupportedKeys = []
     }
 
-    private func logHardwareStatus(_ session: VTCompressionSession) {
+    func refreshHardwareStatusIfNeeded(reason: String) {
+        guard hardwareStatusRefreshAttempts < maxHardwareStatusRefreshAttempts else { return }
+        guard usingHardwareEncoder == nil || encoderGPURegistryID == nil else { return }
+        guard let session = compressionSession else { return }
+        logHardwareStatus(session, reason: reason)
+    }
+
+    private func logHardwareStatus(_ session: VTCompressionSession, reason: String) {
+        hardwareStatusRefreshAttempts += 1
         usingHardwareEncoder = nil
         encoderGPURegistryID = nil
 
@@ -213,7 +283,8 @@ extension HEVCEncoder {
         }
 
         MirageLogger.encoder(
-            "event=hardware_encoder_status usingHardware=\(usingHardwareText) gpuRegistryID=\(gpuText)"
+            "event=hardware_encoder_status reason=\(reason) usingHardware=\(usingHardwareText) " +
+                "gpuRegistryID=\(gpuText) requiredBySpec=true"
         )
     }
 
@@ -229,19 +300,41 @@ extension HEVCEncoder {
 
     @discardableResult
     func setProperty(_ session: VTCompressionSession, key: CFString, value: CFTypeRef) -> Bool {
+        setPropertyOutcome(session, key: key, value: value).appliedBool
+    }
+
+    @discardableResult
+    private func setPropertyOutcome(
+        _ session: VTCompressionSession,
+        key: CFString,
+        value: CFTypeRef
+    ) -> PropertyApplyOutcome {
         if didQuerySupportedProperties, !supportedPropertyKeys.contains(key) {
             if !loggedUnsupportedKeys.contains(key) {
                 loggedUnsupportedKeys.insert(key)
                 MirageLogger.encoder("Encoder property unsupported: \(key)")
             }
-            return false
+            return .unsupported
         }
         let status = VTSessionSetProperty(session, key: key, value: value)
         guard status == noErr else {
             MirageLogger.error(.encoder, "VTSessionSetProperty \(key) failed: \(status)")
-            return false
+            return .failed
         }
-        return true
+        return .applied
+    }
+
+    @discardableResult
+    private func setPropertyTracked(
+        _ session: VTCompressionSession,
+        key: CFString,
+        value: CFTypeRef,
+        propertyName: String,
+        status: inout GameModePolicyStatus
+    ) -> Bool {
+        let outcome = setPropertyOutcome(session, key: key, value: value)
+        status.record(propertyName, outcome: outcome)
+        return outcome.appliedBool
     }
 
     func hevcProfileName(for profile: CFString) -> String {
@@ -298,32 +391,47 @@ extension HEVCEncoder {
             key: kVTCompressionPropertyKey_Quality,
             value: NSNumber(value: settings.quality)
         )
+        let shouldApplyQPClamps = Self.shouldApplyQPClamps(
+            for: performanceMode,
+            gameModeEmergencyQualityClampsEnabled: gameModeEmergencyQualityClampsEnabled
+        )
         var minQPApplied = false
         var maxQPApplied = false
-        if let minQP = settings.minQP {
+        if shouldApplyQPClamps, let minQP = settings.minQP {
             minQPApplied = setProperty(
                 session,
                 key: kVTCompressionPropertyKey_MinAllowedFrameQP,
                 value: NSNumber(value: minQP)
             )
         }
-        if let maxQP = settings.maxQP {
+        if shouldApplyQPClamps, let maxQP = settings.maxQP {
             maxQPApplied = setProperty(
                 session,
                 key: kVTCompressionPropertyKey_MaxAllowedFrameQP,
                 value: NSNumber(value: maxQP)
             )
         }
+        if !shouldApplyQPClamps {
+            clearGameModeQPClamps(session)
+        }
 
         guard log else { return }
         let qualityText = settings.quality.formatted(.number.precision(.fractionLength(2)))
         let qualityState = qualityApplied ? "applied" : "not-applied"
-        if let minQP = settings.minQP, let maxQP = settings.maxQP {
+        if !shouldApplyQPClamps {
+            MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState)), QP clamps disabled")
+        } else if let minQP = settings.minQP, let maxQP = settings.maxQP {
             let qpState = (minQPApplied && maxQPApplied) ? "applied" : "not-applied"
             MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState)), QP \(minQP)-\(maxQP) (\(qpState))")
         } else {
             MirageLogger.encoder("Encoder quality: \(qualityText) (\(qualityState))")
         }
+    }
+
+    func clearGameModeQPClamps(_ session: VTCompressionSession) {
+        // Use neutral bounds to effectively disable QP clamping in game-mode baseline.
+        setProperty(session, key: kVTCompressionPropertyKey_MinAllowedFrameQP, value: NSNumber(value: 0))
+        setProperty(session, key: kVTCompressionPropertyKey_MaxAllowedFrameQP, value: NSNumber(value: 51))
     }
 
     private func applyBitrateSettings(_ session: VTCompressionSession) {
@@ -332,7 +440,8 @@ extension HEVCEncoder {
         }
         let rateLimit = Self.dataRateLimit(
             targetBitrateBps: targetBitrate,
-            targetFrameRate: configuration.targetFrameRate
+            targetFrameRate: configuration.targetFrameRate,
+            performanceMode: .standard
         )
         setProperty(session, key: kVTCompressionPropertyKey_AverageBitRate, value: NSNumber(value: targetBitrate))
         let rateLimits: [NSNumber] = [
@@ -352,34 +461,165 @@ extension HEVCEncoder {
             )
     }
 
-    func applyBitrateSettingsToActiveSession() {
-        guard let session = compressionSession else { return }
-        applyBitrateSettings(session)
+    private func applyGameModeBitrateSettings(
+        _ session: VTCompressionSession,
+        policy: GameModeRateControlPolicy,
+        status: inout GameModePolicyStatus
+    ) -> GameModeBitrateResult {
+        guard let targetBitrate = configuration.bitrate, targetBitrate > 0 else {
+            return GameModeBitrateResult(strategy: .none, windowSeconds: nil)
+        }
+
+        let targetFrameRate = max(1, policy.expectedFrameRate)
+        let constantBitRateApplied = setPropertyTracked(
+            session,
+            key: kVTCompressionPropertyKey_ConstantBitRate,
+            value: NSNumber(value: targetBitrate),
+            propertyName: "constantBitRate",
+            status: &status
+        )
+
+        let strategy: GameModeBitrateStrategy
+        let windowSeconds: Double?
+        if constantBitRateApplied {
+            strategy = .constantBitRate
+            windowSeconds = nil
+        } else {
+            let averageBitRateApplied = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_AverageBitRate,
+                value: NSNumber(value: targetBitrate),
+                propertyName: "averageBitRate",
+                status: &status
+            )
+            if averageBitRateApplied {
+                // Sunshine-style VT defaults rely on bitrate + realtime + speed priority,
+                // without forcing an ultra-tight DataRateLimits window.
+                strategy = .averageBitRateOnly
+                windowSeconds = nil
+            } else {
+                let rateLimit = Self.dataRateLimit(
+                    targetBitrateBps: targetBitrate,
+                    targetFrameRate: targetFrameRate,
+                    performanceMode: .game
+                )
+                let rateLimits: [NSNumber] = [
+                    NSNumber(value: rateLimit.bytes),
+                    NSNumber(value: rateLimit.windowSeconds),
+                ]
+                let rateLimitApplied = setPropertyTracked(
+                    session,
+                    key: kVTCompressionPropertyKey_DataRateLimits,
+                    value: rateLimits as CFArray,
+                    propertyName: "dataRateLimits",
+                    status: &status
+                )
+                strategy = rateLimitApplied ? .averageBitRateDataRateLimits : .none
+                windowSeconds = rateLimitApplied ? rateLimit.windowSeconds : nil
+            }
+        }
+
+        let mbps = Double(targetBitrate) / 1_000_000.0
+        let bitrateText = mbps.formatted(.number.precision(.fractionLength(1)))
+        if strategy == .averageBitRateDataRateLimits, let windowSeconds {
+            let rateLimit = Self.dataRateLimit(
+                targetBitrateBps: targetBitrate,
+                targetFrameRate: targetFrameRate,
+                performanceMode: .game
+            )
+            let limitMB = Double(rateLimit.bytes) / 1_000_000.0
+            let limitText = limitMB.formatted(.number.precision(.fractionLength(2)))
+            let windowText = windowSeconds.formatted(.number.precision(.fractionLength(4)))
+            MirageLogger
+                .encoder(
+                    "Encoder bitrate target: \(bitrateText) Mbps (strategy \(strategy.rawValue), rate limit \(limitText) MB/\(windowText)s)"
+                )
+        } else {
+            MirageLogger.encoder("Encoder bitrate target: \(bitrateText) Mbps (strategy \(strategy.rawValue))")
+        }
+        return GameModeBitrateResult(strategy: strategy, windowSeconds: windowSeconds)
     }
 
-    static func dataRateLimit(targetBitrateBps: Int, targetFrameRate: Int) -> (bytes: Int, windowSeconds: Double) {
-        let windowSeconds: Double = targetFrameRate >= 120 ? 0.25 : 0.5
+    func applyBitrateSettingsToActiveSession() {
+        guard let session = compressionSession else { return }
+        if performanceMode == .game {
+            let policy = GameModeRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
+            var status = GameModePolicyStatus()
+            _ = applyGameModeBitrateSettings(session, policy: policy, status: &status)
+        } else {
+            applyBitrateSettings(session)
+        }
+    }
+
+    static func dataRateLimit(
+        targetBitrateBps: Int,
+        targetFrameRate: Int,
+        performanceMode: MirageStreamPerformanceMode = .standard
+    ) -> (bytes: Int, windowSeconds: Double) {
+        let clampedFrameRate = max(1, targetFrameRate)
+        let windowSeconds: Double = if performanceMode == .game {
+            1.0 / Double(clampedFrameRate)
+        } else {
+            clampedFrameRate >= 120 ? 0.25 : 0.5
+        }
         let bytesPerSecond = max(1.0, Double(targetBitrateBps) / 8.0)
         let bytes = max(1, Int((bytesPerSecond * windowSeconds).rounded()))
         return (bytes: bytes, windowSeconds: windowSeconds)
     }
 
     private func configureSession(_ session: VTCompressionSession) throws {
-        // Real-time encoding
-        setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        let gameModePolicy = performanceMode == .game ? GameModeRateControlPolicy(
+            targetFrameRate: configuration.targetFrameRate
+        ) : nil
+        var gameModeStatus = GameModePolicyStatus()
 
-        // Disable B-frames for predictable latency (smoothest relies on buffering only).
-        setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+        if let gameModePolicy {
+            _ = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_RealTime,
+                value: gameModePolicy.realTime ? kCFBooleanTrue : kCFBooleanFalse,
+                propertyName: "realTime",
+                status: &gameModeStatus
+            )
+            _ = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_AllowFrameReordering,
+                value: gameModePolicy.allowFrameReordering ? kCFBooleanTrue : kCFBooleanFalse,
+                propertyName: "allowFrameReordering",
+                status: &gameModeStatus
+            )
+            let frameDelay = frameDelayCount(for: resolvedSessionLatencyMode())
+            _ = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_MaxFrameDelayCount,
+                value: NSNumber(value: frameDelay),
+                propertyName: "maxFrameDelayCount",
+                status: &gameModeStatus
+            )
+            _ = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_ExpectedFrameRate,
+                value: gameModePolicy.expectedFrameRate as CFNumber,
+                propertyName: "expectedFrameRate",
+                status: &gameModeStatus
+            )
+        } else {
+            // Real-time encoding.
+            setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
 
-        // Configure encoder buffering policy from the active latency profile.
-        applySessionLatencySettings(session)
+            // Disable B-frames for predictable latency (smoothest relies on buffering only).
+            setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
 
-        // Frame rate
-        setProperty(
-            session,
-            key: kVTCompressionPropertyKey_ExpectedFrameRate,
-            value: configuration.targetFrameRate as CFNumber
-        )
+            // Configure encoder buffering policy from the active latency profile.
+            applySessionLatencySettings(session)
+
+            // Frame rate.
+            setProperty(
+                session,
+                key: kVTCompressionPropertyKey_ExpectedFrameRate,
+                value: configuration.targetFrameRate as CFNumber
+            )
+        }
 
         // Keyframe interval
         setProperty(
@@ -400,14 +640,26 @@ extension HEVCEncoder {
         // Profile selection. ARGB2101010 prefers Main42210 and falls back to Main10.
         applyProfileLevel(session)
 
-        // Prioritize encoding speed over quality for lower latency
-        setProperty(
-            session,
-            key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
-            value: kCFBooleanTrue
-        )
+        // Prioritize encoding speed over quality for lower latency.
+        if gameModePolicy != nil {
+            _ = setPropertyTracked(
+                session,
+                key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+                value: kCFBooleanTrue,
+                propertyName: "prioritizeEncodingSpeedOverQuality",
+                status: &gameModeStatus
+            )
+        } else {
+            setProperty(
+                session,
+                key: kVTCompressionPropertyKey_PrioritizeEncodingSpeedOverQuality,
+                value: kCFBooleanTrue
+            )
+        }
         MirageLogger.encoder("Prioritizing encoding speed over quality")
-        applyGameModeThroughputSettings(session)
+        if let gameModePolicy {
+            applyGameModeThroughputSettings(session, policy: gameModePolicy, status: &gameModeStatus)
+        }
 
         // Apply base quality setting - lower values reduce size for all frames
         let requestedQuality = configuration.frameQuality
@@ -419,12 +671,24 @@ extension HEVCEncoder {
         }
         applyQualitySettings(session, quality: baseQuality, log: true)
 
-        // Apply bitrate caps to keep encode time bounded for motion-heavy scenes
-        applyBitrateSettings(session)
-
-        // Note: kVTCompressionPropertyKey_ConstantBitRate is not supported by all HEVC encoders
-        // The encoder will use its default rate control mode (typically VBR), which is fine
-        // since we already have MaxFrameDelayCount=0 and RealTime=true for low latency
+        // Apply bitrate policy.
+        if let gameModePolicy {
+            let bitrateResult = applyGameModeBitrateSettings(session, policy: gameModePolicy, status: &gameModeStatus)
+            let windowText = if let windowSeconds = bitrateResult.windowSeconds {
+                windowSeconds.formatted(.number.precision(.fractionLength(4)))
+            } else {
+                "n/a"
+            }
+            MirageLogger.encoder(
+                "event=encoder_effective_policy mode=game strategy=\(bitrateResult.strategy.rawValue) " +
+                    "targetFPS=\(gameModePolicy.expectedFrameRate) dataRateWindow=\(windowText)s " +
+                    "applied=\(gameModeStatus.appliedText) unsupported=\(gameModeStatus.unsupportedText) " +
+                    "failed=\(gameModeStatus.failedText)"
+            )
+        } else {
+            // Apply bitrate caps to keep encode time bounded for motion-heavy scenes.
+            applyBitrateSettings(session)
+        }
 
         // Color space configuration
         switch configuration.colorSpace {
@@ -475,35 +739,45 @@ extension HEVCEncoder {
         VTCompressionSessionPrepareToEncodeFrames(session)
     }
 
-    private func applyGameModeThroughputSettings(_ session: VTCompressionSession) {
-        guard performanceMode == .game else { return }
-
+    private func applyGameModeThroughputSettings(
+        _ session: VTCompressionSession,
+        policy: GameModeRateControlPolicy,
+        status: inout GameModePolicyStatus
+    ) {
         // Keep HEVC on the highest-throughput path for sustained high-resolution encoding.
-        let powerPreferenceApplied = setProperty(
+        let powerPreferenceApplied = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
-            value: kCFBooleanFalse
+            value: kCFBooleanFalse,
+            propertyName: "maximizePowerEfficiency",
+            status: &status
         )
-        let referenceBuffersApplied = setProperty(
+        let referenceBuffersApplied = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_ReferenceBufferCount,
-            value: NSNumber(value: 1)
+            value: NSNumber(value: policy.referenceBufferCount),
+            propertyName: "referenceBufferCount",
+            status: &status
         )
-        let openGOPApplied = setProperty(
+        let openGOPApplied = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_AllowOpenGOP,
-            value: kCFBooleanFalse
+            value: kCFBooleanFalse,
+            propertyName: "allowOpenGOP",
+            status: &status
         )
-        let temporalCompressionApplied = setProperty(
+        let temporalCompressionApplied = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_AllowTemporalCompression,
-            value: kCFBooleanTrue
+            value: policy.allowTemporalCompression ? kCFBooleanTrue : kCFBooleanFalse,
+            propertyName: "allowTemporalCompression",
+            status: &status
         )
 
         MirageLogger.encoder(
             "event=encoder_game_mode_tuning maximizePowerEfficiency=false(\(powerPreferenceApplied)) " +
-                "referenceBuffers=1(\(referenceBuffersApplied)) allowOpenGOP=false(\(openGOPApplied)) " +
-                "allowTemporalCompression=true(\(temporalCompressionApplied))"
+                "referenceBuffers=\(policy.referenceBufferCount)(\(referenceBuffersApplied)) allowOpenGOP=false(\(openGOPApplied)) " +
+                "allowTemporalCompression=\(policy.allowTemporalCompression)(\(temporalCompressionApplied))"
         )
     }
 }

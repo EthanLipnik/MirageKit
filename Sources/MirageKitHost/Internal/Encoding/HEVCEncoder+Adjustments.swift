@@ -32,6 +32,23 @@ extension HEVCEncoder {
         applyQualitySettings(session, quality: baseQuality, log: false)
     }
 
+    func setGameModeEmergencyQualityClampsEnabled(_ enabled: Bool) {
+        guard performanceMode == .game else { return }
+        guard gameModeEmergencyQualityClampsEnabled != enabled else { return }
+        gameModeEmergencyQualityClampsEnabled = enabled
+        guard let session = compressionSession else { return }
+        if enabled {
+            applyQualitySettings(session, quality: baseQuality, log: false)
+            MirageLogger.encoder("Game mode emergency QP clamps enabled")
+        } else {
+            clearGameModeQPClamps(session)
+            if !qualityOverrideActive {
+                applyQualitySettings(session, quality: baseQuality, log: false)
+            }
+            MirageLogger.encoder("Game mode emergency QP clamps disabled")
+        }
+    }
+
     func prepareForKeyframe(quality: Float) {
         guard let session = compressionSession else { return }
         let clamped = max(0.02, min(compressionQualityCeiling, quality))

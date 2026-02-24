@@ -159,29 +159,66 @@ extension StreamContext {
 
     @discardableResult
     func applyGameModeStage2BitDepthOverride() async -> Bool {
-        guard encoderConfig.bitDepth == .tenBit else { return false }
+        if encoderConfig.bitDepth == .tenBit {
+            if isRunning {
+                do {
+                    try await updateEncoderSettings(
+                        bitDepth: .eightBit,
+                        bitrate: encoderConfig.bitrate
+                    )
+                    return true
+                } catch {
+                    MirageLogger.error(.stream, error: error, message: "Game mode stage 2 bit-depth override failed: ")
+                    return false
+                }
+            }
+
+            encoderConfig = encoderConfig.withOverrides(
+                bitDepth: .eightBit,
+                bitrate: encoderConfig.bitrate
+            )
+            activePixelFormat = encoderConfig.pixelFormat
+            if currentEncodedSize != .zero {
+                await applyDerivedQuality(for: currentEncodedSize, logLabel: "Game mode stage 2")
+            }
+            MirageLogger.stream("Game mode stage 2 applied without active capture: bitDepth=8-bit")
+            return true
+        }
+
+        // If already at 8-bit, stage 2 still needs a meaningful fallback.
+        let targetScale = max(
+            Self.gameModeMinimumScale,
+            StreamContext.clampStreamScale(streamScale * Self.gameModeStage2ScaleFactor)
+        )
+        guard targetScale + 0.001 < streamScale else { return false }
+
         if isRunning {
             do {
-                try await updateEncoderSettings(
-                    bitDepth: .eightBit,
-                    bitrate: encoderConfig.bitrate
+                try await updateStreamScale(targetScale)
+                let scaleText = Double(streamScale).formatted(.number.precision(.fractionLength(2)))
+                MirageLogger.stream(
+                    "Game mode stage 2 applied via stream-scale fallback: \(scaleText)"
                 )
                 return true
             } catch {
-                MirageLogger.error(.stream, error: error, message: "Game mode stage 2 bit-depth override failed: ")
+                MirageLogger.error(.stream, error: error, message: "Game mode stage 2 scale override failed: ")
                 return false
             }
         }
 
-        encoderConfig = encoderConfig.withOverrides(
-            bitDepth: .eightBit,
-            bitrate: encoderConfig.bitrate
-        )
-        activePixelFormat = encoderConfig.pixelFormat
-        if currentEncodedSize != .zero {
-            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Game mode stage 2")
+        requestedStreamScale = targetScale
+        streamScale = targetScale
+        if baseCaptureSize != .zero {
+            let outputSize = scaledOutputSize(for: baseCaptureSize)
+            currentCaptureSize = outputSize
+            currentEncodedSize = outputSize
+            updateQueueLimits()
+            await applyDerivedQuality(for: outputSize, logLabel: "Game mode stage 2 scale")
         }
-        MirageLogger.stream("Game mode stage 2 applied without active capture: bitDepth=8-bit")
+        let scaleText = Double(targetScale).formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.stream(
+            "Game mode stage 2 applied without active capture: streamScale=\(scaleText)"
+        )
         return true
     }
 
@@ -190,6 +227,8 @@ extension StreamContext {
         gameModeAggressiveQualityDropEnabled = true
         qualityOverBudgetCount = 0
         qualityUnderBudgetCount = 0
+        gameModeConsecutiveHealthyWindows = 0
+        await encoder?.setGameModeEmergencyQualityClampsEnabled(true)
 
         let cap = Self.gameModeEmergencyBitrateCapBps
         let cappedBitrate = min(encoderConfig.bitrate ?? cap, cap)
@@ -218,6 +257,116 @@ extension StreamContext {
         }
 
         return true
+    }
+
+    @discardableResult
+    func restoreGameModeStage1FrameRateOverride() async -> Bool {
+        let baselineFrameRate = max(1, gameModeBaselineFrameRate)
+        guard encoderConfig.targetFrameRate != baselineFrameRate else { return false }
+        if isRunning, captureEngine != nil {
+            do {
+                try await updateFrameRate(baselineFrameRate)
+                return true
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Game mode stage 1 restore failed: ")
+                return false
+            }
+        }
+
+        captureFrameRateOverride = baselineFrameRate
+        currentFrameRate = baselineFrameRate
+        captureFrameRate = baselineFrameRate
+        encoderConfig = encoderConfig.withTargetFrameRate(baselineFrameRate)
+        await encoder?.updateFrameRate(baselineFrameRate)
+        updateKeyframeCadence()
+        updateQueueLimits()
+        MirageLogger.stream("Game mode stage 1 restored without active capture: targetFrameRate=\(baselineFrameRate)")
+        return true
+    }
+
+    @discardableResult
+    func restoreGameModeStage2BitDepthOverride() async -> Bool {
+        let baselineScale = StreamContext.clampStreamScale(gameModeBaselineStreamScale)
+        let needsBitDepthRestore = encoderConfig.bitDepth != gameModeBaselineBitDepth
+        let needsScaleRestore = abs(streamScale - baselineScale) > 0.001
+        guard needsBitDepthRestore || needsScaleRestore else { return false }
+
+        if isRunning {
+            do {
+                if needsBitDepthRestore {
+                    try await updateEncoderSettings(
+                        bitDepth: gameModeBaselineBitDepth,
+                        bitrate: encoderConfig.bitrate
+                    )
+                }
+                if needsScaleRestore {
+                    try await updateStreamScale(baselineScale)
+                }
+                return true
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Game mode stage 2 restore failed: ")
+                return false
+            }
+        }
+
+        if needsBitDepthRestore {
+            encoderConfig = encoderConfig.withOverrides(
+                bitDepth: gameModeBaselineBitDepth,
+                bitrate: encoderConfig.bitrate
+            )
+            activePixelFormat = encoderConfig.pixelFormat
+        }
+        if needsScaleRestore {
+            requestedStreamScale = baselineScale
+            streamScale = baselineScale
+            if baseCaptureSize != .zero {
+                let outputSize = scaledOutputSize(for: baseCaptureSize)
+                currentCaptureSize = outputSize
+                currentEncodedSize = outputSize
+            }
+            updateQueueLimits()
+        }
+        if currentEncodedSize != .zero {
+            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Game mode stage 2 restore")
+        }
+        let baselineScaleText = Double(baselineScale).formatted(.number.precision(.fractionLength(2)))
+        MirageLogger.stream(
+            "Game mode stage 2 restored without active capture: bitDepth=\(gameModeBaselineBitDepth.displayName), " +
+                "streamScale=\(baselineScaleText)"
+        )
+        return true
+    }
+
+    @discardableResult
+    func restoreGameModeStage3EmergencyOverride() async -> Bool {
+        let hadEmergencyQualityDrops = gameModeAggressiveQualityDropEnabled
+        gameModeAggressiveQualityDropEnabled = false
+        qualityOverBudgetCount = 0
+        qualityUnderBudgetCount = 0
+        await encoder?.setGameModeEmergencyQualityClampsEnabled(false)
+
+        let needsBitrateUpdate = encoderConfig.bitrate != gameModeBaselineBitrate
+        if needsBitrateUpdate {
+            if isRunning {
+                do {
+                    try await updateEncoderSettings(
+                        bitDepth: nil,
+                        bitrate: gameModeBaselineBitrate
+                    )
+                    return true
+                } catch {
+                    MirageLogger.error(.stream, error: error, message: "Game mode stage 3 restore failed: ")
+                    return hadEmergencyQualityDrops
+                }
+            } else {
+                encoderConfig = encoderConfig.withOverrides(bitrate: gameModeBaselineBitrate)
+                if currentEncodedSize != .zero {
+                    await applyDerivedQuality(for: currentEncodedSize, logLabel: "Game mode stage 3 restore")
+                }
+            }
+        }
+
+        return hadEmergencyQualityDrops || needsBitrateUpdate
     }
 
     func updateDimensions(windowFrame: CGRect) async throws {

@@ -37,6 +37,30 @@ struct HEVCEncoderRateLimitTests {
         #expect(limit.bytes == 5_000_000)
     }
 
+    @Test("Game mode uses single-frame data-rate window at 120 Hz")
+    func gameModeHighRefreshBudget() {
+        let limit = HEVCEncoder.dataRateLimit(
+            targetBitrateBps: 80_000_000,
+            targetFrameRate: 120,
+            performanceMode: .game
+        )
+
+        #expect(limit.windowSeconds == 1.0 / 120.0)
+        #expect(limit.bytes == 83_333)
+    }
+
+    @Test("Game mode uses single-frame data-rate window at 60 Hz")
+    func gameModeStandardRefreshBudget() {
+        let limit = HEVCEncoder.dataRateLimit(
+            targetBitrateBps: 80_000_000,
+            targetFrameRate: 60,
+            performanceMode: .game
+        )
+
+        #expect(limit.windowSeconds == 1.0 / 60.0)
+        #expect(limit.bytes == 166_667)
+    }
+
     @Test("Frame-rate update path refreshes bitrate window selection inputs")
     func frameRateUpdateRefreshesRateLimitInputs() async {
         let encoder = HEVCEncoder(
@@ -75,6 +99,33 @@ struct HEVCEncoderRateLimitTests {
         #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
         #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
         #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] as? Bool == true)
+    }
+
+    @Test("QP clamp policy applies in baseline game mode")
+    func gameModeBaselineQPClampPolicy() {
+        let shouldApply = HEVCEncoder.shouldApplyQPClamps(
+            for: .game,
+            gameModeEmergencyQualityClampsEnabled: false
+        )
+        #expect(shouldApply)
+    }
+
+    @Test("QP clamp policy applies in emergency game mode")
+    func gameModeEmergencyQPClampPolicy() {
+        let shouldApply = HEVCEncoder.shouldApplyQPClamps(
+            for: .game,
+            gameModeEmergencyQualityClampsEnabled: true
+        )
+        #expect(shouldApply)
+    }
+
+    @Test("QP clamp policy always applies in standard mode")
+    func standardModeQPClampPolicy() {
+        let shouldApply = HEVCEncoder.shouldApplyQPClamps(
+            for: .standard,
+            gameModeEmergencyQualityClampsEnabled: false
+        )
+        #expect(shouldApply)
     }
 }
 #endif

@@ -239,14 +239,15 @@ extension StreamContext {
 
         let nextCount = recoveryRequestCount + 1
         let useHardRecovery = nextCount >= hardRecoveryThreshold
+        let requiresReset = useHardRecovery && performanceMode != .game
         let reason = useHardRecovery ? "Keyframe request (hard)" : "Keyframe request (soft)"
 
         let queued = queueKeyframe(
             reason: reason,
             checkInFlight: true,
             requiresFlush: useHardRecovery,
-            requiresReset: useHardRecovery,
-            advanceEpochOnReset: useHardRecovery,
+            requiresReset: requiresReset,
+            advanceEpochOnReset: requiresReset,
             urgent: true
         )
         guard queued else { return }

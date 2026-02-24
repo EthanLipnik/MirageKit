@@ -35,12 +35,15 @@ actor HEVCEncoder {
     var activeProfileLevel: CFString?
     var usingHardwareEncoder: Bool?
     var encoderGPURegistryID: UInt64?
+    var hardwareStatusRefreshAttempts: Int = 0
+    let maxHardwareStatusRefreshAttempts: Int = 4
     var supportedPropertyKeys: Set<CFString> = []
     var didQuerySupportedProperties = false
     var loggedUnsupportedKeys: Set<CFString> = []
     var didLogPixelFormat = false
     var baseQuality: Float
     var qualityOverrideActive = false
+    var gameModeEmergencyQualityClampsEnabled = false
     let compressionQualityCeiling: Float = 0.94
     let performanceTracker = EncodePerformanceTracker()
 
@@ -110,6 +113,17 @@ actor HEVCEncoder {
              .nv12:
             [kVTProfileLevel_HEVC_Main_AutoLevel]
         }
+    }
+
+    static func shouldApplyQPClamps(
+        for performanceMode: MirageStreamPerformanceMode,
+        gameModeEmergencyQualityClampsEnabled: Bool
+    ) -> Bool {
+        _ = performanceMode
+        _ = gameModeEmergencyQualityClampsEnabled
+        // Keep QP clamps active in all modes. On some Macs VT ignores `Quality`,
+        // so QP bounds are the only reliable way to enforce throughput targets.
+        return true
     }
 
     // Create the compression session

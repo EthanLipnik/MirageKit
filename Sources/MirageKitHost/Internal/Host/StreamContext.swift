@@ -297,7 +297,10 @@ actor StreamContext {
     var gameModeStage: GameModeStage = .baseline
     /// Consecutive game-mode deficit windows.
     var gameModeConsecutiveDeficitWindows: Int = 0
+    /// Consecutive healthy windows used for staged restoration.
+    var gameModeConsecutiveHealthyWindows: Int = 0
     let gameModeDeficitWindowFailuresRequired: Int = 3
+    let gameModeRecoveryWindowSuccessesRequired: Int = 3
     let gameModeWarmupSeconds: CFAbsoluteTime = 5.0
     let gameModeTargetFPSScale: Double = 0.97
     let gameModeTargetEncodeScale: Double = 1.02
@@ -306,10 +309,19 @@ actor StreamContext {
     let gameModeAggressiveQualityDropThreshold: Int = 1
     let gameModeAggressiveQualityDropStep: Float = 0.04
     let gameModeAggressiveQualityDropStepHighPressure: Float = 0.09
+    let gameModeBaselineFrameRate: Int
+    let gameModeBaselineBitDepth: MirageVideoBitDepth
+    let gameModeBaselineBitrate: Int?
+    let gameModeBaselineStreamScale: CGFloat
 
     nonisolated static let gameModeBaselineKeyframeIntervalFrames: Int = 7_200
-    nonisolated static let gameModeBaselineBitrateCapBps: Int = 280_000_000
     nonisolated static let gameModeEmergencyBitrateCapBps: Int = 180_000_000
+    nonisolated static let gameModeLowLatencyInFlightLimit: Int = 2
+    nonisolated static let gameModeStage2ScaleFactor: CGFloat = 0.85
+    nonisolated static let gameModeMinimumScale: CGFloat = 0.50
+    nonisolated static let gameModeQueueCapBytes: Int = 12_000_000
+    nonisolated static let gameModeBackpressureTriggerBytes: Int = 6_000_000
+    nonisolated static let gameModeQueuePressureRatio: Double = 0.80
     nonisolated static let canonical6KWidth: Int = 6_016
     nonisolated static let canonical6KHeight: Int = 3_384
 
@@ -335,17 +347,19 @@ actor StreamContext {
         var resolvedCapturePressureProfile = capturePressureProfile
         if performanceMode == .game {
             resolvedLatencyMode = .lowestLatency
-            resolvedRuntimeQualityAdjustmentEnabled = true
-            resolvedLowLatencyHighResolutionCompressionBoostEnabled = true
+            // Sunshine-style game mode keeps latency-first VT policy but avoids
+            // forced runtime adaptation layers unless explicitly requested.
+            resolvedRuntimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
+            resolvedLowLatencyHighResolutionCompressionBoostEnabled =
+                lowLatencyHighResolutionCompressionBoostEnabled
             resolvedCapturePressureProfile = .tuned
             resolvedEncoderConfig.captureQueueDepth = nil
             resolvedEncoderConfig.keyFrameInterval = Self.gameModeBaselineKeyframeIntervalFrames
-            let baselineBitrateCap = Self.gameModeBaselineBitrateCapBps
-            let initialBitrate = min(resolvedEncoderConfig.bitrate ?? baselineBitrateCap, baselineBitrateCap)
-            let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
-                bitrate: initialBitrate
-            ) ?? initialBitrate
-            resolvedEncoderConfig.bitrate = normalizedBitrate
+            if let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
+                bitrate: resolvedEncoderConfig.bitrate
+            ) {
+                resolvedEncoderConfig.bitrate = normalizedBitrate
+            }
         }
 
         self.streamID = streamID
@@ -372,17 +386,17 @@ actor StreamContext {
         let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
         let latencySensitive = resolvedLatencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
-        let bufferDepth = Self.frameBufferDepth(
+        var bufferDepth = Self.frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: resolvedLatencyMode
         )
-        let minInFlight = Self.minInFlightFrames(
+        var minInFlight = Self.minInFlightFrames(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
             latencyMode: resolvedLatencyMode
         )
-        let inFlightCap = min(
+        var inFlightCap = min(
             bufferDepth,
             Self.inFlightCap(
                 useLowLatencyPipeline: useLowLatencyPipeline,
@@ -390,9 +404,19 @@ actor StreamContext {
                 latencyMode: resolvedLatencyMode
             )
         )
-        maxInFlightFramesCap = max(1, inFlightCap)
+        if performanceMode == .game,
+           useLowLatencyPipeline,
+           resolvedEncoderConfig.targetFrameRate <= 60 {
+            let gameModeInFlightLimit = Self.gameModeLowLatencyInFlightLimit
+            bufferDepth = max(bufferDepth, gameModeInFlightLimit)
+            minInFlight = max(minInFlight, gameModeInFlightLimit)
+            inFlightCap = max(inFlightCap, gameModeInFlightLimit)
+        }
+        let resolvedInFlightCap = max(1, inFlightCap)
+        let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)
+        maxInFlightFramesCap = resolvedInFlightCap
         minInFlightFrames = minInFlight
-        maxInFlightFrames = min(minInFlight, maxInFlightFramesCap)
+        maxInFlightFrames = resolvedInitialInFlight
         frameBufferDepth = bufferDepth
         frameInbox = StreamFrameInbox(capacity: bufferDepth)
         maxEncodeTimeMs = resolvedEncoderConfig.targetFrameRate >= 120 ? 900 : 600
@@ -416,6 +440,10 @@ actor StreamContext {
         keyframeIntervalSeconds = cadence.interval
         keyframeMaxIntervalSeconds = cadence.maxInterval
         gameModeStreamStartTime = CFAbsoluteTimeGetCurrent()
+        gameModeBaselineFrameRate = resolvedEncoderConfig.targetFrameRate
+        gameModeBaselineBitDepth = resolvedEncoderConfig.bitDepth
+        gameModeBaselineBitrate = resolvedEncoderConfig.bitrate
+        gameModeBaselineStreamScale = clampedScale
 
         if performanceMode == .game {
             let bitrateText = String(resolvedEncoderConfig.bitrate ?? 0)
@@ -425,7 +453,8 @@ actor StreamContext {
                         "runtimeQuality=\(resolvedRuntimeQualityAdjustmentEnabled) lowLatencyBoost=\(resolvedLowLatencyHighResolutionCompressionBoostEnabled) " +
                         "captureProfile=\(resolvedCapturePressureProfile.rawValue) keyframeInterval=\(resolvedEncoderConfig.keyFrameInterval) " +
                         "bitrate=\(bitrateText) targetFPS=\(resolvedEncoderConfig.targetFrameRate) " +
-                        "bitDepth=\(resolvedEncoderConfig.bitDepth.rawValue)"
+                        "bitDepth=\(resolvedEncoderConfig.bitDepth.rawValue) inFlight=\(resolvedInitialInFlight)/\(resolvedInFlightCap) " +
+                        "bufferDepth=\(bufferDepth)"
                 )
         }
     }

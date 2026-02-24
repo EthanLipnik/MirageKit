@@ -15,6 +15,8 @@ import MirageKit
 struct EncoderSettingsSnapshot: Sendable {
     let keyFrameInterval: Int
     let bitDepth: MirageVideoBitDepth
+    let frameQuality: Float
+    let keyframeQuality: Float
     let pixelFormat: MiragePixelFormat
     let colorSpace: MirageColorSpace
     let latencyMode: MirageStreamLatencyMode
@@ -77,6 +79,20 @@ extension StreamContext {
         encoderConfig.targetFrameRate
     }
 
+    func getInFlightPolicy() -> (
+        minInFlightFrames: Int,
+        maxInFlightFrames: Int,
+        maxInFlightFramesCap: Int,
+        frameBufferDepth: Int
+    ) {
+        (
+            minInFlightFrames: minInFlightFrames,
+            maxInFlightFrames: maxInFlightFrames,
+            maxInFlightFramesCap: maxInFlightFramesCap,
+            frameBufferDepth: frameBufferDepth
+        )
+    }
+
     func getCodec() -> MirageVideoCodec {
         encoderConfig.codec
     }
@@ -93,6 +109,8 @@ extension StreamContext {
         EncoderSettingsSnapshot(
             keyFrameInterval: encoderConfig.keyFrameInterval,
             bitDepth: encoderConfig.bitDepth,
+            frameQuality: encoderConfig.frameQuality,
+            keyframeQuality: encoderConfig.keyframeQuality,
             pixelFormat: activePixelFormat,
             colorSpace: encoderConfig.colorSpace,
             latencyMode: latencyMode,
@@ -111,6 +129,10 @@ extension StreamContext {
 
     func getGameModeStage() -> GameModeStage {
         gameModeStage
+    }
+
+    func getGameModeStreamStartTime() -> CFAbsoluteTime {
+        gameModeStreamStartTime
     }
 }
 #endif

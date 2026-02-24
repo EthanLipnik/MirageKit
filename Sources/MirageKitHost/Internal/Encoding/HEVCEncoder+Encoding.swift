@@ -244,6 +244,13 @@ extension HEVCEncoder {
             let encodeEndTime = CFAbsoluteTimeGetCurrent()
             let encodingDuration = (encodeEndTime - info.encodeStartTime) * 1000 // ms
             info.performanceTracker?.record(durationMs: encodingDuration)
+            if info.frameNumber < 3 {
+                Task(priority: .utility) {
+                    await self.refreshHardwareStatusIfNeeded(
+                        reason: "first_output_frame_\(info.frameNumber)"
+                    )
+                }
+            }
 
             // Check if keyframe
             let isKeyframe = Self.isKeyframe(sampleBuffer)
