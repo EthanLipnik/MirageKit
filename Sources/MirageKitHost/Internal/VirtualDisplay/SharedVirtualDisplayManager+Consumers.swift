@@ -197,69 +197,6 @@ extension SharedVirtualDisplayManager {
         if activeConsumers.isEmpty { await destroyDisplay() }
     }
 
-    /// Update the resolution for a stream (when client moves to different display)
-    /// - Parameters:
-    ///   - streamID: The stream to update
-    ///   - newResolution: The new client resolution
-    func updateClientResolution(
-        for streamID: StreamID,
-        newResolution: CGSize,
-        refreshRate: Int = 60
-    )
-    async throws {
-        let requestedRate = refreshRate
-        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
-        let consumer = DisplayConsumer.stream(streamID)
-        let previousGeneration = sharedDisplay?.generation ?? 0
-        guard var clientInfo = activeConsumers[consumer] else { throw SharedDisplayError.clientNotFound(streamID) }
-
-        // Update stored resolution
-        clientInfo = ClientDisplayInfo(
-            resolution: newResolution,
-            windowID: clientInfo.windowID,
-            colorSpace: clientInfo.colorSpace,
-            acquiredAt: clientInfo.acquiredAt
-        )
-        activeConsumers[consumer] = clientInfo
-
-        // Check if we need to resize
-        let optimalResolution = calculateOptimalResolution()
-
-        if let current = sharedDisplay {
-            let needsRefresh = current.refreshRate != Double(refreshRate)
-            let requiresResize = needsResize(currentResolution: current.resolution, targetResolution: optimalResolution)
-
-            if needsRefresh || requiresResize {
-                let updated = await updateDisplayInPlace(
-                    newResolution: optimalResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: clientInfo.colorSpace
-                )
-
-                if !updated {
-                    if needsRefresh {
-                        MirageLogger
-                            .host(
-                                "Client resolution change requires refresh update to \(refreshRate)Hz (requested \(requestedRate)Hz)"
-                            )
-                    } else {
-                        MirageLogger
-                            .host(
-                                "Client resolution change requires display resize to \(Int(optimalResolution.width))x\(Int(optimalResolution.height))"
-                            )
-                    }
-                    sharedDisplay = try await recreateDisplay(
-                        newResolution: optimalResolution,
-                        refreshRate: refreshRate,
-                        colorSpace: clientInfo.colorSpace
-                    )
-                }
-            }
-        }
-
-        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-    }
-
     /// Update the display resolution for a consumer (used for desktop streaming resize)
     /// This updates the existing display's resolution in place without recreation
     /// - Parameters:
@@ -274,8 +211,7 @@ extension SharedVirtualDisplayManager {
     async throws {
         let requestedRate = refreshRate
         let refreshRate: Int = switch consumer {
-        case .desktopStream,
-             .stream:
+        case .desktopStream:
             SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
         default:
             resolvedRefreshRate(requestedRate)

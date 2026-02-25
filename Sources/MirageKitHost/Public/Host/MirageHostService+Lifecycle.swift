@@ -101,6 +101,7 @@ public extension MirageHostService {
         for stream in activeStreams {
             await stopStream(stream)
         }
+        windowVirtualDisplayStateByWindowID.removeAll()
 
         // Disconnect all clients
         for client in connectedClients {

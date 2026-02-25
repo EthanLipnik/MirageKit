@@ -68,11 +68,8 @@ extension SharedVirtualDisplayManager {
         generationChangeHandler?(snapshot(from: display), previousGeneration)
     }
 
-    /// Fixed 3K resolution for virtual display
-    /// 2880×1800 (16:10) - balanced between 4K (text too small) and 1080p (text too big)
-    /// With HiDPI this gives 1440×900 logical points
-    func calculateOptimalResolution() -> CGSize {
-        CGSize(width: 2880, height: 1800)
+    func dedicatedDisplayName(for streamID: StreamID) -> String {
+        "Mirage Stream Display (\(streamID))"
     }
 
     /// Check if display needs to be resized
@@ -175,13 +172,13 @@ extension SharedVirtualDisplayManager {
     }
 
     func updateDisplayInPlace(
+        display: ManagedDisplayContext,
         newResolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace
     )
-    async -> Bool {
-        guard let display = sharedDisplay else { return false }
-        guard display.colorSpace == colorSpace else { return false }
+    async -> ManagedDisplayContext? {
+        guard display.colorSpace == colorSpace else { return nil }
 
         let useHiDPI = display.scaleFactor > 1.5
         let success = CGVirtualDisplayBridge.updateDisplayResolution(
@@ -191,35 +188,54 @@ extension SharedVirtualDisplayManager {
             refreshRate: Double(refreshRate),
             hiDPI: useHiDPI
         )
+        guard success else { return nil }
 
-        if success {
-            let updatedScaleFactor = resolvedScaleFactor(displayID: display.displayID, fallback: display.scaleFactor)
-            sharedDisplay = ManagedDisplayContext(
-                displayID: display.displayID,
-                spaceID: display.spaceID,
-                resolution: newResolution,
-                scaleFactor: updatedScaleFactor,
-                refreshRate: Double(refreshRate),
-                colorSpace: display.colorSpace,
-                generation: display.generation,
-                createdAt: display.createdAt,
-                displayRef: display.displayRef
-            )
+        let updatedScaleFactor = resolvedScaleFactor(displayID: display.displayID, fallback: display.scaleFactor)
+        let updatedDisplay = ManagedDisplayContext(
+            displayID: display.displayID,
+            spaceID: display.spaceID,
+            resolution: newResolution,
+            scaleFactor: updatedScaleFactor,
+            refreshRate: Double(refreshRate),
+            colorSpace: display.colorSpace,
+            generation: display.generation,
+            createdAt: display.createdAt,
+            displayRef: display.displayRef
+        )
 
-            await MainActor.run {
-                VirtualDisplayKeepaliveController.shared.update(displayID: display.displayID)
-            }
+        await MainActor.run {
+            VirtualDisplayKeepaliveController.shared.update(displayID: display.displayID)
         }
 
-        return success
+        return updatedDisplay
     }
 
-    /// Create the shared virtual display
+    func updateDisplayInPlace(
+        newResolution: CGSize,
+        refreshRate: Int,
+        colorSpace: MirageColorSpace
+    )
+    async -> Bool {
+        guard let display = sharedDisplay else { return false }
+        guard let updatedDisplay = await updateDisplayInPlace(
+            display: display,
+            newResolution: newResolution,
+            refreshRate: refreshRate,
+            colorSpace: colorSpace
+        ) else {
+            return false
+        }
+        sharedDisplay = updatedDisplay
+        return true
+    }
+
+    /// Create a managed virtual display instance.
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func createDisplay(
         resolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageColorSpace,
+        displayNameOverride: String? = nil
     )
     async throws -> ManagedDisplayContext {
         if displayCounter == 0 {
@@ -227,7 +243,7 @@ extension SharedVirtualDisplayManager {
         }
         displayGeneration &+= 1
         let generation = displayGeneration
-        let displayName = "Mirage Shared Display (#\(displayCounter))"
+        let displayName = displayNameOverride ?? "Mirage Shared Display (#\(displayCounter))"
 
         let attempts: [(resolution: CGSize, hiDPI: Bool)] = [
             (resolution, true),
@@ -337,7 +353,7 @@ extension SharedVirtualDisplayManager {
         throw SharedDisplayError.creationFailed("Virtual display failed activation (Retina + 1x fallback)")
     }
 
-    /// Recreate the display at a new resolution
+    /// Recreate the display at a new resolution.
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func recreateDisplay(
         newResolution: CGSize,
@@ -345,30 +361,38 @@ extension SharedVirtualDisplayManager {
         colorSpace: MirageColorSpace
     )
     async throws -> ManagedDisplayContext {
-        // Destroy current display
         await destroyDisplay()
-
-        // Small delay for cleanup
         try await Task.sleep(for: .milliseconds(50))
-
-        // Create new display
         return try await createDisplay(resolution: newResolution, refreshRate: refreshRate, colorSpace: colorSpace)
     }
 
-    /// Destroy the shared display
-    func destroyDisplay() async {
-        guard let display = sharedDisplay else { return }
+    /// Recreate a specific display instance (used by dedicated stream displays).
+    func recreateDisplay(
+        from display: ManagedDisplayContext,
+        newResolution: CGSize,
+        refreshRate: Int,
+        colorSpace: MirageColorSpace,
+        displayNameOverride: String? = nil
+    )
+    async throws -> ManagedDisplayContext {
+        await destroyDisplay(display)
+        try await Task.sleep(for: .milliseconds(50))
+        return try await createDisplay(
+            resolution: newResolution,
+            refreshRate: refreshRate,
+            colorSpace: colorSpace,
+            displayNameOverride: displayNameOverride
+        )
+    }
 
+    func destroyDisplay(_ display: ManagedDisplayContext) async {
         let displayID = display.displayID
-        MirageLogger.host("Destroying shared virtual display, displayID=\(displayID)")
+        MirageLogger.host("Destroying virtual display, displayID=\(displayID)")
 
         await MainActor.run {
             VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
         }
 
-        // Clear the reference - ARC will deallocate the CGVirtualDisplay
-        // which removes it from the system display list
-        sharedDisplay = nil
         CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
 
         let deadline = Date().addingTimeInterval(1.5)
@@ -381,6 +405,13 @@ extension SharedVirtualDisplayManager {
         }
 
         MirageLogger.error(.host, "WARNING: Virtual display \(displayID) still exists after destruction!")
+    }
+
+    /// Destroy the shared display
+    func destroyDisplay() async {
+        guard let display = sharedDisplay else { return }
+        sharedDisplay = nil
+        await destroyDisplay(display)
     }
 }
 #endif

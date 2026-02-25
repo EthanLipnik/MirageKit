@@ -49,9 +49,11 @@ extension AppStreamManager {
 
         do {
             let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            let bundleIDs = Array(sessions.keys)
 
-            for (bundleID, var session) in sessions {
-                guard case .streaming = session.state else { continue }
+            for bundleID in bundleIDs {
+                guard let session = sessions[bundleID],
+                      case .streaming = session.state else { continue }
 
                 // Get windows for this app
                 let appWindows = content.windows.filter { window in
@@ -67,40 +69,35 @@ extension AppStreamManager {
                     return hasMinSize && isNormalLayer && hasOwner
                 }
 
-                let currentStreamingIDs = Set(session.windowStreams.keys)
                 let currentValidIDs = Set(validWindows.map { WindowID($0.windowID) })
 
-                // Check for new windows - only windows we haven't seen before AND are on-screen
-                var sessionUpdated = false
-                for window in validWindows {
+                // Check for new windows - only windows we haven't seen before AND are on-screen.
+                // IMPORTANT: mutate the live session entry directly to avoid clobbering stream state
+                // that callback handlers may update while this loop is running.
+                for window in validWindows where window.isOnScreen {
                     let windowID = WindowID(window.windowID)
-                    // Only notify for truly NEW windows (not seen before) that are on-screen
-                    if !session.knownWindowIDs.contains(windowID), window.isOnScreen {
-                        logger.info("New window detected: \(window.title ?? "untitled") for \(bundleID)")
-                        session.knownWindowIDs.insert(windowID)
-                        sessionUpdated = true
-                        await onNewWindowDetected?(bundleID, window)
-                    }
+                    guard sessions[bundleID]?.knownWindowIDs.contains(windowID) != true else { continue }
+                    sessions[bundleID]?.knownWindowIDs.insert(windowID)
+                    logger.info("New window detected: \(window.title ?? "untitled") for \(bundleID)")
+                    await onNewWindowDetected?(bundleID, window)
                 }
 
-                // Update session if we added new known windows
-                if sessionUpdated { sessions[bundleID] = session }
-
-                // Check for closed windows (only windows that were actively streaming)
-                for windowID in currentStreamingIDs {
-                    if !currentValidIDs.contains(windowID) {
-                        logger.info("Window closed: \(windowID) for \(bundleID)")
-                        await onWindowClosed?(bundleID, windowID)
-                    }
+                // Check for closed windows (only windows that were actively streaming).
+                // Read from the latest session snapshot after potential callback updates.
+                let currentStreamingIDs = Set(sessions[bundleID]?.windowStreams.keys ?? session.windowStreams.keys)
+                for windowID in currentStreamingIDs where !currentValidIDs.contains(windowID) {
+                    logger.info("Window closed: \(windowID) for \(bundleID)")
+                    await onWindowClosed?(bundleID, windowID)
                 }
 
-                // Check if app terminated (no windows and app not running)
+                // Check if app terminated (no windows and app not running).
                 if validWindows.isEmpty {
                     let appIsRunning = NSWorkspace.shared.runningApplications.contains { app in
                         app.bundleIdentifier?.lowercased() == bundleID
                     }
 
-                    if !appIsRunning, session.hasActiveWindows {
+                    let hasActiveWindows = sessions[bundleID]?.hasActiveWindows ?? false
+                    if !appIsRunning, hasActiveWindows {
                         logger.info("App terminated: \(bundleID)")
                         await onAppTerminated?(bundleID)
                     }

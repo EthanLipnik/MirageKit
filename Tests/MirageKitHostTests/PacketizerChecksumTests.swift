@@ -130,6 +130,71 @@ struct PacketizerChecksumTests {
         await sender.stop()
     }
 
+    @Test("Stream packet sender reports packet budget utilization from estimated wire bytes")
+    func streamPacketSenderPacketBudgetUtilization() async {
+        let payload = makePayload(byteCount: 420_000)
+        let sender = StreamPacketSender(maxPayloadSize: 512) { _, _, release in
+            release()
+        }
+
+        await sender.start()
+        await sender.setTargetBitrateBps(2_000_000)
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: payload,
+                streamID: 11,
+                frameNumber: 31,
+                sequenceNumberStart: 3000,
+                wireBytes: payload.count,
+                generation: generation
+            )
+        )
+
+        guard let snapshot = await sender.packetBudgetSnapshot() else {
+            Issue.record("Missing packet budget snapshot")
+            await sender.stop()
+            return
+        }
+        #expect(snapshot.targetBitrateBps == 2_000_000)
+        #expect(snapshot.sampleBytes > payload.count)
+        #expect(snapshot.utilization > 1.5)
+
+        await sender.stop()
+    }
+
+    @Test("Packet budget utilization stays low when frame fits bitrate budget")
+    func streamPacketSenderPacketBudgetUnderUtilization() async {
+        let payload = makePayload(byteCount: 10_000)
+        let sender = StreamPacketSender(maxPayloadSize: 512) { _, _, release in
+            release()
+        }
+
+        await sender.start()
+        await sender.setTargetBitrateBps(200_000_000)
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: payload,
+                streamID: 12,
+                frameNumber: 32,
+                sequenceNumberStart: 4000,
+                wireBytes: payload.count,
+                generation: generation
+            )
+        )
+
+        guard let snapshot = await sender.packetBudgetSnapshot() else {
+            Issue.record("Missing packet budget snapshot")
+            await sender.stop()
+            return
+        }
+        #expect(snapshot.targetBitrateBps == 200_000_000)
+        #expect(snapshot.utilization < 0.25)
+
+        await sender.stop()
+    }
+
     @Test("Audio packetizer checksum behavior matches encrypted contract")
     func audioPacketizerChecksumBehavior() async {
         let payload = makePayload(byteCount: 1450)
@@ -206,6 +271,35 @@ struct PacketizerChecksumTests {
         MirageMediaSecurityContext(
             sessionKey: Data((0 ..< MirageMediaSecurity.sessionKeyLength).map { UInt8(truncatingIfNeeded: $0) }),
             udpRegistrationToken: Data(repeating: 0xA5, count: MirageMediaSecurity.registrationTokenLength)
+        )
+    }
+
+    private func makeWorkItem(
+        payload: Data,
+        streamID: StreamID,
+        frameNumber: UInt32,
+        sequenceNumberStart: UInt32,
+        wireBytes: Int,
+        generation: UInt32
+    ) -> StreamPacketSender.WorkItem {
+        StreamPacketSender.WorkItem(
+            encodedData: payload,
+            frameByteCount: payload.count,
+            isKeyframe: false,
+            presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            contentRect: CGRect(x: 0, y: 0, width: 100, height: 100),
+            streamID: streamID,
+            frameNumber: frameNumber,
+            sequenceNumberStart: sequenceNumberStart,
+            additionalFlags: [],
+            dimensionToken: 0,
+            epoch: 0,
+            fecBlockSize: 0,
+            wireBytes: wireBytes,
+            logPrefix: "test",
+            generation: generation,
+            onSendStart: nil,
+            onSendComplete: nil
         )
     }
 }

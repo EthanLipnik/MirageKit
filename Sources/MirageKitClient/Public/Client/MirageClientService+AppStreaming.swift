@@ -15,11 +15,14 @@ import MirageKit
 public extension MirageClientService {
     /// Request list of installed apps from host.
     /// - Parameter includeIcons: Whether to include app icons (increases message size).
-    func requestAppList(includeIcons: Bool = true) async throws {
+    /// - Parameter forceRefresh: Whether host-side app-list caches should be bypassed.
+    func requestAppList(includeIcons: Bool = true, forceRefresh: Bool = false) async throws {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
 
-        MirageLogger.client("Requesting app list from host (includeIcons: \(includeIcons))")
-        let request = AppListRequestMessage(includeIcons: includeIcons)
+        MirageLogger.client(
+            "Requesting app list from host (includeIcons: \(includeIcons), forceRefresh: \(forceRefresh))"
+        )
+        let request = AppListRequestMessage(includeIcons: includeIcons, forceRefresh: forceRefresh)
         let message = try ControlMessage(type: .appListRequest, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
         MirageLogger.client("App list request sent")
@@ -58,13 +61,22 @@ public extension MirageClientService {
     async throws {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
 
-        // Use provided display resolution or detect from main display.
-        let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
+        guard let displayResolution else {
+            throw MirageError.protocolError("Display size unavailable for app streaming")
+        }
+        let effectiveDisplayResolution = scaledDisplayResolution(displayResolution)
+        guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
+            throw MirageError.protocolError("Display size unavailable for app streaming")
+        }
+        let resolvedScaleFactor = resolvedDisplayScaleFactor(
+            for: effectiveDisplayResolution,
+            explicitScaleFactor: scaleFactor
+        )
 
         var request = SelectAppMessage(
             bundleIdentifier: bundleIdentifier,
             dataPort: nil,
-            scaleFactor: scaleFactor,
+            scaleFactor: resolvedScaleFactor,
             displayWidth: effectiveDisplayResolution.width > 0 ? Int(effectiveDisplayResolution.width) : nil,
             displayHeight: effectiveDisplayResolution.height > 0 ? Int(effectiveDisplayResolution.height) : nil,
             maxRefreshRate: getScreenMaxRefreshRate(),
@@ -103,5 +115,27 @@ public extension MirageClientService {
         let message = try ControlMessage(type: .cancelCooldown, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
         MirageLogger.client("Cancel cooldown requested for window \(windowID)")
+    }
+
+    /// Request host-side close for a specific app-stream window.
+    /// - Parameter windowID: Host window identifier to close.
+    func closeWindow(windowID: WindowID) async throws {
+        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+
+        let request = CloseWindowRequestMessage(windowID: windowID)
+        let message = try ControlMessage(type: .closeWindowRequest, content: request)
+        let payload = message.serialize()
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            connection.send(content: payload, completion: .contentProcessed { error in
+                if let error {
+                    continuation.resume(throwing: error)
+                } else {
+                    continuation.resume()
+                }
+            })
+        }
+
+        MirageLogger.client("Close window requested for window \(windowID)")
     }
 }

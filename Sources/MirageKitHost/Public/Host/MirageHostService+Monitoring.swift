@@ -151,6 +151,10 @@ extension MirageHostService {
               let context = streamsByID[session.id] else {
             return
         }
+        if await context.isUsingVirtualDisplay() {
+            // Dedicated virtual-display streams should not be frontmost-app throttled.
+            return
+        }
 
         if isActive {
             // Window became active - restore full frame rate and request keyframe

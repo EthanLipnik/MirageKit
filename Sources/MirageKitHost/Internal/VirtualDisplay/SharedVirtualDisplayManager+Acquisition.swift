@@ -13,129 +13,140 @@ import CoreGraphics
 import Foundation
 
 extension SharedVirtualDisplayManager {
-    // MARK: - Display Acquisition
+    // MARK: - Dedicated Stream Displays
 
-    /// Acquire the shared virtual display for a stream
-    /// Creates the display if this is the first client, otherwise returns existing
-    /// - Parameters:
-    ///   - streamID: The stream acquiring the display
-    ///   - clientResolution: The client's display resolution
-    ///   - windowID: The window being streamed
-    ///   - refreshRate: Refresh rate in Hz (default 60)
-    /// - Returns: The managed display context
     // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
-    func acquireDisplay(
+    func acquireDedicatedDisplay(
         for streamID: StreamID,
-        clientResolution: CGSize,
-        windowID: WindowID,
+        resolution: CGSize,
         refreshRate: Int = 60,
         colorSpace: MirageColorSpace
     )
     async throws -> DisplaySnapshot {
-        let requestedRate = refreshRate
-        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
-        let consumer = DisplayConsumer.stream(streamID)
-
-        // Check if this consumer already has the display
-        if activeConsumers[consumer] != nil, let display = sharedDisplay {
-            MirageLogger.host("Stream \(streamID) already has shared display, returning existing")
-            return snapshot(from: display)
+        guard resolution.width > 0, resolution.height > 0 else {
+            throw SharedDisplayError.creationFailed("Invalid dedicated display resolution")
         }
-
-        // Register this consumer
-        activeConsumers[consumer] = ClientDisplayInfo(
-            resolution: clientResolution,
-            windowID: windowID,
-            colorSpace: colorSpace,
-            acquiredAt: Date()
-        )
-
-        // Calculate optimal resolution (fixed 3K)
-        let optimalResolution = calculateOptimalResolution()
-        let previousGeneration = sharedDisplay?.generation ?? 0
+        let requestedRate = refreshRate
+        let targetRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
+        let displayName = dedicatedDisplayName(for: streamID)
 
         MirageLogger
             .host(
-                "Stream \(streamID) acquiring shared display. Consumers: \(activeConsumers.count), client res: \(Int(clientResolution.width))x\(Int(clientResolution.height)) → virtual display: \(Int(optimalResolution.width))x\(Int(optimalResolution.height)), color=\(colorSpace.displayName), refresh=\(refreshRate)Hz (requested \(requestedRate)Hz)"
+                "Stream \(streamID) acquiring dedicated display at \(Int(resolution.width))x\(Int(resolution.height)) px, color=\(colorSpace.displayName), refresh=\(targetRefreshRate)Hz (requested \(requestedRate)Hz)"
             )
 
-        // Create or resize display as needed
-        if sharedDisplay == nil {
-            // First consumer - create the display
-            sharedDisplay = try await createDisplay(
-                resolution: optimalResolution,
-                refreshRate: refreshRate,
+        if let existing = dedicatedDisplaysByStreamID[streamID] {
+            let needsRefresh = existing.refreshRate != Double(targetRefreshRate)
+            let requiresResize = needsResize(currentResolution: existing.resolution, targetResolution: resolution)
+
+            if !needsRefresh, !requiresResize, existing.colorSpace == colorSpace {
+                return snapshot(from: existing)
+            }
+
+            if existing.colorSpace != colorSpace {
+                MirageLogger
+                    .host(
+                        "Recreating dedicated display for stream \(streamID) due to color space change (\(existing.colorSpace.displayName) → \(colorSpace.displayName))"
+                    )
+                let recreated = try await recreateDisplay(
+                    from: existing,
+                    newResolution: resolution,
+                    refreshRate: targetRefreshRate,
+                    colorSpace: colorSpace,
+                    displayNameOverride: displayName
+                )
+                dedicatedDisplaysByStreamID[streamID] = recreated
+                return snapshot(from: recreated)
+            }
+
+            if let updated = await updateDisplayInPlace(
+                display: existing,
+                newResolution: resolution,
+                refreshRate: targetRefreshRate,
                 colorSpace: colorSpace
-            )
-        } else if sharedDisplay?.colorSpace != colorSpace {
+            ) {
+                dedicatedDisplaysByStreamID[streamID] = updated
+                return snapshot(from: updated)
+            }
+
             MirageLogger
                 .host(
-                    "Recreating shared display for color space change (\(sharedDisplay?.colorSpace.displayName ?? "Unknown") → \(colorSpace.displayName))"
+                    "Recreating dedicated display for stream \(streamID) after in-place update failure"
                 )
-            sharedDisplay = try await recreateDisplay(
-                newResolution: optimalResolution,
-                refreshRate: refreshRate,
-                colorSpace: colorSpace
+            let recreated = try await recreateDisplay(
+                from: existing,
+                newResolution: resolution,
+                refreshRate: targetRefreshRate,
+                colorSpace: colorSpace,
+                displayNameOverride: displayName
             )
-        } else {
-            let currentResolution = sharedDisplay!.resolution
-            let needsRefresh = sharedDisplay?.refreshRate != Double(refreshRate)
-            let requiresResize = needsResize(currentResolution: currentResolution, targetResolution: optimalResolution)
-
-            if needsRefresh || requiresResize {
-                let targetResolution = requiresResize ? optimalResolution : currentResolution
-                let updated = await updateDisplayInPlace(
-                    newResolution: targetResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: colorSpace
-                )
-
-                if !updated {
-                    if needsRefresh {
-                        MirageLogger
-                            .host(
-                                "Recreating shared display for refresh rate change (\(sharedDisplay?.refreshRate ?? 0) → \(Double(refreshRate)))"
-                            )
-                    } else {
-                        MirageLogger
-                            .host(
-                                "Resizing shared display from \(Int(currentResolution.width))x\(Int(currentResolution.height)) to \(Int(optimalResolution.width))x\(Int(optimalResolution.height))"
-                            )
-                    }
-                    sharedDisplay = try await recreateDisplay(
-                        newResolution: optimalResolution,
-                        refreshRate: refreshRate,
-                        colorSpace: colorSpace
-                    )
-                }
-            }
+            dedicatedDisplaysByStreamID[streamID] = recreated
+            return snapshot(from: recreated)
         }
 
-        notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
-
-        guard let display = sharedDisplay else { throw SharedDisplayError.noActiveDisplay }
-
-        return snapshot(from: display)
+        let created = try await createDisplay(
+            resolution: resolution,
+            refreshRate: targetRefreshRate,
+            colorSpace: colorSpace,
+            displayNameOverride: displayName
+        )
+        dedicatedDisplaysByStreamID[streamID] = created
+        return snapshot(from: created)
     }
 
-    /// Release the shared display for a stream
-    /// Destroys the display if this was the last consumer
-    /// - Parameter streamID: The stream releasing the display
-    func releaseDisplay(for streamID: StreamID) async {
-        let consumer = DisplayConsumer.stream(streamID)
-        guard activeConsumers.removeValue(forKey: consumer) != nil else {
-            MirageLogger.host("Stream \(streamID) was not using shared display")
+    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
+    func updateDedicatedDisplay(
+        for streamID: StreamID,
+        newResolution: CGSize,
+        refreshRate: Int = 60
+    )
+    async throws -> DisplaySnapshot {
+        guard newResolution.width > 0, newResolution.height > 0 else {
+            throw SharedDisplayError.creationFailed("Invalid dedicated display resolution update")
+        }
+        let requestedRate = refreshRate
+        let targetRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
+        guard let existing = dedicatedDisplaysByStreamID[streamID] else {
+            throw SharedDisplayError.streamDisplayNotFound(streamID)
+        }
+
+        let needsRefresh = existing.refreshRate != Double(targetRefreshRate)
+        let requiresResize = needsResize(currentResolution: existing.resolution, targetResolution: newResolution)
+        guard needsRefresh || requiresResize else { return snapshot(from: existing) }
+
+        if let updated = await updateDisplayInPlace(
+            display: existing,
+            newResolution: newResolution,
+            refreshRate: targetRefreshRate,
+            colorSpace: existing.colorSpace
+        ) {
+            dedicatedDisplaysByStreamID[streamID] = updated
+            return snapshot(from: updated)
+        }
+
+        MirageLogger
+            .host(
+                "Recreating dedicated display for stream \(streamID) to apply resolution \(Int(newResolution.width))x\(Int(newResolution.height)) @ \(targetRefreshRate)Hz"
+            )
+        let recreated = try await recreateDisplay(
+            from: existing,
+            newResolution: newResolution,
+            refreshRate: targetRefreshRate,
+            colorSpace: existing.colorSpace,
+            displayNameOverride: dedicatedDisplayName(for: streamID)
+        )
+        dedicatedDisplaysByStreamID[streamID] = recreated
+        return snapshot(from: recreated)
+    }
+
+    func releaseDedicatedDisplay(for streamID: StreamID) async {
+        guard let display = dedicatedDisplaysByStreamID.removeValue(forKey: streamID) else {
+            MirageLogger.host("Stream \(streamID) had no dedicated display to release")
             return
         }
 
-        MirageLogger.host("Stream \(streamID) released shared display. Remaining consumers: \(activeConsumers.count)")
-
-        if activeConsumers.isEmpty {
-            // Last consumer - destroy the display
-            await destroyDisplay()
-        }
-        // Note: We don't downsize when consumers leave to avoid disruption
-        // The display will be destroyed when all consumers leave
+        MirageLogger.host("Releasing dedicated display \(display.displayID) for stream \(streamID)")
+        await destroyDisplay(display)
     }
 }
 #endif

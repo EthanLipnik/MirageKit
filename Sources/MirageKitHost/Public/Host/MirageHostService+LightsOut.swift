@@ -37,12 +37,6 @@ extension MirageHostService {
     }
 
     func updateLightsOutState() async {
-        guard lightsOutEnabled else {
-            lightsOutController.deactivate()
-            await refreshLightsOutCaptureExclusions()
-            return
-        }
-
         guard sessionState == .active else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
@@ -56,8 +50,9 @@ extension MirageHostService {
         }
 
         let hasAppStreams = !activeStreams.isEmpty
-        let hasMirroredDesktop = desktopStreamContext != nil && desktopStreamMode == .mirrored
-        guard hasAppStreams || hasMirroredDesktop else {
+        let hasDesktopStream = desktopStreamContext != nil
+        let shouldEnableLightsOut = hasAppStreams || (lightsOutEnabled && hasDesktopStream)
+        guard shouldEnableLightsOut else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
             return

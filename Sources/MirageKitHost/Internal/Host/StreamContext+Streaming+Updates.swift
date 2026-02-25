@@ -729,9 +729,10 @@ extension StreamContext {
 
         if useVirtualDisplay {
             await WindowSpaceManager.shared.restoreWindowSilently(windowID)
-            await SharedVirtualDisplayManager.shared.releaseDisplay(for: streamID)
+            await SharedVirtualDisplayManager.shared.releaseDedicatedDisplay(for: streamID)
             virtualDisplayContext = nil
         }
+        useVirtualDisplay = false
 
         await packetSender?.stop()
         packetSender = nil

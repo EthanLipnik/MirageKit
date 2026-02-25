@@ -70,6 +70,9 @@ public final class MirageHostWindowController {
         guard let sessions = hostService?.activeStreams else { return }
         for session in sessions {
             let window = session.window
+            if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
+                continue
+            }
             guard let axWindow = getOrCacheAXWindow(for: window),
                   let frame = axWindowFrame(axWindow) else {
                 continue

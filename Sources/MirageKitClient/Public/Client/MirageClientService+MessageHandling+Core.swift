@@ -416,6 +416,11 @@ extension MirageClientService {
             )
 
             if let requested = refreshRateOverridesByStream[metrics.streamID] {
+                guard metrics.streamID == desktopStreamID else {
+                    refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)
+                    refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)
+                    return
+                }
                 if requested != metrics.targetFrameRate {
                     let updatedCount = (refreshRateMismatchCounts[metrics.streamID] ?? 0) + 1
                     refreshRateMismatchCounts[metrics.streamID] = updatedCount

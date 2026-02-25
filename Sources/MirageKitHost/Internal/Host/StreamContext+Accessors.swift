@@ -49,12 +49,8 @@ extension StreamContext {
         virtualDisplayContext?.displayID
     }
 
-    func getSharedDisplayGeneration() -> UInt64 {
-        sharedDisplayGeneration
-    }
-
-    func isReadyForSharedDisplayRebind() -> Bool {
-        isRunning && useVirtualDisplay && virtualDisplayContext != nil && encoder != nil && packetSender != nil
+    func getVirtualDisplaySnapshot() -> SharedVirtualDisplayManager.DisplaySnapshot? {
+        virtualDisplayContext
     }
 
     nonisolated func getWindowID() -> WindowID {

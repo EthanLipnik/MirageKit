@@ -9,6 +9,7 @@
 
 import MirageKit
 #if os(macOS)
+import AppKit
 import CoreGraphics
 import Foundation
 
@@ -165,6 +166,147 @@ extension CGVirtualDisplayBridge {
                 "getDisplayBounds(\(displayID)): using origin \(origin) with knownSize=\(knownResolution) (rawBounds=\(rawBounds)) -> \(bounds)"
             )
         return bounds
+    }
+
+    private static func screen(for displayID: CGDirectDisplayID) -> NSScreen? {
+        NSScreen.screens.first { screen in
+            guard let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else {
+                return false
+            }
+            return CGDirectDisplayID(number.uint32Value) == displayID
+        }
+    }
+
+    static func hasScreen(_ displayID: CGDirectDisplayID) -> Bool {
+        screen(for: displayID) != nil
+    }
+
+    private static func normalizedVisibleInsets(
+        displayID: CGDirectDisplayID,
+        screenFrame: CGRect,
+        visibleFrame: CGRect
+    )
+    -> (left: CGFloat, right: CGFloat, top: CGFloat, bottom: CGFloat) {
+        var left = max(0, visibleFrame.minX - screenFrame.minX)
+        var right = max(0, screenFrame.maxX - visibleFrame.maxX)
+        var top = max(0, screenFrame.maxY - visibleFrame.maxY)
+        var bottom = max(0, visibleFrame.minY - screenFrame.minY)
+
+        // Guard against coordinate-space drift where frame and visibleFrame origins
+        // disagree for virtual displays. Trust visible size first, then distribute.
+        let expectedHorizontal = max(0, screenFrame.width - visibleFrame.width)
+        let expectedVertical = max(0, screenFrame.height - visibleFrame.height)
+        let tolerance: CGFloat = 1
+
+        let rawHorizontal = left + right
+        if abs(rawHorizontal - expectedHorizontal) > tolerance {
+            if expectedHorizontal <= tolerance {
+                left = 0
+                right = 0
+            } else {
+                left = min(max(0, left), expectedHorizontal)
+                right = max(0, expectedHorizontal - left)
+            }
+            MirageLogger.host(
+                "Normalized visibleFrame horizontal insets for display \(displayID): raw=\(rawHorizontal), expected=\(expectedHorizontal)"
+            )
+        }
+
+        let rawVertical = top + bottom
+        if abs(rawVertical - expectedVertical) > tolerance {
+            if expectedVertical <= tolerance {
+                top = 0
+                bottom = 0
+            } else {
+                top = min(max(0, top), expectedVertical)
+                bottom = max(0, expectedVertical - top)
+            }
+            MirageLogger.host(
+                "Normalized visibleFrame vertical insets for display \(displayID): raw=\(rawVertical), expected=\(expectedVertical)"
+            )
+        }
+
+        return (left: left, right: right, top: top, bottom: bottom)
+    }
+
+    /// Returns the display visible bounds in global points (excluding dock/menu bar).
+    /// Falls back to full display bounds when no screen match is available.
+    static func getDisplayVisibleBounds(
+        _ displayID: CGDirectDisplayID,
+        knownBounds: CGRect? = nil
+    )
+    -> CGRect {
+        let resolvedBounds = knownBounds ?? getDisplayBounds(displayID)
+        guard let screen = screen(for: displayID) else { return resolvedBounds }
+
+        let screenFrame = screen.frame
+        let visible = screen.visibleFrame
+        guard visible.width > 0, visible.height > 0, screenFrame.width > 0, screenFrame.height > 0 else {
+            return resolvedBounds
+        }
+
+        // NSScreen frame coordinates do not align with CGDisplayBounds/AX global coordinates.
+        // Derive insets from NSScreen in its own coordinate space, then project those
+        // insets onto the resolved display bounds used by capture/input/window placement.
+        let insets = normalizedVisibleInsets(
+            displayID: displayID,
+            screenFrame: screenFrame,
+            visibleFrame: visible
+        )
+        let leftInset = insets.left
+        let rightInset = insets.right
+        let topInset = insets.top
+        let bottomInset = insets.bottom
+
+        let width = max(1, resolvedBounds.width - leftInset - rightInset)
+        let height = max(1, resolvedBounds.height - topInset - bottomInset)
+
+        return CGRect(
+            x: resolvedBounds.minX + leftInset,
+            y: resolvedBounds.minY + topInset,
+            width: width,
+            height: height
+        )
+    }
+
+    struct DisplayInsets: Sendable, Equatable {
+        let left: CGFloat
+        let right: CGFloat
+        let top: CGFloat
+        let bottom: CGFloat
+
+        var horizontal: CGFloat { left + right }
+        var vertical: CGFloat { top + bottom }
+    }
+
+    static func displayInsets(displayBounds: CGRect, visibleBounds: CGRect) -> DisplayInsets {
+        let left = max(0, visibleBounds.minX - displayBounds.minX)
+        let right = max(0, displayBounds.maxX - visibleBounds.maxX)
+        let top = max(0, visibleBounds.minY - displayBounds.minY)
+        let bottom = max(0, displayBounds.maxY - visibleBounds.maxY)
+        return DisplayInsets(left: left, right: right, top: top, bottom: bottom)
+    }
+
+    /// Build a display-capture source rect in display-local logical points.
+    static func displayCaptureSourceRect(
+        _ displayID: CGDirectDisplayID,
+        knownBounds: CGRect? = nil
+    )
+    -> CGRect {
+        let fullBounds = knownBounds ?? getDisplayBounds(displayID)
+        let visibleBounds = getDisplayVisibleBounds(displayID, knownBounds: fullBounds)
+        let clippedVisible = visibleBounds.intersection(fullBounds)
+        guard !clippedVisible.isEmpty else { return .zero }
+        // sourceRect uses display-local points in the same top-left-oriented
+        // coordinate space as our mapped visible bounds.
+        let localX = clippedVisible.minX - fullBounds.minX
+        let localY = clippedVisible.minY - fullBounds.minY
+        return CGRect(
+            x: max(0, localX),
+            y: max(0, localY),
+            width: clippedVisible.width,
+            height: clippedVisible.height
+        )
     }
 
     static func isDisplayOnline(_ displayID: CGDirectDisplayID) -> Bool {

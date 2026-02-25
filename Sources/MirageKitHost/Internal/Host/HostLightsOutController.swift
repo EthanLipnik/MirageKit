@@ -66,6 +66,8 @@ final class HostLightsOutController {
             label.textColor = .white
             label.alignment = .center
             label.font = .systemFont(ofSize: 28, weight: .semibold)
+            label.maximumNumberOfLines = 2
+            label.lineBreakMode = .byWordWrapping
             label.isHidden = true
 
             view.addSubview(label)
@@ -90,6 +92,10 @@ final class HostLightsOutController {
 
         func setMessageVisible(_ visible: Bool) {
             messageLabel.isHidden = !visible
+        }
+
+        func setMessage(_ message: String) {
+            messageLabel.stringValue = message
         }
 
         func close() {
@@ -129,7 +135,8 @@ final class HostLightsOutController {
     private let revealClock = ContinuousClock()
     private var revealUntil: ContinuousClock.Instant?
 
-    private let messageText = "Streaming with Mirage"
+    private let messageTitleText = "Streaming with Mirage"
+    private let forceStopMessagePrefix = "Force Stop Streams:"
     private let messageDuration: Duration = .seconds(5)
     private let dimmedGammaScale: CGGammaValue = 0.05
 
@@ -197,6 +204,7 @@ final class HostLightsOutController {
 
     private func updateOverlays(for displayIDs: Set<CGDirectDisplayID>) {
         let previousWindowIDs = Set(overlayWindowIDs)
+        let message = overlayMessage()
         let removed = overlays.keys.filter { !displayIDs.contains($0) }
         for displayID in removed {
             overlays[displayID]?.close()
@@ -207,8 +215,9 @@ final class HostLightsOutController {
             let frame = CGDisplayBounds(displayID)
             if let overlay = overlays[displayID] {
                 overlay.updateFrame(frame)
+                overlay.setMessage(message)
             } else {
-                let overlay = Overlay(displayID: displayID, frame: frame, message: messageText)
+                let overlay = Overlay(displayID: displayID, frame: frame, message: message)
                 overlays[displayID] = overlay
                 MirageLogger.host("Lights Out: overlay created for display \(displayID) (sharingType=.none)")
             }
@@ -221,9 +230,16 @@ final class HostLightsOutController {
     }
 
     private func showMessage() {
+        let message = overlayMessage()
         for overlay in overlays.values {
+            overlay.setMessage(message)
             overlay.setMessageVisible(true)
         }
+    }
+
+    private func overlayMessage() -> String {
+        let shortcut = emergencyShortcutStore.currentValue.displayString
+        return "\(messageTitleText)\n\(forceStopMessagePrefix) \(shortcut)"
     }
 
     private func hideMessage() {

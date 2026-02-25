@@ -16,7 +16,11 @@ extension AppStreamManager {
     // MARK: - App List
 
     /// Get list of installed apps with streaming status
-    public func getInstalledApps(includeIcons: Bool = true) async -> [MirageInstalledApp] {
+    public func getInstalledApps(
+        includeIcons: Bool = true,
+        forceRefresh: Bool = false
+    )
+    async -> [MirageInstalledApp] {
         if Task.isCancelled {
             let cached = includeIcons ? cachedAppsWithIcons : cachedAppsWithoutIcons
             return await refreshStatuses(for: cached)
@@ -24,6 +28,28 @@ extension AppStreamManager {
 
         let now = Date()
         let statusSnapshot = snapshotStatus()
+
+        if forceRefresh {
+            let scanned = await applicationScanner.scanInstalledApps(
+                includeIcons: includeIcons,
+                runningApps: statusSnapshot.runningApps,
+                streamingApps: statusSnapshot.streamingApps
+            )
+            if Task.isCancelled {
+                let cached = includeIcons ? cachedAppsWithIcons : cachedAppsWithoutIcons
+                return await refreshStatuses(for: cached)
+            }
+
+            let refreshed = await refreshStatuses(for: scanned)
+            if includeIcons {
+                cachedAppsWithIcons = refreshed
+                lastAppsScanWithIconsAt = now
+            } else {
+                cachedAppsWithoutIcons = refreshed
+                lastAppsScanWithoutIconsAt = now
+            }
+            return refreshed
+        }
 
         if includeIcons {
             if let task = appScanTaskWithIcons {

@@ -40,7 +40,7 @@ extension MirageClientService {
         return max(0.1, min(1.0, scale))
     }
 
-    func virtualDisplayPixelResolution(for displayResolution: CGSize) -> CGSize {
+    public func virtualDisplayPixelResolution(for displayResolution: CGSize) -> CGSize {
         let alignedResolution = scaledDisplayResolution(displayResolution)
         guard alignedResolution.width > 0, alignedResolution.height > 0 else { return .zero }
 
@@ -81,6 +81,31 @@ extension MirageClientService {
         #endif
     }
 
+    func resolvedDisplayScaleFactor(
+        for logicalResolution: CGSize,
+        explicitScaleFactor: CGFloat?
+    )
+    -> CGFloat? {
+        if let explicitScaleFactor, explicitScaleFactor > 0 {
+            return max(1.0, explicitScaleFactor)
+        }
+
+        let alignedLogical = scaledDisplayResolution(logicalResolution)
+        guard alignedLogical.width > 0, alignedLogical.height > 0 else { return nil }
+        let pixelResolution = virtualDisplayPixelResolution(for: alignedLogical)
+        guard pixelResolution.width > 0, pixelResolution.height > 0 else { return nil }
+
+        let widthScale = pixelResolution.width / alignedLogical.width
+        let heightScale = pixelResolution.height / alignedLogical.height
+        let resolvedScale = if widthScale > 0, heightScale > 0 {
+            (widthScale + heightScale) / 2.0
+        } else {
+            max(widthScale, heightScale)
+        }
+        guard resolvedScale > 0 else { return nil }
+        return max(1.0, resolvedScale)
+    }
+
     func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
         let alignedViewSize = scaledDisplayResolution(viewSize)
         guard alignedViewSize.width > 0, alignedViewSize.height > 0 else { return .zero }
@@ -104,11 +129,7 @@ extension MirageClientService {
     public func getMainDisplayResolution() -> CGSize {
         #if os(macOS)
         guard let mainScreen = NSScreen.main else { return CGSize(width: 2560, height: 1600) }
-        let scale = mainScreen.backingScaleFactor
-        return CGSize(
-            width: mainScreen.frame.width * scale,
-            height: mainScreen.frame.height * scale
-        )
+        return scaledDisplayResolution(mainScreen.frame.size)
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics()
         let nativePoints = scaledDisplayResolution(metrics.nativePointSize)
@@ -124,7 +145,14 @@ extension MirageClientService {
 
     public func getMainDisplayNativePixelResolution() -> CGSize {
         #if os(macOS)
-        return getMainDisplayResolution()
+        guard let mainScreen = NSScreen.main else { return CGSize(width: 2560, height: 1600) }
+        let scale = mainScreen.backingScaleFactor
+        return scaledDisplayResolution(
+            CGSize(
+                width: mainScreen.frame.width * scale,
+                height: mainScreen.frame.height * scale
+            )
+        )
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics()
         let nativePixels = scaledDisplayResolution(metrics.nativePixelSize)
@@ -141,12 +169,8 @@ extension MirageClientService {
     }
 
     public func getVirtualDisplayPixelResolution() -> CGSize {
-        #if os(iOS) || os(visionOS)
         let displayResolution = getMainDisplayResolution()
         return virtualDisplayPixelResolution(for: displayResolution)
-        #else
-        return getMainDisplayResolution()
-        #endif
     }
 
     /// Get the maximum refresh rate requested by the client.

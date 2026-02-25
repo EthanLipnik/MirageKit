@@ -73,6 +73,7 @@ extension WindowCaptureEngine {
             knownScaleFactor: knownScaleFactor,
             outputScale: clampedScale,
             resolution: nil,
+            sourceRect: nil,
             showsCursor: false,
             excludedWindows: []
         )
@@ -351,6 +352,7 @@ extension WindowCaptureEngine {
                 try await startDisplayCapture(
                     display: resolvedConfig.display,
                     resolution: resolvedConfig.resolution,
+                    sourceRect: resolvedConfig.sourceRect,
                     excludedWindows: resolvedConfig.excludedWindows,
                     showsCursor: resolvedConfig.showsCursor,
                     onFrame: onFrame,
@@ -383,6 +385,7 @@ extension WindowCaptureEngine {
     func startDisplayCapture(
         display: SCDisplay,
         resolution: CGSize? = nil,
+        sourceRect: CGRect? = nil,
         excludedWindows: [SCWindow] = [],
         showsCursor: Bool = true,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
@@ -416,6 +419,7 @@ extension WindowCaptureEngine {
             knownScaleFactor: nil,
             outputScale: 1.0,
             resolution: resolution,
+            sourceRect: sourceRect,
             showsCursor: showsCursor,
             excludedWindows: excludedWindows
         )
@@ -445,6 +449,9 @@ extension WindowCaptureEngine {
         if useExplicitCaptureDimensions {
             streamConfig.width = currentWidth
             streamConfig.height = currentHeight
+        }
+        if let sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
         }
 
         // Frame rate
@@ -488,7 +495,7 @@ extension WindowCaptureEngine {
         if useExplicitCaptureDimensions {
             MirageLogger
                 .capture(
-                    "Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID)"
+                    "Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID), sourceRect=\(String(describing: sourceRect))"
                 )
         } else {
             MirageLogger

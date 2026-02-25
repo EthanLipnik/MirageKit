@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 1/9/26.
 //
 
+import CoreGraphics
 import Foundation
 
 /// Represents the state of an app streaming session
@@ -27,6 +28,12 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
 
     /// Client's display name
     public let clientName: String
+
+    /// Logical client display resolution requested for app-stream virtual displays.
+    public let requestedDisplayResolution: CGSize
+
+    /// Optional client display scale override used for app-stream virtual displays.
+    public let requestedClientScaleFactor: CGFloat?
 
     /// Current state of the session
     public var state: AppStreamState
@@ -55,6 +62,8 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         appPath: String,
         clientID: UUID,
         clientName: String,
+        requestedDisplayResolution: CGSize = .zero,
+        requestedClientScaleFactor: CGFloat? = nil,
         state: AppStreamState = .starting,
         windowStreams: [WindowID: WindowStreamInfo] = [:],
         windowsInCooldown: [WindowID: Date] = [:],
@@ -68,6 +77,8 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         self.appPath = appPath
         self.clientID = clientID
         self.clientName = clientName
+        self.requestedDisplayResolution = requestedDisplayResolution
+        self.requestedClientScaleFactor = requestedClientScaleFactor
         self.state = state
         self.windowStreams = windowStreams
         self.windowsInCooldown = windowsInCooldown

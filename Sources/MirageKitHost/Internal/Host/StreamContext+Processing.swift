@@ -782,8 +782,15 @@ extension StreamContext {
         let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
         let queuePressured = queueBytes > queuePressureBytes
         let highPressure = queueBytes > maxQueuedBytes
+        let packetBudget = await packetSender?.packetBudgetSnapshot(now: now)
+        let packetUtilization = packetBudget?.utilization ?? 0
+        let packetOverBudget = packetUtilization > packetBudgetDropUtilizationThreshold
+        let packetHighPressure = packetUtilization > packetBudgetHighPressureUtilizationThreshold
+        let packetWithinRaiseBudget = packetUtilization > 0
+            ? packetUtilization < packetBudgetRaiseUtilizationThreshold
+            : true
         let fixedGameModeQuality = performanceMode == .game && !gameModeAggressiveQualityDropEnabled
-        let qualityDropSignal = queuePressured || (!fixedGameModeQuality && encodeOverBudget)
+        let qualityDropSignal = queuePressured || packetOverBudget || (!fixedGameModeQuality && encodeOverBudget)
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = gameModeAggressiveQualityDropEnabled
             ? gameModeAggressiveQualityDropThreshold
@@ -798,18 +805,18 @@ extension StreamContext {
         if qualityDropSignal {
             qualityUnderBudgetCount = 0
             qualityOverBudgetCount += 1
-            let dropThreshold: Int = if bitrateConstrained && highPressure {
+            let dropThreshold: Int = if bitrateConstrained && (highPressure || packetHighPressure) {
                 1
-            } else if bitrateConstrained && queuePressured {
+            } else if bitrateConstrained && (queuePressured || packetOverBudget) {
                 max(1, baseDropThreshold - 1)
             } else {
                 baseDropThreshold
             }
-            let step: Float = if highPressure {
+            let step: Float = if highPressure || packetHighPressure {
                 bitrateConstrained
                     ? (baseHighPressureDropStep + 0.03)
                     : baseHighPressureDropStep
-            } else if bitrateConstrained && queuePressured {
+            } else if bitrateConstrained && (queuePressured || packetOverBudget) {
                 baseDropStep + 0.01
             } else {
                 baseDropStep
@@ -823,11 +830,22 @@ extension StreamContext {
                     qualityOverBudgetCount = 0
                     let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
                     let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.metrics("Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB)")
+                    let packetUtilizationText: String = if let packetBudget {
+                        packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
+                    } else {
+                        "n/a"
+                    }
+                    MirageLogger.metrics(
+                        "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, packetUtil \(packetUtilizationText)x)"
+                    )
                 }
             }
         } else {
             qualityOverBudgetCount = 0
+            if !packetWithinRaiseBudget {
+                qualityUnderBudgetCount = 0
+                return
+            }
             qualityUnderBudgetCount += 1
             if qualityUnderBudgetCount >= qualityRaiseThreshold {
                 let next = min(qualityCeiling, activeQuality + qualityRaiseStep)
@@ -838,7 +856,14 @@ extension StreamContext {
                     qualityUnderBudgetCount = 0
                     let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
                     let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.metrics("Quality up to \(qualityText) (encode \(avgText)ms)")
+                    let packetUtilizationText: String = if let packetBudget {
+                        packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
+                    } else {
+                        "n/a"
+                    }
+                    MirageLogger.metrics(
+                        "Quality up to \(qualityText) (encode \(avgText)ms, packetUtil \(packetUtilizationText)x)"
+                    )
                 }
             }
         }

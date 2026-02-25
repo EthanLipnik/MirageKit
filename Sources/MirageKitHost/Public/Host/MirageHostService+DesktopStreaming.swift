@@ -578,6 +578,56 @@ extension MirageHostService {
         return snapshot
     }
 
+    /// Ensure physical displays are not mirroring virtual displays during app/window streaming.
+    func unmirrorPhysicalDisplaysForWindowStreamingIfNeeded() async {
+        var displayCount: UInt32 = 0
+        CGGetOnlineDisplayList(0, nil, &displayCount)
+        guard displayCount > 0 else { return }
+
+        var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
+        CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
+
+        let physicalDisplaysMirroringVirtual = displays.compactMap { displayID -> CGDirectDisplayID? in
+            guard !CGVirtualDisplayBridge.isVirtualDisplay(displayID) else { return nil }
+            let mirroredDisplayID = CGDisplayMirrorsDisplay(displayID)
+            guard mirroredDisplayID != kCGNullDirectDisplay,
+                  CGVirtualDisplayBridge.isVirtualDisplay(mirroredDisplayID) else {
+                return nil
+            }
+            return displayID
+        }
+
+        guard !physicalDisplaysMirroringVirtual.isEmpty else { return }
+
+        var configRef: CGDisplayConfigRef?
+        guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
+            MirageLogger.error(.host, "Failed to begin display configuration to unmirror physical displays")
+            return
+        }
+
+        var unmirroredCount = 0
+        for displayID in physicalDisplaysMirroringVirtual {
+            let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, kCGNullDirectDisplay)
+            if result == .success {
+                unmirroredCount += 1
+            } else {
+                MirageLogger.error(.host, "Failed to unmirror physical display \(displayID): \(result)")
+            }
+        }
+
+        guard unmirroredCount > 0 else {
+            CGCancelDisplayConfiguration(config)
+            return
+        }
+
+        let completion = CGCompleteDisplayConfiguration(config, .forSession)
+        if completion == .success {
+            MirageLogger.host("Unmirrored \(unmirroredCount) physical displays from virtual displays")
+        } else {
+            MirageLogger.error(.host, "Failed to complete physical display unmirror: \(completion)")
+        }
+    }
+
     /// Set up display mirroring so physical displays mirror the virtual display.
     /// This keeps the virtual display as the resolution source for streaming.
     func setupDisplayMirroring(targetDisplayID: CGDirectDisplayID) async {

@@ -33,6 +33,23 @@ actor StreamPacketSender {
         let onSendComplete: (@Sendable () -> Void)?
     }
 
+    struct PacketBudgetSnapshot: Sendable {
+        let targetBitrateBps: Int
+        let windowSeconds: Double
+        let sampleBytes: Int
+        let measuredBytesPerSecond: Double
+        let budgetBytesPerSecond: Double
+        let utilization: Double
+    }
+
+    private struct PacketBudgetSample: Sendable {
+        let timestamp: CFAbsoluteTime
+        let bytes: Int
+    }
+
+    nonisolated static let packetBudgetWindowSeconds: CFAbsoluteTime = 0.75
+    nonisolated static let packetBudgetMinWindowSeconds: CFAbsoluteTime = 0.20
+
     private let maxPayloadSize: Int
     private let mediaSecurityKey: MirageMediaPacketKey?
     private let onEncodedFrame: @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
@@ -44,6 +61,8 @@ actor StreamPacketSender {
     // Snapshot read from encoder callbacks to tag enqueued frames.
     private nonisolated(unsafe) var generation: UInt32 = 0
     private nonisolated(unsafe) var queuedBytes: Int = 0
+    private nonisolated(unsafe) var packetBudgetSamples: [PacketBudgetSample] = []
+    private nonisolated(unsafe) var packetBudgetSampleBytes: Int = 0
     private nonisolated(unsafe) var dropNonKeyframesUntilKeyframe: Bool = false
     private nonisolated(unsafe) var latestKeyframeFrameNumber: UInt32 = 0
     private let queueLock = NSLock()
@@ -76,6 +95,8 @@ actor StreamPacketSender {
         sendContinuation = continuation
         queueLock.withLock {
             queuedBytes = 0
+            packetBudgetSamples.removeAll(keepingCapacity: true)
+            packetBudgetSampleBytes = 0
         }
         resetPacerState(for: pacerRateBps)
         sendTask = Task(priority: .userInitiated) { [weak self] in
@@ -93,6 +114,8 @@ actor StreamPacketSender {
         sendTask = nil
         queueLock.withLock {
             queuedBytes = 0
+            packetBudgetSamples.removeAll(keepingCapacity: true)
+            packetBudgetSampleBytes = 0
         }
     }
 
@@ -100,6 +123,10 @@ actor StreamPacketSender {
         let sanitized = max(0, bitrate ?? 0)
         guard sanitized != pacerRateBps else { return }
         resetPacerState(for: sanitized)
+        queueLock.withLock {
+            packetBudgetSamples.removeAll(keepingCapacity: true)
+            packetBudgetSampleBytes = 0
+        }
     }
 
     func bumpGeneration(reason: String) {
@@ -111,6 +138,8 @@ actor StreamPacketSender {
         generation &+= 1
         queueLock.withLock {
             queuedBytes = 0
+            packetBudgetSamples.removeAll(keepingCapacity: true)
+            packetBudgetSampleBytes = 0
         }
         MirageLogger.stream("Packet send queue reset (gen \(generation), \(reason))")
     }
@@ -121,6 +150,26 @@ actor StreamPacketSender {
 
     nonisolated func currentGenerationSnapshot() -> UInt32 {
         generation
+    }
+
+    func packetBudgetSnapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> PacketBudgetSnapshot? {
+        guard pacerRateBps > 0 else { return nil }
+        return queueLock.withLock {
+            trimPacketBudgetSamplesLocked(now: now)
+            guard !packetBudgetSamples.isEmpty else { return nil }
+            let elapsed = max(Self.packetBudgetMinWindowSeconds, Self.packetBudgetWindowSeconds)
+            let measuredBytesPerSecond = Double(packetBudgetSampleBytes) / elapsed
+            let budgetBytesPerSecond = max(1.0, Double(pacerRateBps) / 8.0)
+            let utilization = measuredBytesPerSecond / budgetBytesPerSecond
+            return PacketBudgetSnapshot(
+                targetBitrateBps: pacerRateBps,
+                windowSeconds: elapsed,
+                sampleBytes: packetBudgetSampleBytes,
+                measuredBytesPerSecond: measuredBytesPerSecond,
+                budgetBytesPerSecond: budgetBytesPerSecond,
+                utilization: utilization
+            )
+        }
     }
 
     nonisolated static func shouldDuplicateParameterSetPacket(
@@ -138,8 +187,11 @@ actor StreamPacketSender {
     nonisolated func enqueue(_ item: WorkItem) {
         guard sendContinuation != nil else { return }
         let accountedBytes = max(0, item.wireBytes)
+        let estimatedPacketWireBytes = estimatedPacketWireBytes(for: item)
+        let now = CFAbsoluteTimeGetCurrent()
         queueLock.withLock {
             queuedBytes += accountedBytes
+            recordPacketBudgetSampleLocked(bytes: estimatedPacketWireBytes, now: now)
             if item.isKeyframe {
                 dropNonKeyframesUntilKeyframe = true
                 latestKeyframeFrameNumber = item.frameNumber
@@ -466,6 +518,42 @@ actor StreamPacketSender {
         queueLock.withLock {
             queuedBytes = max(0, queuedBytes - bytes)
         }
+    }
+
+    private nonisolated func estimatedPacketWireBytes(for item: WorkItem) -> Int {
+        let payloadBytes = max(0, item.wireBytes)
+        let maxPayload = max(1, maxPayloadSize)
+        let frameByteCount = max(0, item.frameByteCount)
+        let dataFragments = frameByteCount > 0 ? (frameByteCount + maxPayload - 1) / maxPayload : 0
+        let blockSize = max(0, item.fecBlockSize)
+        let parityFragments = blockSize > 1 ? (dataFragments + blockSize - 1) / blockSize : 0
+        let totalFragments = dataFragments + parityFragments
+        let authOverheadPerPacket = mediaSecurityKey == nil ? 0 : MirageMediaSecurity.authTagLength
+        let packetOverheadBytes = totalFragments * (mirageHeaderSize + authOverheadPerPacket)
+        var estimatedBytes = payloadBytes + packetOverheadBytes
+        if awdlExperimentEnabled, item.isKeyframe, dataFragments > 0 {
+            let firstPayload = min(maxPayload, frameByteCount)
+            estimatedBytes += mirageHeaderSize + authOverheadPerPacket + firstPayload
+        }
+        return max(0, estimatedBytes)
+    }
+
+    private nonisolated func trimPacketBudgetSamplesLocked(now: CFAbsoluteTime) {
+        let cutoff = now - Self.packetBudgetWindowSeconds
+        while let first = packetBudgetSamples.first, first.timestamp < cutoff {
+            packetBudgetSampleBytes = max(0, packetBudgetSampleBytes - first.bytes)
+            packetBudgetSamples.removeFirst()
+        }
+    }
+
+    private nonisolated func recordPacketBudgetSampleLocked(bytes: Int, now: CFAbsoluteTime) {
+        guard bytes > 0 else {
+            trimPacketBudgetSamplesLocked(now: now)
+            return
+        }
+        packetBudgetSamples.append(PacketBudgetSample(timestamp: now, bytes: bytes))
+        packetBudgetSampleBytes += bytes
+        trimPacketBudgetSamplesLocked(now: now)
     }
 
     private func computeParity(

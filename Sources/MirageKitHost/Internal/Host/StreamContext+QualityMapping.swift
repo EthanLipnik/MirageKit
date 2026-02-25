@@ -35,7 +35,9 @@ extension StreamContext {
         frameQuality: Float,
         keyframeQuality: Float,
         width: Int,
-        height: Int
+        height: Int,
+        targetBitrateBps: Int,
+        frameRate: Int
     ) -> LowLatencyHighResolutionQualityBoost {
         guard lowLatencyHighResolutionCompressionBoostEnabled,
               latencyMode == .lowestLatency,
@@ -67,8 +69,27 @@ extension StreamContext {
         let qualityDrop = Self.lowLatencyHighResolutionBoostMinDrop +
             Float(easedProgress) *
             (Self.lowLatencyHighResolutionBoostMaxDrop - Self.lowLatencyHighResolutionBoostMinDrop)
+        let bitratePressureScale: Float = if let bpp = MirageBitrateQualityMapper.bitsPerPixelPerFrame(
+            targetBitrateBps: targetBitrateBps,
+            width: width,
+            height: height,
+            frameRate: frameRate
+        ) {
+            Float(MirageBitrateQualityMapper.compressionPressure(for: bpp))
+        } else {
+            1.0
+        }
+        let effectiveQualityDrop = qualityDrop * bitratePressureScale
+        guard effectiveQualityDrop > 0.0001 else {
+            return LowLatencyHighResolutionQualityBoost(
+                frameQuality: frameQuality,
+                keyframeQuality: keyframeQuality,
+                applied: false,
+                drop: 0
+            )
+        }
 
-        let boostedFrameQuality = max(Self.mapperMinimumQuality, frameQuality - qualityDrop)
+        let boostedFrameQuality = max(Self.mapperMinimumQuality, frameQuality - effectiveQualityDrop)
         let keyframeRatio: Float
         if frameQuality > 0 {
             keyframeRatio = max(0.1, min(1.0, keyframeQuality / frameQuality))
@@ -84,7 +105,7 @@ extension StreamContext {
             frameQuality: boostedFrameQuality,
             keyframeQuality: boostedKeyframeQuality,
             applied: true,
-            drop: qualityDrop
+            drop: effectiveQualityDrop
         )
     }
 
@@ -138,7 +159,9 @@ extension StreamContext {
             frameQuality: derived.frameQuality,
             keyframeQuality: derived.keyframeQuality,
             width: width,
-            height: height
+            height: height,
+            targetBitrateBps: targetBitrate,
+            frameRate: currentFrameRate
         )
         let throughputCap = gameModeThroughputQualityCap(
             width: width,
@@ -184,7 +207,7 @@ extension StreamContext {
                 "n/a"
             }
             let scaleText = MirageBitrateQualityMapper
-                .frameRateScale(frameRate: currentFrameRate)
+                .frameRateScale(frameRate: currentFrameRate, bpp: bpp)
                 .formatted(.number.precision(.fractionLength(2)))
             let boostText: String
             if qualityBoost.applied {

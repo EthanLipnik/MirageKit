@@ -65,19 +65,16 @@ extension MirageHostService {
         // Check if this window is already streaming
         if session.windowStreams[windowID] != nil { return }
 
-        let existingStreamID = session.windowStreams.values.first?.streamID
+        let existingStreamID = session.windowStreams.values.map(\.streamID).max()
         let existingContext = existingStreamID.flatMap { streamsByID[$0] }
         let streamScale = await existingContext?.getStreamScale() ?? 1.0
         let encoderSettings = await existingContext?.getEncoderSettings()
         let targetFrameRate = await existingContext?.getTargetFrameRate()
         let audioConfiguration = audioConfigurationByClientID[session.clientID] ?? .default
-        let usesVirtualDisplay = await existingContext?.isUsingVirtualDisplay() ?? false
         let disableResolutionCap = await existingContext?.isResolutionCapDisabled() ?? false
-        let sharedDisplayResolution: CGSize? = if usesVirtualDisplay {
-            await SharedVirtualDisplayManager.shared.getDisplayBounds()?.size
-        } else {
-            nil
-        }
+        let inheritedClientScaleFactor = existingStreamID.flatMap { clientVirtualDisplayScaleFactor(streamID: $0) }
+        let requestedDisplayResolution = session.requestedDisplayResolution
+        let requestedClientScaleFactor = session.requestedClientScaleFactor
 
         // Check if there's a window in cooldown - if so, redirect to it
         if !session.windowsInCooldown.isEmpty {
@@ -89,6 +86,19 @@ extension MirageHostService {
                 // Refresh windows to get the MirageWindow
                 try? await refreshWindows()
                 guard let mirageWindow = availableWindows.first(where: { $0.id == windowID }) else { return }
+                let preferredDisplayResolution: CGSize = {
+                    if requestedDisplayResolution.width > 0, requestedDisplayResolution.height > 0 {
+                        return requestedDisplayResolution
+                    }
+                    if let inheritedBoundsSize = existingStreamID
+                        .flatMap({ getVirtualDisplayState(streamID: $0)?.bounds.size }),
+                        inheritedBoundsSize.width > 0,
+                        inheritedBoundsSize.height > 0 {
+                        return inheritedBoundsSize
+                    }
+                    return mirageWindow.frame.size
+                }()
+                let preferredClientScaleFactor = requestedClientScaleFactor ?? inheritedClientScaleFactor
 
                 // Start stream for the new window
                 do {
@@ -96,7 +106,8 @@ extension MirageHostService {
                         for: mirageWindow,
                         to: clientContext.client,
                         dataPort: nil,
-                        clientDisplayResolution: sharedDisplayResolution,
+                        clientDisplayResolution: preferredDisplayResolution,
+                        clientScaleFactor: preferredClientScaleFactor,
                         keyFrameInterval: encoderSettings?.keyFrameInterval,
                         streamScale: streamScale,
                         targetFrameRate: targetFrameRate,
@@ -149,13 +160,26 @@ extension MirageHostService {
         // No cooldown - this is a genuinely new window, stream it
         try? await refreshWindows()
         guard let mirageWindow = availableWindows.first(where: { $0.id == windowID }) else { return }
+        let preferredDisplayResolution: CGSize = {
+            if requestedDisplayResolution.width > 0, requestedDisplayResolution.height > 0 {
+                return requestedDisplayResolution
+            }
+            if let inheritedBoundsSize = existingStreamID.flatMap({ getVirtualDisplayState(streamID: $0)?.bounds.size }),
+               inheritedBoundsSize.width > 0,
+               inheritedBoundsSize.height > 0 {
+                return inheritedBoundsSize
+            }
+            return mirageWindow.frame.size
+        }()
+        let preferredClientScaleFactor = requestedClientScaleFactor ?? inheritedClientScaleFactor
 
         do {
             let streamSession = try await startStream(
                 for: mirageWindow,
                 to: clientContext.client,
                 dataPort: nil,
-                clientDisplayResolution: sharedDisplayResolution,
+                clientDisplayResolution: preferredDisplayResolution,
+                clientScaleFactor: preferredClientScaleFactor,
                 keyFrameInterval: encoderSettings?.keyFrameInterval,
                 streamScale: streamScale,
                 targetFrameRate: targetFrameRate,

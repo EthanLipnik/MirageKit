@@ -12,8 +12,9 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-/// Manages a single shared virtual display for all Mirage streams
-/// Uses reference counting to create on first client and destroy when last client releases
+/// Manages Mirage virtual displays.
+/// - Shared consumer display: desktop/login/unlock flows.
+/// - Dedicated stream displays: one per window stream.
 actor SharedVirtualDisplayManager {
     // MARK: - Singleton
 
@@ -73,19 +74,18 @@ actor SharedVirtualDisplayManager {
 
     /// Consumer types that can acquire the shared display
     enum DisplayConsumer: Hashable, Sendable {
-        case stream(StreamID)
         case loginDisplay
         case unlockKeyboard
         case desktopStream
         case qualityTest
     }
 
-    /// Error types for shared display operations
+    /// Error types for shared and dedicated display operations
     enum SharedDisplayError: Error, LocalizedError {
         case apiNotAvailable
         case creationFailed(String)
         case noActiveDisplay
-        case clientNotFound(StreamID)
+        case streamDisplayNotFound(StreamID)
         case spaceNotFound(CGDirectDisplayID)
         case scDisplayNotFound(CGDirectDisplayID)
 
@@ -97,8 +97,8 @@ actor SharedVirtualDisplayManager {
                 "Failed to create virtual display: \(reason)"
             case .noActiveDisplay:
                 "No active shared virtual display"
-            case let .clientNotFound(streamID):
-                "No client found for stream \(streamID)"
+            case let .streamDisplayNotFound(streamID):
+                "No dedicated display found for stream \(streamID)"
             case let .spaceNotFound(displayID):
                 "No space found for display \(displayID)"
             case let .scDisplayNotFound(displayID):
@@ -111,6 +111,9 @@ actor SharedVirtualDisplayManager {
 
     /// The single shared virtual display (nil when no clients)
     var sharedDisplay: ManagedDisplayContext?
+
+    /// Dedicated virtual displays keyed by stream ID (one display per stream).
+    var dedicatedDisplaysByStreamID: [StreamID: ManagedDisplayContext] = [:]
 
     /// Active consumers using the shared display
     var activeConsumers: [DisplayConsumer: ClientDisplayInfo] = [:]

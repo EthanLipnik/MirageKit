@@ -11,6 +11,7 @@ import MirageKit
 
 #if os(macOS)
 import AppKit
+import ApplicationServices
 
 /// Manages window movement between displays/spaces for Mirage streams
 /// Handles moving windows to virtual displays and restoring them on stream end
@@ -23,11 +24,22 @@ actor WindowSpaceManager {
 
     // MARK: - Types
 
+    struct TrafficLightVisibilitySnapshot: Sendable {
+        let closeHidden: Bool?
+        let minimizeHidden: Bool?
+        let zoomHidden: Bool?
+
+        var hasRecordedState: Bool {
+            closeHidden != nil || minimizeHidden != nil || zoomHidden != nil
+        }
+    }
+
     /// Saved state for restoring a window to its original position
     struct SavedWindowState: Sendable {
         let windowID: WindowID
         let originalFrame: CGRect
         let originalSpaceIDs: [CGSSpaceID]
+        let trafficLightVisibilitySnapshot: TrafficLightVisibilitySnapshot?
         let savedAt: Date
     }
 
@@ -74,10 +86,16 @@ actor WindowSpaceManager {
 
         if savedStates[windowID] == nil {
             let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+            let axWindow = resolveAXWindow(for: windowID)
+            let trafficLightVisibilitySnapshot = hideTrafficLightsIfSupported(
+                windowID: windowID,
+                axWindow: axWindow
+            )
             let savedState = SavedWindowState(
                 windowID: windowID,
                 originalFrame: windowInfo.frame,
                 originalSpaceIDs: currentSpaces,
+                trafficLightVisibilitySnapshot: trafficLightVisibilitySnapshot,
                 savedAt: Date()
             )
             savedStates[windowID] = savedState
@@ -86,17 +104,72 @@ actor WindowSpaceManager {
             MirageLogger.host("Window \(windowID) already has saved state; preserving original state during move")
         }
 
-        // Move window to the virtual display's space
-        CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: spaceID)
-        let didActivateSpace = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: spaceID)
-        if !didActivateSpace { MirageLogger.host("Failed to set current space \(spaceID) for display \(displayID)") }
-
-        // Position window at the origin of the virtual display
-        // The window will fill the display as needed
         let targetOrigin = displayBounds.origin
-        if !CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin) { MirageLogger.debug(.host, "Failed to move window \(windowID) to position \(targetOrigin)") }
+        let maxAttempts = 4
 
-        MirageLogger.host("Moved window \(windowID) to space \(spaceID) at \(targetOrigin)")
+        for attempt in 1 ... maxAttempts {
+            let didActivateSpaceBeforeMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: spaceID)
+            if !didActivateSpaceBeforeMove {
+                MirageLogger.host("Failed to set current space \(spaceID) for display \(displayID) before move attempt \(attempt)")
+            }
+
+            CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: spaceID)
+            let didMoveWindow = CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin)
+            if !didMoveWindow {
+                MirageLogger.debug(.host, "Failed to move window \(windowID) to position \(targetOrigin) on attempt \(attempt)")
+            }
+            if !CGSWindowSpaceBridge.bringWindowToFront(windowID) {
+                MirageLogger.debug(.host, "Failed to raise window \(windowID) on move attempt \(attempt)")
+            }
+
+            let didActivateSpaceAfterMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: spaceID)
+            if !didActivateSpaceAfterMove {
+                MirageLogger.host("Failed to set current space \(spaceID) for display \(displayID) after move attempt \(attempt)")
+            }
+
+            if verifyWindowPlacement(
+                windowID,
+                expectedSpaceID: spaceID,
+                displayBounds: displayBounds,
+                targetOrigin: targetOrigin
+            ) {
+                MirageLogger.host("Moved window \(windowID) to space \(spaceID) at \(targetOrigin) (attempt \(attempt))")
+                return
+            }
+
+            if attempt < maxAttempts {
+                MirageLogger.host(
+                    "Window \(windowID) placement not yet confirmed on attempt \(attempt)/\(maxAttempts); retrying"
+                )
+                try? await Task.sleep(for: .milliseconds(Int64(40 * attempt)))
+            }
+        }
+
+        throw WindowSpaceError.moveFailed(
+            windowID,
+            "Placement verification failed for space \(spaceID) on display \(displayID)"
+        )
+    }
+
+    private func verifyWindowPlacement(
+        _ windowID: WindowID,
+        expectedSpaceID: CGSSpaceID,
+        displayBounds: CGRect,
+        targetOrigin: CGPoint
+    ) -> Bool {
+        let spaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+        guard spaces.contains(expectedSpaceID) else { return false }
+
+        guard let windowInfo = getWindowInfo(windowID) else { return true }
+
+        let frame = windowInfo.frame
+        let originTolerance: CGFloat = 16
+        let originMatches = abs(frame.origin.x - targetOrigin.x) <= originTolerance &&
+            abs(frame.origin.y - targetOrigin.y) <= originTolerance
+        let expandedBounds = displayBounds.insetBy(dx: -24, dy: -24)
+        let intersectsBounds = frame.intersects(expandedBounds)
+
+        return originMatches || intersectsBounds
     }
 
     /// Restore a window to its original position and space
@@ -119,6 +192,7 @@ actor WindowSpaceManager {
         // Restore original position
         if !CGSWindowSpaceBridge.moveWindow(windowID, to: savedState.originalFrame.origin) { MirageLogger.debug(.host, "Failed to restore window \(windowID) position") }
 
+        restoreTrafficLightsIfNeeded(savedState.trafficLightVisibilitySnapshot, windowID: windowID)
         MirageLogger.host("Restored window \(windowID) to frame \(savedState.originalFrame)")
     }
 
@@ -153,6 +227,257 @@ actor WindowSpaceManager {
         let centerY = displayBounds.origin.y + (displayBounds.height - windowSize.height) / 2
 
         positionWindow(windowID, at: CGPoint(x: centerX, y: centerY))
+    }
+
+    private func hideTrafficLightsIfSupported(
+        windowID: WindowID,
+        axWindow: AXUIElement?
+    )
+    -> TrafficLightVisibilitySnapshot? {
+        guard let axWindow else {
+            MirageLogger.debug(.host, "Traffic lights hide unsupported for window \(windowID): AX window unavailable")
+            return nil
+        }
+
+        let closeHidden = hideTrafficLightButtonIfSupported(
+            in: axWindow,
+            buttonAttribute: kAXCloseButtonAttribute as CFString,
+            buttonLabel: "close",
+            windowID: windowID
+        )
+        let minimizeHidden = hideTrafficLightButtonIfSupported(
+            in: axWindow,
+            buttonAttribute: kAXMinimizeButtonAttribute as CFString,
+            buttonLabel: "minimize",
+            windowID: windowID
+        )
+        let zoomHidden = hideTrafficLightButtonIfSupported(
+            in: axWindow,
+            buttonAttribute: kAXZoomButtonAttribute as CFString,
+            buttonLabel: "zoom",
+            windowID: windowID
+        )
+
+        let snapshot = TrafficLightVisibilitySnapshot(
+            closeHidden: closeHidden,
+            minimizeHidden: minimizeHidden,
+            zoomHidden: zoomHidden
+        )
+
+        if snapshot.hasRecordedState {
+            MirageLogger.host("Applied traffic light hiding for streamed window \(windowID)")
+            return snapshot
+        }
+
+        MirageLogger.debug(.host, "Traffic lights hide unsupported for window \(windowID): no settable AXHidden buttons")
+        return nil
+    }
+
+    private func hideTrafficLightButtonIfSupported(
+        in axWindow: AXUIElement,
+        buttonAttribute: CFString,
+        buttonLabel: String,
+        windowID: WindowID
+    )
+    -> Bool? {
+        guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights hide unsupported for window \(windowID): missing \(buttonLabel) button"
+            )
+            return nil
+        }
+
+        let hiddenAttribute = "AXHidden" as CFString
+        guard let existingValue = axBooleanAttributeValue(button, attribute: hiddenAttribute) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights hide unsupported for window \(windowID): \(buttonLabel) AXHidden unavailable"
+            )
+            return nil
+        }
+
+        guard isAXAttributeSettable(button, attribute: hiddenAttribute) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights hide unsupported for window \(windowID): \(buttonLabel) AXHidden not settable"
+            )
+            return nil
+        }
+
+        guard setAXBooleanAttributeValue(button, attribute: hiddenAttribute, value: true) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights hide failed for window \(windowID): \(buttonLabel) AXHidden set failed"
+            )
+            return nil
+        }
+
+        MirageLogger.host("Hid \(buttonLabel) traffic light for streamed window \(windowID)")
+        return existingValue
+    }
+
+    private func restoreTrafficLightsIfNeeded(_ snapshot: TrafficLightVisibilitySnapshot?, windowID: WindowID) {
+        guard let snapshot, snapshot.hasRecordedState else { return }
+        guard let axWindow = resolveAXWindow(for: windowID) else {
+            MirageLogger.debug(.host, "Traffic lights restore skipped for window \(windowID): AX window unavailable")
+            return
+        }
+
+        restoreTrafficLightButtonIfNeeded(
+            in: axWindow,
+            buttonAttribute: kAXCloseButtonAttribute as CFString,
+            buttonLabel: "close",
+            hiddenValue: snapshot.closeHidden,
+            windowID: windowID
+        )
+        restoreTrafficLightButtonIfNeeded(
+            in: axWindow,
+            buttonAttribute: kAXMinimizeButtonAttribute as CFString,
+            buttonLabel: "minimize",
+            hiddenValue: snapshot.minimizeHidden,
+            windowID: windowID
+        )
+        restoreTrafficLightButtonIfNeeded(
+            in: axWindow,
+            buttonAttribute: kAXZoomButtonAttribute as CFString,
+            buttonLabel: "zoom",
+            hiddenValue: snapshot.zoomHidden,
+            windowID: windowID
+        )
+
+        MirageLogger.host("Restored traffic light visibility for streamed window \(windowID)")
+    }
+
+    private func restoreTrafficLightButtonIfNeeded(
+        in axWindow: AXUIElement,
+        buttonAttribute: CFString,
+        buttonLabel: String,
+        hiddenValue: Bool?,
+        windowID: WindowID
+    ) {
+        guard let hiddenValue else { return }
+        guard let button = axElementAttributeValue(axWindow, attribute: buttonAttribute) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights restore skipped for window \(windowID): missing \(buttonLabel) button"
+            )
+            return
+        }
+
+        let hiddenAttribute = "AXHidden" as CFString
+        guard isAXAttributeSettable(button, attribute: hiddenAttribute) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights restore skipped for window \(windowID): \(buttonLabel) AXHidden not settable"
+            )
+            return
+        }
+
+        guard setAXBooleanAttributeValue(button, attribute: hiddenAttribute, value: hiddenValue) else {
+            MirageLogger.debug(
+                .host,
+                "Traffic lights restore failed for window \(windowID): \(buttonLabel) AXHidden set failed"
+            )
+            return
+        }
+    }
+
+    private func resolveAXWindow(for windowID: WindowID) -> AXUIElement? {
+        guard let windowInfo = getWindowInfo(windowID) else { return nil }
+        guard let ownerPID = windowInfo.ownerPID else { return nil }
+
+        let appElement = AXUIElementCreateApplication(ownerPID)
+        var windowsRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
+        guard result == .success,
+              let axWindowsValue = windowsRef,
+              let axWindows = axWindowsValue as? [AXUIElement],
+              !axWindows.isEmpty else {
+            return nil
+        }
+
+        if axWindows.count == 1 {
+            return axWindows[0]
+        }
+
+        let targetFrame = windowInfo.frame
+        for axWindow in axWindows {
+            guard let frame = axWindowFrame(axWindow) else { continue }
+            if abs(frame.origin.x - targetFrame.origin.x) <= 24,
+               abs(frame.origin.y - targetFrame.origin.y) <= 24,
+               abs(frame.size.width - targetFrame.size.width) <= 24,
+               abs(frame.size.height - targetFrame.size.height) <= 24 {
+                return axWindow
+            }
+        }
+
+        return axWindows.first
+    }
+
+    private func axWindowFrame(_ axWindow: AXUIElement) -> CGRect? {
+        var positionRef: CFTypeRef?
+        var sizeRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(axWindow, kAXPositionAttribute as CFString, &positionRef) == .success,
+              AXUIElementCopyAttributeValue(axWindow, kAXSizeAttribute as CFString, &sizeRef) == .success,
+              let positionRef,
+              let sizeRef,
+              CFGetTypeID(positionRef) == AXValueGetTypeID(),
+              CFGetTypeID(sizeRef) == AXValueGetTypeID() else {
+            return nil
+        }
+
+        let positionValue = unsafeDowncast(positionRef, to: AXValue.self)
+        let sizeValue = unsafeDowncast(sizeRef, to: AXValue.self)
+
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard AXValueGetValue(positionValue, .cgPoint, &position),
+              AXValueGetValue(sizeValue, .cgSize, &size) else {
+            return nil
+        }
+
+        return CGRect(origin: position, size: size)
+    }
+
+    private func axElementAttributeValue(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
+              let value,
+              CFGetTypeID(value) == AXUIElementGetTypeID() else {
+            return nil
+        }
+
+        return unsafeDowncast(value, to: AXUIElement.self)
+    }
+
+    private func axBooleanAttributeValue(_ element: AXUIElement, attribute: CFString) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
+              let value else {
+            return nil
+        }
+
+        if let boolValue = value as? Bool {
+            return boolValue
+        }
+
+        if let numberValue = value as? NSNumber {
+            return numberValue.boolValue
+        }
+
+        return nil
+    }
+
+    private func isAXAttributeSettable(_ element: AXUIElement, attribute: CFString) -> Bool {
+        var isSettable: DarwinBoolean = false
+        let result = AXUIElementIsAttributeSettable(element, attribute, &isSettable)
+        return result == .success && isSettable.boolValue
+    }
+
+    private func setAXBooleanAttributeValue(_ element: AXUIElement, attribute: CFString, value: Bool) -> Bool {
+        let targetValue: CFBoolean = value ? kCFBooleanTrue : kCFBooleanFalse
+        return AXUIElementSetAttributeValue(element, attribute, targetValue) == .success
     }
 
     // MARK: - State Queries
@@ -199,7 +524,7 @@ actor WindowSpaceManager {
     // MARK: - Helpers
 
     /// Get information about a window from CGWindowList
-    private func getWindowInfo(_ windowID: WindowID) -> (frame: CGRect, title: String?)? {
+    private func getWindowInfo(_ windowID: WindowID) -> (frame: CGRect, title: String?, ownerPID: pid_t?)? {
         let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[CFString: Any]]
 
         guard let info = windowList?.first else { return nil }
@@ -214,8 +539,9 @@ actor WindowSpaceManager {
 
         let frame = CGRect(x: x, y: y, width: width, height: height)
         let title = info[kCGWindowName] as? String
+        let ownerPID = (info[kCGWindowOwnerPID] as? NSNumber).map { pid_t($0.int32Value) }
 
-        return (frame, title)
+        return (frame, title, ownerPID)
     }
 
     /// Get all windows on a specific display

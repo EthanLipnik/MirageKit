@@ -14,8 +14,8 @@ import Foundation
 
 extension SharedVirtualDisplayManager {
     func resetVirtualDisplayIdentity() async throws {
-        guard activeConsumers.isEmpty else {
-            throw SharedDisplayError.creationFailed("Active streams are using the virtual display")
+        guard activeConsumers.isEmpty, dedicatedDisplaysByStreamID.isEmpty else {
+            throw SharedDisplayError.creationFailed("Active consumers are using managed virtual displays")
         }
 
         let displayID = sharedDisplay?.displayID

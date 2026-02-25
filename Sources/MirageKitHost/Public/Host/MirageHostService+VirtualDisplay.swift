@@ -107,15 +107,18 @@ extension MirageHostService {
         // Verify the original stream exists
         guard let originalContext = streamsByID[originalStreamID] else { return }
 
-        // Get the virtual display resolution (client's display size)
-        // Use SharedVirtualDisplayManager's getDisplayBounds which uses known resolution
-        let displayResolution: CGSize = if let bounds = await SharedVirtualDisplayManager.shared.getDisplayBounds() {
-            bounds.size
-        } else {
-            // Fallback to window size if no virtual display
-            window.frame.size
+        let inheritedClientScaleFactor = clientVirtualDisplayScaleFactor(streamID: originalStreamID)
+        var displayResolution = window.frame.size
+        if let cachedState = getVirtualDisplayState(streamID: originalStreamID),
+           cachedState.bounds.width > 0,
+           cachedState.bounds.height > 0 {
+            displayResolution = cachedState.bounds.size
+        } else if let inheritedSnapshot = await originalContext.getVirtualDisplaySnapshot() {
+            displayResolution = SharedVirtualDisplayManager.logicalResolution(
+                for: inheritedSnapshot.resolution,
+                scaleFactor: max(1.0, inheritedSnapshot.scaleFactor)
+            )
         }
-
         let streamScale = await originalContext.getStreamScale()
         let disableResolutionCap = await originalContext.isResolutionCapDisabled()
         let encoderSettings = await originalContext.getEncoderSettings()
@@ -129,6 +132,7 @@ extension MirageHostService {
                 to: client,
                 dataPort: nil,
                 clientDisplayResolution: displayResolution,
+                clientScaleFactor: inheritedClientScaleFactor,
                 keyFrameInterval: encoderSettings.keyFrameInterval,
                 streamScale: streamScale,
                 targetFrameRate: targetFrameRate,
@@ -153,6 +157,14 @@ extension MirageHostService {
 
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale change: \(streamID)")
+            return
+        }
+        let usesVirtualDisplay = await context.isUsingVirtualDisplay()
+        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && context.getWindowID() != 0
+        if isDedicatedVirtualDisplayStream {
+            MirageLogger.host(
+                "Ignoring stream scale change for dedicated virtual-display stream \(streamID): \(clampedScale)"
+            )
             return
         }
 
@@ -220,10 +232,9 @@ extension MirageHostService {
         do {
             try await context.updateFrameRate(targetFrameRate)
             if forceDisplayRefresh, await context.isUsingVirtualDisplay() {
-                let encoded = await context.getEncodedDimensions()
-                let pixelResolution = CGSize(width: encoded.width, height: encoded.height)
-                try await context.updateVirtualDisplayResolution(newResolution: pixelResolution)
-                await sendStreamScaleUpdate(streamID: streamID)
+                MirageLogger.host(
+                    "Ignoring forceDisplayRefresh reconfigure for dedicated virtual-display stream \(streamID)"
+                )
             }
             let appliedRate = await context.getTargetFrameRate()
             if appliedRate == targetFrameRate { MirageLogger.host("Stream refresh override applied: \(targetFrameRate)fps") } else {
@@ -240,10 +251,12 @@ extension MirageHostService {
             MirageLogger.debug(.host, "No stream found for encoder settings update: \(request.streamID)")
             return
         }
+        let usesVirtualDisplay = await context.isUsingVirtualDisplay()
+        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && context.getWindowID() != 0
 
         let hasBitDepthChange = request.bitDepth != nil
         let hasBitrateChange = request.bitrate != nil
-        let hasScaleChange = request.streamScale != nil
+        let hasScaleChange = request.streamScale != nil && !isDedicatedVirtualDisplayStream
         let shouldBroadcastStreamUpdate = hasBitDepthChange || hasScaleChange
 
         let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
@@ -255,7 +268,13 @@ extension MirageHostService {
                 )
             }
             if let streamScale = request.streamScale {
-                try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
+                if isDedicatedVirtualDisplayStream {
+                    MirageLogger.host(
+                        "Ignoring encoder settings streamScale for dedicated virtual-display stream \(request.streamID): \(streamScale)"
+                    )
+                } else {
+                    try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
+                }
             }
             if shouldBroadcastStreamUpdate {
                 await sendStreamScaleUpdate(streamID: request.streamID)
@@ -265,6 +284,50 @@ extension MirageHostService {
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to apply encoder settings update: ")
         }
+    }
+
+    func refreshWindowVirtualDisplayState(
+        streamID: StreamID,
+        context: StreamContext,
+        clientScaleFactorOverride: CGFloat?
+    )
+    async {
+        guard let snapshot = await context.getVirtualDisplaySnapshot() else { return }
+
+        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+            for: snapshot.resolution,
+            scaleFactor: max(1.0, snapshot.scaleFactor)
+        )
+        let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+            snapshot.displayID,
+            knownResolution: logicalResolution
+        )
+        var bounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            snapshot.displayID,
+            knownBounds: displayBounds
+        )
+        bounds = bounds.intersection(displayBounds)
+        if bounds.isEmpty {
+            bounds = displayBounds
+        }
+        let resolvedClientScaleFactor = max(
+            1.0,
+            clientScaleFactorOverride ??
+                getVirtualDisplayState(streamID: streamID)?.clientScaleFactor ??
+                snapshot.scaleFactor
+        )
+        let windowID = context.getWindowID()
+        let state = WindowVirtualDisplayState(
+            streamID: streamID,
+            displayID: snapshot.displayID,
+            generation: snapshot.generation,
+            bounds: bounds,
+            scaleFactor: max(1.0, snapshot.scaleFactor),
+            pixelResolution: snapshot.resolution,
+            clientScaleFactor: resolvedClientScaleFactor
+        )
+        setVirtualDisplayState(windowID: windowID, state: state)
+        inputStreamCacheActor.updateWindowFrame(streamID, newFrame: bounds)
     }
 
     func sendStreamScaleUpdate(streamID: StreamID) async {
@@ -557,34 +620,38 @@ extension MirageHostService {
         do {
             let client = activeStreams.first(where: { $0.id == streamID })?.client
             let logicalResolution = newResolution
+            let clientScaleOverride = clientVirtualDisplayScaleFactor(streamID: streamID)
             let pixelResolution = virtualDisplayPixelResolution(
                 for: logicalResolution,
-                client: client
+                client: client,
+                scaleFactorOverride: clientScaleOverride
             )
             try await context.updateVirtualDisplayResolution(newResolution: pixelResolution)
-
-            // Update the cached shared display bounds after resolution change
-            // Use SharedVirtualDisplayManager's getDisplayBounds which uses known resolution
-            if let newBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds() {
-                sharedVirtualDisplayBounds = newBounds
-                if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
-                    sharedVirtualDisplayScaleFactor = max(1.0, snapshot.scaleFactor)
-                }
-                MirageLogger.host("Updated shared virtual display bounds to: \(newBounds)")
-
-                // Also update input cache with new bounds for correct mouse coordinate translation
-                let windowID = context.getWindowID()
-                if let newFrame = currentWindowFrame(for: windowID) { inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame) }
-            }
+            await refreshWindowVirtualDisplayState(
+                streamID: streamID,
+                context: context,
+                clientScaleFactorOverride: clientScaleOverride
+            )
+            await sendStreamScaleUpdate(streamID: streamID)
 
             MirageLogger
                 .host(
-                    "Updated virtual display resolution for stream \(streamID) to " +
+                "Updated virtual display resolution for stream \(streamID) to " +
                         "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
                 )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to update virtual display resolution: ")
+            if let session = activeStreams.first(where: { $0.id == streamID }),
+               let clientContext = findClientContext(clientID: session.client.id) {
+                let errorMessage = ErrorMessage(
+                    code: .encodingError,
+                    message: "Failed to update dedicated display for stream \(streamID): \(error.localizedDescription)",
+                    streamID: streamID
+                )
+                try? await clientContext.send(.error, content: errorMessage)
+                await stopStream(session, minimizeWindow: false)
+            }
         }
     }
 }

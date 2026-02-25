@@ -64,6 +64,30 @@ struct KeyframeRecoveryPolicyTests {
         #expect(mapped.frameQuality >= 0.90)
     }
 
+    @Test("600 Mbps mapping stays near-lossless at 5K60")
+    func sixHundredMbpsNearLosslessQuality() {
+        let mapped = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 600_000_000,
+            width: 5120,
+            height: 2880,
+            frameRate: 60
+        )
+        #expect(mapped.frameQuality >= 0.90)
+        #expect(mapped.keyframeQuality >= 0.80)
+    }
+
+    @Test("25 Mbps mapping compresses aggressively at 5K60")
+    func lowBitrateAggressiveCompression() {
+        let mapped = MirageBitrateQualityMapper.derivedQualities(
+            targetBitrateBps: 25_000_000,
+            width: 5120,
+            height: 2880,
+            frameRate: 60
+        )
+        #expect(mapped.frameQuality <= 0.15)
+        #expect(mapped.keyframeQuality <= 0.09)
+    }
+
     @Test("Stream context applies high-bitrate quality mapping at 5K60")
     func streamContextAppliesHighBitrateQuality() async {
         let context = makeContext(
@@ -132,6 +156,58 @@ struct KeyframeRecoveryPolicyTests {
         #expect(oneTwentyHz.frameQuality < sixtyHz.frameQuality)
     }
 
+    @Test("Low-latency high-res boost does not force compression at 600 Mbps")
+    func lowLatencyHighResBoostRespectsHighBitrateHeadroom() async {
+        let boostedContext = makeContext(
+            frameRate: 60,
+            bitrate: 600_000_000,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: true
+        )
+        let baselineContext = makeContext(
+            frameRate: 60,
+            bitrate: 600_000_000,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: false
+        )
+        let fiveKSize = CGSize(width: 5120, height: 2880)
+        await boostedContext.updateCaptureSizesIfNeeded(fiveKSize)
+        await boostedContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
+        await baselineContext.updateCaptureSizesIfNeeded(fiveKSize)
+        await baselineContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
+
+        let boosted = await boostedContext.activeQuality
+        let baseline = await baselineContext.activeQuality
+        #expect(boosted >= 0.90)
+        #expect(abs(boosted - baseline) < 0.02)
+    }
+
+    @Test("Low-latency high-res boost remains aggressive at 25 Mbps")
+    func lowLatencyHighResBoostStaysAggressiveWhenConstrained() async {
+        let boostedContext = makeContext(
+            frameRate: 60,
+            bitrate: 25_000_000,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: true
+        )
+        let baselineContext = makeContext(
+            frameRate: 60,
+            bitrate: 25_000_000,
+            latencyMode: .lowestLatency,
+            lowLatencyHighResolutionCompressionBoostEnabled: false
+        )
+        let fiveKSize = CGSize(width: 5120, height: 2880)
+        await boostedContext.updateCaptureSizesIfNeeded(fiveKSize)
+        await boostedContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
+        await baselineContext.updateCaptureSizesIfNeeded(fiveKSize)
+        await baselineContext.applyDerivedQuality(for: fiveKSize, logLabel: nil)
+
+        let boosted = await boostedContext.activeQuality
+        let baseline = await baselineContext.activeQuality
+        #expect(boosted <= 0.06)
+        #expect(boosted + 0.07 < baseline)
+    }
+
     @Test("High-bitrate 5K120 remains more compressed than 5K60")
     func highBitrateHighRefreshBias() {
         let sixtyHz = MirageBitrateQualityMapper.derivedQualities(
@@ -168,7 +244,7 @@ struct KeyframeRecoveryPolicyTests {
     func keyframePressureQualityDrop() async {
         let context = makeContext(
             frameRate: 120,
-            bitrate: 120_000_000
+            bitrate: 300_000_000
         )
         let sixKSize = CGSize(width: 6016, height: 3384)
         await context.updateCaptureSizesIfNeeded(sixKSize)
@@ -181,6 +257,24 @@ struct KeyframeRecoveryPolicyTests {
 
         #expect(pressured < baseline)
         #expect(pressured >= floor)
+    }
+
+    @Test("Runtime-quality-disabled streams keep keyframe quality fixed under queue pressure")
+    func keyframeQualityStaysFixedWhenRuntimeAdjustmentDisabled() async {
+        let context = makeContext(
+            frameRate: 120,
+            bitrate: 120_000_000,
+            runtimeQualityAdjustmentEnabled: false
+        )
+        let sixKSize = CGSize(width: 6016, height: 3384)
+        await context.updateCaptureSizesIfNeeded(sixKSize)
+        await context.applyDerivedQuality(for: sixKSize, logLabel: nil)
+
+        let baseline = await context.keyframeQuality(for: 0)
+        let maxQueuedBytes = await context.maxQueuedBytes
+        let pressured = await context.keyframeQuality(for: maxQueuedBytes)
+
+        #expect(abs(baseline - pressured) < 0.0001)
     }
 
     @Test("Recovery requests enable P-frame FEC in loss mode")
@@ -201,7 +295,10 @@ struct KeyframeRecoveryPolicyTests {
 
     private func makeContext(
         frameRate: Int = 60,
-        bitrate: Int = 600_000_000
+        bitrate: Int = 600_000_000,
+        runtimeQualityAdjustmentEnabled: Bool = true,
+        latencyMode: MirageStreamLatencyMode = .auto,
+        lowLatencyHighResolutionCompressionBoostEnabled: Bool = true
     ) -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: frameRate,
@@ -214,7 +311,10 @@ struct KeyframeRecoveryPolicyTests {
             streamID: 1,
             windowID: 1,
             encoderConfig: encoderConfig,
-            streamScale: 1.0
+            streamScale: 1.0,
+            runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
+            lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
+            latencyMode: latencyMode
         )
     }
 }

@@ -38,6 +38,7 @@ extension WindowCaptureEngine {
                 knownScaleFactor: config.knownScaleFactor,
                 outputScale: scale,
                 resolution: config.resolution,
+                sourceRect: config.sourceRect,
                 showsCursor: config.showsCursor,
                 excludedWindows: config.excludedWindows
             )
@@ -72,6 +73,9 @@ extension WindowCaptureEngine {
             : CGColorSpace.sRGB
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
+        if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
+        }
 
         // Update the stream configuration
         try await stream.updateConfiguration(streamConfig)
@@ -108,6 +112,7 @@ extension WindowCaptureEngine {
                 knownScaleFactor: config.knownScaleFactor,
                 outputScale: config.outputScale,
                 resolution: CGSize(width: width, height: height),
+                sourceRect: config.sourceRect,
                 showsCursor: config.showsCursor,
                 excludedWindows: config.excludedWindows
             )
@@ -125,13 +130,16 @@ extension WindowCaptureEngine {
             : CGColorSpace.sRGB
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
+        if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
+        }
 
         try await stream.updateConfiguration(streamConfig)
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         MirageLogger.capture("Resolution updated to client dimensions: \(width)x\(height)")
     }
 
-    func updateCaptureDisplay(_ newDisplay: SCDisplay, resolution: CGSize) async throws {
+    func updateCaptureDisplay(_ newDisplay: SCDisplay, resolution: CGSize, sourceRect: CGRect? = nil) async throws {
         guard isCapturing, let stream else { return }
 
         // Clear cached fallback frame when switching displays
@@ -148,7 +156,9 @@ extension WindowCaptureEngine {
         currentHeight = newHeight
         useBestCaptureResolution = false
         var excludedWindows: [SCWindow] = []
+        var resolvedSourceRect: CGRect? = sourceRect
         if let config = captureSessionConfig {
+            resolvedSourceRect = sourceRect ?? config.sourceRect
             captureSessionConfig = CaptureSessionConfiguration(
                 windowID: config.windowID,
                 applicationPID: config.applicationPID,
@@ -159,6 +169,7 @@ extension WindowCaptureEngine {
                 knownScaleFactor: config.knownScaleFactor,
                 outputScale: config.outputScale,
                 resolution: resolution,
+                sourceRect: resolvedSourceRect,
                 showsCursor: config.showsCursor,
                 excludedWindows: config.excludedWindows
             )
@@ -182,6 +193,9 @@ extension WindowCaptureEngine {
             : CGColorSpace.sRGB
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
+        if let resolvedSourceRect, !resolvedSourceRect.isEmpty {
+            streamConfig.sourceRect = resolvedSourceRect
+        }
 
         // Apply both filter and configuration updates
         try await stream.updateContentFilter(newFilter)
@@ -221,6 +235,7 @@ extension WindowCaptureEngine {
                 knownScaleFactor: config.knownScaleFactor,
                 outputScale: config.outputScale,
                 resolution: config.resolution,
+                sourceRect: config.sourceRect,
                 showsCursor: config.showsCursor,
                 excludedWindows: windows
             )
@@ -253,6 +268,9 @@ extension WindowCaptureEngine {
             : CGColorSpace.sRGB
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
+        if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
+        }
 
         try await stream.updateConfiguration(streamConfig)
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
@@ -291,6 +309,9 @@ extension WindowCaptureEngine {
             : CGColorSpace.sRGB
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = captureQueueDepth
+        if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
+        }
 
         try await stream.updateConfiguration(streamConfig)
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)

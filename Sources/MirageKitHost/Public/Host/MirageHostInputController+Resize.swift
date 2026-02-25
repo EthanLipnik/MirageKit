@@ -21,6 +21,12 @@ extension MirageHostInputController {
     @MainActor
     func handleWindowResize(_ window: MirageWindow, resizeEvent: MirageResizeEvent) {
         guard let windowController else { return }
+        if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
+            MirageLogger.host(
+                "Ignoring absolute resize for window \(window.id) using dedicated virtual display"
+            )
+            return
+        }
         guard let axWindow = windowController.getOrCacheAXWindow(for: window) else { return }
 
         let settable = windowController.isWindowSizeSettable(axWindow)
@@ -65,16 +71,19 @@ extension MirageHostInputController {
     @MainActor
     func handleRelativeResize(_ window: MirageWindow, event: MirageRelativeResizeEvent) {
         guard let windowController else { return }
+        if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
+            MirageLogger.host(
+                "Ignoring relative resize for window \(window.id) using dedicated virtual display"
+            )
+            return
+        }
         guard let axWindow = windowController.getOrCacheAXWindow(for: window),
               let visibleFrame = windowController.maxWindowSizeRect(for: window) else {
             return
         }
 
         let clientAspectRatio = event.aspectRatio
-        let isOnVirtualDisplay = hostService?.isStreamUsingVirtualDisplay(windowID: window.id) ?? false
-        let hostScale: CGFloat = isOnVirtualDisplay
-            ? (hostService?.currentVirtualDisplayScaleFactor() ?? 2.0)
-            : (NSScreen.main?.backingScaleFactor ?? 2.0)
+        let hostScale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2.0
 
         let initialTargetSize: CGSize
         if event.pixelWidth > 0, event.pixelHeight > 0 {
@@ -149,6 +158,12 @@ extension MirageHostInputController {
     @MainActor
     func handlePixelResize(_ window: MirageWindow, event: MiragePixelResizeEvent) {
         guard let windowController else { return }
+        if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
+            MirageLogger.host(
+                "Ignoring pixel resize for window \(window.id) using dedicated virtual display"
+            )
+            return
+        }
         guard let axWindow = windowController.getOrCacheAXWindow(for: window) else { return }
 
         let hostScale = NSScreen.main?.backingScaleFactor ?? 2.0

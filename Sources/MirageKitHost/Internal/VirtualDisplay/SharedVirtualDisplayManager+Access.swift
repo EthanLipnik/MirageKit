@@ -75,12 +75,30 @@ extension SharedVirtualDisplayManager {
         activeConsumers.count
     }
 
-    /// Get all active stream IDs (filters out non-stream consumers)
-    func activeStreamIDs() -> [StreamID] {
-        activeConsumers.keys.compactMap { consumer in
-            if case let .stream(streamID) = consumer { return streamID }
-            return nil
-        }
+    /// Get a dedicated display snapshot for a stream.
+    func getDedicatedDisplaySnapshot(for streamID: StreamID) -> DisplaySnapshot? {
+        guard let display = dedicatedDisplaysByStreamID[streamID] else { return nil }
+        return snapshot(from: display)
+    }
+
+    /// Get dedicated display bounds in logical points for a stream.
+    func getDedicatedDisplayBounds(for streamID: StreamID) -> CGRect? {
+        guard let display = dedicatedDisplaysByStreamID[streamID] else { return nil }
+        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+            for: display.resolution,
+            scaleFactor: display.scaleFactor
+        )
+        return CGVirtualDisplayBridge.getDisplayBounds(display.displayID, knownResolution: logicalResolution)
+    }
+
+    /// Check whether a dedicated display exists for a stream.
+    func hasDedicatedDisplay(for streamID: StreamID) -> Bool {
+        dedicatedDisplaysByStreamID[streamID] != nil
+    }
+
+    /// Get count of dedicated stream displays.
+    func dedicatedDisplayCount() -> Int {
+        dedicatedDisplaysByStreamID.count
     }
 }
 #endif

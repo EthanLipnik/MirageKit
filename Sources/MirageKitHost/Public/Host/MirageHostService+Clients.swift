@@ -39,6 +39,7 @@ extension MirageHostService {
         }
 
         await stopAudioForDisconnectedClient(client.id)
+        await appStreamManager.endSessionsForClient(client.id)
 
         // Remove client
         var removedConnectionID: ObjectIdentifier?
@@ -84,9 +85,9 @@ extension MirageHostService {
         guard activeStreams.isEmpty, loginDisplayContext == nil, desktopStreamContext == nil else { return }
 
         let stats = await SharedVirtualDisplayManager.shared.getStatistics()
-        guard stats.hasDisplay else { return }
+        guard stats.hasDisplay || stats.dedicatedDisplayCount > 0 else { return }
 
-        MirageLogger.host("No active streams or clients; destroying shared virtual display")
+        MirageLogger.host("No active streams or clients; destroying managed virtual displays")
         await SharedVirtualDisplayManager.shared.destroyAllAndClear()
     }
 }

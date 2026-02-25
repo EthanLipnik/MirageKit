@@ -15,9 +15,12 @@ import Foundation
 package struct AppListRequestMessage: Codable {
     /// Whether to include app icons in the response
     package let includeIcons: Bool
+    /// Whether host-side app-list caches should be bypassed for this request
+    package let forceRefresh: Bool
 
-    package init(includeIcons: Bool) {
+    package init(includeIcons: Bool, forceRefresh: Bool = false) {
         self.includeIcons = includeIcons
+        self.forceRefresh = forceRefresh
     }
 }
 

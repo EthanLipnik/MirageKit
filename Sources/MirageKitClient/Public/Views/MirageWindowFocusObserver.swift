@@ -21,6 +21,8 @@ struct MirageWindowFocusObserver: NSViewRepresentable {
     let sessionStore: MirageClientSessionStore
     /// Client service used to send focus input events.
     let clientService: MirageClientService
+    /// Callback fired when the hosting macOS window is closing.
+    let onWindowWillClose: (() -> Void)?
 
     func makeNSView(context _: Context) -> NSView {
         let view = FocusTrackingView()
@@ -28,6 +30,7 @@ struct MirageWindowFocusObserver: NSViewRepresentable {
         view.streamID = streamID
         view.sessionStore = sessionStore
         view.clientService = clientService
+        view.onWindowWillClose = onWindowWillClose
         return view
     }
 
@@ -39,11 +42,25 @@ private final class FocusTrackingView: NSView {
     var streamID: StreamID?
     var sessionStore: MirageClientSessionStore?
     var clientService: MirageClientService?
+    var onWindowWillClose: (() -> Void)?
+    private weak var observedWindow: NSWindow?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard let window else { return }
+        guard observedWindow !== window else { return }
+        detachWindowObservers()
+        attachWindowObservers()
 
+        guard let window else { return }
+        if window.isKeyWindow {
+            sessionStore?.setFocusedSession(sessionID)
+            notifyHostWindowFocused()
+        }
+    }
+
+    private func attachWindowObservers() {
+        guard let window else { return }
+        observedWindow = window
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowDidBecomeKey),
@@ -56,11 +73,32 @@ private final class FocusTrackingView: NSView {
             name: NSWindow.didResignKeyNotification,
             object: window
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+    }
 
-        if window.isKeyWindow {
-            sessionStore?.setFocusedSession(sessionID)
-            notifyHostWindowFocused()
-        }
+    private func detachWindowObservers() {
+        guard let observedWindow else { return }
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.didBecomeKeyNotification,
+            object: observedWindow
+        )
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.didResignKeyNotification,
+            object: observedWindow
+        )
+        NotificationCenter.default.removeObserver(
+            self,
+            name: NSWindow.willCloseNotification,
+            object: observedWindow
+        )
+        self.observedWindow = nil
     }
 
     @objc
@@ -77,6 +115,15 @@ private final class FocusTrackingView: NSView {
         clientService?.sendInputFireAndForget(.flagsChanged([]), forStream: streamID)
     }
 
+    @objc
+    private func windowWillClose(_: Notification) {
+        if sessionStore?.focusedSessionID == sessionID { sessionStore?.setFocusedSession(nil) }
+        if let streamID {
+            clientService?.sendInputFireAndForget(.flagsChanged([]), forStream: streamID)
+        }
+        onWindowWillClose?()
+    }
+
     private func notifyHostWindowFocused() {
         guard let streamID else { return }
         clientService?.sendInputFireAndForget(.windowFocus, forStream: streamID)
@@ -86,7 +133,7 @@ private final class FocusTrackingView: NSView {
     }
 
     deinit {
-        NotificationCenter.default.removeObserver(self)
+        detachWindowObservers()
     }
 }
 #endif

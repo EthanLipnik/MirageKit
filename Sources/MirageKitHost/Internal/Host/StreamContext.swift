@@ -14,7 +14,7 @@ import MirageKit
 import ScreenCaptureKit
 
 /// Manages the capture → encode → send pipeline for a single stream
-/// Uses virtual displays for window isolation, with window-level capture
+/// Uses virtual displays for window isolation, with display-level capture cropped to visible bounds
 actor StreamContext {
     let streamID: StreamID
     let windowID: WindowID
@@ -61,10 +61,9 @@ actor StreamContext {
     var captureEngine: WindowCaptureEngine?
 
     // Virtual display components (provides window isolation)
-    // Uses SharedVirtualDisplayManager for single shared display across all streams
+    // Uses SharedVirtualDisplayManager dedicated stream displays.
     var virtualDisplayContext: SharedVirtualDisplayManager.DisplaySnapshot?
     var useVirtualDisplay: Bool = true
-    var sharedDisplayGeneration: UInt64 = 0
 
     var encoder: HEVCEncoder?
     var isRunning = false
@@ -133,6 +132,9 @@ actor StreamContext {
     let qualityDropStep: Float = 0.02
     let qualityDropStepHighPressure: Float = 0.05
     let qualityRaiseStep: Float = 0.03
+    let packetBudgetDropUtilizationThreshold: Double = 1.05
+    let packetBudgetHighPressureUtilizationThreshold: Double = 1.20
+    let packetBudgetRaiseUtilizationThreshold: Double = 0.95
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
     let typingBurstWindow: CFAbsoluteTime = 0.35

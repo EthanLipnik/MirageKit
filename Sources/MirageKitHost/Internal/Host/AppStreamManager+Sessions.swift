@@ -22,13 +22,17 @@ public extension AppStreamManager {
     ///   - appPath: Path to the app bundle
     ///   - clientID: The client receiving the stream
     ///   - clientName: Display name of the client
+    ///   - requestedDisplayResolution: Requested logical display resolution in points.
+    ///   - requestedClientScaleFactor: Optional client scale-factor override.
     /// - Returns: The created session, or nil if app is not available
     func startAppSession(
         bundleIdentifier: String,
         appName: String,
         appPath: String,
         clientID: UUID,
-        clientName: String
+        clientName: String,
+        requestedDisplayResolution: CGSize,
+        requestedClientScaleFactor: CGFloat?
     )
     -> MirageAppStreamSession? {
         let key = bundleIdentifier.lowercased()
@@ -45,6 +49,8 @@ public extension AppStreamManager {
             appPath: appPath,
             clientID: clientID,
             clientName: clientName,
+            requestedDisplayResolution: requestedDisplayResolution,
+            requestedClientScaleFactor: requestedClientScaleFactor,
             state: .starting
         )
 
@@ -163,6 +169,17 @@ public extension AppStreamManager {
         }
     }
 
+    /// End any sessions that belong to clients that are no longer connected.
+    func endSessionsNotOwned(by connectedClientIDs: Set<UUID>) {
+        let orphanedApps = sessions.values
+            .filter { !connectedClientIDs.contains($0.clientID) }
+            .map(\.bundleIdentifier)
+
+        for app in orphanedApps {
+            endSession(bundleIdentifier: app)
+        }
+    }
+
     /// Get session for an app
     func getSession(bundleIdentifier: String) -> MirageAppStreamSession? {
         sessions[bundleIdentifier.lowercased()]
@@ -177,6 +194,13 @@ public extension AppStreamManager {
     func getSessionForWindow(_ windowID: WindowID) -> MirageAppStreamSession? {
         sessions.values.first { session in
             session.windowStreams[windowID] != nil || session.windowsInCooldown[windowID] != nil
+        }
+    }
+
+    /// Get session containing a specific stream ID.
+    func getSessionForStreamID(_ streamID: StreamID) -> MirageAppStreamSession? {
+        sessions.values.first { session in
+            session.windowStreams.values.contains { $0.streamID == streamID }
         }
     }
 }

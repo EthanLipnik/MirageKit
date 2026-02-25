@@ -47,59 +47,12 @@ extension MirageHostService {
                 scaleFactor: newContext.scaleFactor
             )
         )
-        sharedVirtualDisplayBounds = displayBounds
         sharedVirtualDisplayGeneration = newContext.generation
         sharedVirtualDisplayScaleFactor = max(1.0, newContext.scaleFactor)
         MirageLogger
             .host(
                 "Shared display generation change: \(previousGeneration) -> \(newContext.generation) (display \(newContext.displayID))"
             )
-
-        var streamIDsToRebind: [StreamID] = []
-        for session in activeStreams {
-            guard let context = streamsByID[session.id] else { continue }
-            guard await context.isUsingVirtualDisplay() else { continue }
-            guard await context.isReadyForSharedDisplayRebind() else { continue }
-            let contextGeneration = await context.getSharedDisplayGeneration()
-            guard contextGeneration != newContext.generation else { continue }
-            streamIDsToRebind.append(session.id)
-        }
-
-        for streamID in streamIDsToRebind {
-            guard let context = streamsByID[streamID] else { continue }
-            do {
-                try await context.rebindToSharedDisplay(
-                    newContext: newContext,
-                    reason: "shared display generation change"
-                )
-
-                if let index = activeStreams.firstIndex(where: { $0.id == streamID }) {
-                    let session = activeStreams[index]
-                    let updatedFrame = CGRect(origin: displayBounds.origin, size: session.window.frame.size)
-                    let updatedWindow = MirageWindow(
-                        id: session.window.id,
-                        title: session.window.title,
-                        application: session.window.application,
-                        frame: updatedFrame,
-                        isOnScreen: session.window.isOnScreen,
-                        windowLayer: session.window.windowLayer
-                    )
-                    activeStreams[index] = MirageStreamSession(
-                        id: session.id,
-                        window: updatedWindow,
-                        client: session.client
-                    )
-                    inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedFrame)
-                }
-
-                await sendStreamScaleUpdate(streamID: streamID)
-            } catch {
-                MirageLogger.error(
-                    .host,
-                    "Failed to rebind stream \(streamID) after shared display generation change: \(error)"
-                )
-            }
-        }
 
         await handleDesktopStreamSharedDisplayGenerationChange(
             newContext: newContext,

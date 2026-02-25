@@ -14,6 +14,20 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    private func sendControlError(
+        _ code: ErrorMessage.ErrorCode,
+        message: String,
+        streamID: StreamID? = nil,
+        over connection: NWConnection
+    ) {
+        let payload = ErrorMessage(code: code, message: message, streamID: streamID)
+        guard let response = try? ControlMessage(type: .error, content: payload) else {
+            MirageLogger.error(.host, "Failed to encode error response: \(message)")
+            return
+        }
+        connection.send(content: response.serialize(), completion: .idempotent)
+    }
+
     func registerControlMessageHandlers() {
         controlMessageHandlers = [
             .startStream: { [weak self] message, client, connection in
@@ -127,27 +141,28 @@ extension MirageHostService {
 
             guard let window = availableWindows.first(where: { $0.id == request.windowID }) else {
                 MirageLogger.host("Window not found: \(request.windowID)")
+                sendControlError(
+                    .windowNotFound,
+                    message: "Window \(request.windowID) not found",
+                    over: connection
+                )
                 return
             }
 
-            var clientDisplayResolution: CGSize?
-            if let displayWidth = request.displayWidth, let displayHeight = request.displayHeight,
-               displayWidth > 0, displayHeight > 0 {
-                clientDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
-                MirageLogger.host("Client display size (points): \(displayWidth)x\(displayHeight)")
-            }
-
-            if clientDisplayResolution == nil,
-               let pixelWidth = request.pixelWidth, let pixelHeight = request.pixelHeight,
-               pixelWidth > 0, pixelHeight > 0,
-               let scaleFactor = request.scaleFactor, scaleFactor > 0 {
-                let pointSize = CGSize(
-                    width: CGFloat(pixelWidth) / scaleFactor,
-                    height: CGFloat(pixelHeight) / scaleFactor
+            guard let displayWidth = request.displayWidth,
+                  let displayHeight = request.displayHeight,
+                  displayWidth > 0,
+                  displayHeight > 0 else {
+                MirageLogger.host("Rejecting startStream without display size for window \(request.windowID)")
+                sendControlError(
+                    .invalidMessage,
+                    message: "startStream requires displayWidth/displayHeight",
+                    over: connection
                 )
-                MirageLogger.host("Client initial size (legacy): \(pixelWidth)x\(pixelHeight) px -> \(pointSize) pts")
-                onResizeWindowForStream?(window, pointSize)
+                return
             }
+            let clientDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
+            MirageLogger.host("Client display size (points): \(displayWidth)x\(displayHeight)")
 
             let clientMaxRefreshRate = request.maxRefreshRate
             let targetFrameRate = resolvedTargetFrameRate(clientMaxRefreshRate)
@@ -171,6 +186,7 @@ extension MirageHostService {
                 to: client,
                 dataPort: request.dataPort,
                 clientDisplayResolution: clientDisplayResolution,
+                clientScaleFactor: request.scaleFactor,
                 keyFrameInterval: keyFrameInterval,
                 streamScale: requestedScale,
                 targetFrameRate: targetFrameRate,
@@ -186,6 +202,11 @@ extension MirageHostService {
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle startStream: ")
+            sendControlError(
+                .encodingError,
+                message: "Failed to start stream: \(error.localizedDescription)",
+                over: connection
+            )
         }
     }
 

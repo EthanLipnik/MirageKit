@@ -15,20 +15,33 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Cleanup
 
-    /// Destroy the shared display and clear all consumers
+    /// Destroy all managed displays and clear all consumers
     /// Called during host shutdown
     func destroyAllAndClear() async {
+        let dedicatedDisplays = Array(dedicatedDisplaysByStreamID.values)
+        dedicatedDisplaysByStreamID.removeAll()
         activeConsumers.removeAll()
+        for display in dedicatedDisplays {
+            await destroyDisplay(display)
+        }
         await destroyDisplay()
-        MirageLogger.host("Destroyed shared display and cleared all consumers")
+        MirageLogger.host(
+            "Destroyed shared display, \(dedicatedDisplays.count) dedicated displays, and cleared all consumers"
+        )
     }
 
-    /// Get statistics about the shared display
-    func getStatistics() -> (hasDisplay: Bool, consumerCount: Int, resolution: CGSize?) {
+    /// Get statistics about shared and dedicated displays.
+    func getStatistics() -> (
+        hasDisplay: Bool,
+        consumerCount: Int,
+        resolution: CGSize?,
+        dedicatedDisplayCount: Int
+    ) {
         (
             hasDisplay: sharedDisplay != nil,
             consumerCount: activeConsumers.count,
-            resolution: sharedDisplay?.resolution
+            resolution: sharedDisplay?.resolution,
+            dedicatedDisplayCount: dedicatedDisplaysByStreamID.count
         )
     }
 }

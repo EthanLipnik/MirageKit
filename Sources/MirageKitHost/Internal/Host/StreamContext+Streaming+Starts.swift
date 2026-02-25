@@ -24,6 +24,7 @@ extension StreamContext {
     async throws {
         guard !isRunning else { return }
         isRunning = true
+        useVirtualDisplay = false
         captureFrameRateOverride = currentFrameRate
         captureFrameRate = currentFrameRate
 
@@ -181,6 +182,7 @@ extension StreamContext {
     async throws {
         guard !isRunning else { return }
         isRunning = true
+        useVirtualDisplay = false
         captureFrameRateOverride = currentFrameRate
         captureFrameRate = currentFrameRate
 
@@ -335,6 +337,7 @@ extension StreamContext {
     async throws {
         guard !isRunning else { return }
         isRunning = true
+        useVirtualDisplay = false
         captureFrameRateOverride = currentFrameRate
         captureFrameRate = currentFrameRate
 

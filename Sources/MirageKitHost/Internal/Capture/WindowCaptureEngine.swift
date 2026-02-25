@@ -160,6 +160,7 @@ actor WindowCaptureEngine {
         let knownScaleFactor: CGFloat?
         let outputScale: CGFloat
         let resolution: CGSize?
+        let sourceRect: CGRect?
         let showsCursor: Bool
         let excludedWindows: [SCWindow]
     }

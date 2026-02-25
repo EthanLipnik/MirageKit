@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import Foundation
 import SwiftUI
 import MirageKit
 #if os(macOS)
@@ -37,6 +38,7 @@ public struct MirageStreamContentView: View {
     public let onDictationError: ((String) -> Void)?
     public let dictationMode: MirageDictationMode
     public let maxDrawableSize: CGSize?
+    public let onWindowWillClose: (() -> Void)?
     private let desktopResizeAckTimeout: Duration = .seconds(3)
     private let desktopResizeConvergenceTolerance: CGFloat = 4
 
@@ -51,6 +53,8 @@ public struct MirageStreamContentView: View {
     @State private var resizeFallbackTask: Task<Void, Never>?
     @State private var displayResolutionTask: Task<Void, Never>?
     @State private var lastSentDisplayResolution: CGSize = .zero
+    @State private var pendingAppDisplayResolutionCandidate: CGSize = .zero
+    @State private var pendingAppDisplayResolutionCandidateSince: Date = .distantPast
     @State private var streamScaleTask: Task<Void, Never>?
     @State private var lastSentEncodedPixelSize: CGSize = .zero
     @State private var awaitingDesktopResizeAck: Bool = false
@@ -71,9 +75,9 @@ public struct MirageStreamContentView: View {
     ///   - clientService: The client service used to send input and resize events.
     ///   - isDesktopStream: Whether the stream represents a desktop session.
     ///   - desktopStreamMode: Desktop stream mode (mirrored vs secondary display).
-    ///   - onExitDesktopStream: Optional handler for the desktop exit shortcut.
+    ///   - onExitDesktopStream: Optional handler for the stream-exit shortcut.
     ///   - onToggleDictationShortcut: Optional handler for the dictation toggle shortcut.
-    ///   - desktopExitShortcut: Client shortcut used for desktop stream exit.
+    ///   - desktopExitShortcut: Client shortcut used for stream exit.
     ///   - dictationShortcut: Client shortcut used for dictation toggle.
     ///   - onInputActivity: Optional callback invoked for each locally captured input event.
     ///   - onDirectTouchActivity: Optional callback invoked when direct finger touch input occurs.
@@ -87,6 +91,7 @@ public struct MirageStreamContentView: View {
     ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
     ///   - onDictationError: Optional callback for user-facing dictation errors.
     ///   - dictationMode: Dictation behavior for realtime versus finalized output.
+    ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
     public init(
         session: MirageStreamSessionState,
         sessionStore: MirageClientSessionStore,
@@ -109,7 +114,8 @@ public struct MirageStreamContentView: View {
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
-        maxDrawableSize: CGSize? = nil
+        maxDrawableSize: CGSize? = nil,
+        onWindowWillClose: (() -> Void)? = nil
     ) {
         self.session = session
         self.sessionStore = sessionStore
@@ -133,6 +139,7 @@ public struct MirageStreamContentView: View {
         self.onDictationError = onDictationError
         self.dictationMode = dictationMode
         self.maxDrawableSize = maxDrawableSize
+        self.onWindowWillClose = onWindowWillClose
     }
 
     public var body: some View {
@@ -252,6 +259,8 @@ public struct MirageStreamContentView: View {
             resizeFallbackTask = nil
             displayResolutionTask?.cancel()
             displayResolutionTask = nil
+            pendingAppDisplayResolutionCandidate = .zero
+            pendingAppDisplayResolutionCandidateSince = .distantPast
             streamScaleTask?.cancel()
             streamScaleTask = nil
             desktopResizeAckTimeoutTask?.cancel()
@@ -268,7 +277,8 @@ public struct MirageStreamContentView: View {
                 sessionID: session.id,
                 streamID: session.streamID,
                 sessionStore: sessionStore,
-                clientService: clientService
+                clientService: clientService,
+                onWindowWillClose: onWindowWillClose
             )
         )
         #endif
@@ -292,8 +302,8 @@ public struct MirageStreamContentView: View {
 
     private func sendInputEvent(_ event: MirageInputEvent) {
         if case let .keyDown(keyEvent) = event {
-            if isDesktopStream, desktopExitShortcut.matches(keyEvent) {
-                onExitDesktopStream?()
+            if desktopExitShortcut.matches(keyEvent), let onExitDesktopStream {
+                onExitDesktopStream()
                 return
             }
             if dictationShortcut.matches(keyEvent) {
@@ -379,7 +389,6 @@ public struct MirageStreamContentView: View {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
 
         let viewSize = metrics.viewSize
-        let scaleFactor = metrics.scaleFactor
         let resolvedRawPixelSize = metrics.pixelSize
 
         #if os(iOS) || os(visionOS)
@@ -405,13 +414,7 @@ public struct MirageStreamContentView: View {
         if let nativeScale = metrics.screenNativeScale, nativeScale > 0 {
             MirageClientService.lastKnownScreenNativeScale = nativeScale
         }
-        let fallbackScreenSize = metrics.screenPointSize ?? viewSize
-        #else
-        let screenBounds = NSScreen.main?.visibleFrame ?? CGRect(x: 0, y: 0, width: 1920, height: 1080)
-        let fallbackScreenSize = screenBounds.size
         #endif
-
-        let effectiveScreenSize = (viewSize == .zero) ? fallbackScreenSize : viewSize
 
         Task { @MainActor [clientService] in
             await Task.yield()
@@ -435,19 +438,71 @@ public struct MirageStreamContentView: View {
                 }
             }
 
-            if !isDesktopStream {
-                guard let controller = clientService.controller(for: session.streamID) else { return }
-                await controller.handleDrawableSizeChanged(
-                    resolvedRawPixelSize,
-                    screenBounds: effectiveScreenSize,
-                    scaleFactor: scaleFactor
-                )
-            }
-
             let desktopDisplaySize = isDesktopStream
                 ? clientService.preferredDesktopDisplayResolution(for: viewSize)
                 : .zero
-            if !isDesktopStream { scheduleStreamScaleUpdate(for: viewSize) }
+            if !isDesktopStream {
+                let baseDisplaySize = clientService.scaledDisplayResolution(viewSize)
+                guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
+                    pendingAppDisplayResolutionCandidate = .zero
+                    pendingAppDisplayResolutionCandidateSince = .distantPast
+                    if isResizing { isResizing = false }
+                    return
+                }
+
+                // Dedicated app/window virtual-display streams now resize via display-resolution
+                // updates only. Suppress dynamic stream-scale pushes that can fight placement.
+                streamScaleTask?.cancel()
+                streamScaleTask = nil
+                lastSentEncodedPixelSize = .zero
+                guard lastSentDisplayResolution != baseDisplaySize else {
+                    pendingAppDisplayResolutionCandidate = .zero
+                    pendingAppDisplayResolutionCandidateSince = .distantPast
+                    if isResizing { isResizing = false }
+                    return
+                }
+
+                let now = Date()
+                let stabilizationDuration = appDisplayResolutionStabilizationDuration(
+                    from: lastSentDisplayResolution,
+                    to: baseDisplaySize
+                )
+                if stabilizationDuration > 0 {
+                    if pendingAppDisplayResolutionCandidate != baseDisplaySize {
+                        pendingAppDisplayResolutionCandidate = baseDisplaySize
+                        pendingAppDisplayResolutionCandidateSince = now
+                        return
+                    }
+                    if now.timeIntervalSince(pendingAppDisplayResolutionCandidateSince) < stabilizationDuration {
+                        return
+                    }
+                }
+
+                pendingAppDisplayResolutionCandidate = .zero
+                pendingAppDisplayResolutionCandidateSince = .distantPast
+                displayResolutionTask?.cancel()
+                displayResolutionTask = Task { @MainActor in
+                    do {
+                        try await Task.sleep(for: .milliseconds(200))
+                    } catch {
+                        return
+                    }
+
+                    guard lastSentDisplayResolution != baseDisplaySize else {
+                        pendingAppDisplayResolutionCandidate = .zero
+                        pendingAppDisplayResolutionCandidateSince = .distantPast
+                        if isResizing { isResizing = false }
+                        return
+                    }
+                    lastSentDisplayResolution = baseDisplaySize
+                    try? await clientService.sendDisplayResolutionChange(
+                        streamID: session.streamID,
+                        newResolution: baseDisplaySize
+                    )
+                    if isResizing { isResizing = false }
+                }
+                return
+            }
 
             guard isDesktopStream else { return }
 
@@ -741,6 +796,37 @@ public struct MirageStreamContentView: View {
         let rounded = CGFloat(Int(value.rounded()))
         let even = rounded - CGFloat(Int(rounded) % 2)
         return max(2, even)
+    }
+
+    private func appDisplayResolutionStabilizationDuration(
+        from previous: CGSize,
+        to proposed: CGSize
+    )
+    -> TimeInterval {
+        guard previous.width > 0, previous.height > 0 else { return 0 }
+        guard proposed.width > 0, proposed.height > 0 else { return 0 }
+
+        let previousArea = previous.width * previous.height
+        let proposedArea = proposed.width * proposed.height
+        guard previousArea > 0, proposedArea > 0 else { return 0 }
+
+        let areaDelta = abs(proposedArea - previousArea) / previousArea
+        let widthDelta = abs(proposed.width - previous.width) / previous.width
+        let heightDelta = abs(proposed.height - previous.height) / previous.height
+        let widthRatio = proposed.width / previous.width
+        let heightRatio = proposed.height / previous.height
+
+        if widthRatio < 0.75 || heightRatio < 0.75 {
+            // Guard against transient drawable/layout drops that can collapse app streams
+            // to quarter-size if propagated immediately to host display resolution.
+            return 1.2
+        }
+
+        if areaDelta > 0.28 || widthDelta > 0.20 || heightDelta > 0.20 {
+            return 0.6
+        }
+
+        return 0
     }
 
     private func approximatelyEqualPixelSizes(

@@ -40,21 +40,28 @@ public extension MirageClientService {
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
         var request = StartStreamMessage(windowID: window.id, dataPort: nil)
+        let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
+        guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
+            throw MirageError.protocolError("Display size unavailable for window streaming")
+        }
+        let resolvedScaleFactor = resolvedDisplayScaleFactor(
+            for: effectiveDisplayResolution,
+            explicitScaleFactor: scaleFactor
+        )
+        request.scaleFactor = resolvedScaleFactor
         if let expectedPixelSize, expectedPixelSize.width > 0, expectedPixelSize.height > 0 {
             request.pixelWidth = Int(expectedPixelSize.width)
             request.pixelHeight = Int(expectedPixelSize.height)
-            request.scaleFactor = scaleFactor
         }
 
         // Include display resolution for virtual display sizing.
-        let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
         if effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 {
             request.displayWidth = Int(effectiveDisplayResolution.width)
             request.displayHeight = Int(effectiveDisplayResolution.height)
-                MirageLogger
-                    .client(
-                        "Including display size: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height)) pts"
-                    )
+            MirageLogger
+                .client(
+                    "Including display size: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height)) pts"
+                )
         }
 
         // Include encoder config overrides if specified.

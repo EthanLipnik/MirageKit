@@ -283,6 +283,7 @@ extension StreamContext {
 
     func keyframeQuality(for queueBytes: Int) -> Float {
         let base = min(activeQuality, min(encoderConfig.keyframeQuality, compressionQualityCeiling))
+        guard runtimeQualityAdjustmentEnabled else { return base }
         var adjusted = base
 
         if let bpp = bitrateBitsPerPixelPerFrame() {

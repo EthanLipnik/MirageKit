@@ -155,14 +155,22 @@ public final class MirageHostService {
     /// Approval timeout to avoid wedging the single-client slot.
     let connectionApprovalTimeoutSeconds: CFAbsoluteTime = 15.0
 
-    // Shared virtual display bounds for synchronous access from AppState
-    // Single bounds since all windows share one virtual display
-    var sharedVirtualDisplayBounds: CGRect?
-    var sharedVirtualDisplayGeneration: UInt64 = 0
-    var sharedVirtualDisplayScaleFactor: CGFloat = 2.0
+    struct WindowVirtualDisplayState: Sendable {
+        let streamID: StreamID
+        let displayID: CGDirectDisplayID
+        let generation: UInt64
+        let bounds: CGRect
+        let scaleFactor: CGFloat
+        let pixelResolution: CGSize
+        let clientScaleFactor: CGFloat
+    }
 
-    /// Track which windows are using the shared virtual display
-    var windowsUsingVirtualDisplay: Set<WindowID> = []
+    // Per-window dedicated virtual display state for app/window streams.
+    var windowVirtualDisplayStateByWindowID: [WindowID: WindowVirtualDisplayState] = [:]
+    // Shared-display generation for desktop/login shared-consumer flows.
+    var sharedVirtualDisplayGeneration: UInt64 = 0
+    // Shared-display scale factor for desktop/login shared-consumer flows.
+    var sharedVirtualDisplayScaleFactor: CGFloat = 2.0
 
     // Login display stream (lock/login screen) - internal for extension access
     var loginDisplayContext: StreamContext?
@@ -236,7 +244,8 @@ public final class MirageHostService {
     /// Window activation (robust multi-method for headless Macs)
     @ObservationIgnored let windowActivator: WindowActivator = .forCurrentEnvironment()
 
-    /// Lights Out (curtain) mode for host privacy during streaming.
+    /// Lights Out (curtain) preference for desktop streams.
+    /// App/window streams always force Lights Out while active.
     public var lightsOutEnabled: Bool = false {
         didSet {
             Task { @MainActor [weak self] in
@@ -320,6 +329,7 @@ public final class MirageHostService {
     struct PendingAppListRequest: Equatable {
         let clientID: UUID
         var requestedIcons: Bool
+        var requestedForceRefresh: Bool
     }
 
     public init(
@@ -422,8 +432,7 @@ public final class MirageHostService {
             "host.desktopStreamActive": .bool(desktopStreamID != nil),
             "host.loginDisplayStreamActive": .bool(loginDisplayStreamID != nil),
             "host.desktopResizeInFlight": .bool(desktopResizeInFlight),
-            "host.hasSharedVirtualDisplayBounds": .bool(sharedVirtualDisplayBounds != nil),
-            "host.windowVirtualDisplayCount": .int(windowsUsingVirtualDisplay.count)
+            "host.windowVirtualDisplayCount": .int(windowVirtualDisplayStateByWindowID.count)
         ]
     }
 
