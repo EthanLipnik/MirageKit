@@ -2,7 +2,7 @@
 //  MirageControlMessageLimits.swift
 //  MirageKit
 //
-//  Created by Codex on 2/23/26.
+//  Created by Ethan Lipnik on 2/23/26.
 //
 //  Shared limits used by Mirage control-channel framing and parsing.
 //

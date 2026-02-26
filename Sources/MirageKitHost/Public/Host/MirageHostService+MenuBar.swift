@@ -26,7 +26,7 @@ extension MirageHostService {
             MirageLogger.log(.menuBar, "Client \(client.name) requested menu action: \(request.actionPath)")
 
             // Find the session and its application
-            guard let session = activeStreams.first(where: { $0.id == request.streamID }),
+            guard let session = activeSessionByStreamID[request.streamID],
                   let app = session.window.application else {
                 let result = MenuActionResultMessage(
                     streamID: request.streamID,

@@ -2,7 +2,7 @@
 //  LightsOutStatePolicyTests.swift
 //  MirageKit
 //
-//  Created by Codex on 2/25/26.
+//  Created by Ethan Lipnik on 2/25/26.
 //
 //  Lights Out enablement policy for active and pending stream starts.
 //
@@ -74,6 +74,39 @@ struct LightsOutStatePolicyTests {
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
                 lightsOutEnabled: true
+            )
+        )
+    }
+
+    @Test
+    func staysOffWhenEnvironmentDisablesLightsOut() {
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: true,
+                hasDesktopStream: true,
+                hasPendingAppStreamStart: true,
+                hasPendingDesktopStreamStart: true,
+                lightsOutEnabled: true,
+                lightsOutDisabled: true
+            )
+        )
+    }
+
+    @Test
+    func resolvesEnvironmentDisableFlag() {
+        #expect(
+            MirageHostService.isLightsOutDisabledByEnvironment(
+                environment: [MirageHostService.lightsOutDisableEnvironmentKey: "1"]
+            )
+        )
+        #expect(
+            !MirageHostService.isLightsOutDisabledByEnvironment(
+                environment: [MirageHostService.lightsOutDisableEnvironmentKey: "0"]
+            )
+        )
+        #expect(
+            !MirageHostService.isLightsOutDisabledByEnvironment(
+                environment: [:]
             )
         )
     }

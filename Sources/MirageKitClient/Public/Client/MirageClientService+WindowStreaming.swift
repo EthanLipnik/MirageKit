@@ -124,7 +124,7 @@ public extension MirageClientService {
             window: window
         )
 
-        activeStreams.append(session)
+        upsertActiveStreamSession(streamID: realStreamID, window: window)
         return session
     }
 

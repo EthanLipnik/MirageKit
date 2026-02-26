@@ -15,6 +15,25 @@ import AppKit
 
 @MainActor
 extension MirageHostService {
+    struct ResolvedWindowAddedEvent: Sendable, Equatable {
+        let windowID: WindowID
+        let title: String?
+        let width: Int
+        let height: Int
+    }
+
+    nonisolated static func resolvedWindowAddedEvent(
+        from streamSession: MirageStreamSession
+    ) -> ResolvedWindowAddedEvent {
+        let resolvedWindow = streamSession.window
+        return ResolvedWindowAddedEvent(
+            windowID: resolvedWindow.id,
+            title: resolvedWindow.title,
+            width: Int(resolvedWindow.frame.width),
+            height: Int(resolvedWindow.frame.height)
+        )
+    }
+
     func findClientContext(clientID: UUID) -> ClientContext? {
         clientsByConnection.values.first { $0.client.id == clientID }
     }
@@ -23,10 +42,9 @@ extension MirageHostService {
         Task { @MainActor [weak self] in
             guard let self else { return }
 
-            await appStreamManager.setOnNewWindowDetected { [weak self] bundleID, scWindow in
-                let windowID = WindowID(scWindow.windowID)
+            await appStreamManager.setOnNewWindowDetected { [weak self] bundleID, candidate in
                 Task { @MainActor in
-                    await self?.handleNewWindowFromStreamedApp(bundleID: bundleID, windowID: windowID)
+                    await self?.handleNewWindowFromStreamedApp(bundleID: bundleID, candidate: candidate)
                 }
             }
 
@@ -44,10 +62,17 @@ extension MirageHostService {
         }
     }
 
-    func handleNewWindowFromStreamedApp(bundleID: String, windowID: WindowID) async {
+    func handleNewWindowFromStreamedApp(bundleID: String, candidate: AppStreamWindowCandidate) async {
+        let windowID = candidate.window.id
+        if candidate.classification == .auxiliary {
+            MirageLogger.host(
+                "Skipping auxiliary child window for independent stream startup: \(windowID) (\(candidate.logMetadata))"
+            )
+            return
+        }
+
         guard let initialSession = await appStreamManager.getSession(bundleIdentifier: bundleID),
-              case .streaming = initialSession.state,
-              let initialClientContext = findClientContext(clientID: initialSession.clientID) else {
+              case .streaming = initialSession.state else {
             return
         }
 
@@ -62,19 +87,7 @@ extension MirageHostService {
         let audioConfiguration = audioConfigurationByClientID[initialSession.clientID] ?? .default
         let disableResolutionCap = await existingContext?.isResolutionCapDisabled() ?? false
         let inheritedClientScaleFactor = existingStreamID.flatMap { clientVirtualDisplayScaleFactor(streamID: $0) }
-
-        try? await refreshWindows()
-        guard let mirageWindow = availableWindows.first(where: { $0.id == windowID }) else {
-            await emitWindowStreamFailed(
-                to: initialClientContext,
-                bundleIdentifier: bundleID,
-                windowID: windowID,
-                title: nil,
-                reason: "Window disappeared before stream startup"
-            )
-            await endAppSessionIfIdle(bundleIdentifier: bundleID)
-            return
-        }
+        let mirageWindow = candidate.window
 
         guard let liveSession = await appStreamManager.getSession(bundleIdentifier: bundleID),
               case .streaming = liveSession.state,
@@ -115,8 +128,11 @@ extension MirageHostService {
                 lowLatencyHighResolutionCompressionBoost: encoderSettings?
                     .lowLatencyHighResolutionCompressionBoostEnabled ?? true,
                 disableResolutionCap: disableResolutionCap,
+                allowBestEffortRemap: false,
                 audioConfiguration: audioConfiguration
             )
+            let resolvedWindowEvent = Self.resolvedWindowAddedEvent(from: streamSession)
+            let resolvedWindowID = resolvedWindowEvent.windowID
 
             guard let confirmedSession = await appStreamManager.getSession(bundleIdentifier: bundleID),
                   case .streaming = confirmedSession.state,
@@ -125,43 +141,71 @@ extension MirageHostService {
                 return
             }
 
-            let isResizable = await appStreamManager.checkWindowResizability(
-                windowID: windowID,
-                processID: mirageWindow.application?.id ?? 0
+            let isResizable = appStreamManager.checkWindowResizability(
+                windowID: resolvedWindowID,
+                processID: streamSession.window.application?.id ?? mirageWindow.application?.id ?? 0
             )
 
             await appStreamManager.addWindowToSession(
                 bundleIdentifier: bundleID,
-                windowID: windowID,
+                windowID: resolvedWindowEvent.windowID,
                 streamID: streamSession.id,
-                title: streamSession.window.title,
-                width: Int(streamSession.window.frame.width),
-                height: Int(streamSession.window.frame.height),
+                title: resolvedWindowEvent.title,
+                width: resolvedWindowEvent.width,
+                height: resolvedWindowEvent.height,
                 isResizable: isResizable
             )
+            await appStreamManager.noteWindowStartupSucceeded(bundleID: bundleID, windowID: windowID)
+            await appStreamManager.noteWindowStartupSucceeded(bundleID: bundleID, windowID: resolvedWindowID)
 
             let response = WindowAddedToStreamMessage(
                 bundleIdentifier: bundleID,
                 streamID: streamSession.id,
-                windowID: windowID,
-                title: streamSession.window.title,
-                width: Int(streamSession.window.frame.width),
-                height: Int(streamSession.window.frame.height),
+                windowID: resolvedWindowEvent.windowID,
+                title: resolvedWindowEvent.title,
+                width: resolvedWindowEvent.width,
+                height: resolvedWindowEvent.height,
                 isResizable: isResizable
             )
             try? await clientContext.send(.windowAddedToStream, content: response)
 
-            MirageLogger.host("Added new window \(windowID) to app stream \(bundleID)")
+            MirageLogger.host(
+                "Added new window \(windowID) (resolved \(resolvedWindowID)) to app stream \(bundleID)"
+            )
         } catch {
             let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             let reason = detail.isEmpty ? String(describing: error) : detail
-            await emitWindowStreamFailed(
-                to: clientContext,
-                bundleIdentifier: bundleID,
+
+            let retryable = isRetryableAppWindowStartupError(error)
+            let failureDisposition = await appStreamManager.noteWindowStartupFailed(
+                bundleID: bundleID,
                 windowID: windowID,
-                title: mirageWindow.title,
+                retryable: retryable,
                 reason: reason
             )
+            switch failureDisposition {
+            case let .retryScheduled(attempt, retryAt):
+                MirageLogger.host(
+                    "App window startup retry scheduled for \(windowID) attempt \(attempt) at \(retryAt) (\(candidate.logMetadata))"
+                )
+            case .terminal:
+                let fallbackTitle = streamFailureTitle(
+                    for: mirageWindow,
+                    appName: initialSession.appName
+                )
+                await emitWindowStreamFailed(
+                    to: clientContext,
+                    bundleIdentifier: bundleID,
+                    windowID: windowID,
+                    title: fallbackTitle,
+                    reason: reason
+                )
+                MirageLogger.host(
+                    "App window startup failed permanently for \(windowID): \(reason) (\(candidate.logMetadata))"
+                )
+            case .suppressed:
+                break
+            }
             MirageLogger.error(.host, error: error, message: "Failed to start stream for new window: ")
             await endAppSessionIfIdle(bundleIdentifier: bundleID)
         }
@@ -176,7 +220,7 @@ extension MirageHostService {
         let windowInfo = session.windowStreams[windowID]
 
         if let streamID = windowInfo?.streamID,
-           let streamSession = activeStreams.first(where: { $0.id == streamID }) {
+           let streamSession = activeSessionByStreamID[streamID] {
             await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
         }
 
@@ -210,7 +254,7 @@ extension MirageHostService {
 
         for windowID in closedWindowIDs {
             if let windowInfo = session.windowStreams[windowID],
-               let streamSession = activeStreams.first(where: { $0.id == windowInfo.streamID }) {
+               let streamSession = activeSessionByStreamID[windowInfo.streamID] {
                 await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
             }
 
@@ -270,6 +314,42 @@ extension MirageHostService {
             reason: reason
         )
         try? await clientContext.send(.windowStreamFailed, content: message)
+    }
+
+    private func streamFailureTitle(for window: MirageWindow, appName: String) -> String {
+        if let title = window.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        return "\(appName) window #\(window.id)"
+    }
+
+    private func isRetryableAppWindowStartupError(_ error: Error) -> Bool {
+        if error is WindowStreamStartError { return true }
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case .windowNotFound, .timeout:
+                return true
+            case .alreadyAdvertising,
+                 .notAdvertising,
+                 .connectionFailed,
+                 .authenticationFailed,
+                 .streamNotFound,
+                 .encodingError,
+                 .decodingError,
+                 .permissionDenied,
+                 .protocolError:
+                return false
+            }
+        }
+        let normalizedDescription = error.localizedDescription.lowercased()
+        if normalizedDescription.contains("window not found") ||
+            normalizedDescription.contains("disappeared before stream startup") ||
+            normalizedDescription.contains("virtual-display stream start failed") ||
+            normalizedDescription.contains("dedicated virtual display start failed") {
+            return true
+        }
+        return false
     }
 }
 

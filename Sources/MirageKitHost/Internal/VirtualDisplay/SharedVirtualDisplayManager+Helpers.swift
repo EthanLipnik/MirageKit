@@ -419,11 +419,6 @@ extension SharedVirtualDisplayManager {
 
         for attempt in dedupedAttempts {
             let requestedResolution = attempt.resolution
-            let expectedLogical = SharedVirtualDisplayManager.logicalResolution(
-                for: requestedResolution,
-                scaleFactor: attempt.hiDPI ? 2.0 : 1.0
-            )
-            let expectedPixel = requestedResolution
 
             guard let displayContext = CGVirtualDisplayBridge.createVirtualDisplay(
                 name: displayName,
@@ -447,21 +442,35 @@ extension SharedVirtualDisplayManager {
                 CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayContext.displayID)
             }
 
+            let modeSizesAtCreate = CGVirtualDisplayBridge.currentDisplayModeSizes(displayContext.displayID)
+            let effectiveScaleHint: CGFloat = if let modeSizesAtCreate,
+                                                 modeSizesAtCreate.logical.width > 0 {
+                max(1.0, modeSizesAtCreate.pixel.width / modeSizesAtCreate.logical.width)
+            } else {
+                attempt.hiDPI ? 2.0 : 1.0
+            }
+            let effectivePixel = modeSizesAtCreate?.pixel ?? requestedResolution
+            let effectiveLogical = SharedVirtualDisplayManager.logicalResolution(
+                for: effectivePixel,
+                scaleFactor: effectiveScaleHint
+            )
+
             guard await CGVirtualDisplayBridge.waitForDisplayReady(
                 displayContext.displayID,
-                expectedResolution: expectedLogical,
-                alternateExpectedResolution: expectedPixel
+                expectedResolution: effectiveLogical,
+                alternateExpectedResolution: effectivePixel
             ) != nil else {
                 invalidateAttemptDisplay()
                 continue
             }
 
+            let enforceHiDPI = effectiveScaleHint > 1.5
             let enforced = CGVirtualDisplayBridge.updateDisplayResolution(
                 display: displayContext.display,
-                width: Int(requestedResolution.width),
-                height: Int(requestedResolution.height),
+                width: Int(effectivePixel.width.rounded()),
+                height: Int(effectivePixel.height.rounded()),
                 refreshRate: Double(refreshRate),
-                hiDPI: attempt.hiDPI
+                hiDPI: enforceHiDPI
             )
             guard enforced else {
                 invalidateAttemptDisplay()
@@ -474,10 +483,23 @@ extension SharedVirtualDisplayManager {
                 throw SharedDisplayError.spaceNotFound(displayContext.displayID)
             }
 
+            let modeSizesAfterEnforce = CGVirtualDisplayBridge.currentDisplayModeSizes(displayContext.displayID)
+            let validatedScaleHint: CGFloat = if let modeSizesAfterEnforce,
+                                                 modeSizesAfterEnforce.logical.width > 0 {
+                max(1.0, modeSizesAfterEnforce.pixel.width / modeSizesAfterEnforce.logical.width)
+            } else {
+                effectiveScaleHint
+            }
+            let validatedPixelResolution = modeSizesAfterEnforce?.pixel ?? effectivePixel
+            let validatedLogicalResolution = SharedVirtualDisplayManager.logicalResolution(
+                for: validatedPixelResolution,
+                scaleFactor: validatedScaleHint
+            )
+
             let isValid = await validateDisplayMode(
                 displayID: displayContext.displayID,
-                expectedLogicalResolution: expectedLogical,
-                expectedPixelResolution: expectedPixel
+                expectedLogicalResolution: validatedLogicalResolution,
+                expectedPixelResolution: validatedPixelResolution
             )
             guard isValid else {
                 invalidateAttemptDisplay()
@@ -486,12 +508,12 @@ extension SharedVirtualDisplayManager {
 
             let displayScaleFactor = resolvedScaleFactor(
                 displayID: displayContext.displayID,
-                fallback: attempt.hiDPI ? 2.0 : 1.0
+                fallback: validatedScaleHint
             )
             let managedContext = ManagedDisplayContext(
                 displayID: displayContext.displayID,
                 spaceID: spaceID,
-                resolution: requestedResolution,
+                resolution: validatedPixelResolution,
                 scaleFactor: displayScaleFactor,
                 refreshRate: displayContext.refreshRate,
                 colorSpace: displayContext.colorSpace,
@@ -502,13 +524,13 @@ extension SharedVirtualDisplayManager {
 
             if !attempt.hiDPI {
                 MirageLogger.host(
-                    "Created shared virtual display using non-Retina fallback at \(Int(requestedResolution.width))x\(Int(requestedResolution.height)) px"
+                    "Created shared virtual display using non-Retina fallback at \(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)) px"
                 )
                 registerFallbackEvent(for: colorSpace)
             } else {
                 resetFallbackStreak(for: colorSpace)
                 cacheKnownGoodRetinaResolutionIfNeeded(
-                    requestedResolution,
+                    validatedPixelResolution,
                     scaleFactor: displayScaleFactor,
                     colorSpace: colorSpace
                 )

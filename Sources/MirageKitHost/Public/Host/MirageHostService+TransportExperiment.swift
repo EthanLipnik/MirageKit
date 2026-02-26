@@ -2,7 +2,7 @@
 //  MirageHostService+TransportExperiment.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  AWDL experiment transport recovery hooks.
 //
@@ -57,7 +57,7 @@ extension MirageHostService {
         if desktopStreamID == streamID, let desktopStreamClientContext {
             return desktopStreamClientContext
         }
-        if let session = activeStreams.first(where: { $0.id == streamID }),
+        if let session = activeSessionByStreamID[streamID],
            let context = clientsByID[session.client.id] {
             return context
         }

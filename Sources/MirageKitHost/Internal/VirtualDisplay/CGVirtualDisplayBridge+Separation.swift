@@ -206,15 +206,24 @@ extension CGVirtualDisplayBridge {
                 }
             }
 
-            // Position virtual display to the right of base display
-            let baseDisplayID = originalMainExists ? originalMainDisplayID : displays
-                .first(where: { $0 != virtualDisplayID })
-            if let baseDisplayID {
-                let baseBounds = CGDisplayBounds(baseDisplayID)
-                if baseBounds.width > 0, baseBounds.height > 0 {
-                    let virtualX = Int32(baseBounds.origin.x + baseBounds.width)
-                    let virtualY = Int32(baseBounds.origin.y)
-                    targetPosition = "right of display \(baseDisplayID) at (\(virtualX), \(virtualY))"
+            // Position each new dedicated display to the right of the current rightmost
+            // display to avoid overlap-induced WindowServer auto-repositioning.
+            let candidateDisplays = displays.filter { $0 != virtualDisplayID }
+            let anchorDisplayID = candidateDisplays.max { lhs, rhs in
+                let lhsBounds = CGDisplayBounds(lhs)
+                let rhsBounds = CGDisplayBounds(rhs)
+                if lhsBounds.maxX == rhsBounds.maxX {
+                    return lhsBounds.maxY < rhsBounds.maxY
+                }
+                return lhsBounds.maxX < rhsBounds.maxX
+            } ?? (originalMainExists ? originalMainDisplayID : candidateDisplays.first)
+
+            if let anchorDisplayID {
+                let anchorBounds = CGDisplayBounds(anchorDisplayID)
+                if anchorBounds.width > 0, anchorBounds.height > 0 {
+                    let virtualX = Int32(anchorBounds.maxX)
+                    let virtualY = Int32(anchorBounds.origin.y)
+                    targetPosition = "right of display \(anchorDisplayID) at (\(virtualX), \(virtualY))"
                     let result = CGConfigureDisplayOrigin(config, virtualDisplayID, virtualX, virtualY)
                     if result == .success {
                         configurationChanged = true
@@ -223,7 +232,7 @@ extension CGVirtualDisplayBridge {
                         MirageLogger.error(.host, "Failed to position virtual display: \(result)")
                     }
                 } else {
-                    MirageLogger.host("Base display \(baseDisplayID) has invalid bounds: \(baseBounds)")
+                    MirageLogger.host("Anchor display \(anchorDisplayID) has invalid bounds: \(anchorBounds)")
                 }
             }
         }

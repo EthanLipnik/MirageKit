@@ -13,9 +13,38 @@ import MirageKit
 
 #if os(macOS)
 import AppKit
+import ScreenCaptureKit
 
 @MainActor
 extension MirageHostService {
+    enum InitialAppWindowStartupDecision: Equatable, Sendable {
+        case continueStreaming
+        case abortSession
+    }
+
+    nonisolated static func initialAppWindowStartupDecision(
+        startedWindowCount: Int
+    ) -> InitialAppWindowStartupDecision {
+        startedWindowCount > 0 ? .continueStreaming : .abortSession
+    }
+
+    nonisolated static func appWindowStartupBatchRanges(
+        totalCount: Int,
+        maxConcurrentWindowStarts: Int
+    ) -> [Range<Int>] {
+        guard totalCount > 0 else { return [] }
+        let clampedWidth = max(1, maxConcurrentWindowStarts)
+        var ranges: [Range<Int>] = []
+        ranges.reserveCapacity((totalCount + clampedWidth - 1) / clampedWidth)
+        var lowerBound = 0
+        while lowerBound < totalCount {
+            let upperBound = min(lowerBound + clampedWidth, totalCount)
+            ranges.append(lowerBound ..< upperBound)
+            lowerBound = upperBound
+        }
+        return ranges
+    }
+
     func handleAppListRequest(
         _ message: ControlMessage,
         from client: MirageConnectedClient,
@@ -160,7 +189,10 @@ extension MirageHostService {
                 targetFrameRate: targetFrameRate,
                 requestedDisplayResolution: requestedDisplayResolution
             )
-            guard !startupResult.windows.isEmpty else {
+            let startupDecision = Self.initialAppWindowStartupDecision(
+                startedWindowCount: startupResult.windows.count
+            )
+            guard startupDecision == .continueStreaming else {
                 MirageLogger.host(
                     "No window streams started for \(app.name); ending session (reason: \(startupResult.failureSummary))"
                 )
@@ -208,7 +240,7 @@ extension MirageHostService {
             let request = try message.decode(CloseWindowRequestMessage.self)
             MirageLogger.host("Client \(client.name) requested to close window \(request.windowID)")
 
-            let streamSession = activeStreams.first(where: { $0.window.id == request.windowID })
+            let streamSession = activeStreamIDByWindowID[request.windowID].flatMap { activeSessionByStreamID[$0] }
             let requestedWindow = streamSession?.window ??
                 availableWindows.first(where: { $0.id == request.windowID })
 
@@ -331,6 +363,31 @@ extension MirageHostService {
         let failureSummary: String
     }
 
+    private struct InitialStartedAppWindow: Sendable, Equatable {
+        let streamID: StreamID
+        let windowID: WindowID
+        let title: String?
+        let width: Int
+        let height: Int
+        let isResizable: Bool
+
+        var asWireWindow: AppStreamStartedMessage.AppStreamWindow {
+            AppStreamStartedMessage.AppStreamWindow(
+                streamID: streamID,
+                windowID: windowID,
+                title: title,
+                width: width,
+                height: height,
+                isResizable: isResizable
+            )
+        }
+    }
+
+    private struct InitialAppWindowStartAttemptResult: Sendable {
+        let startedWindow: InitialStartedAppWindow?
+        let failureNotes: [String]
+    }
+
     private func startInitialAppWindowStreams(
         app: MirageInstalledApp,
         client: MirageConnectedClient,
@@ -338,111 +395,287 @@ extension MirageHostService {
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize
     ) async -> InitialAppWindowStartupResult {
-        let maxAttempts = 8
+        let maxDiscoveryAttempts = 4
+        let maxAttemptsPerWindow = 3
+        let maxConcurrentWindowStarts = 2
+        let perWindowRetryBackoff: [Duration] = [
+            .milliseconds(350),
+            .seconds(1),
+            .seconds(2),
+        ]
+        let normalizedBundleID = app.bundleIdentifier.lowercased()
         var startedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
         var failureNotes: [String] = []
-        struct StartupFailureRecord {
-            let windowID: WindowID
-            let title: String
-            let reason: String
-            let attempt: Int
-        }
-        var latestFailureByWindow: [WindowID: StartupFailureRecord] = [:]
         let clientContext = findClientContext(clientID: client.id)
+        var primaryCandidates: [AppStreamWindowCandidate] = []
 
-        for attempt in 1 ... maxAttempts {
-            try? await refreshWindows()
-            let matchingCandidates = availableWindows.filter { window in
-                windowMatchesSelectedAppWindow(window, bundleIdentifier: app.bundleIdentifier)
-            }
-            let preferredCandidates = matchingCandidates.filter(isLikelyPrimaryAppStreamWindow)
-            let candidates = (preferredCandidates.isEmpty ? matchingCandidates : preferredCandidates)
-                .sorted(by: sortAppStreamCandidateWindows)
-
-            if candidates.isEmpty {
-                failureNotes.append("attempt \(attempt): no streamable windows found")
-                if attempt < maxAttempts {
-                    let retryDelay: Duration = attempt <= 3 ? .milliseconds(250) : .milliseconds(500)
-                    try? await Task.sleep(for: retryDelay)
+        for discoveryAttempt in 1 ... maxDiscoveryAttempts {
+            do {
+                let catalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])
+                let allCandidates = (catalog[normalizedBundleID] ?? [])
+                    .sorted { lhs, rhs in
+                        sortAppStreamCandidateWindows(lhs.window, rhs.window)
+                    }
+                let auxiliaryCount = allCandidates.filter { $0.classification == .auxiliary }.count
+                if auxiliaryCount > 0 {
+                    MirageLogger.host(
+                        "Initial startup detected \(auxiliaryCount) auxiliary parent-coupled windows for \(app.bundleIdentifier)"
+                    )
                 }
-                continue
+                primaryCandidates = allCandidates.filter { $0.classification == .primary }
+                if !primaryCandidates.isEmpty { break }
+                failureNotes.append("discovery \(discoveryAttempt): no streamable primary windows found")
+            } catch {
+                let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let renderedDetail = detail.isEmpty ? String(describing: error) : detail
+                failureNotes.append("discovery \(discoveryAttempt): \(renderedDetail)")
+                MirageLogger.error(.host, error: error, message: "Failed app-stream window discovery: ")
             }
 
-            for candidate in candidates {
-                if startedWindows.contains(where: { $0.windowID == candidate.id }) { continue }
-                do {
-                    let startedWindow = try await attemptStartInitialAppWindowStream(
+            if discoveryAttempt < maxDiscoveryAttempts {
+                try? await Task.sleep(for: .milliseconds(250))
+            }
+        }
+
+        if primaryCandidates.isEmpty {
+            let summary = failureNotes.suffix(3).joined(separator: "; ")
+            return InitialAppWindowStartupResult(
+                windows: [],
+                failureSummary: summary.isEmpty ? "no streamable primary windows became available" : summary
+            )
+        }
+
+        let bindingPlan: AppWindowBindingPlan
+        do {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            let liveWindows = content.windows.compactMap { window -> MirageWindow? in
+                guard let app = window.owningApplication else { return nil }
+                return MirageWindow(
+                    id: WindowID(window.windowID),
+                    title: window.title,
+                    application: MirageApplication(
+                        id: app.processID,
+                        bundleIdentifier: app.bundleIdentifier,
+                        name: app.applicationName
+                    ),
+                    frame: window.frame,
+                    isOnScreen: window.isOnScreen,
+                    windowLayer: window.windowLayer
+                )
+            }
+            bindingPlan = AppWindowBindingPlanner.plan(
+                candidates: primaryCandidates,
+                liveWindows: liveWindows,
+                claimedWindowIDs: Set(activeStreamIDByWindowID.keys)
+            )
+        } catch {
+            let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            let renderedDetail = detail.isEmpty ? String(describing: error) : detail
+            failureNotes.append("binding plan snapshot failed: \(renderedDetail)")
+            bindingPlan = AppWindowBindingPlan(
+                resolvedBindings: [],
+                unresolvedCandidates: primaryCandidates
+            )
+        }
+
+        let remappedWindowCount = bindingPlan.resolvedBindings.reduce(into: 0) { partialResult, binding in
+            if binding.candidate.window.id != binding.resolvedWindow.id {
+                partialResult += 1
+            }
+        }
+        if remappedWindowCount > 0 {
+            MirageLogger.host(
+                "Initial app-stream startup remapped \(remappedWindowCount) window(s) for \(app.bundleIdentifier)"
+            )
+        }
+
+        for candidate in bindingPlan.unresolvedCandidates {
+            let reason = "no unclaimed live window match in startup wave"
+            failureNotes.append("window \(candidate.window.id): \(reason)")
+            let failureDisposition = await appStreamManager.noteWindowStartupFailed(
+                bundleID: app.bundleIdentifier,
+                windowID: candidate.window.id,
+                retryable: true,
+                reason: reason
+            )
+            switch failureDisposition {
+            case let .retryScheduled(retryAttempt, retryAt):
+                MirageLogger.host(
+                    "Initial app-stream startup retry scheduled for \(candidate.window.id) attempt \(retryAttempt) at \(retryAt) (\(candidate.logMetadata))"
+                )
+            case .terminal:
+                if let clientContext {
+                    await emitWindowStreamFailed(
+                        to: clientContext,
+                        bundleIdentifier: app.bundleIdentifier,
+                        windowID: candidate.window.id,
+                        title: initialStreamFailureTitle(for: candidate, appName: app.name),
+                        reason: reason
+                    )
+                }
+                MirageLogger.host(
+                    "Initial app-stream startup failed permanently for \(candidate.window.id): \(reason) (\(candidate.logMetadata))"
+                )
+            case .suppressed:
+                break
+            }
+        }
+
+        let startupBatchRanges = Self.appWindowStartupBatchRanges(
+            totalCount: bindingPlan.resolvedBindings.count,
+            maxConcurrentWindowStarts: maxConcurrentWindowStarts
+        )
+        for batchRange in startupBatchRanges {
+            let batch = Array(bindingPlan.resolvedBindings[batchRange])
+            let batchTasks = batch.map { binding in
+                Task { @MainActor [weak self] in
+                    guard let self else {
+                        return InitialAppWindowStartAttemptResult(
+                            startedWindow: nil,
+                            failureNotes: ["startup cancelled: host service released"]
+                        )
+                    }
+                    return await self.startInitialAppWindowBinding(
                         app: app,
-                        candidateWindow: candidate,
+                        binding: binding,
                         client: client,
                         selectRequest: selectRequest,
                         targetFrameRate: targetFrameRate,
-                        requestedDisplayResolution: requestedDisplayResolution
-                    )
-                    startedWindows.append(startedWindow)
-                } catch {
-                    let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let renderedDetail = detail.isEmpty ? String(describing: error) : detail
-                    failureNotes.append("window \(candidate.id) attempt \(attempt): \(renderedDetail)")
-                    latestFailureByWindow[candidate.id] = StartupFailureRecord(
-                        windowID: candidate.id,
-                        title: candidate.title ?? app.name,
-                        reason: renderedDetail,
-                        attempt: attempt
-                    )
-                    MirageLogger.error(
-                        .host,
-                        error: error,
-                        message: "Failed initial app stream attempt for window \(candidate.id): "
+                        requestedDisplayResolution: requestedDisplayResolution,
+                        maxAttemptsPerWindow: maxAttemptsPerWindow,
+                        perWindowRetryBackoff: perWindowRetryBackoff,
+                        clientContext: clientContext
                     )
                 }
             }
-
-            if !startedWindows.isEmpty {
-                return InitialAppWindowStartupResult(
-                    windows: startedWindows.sorted { $0.streamID < $1.streamID },
-                    failureSummary: failureNotes.suffix(3).joined(separator: "; ")
-                )
+            var batchResults: [InitialAppWindowStartAttemptResult] = []
+            batchResults.reserveCapacity(batchTasks.count)
+            for task in batchTasks {
+                batchResults.append(await task.value)
             }
 
-            if attempt < maxAttempts {
-                let retryDelay: Duration = attempt <= 3 ? .milliseconds(250) : .milliseconds(500)
-                try? await Task.sleep(for: retryDelay)
-            }
-        }
-
-        if let clientContext {
-            for failure in latestFailureByWindow.values.sorted(by: { lhs, rhs in
-                if lhs.attempt != rhs.attempt { return lhs.attempt < rhs.attempt }
-                return lhs.windowID < rhs.windowID
-            }) {
-                await emitWindowStreamFailed(
-                    to: clientContext,
-                    bundleIdentifier: app.bundleIdentifier,
-                    windowID: failure.windowID,
-                    title: failure.title,
-                    reason: failure.reason
-                )
+            for result in batchResults {
+                failureNotes.append(contentsOf: result.failureNotes)
+                guard let startedWindow = result.startedWindow else { continue }
+                if startedWindows.contains(where: { $0.windowID == startedWindow.windowID }) {
+                    continue
+                }
+                startedWindows.append(startedWindow.asWireWindow)
             }
         }
 
         let summary = failureNotes.suffix(3).joined(separator: "; ")
         return InitialAppWindowStartupResult(
-            windows: [],
-            failureSummary: summary.isEmpty ? "no streamable windows became available" : summary
+            windows: startedWindows.sorted { $0.streamID < $1.streamID },
+            failureSummary: summary.isEmpty ? "no streamable primary windows became available" : summary
         )
+    }
+
+    private func startInitialAppWindowBinding(
+        app: MirageInstalledApp,
+        binding: ResolvedAppWindowBinding,
+        client: MirageConnectedClient,
+        selectRequest: SelectAppMessage,
+        targetFrameRate: Int,
+        requestedDisplayResolution: CGSize,
+        maxAttemptsPerWindow: Int,
+        perWindowRetryBackoff: [Duration],
+        clientContext: ClientContext?
+    ) async -> InitialAppWindowStartAttemptResult {
+        var failureNotes: [String] = []
+
+        for attempt in 1 ... maxAttemptsPerWindow {
+            do {
+                let startedWindow = try await attemptStartInitialAppWindowStream(
+                    app: app,
+                    startupCandidate: binding.candidate,
+                    preferredWindow: binding.resolvedWindow,
+                    client: client,
+                    selectRequest: selectRequest,
+                    targetFrameRate: targetFrameRate,
+                    requestedDisplayResolution: requestedDisplayResolution
+                )
+                await appStreamManager.noteWindowStartupSucceeded(
+                    bundleID: app.bundleIdentifier,
+                    windowID: binding.candidate.window.id
+                )
+                await appStreamManager.noteWindowStartupSucceeded(
+                    bundleID: app.bundleIdentifier,
+                    windowID: startedWindow.windowID
+                )
+                return InitialAppWindowStartAttemptResult(
+                    startedWindow: InitialStartedAppWindow(
+                        streamID: startedWindow.streamID,
+                        windowID: startedWindow.windowID,
+                        title: startedWindow.title,
+                        width: startedWindow.width,
+                        height: startedWindow.height,
+                        isResizable: startedWindow.isResizable
+                    ),
+                    failureNotes: failureNotes
+                )
+            } catch {
+                let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let renderedDetail = detail.isEmpty ? String(describing: error) : detail
+                failureNotes.append("window \(binding.candidate.window.id) attempt \(attempt): \(renderedDetail)")
+
+                let retryable = isRetryableInitialAppWindowStartupError(error)
+                let failureDisposition = await appStreamManager.noteWindowStartupFailed(
+                    bundleID: app.bundleIdentifier,
+                    windowID: binding.candidate.window.id,
+                    retryable: retryable,
+                    reason: renderedDetail
+                )
+
+                switch failureDisposition {
+                case let .retryScheduled(retryAttempt, retryAt):
+                    MirageLogger.host(
+                        "Initial app-stream startup retry scheduled for \(binding.candidate.window.id) attempt \(retryAttempt) at \(retryAt) (\(binding.candidate.logMetadata))"
+                    )
+                case .terminal:
+                    if let clientContext {
+                        await emitWindowStreamFailed(
+                            to: clientContext,
+                            bundleIdentifier: app.bundleIdentifier,
+                            windowID: binding.candidate.window.id,
+                            title: initialStreamFailureTitle(for: binding.candidate, appName: app.name),
+                            reason: renderedDetail
+                        )
+                    }
+                    MirageLogger.host(
+                        "Initial app-stream startup failed permanently for \(binding.candidate.window.id): \(renderedDetail) (\(binding.candidate.logMetadata))"
+                    )
+                case .suppressed:
+                    break
+                }
+
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Failed initial app stream attempt for window \(binding.candidate.window.id): "
+                )
+
+                guard retryable, attempt < maxAttemptsPerWindow else { break }
+                guard case .retryScheduled = failureDisposition else { break }
+                let backoffIndex = min(attempt - 1, perWindowRetryBackoff.count - 1)
+                try? await Task.sleep(for: perWindowRetryBackoff[backoffIndex])
+            }
+        }
+
+        return InitialAppWindowStartAttemptResult(startedWindow: nil, failureNotes: failureNotes)
     }
 
     private func attemptStartInitialAppWindowStream(
         app: MirageInstalledApp,
-        candidateWindow: MirageWindow,
+        startupCandidate: AppStreamWindowCandidate,
+        preferredWindow: MirageWindow,
         client: MirageConnectedClient,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize
     ) async throws -> AppStreamStartedMessage.AppStreamWindow {
         let streamSession = try await startStream(
-            for: candidateWindow,
+            for: preferredWindow,
             to: client,
             dataPort: selectRequest.dataPort,
             clientDisplayResolution: requestedDisplayResolution,
@@ -458,11 +691,12 @@ extension MirageHostService {
             allowRuntimeQualityAdjustment: selectRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? true,
             disableResolutionCap: selectRequest.disableResolutionCap ?? false,
+            allowBestEffortRemap: false,
             audioConfiguration: selectRequest.audioConfiguration ?? .default
         )
 
         let resolvedWindow = streamSession.window
-        let processID = resolvedWindow.application?.id ?? candidateWindow.application?.id ?? 0
+        let processID = resolvedWindow.application?.id ?? preferredWindow.application?.id ?? startupCandidate.window.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(
             windowID: resolvedWindow.id,
             processID: processID
@@ -499,11 +733,40 @@ extension MirageHostService {
         return lhs.id < rhs.id
     }
 
-    private func isLikelyPrimaryAppStreamWindow(_ window: MirageWindow) -> Bool {
-        guard window.isOnScreen else { return false }
-        guard window.windowLayer == 0 else { return false }
-        guard window.frame.width >= 160, window.frame.height >= 120 else { return false }
-        return true
+    private func initialStreamFailureTitle(for candidate: AppStreamWindowCandidate, appName: String) -> String {
+        if let title = candidate.window.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        return "\(appName) window #\(candidate.window.id)"
+    }
+
+    private func isRetryableInitialAppWindowStartupError(_ error: Error) -> Bool {
+        if error is WindowStreamStartError { return true }
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case .windowNotFound, .timeout:
+                return true
+            case .alreadyAdvertising,
+                 .notAdvertising,
+                 .connectionFailed,
+                 .authenticationFailed,
+                 .streamNotFound,
+                 .encodingError,
+                 .decodingError,
+                 .permissionDenied,
+                 .protocolError:
+                return false
+            }
+        }
+        let normalizedDescription = error.localizedDescription.lowercased()
+        if normalizedDescription.contains("window not found") ||
+            normalizedDescription.contains("disappeared before stream startup") ||
+            normalizedDescription.contains("virtual-display stream start failed") ||
+            normalizedDescription.contains("dedicated virtual display start failed") {
+            return true
+        }
+        return false
     }
 
     private func sendAppSelectionError(

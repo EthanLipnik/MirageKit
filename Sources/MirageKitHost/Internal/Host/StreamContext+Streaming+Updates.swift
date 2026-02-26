@@ -728,7 +728,23 @@ extension StreamContext {
         frameInbox.clear()
 
         if useVirtualDisplay {
-            await WindowSpaceManager.shared.restoreWindowSilently(windowID)
+            let expectedOwner: WindowSpaceManager.WindowBindingOwner?
+            if windowID != 0 {
+                let cachedDisplayID = virtualDisplayContext?.displayID ?? 0
+                let cachedGeneration = virtualDisplayContext?.generation ?? 0
+                expectedOwner = WindowSpaceManager.WindowBindingOwner(
+                    streamID: streamID,
+                    windowID: windowID,
+                    displayID: cachedDisplayID,
+                    generation: cachedGeneration
+                )
+            } else {
+                expectedOwner = nil
+            }
+            await WindowSpaceManager.shared.restoreWindowSilently(
+                windowID,
+                expectedOwner: expectedOwner
+            )
             await SharedVirtualDisplayManager.shared.releaseDedicatedDisplay(for: streamID)
             virtualDisplayContext = nil
             virtualDisplayVisibleBounds = .zero

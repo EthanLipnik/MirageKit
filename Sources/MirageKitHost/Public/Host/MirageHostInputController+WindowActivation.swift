@@ -18,7 +18,10 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Window Activation (runs on accessibilityQueue)
 
-    func activateWindow(windowID: WindowID, app: MirageApplication?) {
+    func activateWindow(
+        windowID: WindowID,
+        app: MirageApplication?
+    ) {
         guard let app,
               let runningApp = NSRunningApplication(processIdentifier: app.id) else {
             return

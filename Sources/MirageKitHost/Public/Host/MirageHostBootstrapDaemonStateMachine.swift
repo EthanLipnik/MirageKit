@@ -2,7 +2,7 @@
 //  MirageHostBootstrapDaemonStateMachine.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  Deterministic state transitions for host bootstrap daemon lifecycle.
 //

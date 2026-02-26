@@ -26,12 +26,12 @@ public actor AppStreamManager {
     public var disconnectReservationDuration: TimeInterval = 30.0
 
     /// Callbacks for notifying the host service of events
-    var onNewWindowDetected: (@Sendable (String, SCWindow) async -> Void)?
+    var onNewWindowDetected: (@Sendable (String, AppStreamWindowCandidate) async -> Void)?
     var onWindowClosed: (@Sendable (String, WindowID) async -> Void)?
     var onAppTerminated: (@Sendable (String) async -> Void)?
 
     /// Setters for callbacks (allows setting from outside the actor)
-    public func setOnNewWindowDetected(_ callback: @escaping @Sendable (String, SCWindow) async -> Void) {
+    func setOnNewWindowDetected(_ callback: @escaping @Sendable (String, AppStreamWindowCandidate) async -> Void) {
         onNewWindowDetected = callback
     }
 
@@ -57,6 +57,9 @@ public actor AppStreamManager {
     /// Timer for periodic window monitoring
     var monitoringTask: Task<Void, Never>?
     var isMonitoring = false
+
+    /// Startup retry bookkeeping keyed by session bundle ID and window ID.
+    var startupFailureStateByBundleID: [String: [WindowID: AppStreamWindowStartupFailureState]] = [:]
 
     public init() {
         applicationScanner = ApplicationScanner()

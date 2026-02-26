@@ -2,7 +2,7 @@
 //  PacketChecksumValidationTests.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  CRC validation behavior for encrypted and unencrypted packet paths.
 //

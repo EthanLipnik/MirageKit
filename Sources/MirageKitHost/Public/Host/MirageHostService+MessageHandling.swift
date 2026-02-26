@@ -294,7 +294,7 @@ extension MirageHostService {
             await endAppStream(bundleIdentifier: appSession.bundleIdentifier)
             return
         }
-        if let session = activeStreams.first(where: { $0.id == request.streamID }) {
+        if let session = activeSessionByStreamID[request.streamID] {
             await stopStream(session, minimizeWindow: request.minimizeWindow)
         }
     }
@@ -320,7 +320,7 @@ extension MirageHostService {
                         "Received RESIZE event: \(resizeEvent.newSize) pts, scale: \(resizeEvent.scaleFactor), pixels: \(resizeEvent.pixelSize)"
                     )
             }
-            if let session = activeStreams.first(where: { $0.id == inputMessage.streamID }) {
+            if let session = activeSessionByStreamID[inputMessage.streamID] {
                 delegate?.hostService(
                     self,
                     didReceiveInputEvent: inputMessage.event,

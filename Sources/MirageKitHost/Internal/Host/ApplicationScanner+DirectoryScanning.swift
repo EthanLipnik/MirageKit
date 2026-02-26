@@ -49,6 +49,9 @@ extension ApplicationScanner {
         var byBundle: [String: AppCandidate] = [:]
         var byPath: [String: AppCandidate] = [:]
         var seenPaths = Set<String>()
+        let runningAppPathsByBundle = runningAppPathsByBundleIdentifier()
+        var defaultAppPathByBundleIdentifier: [String: String] = [:]
+        var missingDefaultAppPathBundleIdentifiers = Set<String>()
 
         for directory in scanDirectories {
             if Task.isCancelled { return Array(byBundle.values) + Array(byPath.values) }
@@ -72,6 +75,9 @@ extension ApplicationScanner {
                     at: url,
                     allowBundleContents: false,
                     seenPaths: &seenPaths,
+                    runningAppPathsByBundle: runningAppPathsByBundle,
+                    defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                    missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
                 ) else {
@@ -85,6 +91,9 @@ extension ApplicationScanner {
                         currentDepth: 0,
                         maxDepth: nestedBundleScanDepth,
                         seenPaths: &seenPaths,
+                        runningAppPathsByBundle: runningAppPathsByBundle,
+                        defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                        missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                         byBundle: &byBundle,
                         byPath: &byPath
                     )
@@ -100,6 +109,9 @@ extension ApplicationScanner {
         at url: URL,
         allowBundleContents: Bool,
         seenPaths: inout Set<String>,
+        runningAppPathsByBundle: [String: Set<String>],
+        defaultAppPathByBundleIdentifier: inout [String: String],
+        missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
         byPath _: inout [String: AppCandidate]
     )
@@ -116,7 +128,16 @@ extension ApplicationScanner {
 
         // Deduplicate by bundle identifier
         if let existing = byBundle[identifier] {
-            if candidate.isPreferred(over: existing) { byBundle[identifier] = candidate }
+            if shouldPrefer(
+                candidate,
+                over: existing,
+                bundleIdentifier: identifier,
+                runningAppPathsByBundle: runningAppPathsByBundle,
+                defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers
+            ) {
+                byBundle[identifier] = candidate
+            }
         } else {
             byBundle[identifier] = candidate
         }
@@ -129,6 +150,9 @@ extension ApplicationScanner {
         currentDepth: Int,
         maxDepth: Int,
         seenPaths: inout Set<String>,
+        runningAppPathsByBundle: [String: Set<String>],
+        defaultAppPathByBundleIdentifier: inout [String: String],
+        missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
         byPath: inout [String: AppCandidate]
     ) {
@@ -167,6 +191,9 @@ extension ApplicationScanner {
                     at: entry,
                     allowBundleContents: true,
                     seenPaths: &seenPaths,
+                    runningAppPathsByBundle: runningAppPathsByBundle,
+                    defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                    missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
                 ), nextDepth < maxDepth {
@@ -175,6 +202,9 @@ extension ApplicationScanner {
                         currentDepth: nextDepth,
                         maxDepth: maxDepth,
                         seenPaths: &seenPaths,
+                        runningAppPathsByBundle: runningAppPathsByBundle,
+                        defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                        missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                         byBundle: &byBundle,
                         byPath: &byPath
                     )
@@ -195,6 +225,9 @@ extension ApplicationScanner {
                     currentDepth: nextDepth,
                     maxDepth: maxDepth,
                     seenPaths: &seenPaths,
+                    runningAppPathsByBundle: runningAppPathsByBundle,
+                    defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                    missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
                 )
@@ -208,6 +241,9 @@ extension ApplicationScanner {
                     currentDepth: nextDepth,
                     maxDepth: maxDepth,
                     seenPaths: &seenPaths,
+                    runningAppPathsByBundle: runningAppPathsByBundle,
+                    defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                    missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
                 )
@@ -220,6 +256,9 @@ extension ApplicationScanner {
         currentDepth: Int,
         maxDepth: Int,
         seenPaths: inout Set<String>,
+        runningAppPathsByBundle: [String: Set<String>],
+        defaultAppPathByBundleIdentifier: inout [String: String],
+        missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
         byPath: inout [String: AppCandidate]
     ) {
@@ -257,6 +296,9 @@ extension ApplicationScanner {
                     at: entry,
                     allowBundleContents: true,
                     seenPaths: &seenPaths,
+                    runningAppPathsByBundle: runningAppPathsByBundle,
+                    defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                    missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
                 ), nextDepth < maxDepth {
@@ -265,6 +307,9 @@ extension ApplicationScanner {
                         currentDepth: nextDepth,
                         maxDepth: maxDepth,
                         seenPaths: &seenPaths,
+                        runningAppPathsByBundle: runningAppPathsByBundle,
+                        defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                        missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                         byBundle: &byBundle,
                         byPath: &byPath
                     )
@@ -284,10 +329,58 @@ extension ApplicationScanner {
                 currentDepth: nextDepth,
                 maxDepth: maxDepth,
                 seenPaths: &seenPaths,
+                runningAppPathsByBundle: runningAppPathsByBundle,
+                defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                 byBundle: &byBundle,
                 byPath: &byPath
             )
         }
+    }
+
+    func shouldPrefer(
+        _ candidate: AppCandidate,
+        over existing: AppCandidate,
+        bundleIdentifier: String,
+        runningAppPathsByBundle: [String: Set<String>],
+        defaultAppPathByBundleIdentifier: inout [String: String],
+        missingDefaultAppPathBundleIdentifiers: inout Set<String>
+    )
+    -> Bool {
+        let runningPaths = runningAppPathsByBundle[bundleIdentifier] ?? []
+        let defaultPath = defaultAppPath(
+            forBundleIdentifier: bundleIdentifier,
+            cachedPaths: &defaultAppPathByBundleIdentifier,
+            missingBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers
+        )
+        if let runtimePreferred = Self.runtimePathPreference(
+            candidatePath: candidate.path,
+            existingPath: existing.path,
+            runningPaths: runningPaths,
+            defaultPath: defaultPath
+        ) {
+            return runtimePreferred
+        }
+
+        return candidate.isPreferred(over: existing)
+    }
+
+    nonisolated static func runtimePathPreference(
+        candidatePath: String,
+        existingPath: String,
+        runningPaths: Set<String>,
+        defaultPath: String?
+    )
+    -> Bool? {
+        let candidateIsRunning = runningPaths.contains(candidatePath)
+        let existingIsRunning = runningPaths.contains(existingPath)
+        if candidateIsRunning != existingIsRunning { return candidateIsRunning }
+
+        guard let defaultPath else { return nil }
+        let candidateIsDefault = candidatePath == defaultPath
+        let existingIsDefault = existingPath == defaultPath
+        if candidateIsDefault != existingIsDefault { return candidateIsDefault }
+        return nil
     }
 
     func candidateFromBundle(at url: URL) -> AppCandidate? {

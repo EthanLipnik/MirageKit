@@ -55,6 +55,7 @@ public extension AppStreamManager {
         )
 
         sessions[key] = session
+        startupFailureStateByBundleID.removeValue(forKey: key)
         logger.info("Started app session: \(appName) -> \(clientName)")
 
         // Start monitoring if not already running
@@ -140,6 +141,7 @@ public extension AppStreamManager {
     func endSession(bundleIdentifier: String) {
         let key = bundleIdentifier.lowercased()
         if let session = sessions.removeValue(forKey: key) { logger.info("Ended app session: \(session.appName)") }
+        startupFailureStateByBundleID.removeValue(forKey: key)
 
         // Stop monitoring if no more sessions
         if sessions.isEmpty { stopMonitoring() }

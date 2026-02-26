@@ -47,8 +47,11 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - Host setting `muteLocalAudioWhileStreaming` mutes host output while audio streaming is active and restores prior mute state when audio streaming stops.
 - MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
 - Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows use non-shareable window policy, ScreenCaptureKit display capture excludes the overlay windows, and screenshot hotkeys (`⌘⇧3`, `⌘⇧4`, `⌘⇧5`) temporarily suspend Lights Out until screenshot UI is no longer active.
+- Host runtime environment variable `MIRAGE_DISABLE_LIGHTS_OUT=1` disables Lights Out activation for desktop and app-stream sessions.
 - Lights Out emergency shortcut: host service exposes a configurable local shortcut that is matched inside the Lights Out event tap to run emergency recovery (disconnect clients, clear overlays, lock host).
 - Host app streaming enforces Stage Manager off during active app-stream sessions; when Mirage disables it for streaming, host restores the prior enabled state after the last app-stream session ends.
+- App-stream startup window binding uses deterministic one-to-one matching from a single live ScreenCaptureKit snapshot per startup wave; stale requested window IDs can remap only to unclaimed live windows.
+- Dedicated app-stream virtual-display ownership is stream-bound (`WindowBindingOwner`), and window restore paths fail closed on owner mismatch so stale teardown cannot move a still-streamed window back to a physical display.
 - Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
 - Bootstrap metadata types (`MirageBootstrapMetadata`, `MirageBootstrapEndpoint`, `MirageWakeOnLANInfo`) model wake/unlock capability publication in CloudKit host records.
 - Wake/unlock runtime contracts include `MirageWakeOnLANClient` and `MirageSSHBootstrapClient`; default SSH bootstrap uses a SwiftNIO+NIOSSH password-auth session probe (`/usr/bin/true`) for cross-platform SSH unlock reachability checks.

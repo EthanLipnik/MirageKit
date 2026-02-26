@@ -292,6 +292,14 @@ extension MirageClientService {
         if let started = try? message.decode(StreamStartedMessage.self) {
             let streamID = started.streamID
             MirageLogger.client("Stream started: \(streamID) for window \(started.windowID)")
+            let resolvedWindow = resolveWindowForStartedStream(
+                streamID: streamID,
+                started: started
+            )
+            upsertActiveStreamSession(
+                streamID: streamID,
+                window: resolvedWindow
+            )
 
             let screenMaxRefreshRate = getScreenMaxRefreshRate()
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
@@ -665,6 +673,61 @@ extension MirageClientService {
 
     private func recordHelloValidationFailure(_ reason: MirageClientHelloValidationStepReason) {
         MirageInstrumentation.record(.clientHelloInvalid(reason))
+    }
+
+    private func resolveWindowForStartedStream(
+        streamID: StreamID,
+        started: StreamStartedMessage
+    ) -> MirageWindow {
+        let fallbackFrame = CGRect(
+            x: 0,
+            y: 0,
+            width: CGFloat(max(1, started.width)),
+            height: CGFloat(max(1, started.height))
+        )
+        let windowTemplate = activeStreams.first(where: { $0.id == streamID })?.window ??
+            sessionStore.sessionByStreamID(streamID)?.window ??
+            availableWindows.first(where: { $0.id == started.windowID })
+
+        guard let template = windowTemplate else {
+            return MirageWindow(
+                id: started.windowID,
+                title: nil,
+                application: nil,
+                frame: fallbackFrame,
+                isOnScreen: true,
+                windowLayer: 0
+            )
+        }
+
+        let templateFrame = template.frame
+        let mergedFrame = CGRect(
+            x: templateFrame.origin.x,
+            y: templateFrame.origin.y,
+            width: CGFloat(max(1, started.width)),
+            height: CGFloat(max(1, started.height))
+        )
+
+        return MirageWindow(
+            id: started.windowID,
+            title: template.title,
+            application: template.application,
+            frame: mergedFrame,
+            isOnScreen: template.isOnScreen,
+            windowLayer: template.windowLayer
+        )
+    }
+
+    func upsertActiveStreamSession(
+        streamID: StreamID,
+        window: MirageWindow
+    ) {
+        let session = ClientStreamSession(id: streamID, window: window)
+        if let index = activeStreams.firstIndex(where: { $0.id == streamID }) {
+            activeStreams[index] = session
+        } else {
+            activeStreams.append(session)
+        }
     }
 
     private func helloRejectionReason(_ reason: HelloRejectionReason?) -> MirageHelloRejectionStepReason {

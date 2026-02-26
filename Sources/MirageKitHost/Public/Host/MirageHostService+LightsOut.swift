@@ -22,9 +22,12 @@ extension MirageHostService {
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool,
-        lightsOutEnabled: Bool
+        lightsOutEnabled: Bool,
+        lightsOutDisabled: Bool = false
     ) -> Bool {
-        hasAppStreams || hasPendingAppStreamStart || (lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart))
+        guard !lightsOutDisabled else { return false }
+        return hasAppStreams || hasPendingAppStreamStart ||
+            (lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart))
     }
 
     /// Emergency recovery path for stuck Lights Out states.
@@ -96,7 +99,8 @@ extension MirageHostService {
             hasDesktopStream: hasDesktopStream,
             hasPendingAppStreamStart: hasPendingAppStreamStart,
             hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
-            lightsOutEnabled: lightsOutEnabled
+            lightsOutEnabled: lightsOutEnabled,
+            lightsOutDisabled: lightsOutDisabledByEnvironment
         )
         guard shouldEnableLightsOut else {
             lightsOutController.deactivate()

@@ -2,7 +2,7 @@
 //  MirageBootstrapMetadata.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  Bootstrap metadata shared between host publication and client recovery logic.
 //

@@ -145,18 +145,30 @@ extension CGVirtualDisplayBridge {
         // CGDisplayBounds is unreliable for newly created virtual displays, especially size.
         // If we have non-zero bounds, trust the reported size (points) to keep windows on-screen.
         let rawBounds = CGDisplayBounds(displayID)
-        let origin = configuredDisplayOrigins[displayID] ?? rawBounds.origin
+        let configuredOrigin = configuredDisplayOrigins[displayID]
+        let fallbackOrigin = configuredOrigin ?? rawBounds.origin
+        let originDriftTolerance: CGFloat = 24
 
         if rawBounds.width > 0, rawBounds.height > 0 {
             let widthDelta = abs(rawBounds.width - knownResolution.width)
             let heightDelta = abs(rawBounds.height - knownResolution.height)
             if widthDelta <= 1, heightDelta <= 1 {
-                return CGRect(origin: origin, size: rawBounds.size)
+                if let configuredOrigin {
+                    let originDeltaX = abs(rawBounds.origin.x - configuredOrigin.x)
+                    let originDeltaY = abs(rawBounds.origin.y - configuredOrigin.y)
+                    if originDeltaX > originDriftTolerance || originDeltaY > originDriftTolerance {
+                        configuredDisplayOrigins[displayID] = rawBounds.origin
+                        MirageLogger.host(
+                            "getDisplayBounds(\(displayID)): configured origin \(configuredOrigin) diverged from raw origin \(rawBounds.origin); adopting raw origin"
+                        )
+                    }
+                }
+                return rawBounds
             }
             if let modeSizes = currentDisplayModeSizes(displayID),
                sizeMatches(modeSizes.logical, expected: rawBounds.size),
                !sizeMatches(modeSizes.logical, expected: knownResolution) {
-                let rawBackedBounds = CGRect(origin: origin, size: rawBounds.size)
+                let rawBackedBounds = rawBounds
                 MirageLogger
                     .host(
                         "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution), modeLogical=\(modeSizes.logical), modePixel=\(modeSizes.pixel); preferring mode-backed raw bounds \(rawBackedBounds)"
@@ -165,15 +177,15 @@ extension CGVirtualDisplayBridge {
             }
             MirageLogger
                 .host(
-                    "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution) (origin \(origin))"
+                    "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution) (fallbackOrigin \(fallbackOrigin))"
                 )
         }
 
         // Fallback to known resolution when raw bounds are not available yet.
-        let bounds = CGRect(origin: origin, size: knownResolution)
+        let bounds = CGRect(origin: fallbackOrigin, size: knownResolution)
         MirageLogger
             .host(
-                "getDisplayBounds(\(displayID)): using origin \(origin) with knownSize=\(knownResolution) (rawBounds=\(rawBounds)) -> \(bounds)"
+                "getDisplayBounds(\(displayID)): using origin \(fallbackOrigin) with knownSize=\(knownResolution) (rawBounds=\(rawBounds)) -> \(bounds)"
             )
         return bounds
     }

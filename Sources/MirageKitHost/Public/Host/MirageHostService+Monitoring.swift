@@ -78,7 +78,7 @@ extension MirageHostService {
     func sendCursorUpdate(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) async {
         // Find the client context - check both app streams and desktop stream
         let clientContext: ClientContext?
-        if let session = activeStreams.first(where: { $0.id == streamID }) {
+        if let session = activeSessionByStreamID[streamID] {
             clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id })
         } else if streamID == desktopStreamID {
             clientContext = desktopStreamClientContext
@@ -147,8 +147,9 @@ extension MirageHostService {
     ///   - isActive: True if window's app is now frontmost, false otherwise
     func handleWindowActivityChange(windowID: WindowID, isActive: Bool) async {
         // Find the stream for this window
-        guard let session = activeStreams.first(where: { $0.window.id == windowID }),
-              let context = streamsByID[session.id] else {
+        guard let streamID = activeStreamIDByWindowID[windowID],
+              activeSessionByStreamID[streamID] != nil,
+              let context = streamsByID[streamID] else {
             return
         }
         if await context.isUsingVirtualDisplay() {

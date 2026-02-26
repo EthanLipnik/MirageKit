@@ -43,6 +43,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     private static let hiDPIEnabledSetting: UInt32 = 2
     private static let colorValidationAttempts = 6
     private static let colorValidationDelaySeconds: TimeInterval = 0.06
+    private static let retinaQuantizedRelativeTolerance: CGFloat = 0.12
+    private static let retinaQuantizedScaleTolerance: CGFloat = 0.12
 
     private enum SerialSlot: Int {
         case primary = 0
@@ -427,6 +429,11 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             abs(observed.height - expected.height) <= tolerance
     }
 
+    private static func relativeDelta(observed: CGFloat, expected: CGFloat) -> CGFloat {
+        guard expected > 0 else { return .infinity }
+        return abs(observed - expected) / expected
+    }
+
     private static func validateModeActivation(
         displayID: CGDirectDisplayID,
         requestedLogical: CGSize,
@@ -477,6 +484,29 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         "Virtual display mode active: logical=\(observed.logical), pixel=\(observed.pixel), scale=\(scaleText)x"
                     )
                     return true
+                }
+
+                if hiDPISetting == hiDPIEnabledSetting {
+                    let observedScale = observed.logical.width > 0 ? observed.pixel.width / observed.logical.width : 0
+                    let requestedScale = requestedLogical.width > 0 ? requestedPixel.width / requestedLogical.width : 0
+
+                    let logicalWidthDelta = relativeDelta(observed: observed.logical.width, expected: requestedLogical.width)
+                    let logicalHeightDelta = relativeDelta(observed: observed.logical.height, expected: requestedLogical.height)
+                    let pixelWidthDelta = relativeDelta(observed: observed.pixel.width, expected: requestedPixel.width)
+                    let pixelHeightDelta = relativeDelta(observed: observed.pixel.height, expected: requestedPixel.height)
+                    let scaleDelta = relativeDelta(observed: observedScale, expected: requestedScale)
+
+                    if logicalWidthDelta <= retinaQuantizedRelativeTolerance,
+                       logicalHeightDelta <= retinaQuantizedRelativeTolerance,
+                       pixelWidthDelta <= retinaQuantizedRelativeTolerance,
+                       pixelHeightDelta <= retinaQuantizedRelativeTolerance,
+                       scaleDelta <= retinaQuantizedScaleTolerance {
+                        let observedScaleText = Double(observedScale).formatted(.number.precision(.fractionLength(2)))
+                        MirageLogger.host(
+                            "Virtual display mode accepted with quantized Retina validation: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observed.logical), observedPixel=\(observed.pixel), observedScale=\(observedScaleText)x"
+                        )
+                        return true
+                    }
                 }
             } else {
                 lastObserved = nil

@@ -2,7 +2,7 @@
 //  HostMediaEncryptionPolicyTests.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  Coverage for host-side media encryption policy and local peer classification.
 //

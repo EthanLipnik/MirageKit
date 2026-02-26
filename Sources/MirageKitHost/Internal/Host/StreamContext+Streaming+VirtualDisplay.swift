@@ -22,6 +22,17 @@ extension StreamContext {
         let insetsPixels: CGSize
     }
 
+    enum VirtualDisplayResizeError: LocalizedError {
+        case rollbackFailed(streamID: StreamID, reason: String)
+
+        var errorDescription: String? {
+            switch self {
+            case let .rollbackFailed(streamID, reason):
+                "Virtual display resize rollback failed for stream \(streamID): \(reason)"
+            }
+        }
+    }
+
     func startWithVirtualDisplay(
         windowWrapper _: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
@@ -81,6 +92,12 @@ extension StreamContext {
                 requestedPixelResolution: clientDisplayResolution,
                 visiblePixelResolution: placement.visiblePixelResolution,
                 displayPixelResolution: placement.snapshot.resolution
+            ),
+            owner: WindowSpaceManager.WindowBindingOwner(
+                streamID: streamID,
+                windowID: windowID,
+                displayID: vdContext.displayID,
+                generation: vdContext.generation
             )
         )
 
@@ -255,6 +272,16 @@ extension StreamContext {
             return
         }
 
+        let previousDisplaySnapshot = virtualDisplayContext
+        let previousVisibleBounds = virtualDisplayVisibleBounds
+        let previousCaptureSourceRect = virtualDisplayCaptureSourceRect
+        let previousVisiblePixelResolution = virtualDisplayVisiblePixelResolution
+        let previousBaseCaptureSize = baseCaptureSize
+        let previousCaptureSize = currentCaptureSize
+        let previousEncodedSize = currentEncodedSize
+        let previousLastWindowFrame = lastWindowFrame
+        let previousStreamScale = streamScale
+
         isResizing = true
         defer { isResizing = false }
 
@@ -273,84 +300,165 @@ extension StreamContext {
             )
 
         await captureEngine?.stopCapture()
-
-        let placement = try await configureDedicatedVirtualDisplay(
-            requestedVisibleResolution: requestedPixels,
-            refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate),
-            isUpdate: true
-        )
-        let newContext = placement.snapshot
-        virtualDisplayContext = newContext
-        applyVirtualDisplayPlacementState(placement)
-
-        try await WindowSpaceManager.shared.moveWindow(
-            windowID,
-            toSpaceID: newContext.spaceID,
-            displayID: newContext.displayID,
-            displayBounds: placement.visibleBounds,
-            targetContentAspectRatio: requestedAspectRatioForWindowFit(
-                requestedPixelResolution: requestedPixels,
-                visiblePixelResolution: placement.visiblePixelResolution,
-                displayPixelResolution: placement.snapshot.resolution
+        do {
+            let placement = try await configureDedicatedVirtualDisplay(
+                requestedVisibleResolution: requestedPixels,
+                refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate),
+                isUpdate: true
             )
-        )
+            let newContext = placement.snapshot
+            virtualDisplayContext = newContext
+            applyVirtualDisplayPlacementState(placement)
 
-        let resolvedDisplayWrapper = try await resolveVirtualDisplayDisplay(
-            displayID: newContext.displayID,
-            label: "virtual display update"
-        )
-
-        baseCaptureSize = placement.visiblePixelResolution
-        streamScale = resolvedStreamScale(
-            for: baseCaptureSize,
-            requestedScale: requestedStreamScale,
-            logLabel: "Resolution cap"
-        )
-        let outputSize = scaledOutputSize(for: baseCaptureSize)
-        currentCaptureSize = outputSize
-        currentEncodedSize = outputSize
-        captureMode = .display
-        lastWindowFrame = placement.visibleBounds
-        updateQueueLimits()
-        if let encoder {
-            try await encoder.updateDimensions(
-                width: Int(outputSize.width),
-                height: Int(outputSize.height)
+            try await WindowSpaceManager.shared.moveWindow(
+                windowID,
+                toSpaceID: newContext.spaceID,
+                displayID: newContext.displayID,
+                displayBounds: placement.visibleBounds,
+                targetContentAspectRatio: requestedAspectRatioForWindowFit(
+                    requestedPixelResolution: requestedPixels,
+                    visiblePixelResolution: placement.visiblePixelResolution,
+                    displayPixelResolution: placement.snapshot.resolution
+                ),
+                owner: WindowSpaceManager.WindowBindingOwner(
+                    streamID: streamID,
+                    windowID: windowID,
+                    displayID: newContext.displayID,
+                    generation: newContext.generation
+                )
             )
-            try await encoder.reset()
-            let resolvedPixelFormat = await encoder.getActivePixelFormat()
-            activePixelFormat = resolvedPixelFormat
-            MirageLogger
-                .encoder("Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for resolution change")
+
+            let resolvedDisplayWrapper = try await resolveVirtualDisplayDisplay(
+                displayID: newContext.displayID,
+                label: "virtual display update"
+            )
+
+            baseCaptureSize = placement.visiblePixelResolution
+            streamScale = resolvedStreamScale(
+                for: baseCaptureSize,
+                requestedScale: requestedStreamScale,
+                logLabel: "Resolution cap"
+            )
+            let outputSize = scaledOutputSize(for: baseCaptureSize)
+            currentCaptureSize = outputSize
+            currentEncodedSize = outputSize
+            captureMode = .display
+            lastWindowFrame = placement.visibleBounds
+            updateQueueLimits()
+            if let encoder {
+                try await encoder.updateDimensions(
+                    width: Int(outputSize.width),
+                    height: Int(outputSize.height)
+                )
+                try await encoder.reset()
+                let resolvedPixelFormat = await encoder.getActivePixelFormat()
+                activePixelFormat = resolvedPixelFormat
+                MirageLogger
+                    .encoder("Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for resolution change")
+            }
+
+            await applyDerivedQuality(for: outputSize, logLabel: "Virtual display resize")
+
+            let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
+            let windowCaptureEngine = WindowCaptureEngine(
+                configuration: captureConfig,
+                capturePressureProfile: capturePressureProfile,
+                latencyMode: latencyMode,
+                captureFrameRate: captureFrameRate,
+                usesDisplayRefreshCadence: true
+            )
+            captureEngine = windowCaptureEngine
+
+            try await windowCaptureEngine.startDisplayCapture(
+                display: resolvedDisplayWrapper.display,
+                resolution: outputSize,
+                sourceRect: placement.captureSourceRect,
+                showsCursor: false,
+                onFrame: { [weak self] frame in
+                    self?.enqueueCapturedFrame(frame)
+                },
+                onAudio: onCapturedAudioBuffer
+            )
+            await refreshCaptureCadence()
+
+            await encoder?.forceKeyframe()
+
+            MirageLogger.stream("Virtual display resolution update complete (frames resumed)")
+        } catch {
+            let originalErrorDescription = error.localizedDescription
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if let previousDisplaySnapshot {
+                virtualDisplayContext = previousDisplaySnapshot
+                virtualDisplayVisibleBounds = previousVisibleBounds
+                virtualDisplayCaptureSourceRect = previousCaptureSourceRect
+                virtualDisplayVisiblePixelResolution = previousVisiblePixelResolution
+            }
+            baseCaptureSize = previousBaseCaptureSize
+            streamScale = previousStreamScale
+            currentCaptureSize = previousCaptureSize
+            currentEncodedSize = previousEncodedSize
+            captureMode = .display
+            lastWindowFrame = previousLastWindowFrame
+            updateQueueLimits()
+
+            // Best-effort rollback: restore the pre-resize capture pipeline so a failed
+            // resize does not leave the stream black until full teardown.
+            var rollbackRestoredCapture = false
+            if let previousDisplaySnapshot,
+               previousCaptureSourceRect.width > 0,
+               previousCaptureSourceRect.height > 0 {
+                do {
+                    let previousDisplayWrapper = try await resolveVirtualDisplayDisplay(
+                        displayID: previousDisplaySnapshot.displayID,
+                        label: "virtual display update rollback",
+                        maxAttempts: 4,
+                        initialDelayMs: 40
+                    )
+                    let rollbackCaptureSize = if previousCaptureSize.width > 0, previousCaptureSize.height > 0 {
+                        previousCaptureSize
+                    } else {
+                        previousEncodedSize
+                    }
+                    let rollbackConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
+                    let rollbackEngine = WindowCaptureEngine(
+                        configuration: rollbackConfig,
+                        capturePressureProfile: capturePressureProfile,
+                        latencyMode: latencyMode,
+                        captureFrameRate: captureFrameRate,
+                        usesDisplayRefreshCadence: true
+                    )
+                    captureEngine = rollbackEngine
+                    try await rollbackEngine.startDisplayCapture(
+                        display: previousDisplayWrapper.display,
+                        resolution: rollbackCaptureSize,
+                        sourceRect: previousCaptureSourceRect,
+                        showsCursor: false,
+                        onFrame: { [weak self] frame in
+                            self?.enqueueCapturedFrame(frame)
+                        },
+                        onAudio: onCapturedAudioBuffer
+                    )
+                    await refreshCaptureCadence()
+                    await encoder?.forceKeyframe()
+                    rollbackRestoredCapture = true
+                    MirageLogger.stream(
+                        "Virtual display resize failed; restored previous capture pipeline for stream \(streamID)"
+                    )
+                } catch let rollbackError {
+                    MirageLogger.error(
+                        .stream,
+                        error: rollbackError,
+                        message: "Failed to restore previous capture pipeline after resize failure: "
+                    )
+                }
+            }
+
+            if rollbackRestoredCapture {
+                throw error
+            }
+            let renderedReason = originalErrorDescription.isEmpty ? String(describing: error) : originalErrorDescription
+            throw VirtualDisplayResizeError.rollbackFailed(streamID: streamID, reason: renderedReason)
         }
-
-        await applyDerivedQuality(for: outputSize, logLabel: "Virtual display resize")
-
-        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
-        let windowCaptureEngine = WindowCaptureEngine(
-            configuration: captureConfig,
-            capturePressureProfile: capturePressureProfile,
-            latencyMode: latencyMode,
-            captureFrameRate: captureFrameRate,
-            usesDisplayRefreshCadence: true
-        )
-        captureEngine = windowCaptureEngine
-
-        try await windowCaptureEngine.startDisplayCapture(
-            display: resolvedDisplayWrapper.display,
-            resolution: outputSize,
-            sourceRect: placement.captureSourceRect,
-            showsCursor: false,
-            onFrame: { [weak self] frame in
-                self?.enqueueCapturedFrame(frame)
-            },
-            onAudio: onCapturedAudioBuffer
-        )
-        await refreshCaptureCadence()
-
-        await encoder?.forceKeyframe()
-
-        MirageLogger.stream("Virtual display resolution update complete (frames resumed)")
     }
 
     private func resolveVirtualDisplayDisplay(
@@ -408,12 +516,18 @@ extension StreamContext {
             scaleFactor: scaleHint,
             colorSpace: colorSpace
         )
-        let initialDisplayPixels = sanitizePixelResolution(
-            CGSize(
-                width: requestedPixels.width + cachedInsets.width,
-                height: requestedPixels.height + cachedInsets.height
+        let initialDisplayPixels: CGSize = if isUpdate {
+            sanitizePixelResolution(
+                CGSize(
+                    width: requestedPixels.width + cachedInsets.width,
+                    height: requestedPixels.height + cachedInsets.height
+                )
             )
-        )
+        } else {
+            // Fresh app-window starts should prefer the client-requested display size.
+            // Inset expansion can over-constrain some app windows and cause startup misses.
+            requestedPixels
+        }
 
         func applyDisplayResolution(_ resolution: CGSize) async throws -> SharedVirtualDisplayManager.DisplaySnapshot {
             if isUpdate {

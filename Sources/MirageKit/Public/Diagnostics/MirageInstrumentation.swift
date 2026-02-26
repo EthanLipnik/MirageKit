@@ -2,7 +2,7 @@
 //  MirageInstrumentation.swift
 //  MirageKit
 //
-//  Created by Codex on 2/24/26.
+//  Created by Ethan Lipnik on 2/24/26.
 //
 //  App-agnostic instrumentation hooks for MirageKit host/client services.
 //

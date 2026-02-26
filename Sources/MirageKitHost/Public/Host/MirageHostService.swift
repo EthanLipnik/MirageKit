@@ -104,6 +104,10 @@ public final class MirageHostService {
     // Stream management (internal for extension access)
     var nextStreamID: StreamID = 1
     var streamsByID: [StreamID: StreamContext] = [:]
+    // O(1) lookup maps for active app/window stream routing.
+    var activeSessionByStreamID: [StreamID: MirageStreamSession] = [:]
+    var activeStreamIDByWindowID: [WindowID: StreamID] = [:]
+    var activeWindowIDByStreamID: [StreamID: WindowID] = [:]
     var clientsByConnection: [ObjectIdentifier: ClientContext] = [:]
     var clientsByID: [UUID: ClientContext] = [:]
     var disconnectingClientIDs: Set<UUID> = []
@@ -139,6 +143,8 @@ public final class MirageHostService {
     var streamStartupRegistrationLogged: Set<StreamID> = []
     var streamStartupFirstPacketSent: Set<StreamID> = []
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
+    nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"
+    let lightsOutDisabledByEnvironment: Bool = MirageHostService.isLightsOutDisabledByEnvironment()
     var mediaPathSnapshotByStreamID: [StreamID: MirageNetworkPathSnapshot] = [:]
     var sendErrorBursts: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
@@ -179,6 +185,8 @@ public final class MirageHostService {
     var windowResizeRequestCounterByStreamID: [StreamID: UInt64] = [:]
     // Debounced visible-frame drift monitor tasks by stream.
     var windowVisibleFrameMonitorTasks: [StreamID: Task<Void, Never>] = [:]
+    // Cooldown tracking for authoritative placement repairs (window -> last repair time).
+    var lastWindowPlacementRepairAtByWindowID: [WindowID: CFAbsoluteTime] = [:]
     // Shared-display generation for desktop/login shared-consumer flows.
     var sharedVirtualDisplayGeneration: UInt64 = 0
     // Shared-display scale factor for desktop/login shared-consumer flows.
@@ -413,6 +421,9 @@ public final class MirageHostService {
         lightsOutController.onScreenshotShortcut = { [weak self] in
             await self?.handleLightsOutScreenshotShortcut()
         }
+        if lightsOutDisabledByEnvironment {
+            MirageLogger.host("Lights Out disabled by environment (\(Self.lightsOutDisableEnvironmentKey)=1)")
+        }
 
         registerControlMessageHandlers()
         registerDiagnosticsContextProvider()
@@ -442,6 +453,7 @@ public final class MirageHostService {
             "host.remoteUnlockEnabled": .bool(remoteUnlockEnabled),
             "host.remoteTransportEnabled": .bool(remoteTransportEnabled),
             "host.lightsOutEnabled": .bool(lightsOutEnabled),
+            "host.lightsOutDisabledByEnvironment": .bool(lightsOutDisabledByEnvironment),
             "host.lockHostOnDisconnect": .bool(lockHostOnDisconnect),
             "host.connectedClientsCount": .int(connectedClients.count),
             "host.activeStreamsCount": .int(activeStreams.count),
@@ -464,6 +476,12 @@ public final class MirageHostService {
         case .error:
             return "error"
         }
+    }
+
+    nonisolated static func isLightsOutDisabledByEnvironment(
+        environment: [String: String] = ProcessInfo.processInfo.environment
+    ) -> Bool {
+        environment[lightsOutDisableEnvironmentKey] == "1"
     }
 
     private static func identityKeyID(for manager: MirageIdentityManager?) -> String? {

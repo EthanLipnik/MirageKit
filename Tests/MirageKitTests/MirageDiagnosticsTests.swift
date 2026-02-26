@@ -2,7 +2,7 @@
 //  MirageDiagnosticsTests.swift
 //  MirageKit
 //
-//  Created by Codex on 2/23/26.
+//  Created by Ethan Lipnik on 2/23/26.
 //
 //  Diagnostics fanout, error reporting, and context registry tests.
 //

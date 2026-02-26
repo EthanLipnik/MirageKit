@@ -11,7 +11,6 @@ import MirageKit
 #if os(macOS)
 import AppKit
 import Foundation
-import ScreenCaptureKit
 
 extension AppStreamManager {
     // MARK: - Window Monitoring
@@ -47,55 +46,67 @@ extension AppStreamManager {
         guard !sessions.isEmpty else { return }
 
         do {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
             let bundleIDs = Array(sessions.keys)
+            let catalogByBundleID = try await AppStreamWindowCatalog.catalog(for: bundleIDs)
 
             for bundleID in bundleIDs {
                 guard let session = sessions[bundleID],
                       case .streaming = session.state else { continue }
 
-                let runningPIDs = Set(
-                    NSWorkspace.shared.runningApplications
-                        .filter { $0.bundleIdentifier?.lowercased() == bundleID }
-                        .map(\.processIdentifier)
-                )
-
-                // Include windows that match by bundle ID or by PID for the selected app.
-                let appWindows = content.windows.filter { window in
-                    guard let app = window.owningApplication else { return false }
-                    if app.bundleIdentifier.lowercased() == bundleID { return true }
-                    return runningPIDs.contains(app.processID)
-                }
-
-                // Only normal on-screen windows with minimum streamable size.
-                let validWindows = appWindows.filter { window in
-                    window.isOnScreen &&
-                        window.windowLayer == 0 &&
-                        window.frame.width >= 160 &&
-                        window.frame.height >= 120
-                }
-
-                let validWindowsByID = Dictionary(uniqueKeysWithValues: validWindows.map { (WindowID($0.windowID), $0) })
-                let currentValidIDs = Set(validWindowsByID.keys)
+                let candidates = catalogByBundleID[bundleID.lowercased()] ?? []
+                let candidatesByWindowID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.window.id, $0) })
+                let currentValidIDs = Set(candidatesByWindowID.keys)
                 let knownWindowIDs = session.knownWindowIDs
-                let currentStreamingIDs = Set(session.windowStreams.keys)
+                var updatedKnownWindowIDs = knownWindowIDs
 
-                // Only surface each discovered window once while it remains present.
-                // This prevents infinite re-attempt loops when stream startup fails.
-                let addedWindowIDs = currentValidIDs.subtracting(knownWindowIDs)
-                for windowID in addedWindowIDs.sorted(by: <) {
-                    guard let window = validWindowsByID[windowID] else { continue }
-                    sessions[bundleID]?.knownWindowIDs.insert(windowID)
-                    logger.info("New window detected: \(window.title ?? "untitled") for \(bundleID) (\(windowID))")
-                    await onNewWindowDetected?(bundleID, window)
+                for candidate in candidates {
+                    let windowID = candidate.window.id
+                    let wasKnown = updatedKnownWindowIDs.contains(windowID)
+                    if !wasKnown {
+                        updatedKnownWindowIDs.insert(windowID)
+                    }
+
+                    switch candidate.classification {
+                    case .auxiliary:
+                        if !wasKnown {
+                            logger.info(
+                                "Detected auxiliary window (parent-coupled): \(candidate.window.displayName) for \(bundleID) (\(windowID), \(candidate.logMetadata))"
+                            )
+                        }
+                        continue
+                    case .primary:
+                        break
+                    }
+
+                    if sessions[bundleID]?.windowStreams[windowID] != nil {
+                        continue
+                    }
+                    guard canAttemptWindowStartup(bundleID: bundleID, windowID: windowID) else {
+                        if !wasKnown {
+                            logger.debug(
+                                "Skipping startup retry for window \(windowID) in \(bundleID); retry budget/cooldown active"
+                            )
+                        }
+                        continue
+                    }
+
+                    let prefix = wasKnown ? "Retrying primary window startup" : "New primary window detected"
+                    logger.info(
+                        "\(prefix): \(candidate.window.displayName) for \(bundleID) (\(windowID), \(candidate.logMetadata))"
+                    )
+                    await onNewWindowDetected?(bundleID, candidate)
                 }
+
+                sessions[bundleID]?.knownWindowIDs = updatedKnownWindowIDs
 
                 // Forget windows once they disappear so future re-open events can be detected.
-                let staleKnownWindowIDs = knownWindowIDs.subtracting(currentValidIDs)
+                let staleKnownWindowIDs = updatedKnownWindowIDs.subtracting(currentValidIDs)
                 for windowID in staleKnownWindowIDs {
                     sessions[bundleID]?.knownWindowIDs.remove(windowID)
+                    clearWindowStartupTracking(bundleID: bundleID, windowID: windowID)
                 }
 
+                let currentStreamingIDs = Set(sessions[bundleID]?.windowStreams.keys.map { $0 } ?? [])
                 let removedWindowIDs = currentStreamingIDs.subtracting(currentValidIDs)
                 for windowID in removedWindowIDs.sorted(by: <) {
                     logger.info("Window removed from active set: \(windowID) for \(bundleID)")
@@ -103,7 +114,7 @@ extension AppStreamManager {
                 }
 
                 // Check if app terminated (no windows and app not running).
-                if validWindows.isEmpty {
+                if candidates.isEmpty {
                     let appIsRunning = NSWorkspace.shared.runningApplications.contains { app in
                         app.bundleIdentifier?.lowercased() == bundleID
                     }

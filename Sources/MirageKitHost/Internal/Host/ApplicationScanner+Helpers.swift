@@ -21,6 +21,35 @@ extension ApplicationScanner {
         return url.resolvingSymlinksInPath()
     }
 
+    func runningAppPathsByBundleIdentifier() -> [String: Set<String>] {
+        var runningPathsByBundle: [String: Set<String>] = [:]
+        for app in NSWorkspace.shared.runningApplications {
+            guard let bundleIdentifier = app.bundleIdentifier?.lowercased(),
+                  let bundleURL = app.bundleURL else { continue }
+            let canonicalPath = canonicalURL(forPath: bundleURL.path).path
+            runningPathsByBundle[bundleIdentifier, default: []].insert(canonicalPath)
+        }
+        return runningPathsByBundle
+    }
+
+    func defaultAppPath(
+        forBundleIdentifier bundleIdentifier: String,
+        cachedPaths: inout [String: String],
+        missingBundleIdentifiers: inout Set<String>
+    )
+    -> String? {
+        if let cachedPath = cachedPaths[bundleIdentifier] { return cachedPath }
+        if missingBundleIdentifiers.contains(bundleIdentifier) { return nil }
+        guard let defaultURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            missingBundleIdentifiers.insert(bundleIdentifier)
+            return nil
+        }
+
+        let canonicalPath = canonicalURL(forPath: defaultURL.path).path
+        cachedPaths[bundleIdentifier] = canonicalPath
+        return canonicalPath
+    }
+
     func domainPriority(for url: URL) -> Int {
         let path = url.path
 

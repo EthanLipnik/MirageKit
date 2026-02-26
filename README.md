@@ -183,6 +183,10 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 - The experiment path keeps stream quality settings unchanged (resolution, bitrate targets, and bit depth policies remain the same).
 - When the variable is unset, host and client runtime follow default transport behavior.
 
+#### Host Lights Out Kill Switch
+
+- `MIRAGE_DISABLE_LIGHTS_OUT=1` disables host Lights Out activation for desktop and app-stream sessions.
+
 ### Streaming Modes
 
 - Window streaming captures a specific window using ScreenCaptureKit.

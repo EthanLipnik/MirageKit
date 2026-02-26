@@ -514,7 +514,7 @@ extension MirageHostService {
             return
         }
 
-        guard let session = activeStreams.first(where: { $0.id == streamID }) else { return }
+        guard let session = activeSessionByStreamID[streamID] else { return }
         guard let clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id }) else { return }
 
         let message = await StreamStartedMessage(
@@ -780,7 +780,7 @@ extension MirageHostService {
     )
     async {
         guard let context = streamsByID[streamID] else { return }
-        guard let session = activeStreams.first(where: { $0.id == streamID }) else { return }
+        guard let session = activeSessionByStreamID[streamID] else { return }
         let client = session.client
         let clientScaleOverride = clientVirtualDisplayScaleFactor(streamID: streamID)
         let pixelResolution = virtualDisplayPixelResolution(
@@ -839,7 +839,46 @@ extension MirageHostService {
                 )
                 try? await clientContext.send(.error, content: errorMessage)
             }
-            await stopStream(session, minimizeWindow: false)
+            let keepStreamAlive: Bool
+            if let resizeError = error as? StreamContext.VirtualDisplayResizeError {
+                switch resizeError {
+                case .rollbackFailed:
+                    keepStreamAlive = false
+                }
+            } else {
+                keepStreamAlive = true
+            }
+
+            if keepStreamAlive {
+                // Fail-open for recoverable app/window display resize errors: keep the stream
+                // alive with the last known-good capture pipeline and report a no-op completion.
+                await refreshWindowVirtualDisplayState(
+                    streamID: streamID,
+                    context: context,
+                    clientScaleFactorOverride: clientScaleOverride
+                )
+                await sendWindowResizeCompletion(
+                    streamID: streamID,
+                    requestNumber: requestNumber,
+                    context: context,
+                    noOp: true
+                )
+                ensureWindowVisibleFrameMonitor(streamID: streamID)
+            } else {
+                let resizeFailureReason = error.localizedDescription
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                if let appSession = await appStreamManager.getSessionForStreamID(streamID),
+                   let clientContext = findClientContext(clientID: appSession.clientID) {
+                    await emitWindowStreamFailed(
+                        to: clientContext,
+                        bundleIdentifier: appSession.bundleIdentifier,
+                        windowID: session.window.id,
+                        title: session.window.title,
+                        reason: resizeFailureReason.isEmpty ? "Dedicated display resize failed" : resizeFailureReason
+                    )
+                }
+                await stopStream(session, minimizeWindow: false)
+            }
         }
     }
 
@@ -850,8 +889,7 @@ extension MirageHostService {
         noOp: Bool
     )
     async {
-        guard let sessionIndex = activeStreams.firstIndex(where: { $0.id == streamID }) else { return }
-        let currentSession = activeStreams[sessionIndex]
+        guard let currentSession = activeSessionByStreamID[streamID] else { return }
         guard let clientContext = findClientContext(clientID: currentSession.client.id) else { return }
 
         let resolvedWindowFrame = getVirtualDisplayBounds(windowID: currentSession.window.id)
@@ -865,10 +903,12 @@ extension MirageHostService {
             isOnScreen: currentSession.window.isOnScreen,
             windowLayer: currentSession.window.windowLayer
         )
-        activeStreams[sessionIndex] = MirageStreamSession(
-            id: currentSession.id,
-            window: updatedWindow,
-            client: currentSession.client
+        registerActiveStreamSession(
+            MirageStreamSession(
+                id: currentSession.id,
+                window: updatedWindow,
+                client: currentSession.client
+            )
         )
         inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedWindow.frame)
 
@@ -915,6 +955,7 @@ extension MirageHostService {
 
             while !Task.isCancelled {
                 guard let state = getVirtualDisplayState(streamID: streamID) else { break }
+                guard let windowID = activeWindowIDByStreamID[streamID] else { break }
                 let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
                     state.displayID,
                     knownResolution: SharedVirtualDisplayManager.logicalResolution(
@@ -969,6 +1010,8 @@ extension MirageHostService {
                     driftCandidate = .zero
                     driftCandidateSince = .distantPast
                 }
+
+                await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
 
                 do {
                     try await Task.sleep(for: .milliseconds(500))

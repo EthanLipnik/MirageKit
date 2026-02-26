@@ -2,7 +2,7 @@
 //  MirageBootstrapEndpointResolver.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  Deterministic bootstrap endpoint ordering + dedupe.
 //

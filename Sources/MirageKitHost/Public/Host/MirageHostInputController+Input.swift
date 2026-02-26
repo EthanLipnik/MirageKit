@@ -28,7 +28,6 @@ extension MirageHostInputController {
             case let .mouseDown(e):
                 flushPointerLerp()
                 clearUnexpectedSystemModifiers()
-                activateWindow(windowID: window.id, app: window.application)
                 injectMouseEvent(.leftMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .mouseUp(e):
                 flushPointerLerp()
@@ -36,7 +35,6 @@ extension MirageHostInputController {
             case let .rightMouseDown(e):
                 flushPointerLerp()
                 clearUnexpectedSystemModifiers()
-                activateWindow(windowID: window.id, app: window.application)
                 injectMouseEvent(.rightMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .rightMouseUp(e):
                 flushPointerLerp()
@@ -44,7 +42,6 @@ extension MirageHostInputController {
             case let .otherMouseDown(e):
                 flushPointerLerp()
                 clearUnexpectedSystemModifiers()
-                activateWindow(windowID: window.id, app: window.application)
                 injectMouseEvent(.otherMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .otherMouseUp(e):
                 flushPointerLerp()
@@ -109,7 +106,6 @@ extension MirageHostInputController {
                 batchScroll(e, windowFrame, app: window.application)
             case let .keyDown(e):
                 flushPointerLerp()
-                activateWindow(windowID: window.id, app: window.application)
                 injectKeyEvent(isKeyDown: true, e, app: window.application)
             case let .keyUp(e):
                 flushPointerLerp()
@@ -125,9 +121,31 @@ extension MirageHostInputController {
                  .windowResize:
                 break
             case .windowFocus:
-                activateWindow(windowID: window.id, app: window.application)
+                break
             }
         }
+    }
+
+    private func performWindowActivation(
+        windowID: WindowID,
+        app: MirageApplication?,
+        trigger: HostInputActivationTrigger
+    ) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let action = HostInputActivationPolicy.action(
+            for: trigger,
+            lastActivationTime: lastWindowActivationTime,
+            now: now
+        )
+
+        switch action {
+        case .none:
+            return
+        case .fullWindowRaise:
+            activateWindow(windowID: windowID, app: app)
+        }
+
+        lastWindowActivationTime = now
     }
 }
 

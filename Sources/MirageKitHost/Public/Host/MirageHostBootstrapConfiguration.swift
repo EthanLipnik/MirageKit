@@ -2,7 +2,7 @@
 //  MirageHostBootstrapConfiguration.swift
 //  MirageKit
 //
-//  Created by Codex on 2/21/26.
+//  Created by Ethan Lipnik on 2/21/26.
 //
 //  Shared host wake/unlock bootstrap configuration.
 //

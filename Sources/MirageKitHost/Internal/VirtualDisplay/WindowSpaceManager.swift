@@ -34,12 +34,20 @@ actor WindowSpaceManager {
         }
     }
 
+    struct WindowBindingOwner: Sendable {
+        let streamID: StreamID
+        let windowID: WindowID
+        let displayID: CGDirectDisplayID
+        let generation: UInt64
+    }
+
     /// Saved state for restoring a window to its original position
     struct SavedWindowState: Sendable {
         let windowID: WindowID
         let originalFrame: CGRect
         let originalSpaceIDs: [CGSSpaceID]
         let trafficLightVisibilitySnapshot: TrafficLightVisibilitySnapshot?
+        let owner: WindowBindingOwner?
         let savedAt: Date
     }
 
@@ -48,6 +56,8 @@ actor WindowSpaceManager {
         case windowNotFound(WindowID)
         case noOriginalState(WindowID)
         case moveFailed(WindowID, String)
+        case ownerConflict(WindowID, existingStreamID: StreamID, requestedStreamID: StreamID)
+        case ownerMismatch(WindowID, expectedStreamID: StreamID, actualStreamID: StreamID)
 
         var errorDescription: String? {
             switch self {
@@ -57,8 +67,37 @@ actor WindowSpaceManager {
                 "No saved state for window \(id)"
             case let .moveFailed(id, reason):
                 "Failed to move window \(id): \(reason)"
+            case let .ownerConflict(id, existingStreamID, requestedStreamID):
+                "Window \(id) already owned by stream \(existingStreamID); requested stream \(requestedStreamID)"
+            case let .ownerMismatch(id, expectedStreamID, actualStreamID):
+                "Window \(id) restore owner mismatch expected stream \(expectedStreamID), actual stream \(actualStreamID)"
             }
         }
+    }
+
+    enum RestoreOwnerValidationResult: Sendable, Equatable {
+        case allowed
+        case ownerMismatch(expectedStreamID: StreamID, actualStreamID: StreamID)
+    }
+
+    nonisolated static func validateRestoreOwner(
+        expectedOwner: WindowBindingOwner?,
+        savedOwner: WindowBindingOwner?
+    ) -> RestoreOwnerValidationResult {
+        guard let expectedOwner else { return .allowed }
+        guard let savedOwner else {
+            return .ownerMismatch(
+                expectedStreamID: expectedOwner.streamID,
+                actualStreamID: StreamID(0)
+            )
+        }
+        guard savedOwner.streamID == expectedOwner.streamID else {
+            return .ownerMismatch(
+                expectedStreamID: expectedOwner.streamID,
+                actualStreamID: savedOwner.streamID
+            )
+        }
+        return .allowed
     }
 
     // MARK: - State
@@ -80,7 +119,8 @@ actor WindowSpaceManager {
         toSpaceID spaceID: CGSSpaceID,
         displayID: CGDirectDisplayID,
         displayBounds: CGRect,
-        targetContentAspectRatio: CGFloat? = nil
+        targetContentAspectRatio: CGFloat? = nil,
+        owner: WindowBindingOwner? = nil
     )
     async throws {
         // Get current window info
@@ -98,11 +138,33 @@ actor WindowSpaceManager {
                 originalFrame: windowInfo.frame,
                 originalSpaceIDs: currentSpaces,
                 trafficLightVisibilitySnapshot: trafficLightVisibilitySnapshot,
+                owner: owner,
                 savedAt: Date()
             )
             savedStates[windowID] = savedState
             MirageLogger.host("Saving window \(windowID) state: frame=\(windowInfo.frame), spaces=\(currentSpaces)")
         } else {
+            if let owner,
+               let existingOwner = savedStates[windowID]?.owner,
+               existingOwner.streamID != owner.streamID {
+                throw WindowSpaceError.ownerConflict(
+                    windowID,
+                    existingStreamID: existingOwner.streamID,
+                    requestedStreamID: owner.streamID
+                )
+            }
+            if let owner,
+               let existing = savedStates[windowID],
+               existing.owner == nil {
+                savedStates[windowID] = SavedWindowState(
+                    windowID: existing.windowID,
+                    originalFrame: existing.originalFrame,
+                    originalSpaceIDs: existing.originalSpaceIDs,
+                    trafficLightVisibilitySnapshot: existing.trafficLightVisibilitySnapshot,
+                    owner: owner,
+                    savedAt: existing.savedAt
+                )
+            }
             MirageLogger.host("Window \(windowID) already has saved state; preserving original state during move")
         }
 
@@ -272,8 +334,12 @@ actor WindowSpaceManager {
         let expectedFrame = aspectFittedFrame(displayBounds, targetContentAspectRatio: targetContentAspectRatio)
         let minimumExpectedWidth = max(1, expectedFrame.width - 12)
         let minimumExpectedHeight = max(1, expectedFrame.height - 12)
+        let maximumExpectedWidth = expectedFrame.width + 24
+        let maximumExpectedHeight = expectedFrame.height + 24
         let sizeMatchesExpectation = frame.width >= minimumExpectedWidth &&
-            frame.height >= minimumExpectedHeight
+            frame.height >= minimumExpectedHeight &&
+            frame.width <= maximumExpectedWidth &&
+            frame.height <= maximumExpectedHeight
 
         if (originMatches || intersectsBounds), sizeMatchesExpectation {
             return true
@@ -282,8 +348,18 @@ actor WindowSpaceManager {
         // Some CGS window queries can report local per-space coordinates. Accept that form only
         // when space membership confirms the window is in the expected target space.
         if expectedSpaceObserved {
-            let localCoordinateBounds = CGRect(origin: .zero, size: displayBounds.size).insetBy(dx: -24, dy: -24)
-            if frame.intersects(localCoordinateBounds), sizeMatchesExpectation {
+            let localExpectedFrame = aspectFittedFrame(
+                CGRect(origin: .zero, size: displayBounds.size),
+                targetContentAspectRatio: targetContentAspectRatio
+            )
+            let localCoordinateBounds = localExpectedFrame.insetBy(dx: -24, dy: -24)
+            let localOriginMatches = abs(frame.origin.x - localExpectedFrame.origin.x) <= 24 &&
+                abs(frame.origin.y - localExpectedFrame.origin.y) <= 24
+            let localSizeUpperBoundMatches = frame.width <= (localExpectedFrame.width + 24) &&
+                frame.height <= (localExpectedFrame.height + 24)
+            if (localOriginMatches || frame.intersects(localCoordinateBounds)),
+               localSizeUpperBoundMatches,
+               sizeMatchesExpectation {
                 return true
             }
         }
@@ -293,11 +369,25 @@ actor WindowSpaceManager {
 
     /// Restore a window to its original position and space
     /// - Parameter windowID: The window to restore
-    func restoreWindow(_ windowID: WindowID) async throws {
-        guard let savedState = savedStates.removeValue(forKey: windowID) else {
+    func restoreWindow(
+        _ windowID: WindowID,
+        expectedOwner: WindowBindingOwner? = nil
+    ) async throws {
+        guard let savedState = savedStates[windowID] else {
             MirageLogger.debug(.host, "No saved state for window \(windowID), cannot restore")
             throw WindowSpaceError.noOriginalState(windowID)
         }
+        switch Self.validateRestoreOwner(expectedOwner: expectedOwner, savedOwner: savedState.owner) {
+        case .allowed:
+            break
+        case let .ownerMismatch(expectedStreamID, actualStreamID):
+            throw WindowSpaceError.ownerMismatch(
+                windowID,
+                expectedStreamID: expectedStreamID,
+                actualStreamID: actualStreamID
+            )
+        }
+        savedStates.removeValue(forKey: windowID)
 
         MirageLogger.host("Restoring window \(windowID) to original state")
 
@@ -325,9 +415,12 @@ actor WindowSpaceManager {
     }
 
     /// Restore a window without throwing (for cleanup scenarios)
-    func restoreWindowSilently(_ windowID: WindowID) async {
+    func restoreWindowSilently(
+        _ windowID: WindowID,
+        expectedOwner: WindowBindingOwner? = nil
+    ) async {
         do {
-            try await restoreWindow(windowID)
+            try await restoreWindow(windowID, expectedOwner: expectedOwner)
         } catch {
             MirageLogger.debug(.host, "Failed to restore window \(windowID): \(error)")
         }
@@ -693,6 +786,7 @@ actor WindowSpaceManager {
             originalFrame: savedState.originalFrame,
             originalSpaceIDs: savedState.originalSpaceIDs,
             trafficLightVisibilitySnapshot: attemptedSnapshot,
+            owner: savedState.owner,
             savedAt: savedState.savedAt
         )
         savedStates[windowID] = savedState
@@ -800,11 +894,13 @@ actor WindowSpaceManager {
     }
 
     private func resolvedWindowFrame(_ windowID: WindowID, axWindow: AXUIElement?) -> CGRect? {
+        if let axWindow {
+            if let axFrame = axWindowFrame(axWindow) {
+                return axFrame
+            }
+        }
         if let compositorFrame = getWindowInfo(windowID)?.frame {
             return compositorFrame
-        }
-        if let axWindow {
-            return axWindowFrame(axWindow)
         }
         return nil
     }

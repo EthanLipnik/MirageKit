@@ -55,6 +55,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     var pointerLastSendTime: TimeInterval = 0
 
     var pointerLerpTimer: DispatchSourceTimer?
+    var lastWindowActivationTime: CFAbsoluteTime?
 
     let pointerOutputIntervalMs: UInt64 = 8
     let pointerLerpTimeConstant: TimeInterval = 0.025

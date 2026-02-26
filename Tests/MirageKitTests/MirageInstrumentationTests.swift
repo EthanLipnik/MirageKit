@@ -2,7 +2,7 @@
 //  MirageInstrumentationTests.swift
 //  MirageKit
 //
-//  Created by Codex on 2/24/26.
+//  Created by Ethan Lipnik on 2/24/26.
 //
 //  Instrumentation fanout and sink lifecycle behavior tests.
 //
