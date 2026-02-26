@@ -106,6 +106,7 @@ public final class MirageHostService {
     var streamsByID: [StreamID: StreamContext] = [:]
     var clientsByConnection: [ObjectIdentifier: ClientContext] = [:]
     var clientsByID: [UUID: ClientContext] = [:]
+    var disconnectingClientIDs: Set<UUID> = []
     var peerIdentityByClientID: [UUID: MiragePeerIdentity] = [:]
     var singleClientConnectionID: ObjectIdentifier?
     nonisolated let transportRegistry = HostTransportRegistry()
@@ -160,6 +161,9 @@ public final class MirageHostService {
         let displayID: CGDirectDisplayID
         let generation: UInt64
         let bounds: CGRect
+        let targetContentAspectRatio: CGFloat?
+        let captureSourceRect: CGRect
+        let visiblePixelResolution: CGSize
         let scaleFactor: CGFloat
         let pixelResolution: CGSize
         let clientScaleFactor: CGFloat
@@ -167,6 +171,14 @@ public final class MirageHostService {
 
     // Per-window dedicated virtual display state for app/window streams.
     var windowVirtualDisplayStateByWindowID: [WindowID: WindowVirtualDisplayState] = [:]
+    // Per-stream queued resize targets for dedicated app/window displays.
+    var pendingWindowResizeResolutionByStreamID: [StreamID: CGSize] = [:]
+    // Streams currently applying a dedicated app/window resize transaction.
+    var windowResizeInFlightStreamIDs: Set<StreamID> = []
+    // Monotonic request counters for dedicated app/window resize transactions.
+    var windowResizeRequestCounterByStreamID: [StreamID: UInt64] = [:]
+    // Debounced visible-frame drift monitor tasks by stream.
+    var windowVisibleFrameMonitorTasks: [StreamID: Task<Void, Never>] = [:]
     // Shared-display generation for desktop/login shared-consumer flows.
     var sharedVirtualDisplayGeneration: UInt64 = 0
     // Shared-display scale factor for desktop/login shared-consumer flows.
@@ -201,7 +213,6 @@ public final class MirageHostService {
     var desktopStreamClientContext: ClientContext?
     var desktopDisplayBounds: CGRect?
     var desktopVirtualDisplayID: CGDirectDisplayID?
-    var desktopUsesVirtualDisplay = false
     var desktopRequestedScaleFactor: CGFloat?
     var desktopStreamMode: MirageDesktopStreamMode = .mirrored
     var pendingDesktopResizeResolution: CGSize?
@@ -229,6 +240,8 @@ public final class MirageHostService {
 
     /// Window activity monitoring (for throttling inactive streams) - internal for extension access
     var windowActivityMonitor: WindowActivityMonitor?
+    /// Baseline target frame rate saved when a stream is client-paused.
+    var pausedStreamBaselineFrameRateByStreamID: [StreamID: Int] = [:]
 
     /// App-centric streaming manager - internal for extension access
     let appStreamManager = AppStreamManager()
@@ -278,6 +291,10 @@ public final class MirageHostService {
     var lightsOutScreenshotSuspended: Bool = false
     /// Task that waits for the screenshot session to finish before restoring Lights Out.
     var lightsOutScreenshotSuspendTask: Task<Void, Never>?
+    /// Number of app/window stream start requests currently in setup before stream activation.
+    var pendingAppStreamStartCount: Int = 0
+    /// Number of desktop stream start requests currently in setup before stream activation.
+    var pendingDesktopStreamStartCount: Int = 0
 
     /// Whether host output stays muted while host audio streaming is active.
     public var muteLocalAudioWhileStreaming: Bool = false {
@@ -1095,8 +1112,7 @@ public final class MirageHostService {
     -> CGRect {
         if desktopStreamMode == .secondary, let bounds = resolveDesktopDisplayBounds() { return bounds }
 
-        guard desktopUsesVirtualDisplay,
-              let virtualResolution,
+        guard let virtualResolution,
               virtualResolution.width > 0,
               virtualResolution.height > 0 else {
             return physicalBounds

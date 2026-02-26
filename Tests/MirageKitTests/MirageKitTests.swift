@@ -410,6 +410,48 @@ struct MirageKitTests {
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
 
+    @Test("Window removed from stream payload serialization")
+    func windowRemovedFromStreamSerialization() throws {
+        let payload = WindowRemovedFromStreamMessage(
+            bundleIdentifier: "com.apple.dt.Xcode",
+            windowID: 12615,
+            reason: .noLongerEligible
+        )
+
+        let envelope = try ControlMessage(type: .windowRemovedFromStream, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(WindowRemovedFromStreamMessage.self)
+        #expect(decoded.bundleIdentifier == "com.apple.dt.Xcode")
+        #expect(decoded.windowID == 12615)
+        #expect(decoded.reason == .noLongerEligible)
+    }
+
+    @Test("Window stream failed payload serialization")
+    func windowStreamFailedSerialization() throws {
+        let payload = WindowStreamFailedMessage(
+            bundleIdentifier: "com.apple.dt.Xcode",
+            windowID: 14674,
+            title: "PokeApp — CanvasGreetingOverlay.swift",
+            reason: "Dedicated display correction failed"
+        )
+
+        let envelope = try ControlMessage(type: .windowStreamFailed, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(WindowStreamFailedMessage.self)
+        #expect(decoded.bundleIdentifier == "com.apple.dt.Xcode")
+        #expect(decoded.windowID == 14674)
+        #expect(decoded.title == "PokeApp — CanvasGreetingOverlay.swift")
+        #expect(decoded.reason == "Dedicated display correction failed")
+    }
+
+    @Test("Removed cooldown app-stream message type IDs are unregistered")
+    func removedCooldownControlMessageTypesAbsent() {
+        // Legacy cooldown IDs are intentionally unbound in the hard rewrite.
+        #expect(ControlMessageType(rawValue: 0x87) == nil)
+        #expect(ControlMessageType(rawValue: 0x88) == nil)
+        #expect(ControlMessageType(rawValue: 0x8C) == nil)
+    }
+
     @Test("Start desktop request latency mode serialization")
     func startDesktopLatencyModeSerialization() throws {
         let request = StartDesktopStreamMessage(

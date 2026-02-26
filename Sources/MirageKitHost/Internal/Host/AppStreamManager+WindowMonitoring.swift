@@ -37,7 +37,6 @@ extension AppStreamManager {
     private func monitoringLoop() async {
         while !Task.isCancelled, isMonitoring {
             await checkForWindowChanges()
-            await checkForExpiredCooldowns()
             await checkForExpiredReservations()
 
             try? await Task.sleep(for: .milliseconds(500))
@@ -55,38 +54,51 @@ extension AppStreamManager {
                 guard let session = sessions[bundleID],
                       case .streaming = session.state else { continue }
 
-                // Get windows for this app
+                let runningPIDs = Set(
+                    NSWorkspace.shared.runningApplications
+                        .filter { $0.bundleIdentifier?.lowercased() == bundleID }
+                        .map(\.processIdentifier)
+                )
+
+                // Include windows that match by bundle ID or by PID for the selected app.
                 let appWindows = content.windows.filter { window in
                     guard let app = window.owningApplication else { return false }
-                    return app.bundleIdentifier.lowercased() == bundleID
+                    if app.bundleIdentifier.lowercased() == bundleID { return true }
+                    return runningPIDs.contains(app.processID)
                 }
 
-                // Filter to valid windows (using existing filtering criteria)
+                // Only normal on-screen windows with minimum streamable size.
                 let validWindows = appWindows.filter { window in
-                    let hasMinSize = window.frame.width >= 200 && window.frame.height >= 150
-                    let isNormalLayer = window.windowLayer == 0
-                    let hasOwner = window.owningApplication != nil
-                    return hasMinSize && isNormalLayer && hasOwner
+                    window.isOnScreen &&
+                        window.windowLayer == 0 &&
+                        window.frame.width >= 160 &&
+                        window.frame.height >= 120
                 }
 
-                let currentValidIDs = Set(validWindows.map { WindowID($0.windowID) })
+                let validWindowsByID = Dictionary(uniqueKeysWithValues: validWindows.map { (WindowID($0.windowID), $0) })
+                let currentValidIDs = Set(validWindowsByID.keys)
+                let knownWindowIDs = session.knownWindowIDs
+                let currentStreamingIDs = Set(session.windowStreams.keys)
 
-                // Check for new windows - only windows we haven't seen before AND are on-screen.
-                // IMPORTANT: mutate the live session entry directly to avoid clobbering stream state
-                // that callback handlers may update while this loop is running.
-                for window in validWindows where window.isOnScreen {
-                    let windowID = WindowID(window.windowID)
-                    guard sessions[bundleID]?.knownWindowIDs.contains(windowID) != true else { continue }
+                // Only surface each discovered window once while it remains present.
+                // This prevents infinite re-attempt loops when stream startup fails.
+                let addedWindowIDs = currentValidIDs.subtracting(knownWindowIDs)
+                for windowID in addedWindowIDs.sorted(by: <) {
+                    guard let window = validWindowsByID[windowID] else { continue }
                     sessions[bundleID]?.knownWindowIDs.insert(windowID)
-                    logger.info("New window detected: \(window.title ?? "untitled") for \(bundleID)")
+                    logger.info("New window detected: \(window.title ?? "untitled") for \(bundleID) (\(windowID))")
                     await onNewWindowDetected?(bundleID, window)
                 }
 
-                // Check for closed windows (only windows that were actively streaming).
-                // Read from the latest session snapshot after potential callback updates.
-                let currentStreamingIDs = Set(sessions[bundleID]?.windowStreams.keys ?? session.windowStreams.keys)
-                for windowID in currentStreamingIDs where !currentValidIDs.contains(windowID) {
-                    logger.info("Window closed: \(windowID) for \(bundleID)")
+                // Forget windows once they disappear so future re-open events can be detected.
+                let staleKnownWindowIDs = knownWindowIDs.subtracting(currentValidIDs)
+                for windowID in staleKnownWindowIDs {
+                    sessions[bundleID]?.knownWindowIDs.remove(windowID)
+                }
+
+                let removedWindowIDs = currentStreamingIDs.subtracting(currentValidIDs)
+                for windowID in removedWindowIDs.sorted(by: <) {
+                    logger.info("Window removed from active set: \(windowID) for \(bundleID)")
                     await onWindowClosed?(bundleID, windowID)
                 }
 
@@ -105,16 +117,6 @@ extension AppStreamManager {
             }
         } catch {
             logger.error("Failed to check window changes: \(error)")
-        }
-    }
-
-    private func checkForExpiredCooldowns() async {
-        for (bundleID, session) in sessions {
-            for windowID in session.expiredCooldowns {
-                sessions[bundleID]?.windowsInCooldown.removeValue(forKey: windowID)
-                logger.debug("Cooldown expired for window \(windowID) in \(bundleID)")
-                await onCooldownExpired?(bundleID, windowID)
-            }
         }
     }
 

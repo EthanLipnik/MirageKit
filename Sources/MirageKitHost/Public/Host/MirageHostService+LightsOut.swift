@@ -12,10 +12,21 @@ import MirageKit
 
 #if os(macOS)
 import AppKit
+import CoreGraphics
 import ScreenCaptureKit
 
 @MainActor
 extension MirageHostService {
+    nonisolated static func shouldEnableLightsOut(
+        hasAppStreams: Bool,
+        hasDesktopStream: Bool,
+        hasPendingAppStreamStart: Bool,
+        hasPendingDesktopStreamStart: Bool,
+        lightsOutEnabled: Bool
+    ) -> Bool {
+        hasAppStreams || hasPendingAppStreamStart || (lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart))
+    }
+
     /// Emergency recovery path for stuck Lights Out states.
     /// Disconnects all clients, clears overlays, and locks the host.
     public func performLightsOutEmergencyRecovery() async {
@@ -24,9 +35,7 @@ extension MirageHostService {
             await disconnectClient(client)
         }
 
-        cancelLightsOutScreenshotSuspension()
-        lightsOutController.deactivate()
-        await refreshLightsOutCaptureExclusions()
+        await forceDisableLightsOut(reason: "emergency recovery")
 
         guard sessionState == .active else { return }
         if let lockHostHandler {
@@ -34,6 +43,35 @@ extension MirageHostService {
             return
         }
         lockHost()
+    }
+
+    func forceDisableLightsOut(reason: String) async {
+        cancelLightsOutScreenshotSuspension()
+        pendingAppStreamStartCount = 0
+        pendingDesktopStreamStartCount = 0
+        lightsOutController.deactivate()
+        await refreshLightsOutCaptureExclusions()
+        MirageLogger.host("Lights Out forcibly disabled (\(reason))")
+    }
+
+    func beginPendingAppStreamLightsOutSetup() async {
+        pendingAppStreamStartCount += 1
+        await updateLightsOutState()
+    }
+
+    func endPendingAppStreamLightsOutSetup() async {
+        pendingAppStreamStartCount = max(0, pendingAppStreamStartCount - 1)
+        await updateLightsOutState()
+    }
+
+    func beginPendingDesktopStreamLightsOutSetup() async {
+        pendingDesktopStreamStartCount += 1
+        await updateLightsOutState()
+    }
+
+    func endPendingDesktopStreamLightsOutSetup() async {
+        pendingDesktopStreamStartCount = max(0, pendingDesktopStreamStartCount - 1)
+        await updateLightsOutState()
     }
 
     func updateLightsOutState() async {
@@ -51,7 +89,15 @@ extension MirageHostService {
 
         let hasAppStreams = !activeStreams.isEmpty
         let hasDesktopStream = desktopStreamContext != nil
-        let shouldEnableLightsOut = hasAppStreams || (lightsOutEnabled && hasDesktopStream)
+        let hasPendingAppStreamStart = pendingAppStreamStartCount > 0
+        let hasPendingDesktopStreamStart = pendingDesktopStreamStartCount > 0
+        let shouldEnableLightsOut = Self.shouldEnableLightsOut(
+            hasAppStreams: hasAppStreams,
+            hasDesktopStream: hasDesktopStream,
+            hasPendingAppStreamStart: hasPendingAppStreamStart,
+            hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
+            lightsOutEnabled: lightsOutEnabled
+        )
         guard shouldEnableLightsOut else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
@@ -187,16 +233,66 @@ extension MirageHostService {
 
     private func lockHost() {
         Task.detached(priority: .utility) {
+            if Self.lockHostUsingCGSessionCommand() { return }
+            if Self.lockHostUsingKeyboardShortcut() { return }
+            MirageLogger.error(.host, "Failed to lock host session: no supported lock strategy succeeded")
+        }
+    }
+
+    nonisolated private static func lockHostUsingCGSessionCommand() -> Bool {
+        let candidates = [
+            "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession",
+            "/System/Library/CoreServices/CGSession",
+        ]
+
+        for candidate in candidates where FileManager.default.isExecutableFile(atPath: candidate) {
             let task = Process()
-            task.executableURL = URL(fileURLWithPath: "/System/Library/CoreServices/Menu Extras/User.menu/Contents/Resources/CGSession")
+            task.executableURL = URL(fileURLWithPath: candidate)
             task.arguments = ["-suspend"]
+
             do {
                 try task.run()
                 task.waitUntilExit()
+                if task.terminationStatus == 0 {
+                    return true
+                }
+                MirageLogger.error(.host, "Lock command '\(candidate)' exited with status \(task.terminationStatus)")
             } catch {
-                MirageLogger.error(.host, error: error, message: "Failed to lock host session: ")
+                MirageLogger.error(.host, error: error, message: "Failed to run lock command '\(candidate)': ")
             }
         }
+
+        return false
+    }
+
+    nonisolated private static func lockHostUsingKeyboardShortcut() -> Bool {
+        guard let eventSource = CGEventSource(stateID: .hidSystemState) else {
+            MirageLogger.error(.host, "Failed to create keyboard event source for lock shortcut")
+            return false
+        }
+
+        let lockKeyCode: CGKeyCode = 12 // Q
+        let shortcutFlags: CGEventFlags = [.maskCommand, .maskControl]
+
+        guard let keyDown = CGEvent(
+            keyboardEventSource: eventSource,
+            virtualKey: lockKeyCode,
+            keyDown: true
+        ),
+            let keyUp = CGEvent(
+                keyboardEventSource: eventSource,
+                virtualKey: lockKeyCode,
+                keyDown: false
+            ) else {
+            MirageLogger.error(.host, "Failed to create keyboard events for lock shortcut")
+            return false
+        }
+
+        keyDown.flags = shortcutFlags
+        keyUp.flags = shortcutFlags
+        keyDown.post(tap: .cghidEventTap)
+        keyUp.post(tap: .cghidEventTap)
+        return true
     }
 }
 #endif

@@ -153,6 +153,16 @@ extension CGVirtualDisplayBridge {
             if widthDelta <= 1, heightDelta <= 1 {
                 return CGRect(origin: origin, size: rawBounds.size)
             }
+            if let modeSizes = currentDisplayModeSizes(displayID),
+               sizeMatches(modeSizes.logical, expected: rawBounds.size),
+               !sizeMatches(modeSizes.logical, expected: knownResolution) {
+                let rawBackedBounds = CGRect(origin: origin, size: rawBounds.size)
+                MirageLogger
+                    .host(
+                        "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution), modeLogical=\(modeSizes.logical), modePixel=\(modeSizes.pixel); preferring mode-backed raw bounds \(rawBackedBounds)"
+                    )
+                return rawBackedBounds
+            }
             MirageLogger
                 .host(
                     "getDisplayBounds(\(displayID)): raw size \(rawBounds.size) differs from knownResolution \(knownResolution) (origin \(origin))"

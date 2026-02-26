@@ -15,7 +15,7 @@ import SwiftUI
 struct MirageWindowFocusObserver: NSViewRepresentable {
     /// Session ID used to track focus state.
     let sessionID: StreamSessionID
-    /// Stream ID for forwarding focus events.
+    /// Stream ID for forwarding input focus events.
     let streamID: StreamID
     /// Session store for focus updates.
     let sessionStore: MirageClientSessionStore
@@ -110,7 +110,6 @@ private final class FocusTrackingView: NSView {
     @objc
     private func windowDidResignKey(_: Notification) {
         if sessionStore?.focusedSessionID == sessionID { sessionStore?.setFocusedSession(nil) }
-
         guard let streamID else { return }
         clientService?.sendInputFireAndForget(.flagsChanged([]), forStream: streamID)
     }

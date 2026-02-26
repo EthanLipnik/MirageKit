@@ -111,8 +111,7 @@ public extension MirageHostService {
         await restoreStageManagerAfterAppStreamingIfNeeded(force: true)
 
         hostAudioMuteController.setMuted(false)
-        cancelLightsOutScreenshotSuspension()
-        lightsOutController.deactivate()
+        await forceDisableLightsOut(reason: "host service stop")
 
         // Force release power assertion on full stop
         await PowerAssertionManager.shared.forceDisable()

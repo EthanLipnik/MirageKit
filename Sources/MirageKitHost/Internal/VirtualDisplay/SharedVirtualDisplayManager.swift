@@ -51,6 +51,12 @@ actor SharedVirtualDisplayManager {
         let createdAt: Date
     }
 
+    /// Cache key for dedicated-display inset calibration.
+    struct DedicatedInsetCacheKey: Hashable, Sendable {
+        let colorSpace: MirageColorSpace
+        let scaleBucket: Int
+    }
+
     /// Box for non-Sendable display reference
     final class UncheckedSendableBox<T>: @unchecked Sendable {
         let value: T
@@ -126,6 +132,16 @@ actor SharedVirtualDisplayManager {
 
     /// Consecutive non-Retina fallback streak by color space.
     var fallbackStreakByColorSpace: [MirageColorSpace: Int] = [:]
+
+    /// Cached observed inset pixels keyed by color-space + display scale.
+    var dedicatedInsetsByKey: [DedicatedInsetCacheKey: CGSize] = [:]
+
+    /// Last successfully validated Retina pixel resolution by color space.
+    /// Used as an optional fallback candidate when nearby requests fail.
+    var lastKnownGoodRetinaResolutionByColorSpace: [MirageColorSpace: CGSize] = [:]
+
+    /// Display IDs that remained online after explicit invalidation + timeout.
+    var orphanedDisplayIDs: Set<CGDirectDisplayID> = []
 
     /// Handler invoked when the shared display generation changes while streams are active.
     var generationChangeHandler: (@Sendable (DisplaySnapshot, UInt64) -> Void)?

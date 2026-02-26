@@ -354,6 +354,7 @@ extension MirageClientService {
         for task in startupRegistrationRetryTasks.values { task.cancel() }
         startupRegistrationRetryTasks.removeAll()
         activeStreams.removeAll()
+        appStreamFocusStateByStreamID.removeAll()
         for session in storedSessions {
             sessionStore.removeSession(session.id)
         }

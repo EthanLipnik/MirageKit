@@ -78,9 +78,6 @@ extension MirageHostService {
             .streamResumed: { [weak self] message, client, _ in
                 await self?.handleStreamResumed(message, from: client)
             },
-            .cancelCooldown: { [weak self] message, client, connection in
-                await self?.handleCancelCooldown(message, from: client, connection: connection)
-            },
             .menuActionRequest: { [weak self] message, client, connection in
                 await self?.handleMenuActionRequest(message, from: client, connection: connection)
             },
@@ -128,8 +125,14 @@ extension MirageHostService {
         from client: MirageConnectedClient,
         connection: NWConnection
     ) async {
+        var pendingLightsOutSetup = false
         do {
             let request = try message.decode(StartStreamMessage.self)
+            guard !disconnectingClientIDs.contains(client.id),
+                  clientsByID[client.id] != nil else {
+                MirageLogger.host("Ignoring startStream from disconnected client \(client.name)")
+                return
+            }
             MirageLogger.host("Client requested stream for window \(request.windowID)")
 
             await refreshSessionStateIfNeeded()
@@ -181,6 +184,8 @@ extension MirageHostService {
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Performance mode: \(performanceMode.displayName)")
 
+            pendingLightsOutSetup = true
+            await beginPendingAppStreamLightsOutSetup()
             _ = try await startStream(
                 for: window,
                 to: client,
@@ -200,10 +205,21 @@ extension MirageHostService {
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration
             )
+            pendingLightsOutSetup = false
+            await endPendingAppStreamLightsOutSetup()
         } catch {
+            if pendingLightsOutSetup {
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
+            }
             MirageLogger.error(.host, error: error, message: "Failed to handle startStream: ")
+            let errorCode: ErrorMessage.ErrorCode = if error is WindowStreamStartError {
+                .virtualDisplayStartFailed
+            } else {
+                .encodingError
+            }
             sendControlError(
-                .encodingError,
+                errorCode,
                 message: "Failed to start stream: \(error.localizedDescription)",
                 over: connection
             )
@@ -274,6 +290,10 @@ extension MirageHostService {
 
     private func handleStopStreamMessage(_ message: ControlMessage) async {
         guard let request = try? message.decode(StopStreamMessage.self) else { return }
+        if let appSession = await appStreamManager.getSessionForStreamID(request.streamID) {
+            await endAppStream(bundleIdentifier: appSession.bundleIdentifier)
+            return
+        }
         if let session = activeStreams.first(where: { $0.id == request.streamID }) {
             await stopStream(session, minimizeWindow: request.minimizeWindow)
         }

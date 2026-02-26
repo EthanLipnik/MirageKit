@@ -15,6 +15,12 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
+    private struct DisplayCreationAttempt: Sendable {
+        let resolution: CGSize
+        let hiDPI: Bool
+        let label: String
+    }
+
     static func logicalResolution(for pixelResolution: CGSize, scaleFactor: CGFloat = 2.0) -> CGSize {
         guard pixelResolution.width > 0, pixelResolution.height > 0 else { return pixelResolution }
         let scale = max(1.0, scaleFactor)
@@ -28,6 +34,95 @@ extension SharedVirtualDisplayManager {
         let width = CGFloat(StreamContext.alignedEvenPixel(max(2.0, retinaResolution.width / 2.0)))
         let height = CGFloat(StreamContext.alignedEvenPixel(max(2.0, retinaResolution.height / 2.0)))
         return CGSize(width: width, height: height)
+    }
+
+    private static func normalizedPixelResolution(_ resolution: CGSize) -> CGSize {
+        CGSize(
+            width: CGFloat(StreamContext.alignedEvenPixel(max(2.0, resolution.width))),
+            height: CGFloat(StreamContext.alignedEvenPixel(max(2.0, resolution.height)))
+        )
+    }
+
+    private static func hasCompatibleAspectRatio(
+        requested: CGSize,
+        candidate: CGSize
+    ) -> Bool {
+        let requestedWidth = Int64(requested.width.rounded())
+        let requestedHeight = Int64(requested.height.rounded())
+        let candidateWidth = Int64(candidate.width.rounded())
+        let candidateHeight = Int64(candidate.height.rounded())
+        guard requestedWidth > 0,
+              requestedHeight > 0,
+              candidateWidth > 0,
+              candidateHeight > 0 else {
+            return false
+        }
+
+        return requestedWidth * candidateHeight == candidateWidth * requestedHeight
+    }
+
+    private static func hasMatchingPixelArea(
+        requested: CGSize,
+        candidate: CGSize
+    ) -> Bool {
+        let requestedWidth = Int64(requested.width.rounded())
+        let requestedHeight = Int64(requested.height.rounded())
+        let candidateWidth = Int64(candidate.width.rounded())
+        let candidateHeight = Int64(candidate.height.rounded())
+        guard requestedWidth > 0,
+              requestedHeight > 0,
+              candidateWidth > 0,
+              candidateHeight > 0 else {
+            return false
+        }
+
+        return requestedWidth * requestedHeight == candidateWidth * candidateHeight
+    }
+
+    private static func isCloseToRequested(
+        requested: CGSize,
+        candidate: CGSize,
+        relativeTolerance: CGFloat = 0.12
+    ) -> Bool {
+        guard requested.width > 0, requested.height > 0 else { return false }
+        let widthDelta = abs(candidate.width - requested.width) / requested.width
+        let heightDelta = abs(candidate.height - requested.height) / requested.height
+        return widthDelta <= relativeTolerance && heightDelta <= relativeTolerance
+    }
+
+    private func knownGoodRetinaCandidate(
+        requestedResolution: CGSize,
+        colorSpace: MirageColorSpace,
+        allowAspectMismatchRetinaCandidate: Bool
+    ) -> CGSize? {
+        guard let cached = lastKnownGoodRetinaResolutionByColorSpace[colorSpace] else { return nil }
+        let requested = Self.normalizedPixelResolution(requestedResolution)
+        let candidate = Self.normalizedPixelResolution(cached)
+        if Self.hasCompatibleAspectRatio(requested: requested, candidate: candidate),
+           Self.isCloseToRequested(requested: requested, candidate: candidate) {
+            return candidate
+        }
+
+        guard allowAspectMismatchRetinaCandidate,
+              Self.hasMatchingPixelArea(requested: requested, candidate: candidate),
+              Self.isCloseToRequested(requested: requested, candidate: candidate) else {
+            return nil
+        }
+
+        MirageLogger.host(
+            "Using cached Retina candidate with aspect mismatch for equal-area app stream fallback: requested \(Int(requested.width))x\(Int(requested.height)), cached \(Int(candidate.width))x\(Int(candidate.height))"
+        )
+        return candidate
+    }
+
+    private func cacheKnownGoodRetinaResolutionIfNeeded(
+        _ resolution: CGSize,
+        scaleFactor: CGFloat,
+        colorSpace: MirageColorSpace
+    ) {
+        guard scaleFactor >= 1.5 else { return }
+        let normalized = Self.normalizedPixelResolution(resolution)
+        lastKnownGoodRetinaResolutionByColorSpace[colorSpace] = normalized
     }
 
     private func resolvedScaleFactor(displayID: CGDirectDisplayID, fallback: CGFloat) -> CGFloat {
@@ -70,6 +165,32 @@ extension SharedVirtualDisplayManager {
 
     func dedicatedDisplayName(for streamID: StreamID) -> String {
         "Mirage Stream Display (\(streamID))"
+    }
+
+    private func dedicatedInsetCacheKey(
+        scaleFactor: CGFloat,
+        colorSpace: MirageColorSpace
+    ) -> DedicatedInsetCacheKey {
+        let normalizedScale = max(1.0, scaleFactor)
+        let bucket = Int((normalizedScale * 100).rounded())
+        return DedicatedInsetCacheKey(colorSpace: colorSpace, scaleBucket: bucket)
+    }
+
+    func cachedDedicatedInsetsPixels(
+        scaleFactor: CGFloat,
+        colorSpace: MirageColorSpace
+    ) -> CGSize {
+        dedicatedInsetsByKey[dedicatedInsetCacheKey(scaleFactor: scaleFactor, colorSpace: colorSpace)] ?? .zero
+    }
+
+    func cacheDedicatedInsetsPixels(
+        _ insets: CGSize,
+        scaleFactor: CGFloat,
+        colorSpace: MirageColorSpace
+    ) {
+        guard insets.width >= 0, insets.height >= 0 else { return }
+        let sanitized = CGSize(width: ceil(insets.width), height: ceil(insets.height))
+        dedicatedInsetsByKey[dedicatedInsetCacheKey(scaleFactor: scaleFactor, colorSpace: colorSpace)] = sanitized
     }
 
     /// Check if display needs to be resized
@@ -203,6 +324,12 @@ extension SharedVirtualDisplayManager {
             displayRef: display.displayRef
         )
 
+        cacheKnownGoodRetinaResolutionIfNeeded(
+            newResolution,
+            scaleFactor: updatedScaleFactor,
+            colorSpace: colorSpace
+        )
+
         await MainActor.run {
             VirtualDisplayKeepaliveController.shared.update(displayID: display.displayID)
         }
@@ -235,7 +362,8 @@ extension SharedVirtualDisplayManager {
         resolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        displayNameOverride: String? = nil
+        displayNameOverride: String? = nil,
+        allowAspectMismatchRetinaCandidate: Bool = false
     )
     async throws -> ManagedDisplayContext {
         if displayCounter == 0 {
@@ -245,12 +373,51 @@ extension SharedVirtualDisplayManager {
         let generation = displayGeneration
         let displayName = displayNameOverride ?? "Mirage Shared Display (#\(displayCounter))"
 
-        let attempts: [(resolution: CGSize, hiDPI: Bool)] = [
-            (resolution, true),
-            (SharedVirtualDisplayManager.fallbackResolution(for: resolution), false),
+        let normalizedRequested = Self.normalizedPixelResolution(resolution)
+        var attempts: [DisplayCreationAttempt] = [
+            DisplayCreationAttempt(
+                resolution: normalizedRequested,
+                hiDPI: true,
+                label: "requested-retina"
+            ),
         ]
 
+        if let cachedRetina = knownGoodRetinaCandidate(
+            requestedResolution: normalizedRequested,
+            colorSpace: colorSpace,
+            allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
+        ),
+            needsResize(currentResolution: cachedRetina, targetResolution: normalizedRequested) {
+            attempts.append(
+                DisplayCreationAttempt(
+                    resolution: cachedRetina,
+                    hiDPI: true,
+                    label: "cached-retina"
+                )
+            )
+            MirageLogger.host(
+                "Trying cached nearby Retina resolution \(Int(cachedRetina.width))x\(Int(cachedRetina.height)) for requested \(Int(normalizedRequested.width))x\(Int(normalizedRequested.height))"
+            )
+        }
+
+        attempts.append(
+            DisplayCreationAttempt(
+                resolution: SharedVirtualDisplayManager.fallbackResolution(for: normalizedRequested),
+                hiDPI: false,
+                label: "fallback-1x"
+            )
+        )
+
+        var dedupedAttempts: [DisplayCreationAttempt] = []
+        var seenAttemptKeys = Set<String>()
         for attempt in attempts {
+            let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")"
+            if seenAttemptKeys.insert(key).inserted {
+                dedupedAttempts.append(attempt)
+            }
+        }
+
+        for attempt in dedupedAttempts {
             let requestedResolution = attempt.resolution
             let expectedLogical = SharedVirtualDisplayManager.logicalResolution(
                 for: requestedResolution,
@@ -266,6 +433,9 @@ extension SharedVirtualDisplayManager {
                 hiDPI: attempt.hiDPI,
                 colorSpace: colorSpace
             ) else {
+                MirageLogger.host(
+                    "Virtual display create failed for \(attempt.label) at \(Int(requestedResolution.width))x\(Int(requestedResolution.height))"
+                )
                 continue
             }
 
@@ -337,6 +507,11 @@ extension SharedVirtualDisplayManager {
                 registerFallbackEvent(for: colorSpace)
             } else {
                 resetFallbackStreak(for: colorSpace)
+                cacheKnownGoodRetinaResolutionIfNeeded(
+                    requestedResolution,
+                    scaleFactor: displayScaleFactor,
+                    colorSpace: colorSpace
+                )
             }
 
             await MainActor.run {
@@ -358,12 +533,18 @@ extension SharedVirtualDisplayManager {
     func recreateDisplay(
         newResolution: CGSize,
         refreshRate: Int,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageColorSpace,
+        allowAspectMismatchRetinaCandidate: Bool = false
     )
     async throws -> ManagedDisplayContext {
         await destroyDisplay()
         try await Task.sleep(for: .milliseconds(50))
-        return try await createDisplay(resolution: newResolution, refreshRate: refreshRate, colorSpace: colorSpace)
+        return try await createDisplay(
+            resolution: newResolution,
+            refreshRate: refreshRate,
+            colorSpace: colorSpace,
+            allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
+        )
     }
 
     /// Recreate a specific display instance (used by dedicated stream displays).
@@ -372,7 +553,8 @@ extension SharedVirtualDisplayManager {
         newResolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        displayNameOverride: String? = nil
+        displayNameOverride: String? = nil,
+        allowAspectMismatchRetinaCandidate: Bool = false
     )
     async throws -> ManagedDisplayContext {
         await destroyDisplay(display)
@@ -381,7 +563,8 @@ extension SharedVirtualDisplayManager {
             resolution: newResolution,
             refreshRate: refreshRate,
             colorSpace: colorSpace,
-            displayNameOverride: displayNameOverride
+            displayNameOverride: displayNameOverride,
+            allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
         )
     }
 
@@ -393,18 +576,29 @@ extension SharedVirtualDisplayManager {
             VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
         }
 
-        CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-
-        let deadline = Date().addingTimeInterval(1.5)
-        while Date() < deadline {
-            if !CGVirtualDisplayBridge.isDisplayOnline(displayID) {
-                MirageLogger.host("Virtual display \(displayID) successfully destroyed")
-                return
-            }
-            try? await Task.sleep(for: .milliseconds(50))
+        let invalidateSelector = NSSelectorFromString("invalidate")
+        let displayObject = display.displayRef.value
+        if (displayObject as AnyObject).responds(to: invalidateSelector) {
+            _ = (displayObject as AnyObject).perform(invalidateSelector)
+            MirageLogger.host("Invalidated virtual display object \(displayID)")
         }
 
-        MirageLogger.error(.host, "WARNING: Virtual display \(displayID) still exists after destruction!")
+        CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
+        await waitForDisplayRemoval(displayID: displayID)
+
+        if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
+            orphanedDisplayIDs.insert(displayID)
+            CGVirtualDisplayBridge.clearPreferredDescriptorProfile(for: display.colorSpace)
+            CGVirtualDisplayBridge.invalidatePersistentSerial(for: display.colorSpace)
+            MirageLogger.error(
+                .host,
+                "WARNING: Virtual display \(displayID) still online after invalidation; marked orphaned and rotated descriptor profile/serial"
+            )
+            return
+        }
+
+        orphanedDisplayIDs.remove(displayID)
+        MirageLogger.host("Virtual display \(displayID) successfully destroyed")
     }
 
     /// Destroy the shared display

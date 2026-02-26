@@ -19,11 +19,10 @@ public extension AppStreamManager {
     /// - Parameter bundleIdentifier: The app to launch
     /// - Returns: True if app was launched or already running
     func launchAppIfNeeded(_ bundleIdentifier: String, path: String) async -> Bool {
-        let isRunning = NSWorkspace.shared.runningApplications.contains { app in
+        if let runningApp = NSWorkspace.shared.runningApplications.first(where: { app in
             app.bundleIdentifier?.lowercased() == bundleIdentifier.lowercased()
-        }
-
-        if isRunning {
+        }) {
+            runningApp.activate()
             logger.debug("App \(bundleIdentifier) already running")
             return true
         }

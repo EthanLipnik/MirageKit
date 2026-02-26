@@ -13,6 +13,19 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+enum WindowStreamStartError: Error {
+    case virtualDisplayStartFailed(String)
+}
+
+extension WindowStreamStartError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case let .virtualDisplayStartFailed(details):
+            "Dedicated virtual display start failed: \(details)"
+        }
+    }
+}
+
 @MainActor
 public extension MirageHostService {
     func startStream(
@@ -39,12 +52,16 @@ public extension MirageHostService {
         // Clear any stuck modifier state from previous streams
         inputController.clearAllModifiers()
 
+        guard !disconnectingClientIDs.contains(client.id),
+              clientsByID[client.id] != nil else {
+            throw MirageError.protocolError("Client is disconnected or disconnecting")
+        }
+
         // Resolve capture sources from live ScreenCaptureKit content to avoid stale host window IDs.
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         let captureSource = try resolveCaptureSource(for: window, from: content)
         let scWindow = captureSource.window
         let scApplication = captureSource.application
-        let fallbackDisplayWrapper = SCDisplayWrapper(display: captureSource.display)
         let resolvedWindowID = WindowID(scWindow.windowID)
         if resolvedWindowID != window.id {
             MirageLogger.host("Resolved window \(window.id) to live window \(resolvedWindowID) for stream start")
@@ -75,7 +92,7 @@ public extension MirageHostService {
             windowLayer: scWindow.windowLayer
         )
 
-        let session = MirageStreamSession(
+        var session = MirageStreamSession(
             id: streamID,
             window: updatedWindow,
             client: client
@@ -90,6 +107,11 @@ public extension MirageHostService {
         )
         guard mediaSecurityByClientID[client.id] != nil else {
             throw MirageError.protocolError("Missing media security context for client")
+        }
+
+        guard !disconnectingClientIDs.contains(client.id),
+              clientsByID[client.id] != nil else {
+            throw MirageError.protocolError("Client is disconnected or disconnecting")
         }
 
         // TODO: HDR support - requires proper virtual display EDR configuration
@@ -230,11 +252,46 @@ public extension MirageHostService {
                 onVirtualDisplayReady: { [weak self] snapshot, bounds in
                     guard let self else { return }
                     let resolvedClientScale = resolvedClientScaleFactor ?? max(1.0, snapshot.scaleFactor)
+                    let effectiveBounds = aspectFittedWindowBounds(
+                        bounds,
+                        targetAspectRatio: requestedAspectRatioForWindowFit(
+                            requestedPixelResolution: virtualDisplayResolution,
+                            visiblePixelResolution: CGSize(
+                                width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
+                                height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
+                            ),
+                            displayPixelResolution: snapshot.resolution
+                        )
+                    )
+                    let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+                        for: snapshot.resolution,
+                        scaleFactor: max(1.0, snapshot.scaleFactor)
+                    )
+                    let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                        snapshot.displayID,
+                        knownResolution: logicalResolution
+                    )
+                    let captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
+                        snapshot.displayID,
+                        knownBounds: displayBounds
+                    )
+                    let visiblePixelResolution = CGSize(
+                        width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
+                        height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
+                    )
+                    let targetContentAspectRatio = requestedAspectRatioForWindowFit(
+                        requestedPixelResolution: virtualDisplayResolution,
+                        visiblePixelResolution: visiblePixelResolution,
+                        displayPixelResolution: snapshot.resolution
+                    )
                     let state = WindowVirtualDisplayState(
                         streamID: streamID,
                         displayID: snapshot.displayID,
                         generation: snapshot.generation,
-                        bounds: bounds,
+                        bounds: effectiveBounds,
+                        targetContentAspectRatio: targetContentAspectRatio,
+                        captureSourceRect: captureSourceRect,
+                        visiblePixelResolution: visiblePixelResolution,
                         scaleFactor: max(1.0, snapshot.scaleFactor),
                         pixelResolution: snapshot.resolution,
                         clientScaleFactor: resolvedClientScale
@@ -256,42 +313,49 @@ public extension MirageHostService {
                 MirageLogger.host("Updated input cache with new frame after virtual display move: \(newFrame)")
             }
 
+            let resolvedStreamFrame = getVirtualDisplayBounds(windowID: updatedWindow.id)
+                ?? currentWindowFrame(for: updatedWindow.id)
+                ?? updatedWindow.frame
+            let resolvedWindow = MirageWindow(
+                id: updatedWindow.id,
+                title: updatedWindow.title,
+                application: updatedWindow.application,
+                frame: resolvedStreamFrame,
+                isOnScreen: updatedWindow.isOnScreen,
+                windowLayer: updatedWindow.windowLayer
+            )
+            session = MirageStreamSession(
+                id: streamID,
+                window: resolvedWindow,
+                client: client
+            )
+            if let index = activeStreams.firstIndex(where: { $0.id == streamID }) {
+                activeStreams[index] = session
+            }
+            inputStreamCacheActor.updateWindowFrame(streamID, newFrame: resolvedWindow.frame)
+            await refreshWindowVirtualDisplayState(
+                streamID: streamID,
+                context: context,
+                clientScaleFactorOverride: resolvedClientScaleFactor
+            )
+            ensureWindowVisibleFrameMonitor(streamID: streamID)
+
             let usesVirtualDisplay = await context.isUsingVirtualDisplay()
             if !usesVirtualDisplay {
                 await addWindowToActivityMonitor(updatedWindow.id)
             }
         } catch let virtualDisplayError {
-            // Dedicated virtual-display startup is preferred for app/window streams, but
-            // fail-safe fallback to direct window capture avoids startup dead-ends.
             MirageLogger.error(
                 .host,
                 error: virtualDisplayError,
-                message: "Virtual-display stream start failed, attempting direct window capture fallback: "
+                message: "Virtual-display stream start failed: "
             )
             await context.stop()
             clearVirtualDisplayState(windowID: updatedWindow.id)
-
-            do {
-                try await context.start(
-                    windowWrapper: windowWrapper,
-                    applicationWrapper: applicationWrapper,
-                    displayWrapper: fallbackDisplayWrapper,
-                    onEncodedFrame: onEncodedFrame
-                )
-                if let resolvedFrame = currentWindowFrame(for: updatedWindow.id) {
-                    inputStreamCacheActor.updateWindowFrame(streamID, newFrame: resolvedFrame)
-                }
-                await addWindowToActivityMonitor(updatedWindow.id)
-                MirageLogger.host("Started stream \(streamID) with direct window capture fallback")
-            } catch {
-                MirageLogger.error(.host, error: error, message: "Direct window capture fallback failed: ")
-                await context.stop()
-                clearVirtualDisplayState(windowID: updatedWindow.id)
-                streamsByID.removeValue(forKey: streamID)
-                activeStreams.removeAll { $0.id == streamID }
-                await deactivateAudioSourceIfNeeded(streamID: streamID)
-                throw error
-            }
+            streamsByID.removeValue(forKey: streamID)
+            activeStreams.removeAll { $0.id == streamID }
+            await deactivateAudioSourceIfNeeded(streamID: streamID)
+            throw WindowStreamStartError.virtualDisplayStartFailed(virtualDisplayError.localizedDescription)
         }
 
         // Activate the window/app being streamed.
@@ -305,8 +369,9 @@ public extension MirageHostService {
 
         // Only notify client AFTER capture successfully started
         if let clientContext = clientsByConnection.values.first(where: { $0.client.id == client.id }) {
-            let minSize = minimumSizesByWindowID[updatedWindow.id]
-            let fallbackMin = fallbackMinimumSize(for: updatedWindow.frame)
+            let streamWindow = session.window
+            let minSize = minimumSizesByWindowID[streamWindow.id]
+            let fallbackMin = fallbackMinimumSize(for: streamWindow.frame)
             let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))
             let minHeight = Int(minSize?.height ?? CGFloat(fallbackMin.minHeight))
 
@@ -319,7 +384,7 @@ public extension MirageHostService {
 
             let message = StreamStartedMessage(
                 streamID: streamID,
-                windowID: updatedWindow.id,
+                windowID: streamWindow.id,
                 width: encodedDimensions.width,
                 height: encodedDimensions.height,
                 frameRate: targetFrameRate,
@@ -332,7 +397,9 @@ public extension MirageHostService {
         }
 
         // Start menu bar monitoring for this stream
-        if let app = updatedWindow.application { await startMenuBarMonitoring(streamID: streamID, app: app, client: client) }
+        if let app = session.window.application {
+            await startMenuBarMonitoring(streamID: streamID, app: app, client: client)
+        }
 
         await updateLightsOutState()
         MirageInstrumentation.record(.hostStreamWindowStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
@@ -390,7 +457,8 @@ public extension MirageHostService {
                 windowID,
                 toSpaceID: resolvedSpaceID,
                 displayID: state.displayID,
-                displayBounds: state.bounds
+                displayBounds: state.bounds,
+                targetContentAspectRatio: state.targetContentAspectRatio
             )
             inputStreamCacheActor.updateWindowFrame(state.streamID, newFrame: state.bounds)
             MirageLogger.host("Reasserted virtual-display placement for window \(windowID) on display \(state.displayID)")
@@ -446,11 +514,8 @@ public extension MirageHostService {
                 return candidateApp.bundleIdentifier.lowercased() == requestedBundleID
             }
             .sorted { lhs, rhs in
-                if lhs.isOnScreen != rhs.isOnScreen { return lhs.isOnScreen }
-                if lhs.windowLayer != rhs.windowLayer { return lhs.windowLayer < rhs.windowLayer }
-                let lhsArea = lhs.frame.width * lhs.frame.height
-                let rhsArea = rhs.frame.width * rhs.frame.height
-                return lhsArea > rhsArea
+                captureCandidateScore(lhs, requestedWindow: requestedWindow) <
+                    captureCandidateScore(rhs, requestedWindow: requestedWindow)
             }
 
         for candidate in fallbackCandidates {
@@ -488,6 +553,54 @@ public extension MirageHostService {
         return displays.first
     }
 
+    private func captureCandidateScore(
+        _ candidate: SCWindow,
+        requestedWindow: MirageWindow
+    ) -> Int {
+        var score = 0
+
+        if !candidate.isOnScreen {
+            score += 1_000_000
+        }
+
+        // Keep standard app windows ahead of utility/overlay layers.
+        if candidate.windowLayer != 0 {
+            score += 2_000
+        }
+        score += abs(candidate.windowLayer - requestedWindow.windowLayer) * 250
+
+        let requestedTitle = (requestedWindow.title ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        let candidateTitle = (candidate.title ?? "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .lowercased()
+        if !requestedTitle.isEmpty {
+            if candidateTitle == requestedTitle {
+                score += 0
+            } else if candidateTitle.contains(requestedTitle) || requestedTitle.contains(candidateTitle) {
+                score += 150
+            } else {
+                score += 600
+            }
+        }
+
+        let requestedFrame = requestedWindow.frame
+        let candidateFrame = candidate.frame
+        let sizeDelta = abs(candidateFrame.width - requestedFrame.width) +
+            abs(candidateFrame.height - requestedFrame.height)
+        let originDelta = abs(candidateFrame.minX - requestedFrame.minX) +
+            abs(candidateFrame.minY - requestedFrame.minY)
+        score += Int(sizeDelta)
+        score += Int(originDelta * 0.25)
+
+        if candidateFrame.width < 160 || candidateFrame.height < 120 {
+            score += 10_000
+        }
+
+        return score
+    }
+
     func stopStream(
         _ session: MirageStreamSession,
         minimizeWindow: Bool = false,
@@ -510,6 +623,11 @@ public extension MirageHostService {
 
         // Remove dedicated virtual display state for this window.
         clearVirtualDisplayState(windowID: windowID)
+        pendingWindowResizeResolutionByStreamID.removeValue(forKey: session.id)
+        windowResizeRequestCounterByStreamID.removeValue(forKey: session.id)
+        windowResizeInFlightStreamIDs.remove(session.id)
+        pausedStreamBaselineFrameRateByStreamID.removeValue(forKey: session.id)
+        stopWindowVisibleFrameMonitor(streamID: session.id)
 
         await context.stop()
         streamsByID.removeValue(forKey: session.id)

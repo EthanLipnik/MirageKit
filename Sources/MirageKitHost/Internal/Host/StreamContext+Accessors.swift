@@ -53,6 +53,18 @@ extension StreamContext {
         virtualDisplayContext
     }
 
+    func getVirtualDisplayVisibleBounds() -> CGRect {
+        virtualDisplayVisibleBounds
+    }
+
+    func getVirtualDisplayCaptureSourceRect() -> CGRect {
+        virtualDisplayCaptureSourceRect
+    }
+
+    func getVirtualDisplayVisiblePixelResolution() -> CGSize {
+        virtualDisplayVisiblePixelResolution
+    }
+
     nonisolated func getWindowID() -> WindowID {
         windowID
     }

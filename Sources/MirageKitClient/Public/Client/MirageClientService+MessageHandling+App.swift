@@ -68,36 +68,23 @@ extension MirageClientService {
         }
     }
 
-    func handleWindowCooldownStarted(_ message: ControlMessage) {
+    func handleWindowRemovedFromStream(_ message: ControlMessage) {
         do {
-            let cooldown = try message.decode(WindowCooldownStartedMessage.self)
-            MirageLogger.client("Window cooldown started: \(cooldown.windowID) for \(cooldown.durationSeconds)s")
-            onWindowCooldownStarted?(cooldown)
+            let removed = try message.decode(WindowRemovedFromStreamMessage.self)
+            MirageLogger.client("Window removed from stream: \(removed.windowID), reason=\(removed.reason.rawValue)")
+            onWindowRemovedFromStream?(removed)
         } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to decode cooldown started: ")
+            MirageLogger.error(.client, error: error, message: "Failed to decode window removed: ")
         }
     }
 
-    func handleWindowCooldownCancelled(_ message: ControlMessage) {
+    func handleWindowStreamFailed(_ message: ControlMessage) {
         do {
-            let cancelled = try message.decode(WindowCooldownCancelledMessage.self)
-            MirageLogger.client("Window cooldown cancelled, new window: \(cancelled.newWindowID)")
-            onWindowCooldownCancelled?(cancelled)
+            let failed = try message.decode(WindowStreamFailedMessage.self)
+            MirageLogger.client("Window stream failed: \(failed.windowID) reason=\(failed.reason)")
+            onWindowStreamFailed?(failed)
         } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to decode cooldown cancelled: ")
-        }
-    }
-
-    func handleReturnToAppSelection(_ message: ControlMessage) {
-        do {
-            let returnMsg = try message.decode(ReturnToAppSelectionMessage.self)
-            MirageLogger.client("Return to app selection for window: \(returnMsg.windowID)")
-            streamingAppBundleID = nil
-            pendingAppAdaptiveFallbackBitrate = nil
-            pendingAppAdaptiveFallbackBitDepth = nil
-            onReturnToAppSelection?(returnMsg)
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to decode return to app selection: ")
+            MirageLogger.error(.client, error: error, message: "Failed to decode window stream failed: ")
         }
     }
 

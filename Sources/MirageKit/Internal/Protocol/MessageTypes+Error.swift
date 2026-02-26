@@ -26,6 +26,8 @@ package struct ErrorMessage: Codable {
         case networkError
         case authRequired
         case permissionDenied
+        case virtualDisplayStartFailed
+        case virtualDisplayResizeFailed
     }
 
     package init(code: ErrorCode, message: String, streamID: StreamID? = nil) {

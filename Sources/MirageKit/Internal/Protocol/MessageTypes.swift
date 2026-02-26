@@ -64,13 +64,10 @@ package enum ControlMessageType: UInt8, Codable {
     case appStreamStarted = 0x83
     case windowAddedToStream = 0x84
     case windowRemovedFromStream = 0x85
-    case windowCooldownStarted = 0x86
-    case windowCooldownCancelled = 0x87
-    case returnToAppSelection = 0x88
+    case windowStreamFailed = 0x86
     case closeWindowRequest = 0x89
     case streamPaused = 0x8A
     case streamResumed = 0x8B
-    case cancelCooldown = 0x8C
     case windowResizabilityChanged = 0x8D
     case appTerminated = 0x8E
 

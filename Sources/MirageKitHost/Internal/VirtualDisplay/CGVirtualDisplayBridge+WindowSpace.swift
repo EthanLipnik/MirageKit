@@ -111,12 +111,27 @@ enum CGSWindowSpaceBridge {
         var spaces: [CGSSpaceID] = []
         for i in 0 ..< CFArrayGetCount(spacesArray) {
             if let spacePtr = CFArrayGetValueAtIndex(spacesArray, i) {
-                let spaceID = UInt64(bitPattern: Int64(Int(bitPattern: spacePtr)))
-                spaces.append(spaceID)
+                let value = unsafeBitCast(spacePtr, to: CFTypeRef.self)
+                if CFGetTypeID(value) == CFNumberGetTypeID() {
+                    var numericSpaceID: Int64 = 0
+                    if CFNumberGetValue(
+                        unsafeDowncast(value, to: CFNumber.self),
+                        .sInt64Type,
+                        &numericSpaceID
+                    ) {
+                        spaces.append(UInt64(numericSpaceID))
+                        continue
+                    }
+                }
+
+                // Fallback for hosts that expose raw pointer-encoded IDs.
+                let pointerEncoded = UInt64(bitPattern: Int64(Int(bitPattern: spacePtr)))
+                spaces.append(pointerEncoded)
             }
         }
 
-        return spaces
+        // Keep deterministic ordering and remove accidental duplicates.
+        return Array(Set(spaces)).sorted()
     }
 
     static func getCurrentSpaceForDisplay(_ displayID: CGDirectDisplayID) -> CGSSpaceID {

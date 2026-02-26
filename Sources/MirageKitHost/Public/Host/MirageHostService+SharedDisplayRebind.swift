@@ -67,7 +67,6 @@ extension MirageHostService {
         displayBounds: CGRect
     )
     async {
-        guard desktopUsesVirtualDisplay else { return }
         guard let desktopStreamID, let desktopContext = desktopStreamContext else { return }
 
         desktopDisplayBounds = displayBounds

@@ -91,34 +91,21 @@ public extension AppStreamManager {
         )
 
         sessions[key]?.windowStreams[windowID] = windowInfo
-        sessions[key]?.windowsInCooldown.removeValue(forKey: windowID)
         sessions[key]?.knownWindowIDs.insert(windowID)
 
         logger.debug("Added window \(windowID) to session \(bundleIdentifier)")
     }
 
-    /// Remove a window from an app session (entering cooldown)
+    /// Remove a streamed window from an app session.
     func removeWindowFromSession(
         bundleIdentifier: String,
-        windowID: WindowID,
-        enterCooldown: Bool
+        windowID: WindowID
     ) {
         let key = bundleIdentifier.lowercased()
         guard sessions[key] != nil else { return }
 
         sessions[key]?.windowStreams.removeValue(forKey: windowID)
-
-        if enterCooldown {
-            let expiresAt = Date().addingTimeInterval(windowCooldownDuration)
-            sessions[key]?.windowsInCooldown[windowID] = expiresAt
-            logger.debug("Window \(windowID) entering cooldown until \(expiresAt)")
-        }
-    }
-
-    /// Cancel cooldown for a window (e.g., user clicked "Close Now")
-    func cancelCooldown(bundleIdentifier: String, windowID: WindowID) {
-        let key = bundleIdentifier.lowercased()
-        sessions[key]?.windowsInCooldown.removeValue(forKey: windowID)
+        logger.debug("Removed window \(windowID) from session \(bundleIdentifier)")
     }
 
     /// Handle client disconnect (start reservation period)
@@ -193,7 +180,7 @@ public extension AppStreamManager {
     /// Get session containing a specific window
     func getSessionForWindow(_ windowID: WindowID) -> MirageAppStreamSession? {
         sessions.values.first { session in
-            session.windowStreams[windowID] != nil || session.windowsInCooldown[windowID] != nil
+            session.windowStreams[windowID] != nil
         }
     }
 

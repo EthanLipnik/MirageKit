@@ -17,6 +17,8 @@ import AppKit
 /// This view bridges `MirageStreamViewRepresentable` with a `MirageClientSessionStore`
 /// to coordinate focus, resize events, and input forwarding.
 public struct MirageStreamContentView: View {
+    @Environment(\.scenePhase) private var scenePhase
+
     public let session: MirageStreamSessionState
     public let sessionStore: MirageClientSessionStore
     public let clientService: MirageClientService
@@ -57,6 +59,8 @@ public struct MirageStreamContentView: View {
     @State private var pendingAppDisplayResolutionCandidateSince: Date = .distantPast
     @State private var streamScaleTask: Task<Void, Never>?
     @State private var lastSentEncodedPixelSize: CGSize = .zero
+    @State private var awaitingAppResizeAck: Bool = false
+    @State private var appResizeAckTimeoutTask: Task<Void, Never>?
     @State private var awaitingDesktopResizeAck: Bool = false
     @State private var latestDrawableDisplaySize: CGSize = .zero
     @State private var sentDesktopPostAckCorrection: Bool = false
@@ -251,6 +255,10 @@ public struct MirageStreamContentView: View {
         .onAppear {
             sessionStore.setFocusedSession(session.id)
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
+            applySceneDrivenThrottle(scenePhase)
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            applySceneDrivenThrottle(newPhase)
         }
         .onDisappear {
             scrollInputSampler.reset()
@@ -263,6 +271,9 @@ public struct MirageStreamContentView: View {
             pendingAppDisplayResolutionCandidateSince = .distantPast
             streamScaleTask?.cancel()
             streamScaleTask = nil
+            appResizeAckTimeoutTask?.cancel()
+            appResizeAckTimeoutTask = nil
+            awaitingAppResizeAck = false
             desktopResizeAckTimeoutTask?.cancel()
             desktopResizeAckTimeoutTask = nil
             if awaitingDesktopResizeAck {
@@ -270,6 +281,7 @@ public struct MirageStreamContentView: View {
             } else {
                 if isResizing { isResizing = false }
             }
+            applySceneDrivenThrottle(.background)
         }
         #if os(macOS)
         .background(
@@ -385,6 +397,11 @@ public struct MirageStreamContentView: View {
         clientService.sendInputFireAndForget(event, forStream: session.streamID)
     }
 
+    private func applySceneDrivenThrottle(_ phase: ScenePhase) {
+        let isFocused = phase == .active
+        clientService.updateAppStreamFocusState(streamID: session.streamID, isFocused: isFocused)
+    }
+
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
 
@@ -446,7 +463,7 @@ public struct MirageStreamContentView: View {
                 guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
                     pendingAppDisplayResolutionCandidate = .zero
                     pendingAppDisplayResolutionCandidateSince = .distantPast
-                    if isResizing { isResizing = false }
+                    if isResizing, !awaitingAppResizeAck { isResizing = false }
                     return
                 }
 
@@ -458,7 +475,7 @@ public struct MirageStreamContentView: View {
                 guard lastSentDisplayResolution != baseDisplaySize else {
                     pendingAppDisplayResolutionCandidate = .zero
                     pendingAppDisplayResolutionCandidateSince = .distantPast
-                    if isResizing { isResizing = false }
+                    if isResizing, !awaitingAppResizeAck { isResizing = false }
                     return
                 }
 
@@ -491,15 +508,19 @@ public struct MirageStreamContentView: View {
                     guard lastSentDisplayResolution != baseDisplaySize else {
                         pendingAppDisplayResolutionCandidate = .zero
                         pendingAppDisplayResolutionCandidateSince = .distantPast
-                        if isResizing { isResizing = false }
+                        if isResizing, !awaitingAppResizeAck { isResizing = false }
                         return
                     }
                     lastSentDisplayResolution = baseDisplaySize
-                    try? await clientService.sendDisplayResolutionChange(
-                        streamID: session.streamID,
-                        newResolution: baseDisplaySize
-                    )
-                    if isResizing { isResizing = false }
+                    beginAppResizeAwaitingAck()
+                    do {
+                        try await clientService.sendDisplayResolutionChange(
+                            streamID: session.streamID,
+                            newResolution: baseDisplaySize
+                        )
+                    } catch {
+                        finishAppResizeAwaitingAck()
+                    }
                 }
                 return
             }
@@ -599,9 +620,33 @@ public struct MirageStreamContentView: View {
         }
     }
 
+    private func beginAppResizeAwaitingAck() {
+        awaitingAppResizeAck = true
+        isResizing = true
+        appResizeAckTimeoutTask?.cancel()
+        appResizeAckTimeoutTask = Task { @MainActor in
+            do {
+                try await Task.sleep(for: desktopResizeAckTimeout)
+            } catch {
+                return
+            }
+            guard awaitingAppResizeAck else { return }
+            finishAppResizeAwaitingAck()
+        }
+    }
+
+    private func finishAppResizeAwaitingAck() {
+        appResizeAckTimeoutTask?.cancel()
+        appResizeAckTimeoutTask = nil
+        awaitingAppResizeAck = false
+        if isResizing { isResizing = false }
+    }
+
     private func handleResizeAcknowledgement(_ minSize: CGSize?) {
         guard isDesktopStream else {
-            if isResizing { isResizing = false }
+            guard awaitingAppResizeAck else { return }
+            guard let minSize, minSize.width > 0, minSize.height > 0 else { return }
+            finishAppResizeAwaitingAck()
             return
         }
         guard awaitingDesktopResizeAck else { return }

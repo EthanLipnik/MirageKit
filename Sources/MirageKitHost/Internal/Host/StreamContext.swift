@@ -63,6 +63,9 @@ actor StreamContext {
     // Virtual display components (provides window isolation)
     // Uses SharedVirtualDisplayManager dedicated stream displays.
     var virtualDisplayContext: SharedVirtualDisplayManager.DisplaySnapshot?
+    var virtualDisplayVisibleBounds: CGRect = .zero
+    var virtualDisplayCaptureSourceRect: CGRect = .zero
+    var virtualDisplayVisiblePixelResolution: CGSize = .zero
     var useVirtualDisplay: Bool = true
 
     var encoder: HEVCEncoder?

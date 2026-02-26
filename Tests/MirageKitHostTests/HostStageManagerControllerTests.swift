@@ -9,6 +9,7 @@
 
 #if os(macOS)
 @testable import MirageKitHost
+import CoreGraphics
 import Testing
 
 @Suite("Host Stage Manager controller")
@@ -130,7 +131,9 @@ struct HostStageManagerControllerTests {
             appName: "Example",
             appPath: "/Applications/Example.app",
             clientID: UUID(),
-            clientName: "Client"
+            clientName: "Client",
+            requestedDisplayResolution: CGSize(width: 1920, height: 1080),
+            requestedClientScaleFactor: nil
         )
         await host.appStreamManager.addWindowToSession(
             bundleIdentifier: "com.example.App",

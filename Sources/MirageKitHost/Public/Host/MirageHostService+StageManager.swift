@@ -11,6 +11,7 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+import AppKit
 @MainActor
 extension MirageHostService {
     func prepareStageManagerForAppStreamingIfNeeded() async {
@@ -71,15 +72,29 @@ extension MirageHostService {
 
         await appStreamManager.removeWindowFromSession(
             bundleIdentifier: session.bundleIdentifier,
-            windowID: windowID,
-            enterCooldown: false
+            windowID: windowID
         )
         await endAppSessionIfIdle(bundleIdentifier: session.bundleIdentifier)
     }
 
-    func endAppSessionIfIdle(bundleIdentifier: String) async {
+    func endAppSessionIfIdle(
+        bundleIdentifier: String,
+        keepAliveIfAppRunning: Bool = false
+    )
+    async {
         guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else { return }
-        guard session.windowStreams.isEmpty, session.windowsInCooldown.isEmpty else { return }
+        guard session.windowStreams.isEmpty else { return }
+
+        if keepAliveIfAppRunning {
+            let normalizedBundleIdentifier = bundleIdentifier.lowercased()
+            let appIsRunning = NSWorkspace.shared.runningApplications.contains { app in
+                app.bundleIdentifier?.lowercased() == normalizedBundleIdentifier
+            }
+            if appIsRunning {
+                MirageLogger.host("Keeping idle app session alive for running app \(bundleIdentifier)")
+                return
+            }
+        }
 
         await appStreamManager.endSession(bundleIdentifier: bundleIdentifier)
         await restoreStageManagerAfterAppStreamingIfNeeded()

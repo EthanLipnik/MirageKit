@@ -108,7 +108,7 @@ extension MirageHostService {
     }
 
     func stopSessionRefreshLoopIfIdle() {
-        guard clientsByConnection.isEmpty else { return }
+        guard clientsByConnection.isEmpty || connectedClients.isEmpty else { return }
         sessionRefreshTask?.cancel()
         sessionRefreshTask = nil
         sessionRefreshGeneration &+= 1

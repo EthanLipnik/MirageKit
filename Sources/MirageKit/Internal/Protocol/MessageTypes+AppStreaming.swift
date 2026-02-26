@@ -146,7 +146,9 @@ public struct AppStreamStartedMessage: Codable {
         public let streamID: StreamID
         public let windowID: WindowID
         public let title: String?
+        /// Calibrated stream viewport width in points (derived from dedicated virtual-display visible frame).
         public let width: Int
+        /// Calibrated stream viewport height in points (derived from dedicated virtual-display visible frame).
         public let height: Int
         public let isResizable: Bool
 
@@ -206,21 +208,23 @@ public struct WindowAddedToStreamMessage: Codable {
 }
 
 /// Window removed from app stream (Host → Client)
-package struct WindowRemovedFromStreamMessage: Codable {
+public struct WindowRemovedFromStreamMessage: Codable, Sendable {
     /// Bundle identifier of the app
-    package let bundleIdentifier: String
+    public let bundleIdentifier: String
     /// The window that was removed
-    package let windowID: WindowID
+    public let windowID: WindowID
     /// Why it was removed
-    package let reason: RemovalReason
+    public let reason: RemovalReason
 
-    package enum RemovalReason: String, Codable {
+    public enum RemovalReason: String, Codable, Sendable {
         /// Host closed the window
         case hostClosed
         /// Client requested close
         case clientClosed
-        /// Window became invisible
-        case windowHidden
+        /// Window no longer matches stream-eligible criteria
+        case noLongerEligible
+        /// Host-side app terminated
+        case appTerminated
     }
 
     package init(bundleIdentifier: String, windowID: WindowID, reason: RemovalReason) {
@@ -230,69 +234,22 @@ package struct WindowRemovedFromStreamMessage: Codable {
     }
 }
 
-/// Window cooldown started (Host → Client)
-/// Sent when host closes a window - client should show cooldown UI
-public struct WindowCooldownStartedMessage: Codable {
-    /// The window that entered cooldown
-    public let windowID: WindowID
-    /// Cooldown duration in seconds
-    public let durationSeconds: Int
-    /// Human-readable message
-    public let message: String
-
-    package init(windowID: WindowID, durationSeconds: Int, message: String) {
-        self.windowID = windowID
-        self.durationSeconds = durationSeconds
-        self.message = message
-    }
-}
-
-/// Window cooldown cancelled (Host → Client)
-/// Sent when a new window appears during cooldown - redirect stream to it
-public struct WindowCooldownCancelledMessage: Codable {
-    /// The old window that was in cooldown
-    public let oldWindowID: WindowID
-    /// The new window to stream to
-    public let newStreamID: StreamID
-    public let newWindowID: WindowID
-    public let title: String?
-    public let width: Int
-    public let height: Int
-    public let isResizable: Bool
-
-    package init(
-        oldWindowID: WindowID,
-        newStreamID: StreamID,
-        newWindowID: WindowID,
-        title: String?,
-        width: Int,
-        height: Int,
-        isResizable: Bool
-    ) {
-        self.oldWindowID = oldWindowID
-        self.newStreamID = newStreamID
-        self.newWindowID = newWindowID
-        self.title = title
-        self.width = width
-        self.height = height
-        self.isResizable = isResizable
-    }
-}
-
-/// Return to app selection (Host → Client)
-/// Sent when cooldown expires with no new window
-public struct ReturnToAppSelectionMessage: Codable {
-    /// The window that should return to app selection
-    public let windowID: WindowID
-    /// Bundle identifier of the app that was streaming
+/// Window stream failed (Host -> Client).
+public struct WindowStreamFailedMessage: Codable, Sendable {
+    /// Bundle identifier of the app.
     public let bundleIdentifier: String
-    /// Human-readable message
-    public let message: String
+    /// Host window identifier that failed to stream.
+    public let windowID: WindowID
+    /// Optional host window title.
+    public let title: String?
+    /// Failure reason suitable for diagnostics and user-facing notice text.
+    public let reason: String
 
-    package init(windowID: WindowID, bundleIdentifier: String, message: String) {
-        self.windowID = windowID
+    package init(bundleIdentifier: String, windowID: WindowID, title: String?, reason: String) {
         self.bundleIdentifier = bundleIdentifier
-        self.message = message
+        self.windowID = windowID
+        self.title = title
+        self.reason = reason
     }
 }
 
@@ -325,16 +282,6 @@ package struct StreamResumedMessage: Codable {
 
     package init(streamID: StreamID) {
         self.streamID = streamID
-    }
-}
-
-/// Cancel cooldown and close immediately (Client → Host)
-package struct CancelCooldownMessage: Codable {
-    /// The window to close (was in cooldown)
-    package let windowID: WindowID
-
-    package init(windowID: WindowID) {
-        self.windowID = windowID
     }
 }
 

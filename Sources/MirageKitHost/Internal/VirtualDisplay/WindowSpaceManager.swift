@@ -74,11 +74,13 @@ actor WindowSpaceManager {
     ///   - spaceID: The target space ID (from virtual display)
     ///   - displayID: The virtual display ID (for activating the display space)
     ///   - displayBounds: The bounds of the virtual display
+    ///   - targetContentAspectRatio: Optional aspect ratio to fit inside display bounds for app streams.
     func moveWindow(
         _ windowID: WindowID,
         toSpaceID spaceID: CGSSpaceID,
         displayID: CGDirectDisplayID,
-        displayBounds: CGRect
+        displayBounds: CGRect,
+        targetContentAspectRatio: CGFloat? = nil
     )
     async throws {
         // Get current window info
@@ -104,8 +106,13 @@ actor WindowSpaceManager {
             MirageLogger.host("Window \(windowID) already has saved state; preserving original state during move")
         }
 
-        let targetOrigin = displayBounds.origin
-        let maxAttempts = 4
+        let resolvedDisplayBounds = resolvePlacementDisplayBounds(
+            displayID: displayID,
+            fallbackBounds: displayBounds
+        )
+        let targetOrigin = resolvedDisplayBounds.origin
+        let resolvedAXWindow = resolveAXWindow(for: windowID)
+        let maxAttempts = 6
 
         for attempt in 1 ... maxAttempts {
             let didActivateSpaceBeforeMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: spaceID)
@@ -118,7 +125,7 @@ actor WindowSpaceManager {
             if !didMoveWindow {
                 MirageLogger.debug(.host, "Failed to move window \(windowID) to position \(targetOrigin) on attempt \(attempt)")
             }
-            if !CGSWindowSpaceBridge.bringWindowToFront(windowID) {
+            if !raiseWindow(windowID, axWindow: resolvedAXWindow) {
                 MirageLogger.debug(.host, "Failed to raise window \(windowID) on move attempt \(attempt)")
             }
 
@@ -127,12 +134,22 @@ actor WindowSpaceManager {
                 MirageLogger.host("Failed to set current space \(spaceID) for display \(displayID) after move attempt \(attempt)")
             }
 
+            await fitWindowToVisibleFrame(
+                windowID,
+                visibleFrame: resolvedDisplayBounds,
+                axWindow: resolvedAXWindow,
+                targetContentAspectRatio: targetContentAspectRatio
+            )
+
             if verifyWindowPlacement(
                 windowID,
                 expectedSpaceID: spaceID,
-                displayBounds: displayBounds,
-                targetOrigin: targetOrigin
+                displayBounds: resolvedDisplayBounds,
+                targetOrigin: targetOrigin,
+                axWindow: resolvedAXWindow,
+                targetContentAspectRatio: targetContentAspectRatio
             ) {
+                ensureTrafficLightsHidden(windowID: windowID)
                 MirageLogger.host("Moved window \(windowID) to space \(spaceID) at \(targetOrigin) (attempt \(attempt))")
                 return
             }
@@ -141,7 +158,7 @@ actor WindowSpaceManager {
                 MirageLogger.host(
                     "Window \(windowID) placement not yet confirmed on attempt \(attempt)/\(maxAttempts); retrying"
                 )
-                try? await Task.sleep(for: .milliseconds(Int64(40 * attempt)))
+                try? await Task.sleep(for: .milliseconds(Int64(80 * attempt)))
             }
         }
 
@@ -151,25 +168,127 @@ actor WindowSpaceManager {
         )
     }
 
+    private func resolvePlacementDisplayBounds(
+        displayID: CGDirectDisplayID,
+        fallbackBounds: CGRect
+    ) -> CGRect {
+        let fallback = fallbackBounds.standardized
+        let hasFallback = fallback.width > 0 && fallback.height > 0
+
+        let displayBounds: CGRect
+        if let modeLogicalResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID)?.logical {
+            displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                displayID,
+                knownResolution: modeLogicalResolution
+            )
+        } else if hasFallback {
+            displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                displayID,
+                knownResolution: fallback.size
+            )
+        } else {
+            displayBounds = CGVirtualDisplayBridge.getDisplayBounds(displayID)
+        }
+
+        var visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            displayID,
+            knownBounds: displayBounds
+        )
+        visibleBounds = visibleBounds.intersection(displayBounds)
+        if visibleBounds.isEmpty {
+            return hasFallback ? fallback : displayBounds
+        }
+        guard hasFallback else {
+            return visibleBounds
+        }
+
+        let sizeTolerance: CGFloat = 12
+        let widthClose = abs(visibleBounds.width - fallback.width) <= sizeTolerance
+        let heightClose = abs(visibleBounds.height - fallback.height) <= sizeTolerance
+        if widthClose, heightClose {
+            return visibleBounds
+        }
+
+        let originTolerance: CGFloat = 24
+        let originClose = abs(visibleBounds.minX - fallback.minX) <= originTolerance &&
+            abs(visibleBounds.minY - fallback.minY) <= originTolerance
+        let displayContainsVisible = displayBounds.insetBy(dx: -1, dy: -1).contains(visibleBounds)
+        let fallbackArea = max(1, fallback.width * fallback.height)
+        let visibleArea = max(1, visibleBounds.width * visibleBounds.height)
+        let areaGrowthRatio = (visibleArea / fallbackArea) - 1
+        let nonShrinkingCandidate = visibleBounds.width >= (fallback.width - sizeTolerance) &&
+            visibleBounds.height >= (fallback.height - sizeTolerance)
+
+        // Accept recomputed bounds when they look like a legitimate visible-frame expansion
+        // on the same display, rather than cross-display coordinate drift.
+        if originClose,
+           displayContainsVisible,
+           nonShrinkingCandidate,
+           areaGrowthRatio >= 0.08 {
+            MirageLogger.host(
+                "Adopting recomputed placement bounds for display \(displayID) after visible-frame growth: " +
+                    "cached=\(fallback), recomputed=\(visibleBounds), display=\(displayBounds)"
+            )
+            return visibleBounds
+        }
+
+        // Virtual-display NSScreen visible-frame reads can drift to unrelated display geometry
+        // during space transitions. Keep the calibrated per-stream bounds unless recomputed
+        // bounds closely match.
+        MirageLogger.host(
+            "Using cached placement bounds for display \(displayID) due visible-bounds mismatch: " +
+                "cached=\(fallback), recomputed=\(visibleBounds), display=\(displayBounds)"
+        )
+        return fallback
+    }
+
     private func verifyWindowPlacement(
         _ windowID: WindowID,
         expectedSpaceID: CGSSpaceID,
         displayBounds: CGRect,
-        targetOrigin: CGPoint
+        targetOrigin: CGPoint,
+        axWindow: AXUIElement?,
+        targetContentAspectRatio: CGFloat?
     ) -> Bool {
         let spaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-        guard spaces.contains(expectedSpaceID) else { return false }
+        let expectedSpaceObserved = spaces.contains(expectedSpaceID)
+        if !spaces.isEmpty, !expectedSpaceObserved {
+            MirageLogger.debug(
+                .host,
+                "Window \(windowID) not yet in expected space \(expectedSpaceID); current spaces=\(spaces)"
+            )
+        }
 
-        guard let windowInfo = getWindowInfo(windowID) else { return true }
+        let frame = resolvedWindowFrame(windowID, axWindow: axWindow)
+        guard let frame else {
+            return expectedSpaceObserved
+        }
 
-        let frame = windowInfo.frame
         let originTolerance: CGFloat = 16
         let originMatches = abs(frame.origin.x - targetOrigin.x) <= originTolerance &&
             abs(frame.origin.y - targetOrigin.y) <= originTolerance
         let expandedBounds = displayBounds.insetBy(dx: -24, dy: -24)
         let intersectsBounds = frame.intersects(expandedBounds)
+        let expectedFrame = aspectFittedFrame(displayBounds, targetContentAspectRatio: targetContentAspectRatio)
+        let minimumExpectedWidth = max(1, expectedFrame.width - 12)
+        let minimumExpectedHeight = max(1, expectedFrame.height - 12)
+        let sizeMatchesExpectation = frame.width >= minimumExpectedWidth &&
+            frame.height >= minimumExpectedHeight
 
-        return originMatches || intersectsBounds
+        if (originMatches || intersectsBounds), sizeMatchesExpectation {
+            return true
+        }
+
+        // Some CGS window queries can report local per-space coordinates. Accept that form only
+        // when space membership confirms the window is in the expected target space.
+        if expectedSpaceObserved {
+            let localCoordinateBounds = CGRect(origin: .zero, size: displayBounds.size).insetBy(dx: -24, dy: -24)
+            if frame.intersects(localCoordinateBounds), sizeMatchesExpectation {
+                return true
+            }
+        }
+
+        return false
     }
 
     /// Restore a window to its original position and space
@@ -190,7 +309,16 @@ actor WindowSpaceManager {
         }
 
         // Restore original position
-        if !CGSWindowSpaceBridge.moveWindow(windowID, to: savedState.originalFrame.origin) { MirageLogger.debug(.host, "Failed to restore window \(windowID) position") }
+        if let axWindow = resolveAXWindow(for: windowID) {
+            _ = await resizeWindowViaAccessibility(
+                windowID,
+                to: savedState.originalFrame.size,
+                axElement: axWindow
+            )
+        }
+        if !CGSWindowSpaceBridge.moveWindow(windowID, to: savedState.originalFrame.origin) {
+            MirageLogger.debug(.host, "Failed to restore window \(windowID) position")
+        }
 
         restoreTrafficLightsIfNeeded(savedState.trafficLightVisibilitySnapshot, windowID: windowID)
         MirageLogger.host("Restored window \(windowID) to frame \(savedState.originalFrame)")
@@ -349,6 +477,227 @@ actor WindowSpaceManager {
         MirageLogger.host("Restored traffic light visibility for streamed window \(windowID)")
     }
 
+    private func fitWindowToVisibleFrame(
+        _ windowID: WindowID,
+        visibleFrame: CGRect,
+        axWindow: AXUIElement?,
+        targetContentAspectRatio: CGFloat?
+    )
+    async {
+        guard visibleFrame.width > 0, visibleFrame.height > 0 else { return }
+        guard let axWindow = axWindow ?? resolveAXWindow(for: windowID) else { return }
+
+        let shouldCompensateTopChrome = false
+        let inferredInset: CGFloat = 0
+
+        func fitFrameForInset(_ inset: CGFloat) -> CGRect {
+            let unconstrained = CGRect(
+                x: visibleFrame.minX,
+                y: visibleFrame.minY - inset,
+                width: visibleFrame.width,
+                height: visibleFrame.height + inset
+            )
+            return aspectFittedFrame(
+                unconstrained,
+                targetContentAspectRatio: targetContentAspectRatio
+            )
+        }
+
+        func effectiveContentRect(for frame: CGRect, fallbackInset: CGFloat) -> CGRect {
+            guard shouldCompensateTopChrome else {
+                return frame
+            }
+
+            let measuredInset = normalizedInset(inferredTopChromeInset(for: axWindow, currentFrame: frame))
+            let resolvedInset = measuredInset > 0 ? measuredInset : normalizedInset(fallbackInset)
+            let contentHeight = max(1, frame.height - resolvedInset)
+            return CGRect(
+                x: frame.minX,
+                y: frame.minY + resolvedInset,
+                width: frame.width,
+                height: contentHeight
+            )
+        }
+
+        func normalizedInset(_ value: CGFloat) -> CGFloat {
+            guard value.isFinite else { return 0 }
+            return min(120, max(0, ceil(value)))
+        }
+
+        var candidateInsets: [CGFloat]
+        if shouldCompensateTopChrome {
+            candidateInsets = [
+                normalizedInset(inferredInset),
+                40,
+                56,
+                72,
+                0,
+            ]
+        } else {
+            candidateInsets = [0]
+        }
+        var uniqueInsets: [CGFloat] = []
+        for inset in candidateInsets {
+            if !uniqueInsets.contains(where: { abs($0 - inset) <= 0.5 }) {
+                uniqueInsets.append(inset)
+            }
+        }
+        candidateInsets = uniqueInsets
+
+        let coverageTargetFrame = aspectFittedFrame(
+            visibleFrame,
+            targetContentAspectRatio: targetContentAspectRatio
+        )
+        let minimumCoverageHeight = max(1, coverageTargetFrame.height - 6)
+        let minimumCoverageWidth = max(1, coverageTargetFrame.width - 6)
+        var bestCoverageHeight: CGFloat = -1
+        var bestCoverageWidth: CGFloat = -1
+        var bestOrigin: CGPoint?
+        var bestSize: CGSize?
+        var bestInset: CGFloat = 0
+
+        for inset in candidateInsets {
+            let fitFrame = fitFrameForInset(inset)
+            let targetSize = CGSize(width: fitFrame.width, height: fitFrame.height)
+            if isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
+                _ = await resizeWindowViaAccessibility(windowID, to: targetSize, axElement: axWindow)
+            }
+
+            let fittedSize = targetSize
+            let targetOrigin = CGPoint(
+                x: fitFrame.minX + (fitFrame.width - fittedSize.width) * 0.5,
+                y: fitFrame.minY
+            )
+
+            var mutablePoint = targetOrigin
+            if let positionValue = AXValueCreate(.cgPoint, &mutablePoint) {
+                _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)
+            }
+            if !CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin) {
+                MirageLogger.debug(.host, "Failed to place window \(windowID) at \(targetOrigin)")
+            }
+
+            let observedFrame = resolvedWindowFrame(windowID, axWindow: axWindow)
+            let requestedFrame = CGRect(origin: targetOrigin, size: fittedSize)
+            let resolvedFrame: CGRect
+            if let observedFrame {
+                resolvedFrame = observedFrame
+            } else {
+                resolvedFrame = requestedFrame
+            }
+            let coverageRect = effectiveContentRect(for: resolvedFrame, fallbackInset: inset).intersection(visibleFrame)
+            let coverageHeight = max(0, coverageRect.height)
+            let coverageWidth = max(0, coverageRect.width)
+            if coverageHeight > bestCoverageHeight ||
+                (abs(coverageHeight - bestCoverageHeight) <= 0.5 && coverageWidth > bestCoverageWidth) {
+                bestCoverageHeight = coverageHeight
+                bestCoverageWidth = coverageWidth
+                bestOrigin = targetOrigin
+                bestSize = fittedSize
+                bestInset = inset
+            }
+
+            if coverageHeight >= minimumCoverageHeight, coverageWidth >= minimumCoverageWidth {
+                return
+            }
+        }
+
+        if let bestOrigin {
+            if let bestSize, isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
+                _ = await resizeWindowViaAccessibility(windowID, to: bestSize, axElement: axWindow)
+            }
+            var mutablePoint = bestOrigin
+            if let positionValue = AXValueCreate(.cgPoint, &mutablePoint) {
+                _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)
+            }
+            _ = CGSWindowSpaceBridge.moveWindow(windowID, to: bestOrigin)
+            MirageLogger.debug(
+                .host,
+                "Window \(windowID) best-fit content coverage within visible frame: \(Int(bestCoverageWidth))x\(Int(bestCoverageHeight)) (inset=\(Int(bestInset)))"
+            )
+        }
+    }
+
+    private func aspectFittedFrame(
+        _ frame: CGRect,
+        targetContentAspectRatio: CGFloat?
+    ) -> CGRect {
+        guard let requestedAspect = targetContentAspectRatio,
+              requestedAspect.isFinite,
+              requestedAspect > 0,
+              frame.width > 0,
+              frame.height > 0 else {
+            return frame
+        }
+
+        let containerAspect = frame.width / frame.height
+        guard abs(containerAspect - requestedAspect) > 0.0001 else { return frame }
+
+        var fittedWidth = frame.width
+        var fittedHeight = frame.height
+
+        if containerAspect > requestedAspect {
+            // Container is wider than requested, constrain width.
+            fittedWidth = floor(frame.height * requestedAspect)
+        } else {
+            // Container is taller than requested, constrain height.
+            fittedHeight = floor(frame.width / requestedAspect)
+        }
+
+        fittedWidth = max(1, fittedWidth)
+        fittedHeight = max(1, fittedHeight)
+
+        let originX = frame.minX + (frame.width - fittedWidth) * 0.5
+        let originY = frame.minY + (frame.height - fittedHeight) * 0.5
+
+        return CGRect(x: originX, y: originY, width: fittedWidth, height: fittedHeight)
+    }
+
+    private func raiseWindow(_ windowID: WindowID, axWindow: AXUIElement?) -> Bool {
+        let didRaiseWithCGS = CGSWindowSpaceBridge.bringWindowToFront(windowID)
+        if didRaiseWithCGS {
+            return true
+        }
+        guard let axWindow else { return false }
+        return AXUIElementPerformAction(axWindow, kAXRaiseAction as CFString) == .success
+    }
+
+    private func inferredTopChromeInset(
+        for axWindow: AXUIElement,
+        currentFrame: CGRect?
+    ) -> CGFloat {
+        guard let windowFrame = currentFrame else { return 0 }
+        guard let closeButton = axElementAttributeValue(axWindow, attribute: kAXCloseButtonAttribute as CFString),
+              let closeButtonFrame = axWindowFrame(closeButton) else {
+            return 0
+        }
+        let inferredInset = (closeButtonFrame.maxY - windowFrame.minY) + 6
+        guard inferredInset.isFinite else { return 0 }
+        return min(140, max(0, ceil(inferredInset)))
+    }
+
+    private func ensureTrafficLightsHidden(windowID: WindowID) {
+        guard var savedState = savedStates[windowID] else { return }
+        guard let axWindow = resolveAXWindow(for: windowID) else { return }
+        let existingSnapshot = savedState.trafficLightVisibilitySnapshot
+        let attemptedSnapshot = hideTrafficLightsIfSupported(
+            windowID: windowID,
+            axWindow: axWindow
+        )
+
+        guard existingSnapshot == nil || existingSnapshot?.hasRecordedState == false else { return }
+        guard let attemptedSnapshot, attemptedSnapshot.hasRecordedState else { return }
+
+        savedState = SavedWindowState(
+            windowID: savedState.windowID,
+            originalFrame: savedState.originalFrame,
+            originalSpaceIDs: savedState.originalSpaceIDs,
+            trafficLightVisibilitySnapshot: attemptedSnapshot,
+            savedAt: savedState.savedAt
+        )
+        savedStates[windowID] = savedState
+    }
+
     private func restoreTrafficLightButtonIfNeeded(
         in axWindow: AXUIElement,
         buttonAttribute: CFString,
@@ -401,6 +750,16 @@ actor WindowSpaceManager {
             return axWindows[0]
         }
 
+        // Prefer exact window-ID matching so traffic-light changes and size/position writes
+        // target the streamed window even when an app has multiple similarly sized windows.
+        for axWindow in axWindows {
+            var candidateWindowID: CGWindowID = 0
+            if _AXUIElementGetWindow(axWindow, &candidateWindowID) == .success,
+               WindowID(candidateWindowID) == windowID {
+                return axWindow
+            }
+        }
+
         let targetFrame = windowInfo.frame
         for axWindow in axWindows {
             guard let frame = axWindowFrame(axWindow) else { continue }
@@ -438,6 +797,16 @@ actor WindowSpaceManager {
         }
 
         return CGRect(origin: position, size: size)
+    }
+
+    private func resolvedWindowFrame(_ windowID: WindowID, axWindow: AXUIElement?) -> CGRect? {
+        if let compositorFrame = getWindowInfo(windowID)?.frame {
+            return compositorFrame
+        }
+        if let axWindow {
+            return axWindowFrame(axWindow)
+        }
+        return nil
     }
 
     private func axElementAttributeValue(_ element: AXUIElement, attribute: CFString) -> AXUIElement? {
@@ -586,23 +955,58 @@ extension WindowSpaceManager {
             return false
         }
 
-        // Set position first (some apps require this)
-        var position = CGPoint.zero
-        var positionValue = AXValueCreate(.cgPoint, &position)
-        AXUIElementSetAttributeValue(element, kAXPositionAttribute as CFString, positionValue as CFTypeRef)
-
         // Set size
         var mutableSize = size
         var sizeValue = AXValueCreate(.cgSize, &mutableSize)
         let result = AXUIElementSetAttributeValue(element, kAXSizeAttribute as CFString, sizeValue as CFTypeRef)
 
-        if result == .success {
-            MirageLogger.host("Resized window \(windowID) to \(size) via Accessibility")
-            return true
-        } else {
+        guard result == .success else {
             MirageLogger.debug(.host, "Failed to resize window \(windowID) via Accessibility: \(result)")
             return false
         }
+
+        let tolerance: CGFloat = 3
+        let maxAttempts = 6
+        for attempt in 1 ... maxAttempts {
+            let compositorFrame = getWindowInfo(windowID)?.frame
+            let axFrame = axWindowFrame(element)
+            let compositorMatches = if let compositorFrame {
+                abs(compositorFrame.width - size.width) <= tolerance &&
+                    abs(compositorFrame.height - size.height) <= tolerance
+            } else {
+                false
+            }
+            let axMatches = if let axFrame {
+                abs(axFrame.width - size.width) <= tolerance &&
+                    abs(axFrame.height - size.height) <= tolerance
+            } else {
+                false
+            }
+
+            if compositorMatches || (compositorFrame == nil && axMatches) {
+                let observedCompositor = compositorFrame.map { "\($0.size)" } ?? "unknown"
+                let observedAX = axFrame.map { "\($0.size)" } ?? "unknown"
+                MirageLogger.host(
+                    "Resized window \(windowID) to \(size) via Accessibility (compositor=\(observedCompositor), ax=\(observedAX), attempt \(attempt))"
+                )
+                return true
+            }
+            if attempt < maxAttempts {
+                try? await Task.sleep(for: .milliseconds(20))
+            }
+        }
+
+        let observedCompositorSizeText = if let compositorFrame = getWindowInfo(windowID)?.frame {
+            "\(compositorFrame.size)"
+        } else {
+            "unknown"
+        }
+        let observedAXSizeText = axWindowFrame(element).map { "\($0.size)" } ?? "unknown"
+        MirageLogger.debug(
+            .host,
+            "Accessibility resize for window \(windowID) did not converge to \(size); compositor=\(observedCompositorSizeText), ax=\(observedAXSizeText)"
+        )
+        return false
     }
 }
 

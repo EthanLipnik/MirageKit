@@ -244,6 +244,7 @@ public extension MirageClientService {
         removeActiveStreamID(streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
+        clearAppStreamFocusState(streamID: streamID)
 
         if let controller = controllersByStream[streamID] {
             await controller.stop()

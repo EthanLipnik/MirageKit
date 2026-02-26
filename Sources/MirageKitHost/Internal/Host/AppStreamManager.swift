@@ -15,15 +15,12 @@ import ScreenCaptureKit
 
 /// Manages app-centric streaming sessions on the host
 /// Tracks which apps are being streamed to which clients,
-/// handles window monitoring, cooldowns, and exclusive access
+/// handles deterministic window diffing and exclusive access
 public actor AppStreamManager {
     let logger = Logger(subsystem: "MirageKit", category: "AppStreamManager")
 
     /// Active app streaming sessions keyed by bundle identifier
     var sessions: [String: MirageAppStreamSession] = [:]
-
-    /// Cooldown duration when host closes a window (seconds)
-    public var windowCooldownDuration: TimeInterval = 10.0
 
     /// Reservation duration after unexpected disconnect (seconds)
     public var disconnectReservationDuration: TimeInterval = 30.0
@@ -32,7 +29,6 @@ public actor AppStreamManager {
     var onNewWindowDetected: (@Sendable (String, SCWindow) async -> Void)?
     var onWindowClosed: (@Sendable (String, WindowID) async -> Void)?
     var onAppTerminated: (@Sendable (String) async -> Void)?
-    var onCooldownExpired: (@Sendable (String, WindowID) async -> Void)?
 
     /// Setters for callbacks (allows setting from outside the actor)
     public func setOnNewWindowDetected(_ callback: @escaping @Sendable (String, SCWindow) async -> Void) {
@@ -45,10 +41,6 @@ public actor AppStreamManager {
 
     public func setOnAppTerminated(_ callback: @escaping @Sendable (String) async -> Void) {
         onAppTerminated = callback
-    }
-
-    public func setOnCooldownExpired(_ callback: @escaping @Sendable (String, WindowID) async -> Void) {
-        onCooldownExpired = callback
     }
 
     /// Application scanner for getting installed apps

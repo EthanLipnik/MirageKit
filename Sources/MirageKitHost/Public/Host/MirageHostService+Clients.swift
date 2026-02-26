@@ -14,6 +14,10 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     public func disconnectClient(_ client: MirageConnectedClient) async {
+        if disconnectingClientIDs.contains(client.id) { return }
+        disconnectingClientIDs.insert(client.id)
+        defer { disconnectingClientIDs.remove(client.id) }
+
         MirageInstrumentation.record(.hostClientDisconnected)
 
         // Clear any stuck modifier state from this client's session
@@ -26,22 +30,8 @@ extension MirageHostService {
             await appStreamManager.cancelAppListScans()
         }
 
-        // Stop all window streams for this client and minimize their windows
-        for stream in activeStreams where stream.client.id == client.id {
-            await stopStream(stream, minimizeWindow: true)
-        }
-
-        // Stop desktop stream if owned by this client
-        // This prevents host from continuing to encode/send frames after client disconnects
-        if let desktopClient = desktopStreamClientContext, desktopClient.client.id == client.id {
-            MirageLogger.host("Stopping desktop stream for disconnected client: \(client.name)")
-            await stopDesktopStream(reason: .clientRequested)
-        }
-
-        await stopAudioForDisconnectedClient(client.id)
-        await appStreamManager.endSessionsForClient(client.id)
-
-        // Remove client
+        // Fail closed before asynchronous teardown work so queued handlers no longer
+        // treat this client as active.
         var removedConnectionID: ObjectIdentifier?
         if let key = clientsByConnection.first(where: { $0.value.client.id == client.id })?.key {
             clientsByConnection.removeValue(forKey: key)
@@ -60,21 +50,41 @@ extension MirageHostService {
 
         if let removedConnectionID, singleClientConnectionID == removedConnectionID { singleClientConnectionID = nil }
         removeControlWorker(clientID: client.id)
-
         connectedClients.removeAll { $0.id == client.id }
+
+        // End app sessions immediately so window-monitor callbacks cannot spawn new streams
+        // while disconnect teardown is in progress.
+        await appStreamManager.endSessionsForClient(client.id)
+
+        // Stop all window streams for this client and minimize their windows.
+        // Use a drain loop instead of a snapshot so concurrently started streams
+        // are also torn down before disconnect completes.
+        while let stream = activeStreams.first(where: { $0.client.id == client.id }) {
+            await stopStream(stream, minimizeWindow: true, updateAppSession: false)
+        }
+
+        // Stop desktop stream if owned by this client.
+        if let desktopClient = desktopStreamClientContext, desktopClient.client.id == client.id {
+            MirageLogger.host("Stopping desktop stream for disconnected client: \(client.name)")
+            await stopDesktopStream(reason: .clientRequested)
+        }
+
+        await stopAudioForDisconnectedClient(client.id)
 
         let removedTransportConnections = transportRegistry.unregisterAllConnections(clientID: client.id)
         for connection in removedTransportConnections {
             connection.cancel()
         }
 
+        let hasConnectedClients = !connectedClients.isEmpty
         stopSessionRefreshLoopIfIdle()
-        if clientsByConnection.isEmpty {
+        if !hasConnectedClients {
             // Force local output unmute when the host no longer has any active clients.
             hostAudioMuteController.setMuted(false)
             singleClientConnectionID = nil
             await stopLoginDisplayStream(newState: sessionState)
             await cleanupSharedVirtualDisplayIfIdle()
+            await forceDisableLightsOut(reason: "last client disconnected")
             lockHostIfNeeded()
         }
 

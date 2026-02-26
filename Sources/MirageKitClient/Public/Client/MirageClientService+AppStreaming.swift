@@ -106,17 +106,6 @@ public extension MirageClientService {
         MirageLogger.client("Requested to stream app: \(bundleIdentifier)")
     }
 
-    /// Cancel a window cooldown and close immediately.
-    /// - Parameter windowID: The window currently in cooldown.
-    func cancelCooldown(windowID: WindowID) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
-
-        let request = CancelCooldownMessage(windowID: windowID)
-        let message = try ControlMessage(type: .cancelCooldown, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
-        MirageLogger.client("Cancel cooldown requested for window \(windowID)")
-    }
-
     /// Request host-side close for a specific app-stream window.
     /// - Parameter windowID: Host window identifier to close.
     func closeWindow(windowID: WindowID) async throws {
@@ -137,5 +126,31 @@ public extension MirageClientService {
         }
 
         MirageLogger.client("Close window requested for window \(windowID)")
+    }
+
+    /// Notify host when scene activity changes for a stream window.
+    /// Active scenes run full-rate; inactive/background scenes are throttled.
+    func updateAppStreamFocusState(streamID: StreamID, isFocused: Bool) {
+        guard case .connected = connectionState, let connection else { return }
+        guard appStreamFocusStateByStreamID[streamID] != isFocused else { return }
+
+        appStreamFocusStateByStreamID[streamID] = isFocused
+
+        do {
+            let message: ControlMessage
+            if isFocused {
+                message = try ControlMessage(type: .streamResumed, content: StreamResumedMessage(streamID: streamID))
+            } else {
+                message = try ControlMessage(type: .streamPaused, content: StreamPausedMessage(streamID: streamID))
+            }
+            connection.send(content: message.serialize(), completion: .idempotent)
+            MirageLogger.client("Sent stream focus update for stream \(streamID): focused=\(isFocused)")
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to encode stream focus update: ")
+        }
+    }
+
+    func clearAppStreamFocusState(streamID: StreamID) {
+        appStreamFocusStateByStreamID.removeValue(forKey: streamID)
     }
 }

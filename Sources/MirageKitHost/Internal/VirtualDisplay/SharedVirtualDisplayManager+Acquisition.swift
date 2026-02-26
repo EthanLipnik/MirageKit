@@ -53,7 +53,8 @@ extension SharedVirtualDisplayManager {
                     newResolution: resolution,
                     refreshRate: targetRefreshRate,
                     colorSpace: colorSpace,
-                    displayNameOverride: displayName
+                    displayNameOverride: displayName,
+                    allowAspectMismatchRetinaCandidate: true
                 )
                 dedicatedDisplaysByStreamID[streamID] = recreated
                 return snapshot(from: recreated)
@@ -71,24 +72,19 @@ extension SharedVirtualDisplayManager {
 
             MirageLogger
                 .host(
-                    "Recreating dedicated display for stream \(streamID) after in-place update failure"
+                    "Dedicated display in-place update failed for stream \(streamID); failing fast to avoid recreate thrash"
                 )
-            let recreated = try await recreateDisplay(
-                from: existing,
-                newResolution: resolution,
-                refreshRate: targetRefreshRate,
-                colorSpace: colorSpace,
-                displayNameOverride: displayName
+            throw SharedDisplayError.creationFailed(
+                "Dedicated display update failed for stream \(streamID) (\(Int(resolution.width))x\(Int(resolution.height)) @ \(targetRefreshRate)Hz)"
             )
-            dedicatedDisplaysByStreamID[streamID] = recreated
-            return snapshot(from: recreated)
         }
 
         let created = try await createDisplay(
             resolution: resolution,
             refreshRate: targetRefreshRate,
             colorSpace: colorSpace,
-            displayNameOverride: displayName
+            displayNameOverride: displayName,
+            allowAspectMismatchRetinaCandidate: true
         )
         dedicatedDisplaysByStreamID[streamID] = created
         return snapshot(from: created)
@@ -126,17 +122,11 @@ extension SharedVirtualDisplayManager {
 
         MirageLogger
             .host(
-                "Recreating dedicated display for stream \(streamID) to apply resolution \(Int(newResolution.width))x\(Int(newResolution.height)) @ \(targetRefreshRate)Hz"
+                "Dedicated display resize update failed for stream \(streamID); failing fast to avoid recreate thrash"
             )
-        let recreated = try await recreateDisplay(
-            from: existing,
-            newResolution: newResolution,
-            refreshRate: targetRefreshRate,
-            colorSpace: existing.colorSpace,
-            displayNameOverride: dedicatedDisplayName(for: streamID)
+        throw SharedDisplayError.creationFailed(
+            "Dedicated display resize failed for stream \(streamID) (\(Int(newResolution.width))x\(Int(newResolution.height)) @ \(targetRefreshRate)Hz)"
         )
-        dedicatedDisplaysByStreamID[streamID] = recreated
-        return snapshot(from: recreated)
     }
 
     func releaseDedicatedDisplay(for streamID: StreamID) async {

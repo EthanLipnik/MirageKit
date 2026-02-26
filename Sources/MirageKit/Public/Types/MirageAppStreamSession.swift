@@ -41,10 +41,7 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
     /// Active window streams (WindowID → StreamSession info)
     public var windowStreams: [WindowID: WindowStreamInfo]
 
-    /// Windows currently in cooldown (WindowID → cooldown expiry time)
-    public var windowsInCooldown: [WindowID: Date]
-
-    /// All windows that have been seen for this app (prevents duplicate "new window" detection)
+    /// All windows that have been seen for this app during the current session.
     public var knownWindowIDs: Set<WindowID>
 
     /// When this session started
@@ -66,7 +63,6 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         requestedClientScaleFactor: CGFloat? = nil,
         state: AppStreamState = .starting,
         windowStreams: [WindowID: WindowStreamInfo] = [:],
-        windowsInCooldown: [WindowID: Date] = [:],
         knownWindowIDs: Set<WindowID> = [],
         startTime: Date = Date(),
         disconnectedAt: Date? = nil
@@ -81,7 +77,6 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         self.requestedClientScaleFactor = requestedClientScaleFactor
         self.state = state
         self.windowStreams = windowStreams
-        self.windowsInCooldown = windowsInCooldown
         self.knownWindowIDs = knownWindowIDs
         self.startTime = startTime
         self.disconnectedAt = disconnectedAt
@@ -161,20 +156,6 @@ public extension MirageAppStreamSession {
         return Date() > expiresAt
     }
 
-    /// Total number of windows (streaming + cooldown)
-    var totalWindowCount: Int { windowStreams.count + windowsInCooldown.count }
-
-    /// Check if a specific window is in cooldown
-    func isWindowInCooldown(_ windowID: WindowID) -> Bool {
-        guard let expiresAt = windowsInCooldown[windowID] else { return false }
-        return Date() < expiresAt
-    }
-
-    /// Get expired cooldowns
-    var expiredCooldowns: [WindowID] {
-        let now = Date()
-        return windowsInCooldown.compactMap { windowID, expiresAt in
-            now >= expiresAt ? windowID : nil
-        }
-    }
+    /// Number of currently streamed windows.
+    var totalWindowCount: Int { windowStreams.count }
 }

@@ -277,6 +277,8 @@ public final class MirageClientService {
 
     /// Currently streaming app's bundle identifier
     public internal(set) var streamingAppBundleID: String?
+    /// Last reported focus state per stream for app-stream pause/resume notifications.
+    var appStreamFocusStateByStreamID: [StreamID: Bool] = [:]
 
     /// Callback when app list is received
     public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
@@ -299,14 +301,11 @@ public final class MirageClientService {
     /// Callback when a new window is added to app stream
     public var onWindowAddedToStream: ((WindowAddedToStreamMessage) -> Void)?
 
-    /// Callback when window cooldown starts
-    public var onWindowCooldownStarted: ((WindowCooldownStartedMessage) -> Void)?
+    /// Callback when a window is removed from app streaming.
+    public var onWindowRemovedFromStream: ((WindowRemovedFromStreamMessage) -> Void)?
 
-    /// Callback when cooldown is cancelled (new window appeared)
-    public var onWindowCooldownCancelled: ((WindowCooldownCancelledMessage) -> Void)?
-
-    /// Callback when returning to app selection
-    public var onReturnToAppSelection: ((ReturnToAppSelectionMessage) -> Void)?
+    /// Callback when host fails to start streaming a candidate window.
+    public var onWindowStreamFailed: ((WindowStreamFailedMessage) -> Void)?
 
     /// Callback when app terminates
     public var onAppTerminated: ((AppTerminatedMessage) -> Void)?

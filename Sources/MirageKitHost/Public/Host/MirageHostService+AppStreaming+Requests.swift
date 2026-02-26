@@ -51,8 +51,14 @@ extension MirageHostService {
         connection: NWConnection
     )
     async {
+        var pendingLightsOutSetup = false
         do {
             let request = try message.decode(SelectAppMessage.self)
+            guard !disconnectingClientIDs.contains(client.id),
+                  clientsByID[client.id] != nil else {
+                MirageLogger.host("Ignoring selectApp from disconnected client \(client.name)")
+                return
+            }
             MirageLogger.host("Client \(client.name) selected app: \(request.bundleIdentifier)")
             await pruneOrphanedAppSessions()
 
@@ -105,6 +111,8 @@ extension MirageHostService {
                 sendAppSelectionError(over: connection, code: .windowNotFound, message: "App not found: \(request.bundleIdentifier)")
                 return
             }
+            pendingLightsOutSetup = true
+            await beginPendingAppStreamLightsOutSetup()
             await prepareStageManagerForAppStreamingIfNeeded()
 
             // Start the app session
@@ -124,6 +132,8 @@ extension MirageHostService {
                     message: "\(app.name) is already being streamed to another client"
                 )
                 await restoreStageManagerAfterAppStreamingIfNeeded()
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
                 return
             }
 
@@ -138,17 +148,19 @@ extension MirageHostService {
                     message: "Failed to launch \(app.name)"
                 )
                 await restoreStageManagerAfterAppStreamingIfNeeded()
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
                 return
             }
 
-            let startupResult = await startInitialAppWindowStream(
+            let startupResult = await startInitialAppWindowStreams(
                 app: app,
                 client: client,
                 selectRequest: request,
                 targetFrameRate: targetFrameRate,
                 requestedDisplayResolution: requestedDisplayResolution
             )
-            guard let streamedWindow = startupResult.window else {
+            guard !startupResult.windows.isEmpty else {
                 MirageLogger.host(
                     "No window streams started for \(app.name); ending session (reason: \(startupResult.failureSummary))"
                 )
@@ -159,6 +171,8 @@ extension MirageHostService {
                     code: .windowNotFound,
                     message: "Failed to start \(app.name): \(startupResult.failureSummary)"
                 )
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
                 return
             }
 
@@ -167,13 +181,19 @@ extension MirageHostService {
             let response = AppStreamStartedMessage(
                 bundleIdentifier: app.bundleIdentifier,
                 appName: app.name,
-                windows: [streamedWindow]
+                windows: startupResult.windows.sorted { $0.streamID < $1.streamID }
             )
             let responseMessage = try ControlMessage(type: .appStreamStarted, content: response)
             connection.send(content: responseMessage.serialize(), completion: .idempotent)
 
-            MirageLogger.host("Started streaming \(app.name) with 1 initial window")
+            pendingLightsOutSetup = false
+            await endPendingAppStreamLightsOutSetup()
+            MirageLogger.host("Started streaming \(app.name) with \(startupResult.windows.count) initial window(s)")
         } catch {
+            if pendingLightsOutSetup {
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
+            }
             MirageLogger.error(.host, error: error, message: "Failed to handle select app: ")
         }
     }
@@ -192,9 +212,10 @@ extension MirageHostService {
             let requestedWindow = streamSession?.window ??
                 availableWindows.first(where: { $0.id == request.windowID })
 
-            // Explicit client close requests should always tear down the corresponding stream.
-            // This avoids orphaned host streams when the client window is dismissed.
-            if let streamSession {
+            // Closing any app-stream window is treated as ending the app stream session.
+            if let appSession = await appStreamManager.getSessionForWindow(request.windowID) {
+                await endAppStream(bundleIdentifier: appSession.bundleIdentifier)
+            } else if let streamSession {
                 await stopStream(streamSession, minimizeWindow: false)
             }
 
@@ -280,7 +301,7 @@ extension MirageHostService {
                     bundleIdentifier: session.bundleIdentifier,
                     streamID: request.streamID
                 )
-                // TODO: Add encoder throttling when StreamContext supports setTargetFrameRate
+                await applyClientFocusThrottle(streamID: request.streamID, isFocused: false)
             }
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle stream paused: ")
@@ -298,84 +319,57 @@ extension MirageHostService {
                     bundleIdentifier: session.bundleIdentifier,
                     streamID: request.streamID
                 )
-                // TODO: Restore frame rate when StreamContext supports setTargetFrameRate
+                await applyClientFocusThrottle(streamID: request.streamID, isFocused: true)
             }
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle stream resumed: ")
         }
     }
 
-    func handleCancelCooldown(
-        _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
-    )
-    async {
-        do {
-            let request = try message.decode(CancelCooldownMessage.self)
-            MirageLogger.host("Client \(client.name) cancelled cooldown for window \(request.windowID)")
-
-            // Find the session and cancel cooldown
-            if let session = await appStreamManager.getSessionForWindow(request.windowID) {
-                let bundleIdentifier = session.bundleIdentifier
-                await appStreamManager.cancelCooldown(
-                    bundleIdentifier: bundleIdentifier,
-                    windowID: request.windowID
-                )
-
-                // Send return to app selection
-                let response = ReturnToAppSelectionMessage(
-                    windowID: request.windowID,
-                    bundleIdentifier: bundleIdentifier,
-                    message: "Cooldown cancelled"
-                )
-                let responseMessage = try ControlMessage(type: .returnToAppSelection, content: response)
-                connection.send(content: responseMessage.serialize(), completion: .idempotent)
-
-                await endAppSessionIfIdle(bundleIdentifier: bundleIdentifier)
-            }
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle cancel cooldown: ")
-        }
-    }
-
     private struct InitialAppWindowStartupResult {
-        let window: AppStreamStartedMessage.AppStreamWindow?
+        let windows: [AppStreamStartedMessage.AppStreamWindow]
         let failureSummary: String
     }
 
-    private func startInitialAppWindowStream(
+    private func startInitialAppWindowStreams(
         app: MirageInstalledApp,
         client: MirageConnectedClient,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize
     ) async -> InitialAppWindowStartupResult {
-        let maxAttempts = 12
-        let newWindowRequestAttempts: Set<Int> = [1, 4, 8]
-        var attemptedWindowIDs: Set<WindowID> = []
+        let maxAttempts = 8
+        var startedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
         var failureNotes: [String] = []
+        struct StartupFailureRecord {
+            let windowID: WindowID
+            let title: String
+            let reason: String
+            let attempt: Int
+        }
+        var latestFailureByWindow: [WindowID: StartupFailureRecord] = [:]
+        let clientContext = findClientContext(clientID: client.id)
 
         for attempt in 1 ... maxAttempts {
             try? await refreshWindows()
-            let candidates = availableWindows
-                .filter { window in
-                    windowMatchesSelectedAppWindow(window, bundleIdentifier: app.bundleIdentifier)
-                }
+            let matchingCandidates = availableWindows.filter { window in
+                windowMatchesSelectedAppWindow(window, bundleIdentifier: app.bundleIdentifier)
+            }
+            let preferredCandidates = matchingCandidates.filter(isLikelyPrimaryAppStreamWindow)
+            let candidates = (preferredCandidates.isEmpty ? matchingCandidates : preferredCandidates)
                 .sorted(by: sortAppStreamCandidateWindows)
 
-            let windowsToAttempt: [MirageWindow] = {
-                guard !candidates.isEmpty else { return [] }
-                let unseenCandidates = candidates.filter { !attemptedWindowIDs.contains($0.id) }
-                return unseenCandidates.isEmpty ? [candidates[0]] : unseenCandidates
-            }()
-
-            if windowsToAttempt.isEmpty {
+            if candidates.isEmpty {
                 failureNotes.append("attempt \(attempt): no streamable windows found")
+                if attempt < maxAttempts {
+                    let retryDelay: Duration = attempt <= 3 ? .milliseconds(250) : .milliseconds(500)
+                    try? await Task.sleep(for: retryDelay)
+                }
+                continue
             }
 
-            for candidate in windowsToAttempt {
-                attemptedWindowIDs.insert(candidate.id)
+            for candidate in candidates {
+                if startedWindows.contains(where: { $0.windowID == candidate.id }) { continue }
                 do {
                     let startedWindow = try await attemptStartInitialAppWindowStream(
                         app: app,
@@ -385,11 +379,17 @@ extension MirageHostService {
                         targetFrameRate: targetFrameRate,
                         requestedDisplayResolution: requestedDisplayResolution
                     )
-                    return InitialAppWindowStartupResult(window: startedWindow, failureSummary: "")
+                    startedWindows.append(startedWindow)
                 } catch {
                     let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                     let renderedDetail = detail.isEmpty ? String(describing: error) : detail
                     failureNotes.append("window \(candidate.id) attempt \(attempt): \(renderedDetail)")
+                    latestFailureByWindow[candidate.id] = StartupFailureRecord(
+                        windowID: candidate.id,
+                        title: candidate.title ?? app.name,
+                        reason: renderedDetail,
+                        attempt: attempt
+                    )
                     MirageLogger.error(
                         .host,
                         error: error,
@@ -398,8 +398,11 @@ extension MirageHostService {
                 }
             }
 
-            if newWindowRequestAttempts.contains(attempt) {
-                await appStreamManager.requestNewWindow(bundleIdentifier: app.bundleIdentifier)
+            if !startedWindows.isEmpty {
+                return InitialAppWindowStartupResult(
+                    windows: startedWindows.sorted { $0.streamID < $1.streamID },
+                    failureSummary: failureNotes.suffix(3).joined(separator: "; ")
+                )
             }
 
             if attempt < maxAttempts {
@@ -408,9 +411,24 @@ extension MirageHostService {
             }
         }
 
+        if let clientContext {
+            for failure in latestFailureByWindow.values.sorted(by: { lhs, rhs in
+                if lhs.attempt != rhs.attempt { return lhs.attempt < rhs.attempt }
+                return lhs.windowID < rhs.windowID
+            }) {
+                await emitWindowStreamFailed(
+                    to: clientContext,
+                    bundleIdentifier: app.bundleIdentifier,
+                    windowID: failure.windowID,
+                    title: failure.title,
+                    reason: failure.reason
+                )
+            }
+        }
+
         let summary = failureNotes.suffix(3).joined(separator: "; ")
         return InitialAppWindowStartupResult(
-            window: nil,
+            windows: [],
             failureSummary: summary.isEmpty ? "no streamable windows became available" : summary
         )
     }
@@ -481,6 +499,13 @@ extension MirageHostService {
         return lhs.id < rhs.id
     }
 
+    private func isLikelyPrimaryAppStreamWindow(_ window: MirageWindow) -> Bool {
+        guard window.isOnScreen else { return false }
+        guard window.windowLayer == 0 else { return false }
+        guard window.frame.width >= 160, window.frame.height >= 120 else { return false }
+        return true
+    }
+
     private func sendAppSelectionError(
         over connection: NWConnection,
         code: ErrorMessage.ErrorCode,
@@ -489,6 +514,41 @@ extension MirageHostService {
         let error = ErrorMessage(code: code, message: message)
         guard let response = try? ControlMessage(type: .error, content: error) else { return }
         connection.send(content: response.serialize(), completion: .idempotent)
+    }
+
+    private func applyClientFocusThrottle(streamID: StreamID, isFocused: Bool) async {
+        guard let context = streamsByID[streamID] else {
+            pausedStreamBaselineFrameRateByStreamID.removeValue(forKey: streamID)
+            return
+        }
+
+        if isFocused {
+            let restoreFrameRate: Int
+            if let savedFrameRate = pausedStreamBaselineFrameRateByStreamID.removeValue(forKey: streamID) {
+                restoreFrameRate = savedFrameRate
+            } else {
+                restoreFrameRate = await context.getTargetFrameRate()
+            }
+            do {
+                try await context.updateFrameRate(max(1, restoreFrameRate))
+                await context.requestKeyframe()
+                MirageLogger.host("Stream \(streamID) focused - restored to \(max(1, restoreFrameRate)) fps")
+            } catch {
+                MirageLogger.error(.host, error: error, message: "Failed restoring stream \(streamID) frame rate: ")
+            }
+            return
+        }
+
+        if pausedStreamBaselineFrameRateByStreamID[streamID] == nil {
+            pausedStreamBaselineFrameRateByStreamID[streamID] = await context.getTargetFrameRate()
+        }
+
+        do {
+            try await context.updateFrameRate(1)
+            MirageLogger.host("Stream \(streamID) unfocused - throttled to 1 fps")
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed throttling stream \(streamID): ")
+        }
     }
 
     func suspendAppListRequestsForDesktopStream() async {

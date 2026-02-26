@@ -91,6 +91,7 @@ extension MirageHostService {
         connection: NWConnection
     )
     async {
+        var pendingLightsOutSetup = false
         do {
             let request = try message.decode(StartDesktopStreamMessage.self)
             MirageLogger
@@ -117,6 +118,10 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
             let audioConfiguration = request.audioConfiguration ?? .default
 
+            if lightsOutEnabled {
+                pendingLightsOutSetup = true
+                await beginPendingDesktopStreamLightsOutSetup()
+            }
             try await startDesktopStream(
                 to: clientContext,
                 displayResolution: CGSize(width: request.displayWidth, height: request.displayHeight),
@@ -136,8 +141,23 @@ extension MirageHostService {
                 dataPort: request.dataPort,
                 targetFrameRate: targetFrameRate
             )
+            if pendingLightsOutSetup {
+                pendingLightsOutSetup = false
+                await endPendingDesktopStreamLightsOutSetup()
+            }
         } catch {
+            if pendingLightsOutSetup {
+                pendingLightsOutSetup = false
+                await endPendingDesktopStreamLightsOutSetup()
+            }
             MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
+            let errorPayload = ErrorMessage(
+                code: .virtualDisplayStartFailed,
+                message: "Failed to start desktop stream: \(error.localizedDescription)"
+            )
+            if let response = try? ControlMessage(type: .error, content: errorPayload) {
+                connection.send(content: response.serialize(), completion: .idempotent)
+            }
         }
     }
 

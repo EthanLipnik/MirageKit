@@ -731,6 +731,9 @@ extension StreamContext {
             await WindowSpaceManager.shared.restoreWindowSilently(windowID)
             await SharedVirtualDisplayManager.shared.releaseDedicatedDisplay(for: streamID)
             virtualDisplayContext = nil
+            virtualDisplayVisibleBounds = .zero
+            virtualDisplayCaptureSourceRect = .zero
+            virtualDisplayVisiblePixelResolution = .zero
         }
         useVirtualDisplay = false
 

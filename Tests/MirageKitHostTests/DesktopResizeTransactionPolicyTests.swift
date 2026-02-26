@@ -72,5 +72,49 @@ struct DesktopResizeTransactionPolicyTests {
 
         #expect(decision == .rebind)
     }
+
+    @Test("Window resize no-op skips exact visible resolution")
+    func windowResizeNoOpSkipsExactMatch() {
+        let decision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 2560, height: 1440),
+            currentDisplayResolution: nil,
+            requestedVisibleResolution: CGSize(width: 2560, height: 1440)
+        )
+
+        #expect(decision == .noOp)
+    }
+
+    @Test("Window resize no-op applies on visible resolution mismatch")
+    func windowResizeNoOpAppliesOnMismatch() {
+        let decision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 2560, height: 1440),
+            currentDisplayResolution: nil,
+            requestedVisibleResolution: CGSize(width: 3008, height: 1692)
+        )
+
+        #expect(decision == .apply)
+    }
+
+    @Test("Window resize no-op tolerates tiny visible-resolution drift")
+    func windowResizeNoOpToleratesTinyDrift() {
+        let decision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 2560, height: 1440),
+            currentDisplayResolution: nil,
+            requestedVisibleResolution: CGSize(width: 2561, height: 1442)
+        )
+
+        #expect(decision == .noOp)
+    }
+
+    @Test("Window resize no-op skips when requested size matches calibrated display size")
+    func windowResizeNoOpSkipsDisplayMatch() {
+        let decision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 6016, height: 3324),
+            currentDisplayResolution: CGSize(width: 6016, height: 3384),
+            requestedVisibleResolution: CGSize(width: 6016, height: 3384)
+        )
+
+        #expect(decision == .noOp)
+    }
 }
 #endif
