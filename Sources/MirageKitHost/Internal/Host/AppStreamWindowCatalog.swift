@@ -26,9 +26,31 @@ struct AppStreamWindowCandidate: Sendable {
     let role: String?
     let subrole: String?
     let parentWindowID: WindowID?
+    let isFocused: Bool
+    let isMain: Bool
+
+    init(
+        bundleIdentifier: String,
+        window: MirageWindow,
+        classification: AppStreamWindowClassification,
+        role: String?,
+        subrole: String?,
+        parentWindowID: WindowID?,
+        isFocused: Bool = false,
+        isMain: Bool = false
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.window = window
+        self.classification = classification
+        self.role = role
+        self.subrole = subrole
+        self.parentWindowID = parentWindowID
+        self.isFocused = isFocused
+        self.isMain = isMain
+    }
 
     var logMetadata: String {
-        "classification=\(classification.rawValue), role=\(role ?? "nil"), subrole=\(subrole ?? "nil"), parent=\(parentWindowID.map(String.init) ?? "nil")"
+        "classification=\(classification.rawValue), focused=\(isFocused), main=\(isMain), role=\(role ?? "nil"), subrole=\(subrole ?? "nil"), parent=\(parentWindowID.map(String.init) ?? "nil")"
     }
 }
 
@@ -37,6 +59,8 @@ enum AppStreamWindowCatalog {
         let role: String?
         let subrole: String?
         let parentWindowID: WindowID?
+        let isFocused: Bool
+        let isMain: Bool
     }
 
     static func catalog(
@@ -103,24 +127,32 @@ enum AppStreamWindowCatalog {
                 classification: classification,
                 role: accessibility?.role,
                 subrole: accessibility?.subrole,
-                parentWindowID: accessibility?.parentWindowID
+                parentWindowID: accessibility?.parentWindowID,
+                isFocused: accessibility?.isFocused ?? false,
+                isMain: accessibility?.isMain ?? false
             )
 
             candidatesByBundleID[matchedBundleID, default: []].append(candidate)
         }
 
         for bundleID in candidatesByBundleID.keys {
-            candidatesByBundleID[bundleID]?.sort { lhs, rhs in
-                if lhs.window.isOnScreen != rhs.window.isOnScreen { return lhs.window.isOnScreen }
-                if lhs.window.windowLayer != rhs.window.windowLayer { return lhs.window.windowLayer < rhs.window.windowLayer }
-                let lhsArea = lhs.window.frame.width * lhs.window.frame.height
-                let rhsArea = rhs.window.frame.width * rhs.window.frame.height
-                if lhsArea != rhsArea { return lhsArea > rhsArea }
-                return lhs.window.id < rhs.window.id
-            }
+            candidatesByBundleID[bundleID]?.sort(by: preferredOrder(lhs:rhs:))
         }
 
         return candidatesByBundleID
+    }
+
+    static func preferredOrder(lhs: AppStreamWindowCandidate, rhs: AppStreamWindowCandidate) -> Bool {
+        if lhs.isFocused != rhs.isFocused { return lhs.isFocused }
+        if lhs.isMain != rhs.isMain { return lhs.isMain }
+        if lhs.window.isOnScreen != rhs.window.isOnScreen { return lhs.window.isOnScreen }
+        if lhs.window.windowLayer != rhs.window.windowLayer { return lhs.window.windowLayer < rhs.window.windowLayer }
+
+        let lhsArea = lhs.window.frame.width * lhs.window.frame.height
+        let rhsArea = rhs.window.frame.width * rhs.window.frame.height
+        if lhsArea != rhsArea { return lhsArea > rhsArea }
+
+        return lhs.window.id < rhs.window.id
     }
 
     static func classifyWindow(
@@ -198,6 +230,8 @@ enum AppStreamWindowCatalog {
 
             let role = stringAttribute(kAXRoleAttribute as CFString, from: axWindow)
             let subrole = stringAttribute(kAXSubroleAttribute as CFString, from: axWindow)
+            let isFocused = boolAttribute(kAXFocusedAttribute as CFString, from: axWindow) ?? false
+            let isMain = boolAttribute(kAXMainAttribute as CFString, from: axWindow) ?? false
 
             var parentWindowID: WindowID?
             var parentRef: CFTypeRef?
@@ -214,7 +248,13 @@ enum AppStreamWindowCatalog {
                 }
             }
 
-            index[windowID] = AccessibilityClassification(role: role, subrole: subrole, parentWindowID: parentWindowID)
+            index[windowID] = AccessibilityClassification(
+                role: role,
+                subrole: subrole,
+                parentWindowID: parentWindowID,
+                isFocused: isFocused,
+                isMain: isMain
+            )
         }
 
         return index
@@ -224,6 +264,17 @@ enum AppStreamWindowCatalog {
         var valueRef: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute, &valueRef) == .success else { return nil }
         return valueRef as? String
+    }
+
+    private static func boolAttribute(_ attribute: CFString, from element: AXUIElement) -> Bool? {
+        var valueRef: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &valueRef) == .success else { return nil }
+        guard let valueRef else { return nil }
+        if let bool = valueRef as? Bool { return bool }
+        if let number = valueRef as? NSNumber {
+            return number.boolValue
+        }
+        return nil
     }
 }
 

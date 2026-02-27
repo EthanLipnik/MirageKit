@@ -268,6 +268,21 @@ public final class MirageHostService {
     /// App-centric streaming manager - internal for extension access
     let appStreamManager = AppStreamManager()
 
+    struct PendingAppWindowReplacement: Sendable {
+        let streamID: StreamID
+        let bundleIdentifier: String
+        let clientID: UUID
+        let closedWindowID: WindowID
+        let slotStreamID: StreamID
+        let deadline: Date
+    }
+
+    /// Pending 5s replacement cooldown entries keyed by stream ID.
+    var pendingAppWindowReplacementsByStreamID: [StreamID: PendingAppWindowReplacement] = [:]
+    /// Cooldown expiry tasks keyed by stream ID.
+    var pendingAppWindowReplacementTasksByStreamID: [StreamID: Task<Void, Never>] = [:]
+    let appWindowReplacementCooldownDuration: Duration = .seconds(5)
+
     /// Pending app list request to resume after desktop streaming.
     var pendingAppListRequest: PendingAppListRequest?
     var appListRequestTask: Task<Void, Never>?

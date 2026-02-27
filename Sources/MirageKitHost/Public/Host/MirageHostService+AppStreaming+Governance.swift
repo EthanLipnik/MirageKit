@@ -90,12 +90,19 @@ extension MirageHostService {
             let streamIDs = session.windowStreams.values.map(\.streamID)
             for streamID in streamIDs {
                 await evaluateAppStreamActivity(streamID: streamID, now: now, reason: reason)
+                await maintainVirtualDisplayPlacementForAppStream(streamID: streamID)
             }
             await recomputeAppSessionBitrateBudget(
                 bundleIdentifier: session.bundleIdentifier,
                 reason: "governor:\(reason)"
             )
         }
+    }
+
+    private func maintainVirtualDisplayPlacementForAppStream(streamID: StreamID) async {
+        guard let windowID = activeWindowIDByStreamID[streamID] else { return }
+        guard isStreamUsingVirtualDisplay(windowID: windowID) else { return }
+        await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
     }
 
     nonisolated func noteAppStreamInputSignal(streamID: StreamID) {

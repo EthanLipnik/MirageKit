@@ -69,9 +69,6 @@ extension MirageHostService {
             .selectApp: { [weak self] message, client, connection in
                 await self?.handleSelectApp(message, from: client, connection: connection)
             },
-            .closeWindowRequest: { [weak self] message, client, connection in
-                await self?.handleCloseWindowRequest(message, from: client, connection: connection)
-            },
             .appWindowSwapRequest: { [weak self] message, client, connection in
                 await self?.handleAppWindowSwapRequest(message, from: client, connection: connection)
             },
@@ -287,10 +284,6 @@ extension MirageHostService {
 
     private func handleStopStreamMessage(_ message: ControlMessage) async {
         guard let request = try? message.decode(StopStreamMessage.self) else { return }
-        if let appSession = await appStreamManager.getSessionForStreamID(request.streamID) {
-            await endAppStream(bundleIdentifier: appSession.bundleIdentifier)
-            return
-        }
         if let session = activeSessionByStreamID[request.streamID] {
             await stopStream(session, minimizeWindow: request.minimizeWindow)
         }

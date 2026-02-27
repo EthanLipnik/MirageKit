@@ -63,6 +63,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
 
     private struct CopyBackendState {
         var metalDisabledUntil: CFAbsoluteTime = 0
+        var recentMetalStalls: [CFAbsoluteTime] = []
     }
 
     private enum MetalCopyFormat {
@@ -83,8 +84,10 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private let telemetryLogInterval: CFAbsoluteTime = 2.0
     private let backendFallbackDurationDefault: CFAbsoluteTime = 5.0
     private let backendFallbackDurationOnFailure: CFAbsoluteTime = 15.0
-    private let backendFallbackDurationOnStall: CFAbsoluteTime = 30.0
-    private let metalStallThresholdMs: Double = 80.0
+    private let backendFallbackDurationOnStall: CFAbsoluteTime = 5.0
+    private let metalStallThresholdMs: Double = 250.0
+    private let metalStallWindowSeconds: CFAbsoluteTime = 8.0
+    private let metalStallBurstThreshold: Int = 3
     private let backendLock = NSLock()
     private var backendState = CopyBackendState()
     private let metalLock = NSLock()
@@ -351,6 +354,31 @@ final class CaptureFrameCopier: @unchecked Sendable {
         MirageLogger.capture("Capture copy: falling back to CPU for \(Int(fallbackDuration))s (\(reason))")
     }
 
+    private func handleSuccessfulMetalCopyStall(durationMs: Double) {
+        let now = CFAbsoluteTimeGetCurrent()
+        let shouldFallback = backendLock.withLock { () -> Bool in
+            backendState.recentMetalStalls.removeAll { now - $0 > metalStallWindowSeconds }
+            backendState.recentMetalStalls.append(now)
+            guard backendState.recentMetalStalls.count >= metalStallBurstThreshold else { return false }
+            backendState.recentMetalStalls.removeAll()
+            return true
+        }
+
+        guard shouldFallback else {
+            MirageLogger.capture(
+                "Capture copy: metal stall \(durationMs.formatted(.number.precision(.fractionLength(1))))ms " +
+                    "(below burst threshold \(metalStallBurstThreshold) in \(Int(metalStallWindowSeconds))s)"
+            )
+            return
+        }
+
+        disableMetalCopyTemporarily(
+            reason: "Metal copy stall burst (>=\(metalStallBurstThreshold) in \(Int(metalStallWindowSeconds))s, last " +
+                "\(durationMs.formatted(.number.precision(.fractionLength(1))))ms)",
+            duration: backendFallbackDurationOnStall
+        )
+    }
+
     private func recordInFlightLimitDrop() {
         telemetryLock.lock()
         telemetry.inFlightLimitDrops += 1
@@ -380,10 +408,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
                     duration: backendFallbackDurationOnFailure
                 )
             } else if durationMs >= metalStallThresholdMs {
-                disableMetalCopyTemporarily(
-                    reason: "Metal copy stall (\(durationMs.formatted(.number.precision(.fractionLength(1))))ms)",
-                    duration: backendFallbackDurationOnStall
-                )
+                handleSuccessfulMetalCopyStall(durationMs: durationMs)
             }
         }
         telemetryLock.lock()

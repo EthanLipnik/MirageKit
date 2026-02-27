@@ -11,6 +11,7 @@
 import CoreGraphics
 import Foundation
 import MirageKit
+import Network
 import Testing
 
 #if os(macOS)
@@ -551,6 +552,53 @@ struct AppWindowInventoryGovernanceTests {
         #expect((targets[101] ?? 0) <= MirageHostService.multiWindowPerStreamBitrateCapBps)
         #expect((targets[102] ?? 0) <= MirageHostService.multiWindowPerStreamBitrateCapBps)
         #expect(targets[101] == targets[102])
+    }
+
+    @MainActor
+    @Test("App-stream stop message no longer ends the full app session")
+    func appStreamStopMessageDoesNotEndFullSession() async throws {
+        let host = MirageHostService(hostName: "StopSemanticsHost")
+        let clientID = UUID()
+        let client = MirageConnectedClient(
+            id: clientID,
+            name: "Client",
+            deviceType: .mac,
+            connectedAt: Date()
+        )
+        _ = await host.appStreamManager.startAppSession(
+            bundleIdentifier: bundleIdentifier,
+            appName: "InventoryApp",
+            appPath: "/Applications/InventoryApp.app",
+            clientID: clientID,
+            clientName: client.name,
+            requestedDisplayResolution: CGSize(width: 1920, height: 1080),
+            requestedClientScaleFactor: 2.0,
+            maxVisibleSlots: 2,
+            bitrateBudgetBps: 30_000_000
+        )
+        await host.appStreamManager.markSessionStreaming(bundleIdentifier)
+        _ = await host.appStreamManager.addWindowToSession(
+            bundleIdentifier: bundleIdentifier,
+            windowID: 9201,
+            streamID: 77,
+            title: "Main",
+            width: 1200,
+            height: 800,
+            isResizable: true
+        )
+
+        host.registerControlMessageHandlers()
+        let stop = StopStreamMessage(streamID: 77, minimizeWindow: false)
+        let message = try ControlMessage(type: .stopStream, content: stop)
+        let connection = NWConnection(
+            to: .hostPort(host: "127.0.0.1", port: .init(rawValue: 9)!),
+            using: .tcp
+        )
+
+        await host.handleClientMessage(message, from: client, connection: connection)
+
+        let remainingSession = await host.appStreamManager.getSession(bundleIdentifier: bundleIdentifier)
+        #expect(remainingSession != nil)
     }
 }
 #endif

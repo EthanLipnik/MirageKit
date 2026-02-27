@@ -203,7 +203,11 @@ extension WindowCaptureEngine {
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         let captureRate = effectiveCaptureRate()
-        let stallPolicy = resolvedStallPolicy(windowID: 0, frameRate: captureRate)
+        let stallPolicy = resolvedStallPolicy(
+            windowID: 0,
+            frameRate: captureRate,
+            captureMode: .display
+        )
         activeStallPolicy = stallPolicy
         streamOutput?.updateExpectations(
             frameRate: captureRate,
@@ -276,7 +280,12 @@ extension WindowCaptureEngine {
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
-        let stallPolicy = resolvedStallPolicy(windowID: resolvedWindowID, frameRate: captureRate)
+        let mode = captureMode ?? .window
+        let stallPolicy = resolvedStallPolicy(
+            windowID: resolvedWindowID,
+            frameRate: captureRate,
+            captureMode: mode
+        )
         activeStallPolicy = stallPolicy
         streamOutput?.updateExpectations(
             frameRate: captureRate,
@@ -317,7 +326,12 @@ extension WindowCaptureEngine {
         streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
-        let stallPolicy = resolvedStallPolicy(windowID: resolvedWindowID, frameRate: captureRate)
+        let mode = captureMode ?? .window
+        let stallPolicy = resolvedStallPolicy(
+            windowID: resolvedWindowID,
+            frameRate: captureRate,
+            captureMode: mode
+        )
         activeStallPolicy = stallPolicy
         streamOutput?.updateExpectations(
             frameRate: captureRate,

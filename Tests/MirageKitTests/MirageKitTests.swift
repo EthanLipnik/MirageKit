@@ -99,6 +99,19 @@ struct MirageKitTests {
         }
     }
 
+    @Test("Reserved close-window control type is rejected")
+    func reservedCloseWindowControlTypeIsRejected() {
+        var data = Data([0x89])
+        withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
+
+        switch ControlMessage.deserialize(from: data) {
+        case .invalidFrame:
+            break
+        default:
+            Issue.record("Expected invalidFrame for reserved close-window control type.")
+        }
+    }
+
     @Test("Control parser returns needMoreData for truncated payload")
     func controlParserReturnsNeedMoreDataForTruncatedPayload() {
         var data = Data([ControlMessageType.hello.rawValue])

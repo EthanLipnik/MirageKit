@@ -141,7 +141,11 @@ extension WindowCaptureEngine {
 
         // Create output handler with windowID for fallback capture during SCK pauses
         let captureRate = effectiveCaptureRate()
-        let stallPolicy = resolvedStallPolicy(windowID: window.windowID, frameRate: captureRate)
+        let stallPolicy = resolvedStallPolicy(
+            windowID: window.windowID,
+            frameRate: captureRate,
+            captureMode: .window
+        )
         activeStallPolicy = stallPolicy
         MirageLogger
             .capture(
@@ -515,7 +519,11 @@ extension WindowCaptureEngine {
         // Create output handler
         let captureRate = effectiveCaptureRate()
         let resolvedWindowID: CGWindowID = contentWindowID.map { CGWindowID($0) } ?? 0
-        let stallPolicy = resolvedStallPolicy(windowID: resolvedWindowID, frameRate: captureRate)
+        let stallPolicy = resolvedStallPolicy(
+            windowID: resolvedWindowID,
+            frameRate: captureRate,
+            captureMode: .display
+        )
         activeStallPolicy = stallPolicy
         let softMs = Int((stallPolicy.softStallThreshold * 1000).rounded())
         let hardMs = Int((stallPolicy.hardRestartThreshold * 1000).rounded())

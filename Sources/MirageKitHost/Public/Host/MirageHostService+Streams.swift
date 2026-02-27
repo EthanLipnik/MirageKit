@@ -854,6 +854,7 @@ public extension MirageHostService {
         updateAppSession: Bool = true
     )
     async {
+        clearPendingAppWindowReplacement(streamID: session.id)
         guard let context = streamsByID[session.id] else { return }
 
         // Clear any stuck modifier state when stream ends
@@ -945,6 +946,7 @@ public extension MirageHostService {
             if let bounds = getVirtualDisplayBounds(windowID: window.id) {
                 inputStreamCacheActor.updateWindowFrame(session.id, newFrame: bounds)
             }
+            await enforceVirtualDisplayPlacementAfterActivation(windowID: window.id)
             return
         }
 

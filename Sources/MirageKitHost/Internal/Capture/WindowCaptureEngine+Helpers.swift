@@ -124,6 +124,7 @@ extension WindowCaptureEngine {
 
     nonisolated static func resolveStallPolicy(
         windowID: CGWindowID,
+        captureMode: CaptureMode,
         frameRate: Int,
         configuredSoftStallLimit: CFAbsoluteTime,
         displayStallThreshold: CFAbsoluteTime = 1.5,
@@ -136,7 +137,7 @@ extension WindowCaptureEngine {
             windowStallThreshold: windowStallThreshold
         )
 
-        if windowID == 0 {
+        if captureMode == .display, windowID == 0 {
             let hard = min(max(soft * 2.0, soft + 1.5), 8.0)
             let debounce: CFAbsoluteTime = frameRate >= 120 ? 0.45 : 0.35
             return CaptureStallPolicy(
@@ -144,6 +145,18 @@ extension WindowCaptureEngine {
                 hardRestartThreshold: hard,
                 restartDebounce: debounce,
                 cancellationGrace: 0.30
+            )
+        }
+
+        if captureMode == .display {
+            // App-stream display capture for a specific window can be quiescent for long periods.
+            // Avoid aggressive restart loops that churn virtual displays and spike host CPU.
+            let hard = min(max(soft * 3.0, soft + 8.0), 30.0)
+            return CaptureStallPolicy(
+                softStallThreshold: soft,
+                hardRestartThreshold: hard,
+                restartDebounce: 0.35,
+                cancellationGrace: 0.40
             )
         }
 
@@ -155,9 +168,10 @@ extension WindowCaptureEngine {
         )
     }
 
-    func resolvedStallPolicy(windowID: CGWindowID, frameRate: Int) -> CaptureStallPolicy {
+    func resolvedStallPolicy(windowID: CGWindowID, frameRate: Int, captureMode: CaptureMode) -> CaptureStallPolicy {
         Self.resolveStallPolicy(
             windowID: windowID,
+            captureMode: captureMode,
             frameRate: frameRate,
             configuredSoftStallLimit: stallThreshold(for: frameRate)
         )

@@ -354,35 +354,48 @@ extension MirageClientService {
             streamStartedContinuation?.resume(returning: streamID)
             streamStartedContinuation = nil
 
-            if !registeredStreamIDs.contains(streamID) {
-                registeredStreamIDs.insert(streamID)
-                Task {
-                    do {
-                        await self.setupControllerForStream(streamID)
-                        self.addActiveStreamID(streamID)
-                        if isAppCentricStream { MirageLogger.client("Controller set up for app-centric stream \(streamID)") }
+            if isAppCentricStream {
+                streamStartupBaseTimes[streamID] = CFAbsoluteTimeGetCurrent()
+                streamStartupFirstRegistrationSent.remove(streamID)
+                streamStartupFirstPacketReceived.remove(streamID)
+                markStartupPacketPending(streamID)
+            }
 
-                        if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
-                            let reassembler = await controller.getReassembler()
-                            reassembler.updateExpectedDimensionToken(token)
-                        }
+            Task {
+                do {
+                    await self.setupControllerForStream(streamID)
+                    self.addActiveStreamID(streamID)
+                    if isAppCentricStream { MirageLogger.client("Controller set up for app-centric stream \(streamID)") }
 
-                        if self.udpConnection == nil { try await self.startVideoConnection() }
-
-                        try await self.sendStreamRegistration(streamID: streamID)
-                        await self.ensureAudioTransportRegistered(for: streamID)
-                        let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                        try? await self.sendStreamRefreshRateChange(
-                            streamID: streamID,
-                            maxRefreshRate: refreshRate
-                        )
-                        MirageLogger.client(
-                            "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                        )
-                    } catch {
-                        MirageLogger.error(.client, error: error, message: "Failed to establish video connection: ")
-                        self.registeredStreamIDs.remove(streamID)
+                    if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
+                        let reassembler = await controller.getReassembler()
+                        reassembler.updateExpectedDimensionToken(token)
                     }
+
+                    if self.udpConnection == nil { try await self.startVideoConnection() }
+
+                    // App-centric streams always refresh video registration on streamStarted.
+                    // This recovers from stale registration bookkeeping across multi-window app streams.
+                    let shouldRegisterVideo = !self.registeredStreamIDs.contains(streamID) || isAppCentricStream
+                    if shouldRegisterVideo {
+                        self.registeredStreamIDs.insert(streamID)
+                        try await self.sendStreamRegistration(streamID: streamID)
+                    }
+                    await self.ensureAudioTransportRegistered(for: streamID)
+                    let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                    try? await self.sendStreamRefreshRateChange(
+                        streamID: streamID,
+                        maxRefreshRate: refreshRate
+                    )
+                    MirageLogger.client(
+                        "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
+                    )
+                    if isAppCentricStream { self.startStartupRegistrationRetry(streamID: streamID) }
+                } catch {
+                    MirageLogger.error(.client, error: error, message: "Failed to establish video connection: ")
+                    self.registeredStreamIDs.remove(streamID)
+                    self.clearStartupPacketPending(streamID)
+                    self.cancelStartupRegistrationRetry(streamID: streamID)
                 }
             }
         }
@@ -402,6 +415,11 @@ extension MirageClientService {
             clearStreamRefreshRateOverride(streamID: streamID)
             clearAdaptiveFallbackState(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
+            streamStartupBaseTimes.removeValue(forKey: streamID)
+            streamStartupFirstRegistrationSent.remove(streamID)
+            streamStartupFirstPacketReceived.remove(streamID)
+            clearStartupPacketPending(streamID)
+            cancelStartupRegistrationRetry(streamID: streamID)
             activeJitterHoldMs = 0
 
             Task { [weak self] in

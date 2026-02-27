@@ -167,6 +167,105 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(ranges.allSatisfy { $0.count <= 2 })
     }
 
+    @Test("Existing-session select decision enforces owner, state, and slot cap")
+    func existingSessionSelectDecisionEnforcesOwnerStateAndCap() {
+        let ownerClientID = UUID()
+        let requesterClientID = UUID()
+
+        #expect(
+            MirageHostService.existingSessionSelectDecision(
+                sessionClientID: ownerClientID,
+                requestClientID: ownerClientID,
+                sessionState: .streaming,
+                hasVisibleSlotCapacity: true
+            ) == .allowExpansion
+        )
+        #expect(
+            MirageHostService.existingSessionSelectDecision(
+                sessionClientID: ownerClientID,
+                requestClientID: requesterClientID,
+                sessionState: .streaming,
+                hasVisibleSlotCapacity: true
+            ) == .rejectOtherClientOwner
+        )
+        #expect(
+            MirageHostService.existingSessionSelectDecision(
+                sessionClientID: ownerClientID,
+                requestClientID: ownerClientID,
+                sessionState: .starting,
+                hasVisibleSlotCapacity: true
+            ) == .rejectSessionNotStreaming
+        )
+        #expect(
+            MirageHostService.existingSessionSelectDecision(
+                sessionClientID: ownerClientID,
+                requestClientID: ownerClientID,
+                sessionState: .streaming,
+                hasVisibleSlotCapacity: false
+            ) == .rejectVisibleSlotCapReached
+        )
+    }
+
+    @Test("Window-close cooldown ignores duplicate close notifications")
+    func windowCloseCooldownIgnoresDuplicateCloseNotifications() {
+        #expect(
+            MirageHostService.windowCloseCooldownDecision(
+                existingPendingClosedWindowID: 42,
+                closingWindowID: 42
+            ) == .ignoreDuplicate
+        )
+        #expect(
+            MirageHostService.windowCloseCooldownDecision(
+                existingPendingClosedWindowID: 41,
+                closingWindowID: 42
+            ) == .enterCooldown
+        )
+        #expect(
+            MirageHostService.windowCloseCooldownDecision(
+                existingPendingClosedWindowID: nil,
+                closingWindowID: 42
+            ) == .enterCooldown
+        )
+    }
+
+    @Test("Preferred app-window ordering prioritizes focused then main windows")
+    func preferredWindowOrderingPrioritizesFocusedThenMain() {
+        let focusedCandidate = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(id: 801, title: "Focused", origin: .zero),
+            classification: .primary,
+            role: "AXWindow",
+            subrole: "AXStandardWindow",
+            parentWindowID: nil,
+            isFocused: true,
+            isMain: false
+        )
+        let mainCandidate = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(id: 802, title: "Main", origin: .zero),
+            classification: .primary,
+            role: "AXWindow",
+            subrole: "AXStandardWindow",
+            parentWindowID: nil,
+            isFocused: false,
+            isMain: true
+        )
+        let fallbackCandidate = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(id: 803, title: "Fallback", origin: .zero),
+            classification: .primary,
+            role: "AXWindow",
+            subrole: "AXStandardWindow",
+            parentWindowID: nil,
+            isFocused: false,
+            isMain: false
+        )
+
+        let sorted = [fallbackCandidate, mainCandidate, focusedCandidate]
+            .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
+        #expect(sorted.map(\.window.id) == [801, 802, 803])
+    }
+
     @MainActor
     @Test("Active stream maps remain consistent across register/update/remove")
     func activeStreamMapsRemainConsistent() async {

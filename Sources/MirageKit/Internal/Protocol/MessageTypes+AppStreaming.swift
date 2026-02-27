@@ -278,7 +278,7 @@ public struct AppWindowSwapResultMessage: Codable, Sendable {
 }
 
 /// New window added to the app stream (Host → Client)
-public struct WindowAddedToStreamMessage: Codable {
+public struct WindowAddedToStreamMessage: Codable, Sendable {
     /// Bundle identifier of the app
     public let bundleIdentifier: String
     /// Details of the new window
@@ -320,8 +320,6 @@ public struct WindowRemovedFromStreamMessage: Codable, Sendable {
     public enum RemovalReason: String, Codable, Sendable {
         /// Host closed the window
         case hostClosed
-        /// Client requested close
-        case clientClosed
         /// Window no longer matches stream-eligible criteria
         case noLongerEligible
         /// Host-side app terminated
@@ -351,16 +349,6 @@ public struct WindowStreamFailedMessage: Codable, Sendable {
         self.windowID = windowID
         self.title = title
         self.reason = reason
-    }
-}
-
-/// Request to close a window on the host (Client → Host)
-package struct CloseWindowRequestMessage: Codable {
-    /// The window to close
-    package let windowID: WindowID
-
-    package init(windowID: WindowID) {
-        self.windowID = windowID
     }
 }
 

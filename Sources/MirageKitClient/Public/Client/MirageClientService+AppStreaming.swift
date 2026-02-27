@@ -39,7 +39,7 @@ public extension MirageClientService {
         MirageLogger.client("Host hardware icon request sent")
     }
 
-    /// Select an app to stream (streams all of its windows).
+    /// Select an app to stream.
     /// - Parameters:
     ///   - bundleIdentifier: Bundle identifier of the app to stream.
     ///   - scaleFactor: Optional display scale factor (e.g., 2.0 for Retina).
@@ -126,28 +126,6 @@ public extension MirageClientService {
         )
         let message = try ControlMessage(type: .appWindowSwapRequest, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
-    }
-
-    /// Request host-side close for a specific app-stream window.
-    /// - Parameter windowID: Host window identifier to close.
-    func closeWindow(windowID: WindowID) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
-
-        let request = CloseWindowRequestMessage(windowID: windowID)
-        let message = try ControlMessage(type: .closeWindowRequest, content: request)
-        let payload = message.serialize()
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: payload, completion: .contentProcessed { error in
-                if let error {
-                    continuation.resume(throwing: error)
-                } else {
-                    continuation.resume()
-                }
-            })
-        }
-
-        MirageLogger.client("Close window requested for window \(windowID)")
     }
 
 }
