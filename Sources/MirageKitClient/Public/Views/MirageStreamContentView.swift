@@ -17,8 +17,6 @@ import AppKit
 /// This view bridges `MirageStreamViewRepresentable` with a `MirageClientSessionStore`
 /// to coordinate focus, resize events, and input forwarding.
 public struct MirageStreamContentView: View {
-    @Environment(\.scenePhase) private var scenePhase
-
     public let session: MirageStreamSessionState
     public let sessionStore: MirageClientSessionStore
     public let clientService: MirageClientService
@@ -43,6 +41,7 @@ public struct MirageStreamContentView: View {
     public let onWindowWillClose: (() -> Void)?
     private let desktopResizeAckTimeout: Duration = .seconds(3)
     private let desktopResizeConvergenceTolerance: CGFloat = 4
+    private let desktopResizeSendDebounce: Duration = .milliseconds(120)
 
     /// Resize holdoff task used during foreground transitions (iOS).
     @State private var resizeHoldoffTask: Task<Void, Never>?
@@ -65,6 +64,7 @@ public struct MirageStreamContentView: View {
     @State private var latestDrawableDisplaySize: CGSize = .zero
     @State private var sentDesktopPostAckCorrection: Bool = false
     @State private var desktopResizeAckTimeoutTask: Task<Void, Never>?
+    @State private var pendingDesktopDisplayResolutionAfterAck: CGSize = .zero
 
     @State private var scrollInputSampler = ScrollInputSampler()
     @State private var pointerInputSampler = PointerInputSampler()
@@ -191,8 +191,8 @@ public struct MirageStreamContentView: View {
                 maxDrawableSize: maxDrawableSize
             )
             .ignoresSafeArea()
-            .blur(radius: isResizing ? 20 : 0)
-            .animation(.easeInOut(duration: 0.15), value: isResizing)
+            .blur(radius: resizeBlurRadius)
+            .animation(.easeInOut(duration: 0.15), value: resizeBlurRadius)
             #else
             MirageStreamViewRepresentable(
                 streamID: session.streamID,
@@ -209,8 +209,8 @@ public struct MirageStreamContentView: View {
                 maxDrawableSize: maxDrawableSize
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .blur(radius: isResizing ? 20 : 0)
-            .animation(.easeInOut(duration: 0.15), value: isResizing)
+            .blur(radius: resizeBlurRadius)
+            .animation(.easeInOut(duration: 0.15), value: resizeBlurRadius)
             #endif
         }
         .overlay {
@@ -226,6 +226,15 @@ public struct MirageStreamContentView: View {
                             Text("Connecting to stream...")
                                 .foregroundStyle(.white.opacity(0.7))
                         }
+                    }
+                    .allowsHitTesting(false)
+            } else if awaitingPostResizeFirstFrame {
+                Rectangle()
+                    .fill(.black.opacity(0.22))
+                    .overlay {
+                        ProgressView()
+                            .controlSize(.regular)
+                            .tint(.white)
                     }
                     .allowsHitTesting(false)
             }
@@ -255,10 +264,6 @@ public struct MirageStreamContentView: View {
         .onAppear {
             sessionStore.setFocusedSession(session.id)
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
-            applySceneDrivenThrottle(scenePhase)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            applySceneDrivenThrottle(newPhase)
         }
         .onDisappear {
             scrollInputSampler.reset()
@@ -274,14 +279,15 @@ public struct MirageStreamContentView: View {
             appResizeAckTimeoutTask?.cancel()
             appResizeAckTimeoutTask = nil
             awaitingAppResizeAck = false
+            pendingDesktopDisplayResolutionAfterAck = .zero
             desktopResizeAckTimeoutTask?.cancel()
             desktopResizeAckTimeoutTask = nil
+            setLocalResizeDecodePause(false, requestRecoveryKeyframeOnResume: false)
             if awaitingDesktopResizeAck {
                 finishDesktopResizeAwaitingAck()
             } else {
                 if isResizing { isResizing = false }
             }
-            applySceneDrivenThrottle(.background)
         }
         #if os(macOS)
         .background(
@@ -310,6 +316,16 @@ public struct MirageStreamContentView: View {
 
     private var macOSInputEnabled: Bool {
         canSendInputToHost && sessionStore.focusedSessionID == session.id
+    }
+
+    private var awaitingPostResizeFirstFrame: Bool {
+        sessionStore.postResizeAwaitingFirstFrameStreamIDs.contains(session.streamID)
+    }
+
+    private var resizeBlurRadius: CGFloat {
+        if awaitingPostResizeFirstFrame { return 24 }
+        if isResizing { return 20 }
+        return 0
     }
 
     private func sendInputEvent(_ event: MirageInputEvent) {
@@ -395,11 +411,6 @@ public struct MirageStreamContentView: View {
         }
 
         clientService.sendInputFireAndForget(event, forStream: session.streamID)
-    }
-
-    private func applySceneDrivenThrottle(_ phase: ScenePhase) {
-        let isFocused = phase == .active
-        clientService.updateAppStreamFocusState(streamID: session.streamID, isFocused: isFocused)
     }
 
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
@@ -542,7 +553,9 @@ public struct MirageStreamContentView: View {
             case .skipNoOp:
                 displayResolutionTask?.cancel()
                 displayResolutionTask = nil
+                pendingDesktopDisplayResolutionAfterAck = .zero
                 lastSentDisplayResolution = preferredDisplaySize
+                setLocalResizeDecodePause(false, requestRecoveryKeyframeOnResume: false)
                 if awaitingDesktopResizeAck {
                     finishDesktopResizeAwaitingAck()
                 } else {
@@ -551,14 +564,20 @@ public struct MirageStreamContentView: View {
                 }
                 return
             case .send:
+                if !isResizing { isResizing = true }
+                setLocalResizeDecodePause(true)
                 guard lastSentDisplayResolution != preferredDisplaySize else { return }
+                if awaitingDesktopResizeAck {
+                    pendingDesktopDisplayResolutionAfterAck = preferredDisplaySize
+                    return
+                }
                 break
             }
 
             displayResolutionTask?.cancel()
             displayResolutionTask = Task { @MainActor in
                 do {
-                    try await Task.sleep(for: .milliseconds(200))
+                    try await Task.sleep(for: desktopResizeSendDebounce)
                 } catch {
                     return
                 }
@@ -573,6 +592,7 @@ public struct MirageStreamContentView: View {
                 )
                 if latestDecision == .skipNoOp {
                     lastSentDisplayResolution = preferredDisplaySize
+                    setLocalResizeDecodePause(false, requestRecoveryKeyframeOnResume: false)
                     if awaitingDesktopResizeAck { finishDesktopResizeAwaitingAck() }
                     else if isResizing { isResizing = false }
                     return
@@ -580,6 +600,10 @@ public struct MirageStreamContentView: View {
 
                 guard lastSentDisplayResolution != preferredDisplaySize else {
                     if !awaitingDesktopResizeAck, isResizing { isResizing = false }
+                    return
+                }
+                if awaitingDesktopResizeAck {
+                    pendingDesktopDisplayResolutionAfterAck = preferredDisplaySize
                     return
                 }
                 sentDesktopPostAckCorrection = false
@@ -596,6 +620,7 @@ public struct MirageStreamContentView: View {
     private func beginDesktopResizeAwaitingAck() {
         awaitingDesktopResizeAck = true
         isResizing = true
+        setLocalResizeDecodePause(true)
         desktopResizeAckTimeoutTask?.cancel()
         desktopResizeAckTimeoutTask = Task { @MainActor in
             do {
@@ -614,10 +639,59 @@ public struct MirageStreamContentView: View {
         desktopResizeAckTimeoutTask = nil
         awaitingDesktopResizeAck = false
         sentDesktopPostAckCorrection = false
+        let coalescedTarget = pendingDesktopDisplayResolutionAfterAck
+        pendingDesktopDisplayResolutionAfterAck = .zero
+
+        if flushCoalescedDesktopResizeIfNeeded(targetDisplaySize: coalescedTarget) {
+            return
+        }
+
+        let shouldRequestRecoveryKeyframeOnResume = awaitingPostResizeFirstFrame
+        setLocalResizeDecodePause(
+            false,
+            requestRecoveryKeyframeOnResume: shouldRequestRecoveryKeyframeOnResume
+        )
         if isResizing { isResizing = false }
         if latestDrawableDisplaySize.width > 0, latestDrawableDisplaySize.height > 0 {
             scheduleStreamScaleUpdate(for: latestDrawableDisplaySize)
         }
+    }
+
+    private func flushCoalescedDesktopResizeIfNeeded(targetDisplaySize: CGSize) -> Bool {
+        guard targetDisplaySize.width > 0, targetDisplaySize.height > 0 else { return false }
+        guard !awaitingDesktopResizeAck else { return false }
+
+        let acknowledgedPixelSize = currentDesktopAcknowledgedPixelSize()
+        let pointScale = desktopPointScale(for: targetDisplaySize)
+        let decision = desktopResizeRequestDecision(
+            targetDisplaySize: targetDisplaySize,
+            acknowledgedPixelSize: acknowledgedPixelSize,
+            pointScale: pointScale,
+            mismatchThresholdPoints: desktopResizeConvergenceTolerance
+        )
+        guard decision == .send else {
+            lastSentDisplayResolution = targetDisplaySize
+            return false
+        }
+
+        guard lastSentDisplayResolution != targetDisplaySize else { return false }
+
+        MirageLogger
+            .client(
+                "Flushing coalesced desktop resize for stream \(session.streamID) to " +
+                    "\(Int(targetDisplaySize.width))x\(Int(targetDisplaySize.height)) pts"
+            )
+        sentDesktopPostAckCorrection = false
+        setLocalResizeDecodePause(true)
+        beginDesktopResizeAwaitingAck()
+        lastSentDisplayResolution = targetDisplaySize
+        Task { @MainActor [clientService] in
+            try? await clientService.sendDisplayResolutionChange(
+                streamID: session.streamID,
+                newResolution: targetDisplaySize
+            )
+        }
+        return true
     }
 
     private func beginAppResizeAwaitingAck() {
@@ -688,6 +762,23 @@ public struct MirageStreamContentView: View {
             }
         case .waitForTimeout:
             MirageLogger.client("Desktop resize ack mismatch persisted after correction for stream \(session.streamID)")
+        }
+    }
+
+    private func setLocalResizeDecodePause(
+        _ paused: Bool,
+        requestRecoveryKeyframeOnResume: Bool = false
+    ) {
+        guard isDesktopStream else { return }
+        guard let controller = clientService.controller(for: session.streamID) else { return }
+        Task {
+            if paused {
+                await controller.suspendDecodeForLocalResize()
+            } else {
+                await controller.resumeDecodeAfterLocalResize(
+                    requestRecoveryKeyframe: requestRecoveryKeyframeOnResume
+                )
+            }
         }
     }
 

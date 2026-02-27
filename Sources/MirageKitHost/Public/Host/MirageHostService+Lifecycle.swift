@@ -168,6 +168,7 @@ public extension MirageHostService {
 
         // End the session
         await appStreamManager.endSession(bundleIdentifier: bundleIdentifier)
+        await stopAppStreamGovernorsIfIdle()
         await restoreStageManagerAfterAppStreamingIfNeeded()
 
         MirageLogger.host("Ended app stream for \(bundleIdentifier)")

@@ -89,12 +89,114 @@ extension StreamController {
         return next
     }
 
+    func armFirstPresentedFrameAwaiter(reason: String) {
+        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+        awaitingFirstPresentedFrame = true
+        firstPresentedFrameBaselineSequence = snapshot.sequence
+        firstPresentedFrameWaitStartTime = currentTime()
+        firstPresentedFrameLastWaitLogTime = firstPresentedFrameWaitStartTime
+
+        MirageLogger
+            .client(
+                "Waiting for first presented frame (\(reason)) for stream \(streamID), baseline sequence \(snapshot.sequence)"
+            )
+        startFirstPresentedFrameMonitorIfNeeded()
+    }
+
+    func stopFirstPresentedFrameMonitor() {
+        firstPresentedFrameTask?.cancel()
+        firstPresentedFrameTask = nil
+        awaitingFirstPresentedFrame = false
+        firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameWaitStartTime = 0
+        firstPresentedFrameLastWaitLogTime = 0
+    }
+
+    func markFirstFrameDecoded() {
+        if awaitingFirstFrameAfterResize {
+            awaitingFirstFrameAfterResize = false
+            MirageLogger.client("Post-resize first frame decoded for stream \(streamID)")
+        }
+    }
+
     func markFirstFrameReceived() {
-        guard !hasReceivedFirstFrame else { return }
-        hasReceivedFirstFrame = true
+        let now = currentTime()
+        let wasAwaitingFirstPresentation = awaitingFirstPresentedFrame
+        let waitStart = firstPresentedFrameWaitStartTime
+
+        awaitingFirstPresentedFrame = false
+        firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameWaitStartTime = 0
+        firstPresentedFrameLastWaitLogTime = 0
+
+        if awaitingFirstFrameAfterResize {
+            awaitingFirstFrameAfterResize = false
+            if waitStart > 0 {
+                let elapsedMs = Int((now - waitStart) * 1000)
+                MirageLogger.client(
+                    "Post-resize first frame presented for stream \(streamID) (+\(elapsedMs)ms)"
+                )
+            } else {
+                MirageLogger.client("Post-resize first frame presented for stream \(streamID)")
+            }
+        }
+
+        let shouldNotify = !hasReceivedFirstFrame || wasAwaitingFirstPresentation
+        if !hasReceivedFirstFrame {
+            hasReceivedFirstFrame = true
+        }
+        guard shouldNotify else { return }
+
         Task { @MainActor [weak self] in
             await self?.onFirstFrame?()
         }
+    }
+
+    private func startFirstPresentedFrameMonitorIfNeeded() {
+        guard firstPresentedFrameTask == nil else { return }
+        firstPresentedFrameTask = Task { [weak self] in
+            guard let self else { return }
+            await self.runFirstPresentedFrameMonitor()
+        }
+    }
+
+    private func runFirstPresentedFrameMonitor() async {
+        defer { firstPresentedFrameTask = nil }
+
+        while !Task.isCancelled {
+            guard awaitingFirstPresentedFrame else { return }
+
+            let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+            if snapshot.sequence > firstPresentedFrameBaselineSequence {
+                markFirstFrameReceived()
+                return
+            }
+
+            maybeLogFirstPresentedFrameWait(now: currentTime(), latestSequence: snapshot.sequence)
+
+            do {
+                try await Task.sleep(for: Self.firstPresentedFramePollInterval)
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func maybeLogFirstPresentedFrameWait(now: CFAbsoluteTime, latestSequence: UInt64) {
+        guard awaitingFirstPresentedFrame else { return }
+        guard firstPresentedFrameWaitStartTime > 0 else { return }
+        guard now - firstPresentedFrameLastWaitLogTime >= Self.firstPresentedFrameWaitLogInterval else { return }
+
+        firstPresentedFrameLastWaitLogTime = now
+        let elapsedMs = Int((now - firstPresentedFrameWaitStartTime) * 1000)
+        let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
+        let awaitingKeyframe = reassembler.isAwaitingKeyframe()
+        MirageLogger
+            .client(
+                "Still waiting for first presented frame for stream \(streamID) (+\(elapsedMs)ms, " +
+                    "baseline=\(firstPresentedFrameBaselineSequence), latest=\(latestSequence), " +
+                    "queueDepth=\(pendingDepth), awaitingKeyframe=\(awaitingKeyframe))"
+            )
     }
 
     func recordDecodedFrame() {
@@ -135,11 +237,11 @@ extension StreamController {
     }
 
     func handleFrameLossSignal() async {
-        // Bootstrap exception: if no frame has ever decoded, request keyframes so startup
+        // Bootstrap exception: if no frame has ever been presented, request keyframes so startup
         // does not deadlock on a lost initial keyframe.
         guard hasReceivedFirstFrame else {
             MirageLogger.client(
-                "Frame loss detected before first decoded frame for stream \(streamID); " +
+                "Frame loss detected before first presented frame for stream \(streamID); " +
                     "requesting bootstrap keyframe recovery"
             )
             reassembler.enterKeyframeOnlyMode()

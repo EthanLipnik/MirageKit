@@ -52,9 +52,20 @@ extension MirageClientService {
             let started = try message.decode(AppStreamStartedMessage.self)
             MirageLogger.client("App stream started: \(started.appName) with \(started.windows.count) windows")
             streamingAppBundleID = started.bundleIdentifier
+            appWindowInventory = nil
             onAppStreamStarted?(started.bundleIdentifier, started.appName, started.windows)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app stream started: ")
+        }
+    }
+
+    func handleAppWindowInventory(_ message: ControlMessage) {
+        do {
+            let inventory = try message.decode(AppWindowInventoryMessage.self)
+            appWindowInventory = inventory
+            onAppWindowInventoryUpdate?(inventory)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app window inventory: ")
         }
     }
 
@@ -88,12 +99,31 @@ extension MirageClientService {
         }
     }
 
+    func handleAppWindowSwapResult(_ message: ControlMessage) {
+        do {
+            let result = try message.decode(AppWindowSwapResultMessage.self)
+            if result.success {
+                MirageLogger.client(
+                    "App window swap succeeded: stream=\(result.targetSlotStreamID), window=\(result.windowID)"
+                )
+            } else {
+                MirageLogger.client(
+                    "App window swap failed: stream=\(result.targetSlotStreamID), window=\(result.windowID), reason=\(result.reason ?? "unknown")"
+                )
+            }
+            onAppWindowSwapResult?(result)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app window swap result: ")
+        }
+    }
+
     func handleAppTerminated(_ message: ControlMessage) {
         do {
             let terminated = try message.decode(AppTerminatedMessage.self)
             MirageLogger.client("App terminated: \(terminated.bundleIdentifier)")
             if streamingAppBundleID == terminated.bundleIdentifier {
                 streamingAppBundleID = nil
+                appWindowInventory = nil
                 pendingAppAdaptiveFallbackBitrate = nil
                 pendingAppAdaptiveFallbackBitDepth = nil
             }

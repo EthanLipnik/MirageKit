@@ -8,6 +8,7 @@ MirageKit is the Swift Package that implements the core streaming framework for 
 - If a function is no longer used, remove it completely: signature, implementation, call sites, related protocol requirements, and tests.
 - Do not keep dead wrappers, no-op adapters, or dormant compatibility helpers in internal modules.
 - Public-facing API compatibility can be preserved intentionally at the package boundary when required, but dead code remains disallowed.
+- Platform feature parity is the default across Mirage clients (`macOS`, `iOS`, `visionOS`); do not ask whether to implement work for only one or two platforms unless the user explicitly scopes the request.
 
 ## Behavior Notes
 - MirageKit license: PolyForm Shield 1.0.0 with the line-of-business notice for dedicated remote window/desktop/secondary display/drawing-tablet streaming.

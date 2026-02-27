@@ -54,5 +54,17 @@ struct DesktopResizeRequestDecisionTests {
 
         #expect(decision == .send)
     }
+
+    @Test("Tiny host mismatch can be suppressed with wider tolerance")
+    func tinyHostMismatchSkipsWithWiderTolerance() {
+        let decision = desktopResizeRequestDecision(
+            targetDisplaySize: CGSize(width: 1440, height: 1026),
+            acknowledgedPixelSize: CGSize(width: 2880, height: 2040),
+            pointScale: 2,
+            mismatchThresholdPoints: 8
+        )
+
+        #expect(decision == .skipNoOp)
+    }
 }
 #endif

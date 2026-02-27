@@ -15,6 +15,23 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Consumer-Based Acquisition (for non-stream consumers)
 
+    private func syncActiveConsumerColorSpace(
+        _ consumer: DisplayConsumer,
+        to colorSpace: MirageColorSpace
+    ) {
+        guard let info = activeConsumers[consumer], info.colorSpace != colorSpace else { return }
+        activeConsumers[consumer] = ClientDisplayInfo(
+            resolution: info.resolution,
+            windowID: info.windowID,
+            colorSpace: colorSpace,
+            acquiredAt: info.acquiredAt
+        )
+        MirageLogger
+            .host(
+                "Consumer \(consumer) using fallback color space \(colorSpace.displayName) for shared display"
+            )
+    }
+
     /// Acquire the shared virtual display for a non-stream purpose (login display, unlock, desktop stream)
     /// Creates the display if this is the first consumer, otherwise returns existing
     /// - Parameters:
@@ -99,6 +116,7 @@ extension SharedVirtualDisplayManager {
 
             notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
             guard let updatedDisplay = sharedDisplay else { throw SharedDisplayError.noActiveDisplay }
+            syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
             return snapshot(from: updatedDisplay)
         }
 
@@ -179,6 +197,7 @@ extension SharedVirtualDisplayManager {
         notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
 
         guard let display = sharedDisplay else { throw SharedDisplayError.noActiveDisplay }
+        syncActiveConsumerColorSpace(consumer, to: display.colorSpace)
 
         return snapshot(from: display)
     }
@@ -244,8 +263,12 @@ extension SharedVirtualDisplayManager {
             sharedDisplay = try await recreateDisplay(
                 newResolution: newResolution,
                 refreshRate: refreshRate,
-                colorSpace: requestedColorSpace
+                colorSpace: requestedColorSpace,
+                preferFastRecreate: consumer == .desktopStream
             )
+            if let updatedDisplay = sharedDisplay {
+                syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
+            }
             notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
             return
         }
@@ -260,24 +283,39 @@ extension SharedVirtualDisplayManager {
                     "Updating display \(display.displayID) for \(consumer) to \(Int(newResolution.width))x\(Int(newResolution.height))@\(refreshRate)Hz"
                 )
 
-            let updated = await updateDisplayInPlace(
-                newResolution: newResolution,
-                refreshRate: refreshRate,
-                colorSpace: requestedColorSpace
-            )
-
-            if !updated {
-                if needsRefresh { MirageLogger.host("In-place refresh rate update failed, recreating display") } else {
-                    MirageLogger.host("In-place resize failed, recreating display")
-                }
+            let useFastDesktopRecreatePath = consumer == .desktopStream && requiresResize
+            if useFastDesktopRecreatePath {
+                MirageLogger.host("Desktop resize using fast recreate path (skip in-place mode update)")
                 sharedDisplay = try await recreateDisplay(
+                    newResolution: newResolution,
+                    refreshRate: refreshRate,
+                    colorSpace: requestedColorSpace,
+                    preferFastRecreate: true
+                )
+            } else {
+                let updated = await updateDisplayInPlace(
                     newResolution: newResolution,
                     refreshRate: refreshRate,
                     colorSpace: requestedColorSpace
                 )
+
+                if !updated {
+                    if needsRefresh { MirageLogger.host("In-place refresh rate update failed, recreating display") } else {
+                        MirageLogger.host("In-place resize failed, recreating display")
+                    }
+                    sharedDisplay = try await recreateDisplay(
+                        newResolution: newResolution,
+                        refreshRate: refreshRate,
+                        colorSpace: requestedColorSpace,
+                        preferFastRecreate: consumer == .desktopStream
+                    )
+                }
             }
         }
 
+        if let updatedDisplay = sharedDisplay {
+            syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
+        }
         notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
     }
 }

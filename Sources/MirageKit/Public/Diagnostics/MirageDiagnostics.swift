@@ -167,6 +167,7 @@ actor MirageDiagnosticsStore {
 
     private var sinks: [MirageDiagnosticsSinkToken: any MirageDiagnosticsSink] = [:]
     private var contextProviders: [MirageDiagnosticsContextProviderToken: MirageDiagnosticsContextProvider] = [:]
+    private var contextProviderOrder: [MirageDiagnosticsContextProviderToken] = []
 
     func addSink(_ sink: any MirageDiagnosticsSink) -> MirageDiagnosticsSinkToken {
         let token = MirageDiagnosticsSinkToken()
@@ -185,17 +186,19 @@ actor MirageDiagnosticsStore {
     func registerContextProvider(_ provider: @escaping MirageDiagnosticsContextProvider) -> MirageDiagnosticsContextProviderToken {
         let token = MirageDiagnosticsContextProviderToken()
         contextProviders[token] = provider
+        contextProviderOrder.append(token)
         return token
     }
 
     func unregisterContextProvider(_ token: MirageDiagnosticsContextProviderToken) {
         contextProviders.removeValue(forKey: token)
+        contextProviderOrder.removeAll { $0 == token }
     }
 
     func snapshotContext() async -> MirageDiagnosticsContext {
         var snapshot: MirageDiagnosticsContext = [:]
-        let providers = Array(contextProviders.values)
-        for provider in providers {
+        let orderedProviders = contextProviderOrder.compactMap { contextProviders[$0] }
+        for provider in orderedProviders {
             let context = await provider()
             snapshot.merge(context, uniquingKeysWith: { _, newValue in newValue })
         }

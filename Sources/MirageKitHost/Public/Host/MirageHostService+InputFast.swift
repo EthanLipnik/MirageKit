@@ -27,6 +27,8 @@ extension MirageHostService {
                 return
             }
 
+            noteAppStreamInputSignal(streamID: inputMessage.streamID)
+
             if cacheEntry.window.id == 0 {
                 switch inputMessage.event {
                 case .relativeResize:

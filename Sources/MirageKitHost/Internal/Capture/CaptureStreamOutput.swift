@@ -114,9 +114,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var fallbackStartTime: CFAbsoluteTime = 0 // When fallback mode started
     private let fallbackLock = NSLock()
 
-    /// Only request keyframe if fallback lasted longer than this threshold
-    /// Brief fallbacks (<200ms) don't need keyframes - they're just normal SCK latency
-    private let keyframeThreshold: CFAbsoluteTime = 0.35
+    /// Only request keyframe if fallback lasted longer than this threshold.
+    /// Short fallback blips are common during menu tracking and focus churn and
+    /// forcing a keyframe for each one can overload multi-stream app sessions.
+    private let keyframeThreshold: CFAbsoluteTime = 1.0
 
     init(
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,

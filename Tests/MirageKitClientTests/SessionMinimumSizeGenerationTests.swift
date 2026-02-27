@@ -44,6 +44,66 @@ struct SessionMinimumSizeGenerationTests {
         #expect(store.sessionMinSizes.isEmpty)
     }
 
+    @Test("Session metadata updates for same stream ID rebind")
+    @MainActor
+    func sessionMetadataUpdatesForStreamRebind() {
+        let store = MirageClientSessionStore()
+        let sessionID = store.createSession(
+            streamID: 7,
+            window: testWindow(id: 701),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.updateSessionWindowMetadata(
+            streamID: 7,
+            window: testWindow(id: 702)
+        )
+
+        #expect(store.session(for: sessionID)?.window.id == 702)
+        #expect(store.sessionForStream(701) == nil)
+        #expect(store.sessionForStream(702)?.streamID == 7)
+    }
+
+    @Test("Post-resize transition clears on first frame")
+    @MainActor
+    func postResizeTransitionClearsOnFirstFrame() {
+        let store = MirageClientSessionStore()
+        let streamID: StreamID = 11
+        _ = store.createSession(
+            streamID: streamID,
+            window: testWindow(id: 1101),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.beginPostResizeTransition(for: streamID)
+        #expect(store.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        store.markFirstFrameReceived(for: streamID)
+        #expect(!store.isAwaitingPostResizeFirstFrame(for: streamID))
+        #expect(store.sessionByStreamID(streamID)?.hasReceivedFirstFrame == true)
+    }
+
+    @Test("Removing session clears post-resize transition state")
+    @MainActor
+    func removingSessionClearsPostResizeTransitionState() {
+        let store = MirageClientSessionStore()
+        let streamID: StreamID = 12
+        let sessionID = store.createSession(
+            streamID: streamID,
+            window: testWindow(id: 1201),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.beginPostResizeTransition(for: streamID)
+        #expect(store.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        store.removeSession(sessionID)
+        #expect(!store.isAwaitingPostResizeFirstFrame(for: streamID))
+    }
+
     @MainActor
     private func testWindow(id: WindowID) -> MirageWindow {
         MirageWindow(

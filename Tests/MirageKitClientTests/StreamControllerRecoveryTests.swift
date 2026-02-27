@@ -15,6 +15,92 @@ import Testing
 #if os(macOS)
 @Suite("Stream Controller Recovery")
 struct StreamControllerRecoveryTests {
+    @Test("Post-resize decode admission stays keyframe-only until first frame")
+    func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstFrame() {
+        let dropDecision = StreamController.postResizeDecodeAdmissionDecision(
+            awaitingFirstFrameAfterResize: true,
+            isKeyframe: false
+        )
+        let acceptKeyframeDecision = StreamController.postResizeDecodeAdmissionDecision(
+            awaitingFirstFrameAfterResize: true,
+            isKeyframe: true
+        )
+        let acceptNormalDecision = StreamController.postResizeDecodeAdmissionDecision(
+            awaitingFirstFrameAfterResize: false,
+            isKeyframe: false
+        )
+
+        #expect(dropDecision == .dropNonKeyframeWhileAwaitingFirstFrame)
+        #expect(acceptKeyframeDecision == .accept)
+        #expect(acceptNormalDecision == .accept)
+    }
+
+    @Test("Local-resize decode admission drops while paused")
+    func localResizeDecodeAdmissionDropsWhilePaused() {
+        let dropDecision = StreamController.localResizeDecodeAdmissionDecision(
+            decodePausedForLocalResize: true
+        )
+        let acceptDecision = StreamController.localResizeDecodeAdmissionDecision(
+            decodePausedForLocalResize: false
+        )
+
+        #expect(dropDecision == .dropWhileLocalResizePaused)
+        #expect(acceptDecision == .accept)
+    }
+
+    @Test("Suspend and resume local-resize decode toggles pause state")
+    func suspendAndResumeLocalResizeDecodeTogglesPauseState() async {
+        let controller = StreamController(streamID: 91, maxPayloadSize: 1200)
+
+        await controller.suspendDecodeForLocalResize()
+        #expect(await controller.decodePausedForLocalResize)
+
+        await controller.resumeDecodeAfterLocalResize(requestRecoveryKeyframe: false)
+        #expect(!(await controller.decodePausedForLocalResize))
+
+        await controller.stop()
+    }
+
+    @Test("Reset re-arms first-frame callback for post-resize transitions")
+    func resetRearmsFirstFrameCallbackForPostResizeTransition() async throws {
+        let firstFrameCounter = LockedCounter()
+        let controller = StreamController(streamID: 90, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: nil,
+            onResizeEvent: nil,
+            onResizeStateChanged: nil,
+            onFrameDecoded: nil,
+            onFirstFrame: {
+                firstFrameCounter.increment()
+            },
+            onAdaptiveFallbackNeeded: nil
+        )
+
+        await controller.markFirstFrameReceived()
+        try await waitUntil("initial first-frame callback") {
+            firstFrameCounter.value == 1
+        }
+        #expect(await controller.hasReceivedFirstFrame)
+
+        await controller.resetForNewSession()
+        #expect(!(await controller.hasReceivedFirstFrame))
+        #expect(!(await controller.awaitingFirstFrameAfterResize))
+
+        await controller.beginPostResizeTransition()
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.markFirstFrameReceived()
+        try await waitUntil("post-resize first-frame callback") {
+            firstFrameCounter.value == 2
+        }
+
+        #expect(await controller.hasReceivedFirstFrame)
+        #expect(!(await controller.awaitingFirstFrameAfterResize))
+
+        await controller.stop()
+    }
+
     @Test("Decode enqueue signals render listeners through stream store")
     func decodeEnqueueSignalsRenderListeners() {
         let streamID: StreamID = 50

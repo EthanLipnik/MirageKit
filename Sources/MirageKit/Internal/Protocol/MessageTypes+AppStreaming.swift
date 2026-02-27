@@ -70,6 +70,10 @@ package struct SelectAppMessage: Codable {
     package let streamScale: CGFloat?
     /// Client audio streaming configuration
     package let audioConfiguration: MirageAudioConfiguration?
+    /// Maximum concurrent visible app windows requested by the client tier policy.
+    package let maxConcurrentVisibleWindows: Int
+    /// Client-requested shared bitrate allocation policy for multi-window app streaming.
+    package let bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy?
     // TODO: HDR support - requires proper virtual display EDR configuration
     // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
     // var preferHDR: Bool = false
@@ -92,6 +96,8 @@ package struct SelectAppMessage: Codable {
         case disableResolutionCap
         case streamScale
         case audioConfiguration
+        case maxConcurrentVisibleWindows
+        case bitrateAllocationPolicy
     }
 
     package init(
@@ -111,7 +117,9 @@ package struct SelectAppMessage: Codable {
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
-        audioConfiguration: MirageAudioConfiguration? = nil
+        audioConfiguration: MirageAudioConfiguration? = nil,
+        maxConcurrentVisibleWindows: Int = 1,
+        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.dataPort = dataPort
@@ -130,6 +138,8 @@ package struct SelectAppMessage: Codable {
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
+        self.maxConcurrentVisibleWindows = max(1, maxConcurrentVisibleWindows)
+        self.bitrateAllocationPolicy = bitrateAllocationPolicy
     }
 }
 
@@ -173,6 +183,97 @@ public struct AppStreamStartedMessage: Codable {
         self.bundleIdentifier = bundleIdentifier
         self.appName = appName
         self.windows = windows
+    }
+}
+
+public struct AppWindowInventoryMessage: Codable, Sendable {
+    public struct WindowMetadata: Codable, Sendable, Equatable {
+        public let windowID: WindowID
+        public let title: String?
+        public let width: Int
+        public let height: Int
+        public let isResizable: Bool
+
+        package init(
+            windowID: WindowID,
+            title: String?,
+            width: Int,
+            height: Int,
+            isResizable: Bool
+        ) {
+            self.windowID = windowID
+            self.title = title
+            self.width = width
+            self.height = height
+            self.isResizable = isResizable
+        }
+    }
+
+    public struct Slot: Codable, Sendable, Equatable {
+        public let slotIndex: Int
+        public let streamID: StreamID
+        public let window: WindowMetadata
+
+        package init(slotIndex: Int, streamID: StreamID, window: WindowMetadata) {
+            self.slotIndex = slotIndex
+            self.streamID = streamID
+            self.window = window
+        }
+    }
+
+    public let bundleIdentifier: String
+    public let maxVisibleSlots: Int
+    public let slots: [Slot]
+    public let hiddenWindows: [WindowMetadata]
+
+    package init(
+        bundleIdentifier: String,
+        maxVisibleSlots: Int,
+        slots: [Slot],
+        hiddenWindows: [WindowMetadata]
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.maxVisibleSlots = max(1, maxVisibleSlots)
+        self.slots = slots
+        self.hiddenWindows = hiddenWindows
+    }
+}
+
+package struct AppWindowSwapRequestMessage: Codable {
+    package let bundleIdentifier: String
+    package let targetSlotStreamID: StreamID
+    package let targetWindowID: WindowID
+
+    package init(
+        bundleIdentifier: String,
+        targetSlotStreamID: StreamID,
+        targetWindowID: WindowID
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.targetSlotStreamID = targetSlotStreamID
+        self.targetWindowID = targetWindowID
+    }
+}
+
+public struct AppWindowSwapResultMessage: Codable, Sendable {
+    public let bundleIdentifier: String
+    public let targetSlotStreamID: StreamID
+    public let windowID: WindowID
+    public let success: Bool
+    public let reason: String?
+
+    package init(
+        bundleIdentifier: String,
+        targetSlotStreamID: StreamID,
+        windowID: WindowID,
+        success: Bool,
+        reason: String?
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.targetSlotStreamID = targetSlotStreamID
+        self.windowID = windowID
+        self.success = success
+        self.reason = reason
     }
 }
 
@@ -260,28 +361,6 @@ package struct CloseWindowRequestMessage: Codable {
 
     package init(windowID: WindowID) {
         self.windowID = windowID
-    }
-}
-
-/// Stream paused notification (Client → Host)
-/// Sent when client window loses focus (e.g., Stage Manager)
-package struct StreamPausedMessage: Codable {
-    /// The stream to pause
-    package let streamID: StreamID
-
-    package init(streamID: StreamID) {
-        self.streamID = streamID
-    }
-}
-
-/// Stream resumed notification (Client → Host)
-/// Sent when client window regains focus
-package struct StreamResumedMessage: Codable {
-    /// The stream to resume
-    package let streamID: StreamID
-
-    package init(streamID: StreamID) {
-        self.streamID = streamID
     }
 }
 

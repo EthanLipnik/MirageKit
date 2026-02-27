@@ -48,6 +48,37 @@ actor StreamController {
         case confirmed(finalSize: CGSize)
     }
 
+    enum PostResizeDecodeAdmissionDecision: Equatable, Sendable {
+        case accept
+        case dropNonKeyframeWhileAwaitingFirstFrame
+    }
+
+    nonisolated static func postResizeDecodeAdmissionDecision(
+        awaitingFirstFrameAfterResize: Bool,
+        isKeyframe: Bool
+    )
+    -> PostResizeDecodeAdmissionDecision {
+        if awaitingFirstFrameAfterResize, !isKeyframe {
+            return .dropNonKeyframeWhileAwaitingFirstFrame
+        }
+        return .accept
+    }
+
+    enum LocalResizeDecodeAdmissionDecision: Equatable, Sendable {
+        case accept
+        case dropWhileLocalResizePaused
+    }
+
+    nonisolated static func localResizeDecodeAdmissionDecision(
+        decodePausedForLocalResize: Bool
+    )
+    -> LocalResizeDecodeAdmissionDecision {
+        if decodePausedForLocalResize {
+            return .dropWhileLocalResizePaused
+        }
+        return .accept
+    }
+
     /// Information needed to send a resize event
     struct ResizeEvent: Sendable {
         let aspectRatio: CGFloat
@@ -120,6 +151,10 @@ actor StreamController {
 
     /// Maximum number of compressed frames buffered ahead of decode.
     static let maxQueuedFrames: Int = 48
+    /// Poll interval while waiting for the first presented frame after startup/reset/resize.
+    static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
+    /// Interval for progress logs while waiting on first-frame presentation.
+    static let firstPresentedFrameWaitLogInterval: CFAbsoluteTime = 0.5
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
@@ -151,6 +186,18 @@ actor StreamController {
 
     /// Whether we've received at least one frame
     var hasReceivedFirstFrame = false
+    /// True while the decoder should remain keyframe-only for a post-resize transition.
+    var awaitingFirstFrameAfterResize = false
+    /// True while UI gating waits for the first newly presented frame.
+    var awaitingFirstPresentedFrame = false
+    /// Last presented sequence at the moment first-frame presentation waiting was armed.
+    var firstPresentedFrameBaselineSequence: UInt64 = 0
+    /// Start time for first-frame presentation wait latency logs.
+    var firstPresentedFrameWaitStartTime: CFAbsoluteTime = 0
+    /// Last time a first-frame presentation wait progress log was emitted.
+    var firstPresentedFrameLastWaitLogTime: CFAbsoluteTime = 0
+    /// True while local client resize orchestration keeps decode paused pre-ack.
+    var decodePausedForLocalResize = false
 
     /// Bounded queue of frames waiting to be decoded.
     var queuedFrames = MirageRingBuffer<FrameData>(minimumCapacity: 32)
@@ -161,6 +208,8 @@ actor StreamController {
     /// Task that processes frames from the stream in FIFO order
     /// This ensures frames are decoded sequentially, preventing P-frame decode errors
     var frameProcessingTask: Task<Void, Never>?
+    /// Task that waits for first frame presentation progress before unblocking UI state.
+    var firstPresentedFrameTask: Task<Void, Never>?
 
     var queueDropsSinceLastLog: UInt64 = 0
     var lastQueueDropLogTime: CFAbsoluteTime = 0
@@ -306,12 +355,13 @@ actor StreamController {
             let firstDecodedFrame = metricsTracker.recordDecodedFrame()
             Task { [weak self] in
                 guard let self else { return }
-                if firstDecodedFrame { await self.markFirstFrameReceived() }
+                if firstDecodedFrame { await self.markFirstFrameDecoded() }
                 await self.recordDecodedFrame()
             }
         }
 
         await startFrameProcessingPipeline()
+        armFirstPresentedFrameAwaiter(reason: "stream-start")
         startMetricsReporting()
     }
 
@@ -397,6 +447,21 @@ actor StreamController {
     }
 
     private func enqueueFrame(_ frame: FrameData) async {
+        if Self.localResizeDecodeAdmissionDecision(
+            decodePausedForLocalResize: decodePausedForLocalResize
+        ) == .dropWhileLocalResizePaused {
+            frame.releaseBuffer()
+            return
+        }
+
+        if Self.postResizeDecodeAdmissionDecision(
+            awaitingFirstFrameAfterResize: awaitingFirstFrameAfterResize,
+            isKeyframe: frame.isKeyframe
+        ) == .dropNonKeyframeWhileAwaitingFirstFrame {
+            frame.releaseBuffer()
+            return
+        }
+
         if let continuation = dequeueContinuation {
             dequeueContinuation = nil
             continuation.resume(returning: frame)
@@ -480,6 +545,7 @@ actor StreamController {
         stopFrameProcessingPipeline()
         stopMetricsReporting()
         stopFreezeMonitor()
+        stopFirstPresentedFrameMonitor()
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil

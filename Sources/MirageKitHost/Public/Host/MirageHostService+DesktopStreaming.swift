@@ -520,6 +520,49 @@ extension MirageHostService {
         return snapshot
     }
 
+    func isDisplayMirroringRestored(targetDisplayID: CGDirectDisplayID) -> Bool {
+        let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+        guard !displaysToMirror.isEmpty else { return true }
+        let mirroredCount = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }.count
+        return mirroredCount == displaysToMirror.count
+    }
+
+    func restoreDisplayMirroringAfterResize(
+        targetDisplayID: CGDirectDisplayID,
+        maxAttempts: Int = 3
+    )
+    async -> Bool {
+        var retryDelayMs = 120
+        for attempt in 1 ... maxAttempts {
+            await setupDisplayMirroring(targetDisplayID: targetDisplayID)
+            if isDisplayMirroringRestored(targetDisplayID: targetDisplayID) {
+                if attempt > 1 {
+                    MirageLogger
+                        .host(
+                            "Desktop mirroring restore succeeded on attempt \(attempt)/\(maxAttempts)"
+                        )
+                }
+                return true
+            }
+
+            let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+            let mirroredCount = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }.count
+            MirageLogger
+                .error(
+                    .host,
+                    "Desktop mirroring restore verification failed (attempt \(attempt)/\(maxAttempts), mirrored=\(mirroredCount)/\(displaysToMirror.count), target=\(targetDisplayID))"
+                )
+
+            if attempt < maxAttempts {
+                try? await Task.sleep(for: .milliseconds(retryDelayMs))
+                retryDelayMs = min(1000, Int(Double(retryDelayMs) * 1.6))
+            }
+        }
+
+        MirageLogger.error(.host, "Desktop mirroring restore failed after \(maxAttempts) attempts")
+        return false
+    }
+
     /// Ensure physical displays are not mirroring virtual displays during app/window streaming.
     func unmirrorPhysicalDisplaysForWindowStreamingIfNeeded() async {
         var displayCount: UInt32 = 0

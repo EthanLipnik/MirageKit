@@ -12,6 +12,38 @@ import MirageKit
 import CoreGraphics
 import Foundation
 
+func displaySeparationAnchorDisplayID(
+    displays: [CGDirectDisplayID],
+    virtualDisplayID: CGDirectDisplayID,
+    originalMainDisplayID: CGDirectDisplayID,
+    isVirtualDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isVirtualDisplay($0) },
+    displayBounds: (CGDirectDisplayID) -> CGRect = { CGDisplayBounds($0) }
+)
+-> CGDirectDisplayID? {
+    let candidates = displays.filter { $0 != virtualDisplayID }
+    guard !candidates.isEmpty else { return nil }
+
+    let rightmostDisplayComparator: (CGDirectDisplayID, CGDirectDisplayID) -> Bool = { lhs, rhs in
+        let lhsBounds = displayBounds(lhs)
+        let rhsBounds = displayBounds(rhs)
+        if lhsBounds.maxX == rhsBounds.maxX {
+            return lhsBounds.maxY < rhsBounds.maxY
+        }
+        return lhsBounds.maxX < rhsBounds.maxX
+    }
+
+    let physicalCandidates = candidates.filter { !isVirtualDisplay($0) }
+    if physicalCandidates.contains(originalMainDisplayID) {
+        return originalMainDisplayID
+    }
+
+    if let physicalAnchor = physicalCandidates.max(by: rightmostDisplayComparator) {
+        return physicalAnchor
+    }
+
+    return candidates.max(by: rightmostDisplayComparator)
+}
+
 extension CGVirtualDisplayBridge {
     // MARK: - Display Separation Configuration
 
@@ -206,19 +238,18 @@ extension CGVirtualDisplayBridge {
                 }
             }
 
-            // Position each new dedicated display to the right of the current rightmost
-            // display to avoid overlap-induced WindowServer auto-repositioning.
-            let candidateDisplays = displays.filter { $0 != virtualDisplayID }
-            let anchorDisplayID = candidateDisplays.max { lhs, rhs in
-                let lhsBounds = CGDisplayBounds(lhs)
-                let rhsBounds = CGDisplayBounds(rhs)
-                if lhsBounds.maxX == rhsBounds.maxX {
-                    return lhsBounds.maxY < rhsBounds.maxY
-                }
-                return lhsBounds.maxX < rhsBounds.maxX
-            } ?? (originalMainExists ? originalMainDisplayID : candidateDisplays.first)
+            // Position each new dedicated display to the right of a physical display when
+            // available so stale/orphan virtual displays do not become the placement anchor.
+            let anchorDisplayID = displaySeparationAnchorDisplayID(
+                displays: displays,
+                virtualDisplayID: virtualDisplayID,
+                originalMainDisplayID: originalMainDisplayID
+            )
 
             if let anchorDisplayID {
+                if isVirtualDisplay(anchorDisplayID) {
+                    MirageLogger.host("No physical display anchor available; using display \(anchorDisplayID)")
+                }
                 let anchorBounds = CGDisplayBounds(anchorDisplayID)
                 if anchorBounds.width > 0, anchorBounds.height > 0 {
                     let virtualX = Int32(anchorBounds.maxX)

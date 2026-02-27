@@ -18,7 +18,16 @@ extension SharedVirtualDisplayManager {
     private struct DisplayCreationAttempt: Sendable {
         let resolution: CGSize
         let hiDPI: Bool
+        let colorSpace: MirageColorSpace
         let label: String
+    }
+
+    func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
+        var ordered = [requestedColorSpace]
+        for candidate in MirageColorSpace.allCases where candidate != requestedColorSpace {
+            ordered.append(candidate)
+        }
+        return ordered
     }
 
     static func logicalResolution(for pixelResolution: CGSize, scaleFactor: CGFloat = 2.0) -> CGSize {
@@ -284,8 +293,9 @@ extension SharedVirtualDisplayManager {
         return false
     }
 
-    func waitForDisplayRemoval(displayID: CGDirectDisplayID) async {
-        let deadline = Date().addingTimeInterval(1.5)
+    func waitForDisplayRemoval(displayID: CGDirectDisplayID, timeoutMs: Int = 1500) async {
+        let clampedTimeoutMs = max(0, timeoutMs)
+        let deadline = Date().addingTimeInterval(Double(clampedTimeoutMs) / 1000.0)
         while Date() < deadline {
             if !CGVirtualDisplayBridge.isDisplayOnline(displayID) { return }
             try? await Task.sleep(for: .milliseconds(50))
@@ -374,44 +384,60 @@ extension SharedVirtualDisplayManager {
         let displayName = displayNameOverride ?? "Mirage Shared Display (#\(displayCounter))"
 
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
-        var attempts: [DisplayCreationAttempt] = [
-            DisplayCreationAttempt(
-                resolution: normalizedRequested,
-                hiDPI: true,
-                label: "requested-retina"
-            ),
-        ]
+        let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
+        var attempts: [DisplayCreationAttempt] = []
 
-        if let cachedRetina = knownGoodRetinaCandidate(
-            requestedResolution: normalizedRequested,
-            colorSpace: colorSpace,
-            allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
-        ),
-            needsResize(currentResolution: cachedRetina, targetResolution: normalizedRequested) {
+        // Priority 1: requested resolution in Retina mode.
+        for candidateColorSpace in colorFallbackOrder {
             attempts.append(
                 DisplayCreationAttempt(
-                    resolution: cachedRetina,
+                    resolution: normalizedRequested,
                     hiDPI: true,
-                    label: "cached-retina"
+                    colorSpace: candidateColorSpace,
+                    label: "requested-retina-\(candidateColorSpace.rawValue)"
                 )
-            )
-            MirageLogger.host(
-                "Trying cached nearby Retina resolution \(Int(cachedRetina.width))x\(Int(cachedRetina.height)) for requested \(Int(normalizedRequested.width))x\(Int(normalizedRequested.height))"
             )
         }
 
-        attempts.append(
-            DisplayCreationAttempt(
-                resolution: SharedVirtualDisplayManager.fallbackResolution(for: normalizedRequested),
-                hiDPI: false,
-                label: "fallback-1x"
+        // Priority 2: cached nearby Retina resolutions, first with requested color then fallbacks.
+        for candidateColorSpace in colorFallbackOrder {
+            if let cachedRetina = knownGoodRetinaCandidate(
+                requestedResolution: normalizedRequested,
+                colorSpace: candidateColorSpace,
+                allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
+            ),
+                needsResize(currentResolution: cachedRetina, targetResolution: normalizedRequested) {
+                attempts.append(
+                    DisplayCreationAttempt(
+                        resolution: cachedRetina,
+                        hiDPI: true,
+                        colorSpace: candidateColorSpace,
+                        label: "cached-retina-\(candidateColorSpace.rawValue)"
+                    )
+                )
+                MirageLogger.host(
+                    "Trying cached nearby Retina resolution \(Int(cachedRetina.width))x\(Int(cachedRetina.height)) for requested \(Int(normalizedRequested.width))x\(Int(normalizedRequested.height)), color=\(candidateColorSpace.displayName)"
+                )
+            }
+        }
+
+        // Priority 3: non-Retina fallback at the requested effective size.
+        let fallbackResolution = SharedVirtualDisplayManager.fallbackResolution(for: normalizedRequested)
+        for candidateColorSpace in colorFallbackOrder {
+            attempts.append(
+                DisplayCreationAttempt(
+                    resolution: fallbackResolution,
+                    hiDPI: false,
+                    colorSpace: candidateColorSpace,
+                    label: "fallback-1x-\(candidateColorSpace.rawValue)"
+                )
             )
-        )
+        }
 
         var dedupedAttempts: [DisplayCreationAttempt] = []
         var seenAttemptKeys = Set<String>()
         for attempt in attempts {
-            let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")"
+            let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")-\(attempt.colorSpace.rawValue)"
             if seenAttemptKeys.insert(key).inserted {
                 dedupedAttempts.append(attempt)
             }
@@ -426,10 +452,10 @@ extension SharedVirtualDisplayManager {
                 height: Int(requestedResolution.height),
                 refreshRate: Double(refreshRate),
                 hiDPI: attempt.hiDPI,
-                colorSpace: colorSpace
+                colorSpace: attempt.colorSpace
             ) else {
                 MirageLogger.host(
-                    "Virtual display create failed for \(attempt.label) at \(Int(requestedResolution.width))x\(Int(requestedResolution.height))"
+                    "Virtual display create failed for \(attempt.label) at \(Int(requestedResolution.width))x\(Int(requestedResolution.height)), color=\(attempt.colorSpace.displayName)"
                 )
                 continue
             }
@@ -524,15 +550,21 @@ extension SharedVirtualDisplayManager {
 
             if !attempt.hiDPI {
                 MirageLogger.host(
-                    "Created shared virtual display using non-Retina fallback at \(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)) px"
+                    "Created shared virtual display using non-Retina fallback at \(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)) px, color=\(attempt.colorSpace.displayName)"
                 )
-                registerFallbackEvent(for: colorSpace)
+                registerFallbackEvent(for: attempt.colorSpace)
             } else {
-                resetFallbackStreak(for: colorSpace)
+                resetFallbackStreak(for: attempt.colorSpace)
                 cacheKnownGoodRetinaResolutionIfNeeded(
                     validatedPixelResolution,
                     scaleFactor: displayScaleFactor,
-                    colorSpace: colorSpace
+                    colorSpace: attempt.colorSpace
+                )
+            }
+
+            if attempt.colorSpace != colorSpace {
+                MirageLogger.host(
+                    "Virtual display color fallback engaged: requested \(colorSpace.displayName), using \(attempt.colorSpace.displayName)"
                 )
             }
 
@@ -547,7 +579,9 @@ extension SharedVirtualDisplayManager {
             return managedContext
         }
 
-        throw SharedDisplayError.creationFailed("Virtual display failed activation (Retina + 1x fallback)")
+        throw SharedDisplayError.creationFailed(
+            "Virtual display failed activation (retina-first, color-fallback, 1x fallback)"
+        )
     }
 
     /// Recreate the display at a new resolution.
@@ -556,10 +590,11 @@ extension SharedVirtualDisplayManager {
         newResolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        allowAspectMismatchRetinaCandidate: Bool = false
+        allowAspectMismatchRetinaCandidate: Bool = false,
+        preferFastRecreate: Bool = false
     )
     async throws -> ManagedDisplayContext {
-        await destroyDisplay()
+        await destroyDisplay(removalWaitMs: preferFastRecreate ? 250 : 1500)
         try await Task.sleep(for: .milliseconds(50))
         return try await createDisplay(
             resolution: newResolution,
@@ -576,10 +611,11 @@ extension SharedVirtualDisplayManager {
         refreshRate: Int,
         colorSpace: MirageColorSpace,
         displayNameOverride: String? = nil,
-        allowAspectMismatchRetinaCandidate: Bool = false
+        allowAspectMismatchRetinaCandidate: Bool = false,
+        preferFastRecreate: Bool = false
     )
     async throws -> ManagedDisplayContext {
-        await destroyDisplay(display)
+        await destroyDisplay(display, removalWaitMs: preferFastRecreate ? 250 : 1500)
         try await Task.sleep(for: .milliseconds(50))
         return try await createDisplay(
             resolution: newResolution,
@@ -590,7 +626,7 @@ extension SharedVirtualDisplayManager {
         )
     }
 
-    func destroyDisplay(_ display: ManagedDisplayContext) async {
+    func destroyDisplay(_ display: ManagedDisplayContext, removalWaitMs: Int = 1500) async {
         let displayID = display.displayID
         MirageLogger.host("Destroying virtual display, displayID=\(displayID)")
 
@@ -606,7 +642,7 @@ extension SharedVirtualDisplayManager {
         }
 
         CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
-        await waitForDisplayRemoval(displayID: displayID)
+        await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
 
         if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
             orphanedDisplayIDs.insert(displayID)
@@ -625,9 +661,14 @@ extension SharedVirtualDisplayManager {
 
     /// Destroy the shared display
     func destroyDisplay() async {
+        await destroyDisplay(removalWaitMs: 1500)
+    }
+
+    /// Destroy the shared display with a custom removal wait budget.
+    func destroyDisplay(removalWaitMs: Int) async {
         guard let display = sharedDisplay else { return }
         sharedDisplay = nil
-        await destroyDisplay(display)
+        await destroyDisplay(display, removalWaitMs: removalWaitMs)
     }
 }
 #endif

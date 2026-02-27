@@ -23,6 +23,11 @@ extension MirageClientService {
             let hasController = controllersByStream[streamID] != nil
             let previousDimensionToken = desktopDimensionTokenByStream[streamID]
             let dimensionToken = started.dimensionToken
+            let isResizeTokenAdvance = if let previousDimensionToken, let dimensionToken {
+                previousDimensionToken != dimensionToken && previousStreamID == streamID && hasController
+            } else {
+                false
+            }
             let resetDecision = desktopStreamStartResetDecision(
                 streamID: streamID,
                 previousStreamID: previousStreamID,
@@ -38,6 +43,9 @@ extension MirageClientService {
                     .client(
                         "Desktop stream token advanced \(previousDimensionToken) -> \(dimensionToken); resetting controller"
                     )
+            }
+            if isResizeTokenAdvance {
+                sessionStore.beginPostResizeTransition(for: streamID)
             }
             desktopStreamID = streamID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
@@ -69,7 +77,10 @@ extension MirageClientService {
 
             Task {
                 if shouldResetController {
-                    await self.setupControllerForStream(streamID)
+                    await self.setupControllerForStream(
+                        streamID,
+                        beginPostResizeTransition: isResizeTokenAdvance
+                    )
                 }
                 self.addActiveStreamID(streamID)
 
@@ -128,6 +139,7 @@ extension MirageClientService {
             desktopStreamResolution = nil
             desktopStreamMode = nil
             desktopDimensionTokenByStream.removeValue(forKey: streamID)
+            sessionStore.clearPostResizeTransition(for: streamID)
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
             cursorPositionStore.clear(streamID: streamID)

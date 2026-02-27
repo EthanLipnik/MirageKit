@@ -34,6 +34,8 @@ public final class MirageClientSessionStore {
 
     /// Streams that decoded a frame before the session entry existed.
     private var pendingFirstFrameStreamIDs: Set<StreamID> = []
+    /// Streams currently waiting for the first presented frame after a desktop resize reset.
+    public var postResizeAwaitingFirstFrameStreamIDs: Set<StreamID> = []
 
     // MARK: - Focus State
 
@@ -109,7 +111,9 @@ public final class MirageClientSessionStore {
     /// - Parameter sessionID: The session identifier to remove.
     public func removeSession(_ sessionID: StreamSessionID) {
         if focusedSessionID == sessionID { focusedSessionID = nil }
-
+        if let streamID = streamSessions[sessionID]?.streamID {
+            postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
+        }
         streamSessions.removeValue(forKey: sessionID)
         sessionMinSizes.removeValue(forKey: sessionID)
         sessionMinSizeUpdateGenerations.removeValue(forKey: sessionID)
@@ -125,6 +129,13 @@ public final class MirageClientSessionStore {
     /// - Parameter sessionID: Session identifier to query.
     public func window(for sessionID: StreamSessionID) -> MirageWindow? {
         streamSessions[sessionID]?.window
+    }
+
+    /// Update window metadata for an existing session keyed by stream ID.
+    /// Used when the host rebinds a slot to a different window while preserving stream ID.
+    public func updateSessionWindowMetadata(streamID: StreamID, window: MirageWindow) {
+        guard let session = streamSessions.values.first(where: { $0.streamID == streamID }) else { return }
+        session.window = window
     }
 
     // MARK: - Minimum Size Updates
@@ -168,6 +179,9 @@ public final class MirageClientSessionStore {
 
     /// Stop login display stream and clear cached frames.
     public func stopLoginDisplay() {
+        if let loginDisplayStreamID {
+            postResizeAwaitingFirstFrameStreamIDs.remove(loginDisplayStreamID)
+        }
         loginDisplayStreamID = nil
         loginDisplayResolution = nil
         loginDisplayHasFrame = false
@@ -175,14 +189,19 @@ public final class MirageClientSessionStore {
 
     /// Reset all login display state on disconnect.
     public func clearLoginDisplayState() {
+        if let loginDisplayStreamID {
+            postResizeAwaitingFirstFrameStreamIDs.remove(loginDisplayStreamID)
+        }
         loginDisplayStreamID = nil
         loginDisplayResolution = nil
         loginDisplayHasFrame = false
     }
 
-    /// Mark the first decoded frame for a stream.
+    /// Mark the first presented frame for a stream.
     /// Used to drive UI state without per-frame SwiftUI updates.
     public func markFirstFrameReceived(for streamID: StreamID) {
+        postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
+
         if streamID == loginDisplayStreamID {
             if !loginDisplayHasFrame { loginDisplayHasFrame = true }
             return
@@ -195,6 +214,21 @@ public final class MirageClientSessionStore {
             pendingFirstFrameStreamIDs.insert(streamID)
         }
     }
+
+    /// Marks that a stream should remain in resize-transition UI until a new presented frame arrives.
+    public func beginPostResizeTransition(for streamID: StreamID) {
+        postResizeAwaitingFirstFrameStreamIDs.insert(streamID)
+    }
+
+    /// Clears post-resize transition state for a stream.
+    public func clearPostResizeTransition(for streamID: StreamID) {
+        postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
+    }
+
+    /// Returns whether the stream is awaiting its first post-resize presented frame.
+    public func isAwaitingPostResizeFirstFrame(for streamID: StreamID) -> Bool {
+        postResizeAwaitingFirstFrameStreamIDs.contains(streamID)
+    }
 }
 
 /// State for an active stream session.
@@ -203,7 +237,7 @@ public final class MirageClientSessionStore {
 public final class MirageStreamSessionState: Identifiable {
     public let id: StreamSessionID
     public let streamID: StreamID
-    public let window: MirageWindow
+    public var window: MirageWindow
     public let hostName: String
     public var statistics: MirageStreamStatistics?
     public var hasReceivedFirstFrame: Bool

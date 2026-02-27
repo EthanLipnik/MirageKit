@@ -376,11 +376,7 @@ public extension MirageHostService {
                 clientScaleFactorOverride: resolvedClientScaleFactor
             )
             ensureWindowVisibleFrameMonitor(streamID: streamID)
-
-            let usesVirtualDisplay = await context.isUsingVirtualDisplay()
-            if !usesVirtualDisplay {
-                await addWindowToActivityMonitor(updatedWindow.id)
-            }
+            await addWindowToActivityMonitor(updatedWindow.id)
         } catch let virtualDisplayError {
             let detail = virtualDisplayError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             let renderedDetail = detail.isEmpty ? String(describing: virtualDisplayError) : detail
@@ -473,6 +469,10 @@ public extension MirageHostService {
             )
             try await clientContext.send(.streamStarted, content: message)
         }
+        let appliedTargetFrameRate = await context.getTargetFrameRate()
+        registerAppStreamDesiredFrameRate(streamID: streamID, frameRate: appliedTargetFrameRate)
+        await startAppStreamGovernorsIfNeeded()
+        await markAppStreamInteraction(streamID: streamID, reason: "stream started")
 
         // Start menu bar monitoring for this stream
         if let app = session.window.application {
@@ -549,6 +549,18 @@ public extension MirageHostService {
             return true
         }
         if normalizedDescription.contains("virtual display start failed") {
+            return true
+        }
+        if normalizedDescription.contains("failed to create virtual display") {
+            return true
+        }
+        if normalizedDescription.contains("virtual display failed activation") {
+            return true
+        }
+        if normalizedDescription.contains("spawnproxy message error") {
+            return true
+        }
+        if normalizedDescription.contains("pluginwithoptions") {
             return true
         }
         return false
@@ -866,7 +878,7 @@ public extension MirageHostService {
         pendingWindowResizeResolutionByStreamID.removeValue(forKey: session.id)
         windowResizeRequestCounterByStreamID.removeValue(forKey: session.id)
         windowResizeInFlightStreamIDs.remove(session.id)
-        pausedStreamBaselineFrameRateByStreamID.removeValue(forKey: session.id)
+        clearAppStreamGovernorState(streamID: session.id)
         stopWindowVisibleFrameMonitor(streamID: session.id)
 
         await context.stop()
@@ -908,6 +920,7 @@ public extension MirageHostService {
             // Disable power assertion when no more streams are active (including login display)
             if loginDisplayStreamID == nil { await PowerAssertionManager.shared.disable() }
         }
+        await stopAppStreamGovernorsIfIdle()
     }
 
     func notifyWindowResized(_ window: MirageWindow) async {

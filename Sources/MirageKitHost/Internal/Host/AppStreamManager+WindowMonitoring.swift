@@ -57,6 +57,8 @@ extension AppStreamManager {
                 let candidatesByWindowID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.window.id, $0) })
                 let currentValidIDs = Set(candidatesByWindowID.keys)
                 let knownWindowIDs = session.knownWindowIDs
+                let hiddenWindowIDs = Set(session.hiddenWindows.keys)
+                let visibleWindowIDs = Set(session.windowStreams.keys)
                 var updatedKnownWindowIDs = knownWindowIDs
 
                 for candidate in candidates {
@@ -78,9 +80,10 @@ extension AppStreamManager {
                         break
                     }
 
-                    if sessions[bundleID]?.windowStreams[windowID] != nil {
-                        continue
-                    }
+                    if visibleWindowIDs.contains(windowID) { continue }
+                    // Hidden windows remain tracked in inventory and should not repeatedly
+                    // trigger startup attempts until a slot becomes available.
+                    if hiddenWindowIDs.contains(windowID) { continue }
                     guard canAttemptWindowStartup(bundleID: bundleID, windowID: windowID) else {
                         if !wasKnown {
                             logger.debug(
@@ -106,10 +109,10 @@ extension AppStreamManager {
                     clearWindowStartupTracking(bundleID: bundleID, windowID: windowID)
                 }
 
-                let currentStreamingIDs = Set(sessions[bundleID]?.windowStreams.keys.map { $0 } ?? [])
-                let removedWindowIDs = currentStreamingIDs.subtracting(currentValidIDs)
+                let trackedWindowIDs = visibleWindowIDs.union(hiddenWindowIDs)
+                let removedWindowIDs = trackedWindowIDs.subtracting(currentValidIDs)
                 for windowID in removedWindowIDs.sorted(by: <) {
-                    logger.info("Window removed from active set: \(windowID) for \(bundleID)")
+                    logger.info("Window removed from tracked set: \(windowID) for \(bundleID)")
                     await onWindowClosed?(bundleID, windowID)
                 }
 

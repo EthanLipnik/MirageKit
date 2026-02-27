@@ -285,7 +285,8 @@ extension MirageHostService {
             return
         }
         let usesVirtualDisplay = await context.isUsingVirtualDisplay()
-        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && context.getWindowID() != 0
+        let contextWindowID = await context.getWindowID()
+        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && contextWindowID != 0
         if isDedicatedVirtualDisplayStream {
             MirageLogger.host(
                 "Ignoring stream scale change for dedicated virtual-display stream \(streamID): \(clampedScale)"
@@ -356,6 +357,8 @@ extension MirageHostService {
 
         do {
             try await context.updateFrameRate(targetFrameRate)
+            registerAppStreamDesiredFrameRate(streamID: streamID, frameRate: targetFrameRate)
+            await refreshAppStreamActivity(streamID: streamID, reason: "refreshOverride")
             if forceDisplayRefresh, await context.isUsingVirtualDisplay() {
                 MirageLogger.host(
                     "Ignoring forceDisplayRefresh reconfigure for dedicated virtual-display stream \(streamID)"
@@ -377,7 +380,8 @@ extension MirageHostService {
             return
         }
         let usesVirtualDisplay = await context.isUsingVirtualDisplay()
-        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && context.getWindowID() != 0
+        let contextWindowID = await context.getWindowID()
+        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && contextWindowID != 0
 
         let hasBitDepthChange = request.bitDepth != nil
         let hasBitrateChange = request.bitrate != nil
@@ -455,7 +459,7 @@ extension MirageHostService {
                 existingState?.clientScaleFactor ??
                 snapshot.scaleFactor
         )
-        let windowID = context.getWindowID()
+        let windowID = await context.getWindowID()
         let effectiveBounds = aspectFittedWindowBounds(
             bounds,
             targetAspectRatio: existingState?.targetContentAspectRatio
@@ -581,6 +585,7 @@ extension MirageHostService {
         var shouldRestoreMirroring = false
         var resizeCompletionContext: StreamContext?
         var shouldStopDesktopStreamWithError = false
+        var shouldResumeEncodingAfterResize = false
         do {
             let pixelResolution = virtualDisplayPixelResolution(
                 for: logicalResolution,
@@ -618,6 +623,8 @@ extension MirageHostService {
                         "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
                 )
+            await desktopContext.suspendEncodingForDesktopResize()
+            shouldResumeEncodingAfterResize = true
 
             if mirroringPlan == .suspendAndRestore, let displayID = preResizeSnapshot?.displayID {
                 await suspendDisplayMirroringForResize(targetDisplayID: displayID)
@@ -642,6 +649,18 @@ extension MirageHostService {
 
             let effectivePixelResolution = postResizeSnapshot.resolution
             let activeDisplayID = postResizeSnapshot.displayID
+
+            if shouldRestoreMirroring,
+               streamID == desktopStreamID,
+               desktopStreamMode == .mirrored {
+                let mirroringRestored = await restoreDisplayMirroringAfterResize(targetDisplayID: activeDisplayID)
+                guard mirroringRestored else {
+                    throw MirageError.protocolError(
+                        "Failed to restore display mirroring after desktop resize"
+                    )
+                }
+                shouldRestoreMirroring = false
+            }
 
             let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
             guard streamID == desktopStreamID, let latestDesktopContext = desktopStreamContext else {
@@ -696,6 +715,7 @@ extension MirageHostService {
         }
 
         if shouldStopDesktopStreamWithError, streamID == desktopStreamID {
+            shouldResumeEncodingAfterResize = false
             await stopDesktopStream(reason: .error)
             return
         }
@@ -708,6 +728,16 @@ extension MirageHostService {
                 context: resizeCompletionContext,
                 noOp: false
             )
+            if shouldResumeEncodingAfterResize {
+                await resizeCompletionContext.resumeEncodingAfterDesktopResize()
+                shouldResumeEncodingAfterResize = false
+            }
+        }
+
+        if shouldResumeEncodingAfterResize,
+           streamID == desktopStreamID,
+           let latestDesktopContext = desktopStreamContext {
+            await latestDesktopContext.resumeEncodingAfterDesktopResize()
         }
     }
 

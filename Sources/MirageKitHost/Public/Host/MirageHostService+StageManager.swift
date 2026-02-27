@@ -97,6 +97,7 @@ extension MirageHostService {
         }
 
         await appStreamManager.endSession(bundleIdentifier: bundleIdentifier)
+        await stopAppStreamGovernorsIfIdle()
         await restoreStageManagerAfterAppStreamingIfNeeded()
     }
 }

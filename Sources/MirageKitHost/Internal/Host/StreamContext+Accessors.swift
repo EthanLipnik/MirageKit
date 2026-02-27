@@ -65,8 +65,25 @@ extension StreamContext {
         virtualDisplayVisiblePixelResolution
     }
 
-    nonisolated func getWindowID() -> WindowID {
+    func getWindowID() -> WindowID {
         windowID
+    }
+
+    func updateWindowBinding(windowID: WindowID, ownerGeneration: UInt64?) {
+        self.windowID = windowID
+        if let ownerGeneration,
+           let snapshot = virtualDisplayContext {
+            virtualDisplayContext = SharedVirtualDisplayManager.DisplaySnapshot(
+                displayID: snapshot.displayID,
+                spaceID: snapshot.spaceID,
+                resolution: snapshot.resolution,
+                scaleFactor: snapshot.scaleFactor,
+                refreshRate: snapshot.refreshRate,
+                colorSpace: snapshot.colorSpace,
+                generation: ownerGeneration,
+                createdAt: snapshot.createdAt
+            )
+        }
     }
 
     func getDimensionToken() -> UInt16 {

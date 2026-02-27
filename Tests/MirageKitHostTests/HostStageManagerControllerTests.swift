@@ -133,7 +133,9 @@ struct HostStageManagerControllerTests {
             clientID: UUID(),
             clientName: "Client",
             requestedDisplayResolution: CGSize(width: 1920, height: 1080),
-            requestedClientScaleFactor: nil
+            requestedClientScaleFactor: nil,
+            maxVisibleSlots: 1,
+            bitrateBudgetBps: nil
         )
         await host.appStreamManager.addWindowToSession(
             bundleIdentifier: "com.example.App",

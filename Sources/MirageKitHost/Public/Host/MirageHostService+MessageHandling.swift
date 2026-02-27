@@ -72,11 +72,8 @@ extension MirageHostService {
             .closeWindowRequest: { [weak self] message, client, connection in
                 await self?.handleCloseWindowRequest(message, from: client, connection: connection)
             },
-            .streamPaused: { [weak self] message, client, _ in
-                await self?.handleStreamPaused(message, from: client)
-            },
-            .streamResumed: { [weak self] message, client, _ in
-                await self?.handleStreamResumed(message, from: client)
+            .appWindowSwapRequest: { [weak self] message, client, connection in
+                await self?.handleAppWindowSwapRequest(message, from: client, connection: connection)
             },
             .menuActionRequest: { [weak self] message, client, connection in
                 await self?.handleMenuActionRequest(message, from: client, connection: connection)

@@ -47,6 +47,8 @@ public extension MirageClientService {
     ///   - keyFrameInterval: Optional keyframe interval in frames.
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - audioConfiguration: Optional per-stream audio overrides.
+    ///   - maxConcurrentVisibleWindows: Maximum visible app-window slots allowed for this session.
+    ///   - bitrateAllocationPolicy: Shared app-stream bitrate allocation mode.
     // TODO: HDR support - requires proper virtual display EDR configuration.
     // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ).
     func selectApp(
@@ -55,7 +57,9 @@ public extension MirageClientService {
         displayResolution: CGSize? = nil,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
-        audioConfiguration: MirageAudioConfiguration? = nil
+        audioConfiguration: MirageAudioConfiguration? = nil,
+        maxConcurrentVisibleWindows: Int = 1,
+        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow
         // preferHDR: Bool = false
     )
     async throws {
@@ -84,7 +88,9 @@ public extension MirageClientService {
             bitDepth: nil,
             bitrate: nil,
             streamScale: clampedStreamScale(),
-            audioConfiguration: audioConfiguration ?? self.audioConfiguration
+            audioConfiguration: audioConfiguration ?? self.audioConfiguration,
+            maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
+            bitrateAllocationPolicy: bitrateAllocationPolicy
         )
         // TODO: HDR support - requires proper virtual display EDR configuration.
         // request.preferHDR = preferHDR
@@ -104,6 +110,22 @@ public extension MirageClientService {
 
         streamingAppBundleID = bundleIdentifier
         MirageLogger.client("Requested to stream app: \(bundleIdentifier)")
+    }
+
+    /// Request a host-side slot swap from hidden inventory into a visible stream slot.
+    func requestAppWindowSwap(
+        bundleIdentifier: String,
+        targetSlotStreamID: StreamID,
+        targetWindowID: WindowID
+    ) async throws {
+        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        let request = AppWindowSwapRequestMessage(
+            bundleIdentifier: bundleIdentifier,
+            targetSlotStreamID: targetSlotStreamID,
+            targetWindowID: targetWindowID
+        )
+        let message = try ControlMessage(type: .appWindowSwapRequest, content: request)
+        connection.send(content: message.serialize(), completion: .idempotent)
     }
 
     /// Request host-side close for a specific app-stream window.
@@ -128,29 +150,4 @@ public extension MirageClientService {
         MirageLogger.client("Close window requested for window \(windowID)")
     }
 
-    /// Notify host when scene activity changes for a stream window.
-    /// Active scenes run full-rate; inactive/background scenes are throttled.
-    func updateAppStreamFocusState(streamID: StreamID, isFocused: Bool) {
-        guard case .connected = connectionState, let connection else { return }
-        guard appStreamFocusStateByStreamID[streamID] != isFocused else { return }
-
-        appStreamFocusStateByStreamID[streamID] = isFocused
-
-        do {
-            let message: ControlMessage
-            if isFocused {
-                message = try ControlMessage(type: .streamResumed, content: StreamResumedMessage(streamID: streamID))
-            } else {
-                message = try ControlMessage(type: .streamPaused, content: StreamPausedMessage(streamID: streamID))
-            }
-            connection.send(content: message.serialize(), completion: .idempotent)
-            MirageLogger.client("Sent stream focus update for stream \(streamID): focused=\(isFocused)")
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to encode stream focus update: ")
-        }
-    }
-
-    func clearAppStreamFocusState(streamID: StreamID) {
-        appStreamFocusStateByStreamID.removeValue(forKey: streamID)
-    }
 }

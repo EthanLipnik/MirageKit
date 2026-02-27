@@ -130,9 +130,16 @@ public extension MirageClientService {
 
     /// Set up or reset controller for a specific stream.
     /// StreamController owns the decoder, reassembler, and resize state machine.
-    internal func setupControllerForStream(_ streamID: StreamID) async {
+    internal func setupControllerForStream(
+        _ streamID: StreamID,
+        beginPostResizeTransition: Bool = false
+    )
+    async {
         if let existingController = controllersByStream[streamID] {
             await existingController.resetForNewSession()
+            if beginPostResizeTransition {
+                await existingController.beginPostResizeTransition()
+            }
             adaptiveFallbackLastAppliedTime[streamID] = 0
             MirageLogger.client("Reset existing controller for stream \(streamID)")
             return
@@ -194,6 +201,9 @@ public extension MirageClientService {
         if let kind = videoPathSnapshot?.kind {
             await controller.setTransportPathKind(kind)
         }
+        if beginPostResizeTransition {
+            await controller.beginPostResizeTransition()
+        }
         await controller.start()
         await updateReassemblerSnapshot()
 
@@ -244,7 +254,6 @@ public extension MirageClientService {
         removeActiveStreamID(streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
-        clearAppStreamFocusState(streamID: streamID)
 
         if let controller = controllersByStream[streamID] {
             await controller.stop()

@@ -72,7 +72,9 @@ actor StreamPacketSender {
     private var pacerTokens: Double = 0
     private var pacerLastTime: CFAbsoluteTime = 0
     private var pacerMaxBurstBytes: Double = 0
+    private var pacerMaxDebtBytes: Double = 0
     private let pacerBurstSeconds: Double = 0.0025
+    private let pacerMinSleepSeconds: Double = 0.002
     private let pacerMinBurstPackets: Int = 8
     private let pacerMaxBurstPackets: Int = 64
 
@@ -597,6 +599,7 @@ actor StreamPacketSender {
             pacerRateBytesPerSecond = 0
             pacerTokens = 0
             pacerMaxBurstBytes = 0
+            pacerMaxDebtBytes = 0
             return
         }
 
@@ -605,18 +608,26 @@ actor StreamPacketSender {
         let maxBurstBytes = Double(maxPayloadSize * pacerMaxBurstPackets)
         let burstFromRate = pacerRateBytesPerSecond * pacerBurstSeconds
         pacerMaxBurstBytes = min(maxBurstBytes, max(minBurstBytes, burstFromRate))
+        pacerMaxDebtBytes = max(
+            Double(maxPayloadSize * pacerMaxBurstPackets),
+            pacerRateBytesPerSecond * pacerMinSleepSeconds * 4.0
+        )
         pacerTokens = pacerMaxBurstBytes
+    }
+
+    private func refillPacerTokens(now: CFAbsoluteTime) {
+        let elapsed = max(0, now - pacerLastTime)
+        if elapsed > 0 {
+            pacerTokens = min(pacerMaxBurstBytes, pacerTokens + elapsed * pacerRateBytesPerSecond)
+            pacerLastTime = now
+        }
     }
 
     private func paceIfNeeded(packetBytes: Int) async {
         guard pacerRateBps > 0, packetBytes > 0 else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
-        let elapsed = max(0, now - pacerLastTime)
-        if elapsed > 0 {
-            pacerTokens = min(pacerMaxBurstBytes, pacerTokens + elapsed * pacerRateBytesPerSecond)
-        }
-        pacerLastTime = now
+        refillPacerTokens(now: now)
 
         let packetCost = Double(packetBytes)
         guard pacerTokens < packetCost else {
@@ -625,15 +636,27 @@ actor StreamPacketSender {
         }
 
         let deficit = packetCost - pacerTokens
-        pacerTokens = 0
         let waitSeconds = deficit / pacerRateBytesPerSecond
         guard waitSeconds > 0 else { return }
+        if waitSeconds < pacerMinSleepSeconds {
+            // Coalesce tiny pacing waits to avoid per-packet sleep overshoot at high packet rates.
+            pacerTokens = max(-pacerMaxDebtBytes, pacerTokens - packetCost)
+            return
+        }
+
         do {
             try await Task.sleep(for: .seconds(waitSeconds))
         } catch {
             return
         }
-        pacerLastTime = CFAbsoluteTimeGetCurrent()
+
+        let wakeTime = CFAbsoluteTimeGetCurrent()
+        refillPacerTokens(now: wakeTime)
+        if pacerTokens >= packetCost {
+            pacerTokens -= packetCost
+        } else {
+            pacerTokens = max(-pacerMaxDebtBytes, pacerTokens - packetCost)
+        }
     }
 }
 

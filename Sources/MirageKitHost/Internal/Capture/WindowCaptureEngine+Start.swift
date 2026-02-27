@@ -353,6 +353,7 @@ extension WindowCaptureEngine {
                     display: resolvedConfig.display,
                     resolution: resolvedConfig.resolution,
                     sourceRect: resolvedConfig.sourceRect,
+                    contentWindowID: resolvedConfig.windowID,
                     excludedWindows: resolvedConfig.excludedWindows,
                     showsCursor: resolvedConfig.showsCursor,
                     onFrame: onFrame,
@@ -379,6 +380,7 @@ extension WindowCaptureEngine {
     /// - Parameters:
     ///   - display: The display to capture
     ///   - resolution: Optional pixel resolution override (used for HiDPI virtual displays)
+    ///   - contentWindowID: Optional originating window ID for window-oriented stall policy while using display capture.
     ///   - showsCursor: Whether to show cursor in captured frames (true for login, false for desktop streaming)
     ///   - onFrame: Callback for each captured frame
     ///   - onDimensionChange: Callback when dimensions change
@@ -386,6 +388,7 @@ extension WindowCaptureEngine {
         display: SCDisplay,
         resolution: CGSize? = nil,
         sourceRect: CGRect? = nil,
+        contentWindowID: WindowID? = nil,
         excludedWindows: [SCWindow] = [],
         showsCursor: Bool = true,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
@@ -410,7 +413,7 @@ extension WindowCaptureEngine {
         currentHeight = max(1, Int(captureResolution.height))
         captureMode = .display
         captureSessionConfig = CaptureSessionConfiguration(
-            windowID: nil,
+            windowID: contentWindowID,
             applicationPID: nil,
             displayID: display.displayID,
             window: nil,
@@ -511,15 +514,15 @@ extension WindowCaptureEngine {
 
         // Create output handler
         let captureRate = effectiveCaptureRate()
-        let stallPolicy = resolvedStallPolicy(windowID: 0, frameRate: captureRate)
+        let resolvedWindowID: CGWindowID = contentWindowID.map { CGWindowID($0) } ?? 0
+        let stallPolicy = resolvedStallPolicy(windowID: resolvedWindowID, frameRate: captureRate)
         activeStallPolicy = stallPolicy
-        MirageLogger
-            .capture(
-                "event=stall_policy mode=display softMs=\(Int((stallPolicy.softStallThreshold * 1000).rounded())) " +
-                    "hardMs=\(Int((stallPolicy.hardRestartThreshold * 1000).rounded())) " +
-                    "debounceMs=\(Int((stallPolicy.restartDebounce * 1000).rounded())) " +
-                    "profile=\(capturePressureProfile.rawValue)"
-            )
+        let softMs = Int((stallPolicy.softStallThreshold * 1000).rounded())
+        let hardMs = Int((stallPolicy.hardRestartThreshold * 1000).rounded())
+        let debounceMs = Int((stallPolicy.restartDebounce * 1000).rounded())
+        MirageLogger.capture(
+            "event=stall_policy mode=display softMs=\(softMs) hardMs=\(hardMs) debounceMs=\(debounceMs) profile=\(capturePressureProfile.rawValue)"
+        )
         streamOutput = CaptureStreamOutput(
             onFrame: onFrame,
             onAudio: onAudio,
@@ -530,6 +533,7 @@ extension WindowCaptureEngine {
                 self?.enqueueCaptureStallSignal(signal)
             },
             shouldDropFrame: admissionDropper,
+            windowID: resolvedWindowID,
             usesDetailedMetadata: false,
             tracksFrameStatus: true,
             frameGapThreshold: frameGapThreshold(for: captureRate),

@@ -239,8 +239,10 @@ final class AudioPlaybackController {
         if audioSessionConfigured { return true }
         let session = AVAudioSession.sharedInstance()
         do {
-            // `.playback` keeps streamed audio reliable while `.mixWithOthers` avoids interrupting user media.
-            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+            // Keep existing media (for example, Music/Spotify) playing when a stream starts.
+            // `.ambient` is the least disruptive while other audio is active; otherwise we keep `.playback`.
+            let category: AVAudioSession.Category = session.isOtherAudioPlaying ? .ambient : .playback
+            try session.setCategory(category, mode: .default, options: [.mixWithOthers])
             try session.setActive(true, options: [])
             audioSessionConfigured = true
             return true

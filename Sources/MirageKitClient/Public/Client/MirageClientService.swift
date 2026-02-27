@@ -235,6 +235,8 @@ public final class MirageClientService {
     public internal(set) var desktopStreamMode: MirageDesktopStreamMode?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
+    /// Last seen app/window stream dimension token per stream.
+    var appDimensionTokenByStream: [StreamID: UInt16] = [:]
 
     /// Stream scale for post-capture downscaling
     /// 1.0 = native resolution, lower values reduce encoded size
@@ -277,8 +279,8 @@ public final class MirageClientService {
 
     /// Currently streaming app's bundle identifier
     public internal(set) var streamingAppBundleID: String?
-    /// Last reported focus state per stream for app-stream pause/resume notifications.
-    var appStreamFocusStateByStreamID: [StreamID: Bool] = [:]
+    /// Latest host-owned inventory for the currently streamed app session.
+    public internal(set) var appWindowInventory: AppWindowInventoryMessage?
 
     /// Callback when app list is received
     public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
@@ -298,8 +300,14 @@ public final class MirageClientService {
     /// Callback when app streaming starts
     public var onAppStreamStarted: ((String, String, [AppStreamStartedMessage.AppStreamWindow]) -> Void)?
 
+    /// Callback when host publishes app-window slot inventory updates.
+    public var onAppWindowInventoryUpdate: ((AppWindowInventoryMessage) -> Void)?
+
     /// Callback when a new window is added to app stream
     public var onWindowAddedToStream: ((WindowAddedToStreamMessage) -> Void)?
+
+    /// Callback when a requested slot swap succeeds or fails.
+    public var onAppWindowSwapResult: ((AppWindowSwapResultMessage) -> Void)?
 
     /// Callback when a window is removed from app streaming.
     public var onWindowRemovedFromStream: ((WindowRemovedFromStreamMessage) -> Void)?

@@ -116,8 +116,15 @@ extension MirageHostService {
                 return
             }
             let requestedDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
+            let maxVisibleSlots = resolvedMaxVisibleAppWindowSlots(request.maxConcurrentVisibleWindows)
+            let sharedBitrateBudget = resolvedAppSessionBitrateBudget(requestedBitrate: request.bitrate)
+            let bitrateAllocationPolicy = request.bitrateAllocationPolicy ?? .prioritizeActiveWindow
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Performance mode: \(performanceMode.displayName)")
+            MirageLogger
+                .host(
+                    "App stream slot cap: \(maxVisibleSlots), shared bitrate budget: \(sharedBitrateBudget.map { "\($0) bps" } ?? "none"), allocationPolicy: \(bitrateAllocationPolicy.rawValue)"
+                )
 
             // Check if app is available for streaming
             guard await appStreamManager.isAppAvailableForStreaming(request.bundleIdentifier) else {
@@ -152,7 +159,10 @@ extension MirageHostService {
                 clientID: client.id,
                 clientName: client.name,
                 requestedDisplayResolution: requestedDisplayResolution,
-                requestedClientScaleFactor: request.scaleFactor
+                requestedClientScaleFactor: request.scaleFactor,
+                maxVisibleSlots: maxVisibleSlots,
+                bitrateBudgetBps: sharedBitrateBudget,
+                bitrateAllocationPolicy: bitrateAllocationPolicy
             ) != nil else {
                 MirageLogger.host("Failed to start app session for \(app.name)")
                 sendAppSelectionError(
@@ -187,7 +197,8 @@ extension MirageHostService {
                 client: client,
                 selectRequest: request,
                 targetFrameRate: targetFrameRate,
-                requestedDisplayResolution: requestedDisplayResolution
+                requestedDisplayResolution: requestedDisplayResolution,
+                maxVisibleSlots: maxVisibleSlots
             )
             let startupDecision = Self.initialAppWindowStartupDecision(
                 startedWindowCount: startupResult.windows.count
@@ -217,6 +228,9 @@ extension MirageHostService {
             )
             let responseMessage = try ControlMessage(type: .appStreamStarted, content: response)
             connection.send(content: responseMessage.serialize(), completion: .idempotent)
+            await sendAppWindowInventoryUpdate(bundleIdentifier: app.bundleIdentifier, clientID: client.id)
+            await startAppStreamGovernorsIfNeeded()
+            await recomputeAppSessionBitrateBudget(bundleIdentifier: app.bundleIdentifier, reason: "appStreamStarted")
 
             pendingLightsOutSetup = false
             await endPendingAppStreamLightsOutSetup()
@@ -271,6 +285,250 @@ extension MirageHostService {
         }
     }
 
+    func handleAppWindowSwapRequest(
+        _ message: ControlMessage,
+        from client: MirageConnectedClient,
+        connection: NWConnection
+    ) async {
+        do {
+            let request = try message.decode(AppWindowSwapRequestMessage.self)
+            let result = await performAppWindowSwap(
+                bundleIdentifier: request.bundleIdentifier,
+                targetSlotStreamID: request.targetSlotStreamID,
+                targetWindowID: request.targetWindowID,
+                clientID: client.id
+            )
+            if let response = try? ControlMessage(type: .appWindowSwapResult, content: result) {
+                connection.send(content: response.serialize(), completion: .idempotent)
+            }
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle app window swap request: ")
+            let fallback = AppWindowSwapResultMessage(
+                bundleIdentifier: "",
+                targetSlotStreamID: 0,
+                windowID: 0,
+                success: false,
+                reason: error.localizedDescription
+            )
+            if let response = try? ControlMessage(type: .appWindowSwapResult, content: fallback) {
+                connection.send(content: response.serialize(), completion: .idempotent)
+            }
+        }
+    }
+
+    private func performAppWindowSwap(
+        bundleIdentifier: String,
+        targetSlotStreamID: StreamID,
+        targetWindowID: WindowID,
+        clientID: UUID
+    ) async -> AppWindowSwapResultMessage {
+        let failure: (String) -> AppWindowSwapResultMessage = { reason in
+            AppWindowSwapResultMessage(
+                bundleIdentifier: bundleIdentifier,
+                targetSlotStreamID: targetSlotStreamID,
+                windowID: targetWindowID,
+                success: false,
+                reason: reason
+            )
+        }
+
+        guard let appSession = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else {
+            return failure("App session not found")
+        }
+        guard appSession.clientID == clientID else {
+            return failure("Swap request client does not own this app session")
+        }
+        guard let currentWindowID = await appStreamManager.windowIDForStream(
+            bundleIdentifier: bundleIdentifier,
+            streamID: targetSlotStreamID
+        ) else {
+            return failure("Target slot stream is not active")
+        }
+        guard let hiddenInfo = await appStreamManager.hiddenWindowInfo(
+            bundleIdentifier: bundleIdentifier,
+            windowID: targetWindowID
+        ) else {
+            return failure("Target window is not in hidden inventory")
+        }
+        guard let streamSession = activeSessionByStreamID[targetSlotStreamID],
+              let context = streamsByID[targetSlotStreamID] else {
+            return failure("Target slot stream context is unavailable")
+        }
+        let previousWindowInfo = appSession.windowStreams[currentWindowID]
+        guard let virtualDisplayState = getVirtualDisplayState(streamID: targetSlotStreamID) else {
+            return failure("Target slot stream does not have virtual-display state")
+        }
+        guard let clientContext = findClientContext(clientID: clientID) else {
+            return failure("Client context unavailable")
+        }
+
+        if currentWindowID == targetWindowID {
+            return AppWindowSwapResultMessage(
+                bundleIdentifier: bundleIdentifier,
+                targetSlotStreamID: targetSlotStreamID,
+                windowID: targetWindowID,
+                success: true,
+                reason: nil
+            )
+        }
+
+        let resolvedSpaceID = CGVirtualDisplayBridge.getSpaceForDisplay(virtualDisplayState.displayID)
+        guard resolvedSpaceID != 0 else {
+            return failure("Unable to resolve target display space for slot")
+        }
+
+        let oldOwner = WindowSpaceManager.WindowBindingOwner(
+            streamID: targetSlotStreamID,
+            windowID: currentWindowID,
+            displayID: virtualDisplayState.displayID,
+            generation: virtualDisplayState.generation
+        )
+        let newGeneration = virtualDisplayState.generation &+ 1
+        let newOwner = WindowSpaceManager.WindowBindingOwner(
+            streamID: targetSlotStreamID,
+            windowID: targetWindowID,
+            displayID: virtualDisplayState.displayID,
+            generation: newGeneration
+        )
+
+        do {
+            try await WindowSpaceManager.shared.restoreWindow(
+                currentWindowID,
+                expectedOwner: oldOwner
+            )
+        } catch {
+            return failure("Failed to release previous slot window: \(error.localizedDescription)")
+        }
+
+        do {
+            try await WindowSpaceManager.shared.moveWindow(
+                targetWindowID,
+                toSpaceID: resolvedSpaceID,
+                displayID: virtualDisplayState.displayID,
+                displayBounds: virtualDisplayState.bounds,
+                targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
+                owner: newOwner
+            )
+        } catch {
+            // Fail closed: attempt to restore prior slot binding before returning error.
+            do {
+                try await WindowSpaceManager.shared.moveWindow(
+                    currentWindowID,
+                    toSpaceID: resolvedSpaceID,
+                    displayID: virtualDisplayState.displayID,
+                    displayBounds: virtualDisplayState.bounds,
+                    targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
+                    owner: oldOwner
+                )
+            } catch {
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Failed to restore prior slot binding after swap failure: "
+                )
+            }
+            return failure("Failed to bind requested hidden window into slot: \(error.localizedDescription)")
+        }
+
+        let targetFrame = currentWindowFrame(for: targetWindowID) ?? CGRect(
+            x: virtualDisplayState.bounds.origin.x,
+            y: virtualDisplayState.bounds.origin.y,
+            width: CGFloat(max(1, hiddenInfo.width)),
+            height: CGFloat(max(1, hiddenInfo.height))
+        )
+        let targetWindow = MirageWindow(
+            id: targetWindowID,
+            title: hiddenInfo.title,
+            application: activeSessionByStreamID[targetSlotStreamID]?.window.application,
+            frame: targetFrame,
+            isOnScreen: true,
+            windowLayer: 0
+        )
+
+        registerActiveStreamSession(
+            MirageStreamSession(
+                id: targetSlotStreamID,
+                window: targetWindow,
+                client: streamSession.client
+            )
+        )
+        inputStreamCacheActor.set(targetSlotStreamID, window: targetWindow, client: streamSession.client)
+        clearVirtualDisplayState(windowID: currentWindowID)
+        setVirtualDisplayState(
+            windowID: targetWindowID,
+            state: WindowVirtualDisplayState(
+                streamID: targetSlotStreamID,
+                displayID: virtualDisplayState.displayID,
+                generation: newGeneration,
+                bounds: virtualDisplayState.bounds,
+                targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
+                captureSourceRect: virtualDisplayState.captureSourceRect,
+                visiblePixelResolution: virtualDisplayState.visiblePixelResolution,
+                scaleFactor: virtualDisplayState.scaleFactor,
+                pixelResolution: virtualDisplayState.pixelResolution,
+                clientScaleFactor: virtualDisplayState.clientScaleFactor
+            )
+        )
+        await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: newGeneration)
+
+        let processID = targetWindow.application?.id ?? 0
+        let isResizable = appStreamManager.checkWindowResizability(windowID: targetWindowID, processID: processID)
+        _ = await appStreamManager.replaceVisibleWindowForStream(
+            bundleIdentifier: bundleIdentifier,
+            streamID: targetSlotStreamID,
+            newWindowID: targetWindowID,
+            title: targetWindow.title,
+            width: Int(targetWindow.frame.width),
+            height: Int(targetWindow.frame.height),
+            isResizable: isResizable
+        )
+        await appStreamManager.upsertHiddenWindow(
+            bundleIdentifier: bundleIdentifier,
+            windowID: currentWindowID,
+            title: previousWindowInfo?.title ?? streamSession.window.title,
+            width: previousWindowInfo?.width ?? Int(max(1, streamSession.window.frame.width)),
+            height: previousWindowInfo?.height ?? Int(max(1, streamSession.window.frame.height)),
+            isResizable: previousWindowInfo?.isResizable ?? true
+        )
+
+        do {
+            let encodedDimensions = await context.getEncodedDimensions()
+            let targetFrameRate = await context.getTargetFrameRate()
+            let codec = await context.getCodec()
+            let dimensionToken = await context.getDimensionToken()
+            let fallbackMin = fallbackMinimumSize(for: targetWindow.frame)
+            let minWidth = Int(minimumSizesByWindowID[targetWindowID]?.width ?? CGFloat(fallbackMin.minWidth))
+            let minHeight = Int(minimumSizesByWindowID[targetWindowID]?.height ?? CGFloat(fallbackMin.minHeight))
+            let started = StreamStartedMessage(
+                streamID: targetSlotStreamID,
+                windowID: targetWindowID,
+                width: encodedDimensions.width,
+                height: encodedDimensions.height,
+                frameRate: targetFrameRate,
+                codec: codec,
+                minWidth: minWidth,
+                minHeight: minHeight,
+                dimensionToken: dimensionToken
+            )
+            try await clientContext.send(.streamStarted, content: started)
+        } catch {
+            return failure("Swap applied but failed to notify client stream metadata: \(error.localizedDescription)")
+        }
+
+        await context.requestKeyframe()
+        await markAppStreamInteraction(streamID: targetSlotStreamID, reason: "slot swap")
+        await sendAppWindowInventoryUpdate(bundleIdentifier: bundleIdentifier, clientID: clientID)
+        await recomputeAppSessionBitrateBudget(bundleIdentifier: bundleIdentifier, reason: "slot swap")
+
+        return AppWindowSwapResultMessage(
+            bundleIdentifier: bundleIdentifier,
+            targetSlotStreamID: targetSlotStreamID,
+            windowID: targetWindowID,
+            success: true,
+            reason: nil
+        )
+    }
+
     private func closeAppWindow(windowID: WindowID, app: MirageApplication) -> Bool {
         guard NSRunningApplication(processIdentifier: app.id) != nil else {
             MirageLogger.host("Cannot close window \(windowID): process \(app.id) is no longer running")
@@ -322,42 +580,6 @@ extension MirageHostService {
         return AXUIElementPerformAction(axWindow, closeAction) == .success
     }
 
-    func handleStreamPaused(_ message: ControlMessage, from client: MirageConnectedClient) async {
-        do {
-            let request = try message.decode(StreamPausedMessage.self)
-            MirageLogger.host("Client \(client.name) paused stream \(request.streamID)")
-
-            // Find the session and pause it
-            if let session = await appStreamManager.getSessionForStreamID(request.streamID) {
-                await appStreamManager.pauseStream(
-                    bundleIdentifier: session.bundleIdentifier,
-                    streamID: request.streamID
-                )
-                await applyClientFocusThrottle(streamID: request.streamID, isFocused: false)
-            }
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle stream paused: ")
-        }
-    }
-
-    func handleStreamResumed(_ message: ControlMessage, from client: MirageConnectedClient) async {
-        do {
-            let request = try message.decode(StreamResumedMessage.self)
-            MirageLogger.host("Client \(client.name) resumed stream \(request.streamID)")
-
-            // Find the session and resume it
-            if let session = await appStreamManager.getSessionForStreamID(request.streamID) {
-                await appStreamManager.resumeStream(
-                    bundleIdentifier: session.bundleIdentifier,
-                    streamID: request.streamID
-                )
-                await applyClientFocusThrottle(streamID: request.streamID, isFocused: true)
-            }
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle stream resumed: ")
-        }
-    }
-
     private struct InitialAppWindowStartupResult {
         let windows: [AppStreamStartedMessage.AppStreamWindow]
         let failureSummary: String
@@ -393,7 +615,8 @@ extension MirageHostService {
         client: MirageConnectedClient,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
-        requestedDisplayResolution: CGSize
+        requestedDisplayResolution: CGSize,
+        maxVisibleSlots: Int
     ) async -> InitialAppWindowStartupResult {
         let maxDiscoveryAttempts = 4
         let maxAttemptsPerWindow = 3
@@ -521,12 +744,72 @@ extension MirageHostService {
             }
         }
 
+        let clampedMaxVisibleSlots = max(1, maxVisibleSlots)
+        let visibleBindings: [(slotIndex: Int, binding: ResolvedAppWindowBinding)] = Array(
+            bindingPlan.resolvedBindings
+                .prefix(clampedMaxVisibleSlots)
+                .enumerated()
+                .map { index, binding in
+                    (slotIndex: index, binding: binding)
+                }
+        )
+        let overflowBindings = Array(bindingPlan.resolvedBindings.dropFirst(clampedMaxVisibleSlots))
+        var startupBitratePerVisibleWindow: Int?
+        if !visibleBindings.isEmpty {
+            let visibleCount = max(1, visibleBindings.count)
+            let perStreamBitrateCap = Self.appStreamPerStreamBitrateCap(visibleStreamCount: visibleCount)
+            let sharedBudgetBps = await appStreamManager.sharedBitrateBudget(bundleIdentifier: app.bundleIdentifier)
+                ?? resolvedAppSessionBitrateBudget(requestedBitrate: selectRequest.bitrate)
+            if let sharedBudgetBps {
+                let perVisibleBitrate = max(1_000_000, sharedBudgetBps / visibleCount)
+                startupBitratePerVisibleWindow = min(perVisibleBitrate, perStreamBitrateCap)
+            } else {
+                if let requestedBitrate = selectRequest.bitrate {
+                    startupBitratePerVisibleWindow = min(max(1_000_000, requestedBitrate), perStreamBitrateCap)
+                } else {
+                    startupBitratePerVisibleWindow = perStreamBitrateCap == Int.max ? nil : perStreamBitrateCap
+                }
+            }
+        }
+        if !overflowBindings.isEmpty {
+            for binding in overflowBindings {
+                let resolved = binding.resolvedWindow
+                let processID = resolved.application?.id ?? binding.candidate.window.application?.id ?? 0
+                let isResizable = appStreamManager.checkWindowResizability(
+                    windowID: resolved.id,
+                    processID: processID
+                )
+                await appStreamManager.upsertHiddenWindow(
+                    bundleIdentifier: app.bundleIdentifier,
+                    windowID: resolved.id,
+                    title: resolved.title,
+                    width: Int(resolved.frame.width),
+                    height: Int(resolved.frame.height),
+                    isResizable: isResizable
+                )
+                await appStreamManager.noteWindowStartupSucceeded(
+                    bundleID: app.bundleIdentifier,
+                    windowID: binding.candidate.window.id
+                )
+                await appStreamManager.noteWindowStartupSucceeded(
+                    bundleID: app.bundleIdentifier,
+                    windowID: resolved.id
+                )
+            }
+            MirageLogger
+                .host(
+                    "Initial app-stream startup queued \(overflowBindings.count) hidden window(s) for \(app.bundleIdentifier)"
+                )
+        }
+
         let startupBatchRanges = Self.appWindowStartupBatchRanges(
-            totalCount: bindingPlan.resolvedBindings.count,
+            totalCount: visibleBindings.count,
             maxConcurrentWindowStarts: maxConcurrentWindowStarts
         )
+        var startedWindowIDs: Set<WindowID> = []
+        var startedStreamIDs: Set<StreamID> = []
         for batchRange in startupBatchRanges {
-            let batch = Array(bindingPlan.resolvedBindings[batchRange])
+            let batch = Array(visibleBindings[batchRange])
             let batchTasks = batch.map { binding in
                 Task { @MainActor [weak self] in
                     guard let self else {
@@ -537,13 +820,15 @@ extension MirageHostService {
                     }
                     return await self.startInitialAppWindowBinding(
                         app: app,
-                        binding: binding,
+                        binding: binding.binding,
+                        preferredSlotIndex: binding.slotIndex,
                         client: client,
                         selectRequest: selectRequest,
                         targetFrameRate: targetFrameRate,
                         requestedDisplayResolution: requestedDisplayResolution,
                         maxAttemptsPerWindow: maxAttemptsPerWindow,
                         perWindowRetryBackoff: perWindowRetryBackoff,
+                        startupBitratePerVisibleWindow: startupBitratePerVisibleWindow,
                         clientContext: clientContext
                     )
                 }
@@ -557,7 +842,9 @@ extension MirageHostService {
             for result in batchResults {
                 failureNotes.append(contentsOf: result.failureNotes)
                 guard let startedWindow = result.startedWindow else { continue }
-                if startedWindows.contains(where: { $0.windowID == startedWindow.windowID }) {
+                let insertedWindow = startedWindowIDs.insert(startedWindow.windowID).inserted
+                let insertedStream = startedStreamIDs.insert(startedWindow.streamID).inserted
+                if !insertedWindow || !insertedStream {
                     continue
                 }
                 startedWindows.append(startedWindow.asWireWindow)
@@ -574,12 +861,14 @@ extension MirageHostService {
     private func startInitialAppWindowBinding(
         app: MirageInstalledApp,
         binding: ResolvedAppWindowBinding,
+        preferredSlotIndex: Int,
         client: MirageConnectedClient,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize,
         maxAttemptsPerWindow: Int,
         perWindowRetryBackoff: [Duration],
+        startupBitratePerVisibleWindow: Int?,
         clientContext: ClientContext?
     ) async -> InitialAppWindowStartAttemptResult {
         var failureNotes: [String] = []
@@ -590,10 +879,12 @@ extension MirageHostService {
                     app: app,
                     startupCandidate: binding.candidate,
                     preferredWindow: binding.resolvedWindow,
+                    preferredSlotIndex: preferredSlotIndex,
                     client: client,
                     selectRequest: selectRequest,
                     targetFrameRate: targetFrameRate,
-                    requestedDisplayResolution: requestedDisplayResolution
+                    requestedDisplayResolution: requestedDisplayResolution,
+                    requestedBitrateOverride: startupBitratePerVisibleWindow
                 )
                 await appStreamManager.noteWindowStartupSucceeded(
                     bundleID: app.bundleIdentifier,
@@ -619,13 +910,14 @@ extension MirageHostService {
                 let renderedDetail = detail.isEmpty ? String(describing: error) : detail
                 failureNotes.append("window \(binding.candidate.window.id) attempt \(attempt): \(renderedDetail)")
 
-                let retryable = isRetryableInitialAppWindowStartupError(error)
+                let retryable = AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error)
                 let failureDisposition = await appStreamManager.noteWindowStartupFailed(
                     bundleID: app.bundleIdentifier,
                     windowID: binding.candidate.window.id,
                     retryable: retryable,
                     reason: renderedDetail
                 )
+                let shouldMoveToHiddenInventory = AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error)
 
                 switch failureDisposition {
                 case let .retryScheduled(retryAttempt, retryAt):
@@ -633,18 +925,46 @@ extension MirageHostService {
                         "Initial app-stream startup retry scheduled for \(binding.candidate.window.id) attempt \(retryAttempt) at \(retryAt) (\(binding.candidate.logMetadata))"
                     )
                 case .terminal:
-                    if let clientContext {
-                        await emitWindowStreamFailed(
-                            to: clientContext,
+                    if shouldMoveToHiddenInventory {
+                        let resolved = binding.resolvedWindow
+                        let processID = resolved.application?.id ?? binding.candidate.window.application?.id ?? 0
+                        let isResizable = appStreamManager.checkWindowResizability(
+                            windowID: resolved.id,
+                            processID: processID
+                        )
+                        await appStreamManager.upsertHiddenWindow(
                             bundleIdentifier: app.bundleIdentifier,
-                            windowID: binding.candidate.window.id,
-                            title: initialStreamFailureTitle(for: binding.candidate, appName: app.name),
-                            reason: renderedDetail
+                            windowID: resolved.id,
+                            title: resolved.title,
+                            width: Int(resolved.frame.width),
+                            height: Int(resolved.frame.height),
+                            isResizable: isResizable
+                        )
+                        await appStreamManager.noteWindowStartupSucceeded(
+                            bundleID: app.bundleIdentifier,
+                            windowID: binding.candidate.window.id
+                        )
+                        await appStreamManager.noteWindowStartupSucceeded(
+                            bundleID: app.bundleIdentifier,
+                            windowID: resolved.id
+                        )
+                        MirageLogger.host(
+                            "Initial app-stream startup moved window \(resolved.id) to hidden inventory after non-retryable startup failure: \(renderedDetail) (\(binding.candidate.logMetadata))"
+                        )
+                    } else {
+                        if let clientContext {
+                            await emitWindowStreamFailed(
+                                to: clientContext,
+                                bundleIdentifier: app.bundleIdentifier,
+                                windowID: binding.candidate.window.id,
+                                title: initialStreamFailureTitle(for: binding.candidate, appName: app.name),
+                                reason: renderedDetail
+                            )
+                        }
+                        MirageLogger.host(
+                            "Initial app-stream startup failed permanently for \(binding.candidate.window.id): \(renderedDetail) (\(binding.candidate.logMetadata))"
                         )
                     }
-                    MirageLogger.host(
-                        "Initial app-stream startup failed permanently for \(binding.candidate.window.id): \(renderedDetail) (\(binding.candidate.logMetadata))"
-                    )
                 case .suppressed:
                     break
                 }
@@ -669,10 +989,12 @@ extension MirageHostService {
         app: MirageInstalledApp,
         startupCandidate: AppStreamWindowCandidate,
         preferredWindow: MirageWindow,
+        preferredSlotIndex: Int,
         client: MirageConnectedClient,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
-        requestedDisplayResolution: CGSize
+        requestedDisplayResolution: CGSize,
+        requestedBitrateOverride: Int?
     ) async throws -> AppStreamStartedMessage.AppStreamWindow {
         let streamSession = try await startStream(
             for: preferredWindow,
@@ -685,7 +1007,7 @@ extension MirageHostService {
             targetFrameRate: targetFrameRate,
             bitDepth: selectRequest.bitDepth,
             captureQueueDepth: selectRequest.captureQueueDepth,
-            bitrate: selectRequest.bitrate,
+            bitrate: requestedBitrateOverride ?? selectRequest.bitrate,
             latencyMode: selectRequest.latencyMode ?? .auto,
             performanceMode: selectRequest.performanceMode ?? .standard,
             allowRuntimeQualityAdjustment: selectRequest.allowRuntimeQualityAdjustment,
@@ -702,15 +1024,42 @@ extension MirageHostService {
             processID: processID
         )
 
-        await appStreamManager.addWindowToSession(
+        if let existingStreamID = await appStreamManager.streamIDForWindow(
+            bundleIdentifier: app.bundleIdentifier,
+            windowID: resolvedWindow.id
+        ), existingStreamID != streamSession.id {
+            await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+            throw WindowStreamStartError.windowAlreadyBound(
+                windowID: resolvedWindow.id,
+                existingStreamID: existingStreamID
+            )
+        }
+
+        guard await appStreamManager.addWindowToSession(
             bundleIdentifier: app.bundleIdentifier,
             windowID: resolvedWindow.id,
             streamID: streamSession.id,
             title: resolvedWindow.title,
             width: Int(resolvedWindow.frame.width),
             height: Int(resolvedWindow.frame.height),
-            isResizable: isResizable
-        )
+            isResizable: isResizable,
+            slotIndex: preferredSlotIndex
+        ) != nil else {
+            let existingStreamID = await appStreamManager.streamIDForWindow(
+                bundleIdentifier: app.bundleIdentifier,
+                windowID: resolvedWindow.id
+            )
+            await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+            if let existingStreamID {
+                throw WindowStreamStartError.windowAlreadyBound(
+                    windowID: resolvedWindow.id,
+                    existingStreamID: existingStreamID
+                )
+            }
+            throw MirageError.protocolError(
+                "Failed to bind startup window \(resolvedWindow.id) into slot \(preferredSlotIndex)"
+            )
+        }
 
         return AppStreamStartedMessage.AppStreamWindow(
             streamID: streamSession.id,
@@ -741,34 +1090,6 @@ extension MirageHostService {
         return "\(appName) window #\(candidate.window.id)"
     }
 
-    private func isRetryableInitialAppWindowStartupError(_ error: Error) -> Bool {
-        if error is WindowStreamStartError { return true }
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case .windowNotFound, .timeout:
-                return true
-            case .alreadyAdvertising,
-                 .notAdvertising,
-                 .connectionFailed,
-                 .authenticationFailed,
-                 .streamNotFound,
-                 .encodingError,
-                 .decodingError,
-                 .permissionDenied,
-                 .protocolError:
-                return false
-            }
-        }
-        let normalizedDescription = error.localizedDescription.lowercased()
-        if normalizedDescription.contains("window not found") ||
-            normalizedDescription.contains("disappeared before stream startup") ||
-            normalizedDescription.contains("virtual-display stream start failed") ||
-            normalizedDescription.contains("dedicated virtual display start failed") {
-            return true
-        }
-        return false
-    }
-
     private func sendAppSelectionError(
         over connection: NWConnection,
         code: ErrorMessage.ErrorCode,
@@ -777,41 +1098,6 @@ extension MirageHostService {
         let error = ErrorMessage(code: code, message: message)
         guard let response = try? ControlMessage(type: .error, content: error) else { return }
         connection.send(content: response.serialize(), completion: .idempotent)
-    }
-
-    private func applyClientFocusThrottle(streamID: StreamID, isFocused: Bool) async {
-        guard let context = streamsByID[streamID] else {
-            pausedStreamBaselineFrameRateByStreamID.removeValue(forKey: streamID)
-            return
-        }
-
-        if isFocused {
-            let restoreFrameRate: Int
-            if let savedFrameRate = pausedStreamBaselineFrameRateByStreamID.removeValue(forKey: streamID) {
-                restoreFrameRate = savedFrameRate
-            } else {
-                restoreFrameRate = await context.getTargetFrameRate()
-            }
-            do {
-                try await context.updateFrameRate(max(1, restoreFrameRate))
-                await context.requestKeyframe()
-                MirageLogger.host("Stream \(streamID) focused - restored to \(max(1, restoreFrameRate)) fps")
-            } catch {
-                MirageLogger.error(.host, error: error, message: "Failed restoring stream \(streamID) frame rate: ")
-            }
-            return
-        }
-
-        if pausedStreamBaselineFrameRateByStreamID[streamID] == nil {
-            pausedStreamBaselineFrameRateByStreamID[streamID] = await context.getTargetFrameRate()
-        }
-
-        do {
-            try await context.updateFrameRate(1)
-            MirageLogger.host("Stream \(streamID) unfocused - throttled to 1 fps")
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed throttling stream \(streamID): ")
-        }
     }
 
     func suspendAppListRequestsForDesktopStream() async {

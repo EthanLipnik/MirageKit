@@ -236,6 +236,7 @@ extension StreamContext {
             display: resolvedDisplayWrapper.display,
             resolution: outputSize,
             sourceRect: placement.captureSourceRect,
+            contentWindowID: windowID,
             showsCursor: false,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
@@ -373,6 +374,7 @@ extension StreamContext {
                 display: resolvedDisplayWrapper.display,
                 resolution: outputSize,
                 sourceRect: placement.captureSourceRect,
+                contentWindowID: windowID,
                 showsCursor: false,
                 onFrame: { [weak self] frame in
                     self?.enqueueCapturedFrame(frame)
@@ -432,6 +434,7 @@ extension StreamContext {
                         display: previousDisplayWrapper.display,
                         resolution: rollbackCaptureSize,
                         sourceRect: previousCaptureSourceRect,
+                        contentWindowID: windowID,
                         showsCursor: false,
                         onFrame: { [weak self] frame in
                             self?.enqueueCapturedFrame(frame)

@@ -232,6 +232,79 @@ struct MirageKitTests {
         #expect(decoded.requestedAtNs == 12_345)
     }
 
+    @Test("Select app message includes max visible slot count")
+    func selectAppMessageMaxVisibleSlotsSerialization() throws {
+        let request = SelectAppMessage(
+            bundleIdentifier: "com.apple.mail",
+            maxRefreshRate: 120,
+            maxConcurrentVisibleWindows: 8
+        )
+        let envelope = try ControlMessage(type: .selectApp, content: request)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
+        #expect(decoded.bundleIdentifier == "com.apple.mail")
+        #expect(decoded.maxConcurrentVisibleWindows == 8)
+    }
+
+    @Test("App window inventory and swap messages serialize")
+    func appWindowInventoryAndSwapSerialization() throws {
+        let metadata = AppWindowInventoryMessage.WindowMetadata(
+            windowID: 9001,
+            title: "Inbox",
+            width: 1440,
+            height: 900,
+            isResizable: true
+        )
+        let inventory = AppWindowInventoryMessage(
+            bundleIdentifier: "com.apple.mail",
+            maxVisibleSlots: 8,
+            slots: [
+                .init(slotIndex: 0, streamID: 41, window: metadata),
+            ],
+            hiddenWindows: [
+                .init(
+                    windowID: 9002,
+                    title: "Draft",
+                    width: 1280,
+                    height: 860,
+                    isResizable: true
+                ),
+            ]
+        )
+        let inventoryEnvelope = try ControlMessage(type: .appWindowInventory, content: inventory)
+        let (decodedInventoryEnvelope, _) = try requireParsedControlMessage(from: inventoryEnvelope.serialize())
+        let decodedInventory = try decodedInventoryEnvelope.decode(AppWindowInventoryMessage.self)
+        #expect(decodedInventory.bundleIdentifier == "com.apple.mail")
+        #expect(decodedInventory.maxVisibleSlots == 8)
+        #expect(decodedInventory.slots.count == 1)
+        #expect(decodedInventory.hiddenWindows.count == 1)
+
+        let swapRequest = AppWindowSwapRequestMessage(
+            bundleIdentifier: "com.apple.mail",
+            targetSlotStreamID: 41,
+            targetWindowID: 9002
+        )
+        let requestEnvelope = try ControlMessage(type: .appWindowSwapRequest, content: swapRequest)
+        let (decodedRequestEnvelope, _) = try requireParsedControlMessage(from: requestEnvelope.serialize())
+        let decodedSwapRequest = try decodedRequestEnvelope.decode(AppWindowSwapRequestMessage.self)
+        #expect(decodedSwapRequest.targetSlotStreamID == 41)
+        #expect(decodedSwapRequest.targetWindowID == 9002)
+
+        let swapResult = AppWindowSwapResultMessage(
+            bundleIdentifier: "com.apple.mail",
+            targetSlotStreamID: 41,
+            windowID: 9002,
+            success: true,
+            reason: nil
+        )
+        let resultEnvelope = try ControlMessage(type: .appWindowSwapResult, content: swapResult)
+        let (decodedResultEnvelope, _) = try requireParsedControlMessage(from: resultEnvelope.serialize())
+        let decodedSwapResult = try decodedResultEnvelope.decode(AppWindowSwapResultMessage.self)
+        #expect(decodedSwapResult.success == true)
+        #expect(decodedSwapResult.targetSlotStreamID == 41)
+        #expect(decodedSwapResult.windowID == 9002)
+    }
+
     @Test("Host software update control message serialization")
     func hostSoftwareUpdateControlMessageSerialization() throws {
         let statusRequest = HostSoftwareUpdateStatusRequestMessage(forceRefresh: true)
@@ -444,12 +517,11 @@ struct MirageKitTests {
         #expect(decoded.reason == "Dedicated display correction failed")
     }
 
-    @Test("Removed cooldown app-stream message type IDs are unregistered")
-    func removedCooldownControlMessageTypesAbsent() {
-        // Legacy cooldown IDs are intentionally unbound in the hard rewrite.
-        #expect(ControlMessageType(rawValue: 0x87) == nil)
-        #expect(ControlMessageType(rawValue: 0x88) == nil)
-        #expect(ControlMessageType(rawValue: 0x8C) == nil)
+    @Test("App window inventory and swap message IDs are registered")
+    func appWindowControlMessageTypeIDsRegistered() {
+        #expect(ControlMessageType(rawValue: 0x87) == .appWindowInventory)
+        #expect(ControlMessageType(rawValue: 0x88) == .appWindowSwapRequest)
+        #expect(ControlMessageType(rawValue: 0x8C) == .appWindowSwapResult)
     }
 
     @Test("Start desktop request latency mode serialization")

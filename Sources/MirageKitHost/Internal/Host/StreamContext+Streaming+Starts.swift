@@ -388,12 +388,26 @@ extension StreamContext {
         let streamID = streamID
         var localFrameNumber: UInt32 = 0
         var localSequenceNumber: UInt32 = 0
+        let pinDesktopContentRectToFullFrame = CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
+        let fullDesktopContentRect = CGRect(
+            x: 0,
+            y: 0,
+            width: outputSize.width,
+            height: outputSize.height
+        )
 
         await encoder.startEncoding(
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
 
-                let contentRect = currentContentRect
+                // Virtual-display desktop capture can report transient/stale content rects
+                // during mirror transitions. Pin to full-frame so client presentation and
+                // input mapping stay in the same coordinate space.
+                let contentRect = if pinDesktopContentRectToFullFrame {
+                    fullDesktopContentRect
+                } else {
+                    currentContentRect
+                }
                 let frameNum = localFrameNumber
                 let seqStart = localSequenceNumber
                 let now = CFAbsoluteTimeGetCurrent()

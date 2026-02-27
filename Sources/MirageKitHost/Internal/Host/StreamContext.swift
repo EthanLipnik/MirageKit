@@ -17,7 +17,7 @@ import ScreenCaptureKit
 /// Uses virtual displays for window isolation, with display-level capture cropped to visible bounds
 actor StreamContext {
     let streamID: StreamID
-    let windowID: WindowID
+    var windowID: WindowID
     var encoderConfig: MirageEncoderConfiguration
     var streamScale: CGFloat
     var baseCaptureSize: CGSize = .zero
@@ -188,6 +188,8 @@ actor StreamContext {
     /// When true, incoming frames are dropped to prevent decode errors and wasted CPU
     /// Set before dimension updates begin, cleared after completion
     var isResizing: Bool = false
+    /// True when desktop resize orchestration has explicitly paused encode admission.
+    var encodingSuspendedForResize: Bool = false
 
     // MARK: - Backpressure
 

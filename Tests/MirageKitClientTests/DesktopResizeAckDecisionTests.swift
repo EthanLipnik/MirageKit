@@ -46,5 +46,17 @@ struct DesktopResizeAckDecisionTests {
 
         #expect(decision == .waitForTimeout)
     }
+
+    @Test("Tiny mismatch can converge with wider tolerance")
+    func tinyMismatchConvergesWithWiderTolerance() {
+        let decision = desktopResizeAckDecision(
+            acknowledgedDisplaySize: CGSize(width: 1440, height: 1020),
+            targetDisplaySize: CGSize(width: 1440, height: 1026),
+            correctionAlreadySent: false,
+            mismatchThresholdPoints: 8
+        )
+
+        #expect(decision == .converged)
+    }
 }
 #endif

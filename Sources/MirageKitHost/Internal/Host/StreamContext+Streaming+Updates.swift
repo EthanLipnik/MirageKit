@@ -698,6 +698,29 @@ extension StreamContext {
         }
     }
 
+    func suspendEncodingForDesktopResize() async {
+        guard !encodingSuspendedForResize else { return }
+        encodingSuspendedForResize = true
+        shouldEncodeFrames = false
+        frameInbox.clear()
+        resetPipelineStateForReconfiguration(reason: "desktop resize preflight pause")
+        await packetSender?.resetQueue(reason: "desktop resize preflight pause")
+        MirageLogger.stream("Desktop resize preflight: encoding suspended")
+    }
+
+    func resumeEncodingAfterDesktopResize() async {
+        guard encodingSuspendedForResize else { return }
+        encodingSuspendedForResize = false
+        shouldEncodeFrames = true
+        lastKeyframeTime = 0
+        smoothedDirtyPercentage = 0
+        if let encoder {
+            await encoder.resetFrameNumber()
+            await encoder.forceKeyframe()
+        }
+        MirageLogger.stream("Desktop resize completion: encoding resumed")
+    }
+
     func allowEncodingAfterRegistration() async {
         guard !shouldEncodeFrames else { return }
         shouldEncodeFrames = true

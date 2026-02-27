@@ -307,12 +307,38 @@ extension MirageClientService {
             refreshRateOverridesByStream[streamID] = desiredRefreshRate >= 120 ? 120 : 60
 
             let dimensionToken = started.dimensionToken
-
-            Task { [weak self] in
-                if let controller = self?.controllersByStream[streamID] {
-                    let reassembler = await controller.getReassembler()
-                    reassembler.reset()
-                    if let token = dimensionToken { reassembler.updateExpectedDimensionToken(token) }
+            let hasController = controllersByStream[streamID] != nil
+            let isExistingStream = activeStreams.contains(where: { $0.id == streamID }) ||
+                sessionStore.sessionByStreamID(streamID) != nil
+            let previousDimensionToken = appDimensionTokenByStream[streamID]
+            let resetDecision = appStreamStartResetDecision(
+                streamID: streamID,
+                isExistingStream: isExistingStream,
+                hasController: hasController,
+                requestStartPending: streamStartedContinuation != nil,
+                previousDimensionToken: previousDimensionToken,
+                receivedDimensionToken: dimensionToken
+            )
+            let shouldResetController = resetDecision == .resetController
+            if let previousDimensionToken, let dimensionToken, previousDimensionToken != dimensionToken {
+                MirageLogger
+                    .client(
+                        "App stream token advanced \(previousDimensionToken) -> \(dimensionToken); reset=\(shouldResetController)"
+                    )
+            }
+            if let dimensionToken {
+                appDimensionTokenByStream[streamID] = dimensionToken
+            }
+            if hasController {
+                Task { [weak self] in
+                    guard let self, let controller = self.controllersByStream[streamID] else { return }
+                    if shouldResetController {
+                        await controller.resetForNewSession()
+                    }
+                    if let token = dimensionToken {
+                        let reassembler = await controller.getReassembler()
+                        reassembler.updateExpectedDimensionToken(token)
+                    }
                 }
             }
 
@@ -375,6 +401,7 @@ extension MirageClientService {
             registeredStreamIDs.remove(streamID)
             clearStreamRefreshRateOverride(streamID: streamID)
             clearAdaptiveFallbackState(for: streamID)
+            appDimensionTokenByStream.removeValue(forKey: streamID)
             activeJitterHoldMs = 0
 
             Task { [weak self] in

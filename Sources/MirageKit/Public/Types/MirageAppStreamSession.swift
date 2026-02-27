@@ -35,14 +35,31 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
     /// Optional client display scale override used for app-stream virtual displays.
     public let requestedClientScaleFactor: CGFloat?
 
+    /// Maximum number of visible window slots for this app stream session.
+    public var maxVisibleSlots: Int
+
+    /// Total bitrate budget shared across visible window slots.
+    package var bitrateBudgetBps: Int?
+    /// Policy describing how shared bitrate budget is distributed among visible windows.
+    package var bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy
+
     /// Current state of the session
     public var state: AppStreamState
 
     /// Active window streams (WindowID → StreamSession info)
     public var windowStreams: [WindowID: WindowStreamInfo]
 
+    /// Hidden candidate windows that are eligible for slot swap/start.
+    package var hiddenWindows: [WindowID: AppStreamHiddenWindowInfo]
+
     /// All windows that have been seen for this app during the current session.
     public var knownWindowIDs: Set<WindowID>
+
+    /// Last computed active/inactive state for visible stream IDs.
+    package var streamActivityByStreamID: [StreamID: Bool]
+
+    /// Last bitrate targets applied by the host governor for visible stream IDs.
+    package var streamBitrateTargetsByStreamID: [StreamID: Int]
 
     /// When this session started
     public let startTime: Date
@@ -61,9 +78,15 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         clientName: String,
         requestedDisplayResolution: CGSize = .zero,
         requestedClientScaleFactor: CGFloat? = nil,
+        maxVisibleSlots: Int = 1,
+        bitrateBudgetBps: Int? = nil,
+        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow,
         state: AppStreamState = .starting,
         windowStreams: [WindowID: WindowStreamInfo] = [:],
+        hiddenWindows: [WindowID: AppStreamHiddenWindowInfo] = [:],
         knownWindowIDs: Set<WindowID> = [],
+        streamActivityByStreamID: [StreamID: Bool] = [:],
+        streamBitrateTargetsByStreamID: [StreamID: Int] = [:],
         startTime: Date = Date(),
         disconnectedAt: Date? = nil
     ) {
@@ -75,9 +98,15 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
         self.clientName = clientName
         self.requestedDisplayResolution = requestedDisplayResolution
         self.requestedClientScaleFactor = requestedClientScaleFactor
+        self.maxVisibleSlots = max(1, maxVisibleSlots)
+        self.bitrateBudgetBps = bitrateBudgetBps
+        self.bitrateAllocationPolicy = bitrateAllocationPolicy
         self.state = state
         self.windowStreams = windowStreams
+        self.hiddenWindows = hiddenWindows
         self.knownWindowIDs = knownWindowIDs
+        self.streamActivityByStreamID = streamActivityByStreamID
+        self.streamBitrateTargetsByStreamID = streamBitrateTargetsByStreamID
         self.startTime = startTime
         self.disconnectedAt = disconnectedAt
     }
@@ -103,6 +132,9 @@ public struct WindowStreamInfo: Sendable {
     /// The stream ID assigned to this window
     public let streamID: StreamID
 
+    /// Fixed slot index for this stream/window binding.
+    public var slotIndex: Int
+
     /// Window title
     public var title: String?
 
@@ -116,25 +148,51 @@ public struct WindowStreamInfo: Sendable {
     /// Whether the stream is currently paused (client not in focus)
     public var isPaused: Bool
 
+    /// Whether the host activity governor currently treats the stream as active.
+    public var isActive: Bool
+
     /// When this stream started
     public let startTime: Date
 
     public init(
         streamID: StreamID,
+        slotIndex: Int = 0,
         title: String? = nil,
         width: Int,
         height: Int,
         isResizable: Bool = true,
         isPaused: Bool = false,
+        isActive: Bool = true,
         startTime: Date = Date()
     ) {
         self.streamID = streamID
+        self.slotIndex = slotIndex
         self.title = title
         self.width = width
         self.height = height
         self.isResizable = isResizable
         self.isPaused = isPaused
+        self.isActive = isActive
         self.startTime = startTime
+    }
+}
+
+public struct AppStreamHiddenWindowInfo: Sendable {
+    public var title: String?
+    public var width: Int
+    public var height: Int
+    public var isResizable: Bool
+
+    public init(
+        title: String? = nil,
+        width: Int,
+        height: Int,
+        isResizable: Bool = true
+    ) {
+        self.title = title
+        self.width = width
+        self.height = height
+        self.isResizable = isResizable
     }
 }
 
@@ -158,4 +216,7 @@ public extension MirageAppStreamSession {
 
     /// Number of currently streamed windows.
     var totalWindowCount: Int { windowStreams.count }
+
+    /// Number of hidden overflow windows.
+    var hiddenWindowCount: Int { hiddenWindows.count }
 }

@@ -149,33 +149,10 @@ extension MirageHostService {
         // Find the stream for this window
         guard let streamID = activeStreamIDByWindowID[windowID],
               activeSessionByStreamID[streamID] != nil,
-              let context = streamsByID[streamID] else {
+              await appStreamManager.getSessionForStreamID(streamID) != nil else {
             return
         }
-        if await context.isUsingVirtualDisplay() {
-            // Dedicated virtual-display streams should not be frontmost-app throttled.
-            return
-        }
-
-        if isActive {
-            // Window became active - restore full frame rate and request keyframe
-            do {
-                let targetFrameRate = await context.getTargetFrameRate()
-                try await context.updateFrameRate(targetFrameRate)
-                await context.requestKeyframe()
-                MirageLogger.host("Window \(windowID) active - restored to \(targetFrameRate) fps with keyframe")
-            } catch {
-                MirageLogger.error(.host, error: error, message: "Failed to restore frame rate for window \(windowID): ")
-            }
-        } else {
-            // Window became inactive - throttle to 1 fps
-            do {
-                try await context.updateFrameRate(1)
-                MirageLogger.host("Window \(windowID) inactive - throttled to 1 fps")
-            } catch {
-                MirageLogger.error(.host, error: error, message: "Failed to throttle window \(windowID): ")
-            }
-        }
+        await setAppStreamFrontmostSignal(streamID: streamID, isActive: isActive, reason: "windowActivity")
     }
 }
 
