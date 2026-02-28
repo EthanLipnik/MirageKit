@@ -30,11 +30,6 @@ package let mirageQualityTestRegistrationMagic: UInt32 = 0x4D49_5251 // "MIRQ"
 /// 1200 bytes keeps packets under the IPv6 minimum MTU (1280) once IP/UDP headers are added.
 public let mirageDefaultMaxPacketSize: Int = 1200
 
-// swiftlint:disable identifier_name
-@available(*, deprecated, renamed: "mirageDefaultMaxPacketSize")
-public let MirageDefaultMaxPacketSize: Int = mirageDefaultMaxPacketSize
-// swiftlint:enable identifier_name
-
 /// Header size in bytes:
 /// Base fields (4+1+2+2+4+8+4+2+2+4+4+4 = 41) +
 /// contentRect (4 x Float32 = 16) +

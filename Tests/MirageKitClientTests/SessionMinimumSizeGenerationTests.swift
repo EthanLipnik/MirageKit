@@ -80,9 +80,54 @@ struct SessionMinimumSizeGenerationTests {
         store.beginPostResizeTransition(for: streamID)
         #expect(store.isAwaitingPostResizeFirstFrame(for: streamID))
 
-        store.markFirstFrameReceived(for: streamID)
+        store.markFirstFramePresented(for: streamID)
         #expect(!store.isAwaitingPostResizeFirstFrame(for: streamID))
-        #expect(store.sessionByStreamID(streamID)?.hasReceivedFirstFrame == true)
+        #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == true)
+    }
+
+    @Test("Decoded and presented readiness are tracked independently")
+    @MainActor
+    func decodedAndPresentedReadinessAreTrackedIndependently() {
+        let store = MirageClientSessionStore()
+        let streamID: StreamID = 21
+        _ = store.createSession(
+            streamID: streamID,
+            window: testWindow(id: 2101),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.markFirstFrameDecoded(for: streamID)
+        #expect(store.sessionByStreamID(streamID)?.hasDecodedFrame == true)
+        #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == false)
+
+        store.markFirstFramePresented(for: streamID)
+        #expect(store.sessionByStreamID(streamID)?.hasDecodedFrame == true)
+        #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == true)
+    }
+
+    @Test("Focused stream resolves to active tier while others become passive")
+    @MainActor
+    func focusedStreamResolvesToActiveTier() async throws {
+        let store = MirageClientSessionStore()
+        let firstSessionID = store.createSession(
+            streamID: 31,
+            window: testWindow(id: 3101),
+            hostName: "Host",
+            minSize: nil
+        )
+        _ = store.createSession(
+            streamID: 32,
+            window: testWindow(id: 3201),
+            hostName: "Host",
+            minSize: nil
+        )
+
+        store.setFocusedSession(firstSessionID)
+
+        try await Task.sleep(for: .milliseconds(80))
+        #expect(store.presentationTier(for: 31) == .activeLive)
+        #expect(store.presentationTier(for: 32) == .passiveSnapshot)
     }
 
     @Test("Removing session clears post-resize transition state")

@@ -237,15 +237,10 @@ public final class MirageCloudKitHostProvider {
         ownerUserID: String?
     )
     -> MirageCloudKitHostInfo? {
-        // Required: deviceID
         guard let deviceIDString = record[MirageCloudKitHostInfo.RecordKey.deviceID.rawValue] as? String,
               let deviceID = UUID(uuidString: deviceIDString) else {
-            // Fall back to record name if deviceID field is missing (legacy records)
-            guard let deviceID = UUID(uuidString: record.recordID.recordName) else {
-                MirageLogger.error(.appState, "Host record missing valid deviceID: \(record.recordID.recordName)")
-                return nil
-            }
-            return parseHostRecordWithID(record, deviceID: deviceID, isShared: isShared, ownerUserID: ownerUserID)
+            MirageLogger.error(.appState, "Host record missing valid deviceID: \(record.recordID.recordName)")
+            return nil
         }
 
         return parseHostRecordWithID(record, deviceID: deviceID, isShared: isShared, ownerUserID: ownerUserID)

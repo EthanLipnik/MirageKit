@@ -47,5 +47,27 @@ struct CaptureStallThresholdTests {
         #expect(resolvedFromLow == 8.0)
         #expect(resolvedFromHigh == 9.0)
     }
+
+    @Test("Fallback-resume keyframe threshold scales with frame-gap tolerance")
+    func fallbackResumeKeyframeThresholdScaling() {
+        let highFPS = CaptureStreamOutput.fallbackResumeKeyframeThreshold(frameGapThreshold: 0.3)
+        let lowFPS = CaptureStreamOutput.fallbackResumeKeyframeThreshold(frameGapThreshold: 1.5)
+
+        #expect(highFPS == 1.0)
+        #expect(abs(lowFPS - 3.75) < 0.000_1)
+
+        #expect(
+            CaptureStreamOutput.shouldRequestFallbackResumeKeyframe(
+                fallbackDuration: 2.0,
+                frameGapThreshold: 1.5
+            ) == false
+        )
+        #expect(
+            CaptureStreamOutput.shouldRequestFallbackResumeKeyframe(
+                fallbackDuration: 4.0,
+                frameGapThreshold: 1.5
+            )
+        )
+    }
 }
 #endif

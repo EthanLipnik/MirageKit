@@ -243,7 +243,7 @@ final class FrameReassembler: @unchecked Sendable {
     var expectedDimensionToken: UInt16 = 0
 
     /// Whether dimension token validation is enabled.
-    /// Disabled by default to maintain backward compatibility with older hosts.
+    /// Disabled until the stream provides an explicit token contract.
     var dimensionTokenValidationEnabled: Bool = false
 
     /// Frame completion callback: (streamID, frameData, isKeyframe, timestamp, contentRect, release)

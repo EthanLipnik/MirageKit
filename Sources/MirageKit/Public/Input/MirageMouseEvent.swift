@@ -175,7 +175,7 @@ public struct MirageRotateEvent: Codable, Sendable, Hashable {
     }
 }
 
-/// Represents a window resize request from client (legacy - uses absolute pixel dimensions)
+/// Represents a window resize request from client using point size + scale.
 public struct MirageResizeEvent: Codable, Sendable, Hashable {
     /// Target window ID
     public let windowID: WindowID
@@ -193,7 +193,7 @@ public struct MirageResizeEvent: Codable, Sendable, Hashable {
     /// Event timestamp
     public let timestamp: TimeInterval
 
-    /// Creates a legacy resize event from point size plus client scale.
+    /// Creates a resize event from point size plus client scale.
     ///
     /// - Parameters:
     ///   - windowID: Target window identifier.

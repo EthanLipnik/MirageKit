@@ -94,6 +94,14 @@ public class MirageMetalView: NSView {
         }
     }
 
+    var streamPresentationTier: StreamPresentationTier = .activeLive {
+        didSet {
+            guard streamPresentationTier != oldValue else { return }
+            applyRenderLoopTierPolicy()
+            requestDraw()
+        }
+    }
+
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
 
     public var maxDrawableSize: CGSize? {
@@ -422,10 +430,15 @@ public class MirageMetalView: NSView {
         let target = MirageRenderPreferences.proMotionEnabled() ? 120 : 60
         maxRenderFPS = target
         metalLayer.maximumDrawableCount = desiredLayerMaximumDrawableCount()
-        renderLoop.updateTargetFPS(target)
+        applyRenderLoopTierPolicy()
         renderLoop.updateLatencyMode(MirageRenderPreferences.latencyMode())
         renderLoop.updateAllowDegradationRecovery(MirageRenderPreferences.allowAdaptiveFallback())
         requestDraw()
+    }
+
+    private func applyRenderLoopTierPolicy() {
+        let targetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 4
+        renderLoop.updateTargetFPS(targetFPS)
     }
 
     private func startObservingPreferences() {

@@ -205,9 +205,7 @@ extension MirageClientService {
                 if response.autoTrustGranted == true {
                     let hostComponent = response.hostID.uuidString.lowercased()
                     let noticeKey = "com.mirage.autotrust.client.\(hostComponent)"
-                    let legacyNoticeKey = "com.mirage.autotrust.client.\(hostComponent).\(identity.keyID)"
-                    if !UserDefaults.standard.bool(forKey: noticeKey),
-                       !UserDefaults.standard.bool(forKey: legacyNoticeKey) {
+                    if !UserDefaults.standard.bool(forKey: noticeKey) {
                         UserDefaults.standard.set(true, forKey: noticeKey)
                         let hostDisplayName = response.hostName
                             .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -320,6 +318,14 @@ extension MirageClientService {
                 receivedDimensionToken: dimensionToken
             )
             let shouldResetController = resetDecision == .resetController
+            let shouldSetupController = shouldResetController || !hasController
+            let wasRegistered = registeredStreamIDs.contains(streamID)
+            let registrationDecision = appStreamRegistrationRefreshDecision(
+                hasController: hasController,
+                shouldResetController: shouldResetController,
+                wasRegistered: wasRegistered
+            )
+            let shouldRegisterVideo = registrationDecision == .refreshRegistration
             if let previousDimensionToken, let dimensionToken, previousDimensionToken != dimensionToken {
                 MirageLogger
                     .client(
@@ -328,18 +334,6 @@ extension MirageClientService {
             }
             if let dimensionToken {
                 appDimensionTokenByStream[streamID] = dimensionToken
-            }
-            if hasController {
-                Task { [weak self] in
-                    guard let self, let controller = self.controllersByStream[streamID] else { return }
-                    if shouldResetController {
-                        await controller.resetForNewSession()
-                    }
-                    if let token = dimensionToken {
-                        let reassembler = await controller.getReassembler()
-                        reassembler.updateExpectedDimensionToken(token)
-                    }
-                }
             }
 
             if let minW = started.minWidth, let minH = started.minHeight {
@@ -353,8 +347,9 @@ extension MirageClientService {
             let isAppCentricStream = streamStartedContinuation == nil
             streamStartedContinuation?.resume(returning: streamID)
             streamStartedContinuation = nil
+            let shouldMarkStartupPending = isAppCentricStream && shouldRegisterVideo
 
-            if isAppCentricStream {
+            if shouldMarkStartupPending {
                 streamStartupBaseTimes[streamID] = CFAbsoluteTimeGetCurrent()
                 streamStartupFirstRegistrationSent.remove(streamID)
                 streamStartupFirstPacketReceived.remove(streamID)
@@ -363,39 +358,43 @@ extension MirageClientService {
 
             Task {
                 do {
-                    await self.setupControllerForStream(streamID)
+                    if shouldSetupController {
+                        await self.setupControllerForStream(streamID)
+                    }
                     self.addActiveStreamID(streamID)
-                    if isAppCentricStream { MirageLogger.client("Controller set up for app-centric stream \(streamID)") }
+                    if isAppCentricStream, shouldSetupController {
+                        MirageLogger.client("Controller set up for app-centric stream \(streamID)")
+                    }
 
                     if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
                         let reassembler = await controller.getReassembler()
                         reassembler.updateExpectedDimensionToken(token)
                     }
 
-                    if self.udpConnection == nil { try await self.startVideoConnection() }
-
-                    // App-centric streams always refresh video registration on streamStarted.
-                    // This recovers from stale registration bookkeeping across multi-window app streams.
-                    let shouldRegisterVideo = !self.registeredStreamIDs.contains(streamID) || isAppCentricStream
                     if shouldRegisterVideo {
+                        if self.udpConnection == nil { try await self.startVideoConnection() }
                         self.registeredStreamIDs.insert(streamID)
                         try await self.sendStreamRegistration(streamID: streamID)
+                        await self.ensureAudioTransportRegistered(for: streamID)
+                        let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                        try? await self.sendStreamRefreshRateChange(
+                            streamID: streamID,
+                            maxRefreshRate: refreshRate
+                        )
+                        MirageLogger.client(
+                            "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
+                        )
+                        if shouldMarkStartupPending {
+                            self.startStartupRegistrationRetry(streamID: streamID)
+                        }
                     }
-                    await self.ensureAudioTransportRegistered(for: streamID)
-                    let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                    try? await self.sendStreamRefreshRateChange(
-                        streamID: streamID,
-                        maxRefreshRate: refreshRate
-                    )
-                    MirageLogger.client(
-                        "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                    )
-                    if isAppCentricStream { self.startStartupRegistrationRetry(streamID: streamID) }
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Failed to establish video connection: ")
-                    self.registeredStreamIDs.remove(streamID)
-                    self.clearStartupPacketPending(streamID)
-                    self.cancelStartupRegistrationRetry(streamID: streamID)
+                    if shouldRegisterVideo {
+                        self.registeredStreamIDs.remove(streamID)
+                        self.clearStartupPacketPending(streamID)
+                        self.cancelStartupRegistrationRetry(streamID: streamID)
+                    }
                 }
             }
         }

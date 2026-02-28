@@ -30,6 +30,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Whether input capture should actively process mouse/keyboard events.
     public var inputEnabled: Bool
 
+    /// Active vs passive presentation tier.
+    public var presentationTier: StreamPresentationTier
+
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
@@ -41,6 +44,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
         inputEnabled: Bool = true,
+        presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil
     ) {
         self.streamID = streamID
@@ -50,6 +54,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
         self.inputEnabled = inputEnabled
+        self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
     }
 
@@ -79,6 +84,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         context.coordinator.metalView = metalView
         metalView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
         metalView.maxDrawableSize = maxDrawableSize
+        metalView.streamPresentationTier = presentationTier
         metalView.streamID = streamID
 
         wrapper.cursorStore = cursorStore
@@ -116,6 +122,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         if let metalView = context.coordinator.metalView { metalView.streamID = streamID }
         if let metalView = context.coordinator.metalView { metalView.maxDrawableSize = maxDrawableSize }
+        if let metalView = context.coordinator.metalView { metalView.streamPresentationTier = presentationTier }
 
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore

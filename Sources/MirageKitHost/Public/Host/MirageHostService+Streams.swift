@@ -376,7 +376,6 @@ public extension MirageHostService {
                 clientScaleFactorOverride: resolvedClientScaleFactor
             )
             ensureWindowVisibleFrameMonitor(streamID: streamID)
-            await addWindowToActivityMonitor(updatedWindow.id)
         } catch let virtualDisplayError {
             let detail = virtualDisplayError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             let renderedDetail = detail.isEmpty ? String(describing: virtualDisplayError) : detail
@@ -397,7 +396,6 @@ public extension MirageHostService {
                     if let newFrame = currentWindowFrame(for: updatedWindow.id) {
                         inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame)
                     }
-                    await addWindowToActivityMonitor(updatedWindow.id)
                     MirageLogger.host(
                         "Recovered stream \(streamID) with direct window-capture fallback for window \(updatedWindow.id)"
                     )
@@ -469,9 +467,6 @@ public extension MirageHostService {
             )
             try await clientContext.send(.streamStarted, content: message)
         }
-        let appliedTargetFrameRate = await context.getTargetFrameRate()
-        registerAppStreamDesiredFrameRate(streamID: streamID, frameRate: appliedTargetFrameRate)
-        await startAppStreamGovernorsIfNeeded()
         await markAppStreamInteraction(streamID: streamID, reason: "stream started")
 
         // Start menu bar monitoring for this stream
@@ -871,9 +866,6 @@ public extension MirageHostService {
             nil
         }
 
-        // Remove window from activity monitor
-        await windowActivityMonitor?.removeWindow(windowID)
-
         // Remove dedicated virtual display state for this window.
         clearVirtualDisplayState(windowID: windowID)
         pendingWindowResizeResolutionByStreamID.removeValue(forKey: session.id)
@@ -914,10 +906,6 @@ public extension MirageHostService {
         await updateLightsOutState()
 
         if activeStreams.isEmpty {
-            // Stop activity monitor when no more streams are active
-            await windowActivityMonitor?.stop()
-            windowActivityMonitor = nil
-
             // Disable power assertion when no more streams are active (including login display)
             if loginDisplayStreamID == nil { await PowerAssertionManager.shared.disable() }
         }

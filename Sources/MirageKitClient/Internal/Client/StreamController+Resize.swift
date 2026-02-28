@@ -28,7 +28,7 @@ extension StreamController {
         guard pixelSize.width > 0, pixelSize.height > 0 else { return }
 
         // Only enter resize mode after first frame
-        if hasReceivedFirstFrame { await setResizeState(.awaiting(expectedSize: pixelSize)) }
+        if hasPresentedFirstFrame { await setResizeState(.awaiting(expectedSize: pixelSize)) }
 
         // Cancel pending debounce
         resizeDebounceTask?.cancel()

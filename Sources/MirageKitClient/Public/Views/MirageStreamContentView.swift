@@ -69,9 +69,6 @@ public struct MirageStreamContentView: View {
     @State private var scrollInputSampler = ScrollInputSampler()
     @State private var pointerInputSampler = PointerInputSampler()
 
-    @available(*, deprecated, message: "Use directTouchInputMode instead.")
-    public var usesVirtualTrackpad: Bool { directTouchInputMode == .dragCursor }
-
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:
     ///   - session: Session metadata describing the stream.
@@ -87,7 +84,6 @@ public struct MirageStreamContentView: View {
     ///   - onDirectTouchActivity: Optional callback invoked when direct finger touch input occurs.
     ///   - onHardwareKeyboardPresenceChanged: Optional handler for hardware keyboard availability.
     ///   - onSoftwareKeyboardVisibilityChanged: Optional handler for software keyboard visibility.
-    ///   - usesVirtualTrackpad: Legacy direct-touch behavior flag.
     ///   - directTouchInputMode: Direct-touch behavior mode for iPad and visionOS clients.
     ///   - softwareKeyboardVisible: Whether the software keyboard should be visible.
     ///   - pencilInputMode: Apple Pencil behavior mode for iPad clients.
@@ -110,8 +106,7 @@ public struct MirageStreamContentView: View {
         onDirectTouchActivity: (() -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
-        usesVirtualTrackpad: Bool = false,
-        directTouchInputMode: MirageDirectTouchInputMode? = nil,
+        directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
         pencilInputMode: MiragePencilInputMode = .drawingTablet,
         dictationToggleRequestID: UInt64 = 0,
@@ -134,8 +129,7 @@ public struct MirageStreamContentView: View {
         self.onDirectTouchActivity = onDirectTouchActivity
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
-        self.directTouchInputMode = directTouchInputMode ??
-            (usesVirtualTrackpad ? .dragCursor : .normal)
+        self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilInputMode = pencilInputMode
         self.dictationToggleRequestID = dictationToggleRequestID
@@ -179,7 +173,6 @@ public struct MirageStreamContentView: View {
                 onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
                 onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
                 onDirectTouchActivity: onDirectTouchActivity,
-                usesVirtualTrackpad: directTouchInputMode == .dragCursor,
                 directTouchInputMode: directTouchInputMode,
                 softwareKeyboardVisible: softwareKeyboardVisible,
                 pencilInputMode: pencilInputMode,
@@ -188,6 +181,7 @@ public struct MirageStreamContentView: View {
                 onDictationError: onDictationError,
                 dictationMode: dictationMode,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
+                presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize
             )
             .ignoresSafeArea()
@@ -206,6 +200,7 @@ public struct MirageStreamContentView: View {
                 cursorPositionStore: clientService.cursorPositionStore,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 inputEnabled: macOSInputEnabled,
+                presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -214,7 +209,7 @@ public struct MirageStreamContentView: View {
             #endif
         }
         .overlay {
-            if !session.hasReceivedFirstFrame {
+            if !isReadyForInitialPresentation {
                 Rectangle()
                     .fill(.black)
                     .overlay {
@@ -316,6 +311,19 @@ public struct MirageStreamContentView: View {
 
     private var macOSInputEnabled: Bool {
         canSendInputToHost && sessionStore.focusedSessionID == session.id
+    }
+
+    private var streamPresentationTier: StreamPresentationTier {
+        sessionStore.presentationTier(for: session.streamID)
+    }
+
+    private var isReadyForInitialPresentation: Bool {
+        switch streamPresentationTier {
+        case .activeLive:
+            session.hasPresentedFrame
+        case .passiveSnapshot:
+            session.hasDecodedFrame || session.hasPresentedFrame
+        }
     }
 
     private var awaitingPostResizeFirstFrame: Bool {
@@ -453,7 +461,7 @@ public struct MirageStreamContentView: View {
             }
             guard allowsResizeEvents else { return }
 
-            if session.hasReceivedFirstFrame, !isDesktopStream {
+            if session.hasPresentedFrame, !isDesktopStream {
                 isResizing = true
                 resizeFallbackTask?.cancel()
                 resizeFallbackTask = Task { @MainActor in
@@ -475,6 +483,18 @@ public struct MirageStreamContentView: View {
                     pendingAppDisplayResolutionCandidate = .zero
                     pendingAppDisplayResolutionCandidateSince = .distantPast
                     if isResizing, !awaitingAppResizeAck { isResizing = false }
+                    return
+                }
+                if streamPresentationTier == .passiveSnapshot {
+                    displayResolutionTask?.cancel()
+                    displayResolutionTask = nil
+                    pendingAppDisplayResolutionCandidate = .zero
+                    pendingAppDisplayResolutionCandidateSince = .distantPast
+                    if awaitingAppResizeAck {
+                        finishAppResizeAwaitingAck()
+                    } else if isResizing {
+                        isResizing = false
+                    }
                     return
                 }
 

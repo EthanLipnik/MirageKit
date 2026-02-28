@@ -46,6 +46,15 @@ public class MirageMetalView: UIView {
         }
     }
 
+    public var streamPresentationTier: StreamPresentationTier = .activeLive {
+        didSet {
+            guard streamPresentationTier != oldValue else { return }
+            let requested = appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS
+            applyDisplayRefreshRateLock(requested)
+            requestDraw()
+        }
+    }
+
     // MARK: - Rendering State
 
     let preferencesObserver = MirageUserDefaultsObserver()
@@ -216,10 +225,11 @@ public class MirageMetalView: UIView {
 
     @objc private func displayLinkTick(_ link: CADisplayLink) {
         guard !renderingSuspended else { return }
+        let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 4
         let interval = link.targetTimestamp - link.timestamp
-        let displayRefreshRate = interval > 0 ? (1.0 / interval) : Double(maxRenderFPS)
+        let displayRefreshRate = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
         let framePacingEnabled = displayRefreshRate >=
-            Double(maxRenderFPS) * Self.framePacingRefreshThresholdFactor
+            Double(renderTargetFPS) * Self.framePacingRefreshThresholdFactor
 
         drainFramesIfPossible(
             referenceTime: link.timestamp,
@@ -234,10 +244,16 @@ public class MirageMetalView: UIView {
         guard let streamID else { return }
         recoverDisplayLayerIfNeeded()
         guard displayLayer.status != .failed else { return }
-        let policy: MirageRenderPresentationPolicy = useFramePacing
-            ? .buffered(maxDepth: Self.framePacingBufferedDepth)
-            : .latest
-        let maxFrames = useFramePacing ? 1 : Self.maxCatchUpFramesPerTick
+        let policy: MirageRenderPresentationPolicy = if streamPresentationTier == .passiveSnapshot {
+            .latest
+        } else if useFramePacing {
+            .buffered(maxDepth: Self.framePacingBufferedDepth)
+        } else {
+            .latest
+        }
+        let maxFrames = streamPresentationTier == .passiveSnapshot
+            ? 1
+            : (useFramePacing ? 1 : Self.maxCatchUpFramesPerTick)
 
         var framesSubmitted = 0
         while framesSubmitted < maxFrames {
@@ -453,7 +469,9 @@ public class MirageMetalView: UIView {
     private func startDisplayLinkIfNeeded() {
         guard displayLink == nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
-        configureDisplayLinkRate(link, fps: appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
+        let requestedFPS = appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS
+        let localFPS = streamPresentationTier == .activeLive ? requestedFPS : 4
+        configureDisplayLinkRate(link, fps: localFPS)
         link.add(to: .main, forMode: .common)
         displayLink = link
     }

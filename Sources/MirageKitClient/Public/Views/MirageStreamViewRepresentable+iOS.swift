@@ -42,11 +42,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Callback when non-stylus direct touch activity occurs.
     public var onDirectTouchActivity: (() -> Void)?
 
-    /// Whether direct touch uses a draggable virtual cursor.
-    public var usesVirtualTrackpad: Bool
-
-    /// Direct-touch behavior mode override.
-    public var directTouchInputMode: MirageDirectTouchInputMode?
+    /// Direct-touch behavior mode.
+    public var directTouchInputMode: MirageDirectTouchInputMode
 
     /// Whether the software keyboard should be visible.
     public var softwareKeyboardVisible: Bool
@@ -69,6 +66,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
+    /// Active vs passive presentation tier.
+    public var presentationTier: StreamPresentationTier
+
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
@@ -83,8 +83,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         onDirectTouchActivity: (() -> Void)? = nil,
-        usesVirtualTrackpad: Bool = false,
-        directTouchInputMode: MirageDirectTouchInputMode? = nil,
+        directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
         pencilInputMode: MiragePencilInputMode = .drawingTablet,
         dictationToggleRequestID: UInt64 = 0,
@@ -92,6 +91,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onDictationError: ((String) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         cursorLockEnabled: Bool = false,
+        presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil
     ) {
         self.streamID = streamID
@@ -104,7 +104,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         self.onDirectTouchActivity = onDirectTouchActivity
-        self.usesVirtualTrackpad = usesVirtualTrackpad
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilInputMode = pencilInputMode
@@ -113,6 +112,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onDictationError = onDictationError
         self.dictationMode = dictationMode
         self.cursorLockEnabled = cursorLockEnabled
+        self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
     }
 
@@ -135,7 +135,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
             onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: onDirectTouchActivity,
-            usesVirtualTrackpad: usesVirtualTrackpad,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
@@ -146,6 +145,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
         )
         return controller
@@ -166,7 +166,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
             onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: onDirectTouchActivity,
-            usesVirtualTrackpad: usesVirtualTrackpad,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
@@ -177,6 +176,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
         )
     }
@@ -222,8 +222,7 @@ public final class MirageStreamViewController: UIViewController {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
-        usesVirtualTrackpad: Bool,
-        directTouchInputMode: MirageDirectTouchInputMode?,
+        directTouchInputMode: MirageDirectTouchInputMode,
         softwareKeyboardVisible: Bool,
         pencilInputMode: MiragePencilInputMode,
         dictationToggleRequestID: UInt64,
@@ -233,6 +232,7 @@ public final class MirageStreamViewController: UIViewController {
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
+        presentationTier: StreamPresentationTier,
         maxDrawableSize: CGSize?
     ) {
         captureView.onInputEvent = onInputEvent
@@ -242,8 +242,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         captureView.onDirectTouchActivity = onDirectTouchActivity
-        captureView.directTouchInputMode = directTouchInputMode ??
-            (usesVirtualTrackpad ? .dragCursor : .normal)
+        captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
         captureView.pencilInputMode = pencilInputMode
         captureView.dictationToggleRequestID = dictationToggleRequestID
@@ -253,6 +252,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
         captureView.cursorLockEnabled = cursorLockEnabled
+        captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
         // Set stream ID for direct frame cache access (bypasses all actor machinery)
         captureView.streamID = streamID

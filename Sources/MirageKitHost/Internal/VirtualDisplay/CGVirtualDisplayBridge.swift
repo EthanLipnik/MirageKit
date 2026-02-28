@@ -34,11 +34,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     nonisolated(unsafe) static var configuredDisplayOrigins: [CGDirectDisplayID: CGPoint] = [:]
     static let mirageVendorID: UInt32 = 0x1234
     static let mirageProductID: UInt32 = 0xE000
-    private static let legacySerialDefaultsPrefix = "MirageVirtualDisplaySerial"
     private static let serialSlotDefaultsPrefix = "MirageVirtualDisplaySerialSlot"
     private static let descriptorProfileDefaultsPrefix = "MirageVirtualDisplayDescriptorProfile"
-    private static let serialSchemeVersionDefaultsKey = "MirageVirtualDisplaySerialSchemeVersion"
-    private static let serialSchemeVersion = 3
     private static let hiDPIDisabledSetting: UInt32 = 0
     private static let hiDPIEnabledSetting: UInt32 = 2
     private static let colorValidationAttempts = 6
@@ -782,29 +779,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return nil
     }
 
-    private static func legacySerialDefaultsKey(for colorSpace: MirageColorSpace) -> String {
-        "\(legacySerialDefaultsPrefix).\(colorSpace.rawValue)"
-    }
-
     private static func serialSlotDefaultsKey(for colorSpace: MirageColorSpace) -> String {
         "\(serialSlotDefaultsPrefix).\(colorSpace.rawValue)"
-    }
-
-    private static func migrateLegacySerialStateIfNeeded() {
-        let defaults = UserDefaults.standard
-        if defaults.integer(forKey: serialSchemeVersionDefaultsKey) >= serialSchemeVersion {
-            return
-        }
-
-        for colorSpace in MirageColorSpace.allCases {
-            defaults.removeObject(forKey: legacySerialDefaultsKey(for: colorSpace))
-            defaults.set(SerialSlot.primary.rawValue, forKey: serialSlotDefaultsKey(for: colorSpace))
-        }
-
-        cachedSerialNumbers.removeAll()
-        cachedSerialSlots.removeAll()
-        defaults.set(serialSchemeVersion, forKey: serialSchemeVersionDefaultsKey)
-        MirageLogger.host("Initialized deterministic virtual display serial strategy")
     }
 
     private static func serialNumber(for colorSpace: MirageColorSpace, slot: SerialSlot) -> UInt32 {
@@ -834,8 +810,6 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     }
 
     private static func persistentSerialNumber(for colorSpace: MirageColorSpace) -> UInt32 {
-        migrateLegacySerialStateIfNeeded()
-
         if let cached = cachedSerialNumbers[colorSpace] {
             return cached
         }
@@ -847,8 +821,6 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     }
 
     static func invalidatePersistentSerial(for colorSpace: MirageColorSpace) {
-        migrateLegacySerialStateIfNeeded()
-
         var slot = currentSerialSlot(for: colorSpace)
         slot.toggle()
 

@@ -28,7 +28,7 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
         }
     }
 
-    /// Resolves persisted mode values, including legacy keys.
+    /// Resolves persisted mode values.
     public static func fromPersistedRawValue(
         _ rawValue: String,
         enableVirtualTrackpad: Bool
@@ -36,13 +36,6 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
         if let mode = MirageDirectTouchInputMode(rawValue: rawValue) {
             return mode
         }
-        switch rawValue {
-        case "direct":
-            return .normal
-        case "exclusive", "scrollOnly":
-            return .pencilBased
-        default:
-            return enableVirtualTrackpad ? .dragCursor : .normal
-        }
+        return enableVirtualTrackpad ? .dragCursor : .normal
     }
 }

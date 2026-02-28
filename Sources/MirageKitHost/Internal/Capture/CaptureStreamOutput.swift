@@ -118,6 +118,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     /// Short fallback blips are common during menu tracking and focus churn and
     /// forcing a keyframe for each one can overload multi-stream app sessions.
     private let keyframeThreshold: CFAbsoluteTime = 1.0
+    /// Scales fallback-resume keyframe requests with expected frame-gap tolerance.
+    /// Low-FPS passive streams should require a much longer fallback duration before
+    /// forcing expensive keyframes.
+    private let fallbackResumeKeyframeGapMultiplier: CFAbsoluteTime = 2.5
 
     init(
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
@@ -379,18 +383,48 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         fallbackLock.unlock()
 
         let fallbackMs = Int((fallbackDuration * 1000).rounded())
-        if fallbackDuration > keyframeThreshold {
+        let gapThreshold = expectationLock.withLock { frameGapThreshold }
+        let requiredDuration = Self.fallbackResumeKeyframeThreshold(
+            frameGapThreshold: gapThreshold,
+            minimumThreshold: keyframeThreshold,
+            multiplier: fallbackResumeKeyframeGapMultiplier
+        )
+        let requiredMs = Int((requiredDuration * 1000).rounded())
+        if fallbackDuration > requiredDuration {
             onKeyframeRequest(.fallbackResume)
             MirageLogger
                 .capture(
-                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=scheduled"
+                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=scheduled thresholdMs=\(requiredMs)"
                 )
         } else {
             MirageLogger
                 .capture(
-                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=skipped"
+                    "event=stall_resumed durationMs=\(fallbackMs) keyframe=skipped thresholdMs=\(requiredMs)"
                 )
         }
+    }
+
+    nonisolated static func fallbackResumeKeyframeThreshold(
+        frameGapThreshold: CFAbsoluteTime,
+        minimumThreshold: CFAbsoluteTime = 1.0,
+        multiplier: CFAbsoluteTime = 2.5
+    ) -> CFAbsoluteTime {
+        let safeMultiplier = max(1.0, multiplier)
+        let safeGap = max(0, frameGapThreshold)
+        return max(minimumThreshold, safeGap * safeMultiplier)
+    }
+
+    nonisolated static func shouldRequestFallbackResumeKeyframe(
+        fallbackDuration: CFAbsoluteTime,
+        frameGapThreshold: CFAbsoluteTime,
+        minimumThreshold: CFAbsoluteTime = 1.0,
+        multiplier: CFAbsoluteTime = 2.5
+    ) -> Bool {
+        fallbackDuration > fallbackResumeKeyframeThreshold(
+            frameGapThreshold: frameGapThreshold,
+            minimumThreshold: minimumThreshold,
+            multiplier: multiplier
+        )
     }
 
     func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {

@@ -140,6 +140,8 @@ public extension MirageClientService {
             if beginPostResizeTransition {
                 await existingController.beginPostResizeTransition()
             }
+            let tier = sessionStore.presentationTier(for: streamID)
+            await existingController.updatePresentationTier(tier)
             adaptiveFallbackLastAppliedTime[streamID] = 0
             MirageLogger.client("Reset existing controller for stream \(streamID)")
             return
@@ -184,8 +186,11 @@ public extension MirageClientService {
                 self.activeJitterHoldMs = metrics.activeJitterHoldMs
                 self.logAwdlExperimentTelemetryIfNeeded()
             },
-            onFirstFrame: { [weak self] in
-                self?.sessionStore.markFirstFrameReceived(for: capturedStreamID)
+            onFirstFrameDecoded: { [weak self] in
+                self?.sessionStore.markFirstFrameDecoded(for: capturedStreamID)
+            },
+            onFirstFramePresented: { [weak self] in
+                self?.sessionStore.markFirstFramePresented(for: capturedStreamID)
             },
             onAdaptiveFallbackNeeded: { [weak self] in
                 self?.handleAdaptiveFallbackTrigger(for: capturedStreamID)
@@ -205,6 +210,7 @@ public extension MirageClientService {
             await controller.beginPostResizeTransition()
         }
         await controller.start()
+        await controller.updatePresentationTier(sessionStore.presentationTier(for: streamID))
         await updateReassemblerSnapshot()
 
         MirageLogger.client("Created new controller for stream \(streamID)")
@@ -267,5 +273,10 @@ public extension MirageClientService {
     /// Get the minimum window size for a stream (in points).
     func getMinimumSize(forStream streamID: StreamID) -> (minWidth: Int, minHeight: Int)? {
         streamMinSizes[streamID]
+    }
+
+    func applyStreamPresentationTier(_ tier: StreamPresentationTier, to streamID: StreamID) async {
+        guard let controller = controllersByStream[streamID] else { return }
+        await controller.updatePresentationTier(tier)
     }
 }

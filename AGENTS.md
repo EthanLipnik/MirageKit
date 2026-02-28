@@ -1,340 +1,40 @@
 # MirageKit Agent Guidelines
 
-## Overview
-MirageKit is the Swift Package that implements the core streaming framework for macOS, iOS, and visionOS clients.
+## Package Summary
+- MirageKit is the core streaming package used by Mirage host/client apps on macOS, iOS, and visionOS.
+- Source layout is split into public API in `Sources/*/Public`, implementation in `Sources/*/Internal`, and tests in `Tests/`.
+- MirageKit is licensed under PolyForm Shield 1.0.0.
 
-## Compatibility and Code Hygiene
-- Internal MirageKit code does not keep backward-compatibility shims for removed behavior.
-- If a function is no longer used, remove it completely: signature, implementation, call sites, related protocol requirements, and tests.
-- Do not keep dead wrappers, no-op adapters, or dormant compatibility helpers in internal modules.
-- Public-facing API compatibility can be preserved intentionally at the package boundary when required, but dead code remains disallowed.
-- Platform feature parity is the default across Mirage clients (`macOS`, `iOS`, `visionOS`); do not ask whether to implement work for only one or two platforms unless the user explicitly scopes the request.
+## Core Rules
+- Pre-release package: compatibility is not locked yet for internal code or public API.
+- Remove dead code completely (signatures, implementations, call sites, tests); no shims, wrappers, or dormant compatibility layers.
+- Platform parity across clients is the default unless a task explicitly scopes platforms.
+- Target latest supported OS releases; avoid availability checks.
+- Keep public API additions minimal, intentional, and documented.
+- Do not add third-party dependencies without explicit approval.
+- Comments and README text should be static descriptions of current behavior.
 
-## Behavior Notes
-- MirageKit license: PolyForm Shield 1.0.0 with the line-of-business notice for dedicated remote window/desktop/secondary display/drawing-tablet streaming.
-- Stream scale: client-provided scale derived from the app's resolution limit; encoder overrides define bitrate targets.
-- Hello handshake includes typed protocol negotiation with feature selection (`MirageProtocolNegotiation`, `MirageFeatureSet`).
-- Hello rejection payloads include explicit rejection reason metadata, and protocol-mismatch rejections include host/client protocol versions plus optional mismatch-trigger update result fields.
-- ProMotion preference: refresh override based on client display-link cadence, 120 when supported and enabled, otherwise 60.
-- Backpressure: queue-based frame drops.
-- Encoder quality: derived from target bitrate and output resolution; QP bounds mapping when supported.
-- Bitrate-derived quality mapping biases low-bitrate streams toward stronger compression, and queue-pressure quality drops accelerate for bitrate-constrained streams.
-- Bitrate-derived quality mapping keeps a standard 0.80 ceiling through 400 Mbps, scales toward a 0.94 ceiling by 700 Mbps, and targets near-lossless quality at high resolution when bitrate allows.
-- 120Hz quality mapping keeps frame-rate compression bias so high-refresh paths remain latency-first.
-- Quality settings are immutable while a stream is active and apply on the next stream start.
-- Streaming performance mode supports `standard` and opt-in `game`; mode selection is carried on desktop/window/app stream-start requests.
-- VideoToolbox data-rate limits use a window-budget byte cap (0.25s at 120Hz, 0.5s otherwise) so real-time bitrate caps do not overshoot during motion bursts.
-- Capture format follows stream bit depth: 10-bit uses P010 with Display P3, and 8-bit uses NV12 with sRGB.
-- Host capture enforces expected CVBuffer color attachments before encode (Display P3 or sRGB tag set) so encoder color metadata stays consistent with requested bit depth/color space.
-- Encode flow: limited in-flight frames; completion-driven next encode.
-- In-flight cap: 120Hz 2 frames; 60Hz 1 frame.
-- Keyframe payload: 4-byte parameter set length prefix; Annex B parameter sets; AVCC frame data.
-- iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
-- iPad Apple Pencil input always forwards drawing-tablet pressure and stylus orientation metadata for tablet-aware host apps.
-- iPad direct touch input supports `normal`, `dragCursor`, and `pencilBased` modes; Pencil-based mode routes single-finger touch through native scroll physics while pointer clicks come from Apple Pencil or indirect pointer input.
-- Apple Pencil squeeze triggers a secondary click at the hover location when available, or the latest pointer location.
-- Custom mode: encoder overrides for bit depth, bitrate, and keyframe interval.
-- Game Mode baseline policy applies host-side runtime overrides: forced lowest-latency behavior, tuned capture pressure profile with capture-queue-depth request ignored, long keyframe cadence, requested bitrate preserved (no baseline clamp), low-latency high-resolution quality boost disabled, and mostly-fixed quality until emergency fallback.
-- Game Mode HEVC encoder session tuning requests low-latency rate control at VideoToolbox session creation and applies Sunshine-style latency-first policy (`realTime=true`, `allowFrameReordering=false`, `referenceBufferCount=1`, `expectedFrameRate=target`, `allowTemporalCompression=true`) plus bitrate policy that attempts `ConstantBitRate` first and falls back to `AverageBitRate` + single-frame `DataRateLimits`.
-- Game Mode sustained-deficit handling evaluates 2-second windows only after warmup and advances staged overrides after three consecutive dual-deficit windows (`encodedFPS < targetFPS * 0.97` and `avgEncodeMs > frameBudgetMs * 1.02`): 120Hz to 60Hz, then 10-bit to 8-bit, then emergency bitrate cap plus aggressive queue-pressure quality steps; healthy windows restore stages gradually in reverse order.
-- `MIRAGE_SIGNPOST=1` enables Instruments signposts for decode/render timing.
-- Default `MIRAGE_LOG` categories include `host`, `client`, `appState`, `stream`, `decoder`, and `renderer`; additional categories use explicit `MIRAGE_LOG` overrides.
-- Diagnostics fanout is public and app-agnostic through `MirageDiagnostics` with multi-sink registration, structured error events, and context-provider snapshots.
-- Instrumentation fanout is public and app-agnostic through `MirageInstrumentation` with multi-sink registration; app-layer targets own vendor-specific signal transport (for example TelemetryDeck, custom logs, or feature hooks).
-- MirageKit diagnostics payloads stay structured and sanitized (technical fields only); app-layer crash reporters own transport and vendor-specific policy.
-- Automatic quality tests use staged UDP payloads (warmup + ramp until plateau) plus VideoToolbox benchmarks for encode/decode timing.
-- Automatic quality selection uses staged throughput and loss results as the bitrate baseline, with fixed resolution and bit-depth viability checks.
-- Automatic quality test cadence follows ProMotion preference (max refresh when enabled, 60 Hz cap when disabled).
-- Host setting `muteLocalAudioWhileStreaming` mutes host output while audio streaming is active and restores prior mute state when audio streaming stops.
-- MirageKit targets the latest supported OS releases; availability checks are not used in MirageKit code.
-- Lights Out mode: host-side blackout overlay + input block for app streaming and mirrored desktop streaming; overlay windows use non-shareable window policy, ScreenCaptureKit display capture excludes the overlay windows, and screenshot hotkeys (`⌘⇧3`, `⌘⇧4`, `⌘⇧5`) temporarily suspend Lights Out until screenshot UI is no longer active.
-- Host runtime environment variable `MIRAGE_DISABLE_LIGHTS_OUT=1` disables Lights Out activation for desktop and app-stream sessions.
-- Lights Out emergency shortcut: host service exposes a configurable local shortcut that is matched inside the Lights Out event tap to run emergency recovery (disconnect clients, clear overlays, lock host).
-- Host app streaming enforces Stage Manager off during active app-stream sessions; when Mirage disables it for streaming, host restores the prior enabled state after the last app-stream session ends.
-- App-stream startup window binding uses deterministic one-to-one matching from a single live ScreenCaptureKit snapshot per startup wave; stale requested window IDs can remap only to unclaimed live windows.
-- Dedicated app-stream virtual-display ownership is stream-bound (`WindowBindingOwner`), and window restore paths fail closed on owner mismatch so stale teardown cannot move a still-streamed window back to a physical display.
-- Remote unlock HID credential entry requires visible lock/login UI; if lock UI is not visible, unlock returns a retryable timeout without typing into the active app session.
-- Bootstrap metadata types (`MirageBootstrapMetadata`, `MirageBootstrapEndpoint`, `MirageWakeOnLANInfo`) model wake/unlock capability publication in CloudKit host records.
-- Wake/unlock runtime contracts include `MirageWakeOnLANClient` and `MirageSSHBootstrapClient`; default SSH bootstrap uses a SwiftNIO+NIOSSH password-auth session probe (`/usr/bin/true`) for cross-platform SSH unlock reachability checks.
-- Bootstrap endpoint ordering/dedupe uses `MirageBootstrapEndpointResolver` with deterministic priority (`user`, `auto`, `lastSeen`).
-- Bootstrap daemon handoff uses line-delimited control payloads (`MirageBootstrapControlRequest`, `MirageBootstrapControlResponse`) with signed identity envelopes, encrypted unlock credentials, and host `controlAuthSecret`.
-- SSH bootstrap unlock paths require a pinned host-key fingerprint.
-- Client startup retries stream registration until the first UDP packet arrives.
-- Virtual display serial recovery alternates between two deterministic serial slots per color space to bound ColorSync profile churn while preserving mode-mismatch recovery.
-- Virtual display creation validates the active display color profile name against the requested color space; Display P3 requests fail closed when profile validation stays unresolved and creation retries once with rotated deterministic serial on color-validation failure.
-- Virtual display creation attempts Retina first and can fall back to 1x logical resolution when Retina activation does not validate; display snapshots carry active scale factors so bounds, capture, and input paths follow the active mode.
-- Desktop streaming uses a main-display capture fallback when shared virtual display activation is unavailable, preserving stream startup with physical-display bounds and without shared-display resize orchestration for that session; Display P3 desktop streams keep fallback disabled and fail closed when validated virtual-display color setup is unavailable.
-- Virtual display readiness validates HiDPI mode using paired logical and pixel dimensions from `CGDisplayCopyDisplayMode`, while desktop input bounds prefer cached logical display bounds.
-- CGVirtualDisplay settings use `hiDPI=2` when Retina mode is requested; `hiDPI=1` can resolve to non-Retina 1x modes on some hosts.
-- Capture watchdog restart requests are canceled once stream shutdown begins; display-capture stall recovery uses a 1.5-second threshold, while window-capture stall recovery uses an 8-second threshold for extended menu-tracking pauses.
-- Capture recovery distinguishes fallback-resume keyframe requests from capture-restart requests; fallback resume queues an urgent keyframe without epoch reset, and capture restart uses reset+epoch escalation only after repeated restart streaks.
-- Capture restart pacing uses exponential cooldown for repeated restarts (base 3 seconds, 2x multiplier, 18-second cap) and resets the streak after a 20-second stable window.
-- iOS drawable size changes are reported immediately once they exceed the resize tolerance (0.5% or 4px).
-- iOS/visionOS virtual-display sizing derives from native screen metrics (`nativeBounds`, `nativeScale`) while drawable-size callbacks continue to drive live desktop resize transactions.
-- Desktop resize transactions keep a stable stream identity and use `DesktopStreamStartedMessage.dimensionToken` as the authoritative same-stream hard-reset signal.
-- Desktop virtual-display resize executes as a single-owner transaction: mirrored mode suspends host mirroring before shared-display reconfiguration, runs a desktop capture/encoder hard reset, then restores mirroring after completion signaling.
-- Desktop shared-display generation-change rebind skips desktop rebind work while a desktop resize transaction is in flight.
-- Host/client control-message dispatch uses handler registries keyed by `ControlMessageType`.
-- Control-frame parsing uses typed outcomes (`success`, `needMoreData`, `invalidFrame`) with global/per-type payload limits and fail-closed disconnects on invalid frames.
-- Signed identity handshake v2 requires `identityAuthV2` with canonical payload signatures and replay protection.
-- Replay protection applies nonce-length limits and strict bounded eviction.
-- Hello receive paths buffer until one complete hello frame is present and enforce a dedicated hello-frame byte cap.
-- Accepted hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1`; signed hello responses include `mediaEncryptionEnabled` plus a per-session UDP registration token.
-- Media payload encryption policy is configurable: local peer sessions default to unencrypted payloads unless `requireEncryptedMediaOnLocalNetwork` is enabled, while non-local/remote sessions keep payload encryption; UDP registration token authentication remains required.
-- Media-session security uses ECDH/HKDF-derived keys with ChaCha20-Poly1305 for encrypted UDP video/audio and parity payloads, and client packet handling decrypts encrypted payloads before reassembly and CRC checks.
-- UDP stream/audio/quality registrations carry the per-session token and host registration validates token matches in constant time.
-- `MIRAGE_AWDL_EXPERIMENT=1` enables AWDL transport stabilization paths while default behavior remains unchanged when unset.
-- AWDL stabilization includes path classification snapshots (`awdl`, `wifi`, `wired`, `unknown`) for control/video/audio transports, proactive registration refresh on ready path transitions, and periodic registration refresh while streams are active.
-- AWDL media transport supports USB-C wired links; path logs can still report `interfaces=wifi` with `available=awdl0(...)` during wired USB-C sessions.
-- Host transport send-error bursts are tracked per stream and can trigger queue reset plus urgent recovery keyframe and host-to-client transport refresh requests through an internal control message.
-- Desktop capture admission includes a target-cadence time gate before frame copy for non-idle content frames so high-refresh capture sources do not overfeed lower encode cadence targets; idle continuity behavior remains active for display streams.
-- Host stream metrics include host encode telemetry fields `hostAverageEncodeMs`, `hostUsingHardwareEncoder`, and `hostEncoderGPURegistryID`; host logs structured hardware-encoder status at encoder session creation and reconfiguration.
-- AWDL jitter handling includes bounded adaptive micro-jitter hold at decode dequeue (0-8 ms) with automatic decay after stable windows.
-- AWDL bootstrap hardening duplicates only the keyframe parameter-set fragment packet when experiment mode is enabled.
-- Host software update control messages cover status snapshots (`hostSoftwareUpdateStatus`) and install request results (`hostSoftwareUpdateInstallResult`) for connected clients; payloads include typed automation/disposition/block/result fields plus bounded release-notes summary/body/format and optional remediation hints.
-- Host software update message fields for typed status/result metadata are optional on the wire for compatibility and map into public MirageKit client/host software-update enums when present.
-- Host transport send routing uses `HostTransportRegistry` with lock-backed connection maps for video/audio/quality channel access outside main-actor send paths.
-- Host TCP control receive uses `HostReceiveLoop` with immediate receive re-arm, per-client bounded non-input backlog, and coalescing for display/scale/refresh/encoder-setting updates.
-- Input-event control payloads use a compact binary codec with JSON envelope fallback for legacy peers.
-- Login-display watchdog and retry pacing use queue timers (`DispatchSourceTimer`) driven through queue-to-main bridge handlers.
-- Remote signaling helpers include signed Worker requests, STUN probes, and host candidate parsing for direct remote readiness.
-- Remote signaling endpoint validation accepts `https` URLs only.
-- Host remote path runs a dedicated QUIC control listener (`MirageHostService+Remote.swift`) and publishes STUN-derived `hostCandidates` through signed signaling heartbeats.
-- Remote diagnostics logging spans client remote preflight/join/connect, host remote listener and advertise/heartbeat loops, and signaling request outcomes.
-
-## Interaction Guidelines
-- Planning phase: detailed step list; explicit plan.
-- Complex issues: code review + plan before action.
-- Unclear requirements or behavior: questions first.
-- Comments and READMEs: static descriptions; avoid update-history phrasing.
-
-## Keeping This Document Current
-AGENTS.md is the live reference for MirageKit. Include entries for new files, directories, modules, architecture shifts, build commands, dependencies, and coding conventions.
-
-## Project Structure
-```
-MirageKit/
-├─ .github/
-│  └─ workflows/
-│     └─ ci.yml
-├─ Package.swift
-├─ Sources/
-│  ├─ MirageKit/ (shared)
-│  │  ├─ Public/
-│  │  │  ├─ CloudKit/
-│  │  │  ├─ Bootstrap/
-│  │  │  ├─ Remote/
-│  │  │  ├─ Input/
-│  │  │  ├─ Shared/
-│  │  │  ├─ Diagnostics/
-│  │  │  └─ Types/
-│  │  └─ Internal/
-│  │     ├─ Logging/
-│  │     ├─ Protocol/
-│  │     └─ Utilities/
-│  ├─ MirageKitClient/
-│  │  ├─ Public/
-│  │  │  ├─ Client/
-│  │  │  └─ Views/
-│  │  └─ Internal/
-│  │     ├─ Client/
-│  │     ├─ Decoding/
-│  │     ├─ Network/
-│  │     ├─ Rendering/
-│  │     └─ Utilities/
-│  └─ MirageKitHost/
-│     ├─ Public/
-│     │  ├─ Host/
-│     │  └─ Utilities/
-│     ├─ Internal/
-│     │  ├─ Capture/
-│     │  ├─ Cursor/
-│     │  ├─ Encoding/
-│     │  ├─ Host/
-│     │  ├─ Network/
-│     │  ├─ Utilities/
-│     │  └─ VirtualDisplay/
-└─ Tests/
-   ├─ MirageKitClientTests/
-   ├─ MirageKitHostTests/
-   └─ MirageKitTests/
-```
-
-Docs: `If-Your-Computer-Feels-Stuttery.md` - ColorSync stutter cleanup commands.
-
-## Public API
-- Shared types, input events, trust, and CloudKit helpers: `Sources/MirageKit/Public/`.
-- Diagnostics hooks and structured diagnostics primitives: `Sources/MirageKit/Public/Diagnostics/`.
-- Bootstrap metadata and wake/unlock runtime interfaces: `Sources/MirageKit/Public/Bootstrap/`.
-- Remote signaling and STUN preflight helpers: `Sources/MirageKit/Public/Remote/`.
-- Client services, delegates, session stores, metrics, cursor snapshots, and stream views: `Sources/MirageKitClient/Public/`.
-- Host services, delegates, window/input controllers, and host utilities: `Sources/MirageKitHost/Public/`.
-- Quality probe results are not used.
-
-## Internal Implementation
-- Shared protocol, logging, and support utilities: `Sources/MirageKit/Internal/`.
-- `MirageLogger` forwards log and structured error/fault events into `MirageDiagnostics` sinks.
-- Shared path classification utility: `Sources/MirageKit/Internal/Utilities/MirageNetworkPathClassifier.swift`.
-- Client decode, render, and transport: `Sources/MirageKitClient/Internal/`.
-- Host capture, encode, virtual display, and host utilities: `Sources/MirageKitHost/Internal/`.
-- Host audio mute control: `Sources/MirageKitHost/Internal/Audio/HostAudioMuteController.swift`.
-- Host Lights Out support: `Sources/MirageKitHost/Internal/Host/HostLightsOutController.swift`, `Sources/MirageKitHost/Internal/Host/MirageInjectedEventTag.swift`.
-- Host queue primitives and registries: `Sources/MirageKitHost/Internal/Host/Locked.swift`, `Sources/MirageKitHost/Internal/Host/SerialWorker.swift`, `Sources/MirageKitHost/Internal/Host/HostTransportRegistry.swift`, `Sources/MirageKitHost/Internal/Host/HostStreamRegistry.swift`, `Sources/MirageKitHost/Internal/Host/HostReceiveLoop.swift`.
-- Host Lights Out integration: `Sources/MirageKitHost/Public/Host/MirageHostService+LightsOut.swift`.
-- Host Stage Manager guardrail: `Sources/MirageKitHost/Internal/Host/HostStageManagerController.swift`, `Sources/MirageKitHost/Public/Host/MirageHostService+StageManager.swift`.
-- Host bootstrap daemon shared config and control helpers live under `Sources/MirageKitHost/Public/Host/` and stay consumable by both host app and standalone daemon target.
-
-**Other Modules:**
-- Automatic quality testing no longer includes dedicated probe scene or transport-helper paths.
-- `Sources/MirageKitClient/Public/Client/MirageClientService+QualityTestHelpers.swift` - Quality test helper routines
-
-## Architecture Patterns
-- `MirageHostService` and `MirageClientService` are the main entry points.
-- Delegate pattern for event callbacks.
-- Services are `@Observable` and `@MainActor`.
-- Control-message routing in host/client services uses registry maps keyed by message type.
-
-## Streaming Pipeline
-- Host: ApplicationScanner → WindowCaptureEngine → MetalFrameDiffer → HEVCEncoder → Network.
-- Client: Network → HEVCDecoder → MirageStreamView (`AVSampleBufferDisplayLayer` on iOS/visionOS, Metal on macOS).
-- Client rendering reads frames from `MirageFrameCache` inside stream presentation backends to avoid SwiftUI per-frame churn.
-- Stream scaling: capture at `streamScale` output resolution; content rects are in scaled pixel coordinates.
-- Adaptive stream scale: not supported; streams keep the client-selected `streamScale` throughout the session.
-- SCK buffer lifetime: captured frames are copied into a CVPixelBufferPool before encode to avoid retaining SCK buffers.
-- Queue limits: packet queue thresholds scale with encoded area and frame rate.
-- Frame rate selection: host follows client refresh rate (120fps when supported) across streams.
-- Desktop streaming: packet-queue backpressure and scheduled keyframe deferral during high motion/queue pressure.
-- Low-latency backpressure: queue spikes drop frames to keep latency down while preserving forward decode flow without automatic keyframe recovery requests.
-- Presentation policy: newest-frame decode-synchronous display with no client-added buffering.
-- Underflow behavior: presentation keeps the current on-screen frame without duplicate draw resubmission.
-- Keyframe throttling: host ignores repeated keyframe requests while a keyframe is in flight; encoding waits for UDP registration so the first keyframe is delivered.
-- Recovery keyframes: soft recovery sends urgent keyframes without epoch reset; hard recovery escalates on repeated requests within 4 seconds.
-- Recovery-only cadence: scheduled periodic keyframes are disabled; startup and recovery keyframes remain active.
-- Compression ceiling: frame quality is capped at 0.80 through 400 Mbps and scales up to 0.94 by 700 Mbps while bitrate targets remain independent.
-- FEC policy: loss windows prioritize keyframe parity; P-frame parity is enabled only during hard recovery windows.
-- Adaptive fallback: automatic mode applies bitrate-only steps first (15% per trigger, 15-second cooldown, 8 Mbps floor) before disruptive reconfiguration.
-- Custom mode recovery: stream parameters remain fixed while stream-health warnings report sustained degradation.
-- Decoder recovery: client enters keyframe-only mode after sustained decode-error thresholds until a fresh keyframe arrives.
-- Reassembler P-frame delivery requires a delivered keyframe anchor and monotonic forward progression; frame gaps continue forward decode without immediate keyframe escalation.
-- Startup bootstrap exception: frame-loss signaling can request keyframe recovery before the first decoded frame so a lost initial keyframe does not stall stream start.
-- Presentation catch-up trimming uses oldest-frame age gating to preserve short decode jitter bursts and trims only when latency exceeds the presentation threshold.
-- Decode backpressure handling logs sustained queue pressure and continues forward decode without forced stream reset or keyframe request.
-- Adaptive fallback triggers on decode-storm episodes (two decode-threshold events within an 8-second window) in addition to queue-drop overload signals.
-- Client decode submission cap is adaptive (baseline 2, temporary 3 during sustained decode stress, return to 2 after sustained recovery).
-- Client freeze monitoring records sustained presentation stalls for diagnostics without automatic keyframe recovery requests.
-- Client presentation uses `AVSampleBufferDisplayLayer` + `CADisplayLink` on iOS/visionOS and `MirageRenderLoop` + `CAMetalLayer` on macOS.
-- iOS/visionOS lifecycle handling keeps the current frame during inactive transitions and triggers lifecycle-driven stream recovery only after true background returns or display-layer failure.
-- macOS render-loop draw dispatch is completion-driven and avoids `Task`/`await` in the client render hot path.
-- iOS/visionOS presentation dequeues newest frames and enqueues display-immediate sample buffers on display-link cadence.
-- Decode callbacks enqueue into `MirageRenderStreamStore` per-stream SPSC queues (default capacity 24) with monotonic sequence metadata and cadence telemetry.
-- `MirageFrameCache` is a compatibility facade over the render stream store and continues exposing presentation snapshot, queue depth/age, and typing-burst state.
-- macOS presentation uses a fixed low-latency newest-frame policy.
-- Catch-up trimming and emergency trimming apply only under sustained backlog/age thresholds to preserve short decode-jitter bursts.
-- Audio runtime extra delay remains at zero.
-- `allowAdaptiveFallback` gates render-scale degradation for the macOS render-loop path; iOS/visionOS sample-buffer presentation keeps fixed scale.
-
-## Input Handling
-- Host input clears stuck modifiers after 0.5s of modifier inactivity.
-- iPad modifier input uses flags snapshots with gesture resync to avoid stuck keys.
-- Stylus-backed pointer events bypass pointer smoothing paths to preserve pressure and tilt fidelity.
-- Client multi-click sequencing uses completed-click tracking with a point-distance threshold, and drag paths do not advance the multi-click chain.
-- Client cursor state is read from `MirageClientCursorStore` inside input views to avoid SwiftUI-driven cursor churn.
-- Secondary display cursor position is read from `MirageClientCursorPositionStore` for locked cursor rendering.
-
-## Network Configuration
-- Service type: `_mirage._tcp` (Bonjour).
-- Control port: 9847; Data port: 9848.
-- Protocol version: 1.
-- TCP control framing plus UDP media transport with token-authenticated registrations; media payload encryption follows session policy.
-- UDP packet sizing: `MirageNetworkConfiguration.maxPacketSize` caps Mirage header + payload to avoid IPv6 fragmentation; `StreamContext` uses it for frame fragmentation.
-- `StreamPacketSender` sends bounded bursts and tracks queued bytes for backpressure.
-- Quality feedback messages: none.
-
-## Virtual Display Behavior
-- App streaming: `acquireDisplay(for:clientResolution:)` creates a display sized to client resolution; window is moved onto it for isolation.
-- Desktop streaming: `acquireDisplayForConsumer(.desktopStream)` creates display at client-requested resolution; capture/encoder enforce the cap; main display is mirrored onto it.
-- Display capture for login/desktop streams uses the virtual display pixel resolution override to avoid HiDPI half-resolution captures.
-
-## Platform Support
-- macOS: host + client capability.
-- iOS/iPadOS: client only.
-- visionOS: client only.
-- Conditional compilation with `#if os(macOS)` throughout.
+## Coding Standards
+- 4-space indentation; `UpperCamelCase` types; `lowerCamelCase` members.
+- Public API types keep the `Mirage` prefix.
+- Prefer one primary type per file and use `// MARK: -` in larger files.
+- New Swift files include the standard header with `Created by Ethan Lipnik` and an accurate date.
+- Swift 6.2 strict concurrency baseline.
+- `@Observable` classes are `@MainActor`.
+- Prefer Swift concurrency over GCD.
+- Use `Task.sleep(for:)`, not `Task.sleep(nanoseconds:)`.
+- Avoid force unwraps / force `try` unless failure is unrecoverable.
+- For SwiftUI, prefer modern APIs (`NavigationStack`, `Tab`, `foregroundStyle`, etc.) and avoid `AnyView` unless necessary.
 
 ## Build and Test
-- Build: `swift build --package-path MirageKit`.
-- Test: `swift test --package-path MirageKit`.
-- CI: `.github/workflows/ci.yml` runs `swift build` and `swift test` on `macos-26` with `DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer`.
-- MirageKit package dependencies include `swift-nio` and `swift-nio-ssh` for SSH bootstrap runtime support.
-- Bootstrap API/runtime edits are validated with package tests and host workspace integration build (`xcodebuild -project Mirage.xcodeproj -scheme 'Mirage Host' -configuration Debug -destination 'platform=macOS' build`).
+- Build MirageKit: `swift build --package-path MirageKit`
+- Test MirageKit: `swift test --package-path MirageKit`
+- For host-integration-sensitive changes, also build: `xcodebuild -project Mirage.xcodeproj -scheme 'Mirage Host' -configuration Debug -destination 'platform=macOS' build`
+- Tests use Swift Testing and should be placed in matching targets:
+  - `Tests/MirageKitTests`
+  - `Tests/MirageKitHostTests`
+  - `Tests/MirageKitClientTests`
 
-## Coding Style and Naming
-- Use 4 spaces for indentation and keep line wrapping consistent with surrounding code.
-- Types use `UpperCamelCase`, functions and properties use `lowerCamelCase`.
-- Public API types keep the `Mirage` prefix.
-- Match file names to the primary type and use `// MARK: -` for sections.
-- New Swift files include the standard header with author and a 1-2 line summary of file purpose, for example:
-  ```
-  //
-  //  ExampleThing.swift
-  //  MirageKit
-  //
-  //  Created by Ethan Lipnik on 1/16/26.
-  //
-  //  Stream session state for client rendering.
-  //
-  ```
-- For `Created by` lines in Swift headers, check the system date or the file creation date before setting the date.
-- Keep public API edits in `Sources/MirageKit/Public` minimal and well documented.
-- Break different types into separate Swift files rather than placing multiple structs, classes, or enums in one file.
-- Do not introduce third-party frameworks without asking first.
-- Comments and READMEs use static descriptions; avoid update-history phrasing.
-
-## Swift Guidelines
-- Target Swift 6.2+ with strict concurrency.
-- Always mark `@Observable` classes with `@MainActor`.
-- Never use `DispatchQueue.main.async()`; use Swift concurrency instead.
-- Never use `Task.sleep(nanoseconds:)`; use `Task.sleep(for:)` instead.
-- Prefer Swift-native alternatives to Foundation methods where they exist:
-  - Use `replacing("hello", with: "world")` instead of `replacingOccurrences(of:with:)`.
-  - Use `URL.documentsDirectory` and `appending(path:)` for URL handling.
-- Never use C-style number formatting like `String(format: "%.2f", value)`; use formatters instead.
-- Prefer static member lookup over struct instances.
-- Use `localizedStandardContains()` instead of `contains()` for user-input text filtering.
-- Avoid force unwraps and force `try` unless failure is unrecoverable.
-- Avoid UIKit unless specifically requested.
-
-## SwiftUI Guidelines
-- Always use `foregroundStyle()` instead of `foregroundColor()`.
-- Always use `clipShape(.rect(cornerRadius:))` instead of `cornerRadius()`.
-- Always use the `Tab` API instead of `tabItem()`.
-- Always use `NavigationStack` with `navigationDestination(for:)` instead of `NavigationView`.
-- Use `.scrollIndicators(.hidden)` instead of `showsIndicators: false` in scroll view initializers.
-- Prefer `ImageRenderer` over `UIGraphicsImageRenderer` for rendering SwiftUI views.
-- Do not use `ObservableObject`; prefer `@Observable`.
-- Do not break views up using computed properties; extract new `View` structs instead.
-- Avoid `AnyView` unless absolutely required.
-- Avoid `GeometryReader` if newer alternatives work (`containerRelativeFrame()`, `visualEffect()`).
-- Never use `onChange()` with 1 parameter; use the 2-parameter or 0-parameter variant.
-- Never use `onTapGesture()` unless tap location or count is needed; use `Button` otherwise.
-- For image buttons, include text: `Button("Tap me", systemImage: "plus", action: myAction)`.
-- Never use `UIScreen.main.bounds` to read available space.
-- Do not force specific font sizes; prefer Dynamic Type.
-- When using `ForEach` with `enumerated()`, do not convert to an array first.
-- Avoid UIKit colors in SwiftUI code.
-
-## SwiftData Guidelines (if applicable)
-- Never use `@Attribute(.unique)`.
-- Model properties have default values or are optional.
-- All relationships are optional.
-
-## File Size Guidelines
-- Target: no file exceeds 500 lines.
-- When a file grows beyond 500 lines, extract related functionality into separate manager classes or extensions.
-
-## Testing Guidelines
-- Tests use Swift Testing (`import Testing`) with `@Suite`, `@Test`, and `#expect` assertions.
-- Place new tests under the matching package test target directory (`Tests/MirageKitTests`, `Tests/MirageKitHostTests`, or `Tests/MirageKitClientTests`) and name them descriptively.
-
-## Compilation Checks
-- When finishing work, build MirageKit with `swift build --package-path MirageKit`.
+## File Hygiene
+- Keep files under ~500 lines when practical by splitting responsibilities.
+- Remove unused declarations and related tests in the same change.

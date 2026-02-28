@@ -112,14 +112,24 @@ extension StreamController {
         firstPresentedFrameLastWaitLogTime = 0
     }
 
-    func markFirstFrameDecoded() {
+    func markFirstFrameDecoded() async {
+        let shouldNotify = !hasDecodedFirstFrame
+        if !hasDecodedFirstFrame {
+            hasDecodedFirstFrame = true
+        }
+
         if awaitingFirstFrameAfterResize {
             awaitingFirstFrameAfterResize = false
             MirageLogger.client("Post-resize first frame decoded for stream \(streamID)")
         }
+
+        guard shouldNotify, let handler = onFirstFrameDecoded else { return }
+        await MainActor.run {
+            handler()
+        }
     }
 
-    func markFirstFrameReceived() {
+    func markFirstFramePresented() async {
         let now = currentTime()
         let wasAwaitingFirstPresentation = awaitingFirstPresentedFrame
         let waitStart = firstPresentedFrameWaitStartTime
@@ -141,14 +151,16 @@ extension StreamController {
             }
         }
 
-        let shouldNotify = !hasReceivedFirstFrame || wasAwaitingFirstPresentation
-        if !hasReceivedFirstFrame {
-            hasReceivedFirstFrame = true
+        let shouldNotify = !hasPresentedFirstFrame || wasAwaitingFirstPresentation
+        if !hasPresentedFirstFrame {
+            hasPresentedFirstFrame = true
         }
-        guard shouldNotify else { return }
-
-        Task { @MainActor [weak self] in
-            await self?.onFirstFrame?()
+        if !hasDecodedFirstFrame {
+            hasDecodedFirstFrame = true
+        }
+        guard shouldNotify, let handler = onFirstFramePresented else { return }
+        await MainActor.run {
+            handler()
         }
     }
 
@@ -168,7 +180,7 @@ extension StreamController {
 
             let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
             if snapshot.sequence > firstPresentedFrameBaselineSequence {
-                markFirstFrameReceived()
+                await markFirstFramePresented()
                 return
             }
 
@@ -239,7 +251,7 @@ extension StreamController {
     func handleFrameLossSignal() async {
         // Bootstrap exception: if no frame has ever been presented, request keyframes so startup
         // does not deadlock on a lost initial keyframe.
-        guard hasReceivedFirstFrame else {
+        guard hasPresentedFirstFrame else {
             MirageLogger.client(
                 "Frame loss detected before first presented frame for stream \(streamID); " +
                     "requesting bootstrap keyframe recovery"

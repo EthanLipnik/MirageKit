@@ -151,12 +151,14 @@ extension WindowCaptureEngine {
         if captureMode == .display {
             // App-stream display capture for a specific window can be quiescent for long periods.
             // Avoid aggressive restart loops that churn virtual displays and spike host CPU.
-            let hard = min(max(soft * 3.0, soft + 8.0), 30.0)
+            // Keep soft-stall signaling for diagnostics/recovery signals, but make hard restart
+            // a last-resort path for extended no-frame windows.
+            let hard = min(max(soft * 10.0, soft + 60.0), 120.0)
             return CaptureStallPolicy(
                 softStallThreshold: soft,
                 hardRestartThreshold: hard,
-                restartDebounce: 0.35,
-                cancellationGrace: 0.40
+                restartDebounce: 0.60,
+                cancellationGrace: 0.75
             )
         }
 
@@ -214,15 +216,24 @@ extension WindowCaptureEngine {
         currentFrameRate
     }
 
+    private func shouldFollowDisplayRefreshCadence() -> Bool {
+        guard usesDisplayRefreshCadence else { return false }
+        // Passive snapshot tiers (1-4 FPS) must not run full-refresh capture cadence.
+        // Reserve display-refresh cadence for live/high-FPS paths only.
+        return currentFrameRate >= 30
+    }
+
     func effectiveCaptureRate() -> Int {
-        if usesDisplayRefreshCadence, let refreshRate = currentDisplayRefreshRate, refreshRate > 0 {
+        if shouldFollowDisplayRefreshCadence(),
+           let refreshRate = currentDisplayRefreshRate,
+           refreshRate > 0 {
             return refreshRate
         }
         return currentFrameRate
     }
 
     func resolvedMinimumFrameInterval() -> CMTime {
-        if usesDisplayRefreshCadence { return .zero }
+        if shouldFollowDisplayRefreshCadence() { return .zero }
         return CMTime(value: 1, timescale: CMTimeScale(minimumFrameIntervalRate()))
     }
 

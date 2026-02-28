@@ -81,6 +81,7 @@ struct CaptureStallPolicyTests {
     func displayPolicyDefersRestart() {
         let policy = WindowCaptureEngine.resolveStallPolicy(
             windowID: 0,
+            captureMode: .display,
             frameRate: 60,
             configuredSoftStallLimit: 2.0
         )
@@ -95,6 +96,7 @@ struct CaptureStallPolicyTests {
     func windowPolicyMaintainsImmediateRestartThreshold() {
         let policy = WindowCaptureEngine.resolveStallPolicy(
             windowID: 42,
+            captureMode: .window,
             frameRate: 60,
             configuredSoftStallLimit: 1.0
         )

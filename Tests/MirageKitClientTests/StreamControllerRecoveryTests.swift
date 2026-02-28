@@ -61,6 +61,28 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Passive to active tier promotion requests immediate keyframe recovery")
+    func passiveToActiveTierPromotionRequestsKeyframe() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 92, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.updatePresentationTier(.passiveSnapshot)
+        await controller.updatePresentationTier(.activeLive)
+        try await waitUntil("tier promotion keyframe request") {
+            keyframeCounter.value >= 1
+        }
+        #expect(keyframeCounter.value >= 1)
+
+        await controller.stop()
+    }
+
     @Test("Reset re-arms first-frame callback for post-resize transitions")
     func resetRearmsFirstFrameCallbackForPostResizeTransition() async throws {
         let firstFrameCounter = LockedCounter()
@@ -71,31 +93,31 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil,
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
-            onFirstFrame: {
+            onFirstFramePresented: {
                 firstFrameCounter.increment()
             },
             onAdaptiveFallbackNeeded: nil
         )
 
-        await controller.markFirstFrameReceived()
+        await controller.markFirstFramePresented()
         try await waitUntil("initial first-frame callback") {
             firstFrameCounter.value == 1
         }
-        #expect(await controller.hasReceivedFirstFrame)
+        #expect(await controller.hasPresentedFirstFrame)
 
         await controller.resetForNewSession()
-        #expect(!(await controller.hasReceivedFirstFrame))
+        #expect(!(await controller.hasPresentedFirstFrame))
         #expect(!(await controller.awaitingFirstFrameAfterResize))
 
         await controller.beginPostResizeTransition()
         #expect(await controller.awaitingFirstFrameAfterResize)
 
-        await controller.markFirstFrameReceived()
+        await controller.markFirstFramePresented()
         try await waitUntil("post-resize first-frame callback") {
             firstFrameCounter.value == 2
         }
 
-        #expect(await controller.hasReceivedFirstFrame)
+        #expect(await controller.hasPresentedFirstFrame)
         #expect(!(await controller.awaitingFirstFrameAfterResize))
 
         await controller.stop()
@@ -141,7 +163,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil,
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
-            onFirstFrame: nil,
+            onFirstFramePresented: nil,
             onAdaptiveFallbackNeeded: {
                 fallbackCounter.increment()
             }
@@ -208,7 +230,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil,
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
-            onFirstFrame: nil,
+            onFirstFramePresented: nil,
             onAdaptiveFallbackNeeded: {
                 fallbackCounter.increment()
             }
@@ -298,7 +320,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
-        await controller.markFirstFrameReceived()
+        await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal()
         try await Task.sleep(for: .milliseconds(150))
         #expect(keyframeCounter.value == 0)
@@ -318,7 +340,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
-        await controller.markFirstFrameReceived()
+        await controller.markFirstFramePresented()
         let reassembler = await controller.getReassembler()
         reassembler.enterKeyframeOnlyMode()
 
@@ -345,7 +367,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil,
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
-            onFirstFrame: nil,
+            onFirstFramePresented: nil,
             onAdaptiveFallbackNeeded: nil
         )
 
@@ -382,7 +404,7 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil,
             onResizeStateChanged: nil,
             onFrameDecoded: nil,
-            onFirstFrame: nil,
+            onFirstFramePresented: nil,
             onAdaptiveFallbackNeeded: nil
         )
 

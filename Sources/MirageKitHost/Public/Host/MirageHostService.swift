@@ -246,24 +246,16 @@ public final class MirageHostService {
     var sessionRefreshGeneration: UInt64 = 0
     let sessionRefreshInterval: Duration = .seconds(3)
 
-    /// Window activity monitoring (for throttling inactive streams) - internal for extension access
-    var windowActivityMonitor: WindowActivityMonitor?
-    /// Fast-path last input-activity signal timestamps by stream ID.
-    nonisolated let appStreamLastInputSignalByStreamID = Locked<[StreamID: CFAbsoluteTime]>([:])
-    /// Last frontmost-window activity signal by stream ID.
-    var appStreamFrontmostSignalByStreamID: [StreamID: Bool] = [:]
-    /// Last applied activity state by stream ID.
-    var appStreamAppliedActiveStateByStreamID: [StreamID: Bool] = [:]
-    /// Desired active (unthrottled) frame rate per stream.
-    var appStreamDesiredActiveFrameRateByStreamID: [StreamID: Int] = [:]
-    /// Background governor task for activity and shared-bitrate policy.
-    var appStreamGovernorTask: Task<Void, Never>?
-    /// Inactive throttle frame rate for host-owned app stream activity policy.
-    let appStreamInactivityThrottleFPS: Int = 1
-    /// Duration input signals keep a stream in active state.
-    let appStreamInputActiveHoldSeconds: CFAbsoluteTime = 1.5
-    /// Background governor loop cadence.
-    let appStreamGovernorTickInterval: Duration = .milliseconds(400)
+    /// App-stream owner-selection gate.
+    let inputOwnershipGate = InputOwnershipGate()
+    /// App-stream runtime coordinator.
+    let appStreamCoordinator = AppStreamCoordinator()
+    /// App-stream active-window pipeline.
+    let liveWindowPipeline = LiveWindowPipeline()
+    /// App-stream passive-window snapshot pipeline.
+    let snapshotWindowPipeline = SnapshotWindowPipeline()
+    /// App-stream fixed two-display allocator metadata.
+    let appStreamDisplayAllocator = AppStreamDisplayAllocator()
 
     /// App-centric streaming manager - internal for extension access
     let appStreamManager = AppStreamManager()

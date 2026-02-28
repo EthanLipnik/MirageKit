@@ -57,7 +57,7 @@ actor StreamContext {
     let mediaSecurityContext: MirageMediaSecurityContext?
     nonisolated(unsafe) var shouldEncodeFrames: Bool = true
 
-    /// Window capture engine (used both for legacy and virtual display modes)
+    /// Window capture engine (used for window and virtual-display modes).
     var captureEngine: WindowCaptureEngine?
 
     // Virtual display components (provides window isolation)

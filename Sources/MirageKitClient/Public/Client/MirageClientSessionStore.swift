@@ -9,7 +9,7 @@ import Foundation
 import Observation
 import MirageKit
 
-/// Manages active client stream sessions and resize state.
+/// Manages active client stream sessions, readiness state, and presentation tiers.
 @Observable
 @MainActor
 public final class MirageClientSessionStore {
@@ -25,6 +25,12 @@ public final class MirageClientSessionStore {
     /// Increments for every host min-size update, including no-op value repeats.
     public var sessionMinSizeUpdateGenerations: [StreamSessionID: UInt64] = [:]
 
+    /// Current stream presentation tier map.
+    public var presentationTierByStreamID: [StreamID: StreamPresentationTier] = [:]
+
+    /// Callback when stream presentation tier changes.
+    public var onStreamPresentationTierChanged: ((StreamID, StreamPresentationTier) -> Void)?
+
     // MARK: - Login Display State
 
     /// Login display stream state (for locked host).
@@ -33,7 +39,9 @@ public final class MirageClientSessionStore {
     public var loginDisplayHasFrame: Bool = false
 
     /// Streams that decoded a frame before the session entry existed.
-    private var pendingFirstFrameStreamIDs: Set<StreamID> = []
+    private var pendingFirstDecodedFrameStreamIDs: Set<StreamID> = []
+    /// Streams that presented a frame before the session entry existed.
+    private var pendingFirstPresentedFrameStreamIDs: Set<StreamID> = []
     /// Streams currently waiting for the first presented frame after a desktop resize reset.
     public var postResizeAwaitingFirstFrameStreamIDs: Set<StreamID> = []
 
@@ -46,6 +54,8 @@ public final class MirageClientSessionStore {
 
     /// Client service for stream operations.
     public weak var clientService: MirageClientService?
+
+    private let streamScheduler = ClientStreamScheduler()
 
     public init() {}
 
@@ -85,8 +95,7 @@ public final class MirageClientSessionStore {
         window: MirageWindow,
         hostName: String,
         minSize: CGSize?
-    )
-    -> StreamSessionID {
+    ) -> StreamSessionID {
         let sessionID = StreamSessionID()
 
         let state = MirageStreamSessionState(
@@ -94,9 +103,11 @@ public final class MirageClientSessionStore {
             streamID: streamID,
             window: window,
             hostName: hostName,
-            hasReceivedFirstFrame: pendingFirstFrameStreamIDs.contains(streamID)
+            hasDecodedFrame: pendingFirstDecodedFrameStreamIDs.contains(streamID),
+            hasPresentedFrame: pendingFirstPresentedFrameStreamIDs.contains(streamID)
         )
-        pendingFirstFrameStreamIDs.remove(streamID)
+        pendingFirstDecodedFrameStreamIDs.remove(streamID)
+        pendingFirstPresentedFrameStreamIDs.remove(streamID)
 
         if let minSize {
             state.minWidth = CGFloat(minSize.width)
@@ -104,6 +115,7 @@ public final class MirageClientSessionStore {
         }
 
         streamSessions[sessionID] = state
+        scheduleTierRefresh()
         return sessionID
     }
 
@@ -113,10 +125,12 @@ public final class MirageClientSessionStore {
         if focusedSessionID == sessionID { focusedSessionID = nil }
         if let streamID = streamSessions[sessionID]?.streamID {
             postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
+            presentationTierByStreamID.removeValue(forKey: streamID)
         }
         streamSessions.removeValue(forKey: sessionID)
         sessionMinSizes.removeValue(forKey: sessionID)
         sessionMinSizeUpdateGenerations.removeValue(forKey: sessionID)
+        scheduleTierRefresh()
     }
 
     /// Get stream ID for a session.
@@ -163,6 +177,22 @@ public final class MirageClientSessionStore {
     public func setFocusedSession(_ sessionID: StreamSessionID?) {
         guard focusedSessionID != sessionID else { return }
         focusedSessionID = sessionID
+        scheduleTierRefresh()
+    }
+
+    public func presentationTier(for streamID: StreamID) -> StreamPresentationTier {
+        if let tier = presentationTierByStreamID[streamID] {
+            return tier
+        }
+
+        guard streamSessions.values.contains(where: { $0.streamID == streamID }) else {
+            return .activeLive
+        }
+
+        let preferredActiveStreamID = focusedSessionID.flatMap { streamSessions[$0]?.streamID }
+        let orderedStreamIDs = streamSessions.values.map(\.streamID).sorted()
+        let fallbackActiveStreamID = preferredActiveStreamID ?? orderedStreamIDs.first
+        return fallbackActiveStreamID == streamID ? .activeLive : .passiveSnapshot
     }
 
     // MARK: - Login Display
@@ -197,9 +227,20 @@ public final class MirageClientSessionStore {
         loginDisplayHasFrame = false
     }
 
+    /// Mark the first decoded frame for a stream.
+    public func markFirstFrameDecoded(for streamID: StreamID) {
+        if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
+            if !session.hasDecodedFrame {
+                session.hasDecodedFrame = true
+            }
+        } else {
+            pendingFirstDecodedFrameStreamIDs.insert(streamID)
+        }
+    }
+
     /// Mark the first presented frame for a stream.
     /// Used to drive UI state without per-frame SwiftUI updates.
-    public func markFirstFrameReceived(for streamID: StreamID) {
+    public func markFirstFramePresented(for streamID: StreamID) {
         postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
 
         if streamID == loginDisplayStreamID {
@@ -208,10 +249,15 @@ public final class MirageClientSessionStore {
         }
 
         if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
-            guard !session.hasReceivedFirstFrame else { return }
-            session.hasReceivedFirstFrame = true
+            if !session.hasDecodedFrame {
+                session.hasDecodedFrame = true
+            }
+            if !session.hasPresentedFrame {
+                session.hasPresentedFrame = true
+            }
         } else {
-            pendingFirstFrameStreamIDs.insert(streamID)
+            pendingFirstDecodedFrameStreamIDs.insert(streamID)
+            pendingFirstPresentedFrameStreamIDs.insert(streamID)
         }
     }
 
@@ -229,6 +275,35 @@ public final class MirageClientSessionStore {
     public func isAwaitingPostResizeFirstFrame(for streamID: StreamID) -> Bool {
         postResizeAwaitingFirstFrameStreamIDs.contains(streamID)
     }
+
+    private func scheduleTierRefresh() {
+        let streamIDs = streamSessions.values.map(\.streamID)
+        let preferredActiveStreamID = focusedSessionID.flatMap { streamSessions[$0]?.streamID }
+
+        Task { [weak self, streamIDs, preferredActiveStreamID] in
+            guard let self else { return }
+            let tiers = await streamScheduler.resolveTiers(
+                streamIDs: streamIDs,
+                preferredActiveStreamID: preferredActiveStreamID
+            )
+            await MainActor.run {
+                self.applyResolvedTiers(tiers)
+            }
+        }
+    }
+
+    private func applyResolvedTiers(_ tiers: [StreamID: StreamPresentationTier]) {
+        let previous = presentationTierByStreamID
+        presentationTierByStreamID = tiers
+
+        let changedStreamIDs = Set(previous.keys).union(tiers.keys)
+            .filter { previous[$0] != tiers[$0] }
+            .sorted()
+        for streamID in changedStreamIDs {
+            guard let tier = tiers[streamID] else { continue }
+            onStreamPresentationTierChanged?(streamID, tier)
+        }
+    }
 }
 
 /// State for an active stream session.
@@ -240,7 +315,8 @@ public final class MirageStreamSessionState: Identifiable {
     public var window: MirageWindow
     public let hostName: String
     public var statistics: MirageStreamStatistics?
-    public var hasReceivedFirstFrame: Bool
+    public var hasDecodedFrame: Bool
+    public var hasPresentedFrame: Bool
     /// Minimum window size in points (from host).
     public var minWidth: CGFloat = 400
     public var minHeight: CGFloat = 300
@@ -251,7 +327,8 @@ public final class MirageStreamSessionState: Identifiable {
         window: MirageWindow,
         hostName: String,
         statistics: MirageStreamStatistics? = nil,
-        hasReceivedFirstFrame: Bool = false,
+        hasDecodedFrame: Bool = false,
+        hasPresentedFrame: Bool = false,
         minWidth: CGFloat = 400,
         minHeight: CGFloat = 300
     ) {
@@ -260,7 +337,8 @@ public final class MirageStreamSessionState: Identifiable {
         self.window = window
         self.hostName = hostName
         self.statistics = statistics
-        self.hasReceivedFirstFrame = hasReceivedFirstFrame
+        self.hasDecodedFrame = hasDecodedFrame
+        self.hasPresentedFrame = hasPresentedFrame
         self.minWidth = minWidth
         self.minHeight = minHeight
     }

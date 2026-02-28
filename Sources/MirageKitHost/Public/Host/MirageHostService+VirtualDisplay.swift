@@ -357,8 +357,6 @@ extension MirageHostService {
 
         do {
             try await context.updateFrameRate(targetFrameRate)
-            registerAppStreamDesiredFrameRate(streamID: streamID, frameRate: targetFrameRate)
-            await refreshAppStreamActivity(streamID: streamID, reason: "refreshOverride")
             if forceDisplayRefresh, await context.isUsingVirtualDisplay() {
                 MirageLogger.host(
                     "Ignoring forceDisplayRefresh reconfigure for dedicated virtual-display stream \(streamID)"
@@ -976,11 +974,8 @@ extension MirageHostService {
         guard windowVisibleFrameMonitorTasks[streamID] == nil else { return }
         windowVisibleFrameMonitorTasks[streamID] = Task { @MainActor [weak self] in
             guard let self else { return }
-            var driftCandidate: CGSize = .zero
-            var driftCandidateSince = Date.distantPast
-            var lastAppliedAt: CFAbsoluteTime = 0
+            var lastPlacementRepairAt: CFAbsoluteTime = 0
             let driftTolerancePixels: CGFloat = 8
-            let debounceDelay: TimeInterval = 0.75
             let cooldown: CFAbsoluteTime = 2.0
 
             while !Task.isCancelled {
@@ -1015,30 +1010,11 @@ extension MirageHostService {
                     driftTolerancePixels
                 let drifted = !(directVisibleMatch || displayPixelMatch)
                 if drifted {
-                    let desiredLogicalResolution = CGSize(
-                        width: max(1, state.pixelResolution.width / max(1.0, state.clientScaleFactor)),
-                        height: max(1, state.pixelResolution.height / max(1.0, state.clientScaleFactor))
-                    )
-                    if driftCandidate == .zero || driftCandidate != desiredLogicalResolution {
-                        driftCandidate = desiredLogicalResolution
-                        driftCandidateSince = Date()
-                    } else {
-                        let now = CFAbsoluteTimeGetCurrent()
-                        if Date().timeIntervalSince(driftCandidateSince) >= debounceDelay,
-                           now - lastAppliedAt >= cooldown,
-                           !windowResizeInFlightStreamIDs.contains(streamID) {
-                            lastAppliedAt = now
-                            driftCandidate = .zero
-                            driftCandidateSince = .distantPast
-                            await enqueueWindowResolutionChange(
-                                streamID: streamID,
-                                logicalResolution: desiredLogicalResolution
-                            )
-                        }
+                    let now = CFAbsoluteTimeGetCurrent()
+                    if now - lastPlacementRepairAt >= cooldown {
+                        lastPlacementRepairAt = now
+                        await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID, force: true)
                     }
-                } else {
-                    driftCandidate = .zero
-                    driftCandidateSince = .distantPast
                 }
 
                 await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
@@ -1062,6 +1038,20 @@ extension MirageHostService {
     func handleDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async {
         if streamID == desktopStreamID {
             await enqueueDesktopResolutionChange(streamID: streamID, logicalResolution: newResolution)
+            return
+        }
+
+        if let appSession = await appStreamManager.getSessionForStreamID(streamID),
+           let isActive = await appStreamManager.streamActivity(
+               bundleIdentifier: appSession.bundleIdentifier,
+               streamID: streamID
+           ),
+           !isActive {
+            MirageLogger
+                .debug(
+                    .host,
+                    "Ignoring display resolution change for passive app stream \(streamID)"
+                )
             return
         }
 

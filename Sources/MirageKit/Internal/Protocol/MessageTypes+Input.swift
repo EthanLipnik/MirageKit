@@ -26,12 +26,6 @@ package struct InputEventMessage: Codable {
     }
 
     package static func deserializePayload(_ payload: Data) throws -> InputEventMessage {
-        guard let firstByte = payload.first else {
-            throw MirageError.protocolError("Input payload is empty")
-        }
-        if firstByte == InputEventBinaryCodec.formatVersion {
-            return try InputEventBinaryCodec.deserialize(payload)
-        }
-        return try JSONDecoder().decode(InputEventMessage.self, from: payload)
+        try InputEventBinaryCodec.deserialize(payload)
     }
 }

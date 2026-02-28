@@ -56,6 +56,13 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Active vs passive presentation tier for local rendering cadence.
+    public var presentationTier: StreamPresentationTier = .activeLive {
+        didSet {
+            metalView.streamPresentationTier = presentationTier
+        }
+    }
+
     /// Stream ID for direct frame cache access (iOS gesture tracking support)
     /// Forwards to the underlying Metal view
     public var streamID: StreamID? {
@@ -116,11 +123,7 @@ public class InputCapturingView: UIView {
         }
     }
 
-    @available(*, deprecated, message: "Use directTouchInputMode instead.")
-    public var usesVirtualTrackpad: Bool {
-        get { directTouchInputMode == .dragCursor }
-        set { directTouchInputMode = newValue ? .dragCursor : .normal }
-    }
+    var usesVirtualTrackpad: Bool { directTouchInputMode == .dragCursor }
 
     /// Apple Pencil behavior mode.
     public var pencilInputMode: MiragePencilInputMode = .drawingTablet

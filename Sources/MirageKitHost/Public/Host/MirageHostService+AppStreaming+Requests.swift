@@ -68,6 +68,29 @@ extension MirageHostService {
         return ranges
     }
 
+    nonisolated static func initialAppWindowDiscoveryRetryDelay(
+        afterAttempt attempt: Int
+    ) -> Duration {
+        let backoffSchedule: [Duration] = [
+            .milliseconds(250),
+            .milliseconds(350),
+            .milliseconds(500),
+            .milliseconds(750),
+            .seconds(1),
+        ]
+        let normalizedAttempt = max(1, attempt)
+        let index = min(normalizedAttempt - 1, backoffSchedule.count - 1)
+        return backoffSchedule[index]
+    }
+
+    nonisolated static func shouldRequestNewAppWindowOnInitialDiscovery(
+        discoveryAttempt: Int,
+        hasRequestedNewWindow: Bool
+    ) -> Bool {
+        guard !hasRequestedNewWindow else { return false }
+        return discoveryAttempt >= 3
+    }
+
     func handleAppListRequest(
         _ message: ControlMessage,
         from client: MirageConnectedClient,
@@ -745,7 +768,7 @@ extension MirageHostService {
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize
     ) async -> InitialAppWindowStartupResult {
-        let maxDiscoveryAttempts = 4
+        let maxDiscoveryAttempts = 10
         let maxAttemptsPerWindow = 3
         let maxConcurrentWindowStarts = 2
         let perWindowRetryBackoff: [Duration] = [
@@ -758,6 +781,7 @@ extension MirageHostService {
         var failureNotes: [String] = []
         let clientContext = findClientContext(clientID: client.id)
         var primaryCandidates: [AppStreamWindowCandidate] = []
+        var requestedNewWindow = false
 
         for discoveryAttempt in 1 ... maxDiscoveryAttempts {
             do {
@@ -772,6 +796,16 @@ extension MirageHostService {
                 }
                 primaryCandidates = allCandidates.filter { $0.classification == .primary }
                 if !primaryCandidates.isEmpty { break }
+                if Self.shouldRequestNewAppWindowOnInitialDiscovery(
+                    discoveryAttempt: discoveryAttempt,
+                    hasRequestedNewWindow: requestedNewWindow
+                ) {
+                    requestedNewWindow = true
+                    await appStreamManager.requestNewWindow(bundleIdentifier: app.bundleIdentifier)
+                    MirageLogger.host(
+                        "Initial app-stream startup requested a new window for \(app.bundleIdentifier) after discovery attempt \(discoveryAttempt)"
+                    )
+                }
                 failureNotes.append("discovery \(discoveryAttempt): no streamable primary windows found")
             } catch {
                 let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -781,7 +815,7 @@ extension MirageHostService {
             }
 
             if discoveryAttempt < maxDiscoveryAttempts {
-                try? await Task.sleep(for: .milliseconds(250))
+                try? await Task.sleep(for: Self.initialAppWindowDiscoveryRetryDelay(afterAttempt: discoveryAttempt))
             }
         }
 

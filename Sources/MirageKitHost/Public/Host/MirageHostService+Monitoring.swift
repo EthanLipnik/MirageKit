@@ -123,37 +123,6 @@ extension MirageHostService {
         }
     }
 
-    // MARK: - Window Activity Monitoring
-
-    /// Add a window to the activity monitor, starting it if needed
-    func addWindowToActivityMonitor(_ windowID: WindowID) async {
-        // Create and start monitor if this is the first window
-        if windowActivityMonitor == nil {
-            let monitor = WindowActivityMonitor()
-            windowActivityMonitor = monitor
-
-            await monitor.start(windows: [windowID]) { [weak self] windowID, isActive in
-                await self?.handleWindowActivityChange(windowID: windowID, isActive: isActive)
-            }
-        } else {
-            // Monitor already running, just add the window
-            await windowActivityMonitor?.addWindow(windowID)
-        }
-    }
-
-    /// Handle window activity state changes for throttling
-    /// - Parameters:
-    ///   - windowID: The window whose activity state changed
-    ///   - isActive: True if window's app is now frontmost, false otherwise
-    func handleWindowActivityChange(windowID: WindowID, isActive: Bool) async {
-        // Find the stream for this window
-        guard let streamID = activeStreamIDByWindowID[windowID],
-              activeSessionByStreamID[streamID] != nil,
-              await appStreamManager.getSessionForStreamID(streamID) != nil else {
-            return
-        }
-        await setAppStreamFrontmostSignal(streamID: streamID, isActive: isActive, reason: "windowActivity")
-    }
 }
 
 #endif

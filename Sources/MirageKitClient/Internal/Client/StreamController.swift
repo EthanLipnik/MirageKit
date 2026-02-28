@@ -184,8 +184,10 @@ actor StreamController {
     var keyframeRecoveryTask: Task<Void, Never>?
     var lastRecoveryRequestTime: CFAbsoluteTime = 0
 
-    /// Whether we've received at least one frame
-    var hasReceivedFirstFrame = false
+    /// Whether we've decoded at least one frame.
+    var hasDecodedFirstFrame = false
+    /// Whether we've presented at least one frame.
+    var hasPresentedFirstFrame = false
     /// True while the decoder should remain keyframe-only for a post-resize transition.
     var awaitingFirstFrameAfterResize = false
     /// True while UI gating waits for the first newly presented frame.
@@ -225,6 +227,7 @@ actor StreamController {
     var decodeSubmissionStressStreak: Int = 0
     var decodeSubmissionHealthyStreak: Int = 0
     var currentDecodeSubmissionLimit: Int = 2
+    var presentationTier: StreamPresentationTier = .activeLive
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
@@ -262,7 +265,9 @@ actor StreamController {
     private(set) var onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)?
 
     /// Called when the first frame is decoded for a stream.
-    private(set) var onFirstFrame: (@MainActor @Sendable () -> Void)?
+    private(set) var onFirstFrameDecoded: (@MainActor @Sendable () -> Void)?
+    /// Called when the first frame is presented for a stream.
+    private(set) var onFirstFramePresented: (@MainActor @Sendable () -> Void)?
 
     /// Called when sustained decode overload should trigger host fallback.
     private(set) var onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)?
@@ -275,7 +280,8 @@ actor StreamController {
         onResizeEvent: (@MainActor @Sendable (ResizeEvent) -> Void)?,
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
-        onFirstFrame: (@MainActor @Sendable () -> Void)? = nil,
+        onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
+        onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable () -> Void)? = nil
     ) {
@@ -283,7 +289,8 @@ actor StreamController {
         self.onResizeEvent = onResizeEvent
         self.onResizeStateChanged = onResizeStateChanged
         self.onFrameDecoded = onFrameDecoded
-        self.onFirstFrame = onFirstFrame
+        self.onFirstFrameDecoded = onFirstFrameDecoded
+        self.onFirstFramePresented = onFirstFramePresented
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
         self.onStallEvent = onStallEvent
     }
@@ -361,7 +368,11 @@ actor StreamController {
         }
 
         await startFrameProcessingPipeline()
-        armFirstPresentedFrameAwaiter(reason: "stream-start")
+        if presentationTier == .activeLive {
+            armFirstPresentedFrameAwaiter(reason: "stream-start")
+        } else {
+            stopFirstPresentedFrameMonitor()
+        }
         startMetricsReporting()
     }
 
@@ -465,6 +476,14 @@ actor StreamController {
         if let continuation = dequeueContinuation {
             dequeueContinuation = nil
             continuation.resume(returning: frame)
+            return
+        }
+
+        if presentationTier == .passiveSnapshot {
+            if !queuedFrames.isEmpty {
+                clearQueuedFramesForRecovery()
+            }
+            queuedFrames.append(frame)
             return
         }
 

@@ -628,6 +628,13 @@ public final class MirageClientService {
         }
         identityManager = MirageIdentityManager.shared
         self.sessionStore.clientService = self
+        self.sessionStore.onStreamPresentationTierChanged = { [weak self] streamID, tier in
+            guard let self else { return }
+            Task { [weak self] in
+                guard let self else { return }
+                await self.applyStreamPresentationTier(tier, to: streamID)
+            }
+        }
         registerControlMessageHandlers()
         registerDiagnosticsContextProvider()
     }

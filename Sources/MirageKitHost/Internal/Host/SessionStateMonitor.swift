@@ -169,13 +169,9 @@ actor SessionStateMonitor {
         // Debug: log the session dictionary keys
         MirageLogger.log(.host, "CGSession keys: \(sessionDict.keys.sorted())")
 
-        // Check if at login window (no user has logged in)
-        // kCGSessionLoginDoneKey is the canonical key (kCGSSessionLoginCompletedKey is legacy)
-        // Also check kCGSSessionOnConsoleKey for console access
-        let loginCompleted = sessionDict["kCGSessionLoginDoneKey"] as? Bool
-            ?? sessionDict["kCGSSessionLoginCompletedKey"] as? Bool
-            ?? sessionDict["kCGSSessionLoginDoneKey"] as? Bool
-            ?? false
+        // Check if at login window (no user has logged in).
+        // Also check kCGSSessionOnConsoleKey for console access.
+        let loginCompleted = sessionDict["kCGSessionLoginDoneKey"] as? Bool ?? false
         let onConsole = sessionDict["kCGSSessionOnConsoleKey"] as? Bool ?? false
         let userName = sessionDict["kCGSSessionUserNameKey"] as? String
 

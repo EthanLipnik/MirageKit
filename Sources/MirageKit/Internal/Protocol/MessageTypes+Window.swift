@@ -37,7 +37,7 @@ package struct StartStreamMessage: Codable {
     /// UDP port the client is listening on for video data
     package let dataPort: UInt16?
     /// Client's display scale factor (e.g., 2.0 for Retina Mac, ~1.72 for iPad Pro)
-    /// If nil, host uses its own scale factor (backwards compatibility)
+    /// If nil, host uses its own scale factor.
     package var scaleFactor: CGFloat?
     /// Client's requested pixel dimensions (optional, for initial stream setup)
     /// If nil, host uses window size × scaleFactor

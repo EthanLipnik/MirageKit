@@ -27,7 +27,16 @@ extension MirageHostService {
                 return
             }
 
-            noteAppStreamInputSignal(streamID: inputMessage.streamID)
+            if InputOwnershipGate.isOwnershipSwitchSignal(inputMessage.event) {
+                dispatchMainWork { [weak self] in
+                    guard let self else { return }
+                    await self.handleAppStreamOwnershipSignal(
+                        streamID: inputMessage.streamID,
+                        event: inputMessage.event,
+                        reason: "input-fast-path"
+                    )
+                }
+            }
 
             if cacheEntry.window.id == 0 {
                 switch inputMessage.event {

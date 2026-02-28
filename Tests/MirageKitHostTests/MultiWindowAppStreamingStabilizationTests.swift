@@ -167,6 +167,38 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(ranges.allSatisfy { $0.count <= 2 })
     }
 
+    @Test("Initial startup discovery uses bounded retry backoff")
+    func initialStartupDiscoveryUsesBoundedRetryBackoff() {
+        #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 1) == .milliseconds(250))
+        #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 2) == .milliseconds(350))
+        #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 3) == .milliseconds(500))
+        #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 4) == .milliseconds(750))
+        #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 5) == .seconds(1))
+        #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 30) == .seconds(1))
+    }
+
+    @Test("Initial startup requests a new app window only once after repeated misses")
+    func initialStartupRequestsNewWindowOnlyOnceAfterRepeatedMisses() {
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 1,
+                hasRequestedNewWindow: false
+            ) == false
+        )
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 3,
+                hasRequestedNewWindow: false
+            ) == true
+        )
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 8,
+                hasRequestedNewWindow: true
+            ) == false
+        )
+    }
+
     @Test("Existing-session select decision enforces owner, state, and slot cap")
     func existingSessionSelectDecisionEnforcesOwnerStateAndCap() {
         let ownerClientID = UUID()

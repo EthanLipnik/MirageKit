@@ -22,7 +22,8 @@ extension StreamController {
         await decoder.resetForNewSession()
         reassembler.reset()
         metricsTracker.reset()
-        hasReceivedFirstFrame = false
+        hasDecodedFirstFrame = false
+        hasPresentedFirstFrame = false
         awaitingFirstFrameAfterResize = false
         decodePausedForLocalResize = false
         lastMetricsLogTime = 0
@@ -31,7 +32,11 @@ extension StreamController {
         lastPresentedProgressTime = 0
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
-        armFirstPresentedFrameAwaiter(reason: "session-reset")
+        if presentationTier == .activeLive {
+            armFirstPresentedFrameAwaiter(reason: "session-reset")
+        } else {
+            stopFirstPresentedFrameMonitor()
+        }
     }
 
     /// Freeze decode admission while local resize orchestration is in-flight.
@@ -90,5 +95,34 @@ extension StreamController {
         decodeSubmissionHealthyStreak = 0
         currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
         await decoder.setDecodeSubmissionLimit(limit: decodeSubmissionBaselineLimit, reason: "target refresh update")
+    }
+
+    func updatePresentationTier(_ tier: StreamPresentationTier) async {
+        let previousTier = presentationTier
+        presentationTier = tier
+
+        let targetFPS = tier == .activeLive ? 60 : 4
+        decodeSchedulerTargetFPS = targetFPS
+        decodeSubmissionBaselineLimit = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: targetFPS)
+        decodeSubmissionStressStreak = 0
+        decodeSubmissionHealthyStreak = 0
+        currentDecodeSubmissionLimit = max(1, decodeSubmissionBaselineLimit)
+        await decoder.setDecodeSubmissionLimit(limit: currentDecodeSubmissionLimit, reason: "presentation tier update")
+
+        switch tier {
+        case .activeLive:
+            if !hasPresentedFirstFrame {
+                armFirstPresentedFrameAwaiter(reason: "tier-promotion")
+            }
+            if previousTier == .passiveSnapshot {
+                reassembler.enterKeyframeOnlyMode()
+                startKeyframeRecoveryLoopIfNeeded()
+                await requestKeyframeRecovery(reason: .manualRecovery)
+            }
+        case .passiveSnapshot:
+            if !hasPresentedFirstFrame {
+                stopFirstPresentedFrameMonitor()
+            }
+        }
     }
 }
