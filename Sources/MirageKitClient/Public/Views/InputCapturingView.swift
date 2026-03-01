@@ -28,7 +28,13 @@ public class InputCapturingView: UIView {
     /// Callback for input events - set by the SwiftUI representable's coordinator
     public var onInputEvent: ((MirageInputEvent) -> Void)? {
         didSet {
-            if onInputEvent != nil { sendModifierStateIfNeeded(force: true) }
+            guard onInputEvent != nil else { return }
+            if oldValue == nil {
+                sendModifierStateIfNeeded(force: true)
+                return
+            }
+            suppressedOnInputEventRebindCount &+= 1
+            logOnInputEventRebindSuppressionIfNeeded()
         }
     }
 
@@ -232,6 +238,13 @@ public class InputCapturingView: UIView {
     var softwareKeyboardAccessoryView: SoftwareKeyboardAccessoryView?
     var isSoftwareKeyboardShown: Bool = false
     var softwareHeldModifiers: MirageModifierFlags = []
+    var suppressedOnInputEventRebindCount: UInt64 = 0
+    var lastOnInputEventRebindLogTime: CFAbsoluteTime = 0
+    let onInputEventRebindLogInterval: CFTimeInterval = 5.0
+    var softwareModifierSyncRequestCount: UInt64 = 0
+    var softwareModifierVisualUpdateCount: UInt64 = 0
+    var lastSoftwareModifierSyncLogTime: CFAbsoluteTime = 0
+    let softwareModifierSyncLogInterval: CFTimeInterval = 5.0
 
     // Gesture recognizers
     var longPressGesture: UILongPressGestureRecognizer!
@@ -304,6 +317,46 @@ public class InputCapturingView: UIView {
         lastSentModifiers = modifiers
         updateSoftwareModifierButtons()
         onInputEvent?(.flagsChanged(modifiers))
+    }
+
+    func recordSoftwareModifierSyncResult(visualUpdates: Int) {
+        softwareModifierSyncRequestCount &+= 1
+        if visualUpdates > 0 {
+            softwareModifierVisualUpdateCount &+= UInt64(visualUpdates)
+        }
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastSoftwareModifierSyncLogTime == 0 {
+            lastSoftwareModifierSyncLogTime = now
+            return
+        }
+        guard now - lastSoftwareModifierSyncLogTime >= softwareModifierSyncLogInterval else {
+            return
+        }
+        let requests = softwareModifierSyncRequestCount
+        let visualUpdates = softwareModifierVisualUpdateCount
+        softwareModifierSyncRequestCount = 0
+        softwareModifierVisualUpdateCount = 0
+        lastSoftwareModifierSyncLogTime = now
+        MirageLogger.client(
+            "Software modifier sync stats: requests=\(requests), visualUpdates=\(visualUpdates), windowSeconds=5"
+        )
+    }
+
+    func logOnInputEventRebindSuppressionIfNeeded() {
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastOnInputEventRebindLogTime == 0 {
+            lastOnInputEventRebindLogTime = now
+            return
+        }
+        guard now - lastOnInputEventRebindLogTime >= onInputEventRebindLogInterval else {
+            return
+        }
+        let suppressedCount = suppressedOnInputEventRebindCount
+        suppressedOnInputEventRebindCount = 0
+        lastOnInputEventRebindLogTime = now
+        MirageLogger.client(
+            "Input callback rebind suppressed: count=\(suppressedCount), windowSeconds=5"
+        )
     }
 
     func updateCapsLockState(from modifierFlags: UIKeyModifierFlags) {

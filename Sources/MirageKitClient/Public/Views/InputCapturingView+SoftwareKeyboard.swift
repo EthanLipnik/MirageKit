@@ -90,7 +90,8 @@ extension InputCapturingView {
     }
 
     func updateSoftwareModifierButtons() {
-        softwareKeyboardAccessoryView?.setSelectedModifiers(softwareHeldModifiers)
+        let visualUpdates = softwareKeyboardAccessoryView?.setSelectedModifiers(softwareHeldModifiers) ?? 0
+        recordSoftwareModifierSyncResult(visualUpdates: visualUpdates)
     }
 
     func toggleSoftwareModifier(_ key: SoftwareModifierKey, isSelected: Bool) {
@@ -267,10 +268,16 @@ final class SoftwareKeyboardAccessoryView: UIView {
         CGSize(width: size.width, height: 44)
     }
 
-    func setSelectedModifiers(_ modifiers: MirageModifierFlags) {
+    @discardableResult
+    func setSelectedModifiers(_ modifiers: MirageModifierFlags) -> Int {
+        var updatedButtonCount = 0
         for (flag, button) in buttons {
-            updateButton(button, isSelected: modifiers.contains(flag))
+            let isSelected = modifiers.contains(flag)
+            guard button.isSelected != isSelected else { continue }
+            updateButton(button, isSelected: isSelected)
+            updatedButtonCount += 1
         }
+        return updatedButtonCount
     }
 
     private func setup() {

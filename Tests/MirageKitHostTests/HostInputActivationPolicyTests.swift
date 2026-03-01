@@ -13,33 +13,39 @@ import Testing
 #if os(macOS)
 @Suite("Host Input Activation Policy")
 struct HostInputActivationPolicyTests {
-    @Test("Window focus activation is throttled")
-    func windowFocusActivationIsThrottled() {
+    @Test("Same-window focus activation is throttled")
+    func sameWindowFocusActivationIsThrottled() {
         let action = HostInputActivationPolicy.action(
             for: .windowFocus,
             lastActivationTime: 20.0,
+            lastActivatedWindowID: 11,
+            targetWindowID: 11,
             now: 20.1
         )
 
         #expect(action == .none)
     }
 
-    @Test("Window focus without recent activation performs full raise")
-    func windowFocusPerformsFullRaiseWhenAllowed() {
+    @Test("Cross-window focus activation bypasses throttle")
+    func crossWindowFocusActivationBypassesThrottle() {
         let action = HostInputActivationPolicy.action(
             for: .windowFocus,
-            lastActivationTime: nil,
-            now: 30.0
+            lastActivationTime: 50.0,
+            lastActivatedWindowID: 20,
+            targetWindowID: 21,
+            now: 50.01
         )
 
         #expect(action == .fullWindowRaise)
     }
 
-    @Test("Throttled activation resumes after interval")
-    func throttledActivationResumesAfterInterval() {
+    @Test("Same-window throttled activation resumes after interval")
+    func sameWindowThrottledActivationResumesAfterInterval() {
         let action = HostInputActivationPolicy.action(
             for: .windowFocus,
             lastActivationTime: 40.0,
+            lastActivatedWindowID: 33,
+            targetWindowID: 33,
             now: 40.30
         )
 

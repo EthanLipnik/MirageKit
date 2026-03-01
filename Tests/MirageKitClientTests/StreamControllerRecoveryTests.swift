@@ -7,6 +7,7 @@
 //  Decode overload and recovery behavior coverage for StreamController.
 //
 
+@testable import MirageKit
 @testable import MirageKitClient
 import CoreVideo
 import Foundation
@@ -61,10 +62,12 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Passive to active tier promotion requests immediate keyframe recovery")
-    func passiveToActiveTierPromotionRequestsKeyframe() async throws {
+    @Test("Passive to active promotion keeps P-frame-first when context is healthy")
+    func passiveToActiveTierPromotionUsesPFrameFirstWhenContextHealthy() async throws {
         let keyframeCounter = LockedCounter()
-        let controller = StreamController(streamID: 92, maxPayloadSize: 1200)
+        let streamID: StreamID = 92
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -73,14 +76,80 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
+        await controller.markFirstFramePresented()
+        let reassembler = await controller.getReassembler()
+        primeKeyframeAnchor(for: reassembler, streamID: streamID)
+        #expect(reassembler.hasKeyframeAnchor())
+        #expect(!reassembler.isAwaitingKeyframe())
+
         await controller.updatePresentationTier(.passiveSnapshot)
         await controller.updatePresentationTier(.activeLive)
-        try await waitUntil("tier promotion keyframe request") {
+        try await Task.sleep(for: .milliseconds(100))
+        MirageFrameCache.shared.markPresented(sequence: 1, for: streamID)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(keyframeCounter.value == 0)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Passive to active promotion forces keyframe recovery when keyframe-starved")
+    func passiveToActiveTierPromotionForcesKeyframeWhenStarved() async throws {
+        let keyframeCounter = LockedCounter()
+        let streamID: StreamID = 93
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFramePresented()
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+        #expect(reassembler.isAwaitingKeyframe())
+
+        await controller.updatePresentationTier(.passiveSnapshot)
+        await controller.updatePresentationTier(.activeLive)
+        try await waitUntil("tier promotion keyframe request (awaiting keyframe)") {
             keyframeCounter.value >= 1
         }
         #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
+    }
+
+    @Test("Tier-promotion probe requests single fallback keyframe without presentation progress")
+    func tierPromotionProbeRequestsFallbackKeyframeWithoutProgress() async throws {
+        let keyframeCounter = LockedCounter()
+        let streamID: StreamID = 94
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFramePresented()
+        let reassembler = await controller.getReassembler()
+        primeKeyframeAnchor(for: reassembler, streamID: streamID)
+        #expect(reassembler.hasKeyframeAnchor())
+        #expect(!reassembler.isAwaitingKeyframe())
+
+        await controller.updatePresentationTier(.passiveSnapshot)
+        await controller.updatePresentationTier(.activeLive)
+        try await waitUntil("tier promotion probe fallback keyframe", timeout: .seconds(6)) {
+            keyframeCounter.value >= 1
+        }
+        #expect(keyframeCounter.value >= 1)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
     }
 
     @Test("Reset re-arms first-frame callback for post-resize transitions")
@@ -462,6 +531,63 @@ struct StreamControllerRecoveryTests {
             fatalError("Failed to create CVPixelBuffer")
         }
         return buffer
+    }
+
+    private func primeKeyframeAnchor(
+        for reassembler: FrameReassembler,
+        streamID: StreamID,
+        frameNumber: UInt32 = 1
+    ) {
+        let keyframePayload = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            keyframePayload,
+            header: makeVideoHeader(
+                streamID: streamID,
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: frameNumber,
+                payload: keyframePayload
+            )
+        )
+    }
+
+    private func makeVideoHeader(
+        streamID: StreamID,
+        flags: FrameFlags,
+        frameNumber: UInt32,
+        payload: Data
+    ) -> FrameHeader {
+        FrameHeader(
+            flags: flags,
+            streamID: streamID,
+            sequenceNumber: frameNumber,
+            timestamp: UInt64(frameNumber),
+            frameNumber: frameNumber,
+            fragmentIndex: 0,
+            fragmentCount: 1,
+            payloadLength: UInt32(payload.count),
+            frameByteCount: UInt32(payload.count),
+            checksum: crc32(payload),
+            contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
+            dimensionToken: 0,
+            epoch: 0
+        )
+    }
+
+    private func crc32(_ data: Data) -> UInt32 {
+        let polynomial: UInt32 = 0xEDB88320
+        var crc: UInt32 = 0xFFFFFFFF
+        for byte in data {
+            var current = (crc ^ UInt32(byte)) & 0xFF
+            for _ in 0 ..< 8 {
+                if (current & 1) == 1 {
+                    current = (current >> 1) ^ polynomial
+                } else {
+                    current >>= 1
+                }
+            }
+            crc = (crc >> 8) ^ current
+        }
+        return crc ^ 0xFFFFFFFF
     }
 }
 

@@ -1,170 +1,580 @@
 # MirageKit Architecture
 
-This document describes MirageKit’s package-level architecture: module boundaries, connection and media flow, stream pipelines, and runtime policies.
+This document describes the architecture of the **entire MirageKit Swift package**.
 
-## System Topology
+It is a package-internal architecture reference for engineers working in:
 
-MirageKit is split into three SwiftPM products:
+- `Sources/MirageKit`
+- `Sources/MirageKitHost`
+- `Sources/MirageKitClient`
+- `Tests/MirageKitTests`
+- `Tests/MirageKitHostTests`
+- `Tests/MirageKitClientTests`
 
-- `MirageKit`: shared protocol/types/security/logging/bootstrap/remote helpers.
-- `MirageKitClient`: client service, decode pipeline, render pipeline, and stream views.
-- `MirageKitHost`: host service, capture/encode pipeline, virtual-display orchestration, and input injection.
+It does not describe app-target UI architecture in `Mirage/`, `Mirage Host/`, or daemon app bundles except where they call MirageKit APIs.
+
+## 1. Package Topology
+
+MirageKit is one SwiftPM package with three products:
+
+- `MirageKit` (shared protocol, security, trust, remote/cloud/bootstrap, diagnostics)
+- `MirageKitClient` (client connection + media receive/decode/render + client control state)
+- `MirageKitHost` (host connection + capture/encode/send + input injection + stream governance)
+
+Package constraints from `Package.swift`:
+
+- Swift tools: `6.2`
+- Platforms: `macOS 14+`, `iOS 17.4+`, `visionOS 26+`
+- External deps: `swift-nio`, `swift-nio-ssh`
 
 ```mermaid
 flowchart LR
-    Discovery["MirageDiscovery (Bonjour)"] --> Client["MirageClientService"]
-    Client -->|"Control (TCP for discovered hosts)"| Host["MirageHostService"]
-    Client -->|"Control (QUIC when remote transport is selected)"| Host
-    Host -->|"Control responses/events"| Client
-    Host -->|"UDP video/audio/quality packets"| Client
-    Client -->|"Input + control messages"| Host
+    subgraph "MirageKit Swift Package"
+        MK["Target: MirageKit"]
+        MKC["Target: MirageKitClient"]
+        MKH["Target: MirageKitHost"]
+        T0["Tests: MirageKitTests"]
+        T1["Tests: MirageKitClientTests"]
+        T2["Tests: MirageKitHostTests"]
+    end
+
+    MKC --> MK
+    MKH --> MK
+    T0 --> MK
+    T1 --> MKC
+    T2 --> MKH
 ```
 
-## Core Public Entry Points
+## 2. High-Level Runtime Model
 
-- `MirageHostService` is the host orchestrator (`@Observable`, `@MainActor`).
-- `MirageClientService` is the client orchestrator (`@Observable`, `@MainActor`).
-- `MirageDiscovery` provides Bonjour host discovery.
-- `MirageStreamViewRepresentable` + `MirageStreamContentView` bridge stream rendering/input into SwiftUI.
-- `MirageClientSessionStore` owns client-side session/UI stream state.
-- `MirageEncoderConfiguration`, `MirageEncoderOverrides`, and `MirageNetworkConfiguration` define media/network policy.
-- `MirageHostWindowController` + `MirageHostInputController` handle host window/input coordination.
-- `MirageTrustStore`, `MirageAppPreferences`, and `MirageStreamingSettings` provide shared settings surfaces.
+MirageKit is split into two runtime planes:
 
-## Internal Module Map
+- **Control plane**: typed `ControlMessage` frames over a persistent control connection.
+  - Transport: TCP by default; QUIC is optional for remote/direct control in both host and client control transport enums.
+- **Media plane**: UDP channels for video (`MIRG`), audio (`MIRA`), and quality test (`MIRQ`).
 
-- Shared protocol and security:
-  - `MirageProtocol`, `ControlMessage`, `FrameHeader`, `AudioPacketHeader`.
-  - `MirageProtocolNegotiation` + `MirageFeatureSet`.
-  - `MirageMediaSecurity` (ECDH/HKDF key derivation + ChaCha20-Poly1305 packet encryption).
-  - `MirageReplayProtector` for nonce/timestamp replay defense.
-- Host pipeline:
-  - `WindowCaptureEngine` (`ScreenCaptureKit` capture and frame extraction).
-  - `HEVCEncoder` (VideoToolbox session lifecycle and runtime quality control).
-  - `StreamPacketSender` (fragmentation, pacing, parity fragments, packet send queueing).
-  - `StreamContext` (per-stream state machine, backpressure, quality/keyframe policy).
-  - `SharedVirtualDisplayManager` (dedicated per-stream displays and shared-consumer displays).
-  - `AppStreamManager` (app selection/session/window lifecycle).
-  - `HostReceiveLoop` + `HostTransportRegistry` (control receive and transport send routing).
-- Client pipeline:
-  - `StreamController` (per-stream decode/recovery/metrics loop).
-  - `FrameReassembler` + `HEVCDecoder`.
-  - `MirageRenderStreamStore` (per-stream SPSC frame queues + telemetry).
-  - `MirageFrameCache` (compatibility facade over render store).
-  - `MetalRenderer` + `MirageRenderLoop` (macOS render path).
-  - AVSampleBufferDisplayLayer path in `MirageMetalView+iOS` (iOS/visionOS render path).
+Session setup is explicit:
 
-## Connection and Session Security
+1. Control connection established.
+2. Signed `hello`/`helloResponse` handshake validates identity and negotiation.
+3. Host returns `dataPort` plus per-session UDP registration token.
+4. Client registers stream/client channels over UDP using token.
+5. Host begins sending media packets once registration is accepted.
 
 ```mermaid
 sequenceDiagram
-    participant Client
-    participant Host
-    Client->>Host: hello (device, capabilities, negotiation, signed identity)
-    alt Accepted
-        Host-->>Client: helloResponse (accepted, selected features, dataPort, encryption policy, UDP token, signed identity)
-        Client->>Host: startStream/startDesktopStream/selectApp
-        Host-->>Client: streamStarted/desktopStreamStarted (+ dimensionToken)
-        Client->>Host: UDP registrations (MIRG/MIRA/MIRQ + token)
-        Host-->>Client: UDP media packets (video/audio)
-        Client->>Host: inputEvent/keyframeRequest/control updates (steady-state)
-    else Rejected
-        Host-->>Client: helloResponse (rejected + reason metadata)
+    participant C as "MirageClientService"
+    participant H as "MirageHostService"
+    participant TP as "Trust Provider or Delegate"
+
+    C->>H: "Control connect (TCP or QUIC)"
+    C->>H: "hello (signed identity + nonce + negotiation)"
+    H->>H: "Verify signature, key ID, replay, protocol/features"
+    H->>TP: "Evaluate trust/approval"
+
+    alt "Accepted"
+        H-->>C: "helloResponse accepted (signed, dataPort, UDP token, selected features)"
+        C->>H: "UDP register MIRG stream + token"
+        C->>H: "UDP register MIRA client + token"
+        H-->>C: "Video and audio packets"
+    else "Rejected"
+        H-->>C: "helloResponse rejected (reason + mismatch metadata)"
     end
 ```
 
-- Hello negotiation requires `identityAuthV2`, `udpRegistrationAuthV1`, and `encryptedMediaV1` for accepted sessions.
-- Both peers validate signed identity envelopes and replay constraints before establishing media context.
-- Host enforces a single-client slot; a reconnect with the same device ID or identity key preempts the existing slot.
-- Hello response carries a per-session UDP registration token; host validates token matches in constant time.
-- Media payload encryption policy is session-scoped (peer-to-peer sessions may allow unencrypted payloads when configured; non-peer-to-peer sessions stay encrypted).
+## 3. Shared Target (`Sources/MirageKit`) Architecture
 
-## Control and Media Transport
+### 3.1 Wire Contracts and Message Schema
 
-- Control plane uses `ControlMessage` frames (`type + payload length + payload`) over control connection.
-- Most control payloads are JSON-encoded Codable structs.
-- `inputEvent` payloads use `InputEventBinaryCodec` v1, with JSON fallback for legacy peers.
-- Host control receive is handled by `HostReceiveLoop`:
-  - immediate receive re-arm,
-  - bounded non-input backlog,
-  - coalescing for high-frequency control updates (`displayResolutionChange`, `streamScaleChange`, `streamRefreshRateChange`, `streamEncoderSettingsChange`),
-  - fail-closed disconnect on invalid control frames.
-- UDP registrations and channels:
-  - `MIRG`: video registration + video packet flow.
-  - `MIRA`: audio registration + audio packet flow.
-  - `MIRQ`: quality-test transport.
+Core wire definitions live in `Internal/Protocol/*`:
 
-## Stream Pipelines
+- `ControlMessageType`: complete control taxonomy (hello, stream lifecycle, input, app/desktop, audio, updates, errors).
+- `ControlMessage`: framed envelope:
+  - `type: UInt8`
+  - `payloadLength: UInt32`
+  - `payload: Data`
+- `ControlMessage.deserialize(...)` is bounded by `MirageControlMessageLimits` and fails closed on malformed/oversized frames.
 
-### Host
+Important limits in `MirageControlMessageLimits`:
 
-1. `MirageHostService` creates a `StreamContext` with resolved encoder/runtime policy.
-2. `StreamContext` starts capture (`WindowCaptureEngine`) and encoder (`HEVCEncoder`).
-3. Encoded frames are packetized in `StreamPacketSender` and sent through host transport registry routing.
-4. Backpressure is queue-based and drop-first; sustained pressure can trigger queue reset + urgent recovery keyframe.
+- `maxPayloadBytes`: 8 MB
+- `maxAppListPayloadBytes`: 32 MB
+- `maxHostHardwareIconPayloadBytes`: 4 MB
+- `maxReceiveBufferBytes`: 64 MB
+- `maxHelloFrameBytes`: 64 KB
 
-### Client
+Media packet contracts:
 
-1. `MirageClientService` creates one `StreamController` per stream.
-2. UDP packets go through `FrameReassembler` and then `HEVCDecoder`.
-3. Decoded frames are enqueued into `MirageRenderStreamStore` (`MirageFrameCache` facade).
-4. Presentation backend consumes frames per platform policy.
+- `FrameHeader` (video): fixed 61 bytes.
+  - Includes `streamID`, `sequenceNumber`, `frameNumber`, fragmentation fields, `contentRect`, `dimensionToken`, `epoch`, checksum, flags.
+- `AudioPacketHeader` (audio): fixed 47 bytes.
+  - Includes codec/rate/channels/samples, fragmentation, checksum, flags.
+- `QualityTestPacketHeader`: fixed 37-byte `MIRQ` format for throughput/latency probing.
 
-## Rendering by Platform
+Protocol constants:
 
-- macOS:
-  - `MirageMetalView+macOS` uses `CAMetalLayer`.
-  - `MirageRenderLoop` is completion-driven and schedules draws off decode arrival and display pulses.
-  - Presentation policy follows latency mode (`latest` for lowest-latency and auto-typing, buffered for smoothest/auto-smooth).
-- iOS/visionOS:
-  - `MirageMetalView+iOS` is backed by `AVSampleBufferDisplayLayer`.
-  - `CADisplayLink` drives dequeue/enqueue cadence.
-  - Presentation policy is fixed newest-frame dequeue + immediate sample-buffer enqueue.
+- `mirageProtocolVersion = 1`
+- Required feature negotiation includes:
+  - `identityAuthV2`
+  - `udpRegistrationAuthV1`
+  - `encryptedMediaV1`
 
-## Streaming Modes and Virtual Displays
+### 3.2 Shared Security Architecture
 
-- Window/app stream startup uses a dedicated virtual display path first (`SharedVirtualDisplayManager.acquireDedicatedDisplay`), then falls back to direct window capture if dedicated-display startup fails.
-- Desktop/login flows use shared-consumer virtual-display acquisition (`acquireDisplayForConsumer`).
-- Desktop supports mirrored and secondary-display modes (`MirageDesktopStreamMode`).
-- Resize and hard-reset coordination use `dimensionToken` (same stream ID, token increments on host-side dimension resets).
-- Frame headers include `contentRect` so clients crop ScreenCaptureKit padding correctly.
+Security layers are composed, not monolithic:
 
-## Quality and Latency Policy
+1. **Identity keys** (`MirageIdentityManager`)
+   - P-256 signing key persisted in Keychain (`com.mirage.identity.account.v2`) with sync support.
+   - Stable key identifier = SHA-256 of raw public key.
 
-- `MirageEncoderOverrides` and start-stream message fields allow per-stream overrides:
-  - bitrate, keyframe interval, bit depth, stream scale, capture queue depth,
-  - latency mode (`smoothest`, `lowestLatency`, `auto`),
-  - performance mode (`standard`, `game`),
-  - runtime quality adjustment toggle,
-  - resolution-cap disable flag.
-- Resolution handling:
-  - host encode dimensions are normally capped at 5K (`5120x2880`);
-  - `disableResolutionCap` bypasses this cap for uncapped mode.
-- Keyframe policy is recovery-first (`recoveryOnlyKeyframes` path in `StreamContext`) with soft/hard recovery escalation and explicit urgent keyframe paths.
-- Client decode recovery includes keyframe-only gating and controlled retry loops through `StreamController`.
+2. **Canonical signature payloads** (`MirageIdentitySigning`)
+   - Deterministic field ordering and stable JSON encoding for signed hello/response and worker/bootstrap requests.
 
-## Input and Audio
+3. **Replay protection** (`MirageReplayProtector` actor)
+   - Nonce + timestamp window validation.
+   - Bounded nonce table with pruning and max length enforcement.
 
-- Input path:
-  - client emits `MirageInputEvent`,
-  - encoded in compact binary payload,
-  - host decodes and routes through `MirageHostInputController`.
-  - `InputStreamCacheActor` maintains stream/window mapping for fast coordinate routing.
-- Audio path:
-  - single mixed audio stream per client session,
-  - dedicated UDP registration/transport (`MIRA`),
-  - host capture from active ScreenCaptureKit source stream,
-  - client playback via jitter buffer + decoder + playback controller.
+4. **Media session derivation** (`MirageMediaSecurity`)
+   - ECDH via `MirageIdentityManager.deriveSharedKey(...)` + HKDF with canonical derivation salt.
+   - Produces:
+     - `sessionKey` (32 bytes)
+     - `udpRegistrationToken` (32 bytes)
 
-## Optional Subsystems in MirageKit
+5. **Per-packet AEAD**
+   - ChaCha20-Poly1305 for video/audio payload encryption.
+   - Nonce derived from stream/sequence/fragment and direction.
+   - Checksum policy:
+     - required for unencrypted payloads
+     - optional (`0`) for encrypted payloads where AEAD integrity applies
 
-- Remote signaling surface:
-  - `MirageRemoteSignalingClient` for signed signaling requests.
-  - `MirageStunProbe` for candidate reachability checks.
-  - host remote listener path in `MirageHostService+Remote` (QUIC control listener).
-- Bootstrap/wake/unlock surface:
-  - `MirageBootstrapMetadata`, `MirageBootstrapEndpointResolver`,
-  - `MirageWakeOnLANClient`, `MirageSSHBootstrapClient`, `MirageBootstrapControlClient`.
-- Diagnostics and instrumentation:
-  - `MirageDiagnostics` multi-sink/context-provider registry.
-  - `MirageInstrumentation` multi-sink event registry.
+### 3.3 Trust and Authorization Surfaces
+
+Trust is abstracted behind `MirageTrustProvider`:
+
+- `evaluateTrust(for:)` / `evaluateTrustOutcome(for:)`
+- `grantTrust(to:)`
+- `revokeTrust(for:)`
+
+Concrete trust surfaces in shared target:
+
+- `MirageTrustStore`: local trusted-device persistence.
+- `MirageCloudKitTrustProvider`: cloud-share-aware trust decisions, optional manual-approval override.
+
+Host handshake consumes trust outcome and can emit auto-trust notice semantics (`autoTrustGranted`).
+
+### 3.4 Cloud/Remote/Bootstrap Services
+
+`MirageKit` also owns optional infrastructure used by host/client apps:
+
+- **CloudKit**
+  - `MirageCloudKitManager`
+  - `MirageCloudKitHostProvider`
+  - `MirageCloudKitShareManager`
+  - `MirageCloudKitTrustProvider`
+
+- **Remote signaling**
+  - `MirageRemoteSignalingClient`: signed app-authenticated worker API calls.
+  - `MirageStunProbe`: UDP STUN binding probe for external candidate discovery.
+
+- **Bootstrap (wake/unlock before normal session)**
+  - `MirageWakeOnLANClient`
+  - `MirageSSHBootstrapClient`
+  - `MirageBootstrapControlClient`
+  - endpoint/metadata protocol types and crypto envelope helpers.
+
+### 3.5 Diagnostics and Instrumentation
+
+Two distinct telemetry channels:
+
+- `MirageDiagnostics`
+  - Structured log/error sink fan-out.
+  - Context-provider registry for snapshotting runtime context.
+
+- `MirageInstrumentation`
+  - Step-event timeline for handshake, approval, unlock, and performance-mode milestones.
+
+These are cross-target and intentionally low-coupling (sink interfaces, tokenized registration).
+
+## 4. Host Target (`Sources/MirageKitHost`) Architecture
+
+### 4.1 Host Service as Orchestrator
+
+`MirageHostService` (`@MainActor`, `@Observable`) is the top-level coordinator for host runtime.
+
+Key owned registries/state:
+
+- Control listeners: Bonjour TCP + optional QUIC remote listener.
+- UDP data listener.
+- Client maps:
+  - `clientsByConnection`
+  - `clientsByID`
+  - strict `singleClientConnectionID` reservation.
+- Stream maps:
+  - `streamsByID`
+  - `activeSessionByStreamID`
+  - `activeStreamIDByWindowID`
+- Media security/policy maps:
+  - `mediaSecurityByClientID`
+  - `mediaEncryptionEnabledByClientID`
+- Transport maps for video/audio/quality channels.
+- Desktop/login/app-stream subsystem state.
+
+Startup sequence (`start()`):
+
+1. Start control listener via `BonjourAdvertiser`.
+2. Start UDP data listener.
+3. Publish capabilities, then optional remote QUIC listener.
+4. Register app-stream and shared-display callbacks.
+5. Refresh windows, start cursor monitor, start session monitor.
+
+### 4.2 Handshake, Approval, and Single-Client Policy
+
+`MirageHostService+Connections` enforces:
+
+- signed hello verification
+- replay validation
+- protocol/feature compatibility
+- optional protocol-mismatch-triggered software update request handling
+- single active client slot with reconnect preemption by device ID or identity key ID
+- trust-provider-first approval, delegate fallback, timeout/closure handling
+
+On acceptance, host builds signed hello response and derives media context:
+
+- `dataPort` + `udpRegistrationToken`
+- negotiated selected features
+- `mediaEncryptionEnabled` policy (forced for non-local paths)
+
+### 4.3 Host Receive Architecture
+
+`HostReceiveLoop` isolates receive behavior per control connection:
+
+- immediate receive re-arm
+- bounded receive buffer
+- robust frame parsing (`ControlMessage.deserialize`)
+- fast-lane routing for `inputEvent`
+- control backlog queue with coalescing for high-rate updates:
+  - `displayResolutionChange`
+  - `streamScaleChange`
+  - `streamRefreshRateChange`
+  - `streamEncoderSettingsChange`
+- terminal reasons include protocol violation, persistent errors, buffer overflow
+
+Control work is serialized per-client through `SerialWorker`; input can bypass main actor using `inputQueue` and `handleInputEventFast`.
+
+### 4.4 Stream Pipeline (Capture -> Encode -> Packetize -> Send)
+
+Per stream, host uses `StreamContext` actor.
+
+Major responsibilities in `StreamContext`:
+
+- capture mode and source lifecycle (`WindowCaptureEngine`)
+- dynamic dimensions and tokens
+- keyframe policy and recovery escalation
+- quality and backpressure adaptation
+- frame inbox and decode/encode pacing
+- packet send coordination (`StreamPacketSender`)
+- optional encrypted payload wrapping
+
+```mermaid
+flowchart LR
+    CAP["WindowCaptureEngine"] --> INBOX["StreamFrameInbox"]
+    INBOX --> CTX["StreamContext actor"]
+    CTX --> ENC["HEVCEncoder"]
+    ENC --> SEND["StreamPacketSender"]
+    SEND --> REG["HostTransportRegistry"]
+    REG --> UDP["UDP stream socket"]
+
+    CTX --> POL["Keyframe, quality, backpressure policy"]
+    POL --> ENC
+```
+
+### 4.5 Stream Families
+
+Host supports three stream families with separate orchestration:
+
+1. **Window/App streams**
+   - Dedicated virtual-display-first strategy, direct capture fallback when placement/display setup fails.
+   - Active session maps keep O(1) stream/window routing.
+
+2. **Desktop stream**
+   - `startDesktopStream(...)` / `stopDesktopStream(...)`.
+   - mirrored vs secondary mode.
+   - mirroring snapshot/suspend/restore logic around resize and mode transitions.
+
+3. **Login display stream**
+   - lock-screen path used when host session is not active.
+   - watchdog and bounded restart behavior.
+   - can borrow desktop stream path in shared-display scenarios.
+
+### 4.6 Virtual Display Subsystem
+
+Virtual display architecture is first class, not just a helper:
+
+- `SharedVirtualDisplayManager`
+- `CGVirtualDisplayBridge`
+- `WindowSpaceManager`
+
+Host caches per-window dedicated display state (`WindowVirtualDisplayState`) and tracks generations to avoid stale placement assumptions.
+
+Placement repair flows actively reassert expected space/frame ownership to prevent drift.
+
+### 4.7 App-Streaming Sub-Architecture
+
+App streaming is its own subsystem, centered on:
+
+- `AppStreamManager`
+- `AppStreamCoordinator`
+- `InputOwnershipGate`
+- `LiveWindowPipeline` and `SnapshotWindowPipeline`
+- `AppStreamDisplayAllocator`
+
+Key properties:
+
+- app list retrieval + launch orchestration
+- initial multi-window startup with retry/backoff and window classification
+- visible slot inventory + hidden inventory
+- slot swap transactions (`appWindowSwapRequest`/result)
+- per-session bitrate budgeting and tier-based allocation
+- window lifecycle callbacks for add/remove/failure/termination
+
+### 4.8 Host Input Architecture
+
+Input path is split for latency:
+
+- decoded `InputEventMessage` -> fast path (`handleInputEventFast`) on high-priority queue
+- ownership/activation policy checks
+- injection via `MirageHostInputController` (mouse, keyboard, scroll, tablet, gestures, desktop actions)
+
+`InputStreamCacheActor` keeps stream/window/client routing state accessible to fast path.
+
+### 4.9 Host Audio Architecture
+
+Audio flow is client-scoped:
+
+- activation by source stream (`audioSourceStreamByClientID`)
+- capture/encode pipeline (`HostAudioPipeline` + `AudioEncoder`)
+- packetization (`AudioPacketizer`)
+- dedicated UDP channel registration (`MIRA`) and lifecycle control messages (`audioStreamStarted`/`audioStreamStopped`)
+
+### 4.10 Operational Subsystems
+
+Additional host operational concerns integrated into `MirageHostService` extensions:
+
+- session-state monitoring and unlock manager
+- lights-out control (`HostLightsOutController`)
+- Stage Manager prep/restore (`HostStageManagerController`)
+- software update control requests
+- AWDL transport experiment path switching and refresh requests
+- bootstrap daemon control server/unlock service APIs
+
+## 5. Client Target (`Sources/MirageKitClient`) Architecture
+
+### 5.1 Client Service as Session Coordinator
+
+`MirageClientService` (`@MainActor`, `@Observable`) owns:
+
+- control connection lifecycle
+- signed hello handling and host identity verification
+- stream/session state for window, desktop, login, and app modes
+- UDP video/audio transports and re-registration loops
+- per-stream controllers (`controllersByStream`)
+- metrics/cursor/session stores consumed by UI layers
+
+### 5.2 Client Handshake Validation
+
+`MirageClientService+Connection` and `+MessageHandling+Core` enforce:
+
+- nonce binding to pending hello request
+- host identity key ID validation
+- host signature verification over canonical hello-response payload
+- replay validation
+- expected-host-key consistency when discovery advertised key ID exists
+- negotiation requirements (`identityAuthV2`, `udpRegistrationAuthV1`, `encryptedMediaV1`)
+- local derivation of media session key and registration token binding
+
+### 5.3 Control Routing Model
+
+`registerControlMessageHandlers()` maps each control message type to dedicated domain handlers (core, desktop, app, menu bar, audio, software update, quality test).
+
+Control receive parser:
+
+- bounded buffered parse via `ControlMessage.deserialize`
+- immediate disconnect on invalid frame or control-buffer overflow
+- explicit detection of media payload accidentally arriving on control channel
+
+### 5.4 Video Transport and Ingest Pipeline
+
+`MirageClientService+Video` owns UDP video transport and registration refresh.
+
+Pipeline:
+
+1. start UDP connection to `hostDataPort`
+2. send stream registration (`MIRG` + `streamID` + `deviceID` + token)
+3. receive packet -> parse `FrameHeader`
+4. validate expected wire length
+5. decrypt if encrypted flag set
+6. feed `FrameReassembler`
+
+`FrameReassembler` responsibilities:
+
+- fragment accumulation with pooled buffers
+- checksum and token validation
+- keyframe-anchor and keyframe-only recovery mode
+- epoch-aware stale packet rejection
+- frame-loss signaling
+- optional FEC handling paths
+
+### 5.5 Decode/Recovery Controller per Stream
+
+Each stream has a `StreamController` actor with:
+
+- one `HEVCDecoder`
+- one `FrameReassembler`
+- ordered decode queue and admission controls
+- resize transition gating
+- keyframe recovery loops
+- freeze monitoring and escalation
+- decode-overload / adaptive fallback signaling
+
+`HEVCDecoder` manages VT session lifecycle, parameter sets, in-flight submission limits, and decode error threshold callbacks.
+
+```mermaid
+flowchart LR
+    UDP["Video UDP packets"] --> HDR["FrameHeader parse and optional decrypt"]
+    HDR --> REASM["FrameReassembler"]
+    REASM --> CTRL["StreamController queue"]
+    CTRL --> DEC["HEVCDecoder (VideoToolbox)"]
+    DEC --> CACHE["MirageFrameCache and render stores"]
+    CACHE --> VIEW["MirageMetalView or render driver"]
+```
+
+### 5.6 Rendering Architecture
+
+Rendering is platform-specific behind shared stores:
+
+- macOS path: `MirageMetalView+macOS`, `MirageRenderLoop`, `CAMetalLayer`, `MetalRenderer`
+- iOS/visionOS path: `MirageMetalView+iOS`, `MirageRenderDriver+iOS`, `AVSampleBufferDisplayLayer`
+
+Cross-platform render coordination:
+
+- `MirageRenderStreamStore`
+- `MirageFrameCache`
+- cadence and mode policy helpers (`MirageRenderClock`, `MirageRenderModePolicy`)
+
+### 5.7 Audio Client Pipeline
+
+`MirageClientService+Audio` defines dedicated audio transport:
+
+- UDP audio socket setup
+- registration (`MIRA` + stream/client/token)
+- receive/parse/decrypt/checksum
+- `AudioJitterBuffer` ingest
+- `AudioDecoder` decode
+- `AudioPlaybackController` enqueue/playback
+
+Audio is synchronized through runtime delay hooks driven by metrics snapshot policy.
+
+### 5.8 Desktop/App/Window Control Paths
+
+Client request surfaces:
+
+- window stream start/stop (`startViewing`, `stopViewing`)
+- desktop stream start/stop
+- app list/select/swap
+- encoder setting changes
+- keyframe request / manual recovery
+
+Client tracks dimension-token changes per stream family to choose whether controller reset is required on `streamStarted`/`desktopStreamStarted`.
+
+### 5.9 Quality Test Architecture
+
+Quality-test path combines:
+
+- control-side test plan request (`qualityTestRequest`)
+- UDP `MIRQ` packet loop with stage IDs and payload sizing
+- local decode benchmark + host benchmark summary result integration
+- adaptive stage growth/refinement to estimate stable bitrate envelope
+
+## 6. Cross-Cutting Concurrency Model
+
+Concurrency is intentionally mixed by latency sensitivity:
+
+- **MainActor orchestration**
+  - `MirageHostService`, `MirageClientService`, session-facing observable state
+
+- **Actors for throughput-critical state machines**
+  - host: `StreamContext`, virtual display managers, replay protector
+  - client: `StreamController`, `HEVCDecoder`, audio jitter/decode components
+  - shared diagnostics stores
+
+- **Lock-protected structs for very hot paths**
+  - `Locked<T>` in receive loops, transport registries, lightweight snapshots
+
+- **Dispatch queues for hard low-latency paths**
+  - host input fast path (`inputQueue`)
+  - transport worker queues for timed/serial operations
+
+## 7. Failure and Recovery Strategy
+
+### 7.1 Host Recovery
+
+Host-side recovery mechanisms include:
+
+- receive-loop fail-closed disconnect on protocol violations and persistent errors
+- stream-level keyframe urgency and escalation
+- encoder reset and stuck detection in `StreamContext`
+- capture restart strategies in `WindowCaptureEngine`
+- virtual-display fallback to direct capture for startup failures
+- transport refresh requests for path-change recovery
+
+### 7.2 Client Recovery
+
+Client-side recovery mechanisms include:
+
+- keyframe requests on decode-threshold/freeze/loss/manual triggers
+- reassembler keyframe-only mode until safe decode anchor returns
+- resize gating to avoid old-dimension P-frame decode storms
+- controller reset decisions based on dimension token advances
+- optional adaptive fallback state machine for temporary encoder downshift
+- automatic transport re-registration on path changes or explicit host request
+
+## 8. Test Architecture as Executable Contract
+
+Three test targets map directly to architecture boundaries:
+
+- `MirageKitTests` (shared contract/security/bootstrap/diagnostics)
+- `MirageKitClientTests` (decode/reassembly/recovery/render/audio/transport refresh logic)
+- `MirageKitHostTests` (single-client policy, receive loop, stream policy, virtual display math, app-stream governance, lights-out, software updates)
+
+Representative lock points:
+
+- handshake + replay + remote-signing security tests
+- packet checksum and media encryption policy tests
+- host receive loop robustness tests
+- desktop resize and keyframe recovery policy tests
+- app-window governance/swap/startup stabilization tests
+- AWDL/transport recovery tests on both host and client targets
+
+## 9. Core Architectural Invariants
+
+The package currently relies on these invariants:
+
+1. No accepted control session without successful signed hello validation and replay checks.
+2. No UDP media registration accepted without token match against derived session context.
+3. Control parsing is bounded and fail-closed by shared message limits.
+4. Stream resize transitions propagate via dimension tokens and require token-aware client gating.
+5. Host enforces one active client session slot at a time.
+6. Stream decode state is owned by per-stream controllers, not views.
+7. Diagnostics/instrumentation sinks are optional observers, never control-path dependencies.
+
+## 10. Change Checklist for Architecture Updates
+
+When changing MirageKit architecture-level behavior, update this file in the same change if you modify any of:
+
+- control or media wire schema
+- handshake, negotiation, trust, or media security policy
+- stream lifecycle ownership between host/client subsystems
+- virtual-display, app-stream governance, or input ownership flow
+- transport path switching and registration refresh behavior
+- concurrency ownership (actor/MainActor/queue boundaries)
+- tests that redefine architectural lock points

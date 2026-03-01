@@ -491,7 +491,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if event.phase == .ended || event.momentumPhase == .ended {
             needsRecenter = true
             // Delay recenter slightly to allow final deceleration
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            Task { @MainActor [weak self] in
+                try? await Task.sleep(for: .milliseconds(100))
                 self?.recenterIfNeeded()
             }
         }

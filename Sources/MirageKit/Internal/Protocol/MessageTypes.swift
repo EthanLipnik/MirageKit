@@ -196,3 +196,19 @@ package enum ControlMessageParseResult {
     case needMoreData
     case invalidFrame(reason: String)
 }
+
+package enum ControlMessageParseError: Error {
+    case needMoreData
+    case invalidFrame(String)
+}
+
+package func requireParsedControlMessage(from data: Data, offset: Int = 0) throws -> (ControlMessage, Int) {
+    switch ControlMessage.deserialize(from: data, offset: offset) {
+    case let .success(message, bytesConsumed):
+        return (message, bytesConsumed)
+    case .needMoreData:
+        throw ControlMessageParseError.needMoreData
+    case let .invalidFrame(reason):
+        throw ControlMessageParseError.invalidFrame(reason)
+    }
+}

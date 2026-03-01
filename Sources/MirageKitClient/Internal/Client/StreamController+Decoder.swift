@@ -16,6 +16,7 @@ extension StreamController {
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.
+        stopTierPromotionProbe()
         stopFirstPresentedFrameMonitor()
         MirageFrameCache.shared.clear(for: streamID)
         stopFrameProcessingPipeline()
@@ -115,14 +116,95 @@ extension StreamController {
                 armFirstPresentedFrameAwaiter(reason: "tier-promotion")
             }
             if previousTier == .passiveSnapshot {
-                reassembler.enterKeyframeOnlyMode()
-                startKeyframeRecoveryLoopIfNeeded()
-                await requestKeyframeRecovery(reason: .manualRecovery)
+                await handlePassiveToActivePromotion()
             }
         case .passiveSnapshot:
+            stopTierPromotionProbe()
             if !hasPresentedFirstFrame {
                 stopFirstPresentedFrameMonitor()
             }
         }
+    }
+
+    private func handlePassiveToActivePromotion() async {
+        let decision = streamTierPromotionRecoveryDecision(
+            hasPresentedFirstFrame: hasPresentedFirstFrame,
+            isAwaitingKeyframe: reassembler.isAwaitingKeyframe(),
+            hasKeyframeAnchor: reassembler.hasKeyframeAnchor()
+        )
+
+        switch decision {
+        case let .forceImmediateKeyframe(reason):
+            stopTierPromotionProbe()
+            reassembler.enterKeyframeOnlyMode()
+            startKeyframeRecoveryLoopIfNeeded()
+            MirageLogger.client(
+                "Tier promotion forcing keyframe for stream \(streamID) (reason: \(tierPromotionReasonText(reason)))"
+            )
+            await requestKeyframeRecovery(reason: .manualRecovery)
+        case .pFrameFirst:
+            MirageLogger.client("Tier promotion using P-frame-first for stream \(streamID)")
+            startTierPromotionProbe()
+        }
+    }
+
+    private func tierPromotionReasonText(_ reason: StreamTierPromotionRecoveryReason) -> String {
+        switch reason {
+        case .noPresentedFrame:
+            "noPresentedFrame"
+        case .awaitingKeyframe:
+            "awaitingKeyframe"
+        case .noKeyframeAnchor:
+            "noKeyframeAnchor"
+        }
+    }
+
+    private func startTierPromotionProbe() {
+        stopTierPromotionProbe()
+        let baselineSequence = MirageFrameCache.shared.presentationSnapshot(for: streamID).sequence
+        tierPromotionProbeTask = Task { [weak self] in
+            await self?.runTierPromotionProbe(baselineSequence: baselineSequence)
+        }
+    }
+
+    private func stopTierPromotionProbe() {
+        tierPromotionProbeTask?.cancel()
+        tierPromotionProbeTask = nil
+    }
+
+    private func runTierPromotionProbe(baselineSequence: UInt64) async {
+        defer { tierPromotionProbeTask = nil }
+
+        do {
+            try await Task.sleep(for: Self.tierPromotionProbeDelay)
+        } catch {
+            return
+        }
+
+        guard presentationTier == .activeLive else { return }
+
+        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+        if snapshot.sequence > baselineSequence {
+            MirageLogger.client(
+                "Tier promotion probe progressed for stream \(streamID) (baseline=\(baselineSequence), latest=\(snapshot.sequence))"
+            )
+            return
+        }
+
+        let keyframeStarved = reassembler.isAwaitingKeyframe() || !reassembler.hasKeyframeAnchor()
+        if keyframeStarved {
+            MirageLogger.client(
+                "Tier promotion probe requesting keyframe-only recovery for stream \(streamID) (no progress)"
+            )
+            reassembler.enterKeyframeOnlyMode()
+            startKeyframeRecoveryLoopIfNeeded()
+            await requestKeyframeRecovery(reason: .manualRecovery)
+            return
+        }
+
+        MirageLogger.client(
+            "Tier promotion probe requesting single recovery keyframe for stream \(streamID) (no progress)"
+        )
+        await requestKeyframeRecovery(reason: .manualRecovery)
     }
 }

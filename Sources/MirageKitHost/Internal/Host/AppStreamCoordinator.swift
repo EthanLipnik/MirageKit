@@ -18,6 +18,7 @@ actor AppStreamCoordinator {
     struct StreamRuntimePlan: Sendable {
         let streamID: StreamID
         let tier: AppStreamRuntimeTier
+        let tierChanged: Bool
         let targetFrameRate: Int
         let targetBitrateBps: Int?
     }
@@ -36,6 +37,8 @@ actor AppStreamCoordinator {
 
     private var streamToBundle: [StreamID: String] = [:]
     private var bundleStateByIdentifier: [String: BundleState] = [:]
+    private var lastPlannedTierByStreamID: [StreamID: AppStreamRuntimeTier] = [:]
+    private var lastPlannedActiveStreamIDByBundle: [String: StreamID] = [:]
 
     func registerStream(bundleIdentifier: String, streamID: StreamID) {
         let key = bundleIdentifier.lowercased()
@@ -50,6 +53,7 @@ actor AppStreamCoordinator {
 
     func unregisterStream(streamID: StreamID) {
         guard let key = streamToBundle.removeValue(forKey: streamID) else { return }
+        lastPlannedTierByStreamID.removeValue(forKey: streamID)
         guard var state = bundleStateByIdentifier[key] else { return }
         state.streamIDs.remove(streamID)
         if state.activeStreamID == streamID {
@@ -57,6 +61,7 @@ actor AppStreamCoordinator {
         }
         if state.streamIDs.isEmpty {
             bundleStateByIdentifier.removeValue(forKey: key)
+            lastPlannedActiveStreamIDByBundle.removeValue(forKey: key)
         } else {
             bundleStateByIdentifier[key] = state
         }
@@ -80,12 +85,15 @@ actor AppStreamCoordinator {
     ) -> SessionPlan {
         let key = bundleIdentifier.lowercased()
         var state = bundleStateByIdentifier[key] ?? BundleState()
+        let previousStreamIDs = state.streamIDs
         let visibleSet = Set(visibleStreamIDs)
 
         state.streamIDs.formUnion(visibleSet)
         state.streamIDs = state.streamIDs.intersection(visibleSet)
+        for staleStreamID in previousStreamIDs where !visibleSet.contains(staleStreamID) {
+            lastPlannedTierByStreamID.removeValue(forKey: staleStreamID)
+        }
 
-        let previousActive = state.activeStreamID
         if let active = state.activeStreamID,
            !state.streamIDs.contains(active) {
             state.activeStreamID = nil
@@ -96,7 +104,13 @@ actor AppStreamCoordinator {
 
         bundleStateByIdentifier[key] = state
         let activeStreamID = state.activeStreamID
-        let activeStreamChanged = activeStreamID != previousActive
+        let previousPlannedActiveStreamID = lastPlannedActiveStreamIDByBundle[key]
+        let activeStreamChanged = activeStreamID != previousPlannedActiveStreamID
+        if let activeStreamID {
+            lastPlannedActiveStreamIDByBundle[key] = activeStreamID
+        } else {
+            lastPlannedActiveStreamIDByBundle.removeValue(forKey: key)
+        }
 
         let passiveCount = max(0, visibleStreamIDs.count - (activeStreamID == nil ? 0 : 1))
         let passiveFrameRate = Self.passiveFrameRate(passiveCount: passiveCount)
@@ -108,12 +122,17 @@ actor AppStreamCoordinator {
 
         let streamPlans = visibleStreamIDs.sorted().map { streamID in
             let tier: AppStreamRuntimeTier = streamID == activeStreamID ? .activeLive : .passiveSnapshot
+            let previousTier = lastPlannedTierByStreamID[streamID]
             return StreamRuntimePlan(
                 streamID: streamID,
                 tier: tier,
+                tierChanged: previousTier != tier,
                 targetFrameRate: tier == .activeLive ? 60 : passiveFrameRate,
                 targetBitrateBps: bitrateTargets[streamID]
             )
+        }
+        for streamPlan in streamPlans {
+            lastPlannedTierByStreamID[streamPlan.streamID] = streamPlan.tier
         }
 
         return SessionPlan(

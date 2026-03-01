@@ -110,6 +110,7 @@ public struct MirageDefaultSSHBootstrapClient: MirageSSHBootstrapClient {
 #if canImport(NIOConcurrencyHelpers) && canImport(NIOCore) && canImport(NIOPosix) && canImport(NIOSSH)
         let timeoutNanoseconds = Self.timeoutNanoseconds(timeout)
         guard timeoutNanoseconds > 0 else { throw MirageSSHBootstrapError.timedOut }
+        let timeoutDuration = Duration.nanoseconds(Int64(clamping: timeoutNanoseconds))
 
         return try await withThrowingTaskGroup(of: MirageSSHBootstrapResult.self) { group in
             group.addTask {
@@ -122,7 +123,7 @@ public struct MirageDefaultSSHBootstrapClient: MirageSSHBootstrapClient {
                 )
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                try await Task.sleep(for: timeoutDuration)
                 throw MirageSSHBootstrapError.timedOut
             }
 

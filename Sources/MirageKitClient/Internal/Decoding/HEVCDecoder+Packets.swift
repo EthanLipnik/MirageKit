@@ -543,6 +543,13 @@ extension FrameReassembler {
         return awaiting
     }
 
+    func hasKeyframeAnchor() -> Bool {
+        lock.lock()
+        let hasAnchor = hasDeliveredKeyframeAnchor
+        lock.unlock()
+        return hasAnchor
+    }
+
     func reset() {
         lock.lock()
         for frame in pendingFrames.values {

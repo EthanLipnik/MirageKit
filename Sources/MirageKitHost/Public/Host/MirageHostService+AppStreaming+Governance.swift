@@ -193,6 +193,12 @@ extension MirageHostService {
         var appliedTargets: [StreamID: Int] = [:]
         for streamPlan in plan.streamPlans {
             let isActive = streamPlan.tier == .activeLive
+
+            if streamPlan.tierChanged {
+                await liveWindowPipeline.clear(streamID: streamPlan.streamID)
+                await snapshotWindowPipeline.clear(streamID: streamPlan.streamID)
+            }
+
             await appStreamManager.markStreamActivity(
                 bundleIdentifier: bundleIdentifier,
                 streamID: streamPlan.streamID,

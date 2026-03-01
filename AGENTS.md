@@ -13,6 +13,7 @@
 - Keep public API additions minimal, intentional, and documented.
 - Do not add third-party dependencies without explicit approval.
 - Comments and README text should be static descriptions of current behavior.
+- When architecture, message flow, transport behavior, or subsystem boundaries change, update `Architecture.md` in the same change so diagrams and descriptions match current code.
 
 ## Coding Standards
 - 4-space indentation; `UpperCamelCase` types; `lowerCamelCase` members.

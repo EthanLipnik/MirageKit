@@ -120,27 +120,35 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         MirageStreamViewCoordinator(
             onInputEvent: onInputEvent,
             onDrawableMetricsChanged: onDrawableMetricsChanged,
-            onBecomeActive: onBecomeActive
+            onRefreshRateOverrideChange: onRefreshRateOverrideChange,
+            onBecomeActive: onBecomeActive,
+            onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
+            onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
+            onDirectTouchActivity: onDirectTouchActivity,
+            onDictationStateChanged: onDictationStateChanged,
+            onDictationError: onDictationError
         )
     }
 
     public func makeUIViewController(context: Context) -> MirageStreamViewController {
         let controller = MirageStreamViewController()
-        controller.update(
-            streamID: streamID,
+        controller.configureCallbacks(
             onInputEvent: context.coordinator.handleInputEvent,
             onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
-            onRefreshRateOverrideChange: onRefreshRateOverrideChange,
+            onRefreshRateOverrideChange: context.coordinator.handleRefreshRateOverrideChange,
             onBecomeActive: context.coordinator.handleBecomeActive,
-            onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
-            onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
-            onDirectTouchActivity: onDirectTouchActivity,
+            onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
+            onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
+            onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
+            onDictationStateChanged: context.coordinator.handleDictationStateChanged,
+            onDictationError: context.coordinator.handleDictationError
+        )
+        controller.updateState(
+            streamID: streamID,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
             dictationToggleRequestID: dictationToggleRequestID,
-            onDictationStateChanged: onDictationStateChanged,
-            onDictationError: onDictationError,
             dictationMode: dictationMode,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
@@ -155,23 +163,21 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         // Update coordinator's callbacks in case they changed
         context.coordinator.onInputEvent = onInputEvent
         context.coordinator.onDrawableMetricsChanged = onDrawableMetricsChanged
+        context.coordinator.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         context.coordinator.onBecomeActive = onBecomeActive
+        context.coordinator.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
+        context.coordinator.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
+        context.coordinator.onDirectTouchActivity = onDirectTouchActivity
+        context.coordinator.onDictationStateChanged = onDictationStateChanged
+        context.coordinator.onDictationError = onDictationError
+        context.coordinator.noteRepresentableUpdate(for: streamID)
 
-        uiViewController.update(
+        uiViewController.updateState(
             streamID: streamID,
-            onInputEvent: context.coordinator.handleInputEvent,
-            onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
-            onRefreshRateOverrideChange: onRefreshRateOverrideChange,
-            onBecomeActive: context.coordinator.handleBecomeActive,
-            onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
-            onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
-            onDirectTouchActivity: onDirectTouchActivity,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
             dictationToggleRequestID: dictationToggleRequestID,
-            onDictationStateChanged: onDictationStateChanged,
-            onDictationError: onDictationError,
             dictationMode: dictationMode,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
@@ -213,8 +219,7 @@ public final class MirageStreamViewController: UIViewController {
         stopPointerLockObserver()
     }
 
-    func update(
-        streamID: StreamID,
+    func configureCallbacks(
         onInputEvent: ((MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
         onRefreshRateOverrideChange: ((Int) -> Void)?,
@@ -222,18 +227,8 @@ public final class MirageStreamViewController: UIViewController {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
-        directTouchInputMode: MirageDirectTouchInputMode,
-        softwareKeyboardVisible: Bool,
-        pencilInputMode: MiragePencilInputMode,
-        dictationToggleRequestID: UInt64,
         onDictationStateChanged: ((Bool) -> Void)?,
-        onDictationError: ((String) -> Void)?,
-        dictationMode: MirageDictationMode,
-        cursorStore: MirageClientCursorStore?,
-        cursorPositionStore: MirageClientCursorPositionStore?,
-        cursorLockEnabled: Bool,
-        presentationTier: StreamPresentationTier,
-        maxDrawableSize: CGSize?
+        onDictationError: ((String) -> Void)?
     ) {
         captureView.onInputEvent = onInputEvent
         captureView.onDrawableMetricsChanged = onDrawableMetricsChanged
@@ -242,12 +237,27 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         captureView.onDirectTouchActivity = onDirectTouchActivity
+        captureView.onDictationStateChanged = onDictationStateChanged
+        captureView.onDictationError = onDictationError
+    }
+
+    func updateState(
+        streamID: StreamID,
+        directTouchInputMode: MirageDirectTouchInputMode,
+        softwareKeyboardVisible: Bool,
+        pencilInputMode: MiragePencilInputMode,
+        dictationToggleRequestID: UInt64,
+        dictationMode: MirageDictationMode,
+        cursorStore: MirageClientCursorStore?,
+        cursorPositionStore: MirageClientCursorPositionStore?,
+        cursorLockEnabled: Bool,
+        presentationTier: StreamPresentationTier,
+        maxDrawableSize: CGSize?
+    ) {
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
         captureView.pencilInputMode = pencilInputMode
         captureView.dictationToggleRequestID = dictationToggleRequestID
-        captureView.onDictationStateChanged = onDictationStateChanged
-        captureView.onDictationError = onDictationError
         captureView.dictationMode = dictationMode
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore

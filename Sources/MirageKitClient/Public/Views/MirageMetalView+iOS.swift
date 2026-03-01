@@ -451,7 +451,7 @@ public class MirageMetalView: UIView {
             if Thread.isMainThread {
                 self.requestDraw()
             } else {
-                DispatchQueue.main.async { [weak self] in
+                Task { @MainActor [weak self] in
                     self?.requestDraw()
                 }
             }

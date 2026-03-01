@@ -26,13 +26,32 @@ struct AppWindowInventoryGovernanceTests {
         #expect(await gate.considerSignal(streamID: 1, event: flags, hostKeyWindowEligible: true) == false)
     }
 
-    @Test("Ownership switches require host key-window eligibility")
-    func ownershipSwitchRequiresHostKeyWindowEligibility() async {
+    @Test("Pointer/keyboard ownership switches require host key-window eligibility")
+    func pointerOwnershipSwitchRequiresHostKeyWindowEligibility() async {
         let gate = InputOwnershipGate()
         let click = MirageInputEvent.mouseDown(MirageMouseEvent(location: .zero))
 
         #expect(await gate.considerSignal(streamID: 11, event: click, hostKeyWindowEligible: false) == false)
         #expect(await gate.considerSignal(streamID: 11, event: click, hostKeyWindowEligible: true) == true)
+    }
+
+    @Test("Window-focus ownership switches bypass host key-window eligibility")
+    func windowFocusOwnershipSwitchBypassesHostKeyWindowEligibility() async {
+        let gate = InputOwnershipGate()
+        let focus = MirageInputEvent.windowFocus
+
+        #expect(await gate.considerSignal(streamID: 21, event: focus, hostKeyWindowEligible: false) == true)
+    }
+
+    @Test("Window-focus ownership switches bypass active hold window")
+    func windowFocusOwnershipSwitchBypassesHoldWindow() async {
+        let gate = InputOwnershipGate()
+        let click = MirageInputEvent.mouseDown(MirageMouseEvent(location: .zero))
+        let focus = MirageInputEvent.windowFocus
+
+        #expect(await gate.considerSignal(streamID: 30, event: click, hostKeyWindowEligible: true) == true)
+        #expect(await gate.considerSignal(streamID: 31, event: click, hostKeyWindowEligible: true) == false)
+        #expect(await gate.considerSignal(streamID: 31, event: focus, hostKeyWindowEligible: false) == true)
     }
 
     @Test("Ownership hold window bounds rapid cross-stream switching")
@@ -87,6 +106,45 @@ struct AppWindowInventoryGovernanceTests {
             .map(\.targetFrameRate))
         #expect(passiveFPS.count == 1)
         #expect(passiveFPS.first == 1)
+    }
+
+    @Test("Coordinator marks tier transitions for active/passive flips")
+    func coordinatorMarksTierTransitions() async throws {
+        let coordinator = AppStreamCoordinator()
+        await coordinator.registerStream(bundleIdentifier: "com.example.app", streamID: 1)
+        await coordinator.registerStream(bundleIdentifier: "com.example.app", streamID: 2)
+
+        _ = await coordinator.makeSessionPlan(
+            bundleIdentifier: "com.example.app",
+            visibleStreamIDs: [1, 2],
+            bitrateBudgetBps: 25_000_000
+        )
+
+        await coordinator.forceActiveStream(streamID: 2)
+        let flippedPlan = await coordinator.makeSessionPlan(
+            bundleIdentifier: "com.example.app",
+            visibleStreamIDs: [1, 2],
+            bitrateBudgetBps: 25_000_000
+        )
+
+        let stream1 = try #require(flippedPlan.streamPlans.first(where: { $0.streamID == 1 }))
+        let stream2 = try #require(flippedPlan.streamPlans.first(where: { $0.streamID == 2 }))
+        #expect(stream1.tier == .passiveSnapshot)
+        #expect(stream2.tier == .activeLive)
+        #expect(stream1.tierChanged)
+        #expect(stream2.tierChanged)
+
+        let steadyPlan = await coordinator.makeSessionPlan(
+            bundleIdentifier: "com.example.app",
+            visibleStreamIDs: [1, 2],
+            bitrateBudgetBps: 25_000_000
+        )
+        let steadyStream1 = try #require(steadyPlan.streamPlans.first(where: { $0.streamID == 1 }))
+        let steadyStream2 = try #require(steadyPlan.streamPlans.first(where: { $0.streamID == 2 }))
+        #expect(steadyStream1.tier == .passiveSnapshot)
+        #expect(steadyStream2.tier == .activeLive)
+        #expect(!steadyStream1.tierChanged)
+        #expect(!steadyStream2.tierChanged)
     }
 
     @Test("Live pipeline suppresses no-op reapply within guard windows")

@@ -135,6 +135,8 @@ actor StreamController {
 
     /// Interval for retrying keyframe requests while decoder is unhealthy
     static let keyframeRecoveryInterval: Duration = .seconds(1)
+    /// Grace period to let promotion continue with forward P-frames before forcing recovery.
+    static let tierPromotionProbeDelay: Duration = .milliseconds(250)
     /// Minimum spacing for repeated keyframe retries once keyframe-only mode is active.
     static let keyframeRecoveryRetryInterval: CFAbsoluteTime = 0.5
     /// Escalate decode-threshold recovery to a full reset only after repeated failures.
@@ -182,6 +184,8 @@ actor StreamController {
 
     /// Task that periodically requests keyframes during decoder recovery
     var keyframeRecoveryTask: Task<Void, Never>?
+    /// One-shot probe that verifies decode/presentation progress after passive->active promotion.
+    var tierPromotionProbeTask: Task<Void, Never>?
     var lastRecoveryRequestTime: CFAbsoluteTime = 0
 
     /// Whether we've decoded at least one frame.
@@ -570,6 +574,8 @@ actor StreamController {
         resizeDebounceTask = nil
         keyframeRecoveryTask?.cancel()
         keyframeRecoveryTask = nil
+        tierPromotionProbeTask?.cancel()
+        tierPromotionProbeTask = nil
         MirageFrameCache.shared.clear(for: streamID)
     }
 

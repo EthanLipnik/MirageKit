@@ -121,7 +121,11 @@ extension MirageHostInputController {
                  .windowResize:
                 break
             case .windowFocus:
-                break
+                performWindowActivation(
+                    windowID: window.id,
+                    app: window.application,
+                    trigger: .windowFocus
+                )
             }
         }
     }
@@ -135,17 +139,26 @@ extension MirageHostInputController {
         let action = HostInputActivationPolicy.action(
             for: trigger,
             lastActivationTime: lastWindowActivationTime,
+            lastActivatedWindowID: lastActivatedWindowID,
+            targetWindowID: windowID,
             now: now
         )
 
         switch action {
         case .none:
+            MirageLogger.host("Window focus activation throttled for window \(windowID) (same-window)")
             return
         case .fullWindowRaise:
+            if lastActivatedWindowID == windowID {
+                MirageLogger.host("Window focus activation allowed for window \(windowID) (same-window)")
+            } else {
+                MirageLogger.host("Window focus activation immediate for window \(windowID) (cross-window)")
+            }
             activateWindow(windowID: windowID, app: app)
         }
 
         lastWindowActivationTime = now
+        lastActivatedWindowID = windowID
     }
 }
 

@@ -51,8 +51,21 @@ actor InputOwnershipGate {
         hostKeyWindowEligible: Bool,
         now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> Bool {
-        guard hostKeyWindowEligible else { return false }
         guard Self.isOwnershipSwitchSignal(event) else { return false }
+
+        if case .windowFocus = event {
+            if activeStreamID == streamID {
+                ownershipHoldUntil = max(ownershipHoldUntil, now + Self.ownershipHoldWindow)
+                return false
+            }
+
+            activeStreamID = streamID
+            lastSwitchAt = now
+            ownershipHoldUntil = now + Self.ownershipHoldWindow
+            return true
+        }
+
+        guard hostKeyWindowEligible else { return false }
 
         if activeStreamID == streamID {
             ownershipHoldUntil = max(ownershipHoldUntil, now + Self.ownershipHoldWindow)

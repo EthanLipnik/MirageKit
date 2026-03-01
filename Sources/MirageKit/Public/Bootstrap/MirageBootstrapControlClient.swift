@@ -215,6 +215,7 @@ private extension MirageDefaultBootstrapControlClient {
 
         let timeoutNanoseconds = timeoutNanoseconds(timeout)
         guard timeoutNanoseconds > 0 else { throw MirageBootstrapControlError.timedOut }
+        let timeoutDuration = Duration.nanoseconds(Int64(clamping: timeoutNanoseconds))
 
         return try await withThrowingTaskGroup(of: MirageBootstrapControlResponse.self) { group in
             group.addTask {
@@ -225,7 +226,7 @@ private extension MirageDefaultBootstrapControlClient {
                 )
             }
             group.addTask {
-                try await Task.sleep(nanoseconds: timeoutNanoseconds)
+                try await Task.sleep(for: timeoutDuration)
                 throw MirageBootstrapControlError.timedOut
             }
 

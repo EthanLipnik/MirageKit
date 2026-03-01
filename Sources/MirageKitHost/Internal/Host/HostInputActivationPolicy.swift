@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import MirageKit
 #if os(macOS)
 
 enum HostInputActivationTrigger: Sendable, Equatable {
@@ -25,11 +26,18 @@ enum HostInputActivationPolicy {
     static func action(
         for trigger: HostInputActivationTrigger,
         lastActivationTime: CFAbsoluteTime?,
+        lastActivatedWindowID: WindowID?,
+        targetWindowID: WindowID,
         now: CFAbsoluteTime,
         throttleInterval: CFAbsoluteTime = Self.throttleInterval
     ) -> HostInputActivationAction {
         switch trigger {
         case .windowFocus:
+            // Cross-window focus switches should always activate immediately.
+            if lastActivatedWindowID != targetWindowID {
+                return .fullWindowRaise
+            }
+
             guard shouldAllowThrottledActivation(
                 lastActivationTime: lastActivationTime,
                 now: now,
