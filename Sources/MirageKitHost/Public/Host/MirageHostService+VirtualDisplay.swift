@@ -976,7 +976,7 @@ extension MirageHostService {
             guard let self else { return }
             var lastPlacementRepairAt: CFAbsoluteTime = 0
             let driftTolerancePixels: CGFloat = 8
-            let cooldown: CFAbsoluteTime = 2.0
+            let cooldown: CFAbsoluteTime = 0.35
 
             while !Task.isCancelled {
                 guard let state = getVirtualDisplayState(streamID: streamID) else { break }
@@ -1020,7 +1020,7 @@ extension MirageHostService {
                 await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
 
                 do {
-                    try await Task.sleep(for: .milliseconds(500))
+                    try await Task.sleep(for: .milliseconds(120))
                 } catch {
                     break
                 }

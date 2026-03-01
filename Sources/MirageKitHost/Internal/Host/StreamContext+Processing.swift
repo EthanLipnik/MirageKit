@@ -132,6 +132,7 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
+        lastCaptureStarvationRestartTime = 0
         backpressureActive = false
         backpressureActiveSnapshot = false
         backpressureActivatedAt = 0

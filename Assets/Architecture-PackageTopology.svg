@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 540" width="100%" height="100%">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#000000" flood-opacity="0.04"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <polygon points="0 0, 10 5, 0 10" class="arrow" />
+    </marker>
+  </defs>
+  <style>
+    :root { color-scheme: light dark; }
+    .bg { fill: transparent; }
+    .box { fill: #ffffff; stroke: #e5e5ea; stroke-width: 1.5; }
+    .box-shadow { filter: url(#shadow); }
+    .box-inner { fill: #fbfbfd; stroke: #e5e5ea; stroke-width: 1.5; }
+    .text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 14px; fill: #1d1d1f; }
+    .text-bold { font-weight: 600; }
+    .text-small { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 13px; fill: #86868b; }
+    .title { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; font-size: 16px; font-weight: 600; fill: #1d1d1f; }
+    .line { stroke: #d2d2d7; stroke-width: 2; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .arrow { fill: #d2d2d7; }
+    .icon-bg { fill: #e8f2ff; }
+    .icon { fill: none; stroke: #0071e3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #1c1c1e; stroke: #333336; }
+      .box-inner { fill: #2c2c2e; stroke: #333336; }
+      .text { fill: #f5f5f7; }
+      .text-small { fill: #98989d; }
+      .title { fill: #f5f5f7; }
+      .line { stroke: #424245; }
+      .arrow { fill: #424245; }
+      .icon-bg { fill: rgba(10, 132, 255, 0.15); }
+      .icon { stroke: #0a84ff; }
+    }
+  </style>
+
+  <rect width="100%" height="100%" class="bg" />
+
+  <!-- Lines from top boxes to bottom box -->
+  <path d="M 235 240 L 235 272" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 665 240 L 665 272" class="line" marker-end="url(#arrowhead)" />
+
+  <!-- Client Box -->
+  <rect x="40" y="40" width="390" height="200" rx="20" class="box box-shadow" />
+  <rect x="64" y="64" width="48" height="48" rx="12" class="icon-bg" />
+  <path d="M 76 78 h 24 c 2.2 0 4 1.8 4 4 v 12 c 0 2.2 -1.8 4 -4 4 h -24 c -2.2 0 -4 -1.8 -4 -4 v -12 c 0 -2.2 1.8 -4 4 -4 z M 88 98 v 4 M 82 102 h 12" class="icon" />
+  
+  <text x="128" y="86" class="title">MirageKitClient</text>
+  <text x="128" y="106" class="text-small">Client connection + media receive/decode</text>
+  
+  <rect x="64" y="152" width="342" height="56" rx="12" class="box-inner" />
+  <path d="M 80 180 l 4 4 l 8 -8" class="icon" />
+  <text x="110" y="184" class="text text-bold">MirageKitClientTests</text>
+
+  <!-- Host Box -->
+  <rect x="470" y="40" width="390" height="200" rx="20" class="box box-shadow" />
+  <rect x="494" y="64" width="48" height="48" rx="12" class="icon-bg" />
+  <path d="M 504 76 h 28 c 2.2 0 4 1.8 4 4 v 16 c 0 2.2 -1.8 4 -4 4 h -28 c -2.2 0 -4 -1.8 -4 -4 v -16 c 0 -2.2 1.8 -4 4 -4 z M 500 90 h 36 M 518 100 v 4 M 510 104 h 16" class="icon" />
+  
+  <text x="558" y="86" class="title">MirageKitHost</text>
+  <text x="558" y="106" class="text-small">Host connection + capture/encode/send</text>
+  
+  <rect x="494" y="152" width="342" height="56" rx="12" class="box-inner" />
+  <path d="M 510 180 l 4 4 l 8 -8" class="icon" />
+  <text x="540" y="184" class="text text-bold">MirageKitHostTests</text>
+
+  <!-- Core Box -->
+  <rect x="40" y="280" width="820" height="220" rx="20" class="box box-shadow" />
+  <rect x="64" y="304" width="48" height="48" rx="12" class="icon-bg" />
+  <path d="M 88 314 l 12 6 v 14 l -12 6 l -12 -6 v -14 z M 88 314 v 14 M 76 320 l 12 6 M 100 320 l -12 6" class="icon" />
+  
+  <text x="128" y="326" class="title">MirageKit</text>
+  <text x="128" y="346" class="text-small">Shared protocol, security, remote bootstrap, diagnostics, and trust policies.</text>
+  
+  <rect x="64" y="412" width="772" height="56" rx="12" class="box-inner" />
+  <path d="M 80 440 l 4 4 l 8 -8" class="icon" />
+  <text x="110" y="444" class="text text-bold">MirageKitTests</text>
+  
+</svg>

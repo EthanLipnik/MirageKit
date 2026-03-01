@@ -27,6 +27,11 @@ extension MirageHostInputController {
             switch event {
             case let .mouseDown(e):
                 flushPointerLerp()
+                performWindowActivation(
+                    windowID: window.id,
+                    app: window.application,
+                    trigger: .windowFocus
+                )
                 clearUnexpectedSystemModifiers()
                 injectMouseEvent(.leftMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .mouseUp(e):
@@ -34,6 +39,11 @@ extension MirageHostInputController {
                 injectMouseEvent(.leftMouseUp, e, windowFrame, windowID: window.id, app: window.application)
             case let .rightMouseDown(e):
                 flushPointerLerp()
+                performWindowActivation(
+                    windowID: window.id,
+                    app: window.application,
+                    trigger: .windowFocus
+                )
                 clearUnexpectedSystemModifiers()
                 injectMouseEvent(.rightMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .rightMouseUp(e):
@@ -41,6 +51,11 @@ extension MirageHostInputController {
                 injectMouseEvent(.rightMouseUp, e, windowFrame, windowID: window.id, app: window.application)
             case let .otherMouseDown(e):
                 flushPointerLerp()
+                performWindowActivation(
+                    windowID: window.id,
+                    app: window.application,
+                    trigger: .windowFocus
+                )
                 clearUnexpectedSystemModifiers()
                 injectMouseEvent(.otherMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .otherMouseUp(e):
@@ -106,6 +121,11 @@ extension MirageHostInputController {
                 batchScroll(e, windowFrame, app: window.application)
             case let .keyDown(e):
                 flushPointerLerp()
+                performWindowActivation(
+                    windowID: window.id,
+                    app: window.application,
+                    trigger: .windowFocus
+                )
                 injectKeyEvent(isKeyDown: true, e, app: window.application)
             case let .keyUp(e):
                 flushPointerLerp()

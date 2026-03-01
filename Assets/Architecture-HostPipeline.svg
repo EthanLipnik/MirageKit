@@ -1,0 +1,114 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 340" width="100%" height="100%">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#000000" flood-opacity="0.04"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <polygon points="0 0, 10 5, 0 10" class="arrow" />
+    </marker>
+  </defs>
+  <style>
+    :root { color-scheme: light dark; }
+    .bg { fill: transparent; }
+    .box { fill: #ffffff; stroke: #e5e5ea; stroke-width: 1.5; }
+    .box-shadow { filter: url(#shadow); }
+    .box-inner { fill: #fbfbfd; stroke: #e5e5ea; stroke-width: 1.5; }
+    .text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 14px; fill: #1d1d1f; }
+    .text-bold { font-weight: 600; }
+    .title { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; font-size: 18px; font-weight: 600; fill: #1d1d1f; }
+    .line { stroke: #d2d2d7; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .arrow { fill: #d2d2d7; }
+    .icon-bg { fill: #e8f2ff; }
+    .icon { fill: none; stroke: #0071e3; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+    
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #1c1c1e; stroke: #333336; }
+      .box-inner { fill: #2c2c2e; stroke: #333336; }
+      .text { fill: #f5f5f7; }
+      .title { fill: #f5f5f7; }
+      .line { stroke: #424245; }
+      .arrow { fill: #424245; }
+      .icon-bg { fill: rgba(10, 132, 255, 0.15); }
+      .icon { stroke: #0a84ff; }
+    }
+  </style>
+
+  <rect width="100%" height="100%" class="bg" />
+
+  <!-- Group 1 -->
+  <rect x="40" y="40" width="480" height="260" rx="20" class="box box-shadow" />
+  <text x="280" y="80" class="title" text-anchor="middle">Capture Pipeline</text>
+  
+  <g transform="translate(60, 110)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <circle cx="32" cy="32" r="10" class="icon" />
+    <text x="64" y="37" class="text text-bold">WindowCapture</text>
+  </g>
+  <g transform="translate(300, 110)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 22 24 h 20 v 12 l -10 8 l -10 -8 z" class="icon" />
+    <text x="64" y="37" class="text text-bold">StreamFrameInbox</text>
+  </g>
+  
+  <!-- Group 2 -->
+  <rect x="560" y="40" width="520" height="260" rx="20" class="box box-shadow" />
+  <text x="820" y="80" class="title" text-anchor="middle">Stream Context</text>
+
+  <g transform="translate(580, 110)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <rect x="22" y="22" width="20" height="20" rx="4" class="icon" />
+    <text x="64" y="37" class="text text-bold">StreamContext</text>
+  </g>
+  <g transform="translate(860, 110)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 24 24 h 16 v 16 h -16 z M 28 24 v 16 M 36 24 v 16" class="icon" />
+    <text x="64" y="37" class="text text-bold">HEVCEncoder</text>
+  </g>
+  <g transform="translate(720, 210)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 22 36 l 6 -12 l 8 8 l 6 -12" class="icon" />
+    <text x="64" y="37" class="text text-bold">Quality Policy</text>
+  </g>
+
+  <!-- Group 3 -->
+  <rect x="1120" y="40" width="760" height="260" rx="20" class="box box-shadow" />
+  <text x="1500" y="80" class="title" text-anchor="middle">Transport Layer</text>
+
+  <g transform="translate(1140, 110)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 20 32 l 20 -10 l -8 20 z" class="icon" />
+    <text x="64" y="37" class="text text-bold">StreamSender</text>
+  </g>
+  <g transform="translate(1380, 110)">
+    <rect width="200" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 22 26 h 20 M 22 32 h 20 M 22 38 h 20" class="icon" />
+    <text x="64" y="37" class="text text-bold">HostTransport</text>
+  </g>
+  <g transform="translate(1620, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <circle cx="32" cy="32" r="10" class="icon" />
+    <path d="M 22 42 c 6 6 14 6 20 0" class="icon" />
+    <text x="64" y="37" class="text text-bold">UDP Stream Socket</text>
+  </g>
+
+  <!-- Connections -->
+  <path d="M 260 142 L 292 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 500 142 L 572 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 780 142 L 852 142" class="line" marker-end="url(#arrowhead)" />
+  
+  <!-- Policy Routing -->
+  <path d="M 680 174 L 680 190 L 820 190 L 820 202" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 820 274 L 820 290 L 960 290 L 960 182" class="line" marker-end="url(#arrowhead)" />
+  
+  <path d="M 1060 142 L 1132 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 1340 142 L 1372 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 1580 142 L 1612 142" class="line" marker-end="url(#arrowhead)" />
+</svg>

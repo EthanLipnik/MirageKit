@@ -23,7 +23,7 @@ extension MirageHostInputController {
         _ event: MirageMouseEvent,
         _ windowFrame: CGRect,
         windowID: WindowID,
-        app _: MirageApplication?
+        app: MirageApplication?
     ) {
         let resolvedFrame: CGRect
         if appliesTabletSubtype(event) {
@@ -34,6 +34,29 @@ extension MirageHostInputController {
             let actualFrame = currentWindowFrame(for: windowID)
             let useActualFrame = actualFrame.map { framesAreClose($0, windowFrame) } ?? false
             resolvedFrame = useActualFrame ? (actualFrame ?? windowFrame) : windowFrame
+        }
+
+        let localPoint = CGPoint(
+            x: event.location.x * resolvedFrame.width,
+            y: event.location.y * resolvedFrame.height
+        )
+        let dynamicClusterSize = cachedDynamicTrafficLightClusterSize(
+            windowID: windowID,
+            app: app,
+            windowFrame: resolvedFrame
+        )
+        if HostTrafficLightProtectionPolicy.shouldBlock(
+            eventType: type,
+            localPoint: localPoint,
+            dynamicClusterSize: dynamicClusterSize
+        ) {
+            logTrafficLightBlockedEvent(
+                windowID: windowID,
+                eventType: type,
+                localPoint: localPoint,
+                dynamicClusterSize: dynamicClusterSize
+            )
+            return
         }
 
         let screenPoint = CGPoint(
@@ -48,13 +71,6 @@ extension MirageHostInputController {
             CGWarpMouseCursorPosition(screenPoint)
         default:
             break
-        }
-
-        let pixelX = event.location.x * resolvedFrame.width
-        let pixelY = event.location.y * resolvedFrame.height
-        if pixelX < 80, pixelY < 30, type == .leftMouseDown || type == .leftMouseUp {
-            MirageLogger.host("Blocked click in traffic light area")
-            return
         }
 
         guard let cgEvent = CGEvent(
@@ -80,6 +96,52 @@ extension MirageHostInputController {
 
         applyTabletFieldsIfNeeded(cgEvent, from: event, type: type, point: screenPoint)
         postStylusAwarePointerEvent(cgEvent, from: event, type: type, at: screenPoint)
+    }
+
+    private func cachedDynamicTrafficLightClusterSize(
+        windowID: WindowID,
+        app: MirageApplication?,
+        windowFrame: CGRect
+    ) -> CGSize? {
+        let now = CFAbsoluteTimeGetCurrent()
+        if let cached = trafficLightClusterCacheByWindowID[windowID],
+           now - cached.sampledAt <= trafficLightClusterCacheTTL,
+           framesAreClose(cached.sampledWindowFrame, windowFrame, tolerance: 6) {
+            return cached.dynamicClusterSize
+        }
+
+        let dynamicClusterSize = dynamicTrafficLightClusterSize(
+            windowID: windowID,
+            app: app,
+            windowFrame: windowFrame
+        )
+        trafficLightClusterCacheByWindowID[windowID] = CachedTrafficLightClusterGeometry(
+            dynamicClusterSize: dynamicClusterSize,
+            sampledWindowFrame: windowFrame,
+            sampledAt: now
+        )
+        return dynamicClusterSize
+    }
+
+    private func logTrafficLightBlockedEvent(
+        windowID: WindowID,
+        eventType: CGEventType,
+        localPoint: CGPoint,
+        dynamicClusterSize: CGSize?
+    ) {
+        let now = CFAbsoluteTimeGetCurrent()
+        if let lastLogTime = lastTrafficLightBlockedLogTimeByWindowID[windowID],
+           now - lastLogTime < trafficLightBlockedLogInterval {
+            return
+        }
+        lastTrafficLightBlockedLogTimeByWindowID[windowID] = now
+
+        let effectiveCluster = HostTrafficLightProtectionPolicy.effectiveClusterSize(
+            dynamicClusterSize: dynamicClusterSize
+        )
+        MirageLogger.host(
+            "Blocked remote pointer event \(eventType) in traffic-light cluster for window \(windowID) at \(localPoint) within \(effectiveCluster)"
+        )
     }
 }
 

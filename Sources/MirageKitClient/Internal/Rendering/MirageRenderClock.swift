@@ -142,7 +142,7 @@ final class MirageCVDisplayLinkRenderClock: MirageRenderClock {
 
     func updateTargetFPS(_ fps: Int) {
         lock.lock()
-        targetFPS = fps >= 120 ? 120 : 60
+        targetFPS = max(1, min(120, fps))
         lock.unlock()
     }
 

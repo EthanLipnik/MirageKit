@@ -39,6 +39,7 @@ extension MirageClientService {
             .appWindowSwapResult: { [weak self] in self?.handleAppWindowSwapResult($0) },
             .windowStreamFailed: { [weak self] in self?.handleWindowStreamFailed($0) },
             .appTerminated: { [weak self] in self?.handleAppTerminated($0) },
+            .streamPolicyUpdate: { [weak self] in self?.handleStreamPolicyUpdate($0) },
             .menuBarUpdate: { [weak self] in self?.handleMenuBarUpdate($0) },
             .menuActionResult: { [weak self] in self?.handleMenuActionResult($0) },
             .hostHardwareIcon: { [weak self] in self?.handleHostHardwareIcon($0) },

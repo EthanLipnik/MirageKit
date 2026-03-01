@@ -300,7 +300,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     func setTargetFPS(for streamID: StreamID, targetFPS: Int) {
         let state = streamState(for: streamID)
         state.lock.lock()
-        state.targetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
+        state.targetFPS = max(1, min(120, targetFPS))
         state.lock.unlock()
     }
 

@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 860 700" width="100%" height="100%">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="6" stdDeviation="12" flood-color="#000000" flood-opacity="0.04"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <polygon points="0 0, 8 4, 0 8" class="msg-arrow" />
+    </marker>
+  </defs>
+  <style>
+    :root { color-scheme: light dark; }
+    .bg { fill: transparent; }
+    .box { fill: #ffffff; stroke: #e5e5ea; stroke-width: 1.5; }
+    .box-shadow { filter: url(#shadow); }
+    .text-bold { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 14px; font-weight: 600; fill: #1d1d1f; }
+    
+    .lifeline { stroke: #e5e5ea; stroke-width: 3; stroke-dasharray: 8 8; fill: none; stroke-linecap: round; }
+    .msg-line { stroke: #86868b; stroke-width: 2; fill: none; }
+    .msg-dashed { stroke: #86868b; stroke-width: 2; stroke-dasharray: 6 6; fill: none; }
+    .msg-arrow { fill: #86868b; }
+    .msg-text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 13px; font-weight: 500; fill: #1d1d1f; }
+    
+    .alt-box { fill: rgba(0, 113, 227, 0.02); stroke: rgba(0, 113, 227, 0.15); stroke-width: 1.5; }
+    .alt-label-bg { fill: #ffffff; stroke: rgba(0, 113, 227, 0.15); stroke-width: 1.5; }
+    .alt-label { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 12px; font-weight: 600; fill: #0071e3; }
+    
+    .alt-box-red { fill: rgba(255, 59, 48, 0.02); stroke: rgba(255, 59, 48, 0.15); stroke-width: 1.5; }
+    .alt-label-bg-red { fill: #ffffff; stroke: rgba(255, 59, 48, 0.15); stroke-width: 1.5; }
+    .alt-label-red { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 12px; font-weight: 600; fill: #ff3b30; }
+
+    @media (prefers-color-scheme: dark) {
+      .box { fill: #1c1c1e; stroke: #333336; }
+      .text-bold { fill: #f5f5f7; }
+      .lifeline { stroke: #333336; }
+      .msg-line { stroke: #98989d; }
+      .msg-dashed { stroke: #98989d; }
+      .msg-arrow { fill: #98989d; }
+      .msg-text { fill: #f5f5f7; }
+      
+      .alt-box { fill: rgba(10, 132, 255, 0.05); stroke: rgba(10, 132, 255, 0.2); }
+      .alt-label-bg { fill: #1c1c1e; stroke: rgba(10, 132, 255, 0.2); }
+      .alt-label { fill: #0a84ff; }
+      
+      .alt-box-red { fill: rgba(255, 69, 58, 0.05); stroke: rgba(255, 69, 58, 0.2); }
+      .alt-label-bg-red { fill: #1c1c1e; stroke: rgba(255, 69, 58, 0.2); }
+      .alt-label-red { fill: #ff453a; }
+    }
+  </style>
+
+  <rect width="100%" height="100%" class="bg" />
+
+  <path d="M 150 80 L 150 660" class="lifeline" />
+  <path d="M 430 80 L 430 660" class="lifeline" />
+  <path d="M 710 80 L 710 660" class="lifeline" />
+
+  <rect x="50" y="24" width="200" height="48" rx="16" class="box box-shadow" />
+  <text x="150" y="53" class="text-bold" text-anchor="middle">MirageClientService</text>
+
+  <rect x="330" y="24" width="200" height="48" rx="16" class="box box-shadow" />
+  <text x="430" y="53" class="text-bold" text-anchor="middle">MirageHostService</text>
+
+  <rect x="610" y="24" width="200" height="48" rx="16" class="box box-shadow" />
+  <text x="710" y="53" class="text-bold" text-anchor="middle">Trust Provider</text>
+
+  <!-- TCP -->
+  <text x="290" y="112" class="msg-text" text-anchor="middle">Control connect (TCP or QUIC)</text>
+  <path d="M 150 120 L 422 120" class="msg-line" marker-end="url(#arrowhead)" />
+
+  <!-- Hello -->
+  <text x="290" y="152" class="msg-text" text-anchor="middle">hello (signed identity + nonce + negotiation)</text>
+  <path d="M 150 160 L 422 160" class="msg-line" marker-end="url(#arrowhead)" />
+
+  <!-- Verify -->
+  <text x="450" y="194" class="msg-text" text-anchor="start">Verify signature, key ID, replay</text>
+  <path d="M 430 190 L 444 190 L 444 210 L 438 210" class="msg-line" marker-end="url(#arrowhead)" />
+
+  <!-- Evaluate Trust -->
+  <text x="570" y="242" class="msg-text" text-anchor="middle">Evaluate trust / approval outcome</text>
+  <path d="M 430 250 L 702 250" class="msg-line" marker-end="url(#arrowhead)" />
+
+  <!-- Alt Box Accepted -->
+  <rect x="40" y="290" width="780" height="230" rx="16" class="alt-box" />
+  <rect x="56" y="278" width="90" height="24" rx="12" class="alt-label-bg" />
+  <text x="101" y="294" class="alt-label" text-anchor="middle">Accepted</text>
+
+  <text x="290" y="332" class="msg-text" text-anchor="middle">helloResponse accepted (signed, dataPort, token)</text>
+  <path d="M 430 340 L 158 340" class="msg-dashed" marker-end="url(#arrowhead)" />
+
+  <text x="290" y="382" class="msg-text" text-anchor="middle">UDP register MIRG stream + token</text>
+  <path d="M 150 390 L 422 390" class="msg-line" marker-end="url(#arrowhead)" />
+
+  <text x="290" y="432" class="msg-text" text-anchor="middle">UDP register MIRA client + token</text>
+  <path d="M 150 440 L 422 440" class="msg-line" marker-end="url(#arrowhead)" />
+
+  <text x="290" y="482" class="msg-text" text-anchor="middle">Video and audio media packets flow</text>
+  <path d="M 430 490 L 158 490" class="msg-dashed" marker-end="url(#arrowhead)" />
+
+  <!-- Alt Box Rejected -->
+  <rect x="40" y="550" width="780" height="90" rx="16" class="alt-box-red" />
+  <rect x="56" y="538" width="90" height="24" rx="12" class="alt-label-bg-red" />
+  <text x="101" y="554" class="alt-label-red" text-anchor="middle">Rejected</text>
+
+  <text x="290" y="602" class="msg-text" text-anchor="middle">helloResponse rejected (reason + mismatch info)</text>
+  <path d="M 430 610 L 158 610" class="msg-dashed" marker-end="url(#arrowhead)" />
+
+</svg>

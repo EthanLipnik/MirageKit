@@ -62,6 +62,44 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Passive tier keeps decode submission limit fixed at one")
+    func passiveTierKeepsDecodeSubmissionLimitFixed() async {
+        let controller = StreamController(streamID: 95, maxPayloadSize: 1200)
+
+        await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
+        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 0)
+        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 120)
+
+        #expect(await controller.decodeSubmissionBaselineLimit == 1)
+        #expect(await controller.currentDecodeSubmissionLimit == 1)
+
+        await controller.stop()
+    }
+
+    @Test("Passive tier frame loss requests bounded keyframe recovery without loop")
+    func passiveTierFrameLossRequestsBoundedKeyframeRecoveryWithoutLoop() async throws {
+        let keyframeCounter = LockedCounter()
+        let streamID: StreamID = 96
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
+        await controller.markFirstFramePresented()
+        await controller.handleFrameLossSignal()
+        try await Task.sleep(for: .seconds(2))
+
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
     @Test("Passive to active promotion keeps P-frame-first when context is healthy")
     func passiveToActiveTierPromotionUsesPFrameFirstWhenContextHealthy() async throws {
         let keyframeCounter = LockedCounter()
@@ -373,6 +411,53 @@ struct StreamControllerRecoveryTests {
             keyframeCounter.value == 1
         }
         #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
+    @Test("First-frame watchdog requests bootstrap recovery when startup stalls")
+    func firstFrameWatchdogRequestsBootstrapRecoveryWhenStartupStalls() async throws {
+        let clock = ManualTimeProvider(start: 1_000)
+        let controller = StreamController(
+            streamID: 140,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-stall")
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace + 0.1)
+
+        var watchdogTriggered = false
+        let timeoutAt = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < timeoutAt {
+            if await controller.firstPresentedFrameLastRecoveryRequestTime > 0 {
+                watchdogTriggered = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(watchdogTriggered)
+
+        await controller.stop()
+    }
+
+    @Test("Active tier updates do not re-arm first-frame awaiter while waiting")
+    func activeTierUpdatesDoNotRearmFirstFrameAwaiterWhileWaiting() async {
+        let clock = ManualTimeProvider(start: 2_000)
+        let controller = StreamController(
+            streamID: 141,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.updatePresentationTier(.activeLive)
+        let initialWaitStart = await controller.firstPresentedFrameWaitStartTime
+        #expect(initialWaitStart == 2_000)
+
+        clock.advance(by: 0.25)
+        await controller.updatePresentationTier(.activeLive)
+        let waitStartAfterRepeatUpdate = await controller.firstPresentedFrameWaitStartTime
+        #expect(waitStartAfterRepeatUpdate == initialWaitStart)
 
         await controller.stop()
     }

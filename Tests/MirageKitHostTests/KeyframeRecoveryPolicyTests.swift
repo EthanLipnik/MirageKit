@@ -34,6 +34,51 @@ struct KeyframeRecoveryPolicyTests {
         #expect(await context.pendingKeyframeRequiresFlush == true)
     }
 
+    @Test("Capture-starved recovery schedules restart when no frame has arrived")
+    func captureStarvedRecoveryWithNoFrames() {
+        let shouldRestart = StreamContext.shouldScheduleCaptureRestartForRecovery(
+            now: 10.0,
+            lastCapturedFrameTime: 0,
+            lastRestartTime: 0,
+            stallThreshold: 0.75,
+            cooldown: 1.0
+        )
+        #expect(shouldRestart)
+    }
+
+    @Test("Capture-starved recovery does not restart while cooldown is active")
+    func captureStarvedRecoveryCooldown() {
+        let shouldRestart = StreamContext.shouldScheduleCaptureRestartForRecovery(
+            now: 10.0,
+            lastCapturedFrameTime: 8.0,
+            lastRestartTime: 9.5,
+            stallThreshold: 0.75,
+            cooldown: 1.0
+        )
+        #expect(!shouldRestart)
+    }
+
+    @Test("Capture-starved recovery waits until frame gap exceeds threshold")
+    func captureStarvedRecoveryThreshold() {
+        let belowThreshold = StreamContext.shouldScheduleCaptureRestartForRecovery(
+            now: 10.0,
+            lastCapturedFrameTime: 9.6,
+            lastRestartTime: 0,
+            stallThreshold: 0.75,
+            cooldown: 1.0
+        )
+        #expect(!belowThreshold)
+
+        let aboveThreshold = StreamContext.shouldScheduleCaptureRestartForRecovery(
+            now: 10.0,
+            lastCapturedFrameTime: 8.9,
+            lastRestartTime: 0,
+            stallThreshold: 0.75,
+            cooldown: 1.0
+        )
+        #expect(aboveThreshold)
+    }
+
     @Test("Scheduled keyframes are disabled in recovery-only mode")
     func scheduledKeyframesDisabled() async {
         let context = makeContext()

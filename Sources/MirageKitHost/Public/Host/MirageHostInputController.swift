@@ -46,6 +46,22 @@ public final class MirageHostInputController: @unchecked Sendable {
         var isDesktop: Bool
     }
 
+    struct CachedTrafficLightClusterGeometry {
+        var dynamicClusterSize: CGSize?
+        var sampledWindowFrame: CGRect
+        var sampledAt: CFAbsoluteTime
+    }
+
+    struct HostTrafficLightVisibilitySnapshot {
+        let closeHidden: Bool?
+        let minimizeHidden: Bool?
+        let zoomHidden: Bool?
+
+        var hasRecordedState: Bool {
+            closeHidden != nil || minimizeHidden != nil || zoomHidden != nil
+        }
+    }
+
     // MARK: - Pointer Lerp State (accessed from accessibilityQueue only)
 
     var pointerContext: PointerLerpContext?
@@ -62,6 +78,15 @@ public final class MirageHostInputController: @unchecked Sendable {
     let pointerLerpTimeConstant: TimeInterval = 0.025
     let pointerStopDelay: TimeInterval = 0.05
     let pointerSnapThreshold: CGFloat = 0.0005
+
+    // MARK: - Traffic Light Protection State (accessed from accessibilityQueue only)
+
+    var trafficLightClusterCacheByWindowID: [WindowID: CachedTrafficLightClusterGeometry] = [:]
+    var trafficLightVisibilitySnapshotByWindowID: [WindowID: HostTrafficLightVisibilitySnapshot] = [:]
+    var lastTrafficLightBlockedLogTimeByWindowID: [WindowID: CFAbsoluteTime] = [:]
+
+    let trafficLightClusterCacheTTL: CFAbsoluteTime = 0.35
+    let trafficLightBlockedLogInterval: CFAbsoluteTime = 1.0
 
     // MARK: - Tablet State (accessed from accessibilityQueue only)
 

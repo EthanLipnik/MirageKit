@@ -38,11 +38,8 @@ enum MirageRenderModePolicy {
         latencyMode: MirageStreamLatencyMode,
         typingBurstActive: Bool,
         decodeHealthy: Bool,
-        targetFPS: Int
+        targetFPS _: Int
     ) -> MirageRenderModeDecision {
-        let normalizedTarget = normalizedTargetFPS(targetFPS)
-        _ = normalizedTarget
-
         switch latencyMode {
         case .lowestLatency:
             return MirageRenderModeDecision(
@@ -80,7 +77,7 @@ enum MirageRenderModePolicy {
     }
 
     static func normalizedTargetFPS(_ fps: Int) -> Int {
-        fps >= 120 ? 120 : 60
+        max(1, min(120, fps))
     }
 }
 

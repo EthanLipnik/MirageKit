@@ -75,10 +75,10 @@ final class MirageRenderLoop: @unchecked Sendable {
             return
         }
         running = true
-        let normalized = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
+        let resolvedTarget = targetFPS
         lock.unlock()
 
-        clock.updateTargetFPS(normalized)
+        clock.updateTargetFPS(resolvedTarget)
         clock.start()
     }
 
@@ -122,16 +122,16 @@ final class MirageRenderLoop: @unchecked Sendable {
 
     func updateTargetFPS(_ fps: Int) {
         let streamID: StreamID?
-        let normalized = MirageRenderModePolicy.normalizedTargetFPS(fps)
+        let resolvedFPS = MirageRenderModePolicy.normalizedTargetFPS(fps)
         lock.lock()
-        targetFPS = normalized
+        targetFPS = resolvedFPS
         streamID = self.streamID
         pendingRedraw = true
         lock.unlock()
         if let streamID {
-            MirageFrameCache.shared.setTargetFPS(normalized, for: streamID)
+            MirageFrameCache.shared.setTargetFPS(resolvedFPS, for: streamID)
         }
-        clock.updateTargetFPS(normalized)
+        clock.updateTargetFPS(resolvedFPS)
     }
 
     func updateAllowDegradationRecovery(_ enabled: Bool) {
@@ -304,7 +304,7 @@ final class MirageRenderLoop: @unchecked Sendable {
     }
 
     private func offCycleWakeMinInterval(for targetFPS: Int) -> CFAbsoluteTime {
-        let fps = Double(max(1, MirageRenderModePolicy.normalizedTargetFPS(targetFPS)))
+        let fps = Double(max(1, targetFPS))
         return 0.5 / fps
     }
 

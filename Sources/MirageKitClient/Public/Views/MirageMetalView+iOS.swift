@@ -225,7 +225,7 @@ public class MirageMetalView: UIView {
 
     @objc private func displayLinkTick(_ link: CADisplayLink) {
         guard !renderingSuspended else { return }
-        let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 4
+        let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 1
         let interval = link.targetTimestamp - link.timestamp
         let displayRefreshRate = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
         let framePacingEnabled = displayRefreshRate >=
@@ -388,7 +388,7 @@ public class MirageMetalView: UIView {
             return candidate
         }
 
-        let minStepTimescale = max(60, maxRenderFPS)
+        let minStepTimescale = max(1, maxRenderFPS)
         let stepped = CMTimeAdd(
             lastMappedPresentationTime,
             CMTime(value: 1, timescale: CMTimeScale(minStepTimescale))
@@ -470,7 +470,7 @@ public class MirageMetalView: UIView {
         guard displayLink == nil else { return }
         let link = CADisplayLink(target: self, selector: #selector(displayLinkTick(_:)))
         let requestedFPS = appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS
-        let localFPS = streamPresentationTier == .activeLive ? requestedFPS : 4
+        let localFPS = streamPresentationTier == .activeLive ? requestedFPS : 1
         configureDisplayLinkRate(link, fps: localFPS)
         link.add(to: .main, forMode: .common)
         displayLink = link

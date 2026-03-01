@@ -27,7 +27,7 @@ extension MirageHostService {
                 return
             }
 
-            if InputOwnershipGate.isOwnershipSwitchSignal(inputMessage.event) {
+            if AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(inputMessage.event) {
                 dispatchMainWork { [weak self] in
                     guard let self else { return }
                     await self.handleAppStreamOwnershipSignal(

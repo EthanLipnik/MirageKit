@@ -132,4 +132,17 @@ extension MirageClientService {
             MirageLogger.error(.client, error: error, message: "Failed to decode app terminated: ")
         }
     }
+
+    func handleStreamPolicyUpdate(_ message: ControlMessage) {
+        do {
+            let update = try message.decode(StreamPolicyUpdateMessage.self)
+            sessionStore.applyHostStreamPolicies(update.policies)
+            Task { [weak self] in
+                guard let self else { return }
+                await self.applyHostStreamPolicies(update.policies, epoch: update.epoch)
+            }
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode stream policy update: ")
+        }
+    }
 }

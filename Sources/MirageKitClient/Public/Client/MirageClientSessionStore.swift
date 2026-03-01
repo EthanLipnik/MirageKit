@@ -55,8 +55,6 @@ public final class MirageClientSessionStore {
     /// Client service for stream operations.
     public weak var clientService: MirageClientService?
 
-    private let streamScheduler = ClientStreamScheduler()
-
     public init() {}
 
     // MARK: - Session Management
@@ -115,7 +113,6 @@ public final class MirageClientSessionStore {
         }
 
         streamSessions[sessionID] = state
-        scheduleTierRefresh()
         return sessionID
     }
 
@@ -130,7 +127,6 @@ public final class MirageClientSessionStore {
         streamSessions.removeValue(forKey: sessionID)
         sessionMinSizes.removeValue(forKey: sessionID)
         sessionMinSizeUpdateGenerations.removeValue(forKey: sessionID)
-        scheduleTierRefresh()
     }
 
     /// Get stream ID for a session.
@@ -177,22 +173,17 @@ public final class MirageClientSessionStore {
     public func setFocusedSession(_ sessionID: StreamSessionID?) {
         guard focusedSessionID != sessionID else { return }
         focusedSessionID = sessionID
-        scheduleTierRefresh()
     }
 
     public func presentationTier(for streamID: StreamID) -> StreamPresentationTier {
-        if let tier = presentationTierByStreamID[streamID] {
-            return tier
-        }
+        presentationTierByStreamID[streamID] ?? .activeLive
+    }
 
-        guard streamSessions.values.contains(where: { $0.streamID == streamID }) else {
-            return .activeLive
-        }
-
-        let preferredActiveStreamID = focusedSessionID.flatMap { streamSessions[$0]?.streamID }
-        let orderedStreamIDs = streamSessions.values.map(\.streamID).sorted()
-        let fallbackActiveStreamID = preferredActiveStreamID ?? orderedStreamIDs.first
-        return fallbackActiveStreamID == streamID ? .activeLive : .passiveSnapshot
+    public func applyHostStreamPolicies(_ policies: [MirageStreamPolicy]) {
+        let newTiers = Dictionary(uniqueKeysWithValues: policies.map { policy in
+            (policy.streamID, policy.tier.presentationTier)
+        })
+        applyResolvedTiers(newTiers)
     }
 
     // MARK: - Login Display
@@ -276,22 +267,6 @@ public final class MirageClientSessionStore {
         postResizeAwaitingFirstFrameStreamIDs.contains(streamID)
     }
 
-    private func scheduleTierRefresh() {
-        let streamIDs = streamSessions.values.map(\.streamID)
-        let preferredActiveStreamID = focusedSessionID.flatMap { streamSessions[$0]?.streamID }
-
-        Task { [weak self, streamIDs, preferredActiveStreamID] in
-            guard let self else { return }
-            let tiers = await streamScheduler.resolveTiers(
-                streamIDs: streamIDs,
-                preferredActiveStreamID: preferredActiveStreamID
-            )
-            await MainActor.run {
-                self.applyResolvedTiers(tiers)
-            }
-        }
-    }
-
     private func applyResolvedTiers(_ tiers: [StreamID: StreamPresentationTier]) {
         let previous = presentationTierByStreamID
         presentationTierByStreamID = tiers
@@ -302,6 +277,17 @@ public final class MirageClientSessionStore {
         for streamID in changedStreamIDs {
             guard let tier = tiers[streamID] else { continue }
             onStreamPresentationTierChanged?(streamID, tier)
+        }
+    }
+}
+
+private extension MirageStreamRuntimeTier {
+    var presentationTier: StreamPresentationTier {
+        switch self {
+        case .activeLive:
+            .activeLive
+        case .passiveSnapshot:
+            .passiveSnapshot
         }
     }
 }

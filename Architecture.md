@@ -27,23 +27,7 @@ Package constraints from `Package.swift`:
 - Platforms: `macOS 14+`, `iOS 17.4+`, `visionOS 26+`
 - External deps: `swift-nio`, `swift-nio-ssh`
 
-```mermaid
-flowchart LR
-    subgraph "MirageKit Swift Package"
-        MK["Target: MirageKit"]
-        MKC["Target: MirageKitClient"]
-        MKH["Target: MirageKitHost"]
-        T0["Tests: MirageKitTests"]
-        T1["Tests: MirageKitClientTests"]
-        T2["Tests: MirageKitHostTests"]
-    end
-
-    MKC --> MK
-    MKH --> MK
-    T0 --> MK
-    T1 --> MKC
-    T2 --> MKH
-```
+![MirageKit Package Topology](Assets/Architecture-PackageTopology.svg)
 
 ## 2. High-Level Runtime Model
 
@@ -61,26 +45,7 @@ Session setup is explicit:
 4. Client registers stream/client channels over UDP using token.
 5. Host begins sending media packets once registration is accepted.
 
-```mermaid
-sequenceDiagram
-    participant C as "MirageClientService"
-    participant H as "MirageHostService"
-    participant TP as "Trust Provider or Delegate"
-
-    C->>H: "Control connect (TCP or QUIC)"
-    C->>H: "hello (signed identity + nonce + negotiation)"
-    H->>H: "Verify signature, key ID, replay, protocol/features"
-    H->>TP: "Evaluate trust/approval"
-
-    alt "Accepted"
-        H-->>C: "helloResponse accepted (signed, dataPort, UDP token, selected features)"
-        C->>H: "UDP register MIRG stream + token"
-        C->>H: "UDP register MIRA client + token"
-        H-->>C: "Video and audio packets"
-    else "Rejected"
-        H-->>C: "helloResponse rejected (reason + mismatch metadata)"
-    end
-```
+![MirageKit Session Handshake](Assets/Architecture-Handshake.svg)
 
 ## 3. Shared Target (`Sources/MirageKit`) Architecture
 
@@ -113,11 +78,18 @@ Media packet contracts:
 
 Protocol constants:
 
-- `mirageProtocolVersion = 1`
+- `mirageProtocolVersion = 2`
 - Required feature negotiation includes:
   - `identityAuthV2`
   - `udpRegistrationAuthV1`
   - `encryptedMediaV1`
+
+App-stream runtime control adds host-authoritative per-stream policy distribution:
+
+- `streamPolicyUpdate` (`StreamPolicyUpdateMessage`)
+  - `epoch`
+  - `policies: [MirageStreamPolicy]`
+  - each policy includes `tier`, `targetFPS`, `targetBitrateBps`, `recoveryProfile`
 
 ### 3.2 Shared Security Architecture
 
@@ -275,18 +247,7 @@ Major responsibilities in `StreamContext`:
 - packet send coordination (`StreamPacketSender`)
 - optional encrypted payload wrapping
 
-```mermaid
-flowchart LR
-    CAP["WindowCaptureEngine"] --> INBOX["StreamFrameInbox"]
-    INBOX --> CTX["StreamContext actor"]
-    CTX --> ENC["HEVCEncoder"]
-    ENC --> SEND["StreamPacketSender"]
-    SEND --> REG["HostTransportRegistry"]
-    REG --> UDP["UDP stream socket"]
-
-    CTX --> POL["Keyframe, quality, backpressure policy"]
-    POL --> ENC
-```
+![Host Stream Pipeline](Assets/Architecture-HostPipeline.svg)
 
 ### 4.5 Stream Families
 
@@ -323,10 +284,10 @@ Placement repair flows actively reassert expected space/frame ownership to preve
 App streaming is its own subsystem, centered on:
 
 - `AppStreamManager`
-- `AppStreamCoordinator`
-- `InputOwnershipGate`
-- `LiveWindowPipeline` and `SnapshotWindowPipeline`
+- `AppStreamRuntimeOrchestrator`
+- `StreamPolicyApplier`
 - `AppStreamDisplayAllocator`
+- connection-scoped `MediaConnectionScheduler` in `HostTransportRegistry`
 
 Key properties:
 
@@ -334,7 +295,8 @@ Key properties:
 - initial multi-window startup with retry/backoff and window classification
 - visible slot inventory + hidden inventory
 - slot swap transactions (`appWindowSwapRequest`/result)
-- per-session bitrate budgeting and tier-based allocation
+- deterministic host-authoritative policy snapshots (active-first + passive 1fps)
+- per-session bitrate budgeting and policy-based allocation
 - window lifecycle callbacks for add/remove/failure/termination
 
 ### 4.8 Host Input Architecture
@@ -432,21 +394,22 @@ Each stream has a `StreamController` actor with:
 - one `FrameReassembler`
 - ordered decode queue and admission controls
 - resize transition gating
-- keyframe recovery loops
+- active-only bounded keyframe recovery loops with hard-reset escalation
+- first-frame bootstrap watchdog that requests recovery if startup has no decode/presentation progress
+- idempotent first-frame awaiter arming during host tier updates (prevents startup wait resets)
 - freeze monitoring and escalation
 - decode-overload / adaptive fallback signaling
 
+Client runtime tiering is host-authoritative:
+
+- host emits `streamPolicyUpdate`
+- client applies policy to session store + stream controllers
+- focus/input hints are signals only; they do not elect runtime tier locally
+- `GlobalDecodeBudgetController` enforces active-first decode-token admission across streams
+
 `HEVCDecoder` manages VT session lifecycle, parameter sets, in-flight submission limits, and decode error threshold callbacks.
 
-```mermaid
-flowchart LR
-    UDP["Video UDP packets"] --> HDR["FrameHeader parse and optional decrypt"]
-    HDR --> REASM["FrameReassembler"]
-    REASM --> CTRL["StreamController queue"]
-    CTRL --> DEC["HEVCDecoder (VideoToolbox)"]
-    DEC --> CACHE["MirageFrameCache and render stores"]
-    CACHE --> VIEW["MirageMetalView or render driver"]
-```
+![Client Video Pipeline](Assets/Architecture-ClientPipeline.svg)
 
 ### 5.6 Rendering Architecture
 
@@ -537,6 +500,7 @@ Client-side recovery mechanisms include:
 - controller reset decisions based on dimension token advances
 - optional adaptive fallback state machine for temporary encoder downshift
 - automatic transport re-registration on path changes or explicit host request
+- passive-tier recovery stays bounded (no recurring keyframe loop)
 
 ## 8. Test Architecture as Executable Contract
 
@@ -566,6 +530,7 @@ The package currently relies on these invariants:
 5. Host enforces one active client session slot at a time.
 6. Stream decode state is owned by per-stream controllers, not views.
 7. Diagnostics/instrumentation sinks are optional observers, never control-path dependencies.
+8. Host is the source of truth for app-stream tier/fps/bitrate/recovery policy.
 
 ## 10. Change Checklist for Architecture Updates
 

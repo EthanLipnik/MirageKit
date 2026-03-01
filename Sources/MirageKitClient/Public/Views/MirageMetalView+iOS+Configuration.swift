@@ -154,14 +154,14 @@ extension MirageMetalView {
     }
 
     func applyRefreshRateOverride(_ override: Int) {
-        let clamped = override >= 120 ? 120 : 60
+        let clamped = max(1, min(120, override))
         maxRenderFPS = clamped
         applyDisplayRefreshRateLock(clamped)
         onRefreshRateOverrideChange?(clamped)
     }
 
     func applyDisplayRefreshRateLock(_ fps: Int) {
-        let clamped = fps >= 120 ? 120 : 60
+        let clamped = max(1, min(120, fps))
         let localFPS = resolvedLocalDisplayLinkFPS(baseFPS: clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
@@ -176,7 +176,7 @@ extension MirageMetalView {
     }
 
     func configureDisplayLinkRate(_ displayLink: CADisplayLink, fps: Int) {
-        let clamped = max(4, min(120, fps))
+        let clamped = max(1, min(120, fps))
         if #available(iOS 15.0, visionOS 1.0, *) {
             let preferred = Float(clamped)
             displayLink.preferredFrameRateRange = CAFrameRateRange(
@@ -191,9 +191,9 @@ extension MirageMetalView {
 
     private func resolvedLocalDisplayLinkFPS(baseFPS: Int) -> Int {
         if streamPresentationTier == .passiveSnapshot {
-            return 4
+            return 1
         }
-        return baseFPS >= 120 ? 120 : 60
+        return max(1, min(120, baseFPS))
     }
 
     func startObservingPreferences() {

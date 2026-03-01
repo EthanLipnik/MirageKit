@@ -96,4 +96,13 @@ struct RenderModePolicyTests {
         #expect(stressed.presentationPolicy == .buffered(maxDepth: 3))
         #expect(!stressed.allowOffCycleWake)
     }
+
+    @Test("Target FPS normalization preserves low-frame-rate tiers")
+    func targetFPSNormalizationPreservesLowRates() {
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(1) == 1)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(2) == 2)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(4) == 4)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(120) == 120)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(500) == 120)
+    }
 }

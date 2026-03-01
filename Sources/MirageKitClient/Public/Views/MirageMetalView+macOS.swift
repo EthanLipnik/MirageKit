@@ -437,7 +437,7 @@ public class MirageMetalView: NSView {
     }
 
     private func applyRenderLoopTierPolicy() {
-        let targetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 4
+        let targetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 1
         renderLoop.updateTargetFPS(targetFPS)
     }
 

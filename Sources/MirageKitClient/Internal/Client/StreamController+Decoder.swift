@@ -90,7 +90,7 @@ extension StreamController {
     }
 
     func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
-        decodeSchedulerTargetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFrameRate)
+        decodeSchedulerTargetFPS = max(1, min(120, targetFrameRate))
         decodeSubmissionBaselineLimit = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: decodeSchedulerTargetFPS)
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
@@ -98,13 +98,18 @@ extension StreamController {
         await decoder.setDecodeSubmissionLimit(limit: decodeSubmissionBaselineLimit, reason: "target refresh update")
     }
 
-    func updatePresentationTier(_ tier: StreamPresentationTier) async {
+    func updatePresentationTier(_ tier: StreamPresentationTier, targetFPS: Int? = nil) async {
         let previousTier = presentationTier
         presentationTier = tier
+        await GlobalDecodeBudgetController.shared.updateTier(streamID: streamID, tier: tier)
 
-        let targetFPS = tier == .activeLive ? 60 : 4
-        decodeSchedulerTargetFPS = targetFPS
-        decodeSubmissionBaselineLimit = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: targetFPS)
+        let resolvedTargetFPS = max(1, min(120, targetFPS ?? (tier == .activeLive ? 60 : 1)))
+        decodeSchedulerTargetFPS = resolvedTargetFPS
+        if tier == .passiveSnapshot {
+            decodeSubmissionBaselineLimit = 1
+        } else {
+            decodeSubmissionBaselineLimit = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
+        }
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         currentDecodeSubmissionLimit = max(1, decodeSubmissionBaselineLimit)
@@ -112,7 +117,7 @@ extension StreamController {
 
         switch tier {
         case .activeLive:
-            if !hasPresentedFirstFrame {
+            if !hasPresentedFirstFrame, !awaitingFirstPresentedFrame {
                 armFirstPresentedFrameAwaiter(reason: "tier-promotion")
             }
             if previousTier == .passiveSnapshot {
@@ -120,6 +125,9 @@ extension StreamController {
             }
         case .passiveSnapshot:
             stopTierPromotionProbe()
+            stopKeyframeRecoveryLoop()
+            stopFreezeMonitor()
+            consecutiveFreezeRecoveries = 0
             if !hasPresentedFirstFrame {
                 stopFirstPresentedFrameMonitor()
             }
@@ -206,5 +214,15 @@ extension StreamController {
             "Tier promotion probe requesting single recovery keyframe for stream \(streamID) (no progress)"
         )
         await requestKeyframeRecovery(reason: .manualRecovery)
+    }
+
+    func applyHostRuntimePolicy(_ policy: MirageStreamPolicy) async {
+        let tier: StreamPresentationTier = switch policy.tier {
+        case .activeLive:
+            .activeLive
+        case .passiveSnapshot:
+            .passiveSnapshot
+        }
+        await updatePresentationTier(tier, targetFPS: policy.targetFPS)
     }
 }

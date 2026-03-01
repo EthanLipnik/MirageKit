@@ -71,6 +71,7 @@ package enum ControlMessageType: UInt8, Codable {
     case appWindowSwapResult = 0x8C
     case windowResizabilityChanged = 0x8D
     case appTerminated = 0x8E
+    case streamPolicyUpdate = 0x8F // Host -> Client: Per-stream runtime tier/fps/bitrate/recovery policy
 
     // Menu bar passthrough
     case menuBarUpdate = 0x90 // Host → Client: Menu structure update

@@ -106,9 +106,9 @@ struct SessionMinimumSizeGenerationTests {
         #expect(store.sessionByStreamID(streamID)?.hasPresentedFrame == true)
     }
 
-    @Test("Focused stream resolves to active tier while others become passive")
+    @Test("Host policies determine presentation tiers")
     @MainActor
-    func focusedStreamResolvesToActiveTier() async throws {
+    func hostPoliciesDeterminePresentationTier() {
         let store = MirageClientSessionStore()
         let firstSessionID = store.createSession(
             streamID: 31,
@@ -123,9 +123,25 @@ struct SessionMinimumSizeGenerationTests {
             minSize: nil
         )
 
+        store.applyHostStreamPolicies([
+            MirageStreamPolicy(
+                streamID: 31,
+                tier: .activeLive,
+                targetFPS: 60,
+                targetBitrateBps: 12_000_000,
+                recoveryProfile: .activeAggressive
+            ),
+            MirageStreamPolicy(
+                streamID: 32,
+                tier: .passiveSnapshot,
+                targetFPS: 1,
+                targetBitrateBps: 1_000_000,
+                recoveryProfile: .passiveBounded
+            )
+        ])
+
         store.setFocusedSession(firstSessionID)
 
-        try await Task.sleep(for: .milliseconds(80))
         #expect(store.presentationTier(for: 31) == .activeLive)
         #expect(store.presentationTier(for: 32) == .passiveSnapshot)
     }

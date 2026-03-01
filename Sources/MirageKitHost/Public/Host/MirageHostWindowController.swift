@@ -34,6 +34,12 @@ public final class MirageHostWindowController {
     /// Timer for periodically re-centering streamed windows.
     private var windowCenteringTimer: Timer?
 
+    /// Poll interval for enforcing streamed window frame.
+    private let windowFrameEnforcementInterval: TimeInterval = 0.12
+
+    /// Tolerance for considering two sizes equivalent.
+    private let windowSizeEnforcementTolerance: CGFloat = 2.0
+
     /// Pending resize request for debouncing.
     private var pendingResizeRequest: (windowID: WindowID, width: Int, height: Int)?
 
@@ -53,7 +59,10 @@ public final class MirageHostWindowController {
     /// Starts periodic re-centering for active streamed windows.
     public func startWindowCenteringTimer() {
         windowCenteringTimer?.invalidate()
-        windowCenteringTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+        windowCenteringTimer = Timer.scheduledTimer(
+            withTimeInterval: windowFrameEnforcementInterval,
+            repeats: true
+        ) { [weak self] _ in
             Task { @MainActor in
                 self?.recenterAllStreamedWindows()
             }
@@ -73,12 +82,36 @@ public final class MirageHostWindowController {
             if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
                 continue
             }
-            guard let axWindow = getOrCacheAXWindow(for: window),
-                  let frame = axWindowFrame(axWindow) else {
-                continue
-            }
-            centerWindowOnScreen(axWindow, newSize: frame.size, windowID: window.id)
+            guard let axWindow = getOrCacheAXWindow(for: window) else { continue }
+            enforceDirectStreamWindowFrame(axWindow: axWindow, window: window)
         }
+    }
+
+    private func enforceDirectStreamWindowFrame(axWindow: AXUIElement, window: MirageWindow) {
+        let currentFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id)
+        let fallbackSize = currentFrame?.size ?? window.frame.size
+        let desiredSize = CGSize(
+            width: max(1, window.frame.width),
+            height: max(1, window.frame.height)
+        )
+        var enforcedSize = desiredSize
+        if let visibleFrame = maxWindowSizeRect(for: window) {
+            enforcedSize = constrainSizeToFrame(enforcedSize, frame: visibleFrame)
+        }
+
+        let hasMeaningfulSizeDrift = abs(fallbackSize.width - enforcedSize.width) > windowSizeEnforcementTolerance ||
+            abs(fallbackSize.height - enforcedSize.height) > windowSizeEnforcementTolerance
+        if hasMeaningfulSizeDrift {
+            var mutableSize = enforcedSize
+            if let sizeValue = AXValueCreate(.cgSize, &mutableSize) {
+                let setResult = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
+                if setResult != .success {
+                    enforcedSize = fallbackSize
+                }
+            }
+        }
+
+        centerWindowOnScreen(axWindow, newSize: enforcedSize, windowID: window.id)
     }
 
     // MARK: - AX Window Caching

@@ -246,14 +246,10 @@ public final class MirageHostService {
     var sessionRefreshGeneration: UInt64 = 0
     let sessionRefreshInterval: Duration = .seconds(3)
 
-    /// App-stream owner-selection gate.
-    let inputOwnershipGate = InputOwnershipGate()
-    /// App-stream runtime coordinator.
-    let appStreamCoordinator = AppStreamCoordinator()
-    /// App-stream active-window pipeline.
-    let liveWindowPipeline = LiveWindowPipeline()
-    /// App-stream passive-window snapshot pipeline.
-    let snapshotWindowPipeline = SnapshotWindowPipeline()
+    /// App-stream runtime orchestrator (host-authoritative stream tiering + budgets).
+    let appStreamRuntimeOrchestrator = AppStreamRuntimeOrchestrator()
+    /// Unified stream policy applier with idempotent/cooldown reconfiguration.
+    let streamPolicyApplier = StreamPolicyApplier()
     /// App-stream fixed two-display allocator metadata.
     let appStreamDisplayAllocator = AppStreamDisplayAllocator()
 
@@ -273,6 +269,8 @@ public final class MirageHostService {
     var pendingAppWindowReplacementsByStreamID: [StreamID: PendingAppWindowReplacement] = [:]
     /// Cooldown expiry tasks keyed by stream ID.
     var pendingAppWindowReplacementTasksByStreamID: [StreamID: Task<Void, Never>] = [:]
+    /// Scheduled policy-transition tasks keyed by app session bundle identifier.
+    var appStreamPolicyTransitionTasksByBundleID: [String: Task<Void, Never>] = [:]
     let appWindowReplacementCooldownDuration: Duration = .seconds(5)
 
     /// Pending app list request to resume after desktop streaming.

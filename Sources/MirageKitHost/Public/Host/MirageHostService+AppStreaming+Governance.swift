@@ -56,7 +56,9 @@ extension MirageHostService {
     }
 
     func stopAppStreamGovernorsIfIdle() async {
-        // Runtime is event-driven and does not keep a background governor task.
+        let hasStreamingSessions = await appStreamManager.getAllSessions().contains { $0.state == .streaming }
+        guard !hasStreamingSessions else { return }
+        cancelAllScheduledAppStreamPolicyTransitions()
     }
 
     func refreshAppStreamGovernors(reason: String) async {
@@ -85,17 +87,24 @@ extension MirageHostService {
         event: MirageInputEvent,
         reason: String
     ) async {
-        let shouldSwitch = await inputOwnershipGate.considerSignal(
-            streamID: streamID,
-            event: event,
-            hostKeyWindowEligible: isHostKeyWindowEligibleForOwnershipSwitch()
-        )
+        guard AppStreamRuntimeOrchestrator.isOwnershipSwitchSignal(event) else { return }
+        if case .windowFocus = event {
+            await appStreamRuntimeOrchestrator.forceOwnership(streamID: streamID)
+            await markAppStreamInteraction(
+                streamID: streamID,
+                reason: reason,
+                forceOwnershipSwitch: false
+            )
+            return
+        }
+        guard isHostKeyWindowEligibleForOwnershipSwitch() else { return }
+        let shouldSwitch = await appStreamRuntimeOrchestrator.requestOwnershipSwitch(streamID: streamID)
         guard shouldSwitch else { return }
 
         await markAppStreamInteraction(
             streamID: streamID,
             reason: reason,
-            forceOwnershipSwitch: true
+            forceOwnershipSwitch: false
         )
     }
 
@@ -116,8 +125,7 @@ extension MirageHostService {
         guard let session = await appStreamManager.getSessionForStreamID(streamID) else { return }
 
         if forceOwnershipSwitch {
-            await inputOwnershipGate.forceOwnership(streamID: streamID)
-            await appStreamCoordinator.forceActiveStream(streamID: streamID)
+            await appStreamRuntimeOrchestrator.forceOwnership(streamID: streamID)
         }
 
         await recomputeAppSessionBitrateBudget(
@@ -136,7 +144,7 @@ extension MirageHostService {
     }
 
     func registerAppStreamDesiredFrameRate(streamID _: StreamID, frameRate _: Int) {
-        // Runtime keeps a fixed active baseline and adaptive passive snapshot cadence.
+        // Runtime keeps fixed host-authoritative policy targets.
     }
 
     func clearAppStreamGovernorState(streamID: StreamID) {
@@ -145,11 +153,10 @@ extension MirageHostService {
         windowResizeRequestCounterByStreamID.removeValue(forKey: streamID)
         windowResizeInFlightStreamIDs.remove(streamID)
         Task {
-            await inputOwnershipGate.clear(streamID: streamID)
-            await appStreamCoordinator.unregisterStream(streamID: streamID)
+            await appStreamRuntimeOrchestrator.unregisterStream(streamID: streamID)
             await appStreamDisplayAllocator.unbind(streamID: streamID)
-            await liveWindowPipeline.clear(streamID: streamID)
-            await snapshotWindowPipeline.clear(streamID: streamID)
+            await streamPolicyApplier.clear(streamID: streamID)
+            transportRegistry.setVideoStreamActive(streamID: streamID, isActive: false)
         }
     }
 
@@ -162,7 +169,14 @@ extension MirageHostService {
     }
 
     func recomputeAppSessionBitrateBudget(bundleIdentifier: String, reason: String) async {
-        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else { return }
+        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else {
+            cancelScheduledAppStreamPolicyTransition(bundleIdentifier: bundleIdentifier)
+            return
+        }
+        guard let clientContext = findClientContext(clientID: session.clientID) else {
+            cancelScheduledAppStreamPolicyTransition(bundleIdentifier: bundleIdentifier)
+            return
+        }
 
         let visibleStreamIDs = session.windowStreams
             .values
@@ -170,84 +184,151 @@ extension MirageHostService {
             .sorted()
 
         guard !visibleStreamIDs.isEmpty else {
+            cancelScheduledAppStreamPolicyTransition(bundleIdentifier: bundleIdentifier)
             await appStreamManager.setStreamBitrateTargets(bundleIdentifier: bundleIdentifier, targets: [:])
             return
         }
 
         for streamID in visibleStreamIDs {
-            await appStreamCoordinator.registerStream(
+            await appStreamRuntimeOrchestrator.registerStream(
                 bundleIdentifier: bundleIdentifier,
                 streamID: streamID
             )
         }
 
+        let activeTargetFPS = await resolvedActiveTargetFPS(for: visibleStreamIDs)
         let resolvedBudget = session.bitrateBudgetBps ??
             resolvedAppSessionBitrateBudget(requestedBitrate: nil)
 
-        let plan = await appStreamCoordinator.makeSessionPlan(
+        let snapshot = await appStreamRuntimeOrchestrator.makeRuntimePolicySnapshot(
             bundleIdentifier: bundleIdentifier,
             visibleStreamIDs: visibleStreamIDs,
-            bitrateBudgetBps: resolvedBudget
+            bitrateBudgetBps: resolvedBudget,
+            activeTargetFPS: activeTargetFPS
+        )
+        scheduleAppStreamPolicyTransition(
+            bundleIdentifier: bundleIdentifier,
+            nextTransitionAt: snapshot.nextPolicyTransitionAt
         )
 
         var appliedTargets: [StreamID: Int] = [:]
-        for streamPlan in plan.streamPlans {
-            let isActive = streamPlan.tier == .activeLive
-
-            if streamPlan.tierChanged {
-                await liveWindowPipeline.clear(streamID: streamPlan.streamID)
-                await snapshotWindowPipeline.clear(streamID: streamPlan.streamID)
-            }
+        for policy in snapshot.policies {
+            let isActive = policy.tier == .activeLive
+            let usesDedicatedDisplay = isStreamUsingVirtualDisplay(streamID: policy.streamID)
 
             await appStreamManager.markStreamActivity(
                 bundleIdentifier: bundleIdentifier,
-                streamID: streamPlan.streamID,
+                streamID: policy.streamID,
                 isActive: isActive
             )
+            transportRegistry.setVideoStreamActive(streamID: policy.streamID, isActive: isActive)
 
-            if let bitrate = streamPlan.targetBitrateBps {
-                appliedTargets[streamPlan.streamID] = bitrate
+            if let bitrate = policy.targetBitrateBps {
+                appliedTargets[policy.streamID] = bitrate
             }
 
-            guard let context = streamsByID[streamPlan.streamID] else { continue }
+            guard let context = streamsByID[policy.streamID] else { continue }
             if isActive {
-                ensureWindowVisibleFrameMonitor(streamID: streamPlan.streamID)
-                await appStreamDisplayAllocator.bindLive(streamID: streamPlan.streamID)
-                await liveWindowPipeline.apply(
-                    streamID: streamPlan.streamID,
-                    context: context,
-                    targetFrameRate: streamPlan.targetFrameRate,
-                    targetBitrateBps: streamPlan.targetBitrateBps,
-                    requestRecoveryKeyframe: plan.activeStreamChanged && plan.activeStreamID == streamPlan.streamID
-                )
+                if usesDedicatedDisplay {
+                    ensureWindowVisibleFrameMonitor(streamID: policy.streamID)
+                } else {
+                    stopWindowVisibleFrameMonitor(streamID: policy.streamID)
+                }
+                await appStreamDisplayAllocator.bindLive(streamID: policy.streamID)
             } else {
-                stopWindowVisibleFrameMonitor(streamID: streamPlan.streamID)
-                pendingWindowResizeResolutionByStreamID.removeValue(forKey: streamPlan.streamID)
-                windowResizeRequestCounterByStreamID.removeValue(forKey: streamPlan.streamID)
-                await appStreamDisplayAllocator.bindSnapshot(streamID: streamPlan.streamID)
-                await snapshotWindowPipeline.apply(
-                    streamID: streamPlan.streamID,
-                    context: context,
-                    targetFrameRate: streamPlan.targetFrameRate,
-                    targetBitrateBps: streamPlan.targetBitrateBps
-                )
+                if usesDedicatedDisplay {
+                    ensureWindowVisibleFrameMonitor(streamID: policy.streamID)
+                } else {
+                    stopWindowVisibleFrameMonitor(streamID: policy.streamID)
+                }
+                pendingWindowResizeResolutionByStreamID.removeValue(forKey: policy.streamID)
+                windowResizeRequestCounterByStreamID.removeValue(forKey: policy.streamID)
+                await appStreamDisplayAllocator.bindSnapshot(streamID: policy.streamID)
             }
+
+            await streamPolicyApplier.apply(
+                policy: policy,
+                context: context,
+                requestRecoveryKeyframe: snapshot.activeChanged && snapshot.activeStreamID == policy.streamID
+            )
         }
 
         await appStreamManager.setStreamBitrateTargets(
             bundleIdentifier: bundleIdentifier,
             targets: appliedTargets
         )
+        let policyUpdate = StreamPolicyUpdateMessage(epoch: snapshot.epoch, policies: snapshot.policies)
+        try? await clientContext.send(.streamPolicyUpdate, content: policyUpdate)
 
-        let activeText = plan.activeStreamID.map(String.init) ?? "none"
-        let targetsText = plan.streamPlans.map { plan in
-            let bitrate = plan.targetBitrateBps.map(String.init) ?? "auto"
-            return "\(plan.streamID)=\(plan.tier.rawValue):\(plan.targetFrameRate)fps@\(bitrate)"
+        let activeText = snapshot.activeStreamID.map(String.init) ?? "none"
+        let targetsText = snapshot.policies.map { policy in
+            let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"
+            return "\(policy.streamID)=\(policy.tier.rawValue):\(policy.targetFPS)fps@\(bitrate)"
         }.joined(separator: ", ")
 
         MirageLogger.host(
-            "App-stream runtime update (\(bundleIdentifier), reason=\(reason)): active=\(activeText), targets=[\(targetsText)]"
+            "App-stream runtime update (\(bundleIdentifier), reason=\(reason), epoch=\(snapshot.epoch)): active=\(activeText), targets=[\(targetsText)]"
         )
+    }
+
+    private func cancelScheduledAppStreamPolicyTransition(bundleIdentifier: String) {
+        let key = bundleIdentifier.lowercased()
+        appStreamPolicyTransitionTasksByBundleID.removeValue(forKey: key)?.cancel()
+    }
+
+    private func cancelAllScheduledAppStreamPolicyTransitions() {
+        for task in appStreamPolicyTransitionTasksByBundleID.values {
+            task.cancel()
+        }
+        appStreamPolicyTransitionTasksByBundleID.removeAll()
+    }
+
+    private func scheduleAppStreamPolicyTransition(
+        bundleIdentifier: String,
+        nextTransitionAt: CFAbsoluteTime?
+    ) {
+        cancelScheduledAppStreamPolicyTransition(bundleIdentifier: bundleIdentifier)
+        guard let nextTransitionAt else { return }
+
+        let key = bundleIdentifier.lowercased()
+        let now = CFAbsoluteTimeGetCurrent()
+        let remainingSeconds = nextTransitionAt - now
+
+        if remainingSeconds <= 0 {
+            Task { @MainActor [weak self] in
+                await self?.recomputeAppSessionBitrateBudget(
+                    bundleIdentifier: key,
+                    reason: "demotion grace expired"
+                )
+            }
+            return
+        }
+
+        let delayMilliseconds = max(1, Int((remainingSeconds * 1_000).rounded(.up)))
+        appStreamPolicyTransitionTasksByBundleID[key] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(delayMilliseconds))
+            } catch {
+                return
+            }
+            guard let self else { return }
+            self.appStreamPolicyTransitionTasksByBundleID.removeValue(forKey: key)
+            await self.recomputeAppSessionBitrateBudget(
+                bundleIdentifier: key,
+                reason: "demotion grace expired"
+            )
+        }
+    }
+
+    private func resolvedActiveTargetFPS(for streamIDs: [StreamID]) async -> Int {
+        for streamID in streamIDs {
+            guard let context = streamsByID[streamID] else { continue }
+            let streamFPS = await context.getTargetFrameRate()
+            if streamFPS >= AppStreamRuntimeOrchestrator.highRefreshActiveTargetFPS {
+                return AppStreamRuntimeOrchestrator.highRefreshActiveTargetFPS
+            }
+        }
+        return AppStreamRuntimeOrchestrator.defaultActiveTargetFPS
     }
 }
 

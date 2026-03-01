@@ -133,11 +133,17 @@ actor StreamController {
     /// Timeout for resize confirmation
     static let resizeTimeout: Duration = .seconds(2)
 
-    /// Interval for retrying keyframe requests while decoder is unhealthy
-    static let keyframeRecoveryInterval: Duration = .seconds(1)
+    /// Initial keyframe retry interval while decoder is unhealthy.
+    static let keyframeRecoveryInitialInterval: Duration = .milliseconds(250)
+    /// Secondary keyframe retry interval while decoder is unhealthy.
+    static let keyframeRecoverySecondaryInterval: Duration = .milliseconds(500)
+    /// Steady-state keyframe retry interval while decoder is unhealthy.
+    static let keyframeRecoverySteadyInterval: Duration = .seconds(1)
+    /// Maximum keyframe retries before escalating to a single hard reset.
+    static let activeRecoveryMaxKeyframeAttempts = 3
     /// Grace period to let promotion continue with forward P-frames before forcing recovery.
     static let tierPromotionProbeDelay: Duration = .milliseconds(250)
-    /// Minimum spacing for repeated keyframe retries once keyframe-only mode is active.
+    /// Global keyframe retry limiter (max 2 requests/sec).
     static let keyframeRecoveryRetryInterval: CFAbsoluteTime = 0.5
     /// Escalate decode-threshold recovery to a full reset only after repeated failures.
     static let decodeRecoveryEscalationWindow: CFAbsoluteTime = 8.0
@@ -157,6 +163,12 @@ actor StreamController {
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
     static let firstPresentedFrameWaitLogInterval: CFAbsoluteTime = 0.5
+    /// Grace period before issuing bootstrap recovery while startup has no presentation progress.
+    static let firstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 0.75
+    /// Treat startup as packet-starved when no recent packets arrive inside this window.
+    static let firstPresentedFramePacketStallThreshold: CFAbsoluteTime = 0.35
+    /// Cooldown between bootstrap recovery probes while awaiting the first presented frame.
+    static let firstPresentedFrameRecoveryCooldown: CFAbsoluteTime = 1.0
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
@@ -184,6 +196,7 @@ actor StreamController {
 
     /// Task that periodically requests keyframes during decoder recovery
     var keyframeRecoveryTask: Task<Void, Never>?
+    var keyframeRecoveryAttempt: Int = 0
     /// One-shot probe that verifies decode/presentation progress after passive->active promotion.
     var tierPromotionProbeTask: Task<Void, Never>?
     var lastRecoveryRequestTime: CFAbsoluteTime = 0
@@ -202,6 +215,8 @@ actor StreamController {
     var firstPresentedFrameWaitStartTime: CFAbsoluteTime = 0
     /// Last time a first-frame presentation wait progress log was emitted.
     var firstPresentedFrameLastWaitLogTime: CFAbsoluteTime = 0
+    /// Last time first-frame startup watchdog requested bootstrap recovery.
+    var firstPresentedFrameLastRecoveryRequestTime: CFAbsoluteTime = 0
     /// True while local client resize orchestration keeps decode paused pre-ack.
     var decodePausedForLocalResize = false
 
@@ -319,6 +334,7 @@ actor StreamController {
 
     /// Start the controller - sets up decoder and reassembler callbacks
     func start() async {
+        await GlobalDecodeBudgetController.shared.register(streamID: streamID, tier: presentationTier)
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
@@ -402,11 +418,13 @@ actor StreamController {
 
         // Start the frame processing task - single task processes all frames sequentially
         let capturedDecoder = decoder
+        let decodeBudgetController = GlobalDecodeBudgetController.shared
         frameProcessingTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
                 guard let frame = await dequeueFrame() else { break }
                 defer { frame.releaseBuffer() }
+                let lease = await decodeBudgetController.acquire(streamID: self.streamID)
                 do {
                     try await capturedDecoder.decodeFrame(
                         frame.data,
@@ -417,6 +435,7 @@ actor StreamController {
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Decode error: ")
                 }
+                await decodeBudgetController.release(lease)
             }
         }
 
@@ -574,9 +593,12 @@ actor StreamController {
         resizeDebounceTask = nil
         keyframeRecoveryTask?.cancel()
         keyframeRecoveryTask = nil
+        keyframeRecoveryAttempt = 0
+        lastRecoveryRequestTime = 0
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
         MirageFrameCache.shared.clear(for: streamID)
+        await GlobalDecodeBudgetController.shared.unregister(streamID: streamID)
     }
 
     private func startMetricsReporting() {
@@ -628,6 +650,18 @@ actor StreamController {
     }
 
     func evaluateDecodeSubmissionLimit(decodedFPS: Double) async {
+        if presentationTier == .passiveSnapshot {
+            decodeSubmissionStressStreak = 0
+            decodeSubmissionHealthyStreak = 0
+            decodeSubmissionBaselineLimit = 1
+            decodeSchedulerTargetFPS = max(1, decodeSchedulerTargetFPS)
+            if currentDecodeSubmissionLimit != 1 {
+                currentDecodeSubmissionLimit = 1
+                await decoder.setDecodeSubmissionLimit(limit: 1, reason: "passive tier fixed submission")
+            }
+            return
+        }
+
         let targetFPS = max(1, decodeSchedulerTargetFPS)
         let ratio = decodedFPS / Double(targetFPS)
         let stressLimit = min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit + 1)

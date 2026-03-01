@@ -234,6 +234,10 @@ actor StreamContext {
     var recoveryRequestCount: Int = 0
     var softRecoveryCount: UInt64 = 0
     var hardRecoveryCount: UInt64 = 0
+    let captureStarvationRestartThreshold: CFAbsoluteTime = 0.75
+    let captureStarvationRestartCooldown: CFAbsoluteTime = 1.0
+    let captureStarvationRestartDebounce: CFAbsoluteTime = 0.08
+    var lastCaptureStarvationRestartTime: CFAbsoluteTime = 0
 
     /// Loss-mode deadline for adaptive redundancy and pacing.
     /// When active, keyframes and P-frames include FEC parity fragments.

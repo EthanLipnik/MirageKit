@@ -69,7 +69,7 @@ final class MirageRenderDriver: NSObject {
     }
 
     func updateTargetFPS(_ fps: Int) {
-        let normalized = fps >= 120 ? 120 : 60
+        let normalized = max(1, min(120, fps))
         lock.lock()
         targetFPS = normalized
         let thread = self.thread

@@ -475,6 +475,11 @@ public extension MirageHostService {
         }
 
         await updateLightsOutState()
+        inputController.beginTrafficLightProtection(
+            windowID: session.window.id,
+            app: session.window.application,
+            usesVirtualDisplay: isStreamUsingVirtualDisplay(windowID: session.window.id)
+        )
         MirageInstrumentation.record(.hostStreamWindowStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
 
         return session
@@ -577,8 +582,8 @@ public extension MirageHostService {
             state.bounds,
             targetAspectRatio: state.targetContentAspectRatio
         )
-        let originTolerance: CGFloat = 24
-        let sizeTolerance: CGFloat = 24
+        let originTolerance: CGFloat = 8
+        let sizeTolerance: CGFloat = 8
         let originMatches = abs(currentFrame.minX - expectedFrame.minX) <= originTolerance &&
             abs(currentFrame.minY - expectedFrame.minY) <= originTolerance
         let sizeMatches = abs(currentFrame.width - expectedFrame.width) <= sizeTolerance &&
@@ -587,7 +592,9 @@ public extension MirageHostService {
             return nil
         }
 
-        let intersectsExpected = currentFrame.intersects(expectedFrame.insetBy(dx: -24, dy: -24))
+        let intersectsExpected = currentFrame.intersects(
+            expectedFrame.insetBy(dx: -originTolerance, dy: -originTolerance)
+        )
         let minimumExpectedWidth = max(1, expectedFrame.width - sizeTolerance)
         let minimumExpectedHeight = max(1, expectedFrame.height - sizeTolerance)
         let maximumExpectedWidth = expectedFrame.width + sizeTolerance
@@ -601,7 +608,8 @@ public extension MirageHostService {
         }
 
         if currentSpaceMembership.contains(expectedSpaceID) {
-            let localExpected = CGRect(origin: .zero, size: expectedFrame.size).insetBy(dx: -24, dy: -24)
+            let localExpected = CGRect(origin: .zero, size: expectedFrame.size)
+                .insetBy(dx: -originTolerance, dy: -originTolerance)
             if currentFrame.intersects(localExpected), sizeWithinExpectedRange {
                 return nil
             }
@@ -632,7 +640,7 @@ public extension MirageHostService {
         guard force || driftReason != nil else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
-        let cooldown: CFAbsoluteTime = 0.75
+        let cooldown: CFAbsoluteTime = 0.20
         if !force,
            let lastAppliedAt = lastWindowPlacementRepairAtByWindowID[windowID],
            now - lastAppliedAt < cooldown {
@@ -875,6 +883,7 @@ public extension MirageHostService {
         stopWindowVisibleFrameMonitor(streamID: session.id)
 
         await context.stop()
+        inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)
         unregisterTypingBurstRoute(streamID: session.id)
         removeActiveStreamSession(streamID: session.id)

@@ -279,4 +279,16 @@ public extension MirageClientService {
         guard let controller = controllersByStream[streamID] else { return }
         await controller.updatePresentationTier(tier)
     }
+
+    func applyHostStreamPolicies(_ policies: [MirageStreamPolicy], epoch: UInt64) async {
+        for policy in policies {
+            guard let controller = controllersByStream[policy.streamID] else { continue }
+            await controller.applyHostRuntimePolicy(policy)
+        }
+        let policyText = policies.map { policy in
+            let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"
+            return "\(policy.streamID)=\(policy.tier.rawValue):\(policy.targetFPS)fps@\(bitrate)"
+        }.joined(separator: ", ")
+        MirageLogger.client("Applied host stream policy update epoch=\(epoch): [\(policyText)]")
+    }
 }

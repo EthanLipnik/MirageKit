@@ -232,6 +232,61 @@ extension StreamContext {
         }
     }
 
+    nonisolated static func shouldScheduleCaptureRestartForRecovery(
+        now: CFAbsoluteTime,
+        lastCapturedFrameTime: CFAbsoluteTime,
+        lastRestartTime: CFAbsoluteTime,
+        stallThreshold: CFAbsoluteTime,
+        cooldown: CFAbsoluteTime
+    )
+    -> Bool {
+        let safeCooldown = max(0, cooldown)
+        if lastRestartTime > 0, now - lastRestartTime < safeCooldown {
+            return false
+        }
+
+        guard lastCapturedFrameTime > 0 else {
+            return true
+        }
+
+        let safeThreshold = max(0, stallThreshold)
+        let captureGap = max(0, now - lastCapturedFrameTime)
+        return captureGap >= safeThreshold
+    }
+
+    private func scheduleCaptureRestartForKeyframeRecoveryIfNeeded(
+        now: CFAbsoluteTime,
+        reason: String
+    )
+        async {
+        guard let captureEngine else { return }
+        guard Self.shouldScheduleCaptureRestartForRecovery(
+            now: now,
+            lastCapturedFrameTime: lastCapturedFrameTime,
+            lastRestartTime: lastCaptureStarvationRestartTime,
+            stallThreshold: captureStarvationRestartThreshold,
+            cooldown: captureStarvationRestartCooldown
+        ) else {
+            return
+        }
+
+        lastCaptureStarvationRestartTime = now
+        let thresholdMs = Int((captureStarvationRestartThreshold * 1000).rounded())
+        let captureGapMs: String = if lastCapturedFrameTime > 0 {
+            String(Int((max(0, now - lastCapturedFrameTime) * 1000).rounded()))
+        } else {
+            "none"
+        }
+
+        await captureEngine.scheduleCaptureRestart(
+            reason: "keyframe_recovery_capture_starved reason=\(reason) captureGapMs=\(captureGapMs) thresholdMs=\(thresholdMs)",
+            debounce: captureStarvationRestartDebounce
+        )
+        MirageLogger.stream(
+            "Capture restart requested for keyframe recovery (\(reason), captureGapMs=\(captureGapMs), thresholdMs=\(thresholdMs))"
+        )
+    }
+
     /// Request a keyframe from the encoder.
     func requestKeyframe() async {
         let now = CFAbsoluteTimeGetCurrent()
@@ -260,6 +315,7 @@ extension StreamContext {
             softRecoveryCount += 1
             noteLossEvent(reason: reason, enablePFrameFEC: true)
         }
+        await scheduleCaptureRestartForKeyframeRecoveryIfNeeded(now: now, reason: reason)
         markKeyframeRequestIssued()
         scheduleProcessingIfNeeded()
         MirageLogger

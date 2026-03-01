@@ -11,6 +11,50 @@ import Foundation
 
 // MARK: - App-Centric Streaming Messages
 
+public enum MirageStreamRuntimeTier: String, Codable, Sendable {
+    case activeLive
+    case passiveSnapshot
+}
+
+public enum MirageStreamRecoveryProfile: String, Codable, Sendable {
+    case activeAggressive
+    case passiveBounded
+}
+
+public struct MirageStreamPolicy: Codable, Sendable, Equatable {
+    public let streamID: StreamID
+    public let tier: MirageStreamRuntimeTier
+    public let targetFPS: Int
+    public let targetBitrateBps: Int?
+    public let recoveryProfile: MirageStreamRecoveryProfile
+
+    package init(
+        streamID: StreamID,
+        tier: MirageStreamRuntimeTier,
+        targetFPS: Int,
+        targetBitrateBps: Int?,
+        recoveryProfile: MirageStreamRecoveryProfile
+    ) {
+        self.streamID = streamID
+        self.tier = tier
+        self.targetFPS = max(1, min(120, targetFPS))
+        self.targetBitrateBps = targetBitrateBps
+        self.recoveryProfile = recoveryProfile
+    }
+}
+
+public struct StreamPolicyUpdateMessage: Codable, Sendable, Equatable {
+    public let epoch: UInt64
+    public let policies: [MirageStreamPolicy]
+
+    package init(epoch: UInt64, policies: [MirageStreamPolicy]) {
+        self.epoch = epoch
+        self.policies = policies.sorted { lhs, rhs in
+            lhs.streamID < rhs.streamID
+        }
+    }
+}
+
 /// Request for list of installed apps (Client → Host)
 package struct AppListRequestMessage: Codable {
     /// Whether to include app icons in the response

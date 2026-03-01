@@ -67,7 +67,11 @@ extension StreamController {
     }
 
     /// Request stream recovery (keyframe + reassembler reset)
-    func requestRecovery(reason: RecoveryReason = .manualRecovery) async {
+    func requestRecovery(
+        reason: RecoveryReason = .manualRecovery,
+        restartRecoveryLoop: Bool = true
+    )
+    async {
         MirageLogger.client("Starting stream recovery (\(reason.logLabel)) for stream \(streamID)")
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
@@ -81,7 +85,11 @@ extension StreamController {
         await decoder.resetForNewSession()
         reassembler.reset()
         reassembler.enterKeyframeOnlyMode()
-        startKeyframeRecoveryLoopIfNeeded()
+        if restartRecoveryLoop, presentationTier == .activeLive {
+            startKeyframeRecoveryLoopIfNeeded()
+        } else {
+            stopKeyframeRecoveryLoop()
+        }
         await startFrameProcessingPipeline()
         await requestKeyframeRecovery(reason: reason)
     }

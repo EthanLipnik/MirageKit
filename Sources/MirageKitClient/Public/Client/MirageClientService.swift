@@ -410,7 +410,7 @@ public final class MirageClientService {
     // Track which streams have been registered with the host (prevents duplicate registrations)
     var registeredStreamIDs: Set<StreamID> = []
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
-    let keyframeRequestCooldown: CFAbsoluteTime = 0.25
+    let keyframeRequestCooldown: CFAbsoluteTime = 0.5
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []

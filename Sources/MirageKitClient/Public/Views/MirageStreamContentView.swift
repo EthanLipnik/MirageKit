@@ -20,6 +20,7 @@ public struct MirageStreamContentView: View {
     public let session: MirageStreamSessionState
     public let sessionStore: MirageClientSessionStore
     public let clientService: MirageClientService
+    public let showsHostTrafficLightMask: Bool
     public let isDesktopStream: Bool
     public let desktopStreamMode: MirageDesktopStreamMode
     public let onExitDesktopStream: (() -> Void)?
@@ -74,6 +75,7 @@ public struct MirageStreamContentView: View {
     ///   - session: Session metadata describing the stream.
     ///   - sessionStore: Session store that tracks frames, focus, and resize updates.
     ///   - clientService: The client service used to send input and resize events.
+    ///   - showsHostTrafficLightMask: Whether to render a top-left visual mask over host traffic lights.
     ///   - isDesktopStream: Whether the stream represents a desktop session.
     ///   - desktopStreamMode: Desktop stream mode (mirrored vs secondary display).
     ///   - onExitDesktopStream: Optional handler for the stream-exit shortcut.
@@ -96,6 +98,7 @@ public struct MirageStreamContentView: View {
         session: MirageStreamSessionState,
         sessionStore: MirageClientSessionStore,
         clientService: MirageClientService,
+        showsHostTrafficLightMask: Bool = true,
         isDesktopStream: Bool = false,
         desktopStreamMode: MirageDesktopStreamMode = .mirrored,
         onExitDesktopStream: (() -> Void)? = nil,
@@ -119,6 +122,7 @@ public struct MirageStreamContentView: View {
         self.session = session
         self.sessionStore = sessionStore
         self.clientService = clientService
+        self.showsHostTrafficLightMask = showsHostTrafficLightMask
         self.isDesktopStream = isDesktopStream
         self.desktopStreamMode = desktopStreamMode
         self.onExitDesktopStream = onExitDesktopStream
@@ -234,6 +238,11 @@ public struct MirageStreamContentView: View {
                     .allowsHitTesting(false)
             }
         }
+        .overlay(alignment: .topLeading) {
+            if shouldShowHostTrafficLightMask {
+                hostTrafficLightVisualMask
+            }
+        }
         .onChange(of: sessionStore.sessionMinSizes[session.id]) { _, minSize in
             Task { @MainActor in
                 await Task.yield()
@@ -334,6 +343,36 @@ public struct MirageStreamContentView: View {
         if awaitingPostResizeFirstFrame { return 24 }
         if isResizing { return 20 }
         return 0
+    }
+
+    private var shouldShowHostTrafficLightMask: Bool {
+        showsHostTrafficLightMask && !isDesktopStream && session.window.id != 0
+    }
+
+    private var hostTrafficLightVisualMask: some View {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+            .fill(.ultraThinMaterial)
+            .overlay {
+                LinearGradient(
+                    colors: [
+                        Color.white.opacity(0.30),
+                        Color.white.opacity(0.10),
+                        Color.clear,
+                    ],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.22), lineWidth: 0.8)
+            }
+            .frame(width: 132, height: 54)
+            .padding(.top, 10)
+            .padding(.leading, 10)
+            .shadow(color: .black.opacity(0.20), radius: 8, x: 0, y: 2)
+            .allowsHitTesting(false)
+            .accessibilityHidden(true)
     }
 
     private func sendInputEvent(_ event: MirageInputEvent) {
