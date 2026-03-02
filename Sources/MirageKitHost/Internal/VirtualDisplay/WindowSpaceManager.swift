@@ -13,6 +13,102 @@ import MirageKit
 import AppKit
 import ApplicationServices
 
+enum PlacementBoundsDecisionOutcome: String, Equatable, Sendable {
+    case adoptRecomputedGrowth = "adopt_recomputed_growth"
+    case adoptRecomputedShrink = "adopt_recomputed_shrink"
+    case useCachedMismatch = "use_cached_mismatch"
+}
+
+struct PlacementBoundsDecisionConfig: Equatable, Sendable {
+    var sizeTolerance: CGFloat = 12
+    var originTolerance: CGFloat = 24
+    var minimumSignificantDelta: CGFloat = 24
+    var maximumAcceptedShrinkRatio: CGFloat = 0.35
+    var maximumAcceptedAbsoluteShrink: CGFloat = 140
+}
+
+struct PlacementBoundsDecision: Equatable, Sendable {
+    let outcome: PlacementBoundsDecisionOutcome
+    let resolvedBounds: CGRect
+}
+
+func placementBoundsSelectionDecision(
+    cachedBounds: CGRect,
+    recomputedBounds: CGRect,
+    displayBounds: CGRect,
+    config: PlacementBoundsDecisionConfig = .init()
+)
+-> PlacementBoundsDecision {
+    let cached = cachedBounds.standardized
+    let recomputed = recomputedBounds.standardized
+    let display = displayBounds.standardized
+
+    guard cached.width > 0, cached.height > 0 else {
+        return PlacementBoundsDecision(outcome: .adoptRecomputedGrowth, resolvedBounds: recomputed)
+    }
+    guard recomputed.width > 0, recomputed.height > 0 else {
+        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
+    }
+
+    let originClose = abs(recomputed.minX - cached.minX) <= config.originTolerance &&
+        abs(recomputed.minY - cached.minY) <= config.originTolerance
+    let displayContainsRecomputed = display.insetBy(dx: -1, dy: -1).contains(recomputed)
+    guard originClose, displayContainsRecomputed else {
+        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
+    }
+
+    let widthDelta = recomputed.width - cached.width
+    let heightDelta = recomputed.height - cached.height
+    let widthDeltaAbsolute = abs(widthDelta)
+    let heightDeltaAbsolute = abs(heightDelta)
+    let maxAbsoluteDelta = max(widthDeltaAbsolute, heightDeltaAbsolute)
+    let minimumDimension = max(1, min(cached.width, cached.height))
+    let maxRelativeDelta = maxAbsoluteDelta / minimumDimension
+    let isSignificantDelta = maxAbsoluteDelta >= config.minimumSignificantDelta
+
+    enum AxisTrend {
+        case growth
+        case shrink
+        case stable
+    }
+
+    func trend(for delta: CGFloat, tolerance: CGFloat) -> AxisTrend {
+        if delta > tolerance { return .growth }
+        if delta < -tolerance { return .shrink }
+        return .stable
+    }
+
+    let widthTrend = trend(for: widthDelta, tolerance: config.sizeTolerance)
+    let heightTrend = trend(for: heightDelta, tolerance: config.sizeTolerance)
+    let hasGrowth = widthTrend == .growth || heightTrend == .growth
+    let hasShrink = widthTrend == .shrink || heightTrend == .shrink
+
+    // Mixed growth/shrink typically indicates cross-display drift in visible-frame reads.
+    if hasGrowth, hasShrink, isSignificantDelta {
+        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
+    }
+
+    let exceedsAbsoluteCap = maxAbsoluteDelta > config.maximumAcceptedAbsoluteShrink
+    let exceedsRatioCap = maxRelativeDelta > config.maximumAcceptedShrinkRatio
+    if isSignificantDelta, (exceedsAbsoluteCap || exceedsRatioCap) {
+        return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
+    }
+
+    if hasShrink {
+        return PlacementBoundsDecision(outcome: .adoptRecomputedShrink, resolvedBounds: recomputed)
+    }
+    if hasGrowth {
+        return PlacementBoundsDecision(outcome: .adoptRecomputedGrowth, resolvedBounds: recomputed)
+    }
+
+    let cachedArea = cached.width * cached.height
+    let recomputedArea = recomputed.width * recomputed.height
+    let outcome: PlacementBoundsDecisionOutcome = recomputedArea >= cachedArea
+        ? .adoptRecomputedGrowth
+        : .adoptRecomputedShrink
+    return PlacementBoundsDecision(outcome: outcome, resolvedBounds: recomputed)
+}
+
 /// Manages window movement between displays/spaces for Mirage streams
 /// Handles moving windows to virtual displays and restoring them on stream end
 actor WindowSpaceManager {
@@ -80,6 +176,20 @@ actor WindowSpaceManager {
         case ownerMismatch(expectedStreamID: StreamID, actualStreamID: StreamID)
     }
 
+    enum StaleOwnerRecoveryDecision: Sendable, Equatable {
+        case noOwner
+        case activeOwnerConflict(streamID: StreamID)
+        case recover(streamID: StreamID)
+    }
+
+    enum StaleOwnerRecoveryResult: Sendable, Equatable {
+        case noSavedState
+        case noOwner
+        case activeOwnerConflict(streamID: StreamID)
+        case staleOwnerRestoreSuccess(streamID: StreamID)
+        case staleOwnerClearedAfterRestoreFailure(streamID: StreamID)
+    }
+
     nonisolated static func validateRestoreOwner(
         expectedOwner: WindowBindingOwner?,
         savedOwner: WindowBindingOwner?
@@ -98,6 +208,30 @@ actor WindowSpaceManager {
             )
         }
         return .allowed
+    }
+
+    nonisolated static func staleOwnerRecoveryDecision(
+        savedOwner: WindowBindingOwner?,
+        activeStreamIDs: Set<StreamID>
+    ) -> StaleOwnerRecoveryDecision {
+        guard let savedOwner else { return .noOwner }
+        if activeStreamIDs.contains(savedOwner.streamID) {
+            return .activeOwnerConflict(streamID: savedOwner.streamID)
+        }
+        return .recover(streamID: savedOwner.streamID)
+    }
+
+    nonisolated static func claimedWindowIDsForActiveOwners(
+        from savedStates: [WindowID: SavedWindowState],
+        activeStreamIDs: Set<StreamID>
+    ) -> Set<WindowID> {
+        Set(savedStates.compactMap { windowID, state in
+            guard let owner = state.owner,
+                  activeStreamIDs.contains(owner.streamID) else {
+                return nil
+            }
+            return windowID
+        })
     }
 
     // MARK: - State
@@ -264,44 +398,17 @@ actor WindowSpaceManager {
             return visibleBounds
         }
 
-        let sizeTolerance: CGFloat = 12
-        let widthClose = abs(visibleBounds.width - fallback.width) <= sizeTolerance
-        let heightClose = abs(visibleBounds.height - fallback.height) <= sizeTolerance
-        if widthClose, heightClose {
-            return visibleBounds
-        }
-
-        let originTolerance: CGFloat = 24
-        let originClose = abs(visibleBounds.minX - fallback.minX) <= originTolerance &&
-            abs(visibleBounds.minY - fallback.minY) <= originTolerance
-        let displayContainsVisible = displayBounds.insetBy(dx: -1, dy: -1).contains(visibleBounds)
-        let fallbackArea = max(1, fallback.width * fallback.height)
-        let visibleArea = max(1, visibleBounds.width * visibleBounds.height)
-        let areaGrowthRatio = (visibleArea / fallbackArea) - 1
-        let nonShrinkingCandidate = visibleBounds.width >= (fallback.width - sizeTolerance) &&
-            visibleBounds.height >= (fallback.height - sizeTolerance)
-
-        // Accept recomputed bounds when they look like a legitimate visible-frame expansion
-        // on the same display, rather than cross-display coordinate drift.
-        if originClose,
-           displayContainsVisible,
-           nonShrinkingCandidate,
-           areaGrowthRatio >= 0.08 {
-            MirageLogger.host(
-                "Adopting recomputed placement bounds for display \(displayID) after visible-frame growth: " +
-                    "cached=\(fallback), recomputed=\(visibleBounds), display=\(displayBounds)"
-            )
-            return visibleBounds
-        }
-
-        // Virtual-display NSScreen visible-frame reads can drift to unrelated display geometry
-        // during space transitions. Keep the calibrated per-stream bounds unless recomputed
-        // bounds closely match.
-        MirageLogger.host(
-            "Using cached placement bounds for display \(displayID) due visible-bounds mismatch: " +
-                "cached=\(fallback), recomputed=\(visibleBounds), display=\(displayBounds)"
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: fallback,
+            recomputedBounds: visibleBounds,
+            displayBounds: displayBounds
         )
-        return fallback
+        MirageLogger.host(
+            "event=placement_bounds_decision outcome=\(decision.outcome.rawValue) " +
+                "display=\(displayID) cached=\(fallback) recomputed=\(visibleBounds) " +
+                "resolved=\(decision.resolvedBounds) displayBounds=\(displayBounds)"
+        )
+        return decision.resolvedBounds
     }
 
     private func verifyWindowPlacement(
@@ -955,6 +1062,50 @@ actor WindowSpaceManager {
     /// Get the saved state for a window
     func getSavedState(for windowID: WindowID) -> SavedWindowState? {
         savedStates[windowID]
+    }
+
+    func getSavedOwner(for windowID: WindowID) -> WindowBindingOwner? {
+        savedStates[windowID]?.owner
+    }
+
+    func claimedWindowIDsForActiveOwners(activeStreamIDs: Set<StreamID>) -> Set<WindowID> {
+        Self.claimedWindowIDsForActiveOwners(
+            from: savedStates,
+            activeStreamIDs: activeStreamIDs
+        )
+    }
+
+    func attemptStaleOwnerRecovery(
+        for windowID: WindowID,
+        activeStreamIDs: Set<StreamID>
+    )
+    async -> StaleOwnerRecoveryResult {
+        guard let savedState = savedStates[windowID] else { return .noSavedState }
+
+        switch Self.staleOwnerRecoveryDecision(
+            savedOwner: savedState.owner,
+            activeStreamIDs: activeStreamIDs
+        ) {
+        case .noOwner:
+            return .noOwner
+        case let .activeOwnerConflict(streamID):
+            MirageLogger.host("active_owner_conflict window=\(windowID) ownerStreamID=\(streamID)")
+            return .activeOwnerConflict(streamID: streamID)
+        case let .recover(streamID):
+            do {
+                try await restoreWindow(windowID, expectedOwner: savedState.owner)
+                MirageLogger.host("stale_owner_restore_success window=\(windowID) ownerStreamID=\(streamID)")
+                return .staleOwnerRestoreSuccess(streamID: streamID)
+            } catch {
+                clearSavedState(for: windowID)
+                let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let renderedDetail = detail.isEmpty ? String(describing: error) : detail
+                MirageLogger.host(
+                    "stale_owner_cleared_after_restore_failure window=\(windowID) ownerStreamID=\(streamID) error=\(renderedDetail)"
+                )
+                return .staleOwnerClearedAfterRestoreFailure(streamID: streamID)
+            }
+        }
     }
 
     /// Get all windows with saved states

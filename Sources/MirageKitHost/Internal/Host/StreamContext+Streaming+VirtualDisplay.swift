@@ -54,7 +54,10 @@ extension StreamContext {
         captureFrameRate = currentFrameRate
 
         let application = applicationWrapper.application
+        isAppStream = true
         applicationProcessID = application.processID
+        trafficLightMaskGeometryCache = nil
+        lastTrafficLightMaskLogTime = 0
 
         onEncodedPacket = onEncodedFrame
         self.onContentBoundsChanged = onContentBoundsChanged
@@ -532,6 +535,27 @@ extension StreamContext {
             requestedPixels
         }
 
+        func aspectRelativeDelta(_ resolution: CGSize) -> CGFloat {
+            guard resolution.width > 0, resolution.height > 0, requestedPixels.width > 0, requestedPixels.height > 0 else {
+                return .greatestFiniteMagnitude
+            }
+            let requestedAspect = requestedPixels.width / requestedPixels.height
+            let observedAspect = resolution.width / resolution.height
+            guard requestedAspect > 0, observedAspect > 0 else { return .greatestFiniteMagnitude }
+            return abs(requestedAspect - observedAspect) / requestedAspect
+        }
+
+        func logDecision(_ rung: String, placement: VirtualDisplayPlacement) {
+            let requestedAspect = requestedPixels.width / requestedPixels.height
+            let visibleAspect = placement.visiblePixelResolution.width / placement.visiblePixelResolution.height
+            let aspectDelta = abs(requestedAspect - visibleAspect) / requestedAspect
+            let aspectDeltaPercent = Double(aspectDelta * 100.0)
+                .formatted(.number.precision(.fractionLength(3)))
+            MirageLogger.stream(
+                "Virtual display calibration decision stream \(streamID): rung=\(rung), requested=\(Int(requestedPixels.width))x\(Int(requestedPixels.height)), display=\(Int(placement.snapshot.resolution.width))x\(Int(placement.snapshot.resolution.height)), visible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), insets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height)), aspectDelta=\(aspectDeltaPercent)%"
+            )
+        }
+
         func applyDisplayResolution(_ resolution: CGSize) async throws -> SharedVirtualDisplayManager.DisplaySnapshot {
             if isUpdate {
                 return try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
@@ -578,25 +602,20 @@ extension StreamContext {
         }
 
         if hasDirectVisibleMatch(placement) {
+            logDecision("retina-direct", placement: placement)
             return placement
         }
         var canFallbackToInsetAdjustedPlacement = hasInsetAdjustedMatch(placement)
-        if canFallbackToInsetAdjustedPlacement, placement.snapshot.scaleFactor >= 1.5 {
-            MirageLogger.stream(
-                "Virtual display calibration keeping inset-adjusted Retina placement for stream \(streamID): visible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), requested=\(Int(requestedPixels.width))x\(Int(requestedPixels.height)), insets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height)), scale=\(placement.snapshot.scaleFactor)"
-            )
-            return placement
-        }
         if canFallbackToInsetAdjustedPlacement {
             MirageLogger.stream(
-                "Virtual display calibration found inset-adjusted match for stream \(streamID); attempting correction toward direct visible match"
+                "Virtual display calibration found inset-adjusted match for stream \(streamID); continuing corrections for exact/closest visible aspect match"
             )
         }
 
         let maxCorrectionAttempts = 3
         var correctionAttempts = 0
 
-        while correctionAttempts < maxCorrectionAttempts {
+        correctionLoop: while correctionAttempts < maxCorrectionAttempts {
             let correction = CGSize(
                 width: requestedPixels.width - placement.visiblePixelResolution.width,
                 height: requestedPixels.height - placement.visiblePixelResolution.height
@@ -626,18 +645,14 @@ extension StreamContext {
                         MirageLogger.stream(
                             "Virtual display correction attempt \(correctionAttempts) failed for stream \(streamID); using refreshed placement with direct visible match (error: \(renderedDetail))"
                         )
-                        return refreshedPlacement
-                    }
-                    if hasInsetAdjustedMatch(refreshedPlacement) {
-                        MirageLogger.stream(
-                            "Virtual display correction attempt \(correctionAttempts) failed for stream \(streamID); keeping refreshed inset-adjusted placement (error: \(renderedDetail))"
-                        )
+                        logDecision("retina-direct-refresh", placement: refreshedPlacement)
                         return refreshedPlacement
                     }
                     MirageLogger.stream(
-                        "Virtual display correction attempt \(correctionAttempts) failed for stream \(streamID); refreshed placement did not converge, keeping prior inset-adjusted placement (error: \(renderedDetail))"
+                        "Virtual display correction attempt \(correctionAttempts) failed for stream \(streamID); no direct match yet (error: \(renderedDetail))"
                     )
-                    return placement
+                    placement = refreshedPlacement
+                    break correctionLoop
                 }
                 let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 let renderedDetail = detail.isEmpty ? String(describing: error) : detail
@@ -653,6 +668,7 @@ extension StreamContext {
             )
 
             if hasDirectVisibleMatch(placement) {
+                logDecision("retina-correction-\(correctionAttempts)", placement: placement)
                 return placement
             }
             if hasInsetAdjustedMatch(placement) {
@@ -660,11 +676,89 @@ extension StreamContext {
             }
         }
 
-        if hasInsetAdjustedMatch(placement) {
-            MirageLogger.stream(
-                "Virtual display calibration accepted inset-adjusted visible size for stream \(streamID) after \(correctionAttempts) correction attempt(s): visible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), requested=\(Int(requestedPixels.width))x\(Int(requestedPixels.height)), insets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height))"
-            )
-            return placement
+        func closestAspectCandidates(from basePlacement: VirtualDisplayPlacement) -> [CGSize] {
+            let insets = [cachedInsets, basePlacement.insetsPixels]
+            let scaleSteps: [CGFloat] = [1.0, 0.96, 0.92, 0.88, 0.84, 0.80]
+            var seen = Set<String>()
+            var candidates: [CGSize] = []
+
+            for scale in scaleSteps {
+                let visibleTarget = sanitizePixelResolution(
+                    CGSize(
+                        width: requestedPixels.width * scale,
+                        height: requestedPixels.height * scale
+                    )
+                )
+                for inset in insets {
+                    let candidate = sanitizePixelResolution(
+                        CGSize(
+                            width: visibleTarget.width + inset.width,
+                            height: visibleTarget.height + inset.height
+                        )
+                    )
+                    let key = "\(Int(candidate.width))x\(Int(candidate.height))"
+                    if seen.insert(key).inserted {
+                        candidates.append(candidate)
+                    }
+                }
+            }
+            return candidates
+        }
+
+        func isCloserPlacement(_ lhs: VirtualDisplayPlacement, than rhs: VirtualDisplayPlacement) -> Bool {
+            let lhsDelta = aspectRelativeDelta(lhs.visiblePixelResolution)
+            let rhsDelta = aspectRelativeDelta(rhs.visiblePixelResolution)
+            if abs(lhsDelta - rhsDelta) > 0.0005 { return lhsDelta < rhsDelta }
+            let lhsArea = lhs.visiblePixelResolution.width * lhs.visiblePixelResolution.height
+            let rhsArea = rhs.visiblePixelResolution.width * rhs.visiblePixelResolution.height
+            return lhsArea > rhsArea
+        }
+
+        let fallbackDisplayCandidates = closestAspectCandidates(from: placement)
+        var bestClosestPlacement: VirtualDisplayPlacement?
+        for candidate in fallbackDisplayCandidates {
+            guard !isResolutionMatch(candidate, placement.snapshot.resolution, tolerance: 1.0) else { continue }
+            do {
+                let candidateSnapshot = try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
+                    for: streamID,
+                    newResolution: candidate,
+                    refreshRate: refreshRate
+                )
+                let candidatePlacement = await resolveVirtualDisplayPlacement(from: candidateSnapshot)
+                placement = candidatePlacement
+                await cacheObservedDedicatedInsets(for: candidatePlacement, colorSpace: colorSpace)
+                if hasDirectVisibleMatch(candidatePlacement) {
+                    logDecision("closest-aspect-direct", placement: candidatePlacement)
+                    return candidatePlacement
+                }
+                if let currentBestPlacement = bestClosestPlacement {
+                    if isCloserPlacement(candidatePlacement, than: currentBestPlacement) {
+                        bestClosestPlacement = candidatePlacement
+                    }
+                } else {
+                    bestClosestPlacement = candidatePlacement
+                }
+            } catch {
+                continue
+            }
+        }
+
+        if let bestClosestPlacement,
+           aspectRelativeDelta(bestClosestPlacement.visiblePixelResolution) <= 0.01 {
+            if !isResolutionMatch(bestClosestPlacement.snapshot.resolution, placement.snapshot.resolution, tolerance: 1.0) {
+                let reappliedSnapshot = try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
+                    for: streamID,
+                    newResolution: bestClosestPlacement.snapshot.resolution,
+                    refreshRate: refreshRate
+                )
+                let reappliedPlacement = await resolveVirtualDisplayPlacement(from: reappliedSnapshot)
+                placement = reappliedPlacement
+                await cacheObservedDedicatedInsets(for: reappliedPlacement, colorSpace: colorSpace)
+                logDecision("closest-aspect-reapply", placement: reappliedPlacement)
+                return reappliedPlacement
+            }
+            logDecision("closest-aspect", placement: bestClosestPlacement)
+            return bestClosestPlacement
         }
 
         throw MirageError.protocolError(

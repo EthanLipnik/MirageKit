@@ -540,6 +540,8 @@ extension MirageHostService {
             )
         )
         await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: newGeneration)
+        activateWindow(targetWindow)
+        await enforceVirtualDisplayPlacementAfterActivation(windowID: targetWindowID, force: true)
 
         let processID = targetWindow.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(windowID: targetWindowID, processID: processID)
@@ -616,10 +618,14 @@ extension MirageHostService {
         }
 
         let visibleWindowIDs = Set(session.windowStreams.keys)
+        let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+            activeStreamIDs: Set(activeSessionByStreamID.keys)
+        )
+        let claimedWindowIDs = visibleWindowIDs.union(activeOwnerClaimedWindowIDs)
         let primaryCandidates = catalog
             .filter { $0.classification == .primary }
             .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
-        guard let selectedCandidate = primaryCandidates.first(where: { !visibleWindowIDs.contains($0.window.id) }) else {
+        guard let selectedCandidate = primaryCandidates.first(where: { !claimedWindowIDs.contains($0.window.id) }) else {
             return .failure("No additional \(app.name) windows are available to stream.")
         }
 
@@ -845,10 +851,14 @@ extension MirageHostService {
                     windowLayer: window.windowLayer
                 )
             }
+            let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+                activeStreamIDs: Set(activeSessionByStreamID.keys)
+            )
+            let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
             bindingPlan = AppWindowBindingPlanner.plan(
                 candidates: primaryCandidates,
                 liveWindows: liveWindows,
-                claimedWindowIDs: Set(activeStreamIDByWindowID.keys)
+                claimedWindowIDs: claimedWindowIDs
             )
         } catch {
             let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)

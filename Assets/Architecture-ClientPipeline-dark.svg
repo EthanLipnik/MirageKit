@@ -1,0 +1,92 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 2020 300" width="100%" height="100%">
+  <defs>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="120%">
+      <feDropShadow dx="0" dy="4" stdDeviation="12" flood-color="#000000" flood-opacity="0.04"/>
+    </filter>
+    <marker id="arrowhead" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <polygon points="0 0, 10 5, 0 10" class="arrow" />
+    </marker>
+  </defs>
+  <style>
+    .bg { fill: transparent; }
+    .box { fill: #1c1c1e; stroke: #333336; stroke-width: 1.5; }
+    .box-shadow { filter: url(#shadow); }
+    .box-inner { fill: #2c2c2e; stroke: #333336; stroke-width: 1.5; }
+    .text { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif; font-size: 14px; fill: #f5f5f7; }
+    .text-bold { font-weight: 600; }
+    .title { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Segoe UI", sans-serif; font-size: 18px; font-weight: 600; fill: #f5f5f7; }
+    .line { stroke: #424245; stroke-width: 2.5; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+    .arrow { fill: #424245; }
+    .icon-bg { fill: rgba(10, 132, 255, 0.15); }
+    .icon { fill: none; stroke: #0a84ff; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  </style>
+
+  <rect width="100%" height="100%" class="bg" />
+
+  <!-- Group 1 -->
+  <rect x="40" y="40" width="520" height="220" rx="20" class="box box-shadow" />
+  <text x="300" y="80" class="title" text-anchor="middle">Network Ingest</text>
+  
+  <g transform="translate(60, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <circle cx="32" cy="32" r="10" class="icon" />
+    <path d="M 22 42 c 6 6 14 6 20 0" class="icon" />
+    <text x="64" y="37" class="text text-bold">Video UDP Packets</text>
+  </g>
+  <g transform="translate(320, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 26 26 h 12 M 26 32 h 12 M 26 38 h 12" class="icon" />
+    <text x="64" y="37" class="text text-bold">Header &amp; Decrypt</text>
+  </g>
+
+  <!-- Group 2 -->
+  <rect x="600" y="40" width="780" height="220" rx="20" class="box box-shadow" />
+  <text x="990" y="80" class="title" text-anchor="middle">Decode Pipeline</text>
+
+  <g transform="translate(620, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 22 32 h 20 M 22 26 v 12 M 42 26 v 12 M 32 26 v 12" class="icon" />
+    <text x="64" y="37" class="text text-bold">FrameReassembler</text>
+  </g>
+  <g transform="translate(880, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 22 26 h 20 M 22 32 h 20 M 22 38 h 20 M 28 22 v 20" class="icon" />
+    <text x="64" y="37" class="text text-bold">StreamController</text>
+  </g>
+  <g transform="translate(1140, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 24 24 h 16 v 16 h -16 z M 28 24 v 16 M 36 24 v 16" class="icon" />
+    <text x="64" y="37" class="text text-bold">HEVCDecoder</text>
+  </g>
+
+  <!-- Group 3 -->
+  <rect x="1420" y="40" width="520" height="220" rx="20" class="box box-shadow" />
+  <text x="1680" y="80" class="title" text-anchor="middle">Render Layer</text>
+
+  <g transform="translate(1440, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <rect x="22" y="24" width="20" height="16" rx="2" class="icon" />
+    <path d="M 26 24 v -4 h 12 v 4" class="icon" />
+    <text x="64" y="37" class="text text-bold">MirageFrameCache</text>
+  </g>
+  <g transform="translate(1700, 110)">
+    <rect width="220" height="64" rx="12" class="box-inner" />
+    <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
+    <path d="M 20 26 h 24 v 14 h -24 z M 28 40 v 4 M 36 40 v 4 M 24 44 h 16" class="icon" />
+    <text x="64" y="37" class="text text-bold">MirageMetalView</text>
+  </g>
+
+  <!-- Connections -->
+  <path d="M 280 142 L 312 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 540 142 L 612 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 840 142 L 872 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 1100 142 L 1132 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 1360 142 L 1432 142" class="line" marker-end="url(#arrowhead)" />
+  <path d="M 1660 142 L 1692 142" class="line" marker-end="url(#arrowhead)" />
+</svg>

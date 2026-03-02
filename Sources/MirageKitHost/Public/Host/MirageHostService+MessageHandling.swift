@@ -72,6 +72,9 @@ extension MirageHostService {
             .appWindowSwapRequest: { [weak self] message, client, connection in
                 await self?.handleAppWindowSwapRequest(message, from: client, connection: connection)
             },
+            .appWindowCloseAlertActionRequest: { [weak self] message, client, connection in
+                await self?.handleAppWindowCloseAlertActionRequest(message, from: client, connection: connection)
+            },
             .menuActionRequest: { [weak self] message, client, connection in
                 await self?.handleMenuActionRequest(message, from: client, connection: connection)
             },
@@ -284,9 +287,23 @@ extension MirageHostService {
 
     private func handleStopStreamMessage(_ message: ControlMessage) async {
         guard let request = try? message.decode(StopStreamMessage.self) else { return }
-        if let session = activeSessionByStreamID[request.streamID] {
-            await stopStream(session, minimizeWindow: request.minimizeWindow)
+        guard let session = activeSessionByStreamID[request.streamID] else { return }
+
+        let appSession = await appStreamManager.getSessionForWindow(session.window.id)
+        let shouldAttemptHostWindowClose = Self.clientWindowCloseHostWindowCloseDecision(
+            origin: request.origin,
+            closeHostWindowOnClientWindowClose: closeHostWindowOnClientWindowClose,
+            hasAppStreamSession: appSession != nil
+        ) == .attemptHostWindowClose
+
+        if shouldAttemptHostWindowClose, let appSession {
+            await handleHostWindowCloseAttemptForClientWindowClose(
+                session: session,
+                appSession: appSession
+            )
         }
+
+        await stopStream(session, minimizeWindow: request.minimizeWindow)
     }
 
     private func handleKeyframeRequestMessage(_ message: ControlMessage) async {
@@ -333,6 +350,35 @@ extension MirageHostService {
         }
         await disconnectClient(client)
         delegate?.hostService(self, didDisconnectClient: client)
+    }
+
+    private func handleAppWindowCloseAlertActionRequest(
+        _ message: ControlMessage,
+        from client: MirageConnectedClient,
+        connection: NWConnection
+    ) async {
+        do {
+            let request = try message.decode(AppWindowCloseAlertActionRequestMessage.self)
+            let result = await performAppWindowCloseAlertAction(
+                alertToken: request.alertToken,
+                actionID: request.actionID,
+                presentingStreamID: request.presentingStreamID,
+                clientID: client.id
+            )
+            if let response = try? ControlMessage(type: .appWindowCloseAlertActionResult, content: result) {
+                connection.send(content: response.serialize(), completion: .idempotent)
+            }
+        } catch {
+            let fallback = AppWindowCloseAlertActionResultMessage(
+                alertToken: "",
+                actionID: "",
+                success: false,
+                reason: error.localizedDescription
+            )
+            if let response = try? ControlMessage(type: .appWindowCloseAlertActionResult, content: fallback) {
+                connection.send(content: response.serialize(), completion: .idempotent)
+            }
+        }
     }
 }
 #endif

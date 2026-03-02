@@ -136,6 +136,96 @@ struct MultiWindowAppStreamingStabilizationTests {
         )
     }
 
+    @Test("Stale owner recovery decision selects reclaim for inactive owner stream")
+    func staleOwnerRecoveryDecisionSelectsReclaimForInactiveOwnerStream() {
+        let staleOwner = WindowSpaceManager.WindowBindingOwner(
+            streamID: 9,
+            windowID: 301,
+            displayID: 10,
+            generation: 4
+        )
+        let decision = WindowSpaceManager.staleOwnerRecoveryDecision(
+            savedOwner: staleOwner,
+            activeStreamIDs: [1, 2, 3]
+        )
+        #expect(decision == .recover(streamID: staleOwner.streamID))
+    }
+
+    @Test("Stale owner recovery decision rejects active owner conflict")
+    func staleOwnerRecoveryDecisionRejectsActiveOwnerConflict() {
+        let activeOwner = WindowSpaceManager.WindowBindingOwner(
+            streamID: 9,
+            windowID: 301,
+            displayID: 10,
+            generation: 4
+        )
+        let decision = WindowSpaceManager.staleOwnerRecoveryDecision(
+            savedOwner: activeOwner,
+            activeStreamIDs: [8, 9]
+        )
+        #expect(decision == .activeOwnerConflict(streamID: activeOwner.streamID))
+    }
+
+    @Test("Active owner claims are filtered from app-window remap candidates")
+    func activeOwnerClaimsAreFilteredFromAppWindowRemapCandidates() {
+        let activeClaimWindowID = WindowID(7001)
+        let inactiveClaimWindowID = WindowID(7002)
+        let activeOwner = WindowSpaceManager.WindowBindingOwner(
+            streamID: 44,
+            windowID: activeClaimWindowID,
+            displayID: 1,
+            generation: 2
+        )
+        let inactiveOwner = WindowSpaceManager.WindowBindingOwner(
+            streamID: 55,
+            windowID: inactiveClaimWindowID,
+            displayID: 1,
+            generation: 2
+        )
+        let savedStates: [WindowID: WindowSpaceManager.SavedWindowState] = [
+            activeClaimWindowID: WindowSpaceManager.SavedWindowState(
+                windowID: activeClaimWindowID,
+                originalFrame: .zero,
+                originalSpaceIDs: [],
+                trafficLightVisibilitySnapshot: nil,
+                owner: activeOwner,
+                savedAt: Date()
+            ),
+            inactiveClaimWindowID: WindowSpaceManager.SavedWindowState(
+                windowID: inactiveClaimWindowID,
+                originalFrame: .zero,
+                originalSpaceIDs: [],
+                trafficLightVisibilitySnapshot: nil,
+                owner: inactiveOwner,
+                savedAt: Date()
+            ),
+        ]
+        let activeClaims = WindowSpaceManager.claimedWindowIDsForActiveOwners(
+            from: savedStates,
+            activeStreamIDs: [activeOwner.streamID]
+        )
+        #expect(activeClaims == [activeClaimWindowID])
+
+        let candidate = makeCandidate(
+            windowID: 9004,
+            title: "Inspector",
+            origin: CGPoint(x: 240, y: 180)
+        )
+        let claimedLiveWindow = makeWindow(
+            id: activeClaimWindowID,
+            title: "Inspector",
+            origin: CGPoint(x: 240, y: 180)
+        )
+        let plan = AppWindowBindingPlanner.plan(
+            candidates: [candidate],
+            liveWindows: [claimedLiveWindow],
+            claimedWindowIDs: activeClaims
+        )
+
+        #expect(plan.resolvedBindings.isEmpty)
+        #expect(plan.unresolvedCandidates.map(\.window.id) == [candidate.window.id])
+    }
+
     @Test("Partial startup policy keeps session alive and failed windows retry")
     func partialStartupPolicyKeepsSessionAndRetriesFailures() async {
         #expect(MirageHostService.initialAppWindowStartupDecision(startedWindowCount: 1) == .continueStreaming)

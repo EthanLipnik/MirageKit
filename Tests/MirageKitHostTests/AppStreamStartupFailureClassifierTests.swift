@@ -64,5 +64,31 @@ struct AppStreamStartupFailureClassifierTests {
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
         #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
     }
+
+    @Test("Window already bound conflicts are non-retryable")
+    func windowAlreadyBoundConflictsAreNonRetryable() {
+        let error = WindowStreamStartError.windowAlreadyBound(
+            windowID: 404,
+            existingStreamID: 9
+        )
+
+        #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
+        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+    }
+
+    @Test("Owner conflict and mismatch details are non-retryable")
+    func ownerConflictAndMismatchDetailsAreNonRetryable() {
+        let ownerConflict = WindowStreamStartError.virtualDisplayStartFailed(
+            "Window 18769 already owned by stream 2; requested stream 3"
+        )
+        let ownerMismatch = WindowStreamStartError.virtualDisplayStartFailed(
+            "Window 18769 restore owner mismatch expected stream 3, actual stream 2"
+        )
+
+        #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(ownerConflict))
+        #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(ownerMismatch))
+        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(ownerConflict))
+        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(ownerMismatch))
+    }
 }
 #endif

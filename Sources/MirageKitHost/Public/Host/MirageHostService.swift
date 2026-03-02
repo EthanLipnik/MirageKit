@@ -40,6 +40,9 @@ public final class MirageHostService {
     /// Whether remote unlock is enabled (allows clients to unlock the Mac)
     public var remoteUnlockEnabled: Bool = true
 
+    /// Whether app-stream window close on the client should attempt to close the host window.
+    public var closeHostWindowOnClientWindowClose: Bool = false
+
     /// Host delegate for events
     public weak var delegate: MirageHostDelegate?
 
@@ -175,6 +178,17 @@ public final class MirageHostService {
         let clientScaleFactor: CGFloat
     }
 
+    struct WindowVisibleFrameDriftState: Sendable {
+        let candidateBounds: CGRect
+        let candidateVisiblePixelResolution: CGSize
+        let consecutiveSamples: Int
+    }
+
+    struct WindowPlacementRepairBackoffState: Sendable {
+        let failureCount: Int
+        let nextRetryAt: CFAbsoluteTime
+    }
+
     // Per-window dedicated virtual display state for app/window streams.
     var windowVirtualDisplayStateByWindowID: [WindowID: WindowVirtualDisplayState] = [:]
     // Per-stream queued resize targets for dedicated app/window displays.
@@ -185,8 +199,12 @@ public final class MirageHostService {
     var windowResizeRequestCounterByStreamID: [StreamID: UInt64] = [:]
     // Debounced visible-frame drift monitor tasks by stream.
     var windowVisibleFrameMonitorTasks: [StreamID: Task<Void, Never>] = [:]
+    // Per-stream drift-stability state for visible-frame monitor hysteresis.
+    var windowVisibleFrameDriftStateByStreamID: [StreamID: WindowVisibleFrameDriftState] = [:]
     // Cooldown tracking for authoritative placement repairs (window -> last repair time).
     var lastWindowPlacementRepairAtByWindowID: [WindowID: CFAbsoluteTime] = [:]
+    // Backoff tracking for non-forced maintenance placement repairs.
+    var windowPlacementRepairBackoffByWindowID: [WindowID: WindowPlacementRepairBackoffState] = [:]
     // Shared-display generation for desktop/login shared-consumer flows.
     var sharedVirtualDisplayGeneration: UInt64 = 0
     // Shared-display scale factor for desktop/login shared-consumer flows.
@@ -265,10 +283,29 @@ public final class MirageHostService {
         let deadline: Date
     }
 
+    struct PendingAppWindowCloseAlertAction: Sendable {
+        let id: String
+        let title: String
+        let isDestructive: Bool
+        let index: Int
+    }
+
+    struct PendingAppWindowCloseAlertToken: Sendable {
+        let token: String
+        let clientID: UUID
+        let bundleIdentifier: String
+        let sourceWindowID: WindowID
+        let sourceApp: MirageApplication?
+        let presentingStreamID: StreamID
+        let actions: [PendingAppWindowCloseAlertAction]
+    }
+
     /// Pending 5s replacement cooldown entries keyed by stream ID.
     var pendingAppWindowReplacementsByStreamID: [StreamID: PendingAppWindowReplacement] = [:]
     /// Cooldown expiry tasks keyed by stream ID.
     var pendingAppWindowReplacementTasksByStreamID: [StreamID: Task<Void, Never>] = [:]
+    /// Pending actionable close-blocked host alerts keyed by token.
+    var pendingAppWindowCloseAlertTokensByToken: [String: PendingAppWindowCloseAlertToken] = [:]
     /// Scheduled policy-transition tasks keyed by app session bundle identifier.
     var appStreamPolicyTransitionTasksByBundleID: [String: Task<Void, Never>] = [:]
     let appWindowReplacementCooldownDuration: Duration = .seconds(5)

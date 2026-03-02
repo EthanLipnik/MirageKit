@@ -85,6 +85,7 @@ public extension MirageHostService {
     func stop() async {
         sessionRefreshTask?.cancel()
         sessionRefreshTask = nil
+        clearAllPendingAppWindowCloseAlertTokens()
         stopLoginDisplayWatchdog()
         loginDisplayRetryTimer?.cancel()
         loginDisplayRetryTimer = nil
@@ -102,6 +103,8 @@ public extension MirageHostService {
             await stopStream(stream)
         }
         windowVirtualDisplayStateByWindowID.removeAll()
+        windowVisibleFrameDriftStateByStreamID.removeAll()
+        windowPlacementRepairBackoffByWindowID.removeAll()
 
         // Disconnect all clients
         for client in connectedClients {

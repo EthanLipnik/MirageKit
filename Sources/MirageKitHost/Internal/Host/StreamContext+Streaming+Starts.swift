@@ -31,6 +31,10 @@ extension StreamContext {
         let window = windowWrapper.window
         let application = applicationWrapper.application
         let display = displayWrapper.display
+        isAppStream = true
+        applicationProcessID = application.processID
+        trafficLightMaskGeometryCache = nil
+        lastTrafficLightMaskLogTime = 0
 
         onEncodedPacket = onEncodedFrame
         let packetSender = StreamPacketSender(
@@ -187,6 +191,10 @@ extension StreamContext {
         captureFrameRate = currentFrameRate
 
         let display = displayWrapper.display
+        isAppStream = false
+        applicationProcessID = 0
+        trafficLightMaskGeometryCache = nil
+        lastTrafficLightMaskLogTime = 0
 
         onEncodedPacket = onEncodedFrame
         let packetSender = StreamPacketSender(
@@ -342,6 +350,10 @@ extension StreamContext {
         captureFrameRate = currentFrameRate
 
         let display = displayWrapper.display
+        isAppStream = false
+        applicationProcessID = 0
+        trafficLightMaskGeometryCache = nil
+        lastTrafficLightMaskLogTime = 0
 
         onEncodedPacket = onEncodedFrame
         let packetSender = StreamPacketSender(

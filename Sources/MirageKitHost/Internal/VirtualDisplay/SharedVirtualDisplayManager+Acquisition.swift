@@ -72,11 +72,19 @@ extension SharedVirtualDisplayManager {
 
             MirageLogger
                 .host(
-                    "Dedicated display in-place update failed for stream \(streamID); failing fast to avoid recreate thrash"
+                    "Dedicated display in-place update failed for stream \(streamID); attempting one-shot recreate fallback"
                 )
-            throw SharedDisplayError.creationFailed(
-                "Dedicated display update failed for stream \(streamID) (\(Int(resolution.width))x\(Int(resolution.height)) @ \(targetRefreshRate)Hz)"
+            let recreated = try await recreateDisplay(
+                from: existing,
+                newResolution: resolution,
+                refreshRate: targetRefreshRate,
+                colorSpace: colorSpace,
+                displayNameOverride: displayName,
+                allowAspectMismatchRetinaCandidate: false,
+                preferFastRecreate: true
             )
+            dedicatedDisplaysByStreamID[streamID] = recreated
+            return snapshot(from: recreated)
         }
 
         let created = try await createDisplay(
@@ -122,11 +130,19 @@ extension SharedVirtualDisplayManager {
 
         MirageLogger
             .host(
-                "Dedicated display resize update failed for stream \(streamID); failing fast to avoid recreate thrash"
+                "Dedicated display resize update failed for stream \(streamID); attempting one-shot recreate fallback"
             )
-        throw SharedDisplayError.creationFailed(
-            "Dedicated display resize failed for stream \(streamID) (\(Int(newResolution.width))x\(Int(newResolution.height)) @ \(targetRefreshRate)Hz)"
+        let recreated = try await recreateDisplay(
+            from: existing,
+            newResolution: newResolution,
+            refreshRate: targetRefreshRate,
+            colorSpace: existing.colorSpace,
+            displayNameOverride: dedicatedDisplayName(for: streamID),
+            allowAspectMismatchRetinaCandidate: false,
+            preferFastRecreate: true
         )
+        dedicatedDisplaysByStreamID[streamID] = recreated
+        return snapshot(from: recreated)
     }
 
     func releaseDedicatedDisplay(for streamID: StreamID) async {

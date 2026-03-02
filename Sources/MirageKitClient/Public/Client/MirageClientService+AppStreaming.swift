@@ -128,4 +128,20 @@ public extension MirageClientService {
         connection.send(content: message.serialize(), completion: .idempotent)
     }
 
+    /// Request execution of an actionable host close-blocking alert button.
+    func requestAppWindowCloseAlertAction(
+        alertToken: String,
+        actionID: String,
+        presentingStreamID: StreamID
+    ) async throws {
+        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        let request = AppWindowCloseAlertActionRequestMessage(
+            alertToken: alertToken,
+            actionID: actionID,
+            presentingStreamID: presentingStreamID
+        )
+        let message = try ControlMessage(type: .appWindowCloseAlertActionRequest, content: request)
+        connection.send(content: message.serialize(), completion: .idempotent)
+    }
+
 }

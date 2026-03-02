@@ -18,6 +18,32 @@ enum WindowStreamStartError: Error {
     case windowAlreadyBound(windowID: WindowID, existingStreamID: StreamID)
 }
 
+struct WindowPlacementRepairBackoffStep: Equatable {
+    let failureCount: Int
+    let retryDelaySeconds: CFAbsoluteTime?
+}
+
+func windowPlacementRepairBackoffStep(
+    currentFailureCount: Int,
+    didSucceed: Bool
+)
+-> WindowPlacementRepairBackoffStep {
+    if didSucceed {
+        return WindowPlacementRepairBackoffStep(
+            failureCount: 0,
+            retryDelaySeconds: nil
+        )
+    }
+
+    let nextFailureCount = max(0, currentFailureCount) + 1
+    let retryScheduleSeconds: [CFAbsoluteTime] = [0.5, 1.0, 2.0, 4.0]
+    let retryIndex = min(nextFailureCount - 1, retryScheduleSeconds.count - 1)
+    return WindowPlacementRepairBackoffStep(
+        failureCount: nextFailureCount,
+        retryDelaySeconds: retryScheduleSeconds[retryIndex]
+    )
+}
+
 extension WindowStreamStartError: LocalizedError {
     var errorDescription: String? {
         switch self {
@@ -227,208 +253,265 @@ public extension MirageHostService {
             }
         }
 
-        do {
-            let resolvedClientScaleFactor: CGFloat? = if let clientScaleFactor, clientScaleFactor > 0 {
-                max(1.0, clientScaleFactor)
-            } else {
-                nil
-            }
-            let virtualDisplayResolution = virtualDisplayPixelResolution(
-                for: clientDisplayResolution,
-                client: client,
-                scaleFactorOverride: resolvedClientScaleFactor
-            )
-            await unmirrorPhysicalDisplaysForWindowStreamingIfNeeded()
-            MirageLogger
-                .host(
-                    "Starting stream with virtual display at " +
-                        "\(Int(clientDisplayResolution.width))x\(Int(clientDisplayResolution.height)) pts " +
-                        "(\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px)"
-                )
+        let resolvedClientScaleFactor: CGFloat? = if let clientScaleFactor, clientScaleFactor > 0 {
+            max(1.0, clientScaleFactor)
+        } else {
+            nil
+        }
+        let virtualDisplayResolution = virtualDisplayPixelResolution(
+            for: clientDisplayResolution,
+            client: client,
+            scaleFactorOverride: resolvedClientScaleFactor
+        )
+        var hasAttemptedStaleOwnerRecovery = false
 
+        virtualDisplayStartupLoop: while true {
             do {
-                try await context.startWithVirtualDisplay(
-                    windowWrapper: windowWrapper,
-                    applicationWrapper: applicationWrapper,
-                    clientDisplayResolution: virtualDisplayResolution,
-                    onEncodedFrame: onEncodedFrame,
-                    onContentBoundsChanged: { [weak self] bounds in
-                        guard let self else { return }
-                        dispatchControlWork(clientID: client.id) { [weak self] in
+                await unmirrorPhysicalDisplaysForWindowStreamingIfNeeded()
+                MirageLogger
+                    .host(
+                        "Starting stream with virtual display at " +
+                            "\(Int(clientDisplayResolution.width))x\(Int(clientDisplayResolution.height)) pts " +
+                            "(\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px)"
+                    )
+
+                do {
+                    try await context.startWithVirtualDisplay(
+                        windowWrapper: windowWrapper,
+                        applicationWrapper: applicationWrapper,
+                        clientDisplayResolution: virtualDisplayResolution,
+                        onEncodedFrame: onEncodedFrame,
+                        onContentBoundsChanged: { [weak self] bounds in
                             guard let self else { return }
-                            await sendContentBoundsUpdate(streamID: streamID, bounds: bounds, to: client)
-                        }
-                    },
-                    onNewWindowDetected: { [weak self] newWindow in
-                        guard let self else { return }
-                        dispatchControlWork(clientID: client.id) { [weak self] in
+                            dispatchControlWork(clientID: client.id) { [weak self] in
+                                guard let self else { return }
+                                await sendContentBoundsUpdate(streamID: streamID, bounds: bounds, to: client)
+                            }
+                        },
+                        onNewWindowDetected: { [weak self] newWindow in
                             guard let self else { return }
-                            await handleNewIndependentWindow(
-                                newWindow,
-                                originalStreamID: streamID,
-                                client: client
+                            dispatchControlWork(clientID: client.id) { [weak self] in
+                                guard let self else { return }
+                                await handleNewIndependentWindow(
+                                    newWindow,
+                                    originalStreamID: streamID,
+                                    client: client
+                                )
+                            }
+                        },
+                        onVirtualDisplayReady: { [weak self] snapshot, bounds in
+                            guard let self else { return }
+                            let resolvedClientScale = resolvedClientScaleFactor ?? max(1.0, snapshot.scaleFactor)
+                            let effectiveBounds = aspectFittedWindowBounds(
+                                bounds,
+                                targetAspectRatio: requestedAspectRatioForWindowFit(
+                                    requestedPixelResolution: virtualDisplayResolution,
+                                    visiblePixelResolution: CGSize(
+                                        width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
+                                        height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
+                                    ),
+                                    displayPixelResolution: snapshot.resolution
+                                )
                             )
-                        }
-                    },
-                    onVirtualDisplayReady: { [weak self] snapshot, bounds in
-                        guard let self else { return }
-                        let resolvedClientScale = resolvedClientScaleFactor ?? max(1.0, snapshot.scaleFactor)
-                        let effectiveBounds = aspectFittedWindowBounds(
-                            bounds,
-                            targetAspectRatio: requestedAspectRatioForWindowFit(
+                            let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+                                for: snapshot.resolution,
+                                scaleFactor: max(1.0, snapshot.scaleFactor)
+                            )
+                            let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                                snapshot.displayID,
+                                knownResolution: logicalResolution
+                            )
+                            let captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
+                                snapshot.displayID,
+                                knownBounds: displayBounds
+                            )
+                            let visiblePixelResolution = CGSize(
+                                width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
+                                height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
+                            )
+                            let targetContentAspectRatio = requestedAspectRatioForWindowFit(
                                 requestedPixelResolution: virtualDisplayResolution,
-                                visiblePixelResolution: CGSize(
-                                    width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
-                                    height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
-                                ),
+                                visiblePixelResolution: visiblePixelResolution,
                                 displayPixelResolution: snapshot.resolution
                             )
-                        )
-                        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
-                            for: snapshot.resolution,
-                            scaleFactor: max(1.0, snapshot.scaleFactor)
-                        )
-                        let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
-                            snapshot.displayID,
-                            knownResolution: logicalResolution
-                        )
-                        let captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
-                            snapshot.displayID,
-                            knownBounds: displayBounds
-                        )
-                        let visiblePixelResolution = CGSize(
-                            width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
-                            height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
-                        )
-                        let targetContentAspectRatio = requestedAspectRatioForWindowFit(
-                            requestedPixelResolution: virtualDisplayResolution,
-                            visiblePixelResolution: visiblePixelResolution,
-                            displayPixelResolution: snapshot.resolution
-                        )
-                        let state = WindowVirtualDisplayState(
-                            streamID: streamID,
-                            displayID: snapshot.displayID,
-                            generation: snapshot.generation,
-                            bounds: effectiveBounds,
-                            targetContentAspectRatio: targetContentAspectRatio,
-                            captureSourceRect: captureSourceRect,
-                            visiblePixelResolution: visiblePixelResolution,
-                            scaleFactor: max(1.0, snapshot.scaleFactor),
-                            pixelResolution: snapshot.resolution,
-                            clientScaleFactor: resolvedClientScale
-                        )
-                        await MainActor.run {
-                            self.setVirtualDisplayState(windowID: updatedWindow.id, state: state)
-                            MirageLogger.host(
-                                "Cached dedicated virtual display for window \(updatedWindow.id): display=\(snapshot.displayID), bounds=\(bounds)"
+                            let state = WindowVirtualDisplayState(
+                                streamID: streamID,
+                                displayID: snapshot.displayID,
+                                generation: snapshot.generation,
+                                bounds: effectiveBounds,
+                                targetContentAspectRatio: targetContentAspectRatio,
+                                captureSourceRect: captureSourceRect,
+                                visiblePixelResolution: visiblePixelResolution,
+                                scaleFactor: max(1.0, snapshot.scaleFactor),
+                                pixelResolution: snapshot.resolution,
+                                clientScaleFactor: resolvedClientScale
                             )
+                            await MainActor.run {
+                                self.setVirtualDisplayState(windowID: updatedWindow.id, state: state)
+                                MirageLogger.host(
+                                    "Cached dedicated virtual display for window \(updatedWindow.id): display=\(snapshot.displayID), bounds=\(bounds)"
+                                )
+                            }
                         }
-                    }
-                )
-            } catch {
-                guard allowDirectCaptureFallback,
-                      shouldFallbackToDirectWindowCapture(error) else { throw error }
-                MirageLogger.host(
-                    "Dedicated virtual display startup failed for stream \(streamID) window \(updatedWindow.id); falling back to direct window capture: \(error.localizedDescription)"
-                )
-                await context.stop()
-                clearVirtualDisplayState(windowID: updatedWindow.id)
-                try await context.start(
-                    windowWrapper: windowWrapper,
-                    applicationWrapper: applicationWrapper,
-                    displayWrapper: displayWrapper,
-                    onEncodedFrame: onEncodedFrame
-                )
-                MirageLogger.host(
-                    "Started stream \(streamID) with direct window-capture fallback for window \(updatedWindow.id)"
-                )
-            }
-
-            if let bounds = getVirtualDisplayBounds(windowID: updatedWindow.id) {
-                inputStreamCacheActor.updateWindowFrame(streamID, newFrame: bounds)
-                MirageLogger.host("Updated input cache with new frame after virtual display move: \(bounds)")
-            } else if let newFrame = currentWindowFrame(for: updatedWindow.id) {
-                inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame)
-                MirageLogger.host("Updated input cache with new frame after virtual display move: \(newFrame)")
-            }
-
-            let resolvedStreamFrame = getVirtualDisplayBounds(windowID: updatedWindow.id)
-                ?? currentWindowFrame(for: updatedWindow.id)
-                ?? updatedWindow.frame
-            let resolvedWindow = MirageWindow(
-                id: updatedWindow.id,
-                title: updatedWindow.title,
-                application: updatedWindow.application,
-                frame: resolvedStreamFrame,
-                isOnScreen: updatedWindow.isOnScreen,
-                windowLayer: updatedWindow.windowLayer
-            )
-            session = MirageStreamSession(
-                id: streamID,
-                window: resolvedWindow,
-                client: client
-            )
-            registerActiveStreamSession(session)
-            inputStreamCacheActor.updateWindowFrame(streamID, newFrame: resolvedWindow.frame)
-            await refreshWindowVirtualDisplayState(
-                streamID: streamID,
-                context: context,
-                clientScaleFactorOverride: resolvedClientScaleFactor
-            )
-            ensureWindowVisibleFrameMonitor(streamID: streamID)
-        } catch let virtualDisplayError {
-            let detail = virtualDisplayError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-            let renderedDetail = detail.isEmpty ? String(describing: virtualDisplayError) : detail
-
-            if allowDirectCaptureFallback, shouldFallbackToDirectWindowCapture(virtualDisplayError) {
-                MirageLogger.host(
-                    "Virtual-display stream start failed for stream \(streamID) window \(updatedWindow.id); retrying with direct window capture: \(renderedDetail)"
-                )
-                await context.stop()
-                clearVirtualDisplayState(windowID: updatedWindow.id)
-                do {
+                    )
+                } catch {
+                    guard allowDirectCaptureFallback,
+                          shouldFallbackToDirectWindowCapture(error) else { throw error }
+                    MirageLogger.host(
+                        "Dedicated virtual display startup failed for stream \(streamID) window \(updatedWindow.id); falling back to direct window capture: \(error.localizedDescription)"
+                    )
+                    await context.stop()
+                    clearVirtualDisplayState(windowID: updatedWindow.id)
                     try await context.start(
                         windowWrapper: windowWrapper,
                         applicationWrapper: applicationWrapper,
                         displayWrapper: displayWrapper,
                         onEncodedFrame: onEncodedFrame
                     )
-                    if let newFrame = currentWindowFrame(for: updatedWindow.id) {
-                        inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame)
-                    }
                     MirageLogger.host(
-                        "Recovered stream \(streamID) with direct window-capture fallback for window \(updatedWindow.id)"
+                        "Started stream \(streamID) with direct window-capture fallback for window \(updatedWindow.id)"
                     )
-                } catch {
-                    MirageLogger.error(
-                        .host,
-                        error: error,
-                        message: "Direct window-capture fallback failed after virtual-display startup error: "
+                }
+
+                if let bounds = getVirtualDisplayBounds(windowID: updatedWindow.id) {
+                    inputStreamCacheActor.updateWindowFrame(streamID, newFrame: bounds)
+                    MirageLogger.host("Updated input cache with new frame after virtual display move: \(bounds)")
+                } else if let newFrame = currentWindowFrame(for: updatedWindow.id) {
+                    inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame)
+                    MirageLogger.host("Updated input cache with new frame after virtual display move: \(newFrame)")
+                }
+
+                let resolvedStreamFrame = getVirtualDisplayBounds(windowID: updatedWindow.id)
+                    ?? currentWindowFrame(for: updatedWindow.id)
+                    ?? updatedWindow.frame
+                let resolvedWindow = MirageWindow(
+                    id: updatedWindow.id,
+                    title: updatedWindow.title,
+                    application: updatedWindow.application,
+                    frame: resolvedStreamFrame,
+                    isOnScreen: updatedWindow.isOnScreen,
+                    windowLayer: updatedWindow.windowLayer
+                )
+                session = MirageStreamSession(
+                    id: streamID,
+                    window: resolvedWindow,
+                    client: client
+                )
+                registerActiveStreamSession(session)
+                inputStreamCacheActor.updateWindowFrame(streamID, newFrame: resolvedWindow.frame)
+                await refreshWindowVirtualDisplayState(
+                    streamID: streamID,
+                    context: context,
+                    clientScaleFactorOverride: resolvedClientScaleFactor
+                )
+                ensureWindowVisibleFrameMonitor(streamID: streamID)
+                break virtualDisplayStartupLoop
+            } catch let virtualDisplayError {
+                let activeOtherStreamIDs = Set(activeSessionByStreamID.keys).subtracting([streamID])
+                if isWindowOwnershipError(virtualDisplayError) {
+                    if let conflictingOwnerStreamID = conflictingOwnerStreamID(from: virtualDisplayError),
+                       activeOtherStreamIDs.contains(conflictingOwnerStreamID) {
+                        await cleanupFailedStreamStart(
+                            streamID: streamID,
+                            context: context,
+                            windowID: updatedWindow.id
+                        )
+                        throw WindowStreamStartError.windowAlreadyBound(
+                            windowID: updatedWindow.id,
+                            existingStreamID: conflictingOwnerStreamID
+                        )
+                    }
+
+                    if !hasAttemptedStaleOwnerRecovery {
+                        let recoveryResult = await WindowSpaceManager.shared.attemptStaleOwnerRecovery(
+                            for: updatedWindow.id,
+                            activeStreamIDs: activeOtherStreamIDs
+                        )
+                        switch recoveryResult {
+                        case let .activeOwnerConflict(ownerStreamID):
+                            await cleanupFailedStreamStart(
+                                streamID: streamID,
+                                context: context,
+                                windowID: updatedWindow.id
+                            )
+                            throw WindowStreamStartError.windowAlreadyBound(
+                                windowID: updatedWindow.id,
+                                existingStreamID: ownerStreamID
+                            )
+                        case .staleOwnerRestoreSuccess, .staleOwnerClearedAfterRestoreFailure:
+                            hasAttemptedStaleOwnerRecovery = true
+                            await context.stop()
+                            clearVirtualDisplayState(windowID: updatedWindow.id)
+                            continue virtualDisplayStartupLoop
+                        case .noSavedState, .noOwner:
+                            break
+                        }
+                    }
+                }
+
+                let detail = virtualDisplayError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let renderedDetail = detail.isEmpty ? String(describing: virtualDisplayError) : detail
+                let allowOwnerFallbackAfterRecovery = hasAttemptedStaleOwnerRecovery &&
+                    isWindowOwnershipError(virtualDisplayError) &&
+                    {
+                        guard let conflictingOwnerStreamID = conflictingOwnerStreamID(from: virtualDisplayError) else {
+                            return false
+                        }
+                        return !activeOtherStreamIDs.contains(conflictingOwnerStreamID)
+                    }()
+
+                if allowDirectCaptureFallback,
+                   shouldFallbackToDirectWindowCapture(virtualDisplayError) || allowOwnerFallbackAfterRecovery {
+                    MirageLogger.host(
+                        "Virtual-display stream start failed for stream \(streamID) window \(updatedWindow.id); retrying with direct window capture: \(renderedDetail)"
                     )
                     await context.stop()
                     clearVirtualDisplayState(windowID: updatedWindow.id)
-                    streamsByID.removeValue(forKey: streamID)
-                    removeActiveStreamSession(streamID: streamID)
-                    await deactivateAudioSourceIfNeeded(streamID: streamID)
-                    let fallbackDetail = error.localizedDescription
-                        .trimmingCharacters(in: .whitespacesAndNewlines)
-                    let renderedFallbackDetail = fallbackDetail.isEmpty ? String(describing: error) : fallbackDetail
-                    throw WindowStreamStartError.virtualDisplayStartFailed(
-                        "\(renderedDetail); direct fallback failed: \(renderedFallbackDetail)"
+                    do {
+                        try await context.start(
+                            windowWrapper: windowWrapper,
+                            applicationWrapper: applicationWrapper,
+                            displayWrapper: displayWrapper,
+                            onEncodedFrame: onEncodedFrame
+                        )
+                        if let newFrame = currentWindowFrame(for: updatedWindow.id) {
+                            inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame)
+                        }
+                        MirageLogger.host(
+                            "Recovered stream \(streamID) with direct window-capture fallback for window \(updatedWindow.id)"
+                        )
+                        break virtualDisplayStartupLoop
+                    } catch {
+                        MirageLogger.error(
+                            .host,
+                            error: error,
+                            message: "Direct window-capture fallback failed after virtual-display startup error: "
+                        )
+                        await cleanupFailedStreamStart(
+                            streamID: streamID,
+                            context: context,
+                            windowID: updatedWindow.id
+                        )
+                        let fallbackDetail = error.localizedDescription
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        let renderedFallbackDetail = fallbackDetail.isEmpty ? String(describing: error) : fallbackDetail
+                        throw WindowStreamStartError.virtualDisplayStartFailed(
+                            "\(renderedDetail); direct fallback failed: \(renderedFallbackDetail)"
+                        )
+                    }
+                } else {
+                    MirageLogger.error(
+                        .host,
+                        error: virtualDisplayError,
+                        message: "Virtual-display stream start failed: "
                     )
+                    await cleanupFailedStreamStart(
+                        streamID: streamID,
+                        context: context,
+                        windowID: updatedWindow.id
+                    )
+                    throw WindowStreamStartError.virtualDisplayStartFailed(renderedDetail)
                 }
-            } else {
-                MirageLogger.error(
-                    .host,
-                    error: virtualDisplayError,
-                    message: "Virtual-display stream start failed: "
-                )
-                await context.stop()
-                clearVirtualDisplayState(windowID: updatedWindow.id)
-                streamsByID.removeValue(forKey: streamID)
-                removeActiveStreamSession(streamID: streamID)
-                await deactivateAudioSourceIfNeeded(streamID: streamID)
-                throw WindowStreamStartError.virtualDisplayStartFailed(renderedDetail)
             }
         }
 
@@ -522,8 +605,13 @@ public extension MirageHostService {
     }
 
     private func shouldFallbackToDirectWindowCapture(_ error: Error) -> Bool {
-        if error is WindowStreamStartError {
-            return true
+        if let windowStartError = error as? WindowStreamStartError {
+            switch windowStartError {
+            case .virtualDisplayStartFailed:
+                return true
+            case .windowAlreadyBound:
+                return false
+            }
         }
         if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
             switch windowSpaceError {
@@ -564,6 +652,78 @@ public extension MirageHostService {
             return true
         }
         return false
+    }
+
+    private func cleanupFailedStreamStart(
+        streamID: StreamID,
+        context: StreamContext,
+        windowID: WindowID
+    )
+    async {
+        await context.stop()
+        clearVirtualDisplayState(windowID: windowID)
+        streamsByID.removeValue(forKey: streamID)
+        removeActiveStreamSession(streamID: streamID)
+        await deactivateAudioSourceIfNeeded(streamID: streamID)
+    }
+
+    private func isWindowOwnershipError(_ error: Error) -> Bool {
+        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+            switch windowSpaceError {
+            case .ownerConflict, .ownerMismatch:
+                return true
+            case .windowNotFound, .noOriginalState, .moveFailed:
+                return false
+            }
+        }
+
+        let normalizedDescription = error.localizedDescription.lowercased()
+        return normalizedDescription.contains("already owned by stream") ||
+            normalizedDescription.contains("restore owner mismatch") ||
+            normalizedDescription.contains("owner conflict") ||
+            normalizedDescription.contains("owner mismatch")
+    }
+
+    private func conflictingOwnerStreamID(from error: Error) -> StreamID? {
+        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+            switch windowSpaceError {
+            case let .ownerConflict(_, existingStreamID, _):
+                return existingStreamID
+            case let .ownerMismatch(_, _, actualStreamID):
+                return actualStreamID == 0 ? nil : actualStreamID
+            case .windowNotFound, .noOriginalState, .moveFailed:
+                return nil
+            }
+        }
+
+        let normalizedDescription = error.localizedDescription.lowercased()
+        if let owner = parseOwnerStreamID(
+            in: normalizedDescription,
+            marker: "already owned by stream "
+        ) {
+            return owner
+        }
+        if let owner = parseOwnerStreamID(
+            in: normalizedDescription,
+            marker: "actual stream "
+        ) {
+            return owner
+        }
+        return nil
+    }
+
+    private func parseOwnerStreamID(
+        in description: String,
+        marker: String
+    ) -> StreamID? {
+        guard let markerRange = description.range(of: marker) else { return nil }
+        let suffix = description[markerRange.upperBound...]
+        let digits = suffix.prefix { $0.isNumber }
+        guard !digits.isEmpty,
+              let value = UInt64(digits) else {
+            return nil
+        }
+        return StreamID(value)
     }
 
     private func virtualDisplayPlacementDriftReason(
@@ -640,6 +800,12 @@ public extension MirageHostService {
         guard force || driftReason != nil else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
+        if !force,
+           let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
+           now < backoffState.nextRetryAt {
+            return
+        }
+
         let cooldown: CFAbsoluteTime = 0.20
         if !force,
            let lastAppliedAt = lastWindowPlacementRepairAtByWindowID[windowID],
@@ -667,7 +833,36 @@ public extension MirageHostService {
             MirageLogger.host(
                 "Reasserted virtual-display placement for window \(windowID) on display \(state.displayID) (\(reasonText))"
             )
+            if let previousBackoff = windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID) {
+                let resetStep = windowPlacementRepairBackoffStep(
+                    currentFailureCount: previousBackoff.failureCount,
+                    didSucceed: true
+                )
+                MirageLogger.host(
+                    "event=placement_repair_backoff reset_on_success=true " +
+                        "previous_failure_count=\(previousBackoff.failureCount) " +
+                        "failure_count=\(resetStep.failureCount) window=\(windowID) stream=\(state.streamID)"
+                )
+            }
         } catch {
+            if !force {
+                let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
+                let nextStep = windowPlacementRepairBackoffStep(
+                    currentFailureCount: currentFailureCount,
+                    didSucceed: false
+                )
+                if let retryDelaySeconds = nextStep.retryDelaySeconds {
+                    windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
+                        failureCount: nextStep.failureCount,
+                        nextRetryAt: now + retryDelaySeconds
+                    )
+                    let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
+                    MirageLogger.host(
+                        "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
+                            "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(state.streamID)"
+                    )
+                }
+            }
             MirageLogger.error(
                 .host,
                 error: error,
@@ -842,12 +1037,14 @@ public extension MirageHostService {
            activeStreamIDByWindowID[removedSession.window.id] == streamID {
             activeStreamIDByWindowID.removeValue(forKey: removedSession.window.id)
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: removedSession.window.id)
+            windowPlacementRepairBackoffByWindowID.removeValue(forKey: removedSession.window.id)
         }
 
         if let mappedWindowID = activeWindowIDByStreamID.removeValue(forKey: streamID),
            activeStreamIDByWindowID[mappedWindowID] == streamID {
             activeStreamIDByWindowID.removeValue(forKey: mappedWindowID)
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: mappedWindowID)
+            windowPlacementRepairBackoffByWindowID.removeValue(forKey: mappedWindowID)
         }
     }
 

@@ -64,9 +64,13 @@ func windowResizeNoOpDecision(
 )
 -> WindowResizeNoOpDecision {
     guard requestedVisibleResolution.width > 0, requestedVisibleResolution.height > 0 else { return .noOp }
-    if let currentVisibleResolution,
-       virtualDisplayResolutionMatches(currentVisibleResolution, requestedVisibleResolution) {
-        return .noOp
+    // Prefer the calibrated visible pixel size for no-op decisions.
+    // Falling back to display pixels is only safe when visible pixels are unavailable.
+    if let currentVisibleResolution {
+        if virtualDisplayResolutionMatches(currentVisibleResolution, requestedVisibleResolution) {
+            return .noOp
+        }
+        return .apply
     }
     if let currentDisplayResolution,
        virtualDisplayResolutionMatches(currentDisplayResolution, requestedVisibleResolution) {
@@ -148,15 +152,6 @@ func requestedAspectRatioForWindowFit(
     if let displayPixelResolution,
        displayPixelResolution.width > 0,
        displayPixelResolution.height > 0 {
-        let displayWidthDelta = abs(displayPixelResolution.width - requestedPixelResolution.width)
-        let displayHeightDelta = abs(displayPixelResolution.height - requestedPixelResolution.height)
-        if displayWidthDelta <= 2, displayHeightDelta <= 2 {
-            // Inset-only visible-area reduction on an otherwise exact display request.
-            // Keep the app window filling the calibrated visible frame instead of forcing
-            // pillar/letterboxing to the requested display aspect.
-            return nil
-        }
-
         // Only apply aspect-fit when we intentionally accepted a near-by Retina
         // mode with matching pixel area but different aspect ratio.
         // If the display mode diverges in total area, prefer full visible-frame fill.
@@ -974,13 +969,28 @@ extension MirageHostService {
         guard windowVisibleFrameMonitorTasks[streamID] == nil else { return }
         windowVisibleFrameMonitorTasks[streamID] = Task { @MainActor [weak self] in
             guard let self else { return }
-            var lastPlacementRepairAt: CFAbsoluteTime = 0
             let driftTolerancePixels: CGFloat = 8
-            let cooldown: CFAbsoluteTime = 0.35
+            let driftSampleMatchTolerance: CGFloat = 8
+            let stableDriftSampleThreshold = 3
 
             while !Task.isCancelled {
                 guard let state = getVirtualDisplayState(streamID: streamID) else { break }
                 guard let windowID = activeWindowIDByStreamID[streamID] else { break }
+
+                if windowResizeInFlightStreamIDs.contains(streamID) {
+                    if windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID) != nil {
+                        MirageLogger.host(
+                            "event=visible_frame_drift_stability state=reset stream=\(streamID) reason=resize_in_flight"
+                        )
+                    }
+                    do {
+                        try await Task.sleep(for: .milliseconds(120))
+                    } catch {
+                        break
+                    }
+                    continue
+                }
+
                 let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
                     state.displayID,
                     knownResolution: SharedVirtualDisplayManager.logicalResolution(
@@ -1010,11 +1020,70 @@ extension MirageHostService {
                     driftTolerancePixels
                 let drifted = !(directVisibleMatch || displayPixelMatch)
                 if drifted {
-                    let now = CFAbsoluteTimeGetCurrent()
-                    if now - lastPlacementRepairAt >= cooldown {
-                        lastPlacementRepairAt = now
+                    let existingDriftState = windowVisibleFrameDriftStateByStreamID[streamID]
+                    let sameCandidateAsPrevious: Bool = if let existingDriftState {
+                        abs(existingDriftState.candidateBounds.minX - visibleBounds.minX) <= driftSampleMatchTolerance &&
+                            abs(existingDriftState.candidateBounds.minY - visibleBounds.minY) <=
+                            driftSampleMatchTolerance &&
+                            abs(existingDriftState.candidateBounds.width - visibleBounds.width) <=
+                            driftSampleMatchTolerance &&
+                            abs(existingDriftState.candidateBounds.height - visibleBounds.height) <=
+                            driftSampleMatchTolerance &&
+                            abs(
+                                existingDriftState.candidateVisiblePixelResolution.width - currentVisiblePixels.width
+                            ) <= driftSampleMatchTolerance &&
+                            abs(
+                                existingDriftState.candidateVisiblePixelResolution.height - currentVisiblePixels.height
+                            ) <= driftSampleMatchTolerance
+                    } else {
+                        false
+                    }
+                    let nextSampleCount = sameCandidateAsPrevious
+                        ? (existingDriftState?.consecutiveSamples ?? 0) + 1
+                        : 1
+                    windowVisibleFrameDriftStateByStreamID[streamID] = WindowVisibleFrameDriftState(
+                        candidateBounds: visibleBounds,
+                        candidateVisiblePixelResolution: currentVisiblePixels,
+                        consecutiveSamples: nextSampleCount
+                    )
+                    MirageLogger.host(
+                        "event=visible_frame_drift_stability state=candidate stream=\(streamID) " +
+                            "samples=\(nextSampleCount)/\(stableDriftSampleThreshold) " +
+                            "cached=\(Int(state.visiblePixelResolution.width))x\(Int(state.visiblePixelResolution.height)) " +
+                            "candidate=\(Int(currentVisiblePixels.width))x\(Int(currentVisiblePixels.height))"
+                    )
+                    if nextSampleCount >= stableDriftSampleThreshold {
+                        MirageLogger.host(
+                            "event=visible_frame_drift_stability state=stable stream=\(streamID) " +
+                                "samples=\(nextSampleCount)"
+                        )
+                        if let currentState = getVirtualDisplayState(windowID: windowID), currentState.streamID == streamID {
+                            let updatedBounds = aspectFittedWindowBounds(
+                                visibleBounds,
+                                targetAspectRatio: currentState.targetContentAspectRatio
+                            )
+                            let updatedState = WindowVirtualDisplayState(
+                                streamID: currentState.streamID,
+                                displayID: currentState.displayID,
+                                generation: currentState.generation,
+                                bounds: updatedBounds,
+                                targetContentAspectRatio: currentState.targetContentAspectRatio,
+                                captureSourceRect: currentState.captureSourceRect,
+                                visiblePixelResolution: currentVisiblePixels,
+                                scaleFactor: currentState.scaleFactor,
+                                pixelResolution: currentState.pixelResolution,
+                                clientScaleFactor: currentState.clientScaleFactor
+                            )
+                            setVirtualDisplayState(windowID: windowID, state: updatedState)
+                            inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedBounds)
+                        }
+                        windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID)
                         await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID, force: true)
                     }
+                } else if windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID) != nil {
+                    MirageLogger.host(
+                        "event=visible_frame_drift_stability state=reset stream=\(streamID) reason=drift_cleared"
+                    )
                 }
 
                 await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
@@ -1026,12 +1095,14 @@ extension MirageHostService {
                 }
             }
             windowVisibleFrameMonitorTasks.removeValue(forKey: streamID)
+            windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID)
         }
     }
 
     func stopWindowVisibleFrameMonitor(streamID: StreamID) {
         windowVisibleFrameMonitorTasks[streamID]?.cancel()
         windowVisibleFrameMonitorTasks.removeValue(forKey: streamID)
+        windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID)
     }
 
     /// Handle display resolution change from client

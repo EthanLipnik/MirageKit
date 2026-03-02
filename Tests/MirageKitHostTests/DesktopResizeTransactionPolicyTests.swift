@@ -130,15 +130,103 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision == .noOp)
     }
 
-    @Test("Window resize no-op skips when requested size matches calibrated display size")
-    func windowResizeNoOpSkipsDisplayMatch() {
+    @Test("Window resize no-op applies when display matches but visible differs")
+    func windowResizeNoOpAppliesWhenOnlyDisplayMatches() {
         let decision = windowResizeNoOpDecision(
             currentVisibleResolution: CGSize(width: 6016, height: 3324),
             currentDisplayResolution: CGSize(width: 6016, height: 3384),
             requestedVisibleResolution: CGSize(width: 6016, height: 3384)
         )
 
-        #expect(decision == .noOp)
+        #expect(decision == .apply)
+    }
+
+    @Test("Window resize no-op regression: inset-calibrated visible mismatch must apply")
+    func windowResizeNoOpRegressionInsetVisibleMismatch() {
+        let decision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 2450, height: 1548),
+            currentDisplayResolution: CGSize(width: 2450, height: 1608),
+            requestedVisibleResolution: CGSize(width: 2450, height: 1608)
+        )
+
+        #expect(decision == .apply)
+    }
+
+    @Test("Placement bounds decision accepts same-origin bounded shrink")
+    func placementBoundsDecisionAcceptsBoundedShrink() {
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: CGRect(x: 2056, y: 30, width: 1376, height: 925),
+            recomputedBounds: CGRect(x: 2056, y: 30, width: 1250, height: 845),
+            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
+        )
+
+        #expect(decision.outcome == .adoptRecomputedShrink)
+        #expect(decision.resolvedBounds == CGRect(x: 2056, y: 30, width: 1250, height: 845))
+    }
+
+    @Test("Placement bounds decision rejects shrink with origin mismatch")
+    func placementBoundsDecisionRejectsOriginMismatch() {
+        let cached = CGRect(x: 2056, y: 30, width: 1376, height: 925)
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: cached,
+            recomputedBounds: CGRect(x: 2100, y: 30, width: 1250, height: 845),
+            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
+        )
+
+        #expect(decision.outcome == .useCachedMismatch)
+        #expect(decision.resolvedBounds == cached)
+    }
+
+    @Test("Placement bounds decision rejects extreme shrink")
+    func placementBoundsDecisionRejectsExtremeShrink() {
+        let cached = CGRect(x: 2056, y: 30, width: 1376, height: 925)
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: cached,
+            recomputedBounds: CGRect(x: 2056, y: 30, width: 950, height: 700),
+            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
+        )
+
+        #expect(decision.outcome == .useCachedMismatch)
+        #expect(decision.resolvedBounds == cached)
+    }
+
+    @Test("Placement bounds decision keeps growth acceptance")
+    func placementBoundsDecisionAcceptsGrowth() {
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: CGRect(x: 2056, y: 30, width: 1137, height: 845),
+            recomputedBounds: CGRect(x: 2056, y: 30, width: 1200, height: 900),
+            displayBounds: CGRect(x: 2056, y: 0, width: 1376, height: 1032)
+        )
+
+        #expect(decision.outcome == .adoptRecomputedGrowth)
+        #expect(decision.resolvedBounds == CGRect(x: 2056, y: 30, width: 1200, height: 900))
+    }
+
+    @Test("Window placement repair backoff progression and reset")
+    func windowPlacementRepairBackoffProgressionAndReset() {
+        let step1 = windowPlacementRepairBackoffStep(currentFailureCount: 0, didSucceed: false)
+        #expect(step1.failureCount == 1)
+        #expect(abs((step1.retryDelaySeconds ?? 0) - 0.5) < 0.0001)
+
+        let step2 = windowPlacementRepairBackoffStep(currentFailureCount: step1.failureCount, didSucceed: false)
+        #expect(step2.failureCount == 2)
+        #expect(abs((step2.retryDelaySeconds ?? 0) - 1.0) < 0.0001)
+
+        let step3 = windowPlacementRepairBackoffStep(currentFailureCount: step2.failureCount, didSucceed: false)
+        #expect(step3.failureCount == 3)
+        #expect(abs((step3.retryDelaySeconds ?? 0) - 2.0) < 0.0001)
+
+        let step4 = windowPlacementRepairBackoffStep(currentFailureCount: step3.failureCount, didSucceed: false)
+        #expect(step4.failureCount == 4)
+        #expect(abs((step4.retryDelaySeconds ?? 0) - 4.0) < 0.0001)
+
+        let step5 = windowPlacementRepairBackoffStep(currentFailureCount: step4.failureCount, didSucceed: false)
+        #expect(step5.failureCount == 5)
+        #expect(abs((step5.retryDelaySeconds ?? 0) - 4.0) < 0.0001)
+
+        let reset = windowPlacementRepairBackoffStep(currentFailureCount: step5.failureCount, didSucceed: true)
+        #expect(reset.failureCount == 0)
+        #expect(reset.retryDelaySeconds == nil)
     }
 
     @Test("Display separation anchor prefers physical original main display")

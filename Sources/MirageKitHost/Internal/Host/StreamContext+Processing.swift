@@ -367,6 +367,7 @@ extension StreamContext {
 
             setContentRect(frame.info.contentRect)
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
+            applyTrafficLightCloneStampIfNeeded(frame: frame)
 
             do {
                 guard let encoder else { continue }
@@ -430,6 +431,108 @@ extension StreamContext {
         }
 
         if frameInbox.hasPending(), inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
+    }
+
+    func applyTrafficLightCloneStampIfNeeded(frame: CapturedFrame) {
+        guard isAppStream, windowID != 0 else { return }
+
+        let windowFramePoints = resolvedWindowFramePointsForTrafficLightMask(frame: frame)
+        guard windowFramePoints.width > 0, windowFramePoints.height > 0 else { return }
+        let contentRect = resolvedContentRectForTrafficLightMask(frame: frame)
+        guard contentRect.width > 0, contentRect.height > 0 else { return }
+
+        let geometry = resolveTrafficLightMaskGeometry(windowFramePoints: windowFramePoints)
+        let result = trafficLightCloneStampCompositor.apply(
+            to: frame.pixelBuffer,
+            contentRect: contentRect,
+            geometry: geometry
+        )
+        logTrafficLightCloneStampResultIfNeeded(result, geometry: geometry)
+    }
+
+    func resolvedWindowFramePointsForTrafficLightMask(frame: CapturedFrame) -> CGRect {
+        if !lastWindowFrame.isEmpty, lastWindowFrame.width > 0, lastWindowFrame.height > 0 {
+            return lastWindowFrame
+        }
+
+        let contentRect = frame.info.contentRect
+        guard contentRect.width > 0, contentRect.height > 0 else {
+            return .zero
+        }
+
+        return CGRect(
+            x: 0,
+            y: 0,
+            width: contentRect.width,
+            height: contentRect.height
+        )
+    }
+
+    func resolvedContentRectForTrafficLightMask(frame: CapturedFrame) -> CGRect {
+        if useVirtualDisplay {
+            return CGRect(
+                x: 0,
+                y: 0,
+                width: CVPixelBufferGetWidth(frame.pixelBuffer),
+                height: CVPixelBufferGetHeight(frame.pixelBuffer)
+            )
+        }
+
+        let contentRect = frame.info.contentRect
+        if contentRect.width > 0, contentRect.height > 0 {
+            return contentRect
+        }
+
+        return CGRect(
+            x: 0,
+            y: 0,
+            width: CVPixelBufferGetWidth(frame.pixelBuffer),
+            height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        )
+    }
+
+    func resolveTrafficLightMaskGeometry(windowFramePoints: CGRect) -> HostTrafficLightMaskGeometryResolver.ResolvedGeometry {
+        let now = CFAbsoluteTimeGetCurrent()
+        if let cache = trafficLightMaskGeometryCache,
+           HostTrafficLightMaskGeometryResolver.shouldUseCached(
+               cache,
+               now: now,
+               windowFramePoints: windowFramePoints,
+               ttl: trafficLightMaskGeometryCacheTTL,
+               frameTolerance: trafficLightMaskGeometryFrameTolerance
+           ) {
+            return cache.geometry
+        }
+
+        let geometry = HostTrafficLightMaskGeometryResolver.resolve(
+            windowID: windowID,
+            windowFramePoints: windowFramePoints,
+            appProcessID: applicationProcessID > 0 ? applicationProcessID : nil
+        )
+        trafficLightMaskGeometryCache = HostTrafficLightMaskGeometryResolver.CacheEntry(
+            geometry: geometry,
+            sampledAt: now,
+            sampledWindowFrame: windowFramePoints
+        )
+        return geometry
+    }
+
+    func logTrafficLightCloneStampResultIfNeeded(
+        _ result: HostTrafficLightCloneStampCompositor.ApplyResult,
+        geometry: HostTrafficLightMaskGeometryResolver.ResolvedGeometry
+    ) {
+        guard case let .skipped(reason) = result else { return }
+        guard reason != .hiddenTrafficLights else { return }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if now - lastTrafficLightMaskLogTime < trafficLightMaskLogInterval {
+            return
+        }
+        lastTrafficLightMaskLogTime = now
+        MirageLogger.debug(
+            .stream,
+            "Traffic-light clone-stamp skipped for stream \(streamID) window \(windowID): reason=\(reason.rawValue), source=\(geometry.source.rawValue)"
+        )
     }
 
     func logStreamStatsIfNeeded() async {

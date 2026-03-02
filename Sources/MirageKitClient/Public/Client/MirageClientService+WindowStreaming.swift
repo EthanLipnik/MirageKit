@@ -244,12 +244,22 @@ public extension MirageClientService {
     /// - Parameters:
     ///   - session: The stream session to stop.
     ///   - minimizeWindow: Whether to minimize the source window on the host (default: false).
-    func stopViewing(_ session: ClientStreamSession, minimizeWindow: Bool = false) async {
+    ///   - origin: Optional stop-request origin metadata.
+    func stopViewing(
+        _ session: ClientStreamSession,
+        minimizeWindow: Bool = false,
+        origin: MirageClientService.StreamStopOrigin? = nil
+    )
+    async {
         let streamID = session.id
 
         MirageFrameCache.shared.clear(for: streamID)
 
-        let request = StopStreamMessage(streamID: streamID, minimizeWindow: minimizeWindow)
+        let request = StopStreamMessage(
+            streamID: streamID,
+            minimizeWindow: minimizeWindow,
+            origin: origin?.controlMessageOrigin
+        )
         if let message = try? ControlMessage(type: .stopStream, content: request),
            let connection {
             connection.send(content: message.serialize(), completion: .idempotent)
@@ -290,5 +300,14 @@ public extension MirageClientService {
             return "\(policy.streamID)=\(policy.tier.rawValue):\(policy.targetFPS)fps@\(bitrate)"
         }.joined(separator: ", ")
         MirageLogger.client("Applied host stream policy update epoch=\(epoch): [\(policyText)]")
+    }
+}
+
+private extension MirageClientService.StreamStopOrigin {
+    var controlMessageOrigin: StopStreamMessage.Origin {
+        switch self {
+        case .clientWindowClosed:
+            .clientWindowClosed
+        }
     }
 }

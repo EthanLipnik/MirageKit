@@ -14,7 +14,17 @@ enum AppStreamStartupFailureClassifier {
     static func isRetryableWindowStartupError(_ error: Error) -> Bool {
         if isNonRetryableVirtualDisplayAllocationError(error) { return false }
 
-        if error is WindowStreamStartError { return true }
+        if let windowStartError = error as? WindowStreamStartError {
+            switch windowStartError {
+            case .windowAlreadyBound:
+                return false
+            case let .virtualDisplayStartFailed(details):
+                if isNonRetryableOwnerConflictDescription(details.lowercased()) {
+                    return false
+                }
+                return true
+            }
+        }
 
         if let mirageError = error as? MirageError {
             switch mirageError {
@@ -34,6 +44,9 @@ enum AppStreamStartupFailureClassifier {
         }
 
         let normalizedDescription = error.localizedDescription.lowercased()
+        if isNonRetryableOwnerConflictDescription(normalizedDescription) {
+            return false
+        }
         if normalizedDescription.contains("window not found") ||
             normalizedDescription.contains("disappeared before stream startup") ||
             normalizedDescription.contains("virtual-display stream start failed") ||
@@ -65,6 +78,13 @@ enum AppStreamStartupFailureClassifier {
             description.contains("virtual display failed activation") ||
             description.contains("spawnproxy message error") ||
             description.contains("pluginwithoptions")
+    }
+
+    private static func isNonRetryableOwnerConflictDescription(_ description: String) -> Bool {
+        description.contains("already owned by stream") ||
+            description.contains("restore owner mismatch") ||
+            description.contains("owner conflict") ||
+            description.contains("owner mismatch")
     }
 }
 #endif

@@ -99,16 +99,17 @@ struct MirageKitTests {
         }
     }
 
-    @Test("Reserved close-window control type is rejected")
-    func reservedCloseWindowControlTypeIsRejected() {
-        var data = Data([0x89])
+    @Test("Close-blocked app window alert control type is recognized")
+    func closeBlockedAppWindowAlertControlTypeIsRecognized() {
+        var data = Data([ControlMessageType.appWindowCloseBlockedAlert.rawValue])
         withUnsafeBytes(of: UInt32(0).littleEndian) { data.append(contentsOf: $0) }
 
         switch ControlMessage.deserialize(from: data) {
-        case .invalidFrame:
-            break
+        case let .success(message, consumed):
+            #expect(consumed == data.count)
+            #expect(message.type == .appWindowCloseBlockedAlert)
         default:
-            Issue.record("Expected invalidFrame for reserved close-window control type.")
+            Issue.record("Expected close-blocked alert control type to parse successfully.")
         }
     }
 
@@ -530,11 +531,91 @@ struct MirageKitTests {
         #expect(decoded.reason == "Dedicated display correction failed")
     }
 
-    @Test("App window inventory and swap message IDs are registered")
+    @Test("App window control message IDs are registered")
     func appWindowControlMessageTypeIDsRegistered() {
         #expect(ControlMessageType(rawValue: 0x87) == .appWindowInventory)
         #expect(ControlMessageType(rawValue: 0x88) == .appWindowSwapRequest)
+        #expect(ControlMessageType(rawValue: 0x89) == .appWindowCloseBlockedAlert)
+        #expect(ControlMessageType(rawValue: 0x8A) == .appWindowCloseAlertActionRequest)
+        #expect(ControlMessageType(rawValue: 0x8B) == .appWindowCloseAlertActionResult)
         #expect(ControlMessageType(rawValue: 0x8C) == .appWindowSwapResult)
+    }
+
+    @Test("App window close-blocked alert payload serialization")
+    func appWindowCloseBlockedAlertSerialization() throws {
+        let payload = AppWindowCloseBlockedAlertMessage(
+            bundleIdentifier: "com.apple.TextEdit",
+            sourceWindowID: 901,
+            presentingStreamID: 41,
+            alertToken: "token-123",
+            title: "Save changes?",
+            message: "Do you want to save the changes made to this document?",
+            actions: [
+                .init(id: "action-0", title: "Cancel"),
+                .init(id: "action-1", title: "Don't Save", isDestructive: true),
+                .init(id: "action-2", title: "Save")
+            ]
+        )
+
+        let envelope = try ControlMessage(type: .appWindowCloseBlockedAlert, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(AppWindowCloseBlockedAlertMessage.self)
+        #expect(decoded.bundleIdentifier == "com.apple.TextEdit")
+        #expect(decoded.sourceWindowID == 901)
+        #expect(decoded.presentingStreamID == 41)
+        #expect(decoded.alertToken == "token-123")
+        #expect(decoded.actions.count == 3)
+        #expect(decoded.actions[1].isDestructive)
+    }
+
+    @Test("App window close-alert action request payload serialization")
+    func appWindowCloseAlertActionRequestSerialization() throws {
+        let payload = AppWindowCloseAlertActionRequestMessage(
+            alertToken: "token-abc",
+            actionID: "action-2",
+            presentingStreamID: 73
+        )
+
+        let envelope = try ControlMessage(type: .appWindowCloseAlertActionRequest, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(AppWindowCloseAlertActionRequestMessage.self)
+        #expect(decoded.alertToken == "token-abc")
+        #expect(decoded.actionID == "action-2")
+        #expect(decoded.presentingStreamID == 73)
+    }
+
+    @Test("App window close-alert action result payload serialization")
+    func appWindowCloseAlertActionResultSerialization() throws {
+        let payload = AppWindowCloseAlertActionResultMessage(
+            alertToken: "token-result",
+            actionID: "action-1",
+            success: false,
+            reason: "Presenting stream mismatch"
+        )
+
+        let envelope = try ControlMessage(type: .appWindowCloseAlertActionResult, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(AppWindowCloseAlertActionResultMessage.self)
+        #expect(decoded.alertToken == "token-result")
+        #expect(decoded.actionID == "action-1")
+        #expect(decoded.success == false)
+        #expect(decoded.reason == "Presenting stream mismatch")
+    }
+
+    @Test("Stop stream origin serialization")
+    func stopStreamOriginSerialization() throws {
+        let payload = StopStreamMessage(
+            streamID: 55,
+            minimizeWindow: false,
+            origin: .clientWindowClosed
+        )
+
+        let envelope = try ControlMessage(type: .stopStream, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(StopStreamMessage.self)
+        #expect(decoded.streamID == 55)
+        #expect(decoded.minimizeWindow == false)
+        #expect(decoded.origin == .clientWindowClosed)
     }
 
     @Test("Start desktop request latency mode serialization")

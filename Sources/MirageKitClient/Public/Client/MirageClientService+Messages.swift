@@ -34,6 +34,8 @@ extension MirageClientService {
             .appList: { [weak self] in self?.handleAppList($0) },
             .appStreamStarted: { [weak self] in self?.handleAppStreamStarted($0) },
             .appWindowInventory: { [weak self] in self?.handleAppWindowInventory($0) },
+            .appWindowCloseBlockedAlert: { [weak self] in self?.handleAppWindowCloseBlockedAlert($0) },
+            .appWindowCloseAlertActionResult: { [weak self] in self?.handleAppWindowCloseAlertActionResult($0) },
             .windowAddedToStream: { [weak self] in self?.handleWindowAddedToStream($0) },
             .windowRemovedFromStream: { [weak self] in self?.handleWindowRemovedFromStream($0) },
             .appWindowSwapResult: { [weak self] in self?.handleAppWindowSwapResult($0) },

@@ -27,7 +27,8 @@ Package constraints from `Package.swift`:
 - Platforms: `macOS 14+`, `iOS 17.4+`, `visionOS 26+`
 - External deps: `swift-nio`, `swift-nio-ssh`
 
-![MirageKit Package Topology](Assets/Architecture-PackageTopology.svg)
+![MirageKit Package Topology](Assets/Architecture-PackageTopology.svg#gh-light-mode-only)
+![MirageKit Package Topology](Assets/Architecture-PackageTopology-dark.svg#gh-dark-mode-only)
 
 ## 2. High-Level Runtime Model
 
@@ -45,7 +46,8 @@ Session setup is explicit:
 4. Client registers stream/client channels over UDP using token.
 5. Host begins sending media packets once registration is accepted.
 
-![MirageKit Session Handshake](Assets/Architecture-Handshake.svg)
+![MirageKit Session Handshake](Assets/Architecture-Handshake.svg#gh-light-mode-only)
+![MirageKit Session Handshake](Assets/Architecture-Handshake-dark.svg#gh-dark-mode-only)
 
 ## 3. Shared Target (`Sources/MirageKit`) Architecture
 
@@ -247,7 +249,8 @@ Major responsibilities in `StreamContext`:
 - packet send coordination (`StreamPacketSender`)
 - optional encrypted payload wrapping
 
-![Host Stream Pipeline](Assets/Architecture-HostPipeline.svg)
+![Host Stream Pipeline](Assets/Architecture-HostPipeline.svg#gh-light-mode-only)
+![Host Stream Pipeline](Assets/Architecture-HostPipeline-dark.svg#gh-dark-mode-only)
 
 ### 4.5 Stream Families
 
@@ -409,7 +412,8 @@ Client runtime tiering is host-authoritative:
 
 `HEVCDecoder` manages VT session lifecycle, parameter sets, in-flight submission limits, and decode error threshold callbacks.
 
-![Client Video Pipeline](Assets/Architecture-ClientPipeline.svg)
+![Client Video Pipeline](Assets/Architecture-ClientPipeline.svg#gh-light-mode-only)
+![Client Video Pipeline](Assets/Architecture-ClientPipeline-dark.svg#gh-dark-mode-only)
 
 ### 5.6 Rendering Architecture
 
@@ -444,10 +448,20 @@ Client request surfaces:
 - window stream start/stop (`startViewing`, `stopViewing`)
 - desktop stream start/stop
 - app list/select/swap
+- app close-blocked alert action request/result round-trip
 - encoder setting changes
 - keyframe request / manual recovery
 
 Client tracks dimension-token changes per stream family to choose whether controller reset is required on `streamStarted`/`desktopStreamStarted`.
+
+App-stream close-on-client-close routing now includes an explicit control-flow branch:
+
+1. Client emits `stopStream` with `origin = clientWindowClosed` only for real window-close events.
+2. Host applies close-attempt gating (`origin` match, app-stream session present, host setting enabled).
+3. Host attempts AX close on the source window.
+4. If close is blocked by an alert/sheet and another stream remains for that client, host emits `appWindowCloseBlockedAlert` to the selected presenting stream.
+5. Client presents actionable UI, then sends `appWindowCloseAlertActionRequest`.
+6. Host validates token ownership, executes AX button press, and replies with `appWindowCloseAlertActionResult`.
 
 ### 5.9 Quality Test Architecture
 

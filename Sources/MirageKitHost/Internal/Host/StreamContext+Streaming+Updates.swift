@@ -785,6 +785,9 @@ extension StreamContext {
         onEncodedPacket = nil
         onContentBoundsChanged = nil
         onNewWindowDetected = nil
+        trafficLightMaskGeometryCache = nil
+        isAppStream = false
+        applicationProcessID = 0
 
         MirageLogger.stream("Stopped stream \(streamID)")
     }

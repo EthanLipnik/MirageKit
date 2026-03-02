@@ -10,11 +10,35 @@ import MirageKit
 
 /// Settings for app streaming on the host.
 public struct MirageStreamingSettings: Codable, Equatable {
+    /// Whether closing a client app-stream window should attempt to close the host window.
+    public var closeHostWindowOnClientWindowClose: Bool = false
+
     /// Per-app settings keyed by bundle identifier.
     public var perAppSettings: [String: MirageAppStreamingSettings] = [:]
 
-    public init(perAppSettings: [String: MirageAppStreamingSettings] = [:]) {
+    public init(
+        closeHostWindowOnClientWindowClose: Bool = false,
+        perAppSettings: [String: MirageAppStreamingSettings] = [:]
+    ) {
+        self.closeHostWindowOnClientWindowClose = closeHostWindowOnClientWindowClose
         self.perAppSettings = perAppSettings
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case closeHostWindowOnClientWindowClose
+        case perAppSettings
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        closeHostWindowOnClientWindowClose = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .closeHostWindowOnClientWindowClose
+        ) ?? false
+        perAppSettings = try container.decodeIfPresent(
+            [String: MirageAppStreamingSettings].self,
+            forKey: .perAppSettings
+        ) ?? [:]
     }
 
     /// Get settings for a specific app (with fallback to global).

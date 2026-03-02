@@ -34,6 +34,10 @@ public final class MirageClientService {
         case customTemporary
     }
 
+    public enum StreamStopOrigin: Sendable {
+        case clientWindowClosed
+    }
+
     public enum HostSoftwareUpdateChannel: String, Sendable, Codable {
         case release
         case nightly
@@ -308,6 +312,12 @@ public final class MirageClientService {
 
     /// Callback when a requested slot swap succeeds or fails.
     public var onAppWindowSwapResult: ((AppWindowSwapResultMessage) -> Void)?
+
+    /// Callback when host close is blocked by an alert after a client window close request.
+    public var onAppWindowCloseBlockedAlert: ((AppWindowCloseBlockedAlertMessage) -> Void)?
+
+    /// Callback for host close-alert action execution results.
+    public var onAppWindowCloseAlertActionResult: ((AppWindowCloseAlertActionResultMessage) -> Void)?
 
     /// Callback when a window is removed from app streaming.
     public var onWindowRemovedFromStream: ((WindowRemovedFromStreamMessage) -> Void)?

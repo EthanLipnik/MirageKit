@@ -145,13 +145,20 @@ package struct StartStreamMessage: Codable {
 }
 
 package struct StopStreamMessage: Codable {
+    package enum Origin: String, Codable, Sendable {
+        case clientWindowClosed
+    }
+
     package let streamID: StreamID
     /// Whether to minimize the source window on the host after stopping the stream
     package var minimizeWindow: Bool = false
+    /// Why the stop request was issued. Nil represents legacy/default request paths.
+    package var origin: Origin?
 
-    package init(streamID: StreamID, minimizeWindow: Bool = false) {
+    package init(streamID: StreamID, minimizeWindow: Bool = false, origin: Origin? = nil) {
         self.streamID = streamID
         self.minimizeWindow = minimizeWindow
+        self.origin = origin
     }
 }
 

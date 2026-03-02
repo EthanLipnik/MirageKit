@@ -67,7 +67,9 @@ package enum ControlMessageType: UInt8, Codable {
     case windowStreamFailed = 0x86
     case appWindowInventory = 0x87
     case appWindowSwapRequest = 0x88
-    // 0x89 reserved
+    case appWindowCloseBlockedAlert = 0x89
+    case appWindowCloseAlertActionRequest = 0x8A
+    case appWindowCloseAlertActionResult = 0x8B
     case appWindowSwapResult = 0x8C
     case windowResizabilityChanged = 0x8D
     case appTerminated = 0x8E

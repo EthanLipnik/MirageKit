@@ -26,6 +26,7 @@ actor StreamContext {
     var activePixelFormat: MiragePixelFormat
     var lastWindowFrame: CGRect = .zero
     var applicationProcessID: pid_t = 0
+    var isAppStream: Bool = false
     enum CaptureMode {
         case window
         case display
@@ -85,6 +86,15 @@ actor StreamContext {
     /// Using nonisolated(unsafe) because we need to access from @Sendable encoder callback
     /// and the access pattern is safe (always set before read, in frame order)
     nonisolated(unsafe) var currentContentRect: CGRect = .zero
+
+    // MARK: - Host Traffic-Light Clone-Stamp State
+
+    var trafficLightMaskGeometryCache: HostTrafficLightMaskGeometryResolver.CacheEntry?
+    let trafficLightMaskGeometryCacheTTL: CFAbsoluteTime = 0.35
+    let trafficLightMaskGeometryFrameTolerance: CGFloat = 6
+    var lastTrafficLightMaskLogTime: CFAbsoluteTime = 0
+    let trafficLightMaskLogInterval: CFAbsoluteTime = 1.0
+    let trafficLightCloneStampCompositor = HostTrafficLightCloneStampCompositor()
 
     // Bounded frame inbox to decouple capture from encode with low latency.
     nonisolated let frameInbox: StreamFrameInbox

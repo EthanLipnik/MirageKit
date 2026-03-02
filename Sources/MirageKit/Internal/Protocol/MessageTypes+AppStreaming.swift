@@ -321,6 +321,81 @@ public struct AppWindowSwapResultMessage: Codable, Sendable {
     }
 }
 
+public struct AppWindowCloseBlockedAlertMessage: Codable, Sendable, Equatable {
+    public struct Action: Codable, Sendable, Equatable {
+        public let id: String
+        public let title: String
+        public let isDestructive: Bool
+
+        package init(id: String, title: String, isDestructive: Bool = false) {
+            self.id = id
+            self.title = title
+            self.isDestructive = isDestructive
+        }
+    }
+
+    public let bundleIdentifier: String
+    public let sourceWindowID: WindowID
+    public let presentingStreamID: StreamID
+    public let alertToken: String
+    public let title: String?
+    public let message: String?
+    public let actions: [Action]
+
+    package init(
+        bundleIdentifier: String,
+        sourceWindowID: WindowID,
+        presentingStreamID: StreamID,
+        alertToken: String,
+        title: String?,
+        message: String?,
+        actions: [Action]
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.sourceWindowID = sourceWindowID
+        self.presentingStreamID = presentingStreamID
+        self.alertToken = alertToken
+        self.title = title
+        self.message = message
+        self.actions = actions
+    }
+}
+
+package struct AppWindowCloseAlertActionRequestMessage: Codable {
+    package let alertToken: String
+    package let actionID: String
+    package let presentingStreamID: StreamID
+
+    package init(
+        alertToken: String,
+        actionID: String,
+        presentingStreamID: StreamID
+    ) {
+        self.alertToken = alertToken
+        self.actionID = actionID
+        self.presentingStreamID = presentingStreamID
+    }
+}
+
+public struct AppWindowCloseAlertActionResultMessage: Codable, Sendable, Equatable {
+    public let alertToken: String
+    public let actionID: String
+    public let success: Bool
+    public let reason: String?
+
+    package init(
+        alertToken: String,
+        actionID: String,
+        success: Bool,
+        reason: String?
+    ) {
+        self.alertToken = alertToken
+        self.actionID = actionID
+        self.success = success
+        self.reason = reason
+    }
+}
+
 /// New window added to the app stream (Host → Client)
 public struct WindowAddedToStreamMessage: Codable, Sendable {
     /// Bundle identifier of the app

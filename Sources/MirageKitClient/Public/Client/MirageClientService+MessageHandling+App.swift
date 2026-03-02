@@ -69,6 +69,15 @@ extension MirageClientService {
         }
     }
 
+    func handleAppWindowCloseBlockedAlert(_ message: ControlMessage) {
+        do {
+            let alert = try message.decode(AppWindowCloseBlockedAlertMessage.self)
+            onAppWindowCloseBlockedAlert?(alert)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app-window close blocked alert: ")
+        }
+    }
+
     func handleWindowAddedToStream(_ message: ControlMessage) {
         do {
             let added = try message.decode(WindowAddedToStreamMessage.self)
@@ -114,6 +123,15 @@ extension MirageClientService {
             onAppWindowSwapResult?(result)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app window swap result: ")
+        }
+    }
+
+    func handleAppWindowCloseAlertActionResult(_ message: ControlMessage) {
+        do {
+            let result = try message.decode(AppWindowCloseAlertActionResultMessage.self)
+            onAppWindowCloseAlertActionResult?(result)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app-window close alert action result: ")
         }
     }
 

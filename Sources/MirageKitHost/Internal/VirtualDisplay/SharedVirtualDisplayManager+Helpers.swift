@@ -15,11 +15,17 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
-    private struct DisplayCreationAttempt: Sendable {
+    struct DisplayCreationAttempt: Sendable {
         let resolution: CGSize
         let hiDPI: Bool
         let colorSpace: MirageColorSpace
         let label: String
+    }
+
+    struct DisplayFallbackCandidate: Sendable, Equatable {
+        let resolution: CGSize
+        let hiDPI: Bool
+        let rung: String
     }
 
     func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
@@ -50,6 +56,104 @@ extension SharedVirtualDisplayManager {
             width: CGFloat(StreamContext.alignedEvenPixel(max(2.0, resolution.width))),
             height: CGFloat(StreamContext.alignedEvenPixel(max(2.0, resolution.height)))
         )
+    }
+
+    static func aspectRelativeDelta(requested: CGSize, candidate: CGSize) -> CGFloat {
+        guard requested.width > 0,
+              requested.height > 0,
+              candidate.width > 0,
+              candidate.height > 0 else {
+            return .greatestFiniteMagnitude
+        }
+        let requestedAspect = requested.width / requested.height
+        let candidateAspect = candidate.width / candidate.height
+        guard requestedAspect > 0, candidateAspect > 0 else {
+            return .greatestFiniteMagnitude
+        }
+        return abs(requestedAspect - candidateAspect) / requestedAspect
+    }
+
+    static func closestAspectResolutionCandidates(
+        for baseResolution: CGSize,
+        maxCandidates: Int = 6,
+        maxRelativeAspectDelta: CGFloat = 0.01
+    )
+    -> [CGSize] {
+        let normalizedBase = normalizedPixelResolution(baseResolution)
+        guard normalizedBase.width > 0, normalizedBase.height > 0 else { return [] }
+        let scaleSteps: [CGFloat] = [0.96, 0.92, 0.88, 0.84, 0.80, 0.76, 0.72]
+        var seen = Set<String>()
+        var candidates: [CGSize] = []
+
+        for scale in scaleSteps {
+            let scaled = normalizedPixelResolution(
+                CGSize(
+                    width: normalizedBase.width * scale,
+                    height: normalizedBase.height * scale
+                )
+            )
+            let key = "\(Int(scaled.width))x\(Int(scaled.height))"
+            guard seen.insert(key).inserted else { continue }
+            guard aspectRelativeDelta(requested: normalizedBase, candidate: scaled) <= maxRelativeAspectDelta else {
+                continue
+            }
+            candidates.append(scaled)
+            if candidates.count >= maxCandidates { break }
+        }
+
+        return candidates
+    }
+
+    static func fallbackAttemptPlan(for requestedResolution: CGSize) -> [DisplayFallbackCandidate] {
+        let normalizedRequested = normalizedPixelResolution(requestedResolution)
+        guard normalizedRequested.width > 0, normalizedRequested.height > 0 else { return [] }
+        let fallback1x = fallbackResolution(for: normalizedRequested)
+        let closestRetina = closestAspectResolutionCandidates(for: normalizedRequested)
+        let closestOneX = closestAspectResolutionCandidates(for: fallback1x)
+
+        var seen = Set<String>()
+        var plan: [DisplayFallbackCandidate] = []
+
+        func append(_ candidate: DisplayFallbackCandidate) {
+            let key = "\(Int(candidate.resolution.width))x\(Int(candidate.resolution.height))-\(candidate.hiDPI ? "retina" : "1x")"
+            guard seen.insert(key).inserted else { return }
+            plan.append(candidate)
+        }
+
+        append(
+            DisplayFallbackCandidate(
+                resolution: normalizedRequested,
+                hiDPI: true,
+                rung: "requested-retina"
+            )
+        )
+        append(
+            DisplayFallbackCandidate(
+                resolution: fallback1x,
+                hiDPI: false,
+                rung: "requested-1x"
+            )
+        )
+        for candidate in closestRetina {
+            append(
+                DisplayFallbackCandidate(
+                    resolution: candidate,
+                    hiDPI: true,
+                    rung: "closest-retina"
+                )
+            )
+        }
+        for candidate in closestOneX {
+            append(
+                DisplayFallbackCandidate(
+                    resolution: candidate,
+                    hiDPI: false,
+                    rung: "closest-1x"
+                )
+            )
+        }
+
+        return plan
     }
 
     private static func hasCompatibleAspectRatio(
@@ -102,7 +206,7 @@ extension SharedVirtualDisplayManager {
     private func knownGoodRetinaCandidate(
         requestedResolution: CGSize,
         colorSpace: MirageColorSpace,
-        allowAspectMismatchRetinaCandidate: Bool
+        allowAspectMismatchRetinaCandidate _: Bool
     ) -> CGSize? {
         guard let cached = lastKnownGoodRetinaResolutionByColorSpace[colorSpace] else { return nil }
         let requested = Self.normalizedPixelResolution(requestedResolution)
@@ -111,17 +215,7 @@ extension SharedVirtualDisplayManager {
            Self.isCloseToRequested(requested: requested, candidate: candidate) {
             return candidate
         }
-
-        guard allowAspectMismatchRetinaCandidate,
-              Self.hasMatchingPixelArea(requested: requested, candidate: candidate),
-              Self.isCloseToRequested(requested: requested, candidate: candidate) else {
-            return nil
-        }
-
-        MirageLogger.host(
-            "Using cached Retina candidate with aspect mismatch for equal-area app stream fallback: requested \(Int(requested.width))x\(Int(requested.height)), cached \(Int(candidate.width))x\(Int(candidate.height))"
-        )
-        return candidate
+        return nil
     }
 
     private func cacheKnownGoodRetinaResolutionIfNeeded(
@@ -385,22 +479,20 @@ extension SharedVirtualDisplayManager {
 
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
         let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
+        let fallbackPlan = Self.fallbackAttemptPlan(for: normalizedRequested)
         var attempts: [DisplayCreationAttempt] = []
 
-        // Priority 1: requested resolution in Retina mode.
         for candidateColorSpace in colorFallbackOrder {
-            attempts.append(
-                DisplayCreationAttempt(
-                    resolution: normalizedRequested,
-                    hiDPI: true,
-                    colorSpace: candidateColorSpace,
-                    label: "requested-retina-\(candidateColorSpace.rawValue)"
+            if let requestedRetina = fallbackPlan.first(where: { $0.rung == "requested-retina" }) {
+                attempts.append(
+                    DisplayCreationAttempt(
+                        resolution: requestedRetina.resolution,
+                        hiDPI: requestedRetina.hiDPI,
+                        colorSpace: candidateColorSpace,
+                        label: "\(requestedRetina.rung)-\(candidateColorSpace.rawValue)"
+                    )
                 )
-            )
-        }
-
-        // Priority 2: cached nearby Retina resolutions, first with requested color then fallbacks.
-        for candidateColorSpace in colorFallbackOrder {
+            }
             if let cachedRetina = knownGoodRetinaCandidate(
                 requestedResolution: normalizedRequested,
                 colorSpace: candidateColorSpace,
@@ -415,23 +507,29 @@ extension SharedVirtualDisplayManager {
                         label: "cached-retina-\(candidateColorSpace.rawValue)"
                     )
                 )
-                MirageLogger.host(
-                    "Trying cached nearby Retina resolution \(Int(cachedRetina.width))x\(Int(cachedRetina.height)) for requested \(Int(normalizedRequested.width))x\(Int(normalizedRequested.height)), color=\(candidateColorSpace.displayName)"
+            }
+
+            if let requestedOneX = fallbackPlan.first(where: { $0.rung == "requested-1x" }) {
+                attempts.append(
+                    DisplayCreationAttempt(
+                        resolution: requestedOneX.resolution,
+                        hiDPI: requestedOneX.hiDPI,
+                        colorSpace: candidateColorSpace,
+                        label: "\(requestedOneX.rung)-\(candidateColorSpace.rawValue)"
+                    )
                 )
             }
-        }
 
-        // Priority 3: non-Retina fallback at the requested effective size.
-        let fallbackResolution = SharedVirtualDisplayManager.fallbackResolution(for: normalizedRequested)
-        for candidateColorSpace in colorFallbackOrder {
-            attempts.append(
-                DisplayCreationAttempt(
-                    resolution: fallbackResolution,
-                    hiDPI: false,
-                    colorSpace: candidateColorSpace,
-                    label: "fallback-1x-\(candidateColorSpace.rawValue)"
+            for candidate in fallbackPlan where candidate.rung.hasPrefix("closest-") {
+                attempts.append(
+                    DisplayCreationAttempt(
+                        resolution: candidate.resolution,
+                        hiDPI: candidate.hiDPI,
+                        colorSpace: candidateColorSpace,
+                        label: "\(candidate.rung)-\(candidateColorSpace.rawValue)"
+                    )
                 )
-            )
+            }
         }
 
         var dedupedAttempts: [DisplayCreationAttempt] = []
@@ -567,6 +665,15 @@ extension SharedVirtualDisplayManager {
                     "Virtual display color fallback engaged: requested \(colorSpace.displayName), using \(attempt.colorSpace.displayName)"
                 )
             }
+            let aspectDelta = Self.aspectRelativeDelta(
+                requested: normalizedRequested,
+                candidate: validatedPixelResolution
+            )
+            let aspectDeltaPercent = Double(aspectDelta * 100.0)
+                .formatted(.number.precision(.fractionLength(3)))
+            MirageLogger.host(
+                "Virtual display selection decision: rung=\(attempt.label), requested=\(Int(normalizedRequested.width))x\(Int(normalizedRequested.height)), resolved=\(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)), scale=\(displayScaleFactor), aspectDelta=\(aspectDeltaPercent)%"
+            )
 
             await MainActor.run {
                 VirtualDisplayKeepaliveController.shared.start(
@@ -580,7 +687,7 @@ extension SharedVirtualDisplayManager {
         }
 
         throw SharedDisplayError.creationFailed(
-            "Virtual display failed activation (retina-first, color-fallback, 1x fallback)"
+            "Virtual display failed activation (retina-first, 1x fallback, closest-aspect fallback)"
         )
     }
 
