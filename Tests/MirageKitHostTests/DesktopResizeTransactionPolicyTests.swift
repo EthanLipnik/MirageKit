@@ -177,6 +177,19 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision.resolvedBounds == cached)
     }
 
+    @Test("Placement bounds decision prefers recomputed bounds when cached bounds are outside display")
+    func placementBoundsDecisionPrefersRecomputedWhenCachedOutsideDisplay() {
+        let recomputed = CGRect(x: 2056, y: 30, width: 1528, height: 1218)
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: CGRect(x: 3584, y: 30, width: 1528, height: 1218),
+            recomputedBounds: recomputed,
+            displayBounds: CGRect(x: 2056, y: 0, width: 1528, height: 1248)
+        )
+
+        #expect(decision.outcome == .adoptRecomputedCachedOutsideDisplay)
+        #expect(decision.resolvedBounds == recomputed)
+    }
+
     @Test("Placement bounds decision rejects extreme shrink")
     func placementBoundsDecisionRejectsExtremeShrink() {
         let cached = CGRect(x: 2056, y: 30, width: 1376, height: 925)

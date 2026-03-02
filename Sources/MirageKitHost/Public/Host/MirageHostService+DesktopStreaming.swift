@@ -313,6 +313,11 @@ extension MirageHostService {
         )
         logDesktopStartStep("capture and encoder started")
 
+        // Desktop streams are always foreground/interactive and must bypass
+        // passive queue shedding to preserve keyframe fragment continuity.
+        // Set this once startup succeeds so failed starts do not leave stale policy state.
+        transportRegistry.setVideoStreamActive(streamID: streamID, isActive: true)
+
         // Get dimension token from stream context
         let dimensionToken = await streamContext.getDimensionToken()
 

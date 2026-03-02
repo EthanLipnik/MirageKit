@@ -58,7 +58,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var nextSequence: UInt64 = 0
         var lastPresentedSequence: UInt64 = 0
         var lastPresentedTime: CFAbsoluteTime = 0
-        var typingBurstDeadline: CFAbsoluteTime = 0
         var targetFPS: Int = 60
         var listeners: [ObjectIdentifier: FrameListener] = [:]
 
@@ -78,7 +77,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     private var streams: [StreamID: StreamState] = [:]
 
     private let defaultQueueCapacity = 24
-    private let typingBurstWindow: CFAbsoluteTime = 0.35
     private let sampleWindowSeconds: CFAbsoluteTime = 1.0
 
     private init() {}
@@ -300,23 +298,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     func setTargetFPS(for streamID: StreamID, targetFPS: Int) {
         let state = streamState(for: streamID)
         state.lock.lock()
-        state.targetFPS = max(1, min(120, targetFPS))
+        state.targetFPS = MirageRenderModePolicy.normalizedTargetFPS(targetFPS)
         state.lock.unlock()
-    }
-
-    func noteTypingBurstActivity(for streamID: StreamID) {
-        let state = streamState(for: streamID)
-        state.lock.lock()
-        state.typingBurstDeadline = CFAbsoluteTimeGetCurrent() + typingBurstWindow
-        state.lock.unlock()
-    }
-
-    func isTypingBurstActive(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
-        guard let state = streamStateIfPresent(for: streamID) else { return false }
-        state.lock.lock()
-        let active = typingBurstActiveLocked(state: state, now: now)
-        state.lock.unlock()
-        return active
     }
 
     func registerFrameListener(
@@ -347,7 +330,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         state.lock.lock()
         state.queue.clear()
         state.listeners.removeAll()
-        state.typingBurstDeadline = 0
         state.nextSequence = 0
         state.lastPresentedSequence = 0
         state.lastPresentedTime = 0
@@ -383,15 +365,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
     private func oldestAgeMs(snapshot: MirageSPSCFrameQueue.Snapshot, now: CFAbsoluteTime) -> Double {
         guard let decodeTime = snapshot.oldestDecodeTime else { return 0 }
         return max(0, now - decodeTime) * 1000
-    }
-
-    private func typingBurstActiveLocked(state: StreamState, now: CFAbsoluteTime) -> Bool {
-        guard state.typingBurstDeadline > 0 else { return false }
-        if now < state.typingBurstDeadline {
-            return true
-        }
-        state.typingBurstDeadline = 0
-        return false
     }
 
     private func activeListenersLocked(state: StreamState) -> [@Sendable () -> Void] {

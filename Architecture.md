@@ -264,11 +264,13 @@ Host supports three stream families with separate orchestration:
    - `startDesktopStream(...)` / `stopDesktopStream(...)`.
    - mirrored vs secondary mode.
    - mirroring snapshot/suspend/restore logic around resize and mode transitions.
+   - transport marks the desktop stream as active in `HostTransportRegistry` so video packets bypass passive queue shedding.
 
 3. **Login display stream**
    - lock-screen path used when host session is not active.
    - watchdog and bounded restart behavior.
    - can borrow desktop stream path in shared-display scenarios.
+   - non-borrowed login streams are marked active in `HostTransportRegistry` to preserve keyframe fragment continuity.
 
 ### 4.6 Virtual Display Subsystem
 
@@ -417,16 +419,17 @@ Client runtime tiering is host-authoritative:
 
 ### 5.6 Rendering Architecture
 
-Rendering is platform-specific behind shared stores:
+Rendering uses one shared presentation backend across all client platforms:
 
-- macOS path: `MirageMetalView+macOS`, `MirageRenderLoop`, `CAMetalLayer`, `MetalRenderer`
-- iOS/visionOS path: `MirageMetalView+iOS`, `MirageRenderDriver+iOS`, `AVSampleBufferDisplayLayer`
+- macOS path: `MirageMetalView+macOS` backed by `AVSampleBufferDisplayLayer`
+- iOS/visionOS path: `MirageMetalView+iOS` backed by `AVSampleBufferDisplayLayer`
+- shared draw/pacing/sample-buffer logic: `MirageSampleBufferPresenter`
 
 Cross-platform render coordination:
 
 - `MirageRenderStreamStore`
 - `MirageFrameCache`
-- cadence and mode policy helpers (`MirageRenderClock`, `MirageRenderModePolicy`)
+- shared cadence/pacing constants (`MirageRenderModePolicy`)
 
 ### 5.7 Audio Client Pipeline
 

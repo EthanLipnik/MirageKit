@@ -10,8 +10,7 @@
 import MirageKit
 #if os(iOS) || os(visionOS)
 import AVFoundation
-import CoreMedia
-import CoreVideo
+import Metal
 import QuartzCore
 import UIKit
 
@@ -39,9 +38,7 @@ public class MirageMetalView: UIView {
     public var streamID: StreamID? {
         didSet {
             guard streamID != oldValue else { return }
-            unregisterFrameListener(for: oldValue)
-            registerFrameListener(for: streamID)
-            resetPresentationState()
+            presenter.setStreamID(streamID)
             requestDraw()
         }
     }
@@ -60,38 +57,14 @@ public class MirageMetalView: UIView {
     let preferencesObserver = MirageUserDefaultsObserver()
     lazy var refreshRateMonitor = MirageRefreshRateMonitor(view: self)
     var displayLink: CADisplayLink?
-
-    private var renderingSuspended = false
-    private var cachedFormatKey: PixelBufferFormatKey?
-    private var cachedFormatDescription: CMVideoFormatDescription?
-    private var lastEnqueuedSequence: UInt64 = 0
-    private var remotePresentationOrigin: CMTime?
-    private var localPresentationOrigin: CFTimeInterval?
-    private var lastMappedPresentationTime: CMTime = .invalid
-    private var listenerStreamID: StreamID?
-    private var loggedLayerFailure = false
-    private static let cmTimeScale: CMTimeScale = 1_000_000_000
-    private static let presentationRebaseThresholdSeconds: CFTimeInterval = 1.0
-    private static let framePacingRefreshThresholdFactor: Double = 0.9
-    private static let framePacingBufferedDepth = 2
-    private static let maxCatchUpFramesPerTick = 4
+    var presenter: MirageSampleBufferPresenter!
 
     var maxRenderFPS: Int = 60
     var appliedRefreshRateLock: Int = 0
-
     var lastReportedDrawableSize: CGSize = .zero
 
     static let maxDrawableWidth: CGFloat = 5120
     static let maxDrawableHeight: CGFloat = 2880
-
-    struct PixelBufferFormatKey: Equatable {
-        let width: Int
-        let height: Int
-        let pixelFormat: OSType
-        let colorPrimaries: String?
-        let transferFunction: String?
-        let yCbCrMatrix: String?
-    }
 
     var displayLayer: AVSampleBufferDisplayLayer {
         guard let layer = layer as? AVSampleBufferDisplayLayer else {
@@ -128,12 +101,6 @@ public class MirageMetalView: UIView {
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
-    }
-
-    deinit {
-        unregisterFrameListener(for: listenerStreamID)
-        stopDisplayLink()
-        stopObservingPreferences()
     }
 
     // MARK: - UIView Lifecycle
@@ -177,20 +144,16 @@ public class MirageMetalView: UIView {
     }
 
     public func resumeRendering() {
-        renderingSuspended = false
+        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
         requestDraw()
     }
 
     public var hasDisplayLayerFailure: Bool {
-        displayLayer.status == .failed
+        presenter.hasDisplayLayerFailure
     }
 
     public func suspendRendering(clearCurrentFrame: Bool) {
-        renderingSuspended = true
-        guard clearCurrentFrame else { return }
-        displayLayer.flushAndRemoveImage()
-        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-        lastEnqueuedSequence = 0
+        presenter.setRenderingSuspended(true, clearCurrentFrame: clearCurrentFrame)
     }
 
     // MARK: - Setup
@@ -205,6 +168,11 @@ public class MirageMetalView: UIView {
         displayLayer.isOpaque = true
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
 
+        presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
+        presenter.onFrameAvailable = { [weak self] in
+            self?.requestDraw()
+        }
+
         refreshRateMonitor.onOverrideChange = { [weak self] override in
             self?.applyRefreshRateOverride(override)
         }
@@ -216,254 +184,33 @@ public class MirageMetalView: UIView {
     // MARK: - Draw Path
 
     func requestDraw() {
-        guard !renderingSuspended else { return }
-        drainFramesIfPossible(
+        let overrides = presentationTierOverrides()
+        presenter.requestDraw(
             referenceTime: CACurrentMediaTime(),
-            useFramePacing: false
+            useFramePacing: false,
+            presentationPolicyOverride: overrides.policy,
+            maxFramesOverride: overrides.maxFrames
         )
     }
 
     @objc private func displayLinkTick(_ link: CADisplayLink) {
-        guard !renderingSuspended else { return }
         let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 1
         let interval = link.targetTimestamp - link.timestamp
         let displayRefreshRate = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
-        let framePacingEnabled = displayRefreshRate >=
-            Double(renderTargetFPS) * Self.framePacingRefreshThresholdFactor
-
-        drainFramesIfPossible(
+        let overrides = presentationTierOverrides()
+        presenter.displayLinkTick(
             referenceTime: link.timestamp,
-            useFramePacing: framePacingEnabled
+            displayRefreshRate: displayRefreshRate,
+            presentationPolicyOverride: overrides.policy,
+            maxFramesOverride: overrides.maxFrames
         )
     }
 
-    private func drainFramesIfPossible(
-        referenceTime: CFTimeInterval,
-        useFramePacing: Bool
-    ) {
-        guard let streamID else { return }
-        recoverDisplayLayerIfNeeded()
-        guard displayLayer.status != .failed else { return }
-        let policy: MirageRenderPresentationPolicy = if streamPresentationTier == .passiveSnapshot {
-            .latest
-        } else if useFramePacing {
-            .buffered(maxDepth: Self.framePacingBufferedDepth)
-        } else {
-            .latest
+    private func presentationTierOverrides() -> (policy: MirageRenderPresentationPolicy?, maxFrames: Int?) {
+        if streamPresentationTier == .passiveSnapshot {
+            return (.latest, 1)
         }
-        let maxFrames = streamPresentationTier == .passiveSnapshot
-            ? 1
-            : (useFramePacing ? 1 : Self.maxCatchUpFramesPerTick)
-
-        var framesSubmitted = 0
-        while framesSubmitted < maxFrames {
-            guard displayLayer.isReadyForMoreMediaData else { return }
-            guard let frame = MirageFrameCache.shared.dequeueForPresentation(
-                for: streamID,
-                policy: policy
-            ) else {
-                return
-            }
-            guard frame.sequence > lastEnqueuedSequence else { continue }
-
-            updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
-            guard let sampleBuffer = makeSampleBuffer(
-                from: frame.pixelBuffer,
-                presentationTime: frame.presentationTime,
-                referenceTime: referenceTime
-            ) else {
-                continue
-            }
-
-            displayLayer.enqueue(sampleBuffer)
-            lastEnqueuedSequence = frame.sequence
-            MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
-            framesSubmitted += 1
-        }
-    }
-
-    private func updateLayerContentRect(_ contentRect: CGRect, pixelBuffer: CVPixelBuffer) {
-        let width = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
-        let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-        guard width > 0, height > 0 else {
-            displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-            return
-        }
-
-        let normalized = CGRect(
-            x: min(max(contentRect.origin.x / width, 0), 1),
-            y: min(max(contentRect.origin.y / height, 0), 1),
-            width: min(max(contentRect.size.width / width, 0), 1),
-            height: min(max(contentRect.size.height / height, 0), 1)
-        )
-        displayLayer.contentsRect = normalized
-    }
-
-    private func makeSampleBuffer(
-        from pixelBuffer: CVPixelBuffer,
-        presentationTime: CMTime,
-        referenceTime: CFTimeInterval
-    ) -> CMSampleBuffer? {
-        guard let formatDescription = formatDescription(for: pixelBuffer) else { return nil }
-
-        let samplePresentationTime = mappedPresentationTime(
-            remotePresentationTime: presentationTime,
-            referenceTime: referenceTime
-        )
-
-        var timing = CMSampleTimingInfo(
-            duration: .invalid,
-            presentationTimeStamp: samplePresentationTime,
-            decodeTimeStamp: .invalid
-        )
-        var sampleBuffer: CMSampleBuffer?
-        let status = CMSampleBufferCreateReadyWithImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescription: formatDescription,
-            sampleTiming: &timing,
-            sampleBufferOut: &sampleBuffer
-        )
-
-        guard status == noErr, let sampleBuffer else {
-            MirageLogger.error(.renderer, "CMSampleBufferCreateReadyWithImageBuffer failed: \(status)")
-            return nil
-        }
-
-        if let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: true) as? NSArray,
-           let first = attachments.firstObject as? NSMutableDictionary {
-            first[kCMSampleAttachmentKey_DisplayImmediately] = kCFBooleanTrue
-        }
-        return sampleBuffer
-    }
-
-    private func mappedPresentationTime(
-        remotePresentationTime: CMTime,
-        referenceTime: CFTimeInterval
-    ) -> CMTime {
-        let fallbackNow = CMTime(seconds: referenceTime, preferredTimescale: Self.cmTimeScale)
-        guard remotePresentationTime.isValid else {
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        if remotePresentationOrigin == nil || localPresentationOrigin == nil {
-            remotePresentationOrigin = remotePresentationTime
-            localPresentationOrigin = referenceTime
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        guard let remoteOrigin = remotePresentationOrigin,
-              let localOrigin = localPresentationOrigin else {
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        let delta = CMTimeSubtract(remotePresentationTime, remoteOrigin)
-        let deltaSeconds = CMTimeGetSeconds(delta)
-        guard deltaSeconds.isFinite else {
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        // Host PTS is from the host clock domain. If it jumps backwards/forwards,
-        // rebase to local clock to avoid AVSampleBufferDisplayLayer stalls.
-        if deltaSeconds < -Self.presentationRebaseThresholdSeconds ||
-            deltaSeconds > 60 * 60 {
-            remotePresentationOrigin = remotePresentationTime
-            localPresentationOrigin = referenceTime
-            return makeMonotonicPresentationTime(from: fallbackNow)
-        }
-
-        let localSeconds = localOrigin + max(0, deltaSeconds)
-        let mapped = CMTime(seconds: localSeconds, preferredTimescale: Self.cmTimeScale)
-        return makeMonotonicPresentationTime(from: mapped)
-    }
-
-    private func makeMonotonicPresentationTime(from candidate: CMTime) -> CMTime {
-        guard lastMappedPresentationTime.isValid else {
-            lastMappedPresentationTime = candidate
-            return candidate
-        }
-
-        if CMTimeCompare(candidate, lastMappedPresentationTime) > 0 {
-            lastMappedPresentationTime = candidate
-            return candidate
-        }
-
-        let minStepTimescale = max(1, maxRenderFPS)
-        let stepped = CMTimeAdd(
-            lastMappedPresentationTime,
-            CMTime(value: 1, timescale: CMTimeScale(minStepTimescale))
-        )
-        lastMappedPresentationTime = stepped
-        return stepped
-    }
-
-    private func formatDescription(for pixelBuffer: CVPixelBuffer) -> CMVideoFormatDescription? {
-        let key = PixelBufferFormatKey(
-            width: CVPixelBufferGetWidth(pixelBuffer),
-            height: CVPixelBufferGetHeight(pixelBuffer),
-            pixelFormat: CVPixelBufferGetPixelFormatType(pixelBuffer),
-            colorPrimaries: bufferAttachmentString(pixelBuffer, key: kCVImageBufferColorPrimariesKey),
-            transferFunction: bufferAttachmentString(pixelBuffer, key: kCVImageBufferTransferFunctionKey),
-            yCbCrMatrix: bufferAttachmentString(pixelBuffer, key: kCVImageBufferYCbCrMatrixKey)
-        )
-
-        if key == cachedFormatKey, let cachedFormatDescription {
-            return cachedFormatDescription
-        }
-
-        var formatDescription: CMVideoFormatDescription?
-        let status = CMVideoFormatDescriptionCreateForImageBuffer(
-            allocator: kCFAllocatorDefault,
-            imageBuffer: pixelBuffer,
-            formatDescriptionOut: &formatDescription
-        )
-        guard status == noErr, let formatDescription else {
-            MirageLogger.error(.renderer, "CMVideoFormatDescriptionCreateForImageBuffer failed: \(status)")
-            return nil
-        }
-
-        cachedFormatKey = key
-        cachedFormatDescription = formatDescription
-        return formatDescription
-    }
-
-    private func bufferAttachmentString(_ buffer: CVBuffer, key: CFString) -> String? {
-        CVBufferCopyAttachment(buffer, key, nil) as? String
-    }
-
-    private func resetPresentationState() {
-        cachedFormatKey = nil
-        cachedFormatDescription = nil
-        lastEnqueuedSequence = 0
-        remotePresentationOrigin = nil
-        localPresentationOrigin = nil
-        lastMappedPresentationTime = .invalid
-        loggedLayerFailure = false
-        displayLayer.flushAndRemoveImage()
-        displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-    }
-
-    private func registerFrameListener(for streamID: StreamID?) {
-        guard let streamID else { return }
-        listenerStreamID = streamID
-        MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: self) { [weak self] in
-            guard let self else { return }
-            if Thread.isMainThread {
-                self.requestDraw()
-            } else {
-                Task { @MainActor [weak self] in
-                    self?.requestDraw()
-                }
-            }
-        }
-    }
-
-    private func unregisterFrameListener(for streamID: StreamID?) {
-        guard let streamID else { return }
-        MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: self)
-        if listenerStreamID == streamID {
-            listenerStreamID = nil
-        }
+        return (nil, nil)
     }
 
     private func startDisplayLinkIfNeeded() {
@@ -479,16 +226,6 @@ public class MirageMetalView: UIView {
     private func stopDisplayLink() {
         displayLink?.invalidate()
         displayLink = nil
-    }
-
-    private func recoverDisplayLayerIfNeeded() {
-        guard displayLayer.status == .failed else { return }
-        if !loggedLayerFailure {
-            let description = displayLayer.error?.localizedDescription ?? "unknown error"
-            MirageLogger.error(.renderer, "AVSampleBufferDisplayLayer failure: \(description)")
-            loggedLayerFailure = true
-        }
-        displayLayer.flushAndRemoveImage()
     }
 }
 #endif

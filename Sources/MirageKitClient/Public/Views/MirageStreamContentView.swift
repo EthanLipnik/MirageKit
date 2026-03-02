@@ -351,10 +351,6 @@ public struct MirageStreamContentView: View {
         guard canSendInputToHost else { return }
         onInputActivity?(event)
 
-        if MirageTypingBurstClassifier.shouldTrigger(for: event) {
-            MirageFrameCache.shared.noteTypingBurstActivity(for: session.streamID)
-        }
-
         #if os(macOS)
         guard sessionStore.focusedSessionID == session.id else { return }
         #else

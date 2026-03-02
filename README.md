@@ -1,6 +1,6 @@
 # MirageKit
 
-MirageKit is a window and desktop streaming framework for Apple platforms. It provides a macOS host service for capturing windows or virtual displays and a client service for discovering hosts, receiving low‑latency video over UDP, and forwarding input back to the host. SwiftUI views are included for rendering streams with Metal on macOS, iOS, and visionOS.
+MirageKit is a window and desktop streaming framework for Apple platforms. It provides a macOS host service for capturing windows or virtual displays and a client service for discovering hosts, receiving low‑latency video over UDP, and forwarding input back to the host. SwiftUI views are included for rendering streams through a shared `AVSampleBufferDisplayLayer` presentation path on macOS, iOS, and visionOS.
 
 > ⚠️ MirageKit is still in active development and may introduce breaking API updates.
 
@@ -199,7 +199,7 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 - iPad clients always send Apple Pencil as drawing-tablet input with pressure and stylus orientation metadata for tablet-aware host apps.
 - Direct touch supports `normal`, `dragCursor`, and `pencilBased` modes; Pencil-based mode uses one-finger native scroll physics and reserves pointer clicks for Apple Pencil or indirect pointer input.
 - Apple Pencil squeeze emits a secondary click at the hover location when available, or the latest pointer location.
-- `MirageStreamViewRepresentable` renders streams with Metal and exposes drawable size callbacks for resolution sync.
+- `MirageStreamViewRepresentable` renders streams through `AVSampleBufferDisplayLayer` and exposes drawable size callbacks for resolution sync.
 - `MirageStreamContentView` + `MirageClientSessionStore` coordinate input, focus, and resize UI.
 - The host uses `MirageHostDelegate` and the client uses `MirageClientDelegate` for approvals and state updates.
 

@@ -14,6 +14,7 @@ import AppKit
 import ApplicationServices
 
 enum PlacementBoundsDecisionOutcome: String, Equatable, Sendable {
+    case adoptRecomputedCachedOutsideDisplay = "adopt_recomputed_cached_outside_display"
     case adoptRecomputedGrowth = "adopt_recomputed_growth"
     case adoptRecomputedShrink = "adopt_recomputed_shrink"
     case useCachedMismatch = "use_cached_mismatch"
@@ -50,9 +51,18 @@ func placementBoundsSelectionDecision(
         return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
     }
 
+    let displayContainmentBounds = display.insetBy(dx: -1, dy: -1)
+    let displayContainsCached = displayContainmentBounds.contains(cached)
+    let displayContainsRecomputed = displayContainmentBounds.contains(recomputed)
+    if displayContainsRecomputed, !displayContainsCached {
+        return PlacementBoundsDecision(
+            outcome: .adoptRecomputedCachedOutsideDisplay,
+            resolvedBounds: recomputed
+        )
+    }
+
     let originClose = abs(recomputed.minX - cached.minX) <= config.originTolerance &&
         abs(recomputed.minY - cached.minY) <= config.originTolerance
-    let displayContainsRecomputed = display.insetBy(dx: -1, dy: -1).contains(recomputed)
     guard originClose, displayContainsRecomputed else {
         return PlacementBoundsDecision(outcome: .useCachedMismatch, resolvedBounds: cached)
     }

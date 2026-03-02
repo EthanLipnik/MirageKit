@@ -150,14 +150,6 @@ public final class MirageFrameCache: @unchecked Sendable {
         return frameEntry(from: frame)
     }
 
-    func noteTypingBurstActivity(for streamID: StreamID) {
-        store.noteTypingBurstActivity(for: streamID)
-    }
-
-    func isTypingBurstActive(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
-        store.isTypingBurstActive(for: streamID, now: now)
-    }
-
     func peekLatest(for streamID: StreamID) -> FrameEntry? {
         guard let frame = store.peekLatest(for: streamID) else { return nil }
         return frameEntry(from: frame)

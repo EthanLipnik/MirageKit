@@ -206,6 +206,10 @@ extension MirageHostService {
                 return
             }
 
+            // Login display is the only visual stream while active; keep transport in
+            // active mode so packet scheduler does not collapse fragment queues.
+            transportRegistry.setVideoStreamActive(streamID: streamID, isActive: true)
+
             loginDisplayRetryAttempts = 0
 
             loginDisplayWatchdogStartTime = CFAbsoluteTimeGetCurrent()

@@ -156,6 +156,7 @@ extension MirageMetalView {
     func applyRefreshRateOverride(_ override: Int) {
         let clamped = max(1, min(120, override))
         maxRenderFPS = clamped
+        presenter.setTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
         onRefreshRateOverrideChange?(clamped)
     }

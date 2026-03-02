@@ -4,105 +4,31 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Coverage for decode-health-driven render policy decisions.
+//  Coverage for shared render policy constants.
 //
 
 @testable import MirageKitClient
-import MirageKit
 import Testing
 
 @Suite("Render Mode Policy")
 struct RenderModePolicyTests {
-    @Test("Lowest latency always presents latest frames")
-    func lowestLatencyDecision() {
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .lowestLatency,
-            typingBurstActive: false,
-            decodeHealthy: false,
-            targetFPS: 60
-        )
-
-        #expect(decision.profile == .lowestLatency)
-        #expect(decision.presentationPolicy == .latest)
-        #expect(!decision.decodeHealthy)
-        #expect(decision.allowOffCycleWake)
-    }
-
-    @Test("Auto typing burst keeps low-latency path even under decode stress")
-    func autoTypingBurstDecision() {
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .auto,
-            typingBurstActive: true,
-            decodeHealthy: false,
-            targetFPS: 60
-        )
-
-        #expect(decision.profile == .autoTyping)
-        #expect(decision.presentationPolicy == .latest)
-        #expect(!decision.decodeHealthy)
-        #expect(decision.allowOffCycleWake)
-    }
-
-    @Test("Auto non-typing uses buffered smooth presentation")
-    func autoHealthyDecision() {
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .auto,
-            typingBurstActive: false,
-            decodeHealthy: true,
-            targetFPS: 60
-        )
-
-        #expect(decision.profile == .autoSmooth)
-        #expect(decision.presentationPolicy == .buffered(maxDepth: 3))
-        #expect(decision.decodeHealthy)
-        #expect(!decision.allowOffCycleWake)
-    }
-
-    @Test("Auto decode stress stays in bounded buffering mode")
-    func autoStressDecision() {
-        let decision = MirageRenderModePolicy.decision(
-            latencyMode: .auto,
-            typingBurstActive: false,
-            decodeHealthy: false,
-            targetFPS: 120
-        )
-
-        #expect(decision.profile == .autoSmooth)
-        #expect(decision.presentationPolicy == .buffered(maxDepth: 3))
-        #expect(!decision.decodeHealthy)
-        #expect(!decision.allowOffCycleWake)
-    }
-
-    @Test("Smoothest always uses buffered presentation")
-    func smoothestDecision() {
-        let healthy = MirageRenderModePolicy.decision(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
-            decodeHealthy: true,
-            targetFPS: 60
-        )
-        let stressed = MirageRenderModePolicy.decision(
-            latencyMode: .smoothest,
-            typingBurstActive: false,
-            decodeHealthy: false,
-            targetFPS: 60
-        )
-
-        #expect(healthy.profile == .smoothest)
-        #expect(healthy.presentationPolicy == .buffered(maxDepth: 3))
-        #expect(!healthy.allowOffCycleWake)
-
-        #expect(stressed.profile == .smoothest)
-        #expect(stressed.presentationPolicy == .buffered(maxDepth: 3))
-        #expect(!stressed.allowOffCycleWake)
-    }
-
-    @Test("Target FPS normalization preserves low-frame-rate tiers")
-    func targetFPSNormalizationPreservesLowRates() {
-        #expect(MirageRenderModePolicy.normalizedTargetFPS(1) == 1)
-        #expect(MirageRenderModePolicy.normalizedTargetFPS(2) == 2)
-        #expect(MirageRenderModePolicy.normalizedTargetFPS(4) == 4)
+    @Test("Target FPS normalization uses 60/120 buckets")
+    func normalizedTargetFPS() {
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(1) == 60)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(60) == 60)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(90) == 60)
         #expect(MirageRenderModePolicy.normalizedTargetFPS(120) == 120)
-        #expect(MirageRenderModePolicy.normalizedTargetFPS(500) == 120)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(144) == 120)
+    }
+
+    @Test("Decode-health thresholds stay stable")
+    func decodeHealthThresholds() {
+        #expect(MirageRenderModePolicy.healthyDecodeRatio == 0.95)
+        #expect(MirageRenderModePolicy.stressedDecodeRatio == 0.80)
+    }
+
+    @Test("Stress buffer depth stays bounded")
+    func stressBufferDepth() {
+        #expect(MirageRenderModePolicy.maxStressBufferDepth == 3)
     }
 }
