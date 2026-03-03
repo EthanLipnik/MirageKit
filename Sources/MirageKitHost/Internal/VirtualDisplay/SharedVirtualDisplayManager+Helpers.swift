@@ -753,7 +753,7 @@ extension SharedVirtualDisplayManager {
             orphanedDisplayIDs.insert(displayID)
             CGVirtualDisplayBridge.clearPreferredDescriptorProfile(for: display.colorSpace)
             CGVirtualDisplayBridge.invalidatePersistentSerial(for: display.colorSpace)
-            MirageLogger.error(
+            MirageLogger.debug(
                 .host,
                 "WARNING: Virtual display \(displayID) still online after invalidation; marked orphaned and rotated descriptor profile/serial"
             )

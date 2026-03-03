@@ -101,9 +101,14 @@ public final class MirageCloudKitHostProvider {
             let (results, _) = try await database.records(matching: query, inZoneWith: hostZoneID)
 
             var hosts: [MirageCloudKitHostInfo] = []
+            var processedCount = 0
             for (_, result) in results {
                 if case let .success(record) = result {
                     if let hostInfo = parseHostRecord(record, isShared: false, ownerUserID: nil) { hosts.append(hostInfo) }
+                }
+                processedCount += 1
+                if processedCount.isMultiple(of: 25) {
+                    await Task.yield()
                 }
             }
 
@@ -126,6 +131,7 @@ public final class MirageCloudKitHostProvider {
             let zones = try await sharedDatabase.allRecordZones()
 
             var hosts: [MirageCloudKitHostInfo] = []
+            var processedCount = 0
 
             for zone in zones {
                 // Query for host records in each shared zone
@@ -142,6 +148,10 @@ public final class MirageCloudKitHostProvider {
                             // Get owner user ID from the zone
                             let ownerUserID = zone.zoneID.ownerName
                             if let hostInfo = parseHostRecord(record, isShared: true, ownerUserID: ownerUserID) { hosts.append(hostInfo) }
+                        }
+                        processedCount += 1
+                        if processedCount.isMultiple(of: 25) {
+                            await Task.yield()
                         }
                     }
                 } catch {

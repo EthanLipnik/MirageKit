@@ -43,32 +43,29 @@ public extension AppStreamManager {
 
     /// Request a new window from an app (for apps that are running but have no windows)
     func requestNewWindow(bundleIdentifier: String) async {
-        guard let app = NSWorkspace.shared.runningApplications.first(where: {
+        guard let runningApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier?.lowercased() == bundleIdentifier.lowercased()
         }) else {
             return
         }
 
-        // Activate the app first
-        app.activate()
+        _ = runningApp.activate()
 
-        // Try to send "New Window" command via Apple Events
-        let script = """
-        tell application id "\(bundleIdentifier)"
-            try
-                make new document
-            on error
-                try
-                    activate
-                end try
-            end try
-        end tell
-        """
+        guard let appURL = runningApp.bundleURL ??
+            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            logger.warning("Failed to resolve app URL for reopen request: \(bundleIdentifier)")
+            return
+        }
 
-        if let appleScript = NSAppleScript(source: script) {
-            var error: NSDictionary?
-            appleScript.executeAndReturnError(&error)
-            if let error { logger.warning("Apple Script error requesting new window: \(error)") }
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = true
+        configuration.createsNewApplicationInstance = false
+
+        do {
+            _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
+            logger.info("Requested reopen/new window for app: \(bundleIdentifier)")
+        } catch {
+            logger.warning("Failed to request reopen/new window for app \(bundleIdentifier): \(error)")
         }
     }
 }

@@ -129,6 +129,10 @@ extension MirageClientService {
     }
 
     private func isExpectedReceiveTermination(_ error: Error) -> Bool {
+        Self.isExpectedTransportTermination(error)
+    }
+
+    nonisolated static func isExpectedTransportTermination(_ error: Error) -> Bool {
         if let nwError = error as? NWError {
             switch nwError {
             case let .posix(code):
@@ -143,16 +147,26 @@ extension MirageClientService {
            let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
             return expectedReceivePOSIXErrors.contains(code)
         }
+        if nsError.domain == "Network.NWError", expectedNetworkReceiveErrorCodes.contains(nsError.code) {
+            return true
+        }
 
         return false
     }
 
-    private var expectedReceivePOSIXErrors: Set<POSIXErrorCode> {
+    private nonisolated static var expectedReceivePOSIXErrors: Set<POSIXErrorCode> {
         [
             .ECONNABORTED,
             .ECONNRESET,
             .ENOTCONN,
             .ETIMEDOUT,
+            .ECANCELED,
+        ]
+    }
+
+    private nonisolated static var expectedNetworkReceiveErrorCodes: Set<Int> {
+        [
+            89,
         ]
     }
 }

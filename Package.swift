@@ -22,6 +22,14 @@ let package = Package(
             targets: ["MirageKit"]
         ),
         .library(
+            name: "MirageBootstrapShared",
+            targets: ["MirageBootstrapShared"]
+        ),
+        .library(
+            name: "MirageHostBootstrapRuntime",
+            targets: ["MirageHostBootstrapRuntime"]
+        ),
+        .library(
             name: "MirageKitClient",
             targets: ["MirageKitClient"]
         ),
@@ -43,6 +51,13 @@ let package = Package(
                 .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
                 .product(name: "NIOSSH", package: "swift-nio-ssh"),
             ]
+        ),
+        .target(
+            name: "MirageBootstrapShared"
+        ),
+        .target(
+            name: "MirageHostBootstrapRuntime",
+            dependencies: ["MirageBootstrapShared"]
         ),
         .target(
             name: "MirageKitClient",

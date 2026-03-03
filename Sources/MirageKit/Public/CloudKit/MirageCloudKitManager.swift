@@ -175,9 +175,9 @@ public final class MirageCloudKitManager {
             isInitialized = true
             MirageLogger.error(.appState, error: error, message: "CloudKit initialization failed: ")
             if let ckError = error as? CKError {
-                MirageLogger.error(
+                MirageLogger.debug(
                     .appState,
-                    "CloudKit error code: \(ckError.code.rawValue), userInfo: \(ckError.userInfo)"
+                    "CloudKit initialization detail code=\(ckError.code.rawValue), userInfo=\(ckError.userInfo)"
                 )
             }
         }

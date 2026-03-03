@@ -5,6 +5,8 @@ This document describes the architecture of the **entire MirageKit Swift package
 It is a package-internal architecture reference for engineers working in:
 
 - `Sources/MirageKit`
+- `Sources/MirageBootstrapShared`
+- `Sources/MirageHostBootstrapRuntime`
 - `Sources/MirageKitHost`
 - `Sources/MirageKitClient`
 - `Tests/MirageKitTests`
@@ -15,9 +17,11 @@ It does not describe app-target UI architecture in `Mirage/`, `Mirage Host/`, or
 
 ## 1. Package Topology
 
-MirageKit is one SwiftPM package with three products:
+MirageKit is one SwiftPM package with five products:
 
 - `MirageKit` (shared protocol, security, trust, remote/cloud/bootstrap, diagnostics)
+- `MirageBootstrapShared` (bootstrap wire contract, replay/auth primitives, daemon/host telemetry queue schema)
+- `MirageHostBootstrapRuntime` (daemon-only unlock/control runtime with local OSLog diagnostics)
 - `MirageKitClient` (client connection + media receive/decode/render + client control state)
 - `MirageKitHost` (host connection + capture/encode/send + input injection + stream governance)
 
@@ -155,6 +159,28 @@ Host handshake consumes trust outcome and can emit auto-trust notice semantics (
   - `MirageSSHBootstrapClient`
   - `MirageBootstrapControlClient`
   - endpoint/metadata protocol types and crypto envelope helpers.
+
+### 3.6 Bootstrap Shared/Runtime Split
+
+Bootstrap daemon code is intentionally split from the monolithic host runtime:
+
+- `MirageBootstrapShared`
+  - `HostSessionState`, unlock error codes
+  - bootstrap control protocol request/response/auth/encryption payloads
+  - replay protection (`MirageReplayProtector`)
+  - message size limits (`MirageControlMessageLimits`)
+  - minimal identity verification helpers (`MirageBootstrapIdentityVerification`)
+  - host/daemon telemetry queue envelope schema used for app-group handoff
+  - shared bootstrap configuration payload (`MirageHostBootstrapConfiguration`)
+
+- `MirageHostBootstrapRuntime`
+  - `MirageHostBootstrapControlServer`
+  - `MirageHostBootstrapUnlockService`
+  - `MirageHostBootstrapDaemonStateMachine`
+  - unlock/session monitor internals required for pre-login unlock
+  - local daemon logger and app-group queue writer for diagnostics/analytics handoff
+
+This split keeps bootstrap daemon linkage independent from `MirageKitHost` and app-owned telemetry SDKs.
 
 ### 3.5 Diagnostics and Instrumentation
 

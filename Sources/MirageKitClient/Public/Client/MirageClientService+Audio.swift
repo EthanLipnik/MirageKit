@@ -285,7 +285,11 @@ extension MirageClientService {
                 }
 
                 if let error {
-                    MirageLogger.error(.client, error: error, message: "Audio UDP receive error: ")
+                    if MirageClientService.isExpectedTransportTermination(error) {
+                        MirageLogger.client("Audio UDP receive loop ended by peer/network: \(error.localizedDescription)")
+                    } else {
+                        MirageLogger.error(.client, error: error, message: "Audio UDP receive error: ")
+                    }
                     return
                 }
 

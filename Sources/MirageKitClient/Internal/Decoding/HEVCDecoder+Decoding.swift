@@ -239,7 +239,8 @@ extension HEVCDecoder {
                 case -12910: "ReferenceMissing"
                 default: "Unknown"
                 }
-                MirageLogger.error(.decoder, "Decode callback error: \(status) (\(errorName))")
+                let decodeError = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
+                MirageLogger.error(.decoder, error: decodeError, message: "Decode callback failed (\(errorName))")
                 // Track consecutive errors to detect when we need a fresh keyframe
                 let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
                 info.errorTracker?.recordError()

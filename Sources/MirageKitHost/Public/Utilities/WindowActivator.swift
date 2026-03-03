@@ -27,7 +27,6 @@ public final class WindowActivator {
         case nsRunningApplication // Standard AppKit activation
         case axFrontmostAttribute // Set AXFrontmost on app element
         case axRaiseAndFocus // Raise window + set focused window
-        case appleScript // AppleScript activation (most reliable on headless)
         case nsWorkspaceOpen // NSWorkspace.open with activation config
     }
 
@@ -48,16 +47,16 @@ public final class WindowActivator {
             verbose: false
         )
 
-        /// Fast configuration - skips slow methods like AppleScript
+        /// Fast configuration - skips heavyweight relaunch attempts.
         public static let fast = Configuration(
             methods: [.nsRunningApplication, .axFrontmostAttribute, .axRaiseAndFocus],
             verificationTimeout: 0.05,
             verbose: false
         )
 
-        /// Headless-optimized - prioritizes methods known to work without display
+        /// Headless-optimized fallback order without Apple Events automation prompts.
         public static let headless = Configuration(
-            methods: [.appleScript, .axFrontmostAttribute, .nsRunningApplication, .axRaiseAndFocus],
+            methods: [.nsWorkspaceOpen, .axFrontmostAttribute, .nsRunningApplication, .axRaiseAndFocus],
             verificationTimeout: 0.15,
             verbose: false
         )
@@ -138,9 +137,6 @@ public final class WindowActivator {
 
         case .axRaiseAndFocus:
             tryAXRaiseAndFocus(app: app, axWindow: axWindow)
-
-        case .appleScript:
-            tryAppleScriptActivation(app: app)
 
         case .nsWorkspaceOpen:
             tryNSWorkspaceActivation(app: app)
@@ -241,49 +237,7 @@ public final class WindowActivator {
         )
     }
 
-    /// Method 4: AppleScript activation (most reliable on headless)
-    private func tryAppleScriptActivation(app: MirageApplication) -> ActivationResult {
-        let script: NSAppleScript
-
-        // Prefer bundle identifier (more reliable)
-        if let bundleID = app.bundleIdentifier {
-            let source = """
-            tell application id "\(bundleID)"
-                activate
-            end tell
-            """
-            guard let s = NSAppleScript(source: source) else { return .failure(method: "AppleScript", error: "Failed to create script") }
-            script = s
-        } else {
-            // Fall back to name
-            let escapedName = app.name.replacingOccurrences(of: "\"", with: "\\\"")
-            let source = """
-            tell application "\(escapedName)"
-                activate
-            end tell
-            """
-            guard let s = NSAppleScript(source: source) else { return .failure(method: "AppleScript", error: "Failed to create script") }
-            script = s
-        }
-
-        var errorDict: NSDictionary?
-        script.executeAndReturnError(&errorDict)
-
-        if let error = errorDict {
-            let errorMessage = error[NSAppleScript.errorMessage] as? String ?? "Unknown error"
-            return .failure(method: "AppleScript", error: errorMessage)
-        }
-
-        // Verify activation
-        Thread.sleep(forTimeInterval: configuration.verificationTimeout)
-
-        if let runningApp = NSRunningApplication(processIdentifier: app.id), runningApp.isActive { return .success(method: "AppleScript") }
-
-        // AppleScript doesn't always reflect in isActive on headless, consider partial success
-        return .partialSuccess(method: "AppleScript", message: "Executed without error")
-    }
-
-    /// Method 5: NSWorkspace.open with activation configuration
+    /// Method 4: NSWorkspace.open with activation configuration
     private func tryNSWorkspaceActivation(app: MirageApplication) -> ActivationResult {
         guard let bundleID = app.bundleIdentifier,
               let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID) else {
