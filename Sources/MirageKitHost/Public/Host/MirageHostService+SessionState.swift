@@ -54,6 +54,7 @@ extension MirageHostService {
             for clientContext in clientsByConnection.values {
                 await sendWindowList(to: clientContext)
             }
+            resumePendingAppListRequestIfNeeded()
         } else if !clientsByConnection.isEmpty {
             await startLoginDisplayStreamIfNeeded()
         }

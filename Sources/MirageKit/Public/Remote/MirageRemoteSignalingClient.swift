@@ -183,7 +183,8 @@ public final class MirageRemoteSignalingClient {
 
     /// Ensures a host session is advertised in signaling.
     ///
-    /// On an existing session this updates liveness through heartbeat.
+    /// This refreshes liveness through heartbeat first, then creates only if
+    /// signaling reports the session is missing.
     /// - Parameters:
     ///   - sessionID: Signaling session identifier.
     ///   - hostID: Host device identifier.
@@ -191,15 +192,32 @@ public final class MirageRemoteSignalingClient {
     ///   - hostCandidates: Direct-connect candidates to publish.
     ///   - ttlSeconds: Session time-to-live used by signaling.
     ///
-    /// - Note: If the session already exists, this method falls back to ``hostHeartbeat(sessionID:remoteEnabled:hostCandidates:ttlSeconds:)``.
+    /// - Note: The client retries heartbeat once if a concurrent host create
+    ///   races and returns `session_exists`.
     public func advertiseHostSession(
         sessionID: String,
         hostID: UUID,
         remoteEnabled: Bool,
         hostCandidates: [MirageRemoteCandidate],
-        ttlSeconds: Int = 120
+        ttlSeconds: Int = 360
     )
     async throws {
+        do {
+            try await hostHeartbeat(
+                sessionID: sessionID,
+                remoteEnabled: remoteEnabled,
+                hostCandidates: hostCandidates,
+                ttlSeconds: ttlSeconds
+            )
+            return
+        } catch let error as MirageRemoteSignalingError {
+            guard case let .http(statusCode, errorCode, _) = error,
+                  statusCode == 404,
+                  errorCode == "session_not_found" else {
+                throw error
+            }
+        }
+
         do {
             try await createHostSession(
                 sessionID: sessionID,

@@ -95,12 +95,35 @@ extension StreamController {
     }
 
     func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
-        decodeSchedulerTargetFPS = max(1, min(120, targetFrameRate))
-        decodeSubmissionBaselineLimit = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: decodeSchedulerTargetFPS)
+        let resolvedTargetFPS = max(1, min(120, targetFrameRate))
+        let resolvedBaseline = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
+        let targetUnchanged = resolvedTargetFPS == decodeSchedulerTargetFPS
+        let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
+        if targetUnchanged, baselineUnchanged {
+            if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
+                currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
+            }
+            if await decoder.currentDecodeSubmissionLimit() != currentDecodeSubmissionLimit {
+                await decoder.setDecodeSubmissionLimit(
+                    limit: currentDecodeSubmissionLimit,
+                    reason: "target refresh sync"
+                )
+            }
+            return
+        }
+
+        decodeSchedulerTargetFPS = resolvedTargetFPS
+        decodeSubmissionBaselineLimit = resolvedBaseline
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
-        currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
-        await decoder.setDecodeSubmissionLimit(limit: decodeSubmissionBaselineLimit, reason: "target refresh update")
+        lastDecodeSubmissionConstraintWasSourceBound = nil
+        if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
+            currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
+        }
+        await decoder.setDecodeSubmissionLimit(
+            limit: currentDecodeSubmissionLimit,
+            reason: "target refresh update"
+        )
     }
 
     func updatePresentationTier(_ tier: StreamPresentationTier, targetFPS: Int? = nil) async {
@@ -117,6 +140,7 @@ extension StreamController {
         }
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
+        lastDecodeSubmissionConstraintWasSourceBound = nil
         currentDecodeSubmissionLimit = max(1, decodeSubmissionBaselineLimit)
         await decoder.setDecodeSubmissionLimit(limit: currentDecodeSubmissionLimit, reason: "presentation tier update")
 

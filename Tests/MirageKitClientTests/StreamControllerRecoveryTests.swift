@@ -68,8 +68,8 @@ struct StreamControllerRecoveryTests {
 
         await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
         await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
-        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 0)
-        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 120)
+        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 0, receivedFPS: 0)
+        await controller.evaluateDecodeSubmissionLimit(decodedFPS: 120, receivedFPS: 120)
 
         #expect(await controller.decodeSubmissionBaselineLimit == 1)
         #expect(await controller.currentDecodeSubmissionLimit == 1)

@@ -49,6 +49,10 @@ actor StreamPacketSender {
 
     nonisolated static let packetBudgetWindowSeconds: CFAbsoluteTime = 0.75
     nonisolated static let packetBudgetMinWindowSeconds: CFAbsoluteTime = 0.20
+    nonisolated static let packetPacerBurstWindowMs: Double = 6.0
+    nonisolated static let packetPacerDebtToleranceMs: Double = 1.0
+    nonisolated static let packetPacerMaxSleepMsPerPacket: Int = 12
+    nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
 
     private let maxPayloadSize: Int
     private let mediaSecurityKey: MirageMediaPacketKey?
@@ -68,6 +72,28 @@ actor StreamPacketSender {
     private let queueLock = NSLock()
 
     private var pacerRateBps: Int = 0
+    private var pacerTokensBytes: Double = 0
+    private var pacerLastRefillTime: CFAbsoluteTime = 0
+    private var pacerSleepTotalMs: Int = 0
+    private var pacerSleepMaxMs: Int = 0
+    private var pacerSleepPacketCount: Int = 0
+    private var pacerLastLogTime: CFAbsoluteTime = 0
+
+    nonisolated static func packetPacerSleepMilliseconds(
+        tokensBeforeSend: Double,
+        packetBytes: Int,
+        bytesPerMillisecond: Double,
+        debtToleranceMs: Double = packetPacerDebtToleranceMs,
+        maxSleepMs: Int = packetPacerMaxSleepMsPerPacket
+    ) -> Int {
+        guard packetBytes > 0, bytesPerMillisecond > 0, maxSleepMs > 0 else { return 0 }
+        let toleranceBytes = bytesPerMillisecond * max(0.0, debtToleranceMs)
+        let projectedTokens = tokensBeforeSend - Double(packetBytes)
+        let projectedDebtBytes = max(0.0, -projectedTokens - toleranceBytes)
+        guard projectedDebtBytes > 0 else { return 0 }
+        let rawSleep = Int(ceil(projectedDebtBytes / bytesPerMillisecond))
+        return max(1, min(maxSleepMs, rawSleep))
+    }
 
     init(
         maxPayloadSize: Int,
@@ -91,6 +117,7 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
         }
+        resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
         sendTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             for await item in stream {
@@ -109,6 +136,7 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
         }
+        resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
     }
 
     func setTargetBitrateBps(_ bitrate: Int?) {
@@ -119,6 +147,7 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
         }
+        resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
     }
 
     func bumpGeneration(reason: String) {
@@ -133,6 +162,7 @@ actor StreamPacketSender {
             packetBudgetSamples.removeAll(keepingCapacity: true)
             packetBudgetSampleBytes = 0
         }
+        resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
         MirageLogger.stream("Packet send queue reset (gen \(generation), \(reason))")
     }
 
@@ -320,7 +350,7 @@ actor StreamPacketSender {
 
                 let packetPayloadLength = wirePayload?.count ?? fragmentSize
                 let packetLength = mirageHeaderSize + packetPayloadLength
-                await paceIfNeeded(packetBytes: packetLength)
+                await paceIfNeeded(packetBytes: packetLength, isKeyframeBurst: item.isKeyframe)
 
                 let packetBuffer = packetBufferPool.acquire()
                 packetBuffer.prepare(length: packetLength)
@@ -439,7 +469,10 @@ actor StreamPacketSender {
                     wirePayload = parityData
                 }
 
-                await paceIfNeeded(packetBytes: mirageHeaderSize + wirePayload.count)
+                await paceIfNeeded(
+                    packetBytes: mirageHeaderSize + wirePayload.count,
+                    isKeyframeBurst: item.isKeyframe
+                )
 
                 let packetBuffer = packetBufferPool.acquire()
                 packetBuffer.prepare(length: mirageHeaderSize + wirePayload.count)
@@ -582,8 +615,88 @@ actor StreamPacketSender {
         return parity
     }
 
-    private func paceIfNeeded(packetBytes: Int) async {
-        _ = packetBytes
+    private func paceIfNeeded(packetBytes: Int, isKeyframeBurst: Bool) async {
+        guard isKeyframeBurst else { return }
+        guard packetBytes > 0 else { return }
+        guard pacerRateBps > 0 else { return }
+
+        let bytesPerSecond = max(1.0, Double(pacerRateBps) / 8.0)
+        let bytesPerMillisecond = max(1.0, bytesPerSecond / 1_000.0)
+        let burstBytes = max(
+            bytesPerMillisecond,
+            bytesPerMillisecond * Self.packetPacerBurstWindowMs
+        )
+        refillPacketPacerTokens(
+            now: CFAbsoluteTimeGetCurrent(),
+            bytesPerSecond: bytesPerSecond,
+            burstBytes: burstBytes
+        )
+
+        while true {
+            let sleepMs = Self.packetPacerSleepMilliseconds(
+                tokensBeforeSend: pacerTokensBytes,
+                packetBytes: packetBytes,
+                bytesPerMillisecond: bytesPerMillisecond
+            )
+            guard sleepMs > 0 else { break }
+
+            try? await Task.sleep(for: .milliseconds(Int64(sleepMs)))
+            pacerSleepTotalMs += sleepMs
+            pacerSleepMaxMs = max(pacerSleepMaxMs, sleepMs)
+            pacerSleepPacketCount += 1
+
+            let now = CFAbsoluteTimeGetCurrent()
+            refillPacketPacerTokens(
+                now: now,
+                bytesPerSecond: bytesPerSecond,
+                burstBytes: burstBytes
+            )
+            logPacketPacingIfNeeded(now: now)
+        }
+
+        pacerTokensBytes -= Double(packetBytes)
+    }
+
+    private func resetPacketPacerState(now: CFAbsoluteTime) {
+        pacerTokensBytes = 0
+        pacerLastRefillTime = 0
+        pacerSleepTotalMs = 0
+        pacerSleepMaxMs = 0
+        pacerSleepPacketCount = 0
+        pacerLastLogTime = now
+    }
+
+    private func refillPacketPacerTokens(
+        now: CFAbsoluteTime,
+        bytesPerSecond: Double,
+        burstBytes: Double
+    ) {
+        if pacerLastRefillTime == 0 {
+            pacerLastRefillTime = now
+            pacerTokensBytes = burstBytes
+            return
+        }
+
+        let elapsed = max(0.0, now - pacerLastRefillTime)
+        pacerLastRefillTime = now
+        pacerTokensBytes = min(
+            burstBytes,
+            max(-burstBytes, pacerTokensBytes + elapsed * bytesPerSecond)
+        )
+    }
+
+    private func logPacketPacingIfNeeded(now: CFAbsoluteTime) {
+        guard MirageLogger.isEnabled(.stream) else { return }
+        guard pacerSleepPacketCount > 0 else { return }
+        guard pacerLastLogTime == 0 || now - pacerLastLogTime >= Self.packetPacerLogIntervalSeconds else { return }
+
+        MirageLogger.stream(
+            "Packet pacer: sleeps=\(pacerSleepPacketCount), totalMs=\(pacerSleepTotalMs), maxMs=\(pacerSleepMaxMs)"
+        )
+        pacerSleepTotalMs = 0
+        pacerSleepMaxMs = 0
+        pacerSleepPacketCount = 0
+        pacerLastLogTime = now
     }
 }
 

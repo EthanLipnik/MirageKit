@@ -17,16 +17,24 @@ import ScreenCaptureKit
 
 extension HEVCEncoder {
     nonisolated static func encoderSpecification(
-        for performanceMode: MirageStreamPerformanceMode
+        for performanceMode: MirageStreamPerformanceMode,
+        latencyMode: MirageStreamLatencyMode
     ) -> [CFString: Any] {
         var spec: [CFString: Any] = [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
         ]
-        if performanceMode == .game {
+        if performanceMode == .game || standardLowLatencyVTTuningEnabled(performanceMode: performanceMode, latencyMode: latencyMode) {
             spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true
         }
         return spec
+    }
+
+    nonisolated static func standardLowLatencyVTTuningEnabled(
+        performanceMode: MirageStreamPerformanceMode,
+        latencyMode: MirageStreamLatencyMode
+    ) -> Bool {
+        performanceMode == .standard && latencyMode == .lowestLatency
     }
 
     private struct GameModeRateControlPolicy {
@@ -52,7 +60,7 @@ extension HEVCEncoder {
         var appliedBool: Bool { self == .applied }
     }
 
-    private struct GameModePolicyStatus {
+    private struct SessionPolicyStatus {
         var applied: [String] = []
         var unsupported: [String] = []
         var failed: [String] = []
@@ -135,7 +143,10 @@ extension HEVCEncoder {
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
         ] as CFDictionary
 
-        let baseSpec = Self.encoderSpecification(for: performanceMode)
+        let baseSpec = Self.encoderSpecification(
+            for: performanceMode,
+            latencyMode: resolvedSessionLatencyMode()
+        )
 
         var status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
@@ -330,7 +341,7 @@ extension HEVCEncoder {
         key: CFString,
         value: CFTypeRef,
         propertyName: String,
-        status: inout GameModePolicyStatus
+        status: inout SessionPolicyStatus
     ) -> Bool {
         let outcome = setPropertyOutcome(session, key: key, value: value)
         status.record(propertyName, outcome: outcome)
@@ -464,7 +475,7 @@ extension HEVCEncoder {
     private func applyGameModeBitrateSettings(
         _ session: VTCompressionSession,
         policy: GameModeRateControlPolicy,
-        status: inout GameModePolicyStatus
+        status: inout SessionPolicyStatus
     ) -> GameModeBitrateResult {
         guard let targetBitrate = configuration.bitrate, targetBitrate > 0 else {
             return GameModeBitrateResult(strategy: .none, windowSeconds: nil)
@@ -544,7 +555,7 @@ extension HEVCEncoder {
         guard let session = compressionSession else { return }
         if performanceMode == .game {
             let policy = GameModeRateControlPolicy(targetFrameRate: configuration.targetFrameRate)
-            var status = GameModePolicyStatus()
+            var status = SessionPolicyStatus()
             _ = applyGameModeBitrateSettings(session, policy: policy, status: &status)
         } else {
             applyBitrateSettings(session)
@@ -568,10 +579,16 @@ extension HEVCEncoder {
     }
 
     private func configureSession(_ session: VTCompressionSession) throws {
+        let resolvedLatencyMode = resolvedSessionLatencyMode()
+        let standardLowLatencyTuningEnabled = Self.standardLowLatencyVTTuningEnabled(
+            performanceMode: performanceMode,
+            latencyMode: resolvedLatencyMode
+        )
         let gameModePolicy = performanceMode == .game ? GameModeRateControlPolicy(
             targetFrameRate: configuration.targetFrameRate
         ) : nil
-        var gameModeStatus = GameModePolicyStatus()
+        var gameModeStatus = SessionPolicyStatus()
+        var standardLowLatencyStatus = SessionPolicyStatus()
 
         if let gameModePolicy {
             _ = setPropertyTracked(
@@ -588,7 +605,7 @@ extension HEVCEncoder {
                 propertyName: "allowFrameReordering",
                 status: &gameModeStatus
             )
-            let frameDelay = frameDelayCount(for: resolvedSessionLatencyMode())
+            let frameDelay = frameDelayCount(for: resolvedLatencyMode)
             _ = setPropertyTracked(
                 session,
                 key: kVTCompressionPropertyKey_MaxFrameDelayCount,
@@ -619,6 +636,13 @@ extension HEVCEncoder {
                 key: kVTCompressionPropertyKey_ExpectedFrameRate,
                 value: configuration.targetFrameRate as CFNumber
             )
+
+            if standardLowLatencyTuningEnabled {
+                applyStandardLowLatencyThroughputSettings(
+                    session,
+                    status: &standardLowLatencyStatus
+                )
+            }
         }
 
         // Keyframe interval
@@ -688,6 +712,13 @@ extension HEVCEncoder {
         } else {
             // Apply bitrate caps to keep encode time bounded for motion-heavy scenes.
             applyBitrateSettings(session)
+            if standardLowLatencyTuningEnabled {
+                MirageLogger.encoder(
+                    "event=encoder_standard_low_latency_tuning applied=\(standardLowLatencyStatus.appliedText) " +
+                        "unsupported=\(standardLowLatencyStatus.unsupportedText) " +
+                        "failed=\(standardLowLatencyStatus.failedText)"
+                )
+            }
         }
 
         // Color space configuration
@@ -719,10 +750,30 @@ extension HEVCEncoder {
         VTCompressionSessionPrepareToEncodeFrames(session)
     }
 
+    private func applyStandardLowLatencyThroughputSettings(
+        _ session: VTCompressionSession,
+        status: inout SessionPolicyStatus
+    ) {
+        _ = setPropertyTracked(
+            session,
+            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
+            value: kCFBooleanFalse,
+            propertyName: "maximizePowerEfficiency",
+            status: &status
+        )
+        _ = setPropertyTracked(
+            session,
+            key: kVTCompressionPropertyKey_ReferenceBufferCount,
+            value: NSNumber(value: 1),
+            propertyName: "referenceBufferCount",
+            status: &status
+        )
+    }
+
     private func applyGameModeThroughputSettings(
         _ session: VTCompressionSession,
         policy: GameModeRateControlPolicy,
-        status: inout GameModePolicyStatus
+        status: inout SessionPolicyStatus
     ) {
         // Keep HEVC on the highest-throughput path for sustained high-resolution encoding.
         let powerPreferenceApplied = setPropertyTracked(

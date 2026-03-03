@@ -186,6 +186,8 @@ actor StreamController {
     static let decodeSubmissionHealthyThreshold: Double = 0.95
     static let decodeSubmissionStressWindows: Int = 2
     static let decodeSubmissionHealthyWindows: Int = 3
+    static let decodeSubmissionDecodeBoundGapFPS: Double = 2.5
+    static let decodeSubmissionSourceBoundGapFPS: Double = 1.0
     static let adaptiveJitterHoldMaxMs: Int = 8
     static let adaptiveJitterStressThreshold: Double = 0.88
     static let adaptiveJitterStressWindows: Int = 2
@@ -251,6 +253,7 @@ actor StreamController {
     var decodeSubmissionStressStreak: Int = 0
     var decodeSubmissionHealthyStreak: Int = 0
     var currentDecodeSubmissionLimit: Int = 2
+    var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var presentationTier: StreamPresentationTier = .activeLive
 
     let metricsTracker = ClientFrameMetricsTracker()
@@ -673,7 +676,10 @@ actor StreamController {
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
         let renderTelemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)
         evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
-        await evaluateDecodeSubmissionLimit(decodedFPS: snapshot.decodedFPS)
+        await evaluateDecodeSubmissionLimit(
+            decodedFPS: snapshot.decodedFPS,
+            receivedFPS: snapshot.receivedFPS
+        )
         logMetricsIfNeeded(
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS,
@@ -695,12 +701,13 @@ actor StreamController {
         }
     }
 
-    func evaluateDecodeSubmissionLimit(decodedFPS: Double) async {
+    func evaluateDecodeSubmissionLimit(decodedFPS: Double, receivedFPS: Double) async {
         if presentationTier == .passiveSnapshot {
             decodeSubmissionStressStreak = 0
             decodeSubmissionHealthyStreak = 0
             decodeSubmissionBaselineLimit = 1
             decodeSchedulerTargetFPS = max(1, decodeSchedulerTargetFPS)
+            lastDecodeSubmissionConstraintWasSourceBound = nil
             if currentDecodeSubmissionLimit != 1 {
                 currentDecodeSubmissionLimit = 1
                 await decoder.setDecodeSubmissionLimit(limit: 1, reason: "passive tier fixed submission")
@@ -711,23 +718,54 @@ actor StreamController {
         let targetFPS = max(1, decodeSchedulerTargetFPS)
         let ratio = decodedFPS / Double(targetFPS)
         let stressLimit = min(Self.decodeSubmissionMaximumLimit, decodeSubmissionBaselineLimit + 1)
+        let decodeGap = max(0.0, receivedFPS - decodedFPS)
+        let sourceBound = receivedFPS > 0 && decodeGap <= Self.decodeSubmissionSourceBoundGapFPS
+        let decodeBound = receivedFPS > 0 && decodeGap >= Self.decodeSubmissionDecodeBoundGapFPS
 
         if ratio < Self.decodeSubmissionStressThreshold {
-            decodeSubmissionStressStreak += 1
-            decodeSubmissionHealthyStreak = 0
+            if decodeBound {
+                if lastDecodeSubmissionConstraintWasSourceBound != false {
+                    let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))
+                    let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
+                    MirageLogger.client(
+                        "Decode submission stress classified as decode-bound (decoded \(decodedText)fps, received \(receivedText)fps, target \(targetFPS)fps)"
+                    )
+                }
+                lastDecodeSubmissionConstraintWasSourceBound = false
+                decodeSubmissionStressStreak += 1
+                decodeSubmissionHealthyStreak = 0
+            } else {
+                if sourceBound, lastDecodeSubmissionConstraintWasSourceBound != true {
+                    let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))
+                    let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
+                    MirageLogger.client(
+                        "Decode submission stress classified as source-bound (decoded \(decodedText)fps, received \(receivedText)fps, target \(targetFPS)fps)"
+                    )
+                    lastDecodeSubmissionConstraintWasSourceBound = true
+                } else if !sourceBound {
+                    lastDecodeSubmissionConstraintWasSourceBound = nil
+                }
+                decodeSubmissionStressStreak = 0
+                decodeSubmissionHealthyStreak = 0
+            }
         } else if ratio >= Self.decodeSubmissionHealthyThreshold {
             decodeSubmissionHealthyStreak += 1
             decodeSubmissionStressStreak = 0
+            lastDecodeSubmissionConstraintWasSourceBound = nil
         } else {
             decodeSubmissionStressStreak = 0
             decodeSubmissionHealthyStreak = 0
+            lastDecodeSubmissionConstraintWasSourceBound = nil
         }
 
         if currentDecodeSubmissionLimit < stressLimit,
            decodeSubmissionStressStreak >= Self.decodeSubmissionStressWindows {
             decodeSubmissionStressStreak = 0
             currentDecodeSubmissionLimit = stressLimit
-            await decoder.setDecodeSubmissionLimit(limit: stressLimit, reason: "decode stress")
+            await decoder.setDecodeSubmissionLimit(
+                limit: stressLimit,
+                reason: "decode stress (decode-bound)"
+            )
             return
         }
 

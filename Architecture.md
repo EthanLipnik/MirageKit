@@ -152,6 +152,9 @@ Host handshake consumes trust outcome and can emit auto-trust notice semantics (
 
 - **Remote signaling**
   - `MirageRemoteSignalingClient`: signed app-authenticated worker API calls.
+    - Host advertising is heartbeat-first to refresh liveness without create conflicts.
+    - Host create is used only as fallback when signaling returns `session_not_found`.
+    - Concurrent create races (`session_exists`) retry heartbeat once before surfacing errors.
   - `MirageStunProbe`: UDP STUN binding probe for external candidate discovery.
 
 - **Bootstrap (wake/unlock before normal session)**
@@ -273,6 +276,7 @@ Major responsibilities in `StreamContext`:
 - quality and backpressure adaptation
 - frame inbox and decode/encode pacing
 - packet send coordination (`StreamPacketSender`)
+- keyframe packet pacing with bitrate-budget token bucket shaping
 - optional encrypted payload wrapping
 
 ![Host Stream Pipeline](Assets/Architecture-HostPipeline.svg#gh-light-mode-only)
@@ -541,6 +545,7 @@ Client-side recovery mechanisms include:
 - reassembler keyframe-only mode until safe decode anchor returns
 - resize gating to avoid old-dimension P-frame decode storms
 - controller reset decisions based on dimension token advances
+- decode submission scheduler escalates only when decode is the bottleneck (not source-limited host cadence)
 - optional adaptive fallback state machine for temporary encoder downshift
 - automatic transport re-registration on path changes or explicit host request
 - passive-tier recovery stays bounded (no recurring keyframe loop)

@@ -1296,11 +1296,12 @@ extension MirageHostService {
         }
 
         appListRequestTask?.cancel()
-        let includeIcons = pending.requestedIcons && sessionState == .active
-        let forceRefresh = pending.requestedForceRefresh
-        if pending.requestedIcons, !includeIcons {
-            MirageLogger.host("Session is \(sessionState); responding with app list without icons")
+        if pending.requestedIcons, sessionState != .active {
+            MirageLogger.host("Session is \(sessionState); deferring app list icons until active")
+            return
         }
+        let includeIcons = pending.requestedIcons
+        let forceRefresh = pending.requestedForceRefresh
         let clientID = pending.clientID
         let token = UUID()
         appListRequestToken = token
