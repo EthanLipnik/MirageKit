@@ -14,6 +14,25 @@ import VideoToolbox
 import MirageKit
 
 extension HEVCDecoder {
+    func setPreferredOutputBitDepth(_ bitDepth: MirageVideoBitDepth) {
+        let desiredPixelFormat = preferredOutputPixelFormat(for: bitDepth)
+        let formatChanged = outputPixelFormat != desiredPixelFormat
+        preferredOutputBitDepth = bitDepth
+        outputPixelFormat = desiredPixelFormat
+
+        guard formatChanged else { return }
+
+        if let session = decompressionSession {
+            VTDecompressionSessionInvalidate(session)
+            decompressionSession = nil
+            MirageLogger.decoder(
+                "Decoder preferred output bit depth set to \(bitDepth.displayName); invalidated active session"
+            )
+        } else {
+            MirageLogger.decoder("Decoder preferred output bit depth set to \(bitDepth.displayName)")
+        }
+    }
+
     func setErrorThresholdHandler(_ handler: @escaping @Sendable () -> Void) {
         errorTracker = DecodeErrorTracker(
             maxErrors: maxConsecutiveErrors,

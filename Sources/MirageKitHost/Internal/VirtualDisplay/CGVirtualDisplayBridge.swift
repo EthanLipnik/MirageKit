@@ -71,16 +71,6 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         static let whitePoint = CGPoint(x: 0.3127, y: 0.3290) // D65
     }
 
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // /// BT.2020 (Rec. 2020) color primaries for HDR virtual display configuration
-    // /// These match the encoder's HDR color space settings (Rec. 2020 + PQ)
-    // struct BT2020Primaries {
-    //     static let red = CGPoint(x: 0.708, y: 0.292)
-    //     static let green = CGPoint(x: 0.170, y: 0.797)
-    //     static let blue = CGPoint(x: 0.131, y: 0.046)
-    //     static let whitePoint = CGPoint(x: 0.3127, y: 0.3290)  // D65
-    // }
-
     // MARK: - Virtual Display Context
 
     /// Created virtual display context
@@ -556,7 +546,6 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     ///   - hiDPI: Enable HiDPI/Retina mode (default false for exact pixel dimensions)
     ///   - ppi: Pixels per inch for physical size calculation (default 220)
     /// - Returns: Virtual display context or nil if creation failed
-    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     static func createVirtualDisplay(
         name: String,
         width: Int,

@@ -16,14 +16,14 @@ public struct MirageAccountIdentity: Sendable, Equatable {
     /// Stable key identifier derived from the public key digest.
     public let keyID: String
 
-    /// Raw representation of the signing public key.
+    /// Uncompressed ANSI X9.63 representation (`0x04 || x || y`) of the signing public key.
     public let publicKey: Data
 
     /// Creates a public identity descriptor.
     ///
     /// - Parameters:
     ///   - keyID: Stable digest-derived identifier for the public key.
-    ///   - publicKey: Raw P-256 signing public key bytes.
+    ///   - publicKey: Uncompressed ANSI X9.63 P-256 signing public key bytes.
     public init(keyID: String, publicKey: Data) {
         self.keyID = keyID
         self.publicKey = publicKey
@@ -65,7 +65,7 @@ public final class MirageIdentityManager {
     public func currentIdentity() throws -> MirageAccountIdentity {
         if let cachedIdentity { return cachedIdentity }
         let key = try loadOrCreatePrivateKey()
-        let publicKey = key.publicKey.rawRepresentation
+        let publicKey = key.publicKey.x963Representation
         let identity = MirageAccountIdentity(
             keyID: Self.keyID(for: publicKey),
             publicKey: publicKey
@@ -88,7 +88,7 @@ public final class MirageIdentityManager {
     ///
     /// Uses ECDH followed by HKDF-SHA256 expansion.
     /// - Parameters:
-    ///   - peerPublicKey: Raw P-256 public key bytes from the peer.
+    ///   - peerPublicKey: Uncompressed ANSI X9.63 P-256 public key bytes from the peer.
     ///   - salt: HKDF salt bytes.
     ///   - sharedInfo: HKDF context bytes.
     ///   - outputByteCount: Derived key size in bytes.
@@ -100,7 +100,7 @@ public final class MirageIdentityManager {
     ) throws -> Data {
         let signingKey = try loadOrCreatePrivateKey()
         let agreementKey = try P256.KeyAgreement.PrivateKey(rawRepresentation: signingKey.rawRepresentation)
-        let peerKey = try P256.KeyAgreement.PublicKey(rawRepresentation: peerPublicKey)
+        let peerKey = try P256.KeyAgreement.PublicKey(x963Representation: peerPublicKey)
         let sharedSecret = try agreementKey.sharedSecretFromKeyAgreement(with: peerKey)
         let derivedKey = sharedSecret.hkdfDerivedSymmetricKey(
             using: SHA256.self,
@@ -125,10 +125,10 @@ public final class MirageIdentityManager {
     /// - Parameters:
     ///   - signature: DER-encoded ECDSA signature.
     ///   - payload: Canonical payload bytes originally signed.
-    ///   - publicKey: Raw P-256 signing public key bytes.
+    ///   - publicKey: Uncompressed ANSI X9.63 P-256 signing public key bytes.
     /// - Returns: `true` when the signature is valid for the payload.
     public nonisolated static func verify(signature: Data, payload: Data, publicKey: Data) -> Bool {
-        guard let key = try? P256.Signing.PublicKey(rawRepresentation: publicKey),
+        guard let key = try? P256.Signing.PublicKey(x963Representation: publicKey),
               let parsed = try? P256.Signing.ECDSASignature(derRepresentation: signature) else {
             return false
         }
@@ -137,15 +137,25 @@ public final class MirageIdentityManager {
 
     /// Computes a stable key identifier from the provided public key.
     ///
-    /// - Parameter publicKey: Raw public key bytes.
-    /// - Returns: Lowercase hexadecimal SHA-256 digest string.
+    /// - Parameter publicKey: Uncompressed ANSI X9.63 public key bytes.
+    /// - Returns: Lowercase hexadecimal SHA-256 digest of canonical X9.63 bytes.
     public nonisolated static func keyID(for publicKey: Data) -> String {
-        let digest = SHA256.hash(data: publicKey)
+        let canonicalPublicKey = canonicalizedPublicKeyData(publicKey)
+        let digest = SHA256.hash(data: canonicalPublicKey)
         return digest.map { byte in
             let hex = String(byte, radix: 16)
             return hex.count == 1 ? "0\(hex)" : hex
         }
         .joined()
+    }
+
+    private nonisolated static func canonicalizedPublicKeyData(_ publicKey: Data) -> Data {
+        guard let parsed = try? P256.Signing.PublicKey(x963Representation: publicKey) else {
+            var invalidSentinel = Data("invalid-p256-x963:".utf8)
+            invalidSentinel.append(publicKey)
+            return invalidSentinel
+        }
+        return parsed.x963Representation
     }
 
     // MARK: - Keychain

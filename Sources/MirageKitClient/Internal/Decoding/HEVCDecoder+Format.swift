@@ -130,7 +130,7 @@ extension HEVCDecoder {
             var strippedData = Data(data.suffix(from: parameterSetsEnd))
 
             // Strip any leading SEI NAL units that may confuse VideoToolbox
-            // SEI (Supplemental Enhancement Information) contains metadata like HDR info
+            // SEI (Supplemental Enhancement Information) carries color/transfer metadata
             // VideoToolbox may not properly decode IDR when SEI comes first
             strippedData = stripSEINALUnits(from: strippedData)
 

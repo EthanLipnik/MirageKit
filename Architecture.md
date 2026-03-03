@@ -99,7 +99,7 @@ Security layers are composed, not monolithic:
 
 1. **Identity keys** (`MirageIdentityManager`)
    - P-256 signing key persisted in Keychain (`com.mirage.identity.account.v2`) with sync support.
-   - Stable key identifier = SHA-256 of raw public key.
+   - Stable key identifier = SHA-256 of uncompressed ANSI X9.63 public key bytes (`0x04 || x || y`).
 
 2. **Canonical signature payloads** (`MirageIdentitySigning`)
    - Deterministic field ordering and stable JSON encoding for signed hello/response and worker/bootstrap requests.

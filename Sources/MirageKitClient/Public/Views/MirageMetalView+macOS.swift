@@ -128,6 +128,7 @@ public class MirageMetalView: NSView {
         let displayLayer = self.displayLayer
         displayLayer.videoGravity = .resize
         displayLayer.backgroundColor = NSColor.black.cgColor
+        displayLayer.wantsExtendedDynamicRangeContent = true
         displayLayer.isOpaque = true
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
         displayLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0

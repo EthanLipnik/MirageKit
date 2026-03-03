@@ -15,7 +15,6 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Dedicated Stream Displays
 
-    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func acquireDedicatedDisplay(
         for streamID: StreamID,
         resolution: CGSize,
@@ -98,7 +97,6 @@ extension SharedVirtualDisplayManager {
         return snapshot(from: created)
     }
 
-    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func updateDedicatedDisplay(
         for streamID: StreamID,
         newResolution: CGSize,

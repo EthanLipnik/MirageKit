@@ -710,26 +710,6 @@ extension HEVCEncoder {
                 value: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
             )
 
-        // TODO: HDR support - requires proper virtual display EDR configuration
-        // case .hdr:
-        //     // HDR uses Rec. 2020 primaries with PQ (SMPTE ST 2084) transfer function
-        //     VTSessionSetProperty(
-        //         session,
-        //         key: kVTCompressionPropertyKey_ColorPrimaries,
-        //         value: kCVImageBufferColorPrimaries_ITU_R_2020
-        //     )
-        //     VTSessionSetProperty(
-        //         session,
-        //         key: kVTCompressionPropertyKey_TransferFunction,
-        //         value: kCVImageBufferTransferFunction_SMPTE_ST_2084_PQ
-        //     )
-        //     VTSessionSetProperty(
-        //         session,
-        //         key: kVTCompressionPropertyKey_YCbCrMatrix,
-        //         value: kCVImageBufferYCbCrMatrix_ITU_R_2020
-        //     )
-        //     MirageLogger.encoder("HDR encoding enabled: Rec. 2020 + PQ transfer function")
-
         case .sRGB:
             // sRGB uses standard Rec. 709 primaries
             break

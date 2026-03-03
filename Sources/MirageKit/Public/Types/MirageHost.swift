@@ -88,10 +88,6 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
     /// Whether P3 color space is supported
     public let supportsP3ColorSpace: Bool
 
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // /// Whether HDR (Rec. 2020 with PQ) is supported
-    // public let supportsHDR: Bool
-
     /// Maximum supported frame rate
     public let maxFrameRate: Int
 
@@ -117,7 +113,6 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         maxStreams: Int = 4,
         supportsHEVC: Bool = true,
         supportsP3ColorSpace: Bool = true,
-        // supportsHDR: Bool = true,
         maxFrameRate: Int = 120,
         protocolVersion: Int = Int(MirageKit.protocolVersion),
         deviceID: UUID? = nil,
@@ -129,7 +124,6 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
         self.maxStreams = maxStreams
         self.supportsHEVC = supportsHEVC
         self.supportsP3ColorSpace = supportsP3ColorSpace
-        // self.supportsHDR = supportsHDR
         self.maxFrameRate = maxFrameRate
         self.protocolVersion = protocolVersion
         self.deviceID = deviceID
@@ -145,7 +139,6 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
             "maxStreams": String(maxStreams),
             "hevc": supportsHEVC ? "1" : "0",
             "p3": supportsP3ColorSpace ? "1" : "0",
-            // "hdr": supportsHDR ? "1" : "0",
             "maxFps": String(maxFrameRate),
             "proto": String(protocolVersion),
         ]
@@ -178,7 +171,6 @@ public struct MirageHostCapabilities: Codable, Hashable, Sendable {
             maxStreams: Int(txtRecord["maxStreams"] ?? "4") ?? 4,
             supportsHEVC: txtRecord["hevc"] == "1",
             supportsP3ColorSpace: txtRecord["p3"] == "1",
-            // supportsHDR: txtRecord["hdr"] == "1",
             maxFrameRate: parsedMaxFrameRate,
             protocolVersion: parsedProtocolVersion,
             deviceID: parsedDeviceID,

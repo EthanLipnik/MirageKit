@@ -50,9 +50,6 @@ package struct StartDesktopStreamMessage: Codable {
     /// Client refresh rate override in Hz (60/120 based on client capability)
     /// Used with P2P detection to enable 120fps streaming on capable displays
     package let maxRefreshRate: Int
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
-    // var preferHDR: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case scaleFactor

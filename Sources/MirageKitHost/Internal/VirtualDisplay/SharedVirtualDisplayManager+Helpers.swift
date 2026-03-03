@@ -461,7 +461,6 @@ extension SharedVirtualDisplayManager {
     }
 
     /// Create a managed virtual display instance.
-    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func createDisplay(
         resolution: CGSize,
         refreshRate: Int,
@@ -692,7 +691,6 @@ extension SharedVirtualDisplayManager {
     }
 
     /// Recreate the display at a new resolution.
-    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func recreateDisplay(
         newResolution: CGSize,
         refreshRate: Int,

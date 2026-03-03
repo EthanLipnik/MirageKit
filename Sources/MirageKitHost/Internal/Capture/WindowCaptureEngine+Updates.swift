@@ -68,9 +68,7 @@ extension WindowCaptureEngine {
         }
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
-            ? CGColorSpace.displayP3
-            : CGColorSpace.sRGB
+        streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
@@ -125,9 +123,7 @@ extension WindowCaptureEngine {
         streamConfig.height = height
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
-            ? CGColorSpace.displayP3
-            : CGColorSpace.sRGB
+        streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
@@ -188,9 +184,7 @@ extension WindowCaptureEngine {
         streamConfig.height = newHeight
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
-            ? CGColorSpace.displayP3
-            : CGColorSpace.sRGB
+        streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
         if let resolvedSourceRect, !resolvedSourceRect.isEmpty {
@@ -267,9 +261,7 @@ extension WindowCaptureEngine {
         }
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
-            ? CGColorSpace.displayP3
-            : CGColorSpace.sRGB
+        streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
@@ -313,9 +305,7 @@ extension WindowCaptureEngine {
         }
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
-        streamConfig.colorSpaceName = configuration.colorSpace == .displayP3
-            ? CGColorSpace.displayP3
-            : CGColorSpace.sRGB
+        streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {

@@ -1292,8 +1292,6 @@ public final class MirageHostService {
     ///   - captureQueueDepth: Optional ScreenCaptureKit queue depth override
     ///   - bitrate: Optional target bitrate (bits per second)
     ///   - targetFrameRate: Optional frame rate override (60/120 based on client capability)
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // ///   - hdr: Whether to enable HDR streaming (Rec. 2020 with PQ transfer function)
 
     // Stop a stream
     // - Parameters:

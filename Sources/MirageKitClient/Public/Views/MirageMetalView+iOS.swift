@@ -164,6 +164,7 @@ public class MirageMetalView: UIView {
         let displayLayer = self.displayLayer
         displayLayer.videoGravity = .resize
         displayLayer.backgroundColor = UIColor.black.cgColor
+        displayLayer.wantsExtendedDynamicRangeContent = true
         displayLayer.contentsScale = effectiveScale
         displayLayer.isOpaque = true
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)

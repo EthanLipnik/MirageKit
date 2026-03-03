@@ -77,7 +77,6 @@ public extension MirageHostService {
         allowBestEffortRemap: Bool = true,
         allowDirectCaptureFallback: Bool = true,
         audioConfiguration: MirageAudioConfiguration? = nil
-        // hdr: Bool = false
     )
     async throws -> MirageStreamSession {
         // Clear any stuck modifier state from previous streams
@@ -156,13 +155,6 @@ public extension MirageHostService {
               clientsByID[client.id] != nil else {
             throw MirageError.protocolError("Client is disconnected or disconnecting")
         }
-
-        // TODO: HDR support - requires proper virtual display EDR configuration
-        // Apply HDR color space if requested
-        // if hdr {
-        //     effectiveEncoderConfig.colorSpace = .hdr
-        //     MirageLogger.host("HDR streaming enabled (Rec. 2020 + PQ)")
-        // }
 
         // Create stream context with capture and encoding
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {

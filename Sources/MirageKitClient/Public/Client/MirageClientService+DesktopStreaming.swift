@@ -21,8 +21,6 @@ public extension MirageClientService {
     ///   - keyFrameInterval: Optional keyframe interval in frames.
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - audioConfiguration: Optional per-stream audio overrides.
-    // TODO: HDR support - requires proper virtual display EDR configuration.
-    // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ).
     func startDesktopStream(
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
@@ -30,7 +28,6 @@ public extension MirageClientService {
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil
-        // preferHDR: Bool = false
     )
     async throws {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
@@ -79,8 +76,6 @@ public extension MirageClientService {
             dataPort: nil,
             maxRefreshRate: getScreenMaxRefreshRate()
         )
-        // TODO: HDR support - requires proper virtual display EDR configuration.
-        // request.preferHDR = preferHDR
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }

@@ -13,6 +13,11 @@ import MirageKit
 extension StreamController {
     // MARK: - Decoder Control
 
+    func setPreferredDecoderBitDepth(_ bitDepth: MirageVideoBitDepth) async {
+        preferredDecoderBitDepth = bitDepth
+        await decoder.setPreferredOutputBitDepth(bitDepth)
+    }
+
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.

@@ -74,10 +74,6 @@ package struct StartStreamMessage: Codable {
     package var audioConfiguration: MirageAudioConfiguration?
     /// Client refresh rate override in Hz (60/120 based on client capability).
     package var maxRefreshRate: Int = 60
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
-    // /// Requires HDR-capable display on both host and client
-    // var preferHDR: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case windowID

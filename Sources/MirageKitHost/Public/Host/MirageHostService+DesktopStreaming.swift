@@ -17,7 +17,6 @@ import ScreenCaptureKit
 extension MirageHostService {
     /// Start streaming the desktop (mirrored or secondary display mode)
     /// This stops any active app/window streams for mutual exclusivity
-    // TODO: HDR support - add hdr: Bool = false parameter when EDR configuration is figured out
     func startDesktopStream(
         to clientContext: ClientContext,
         displayResolution: CGSize,
@@ -108,11 +107,6 @@ extension MirageHostService {
         }
 
         if let targetFrameRate { config = config.withTargetFrameRate(targetFrameRate) }
-        // TODO: HDR support - requires proper virtual display EDR configuration
-        // if hdr {
-        //     config.colorSpace = .hdr
-        //     MirageLogger.host("Desktop stream HDR enabled (Rec. 2020 + PQ)")
-        // }
 
         let clampedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
         if disableResolutionCap {

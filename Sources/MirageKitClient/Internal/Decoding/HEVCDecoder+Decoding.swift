@@ -208,6 +208,7 @@ extension HEVCDecoder {
         let decodeInfo = DecodeInfo(
             handler: decodedFrameHandler,
             contentRect: contentRect,
+            isKeyframe: isKeyframe,
             errorTracker: errorTracker,
             decodeStartTime: CFAbsoluteTimeGetCurrent(),
             performanceTracker: performanceTracker,

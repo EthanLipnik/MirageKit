@@ -49,8 +49,6 @@ public extension MirageClientService {
     ///   - audioConfiguration: Optional per-stream audio overrides.
     ///   - maxConcurrentVisibleWindows: Maximum visible app-window slots allowed for this session.
     ///   - bitrateAllocationPolicy: Shared app-stream bitrate allocation mode.
-    // TODO: HDR support - requires proper virtual display EDR configuration.
-    // ///   - preferHDR: Whether to request HDR streaming (Rec. 2020 with PQ).
     func selectApp(
         bundleIdentifier: String,
         scaleFactor: CGFloat? = nil,
@@ -60,7 +58,6 @@ public extension MirageClientService {
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
         bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow
-        // preferHDR: Bool = false
     )
     async throws {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
@@ -92,8 +89,6 @@ public extension MirageClientService {
             maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
             bitrateAllocationPolicy: bitrateAllocationPolicy
         )
-        // TODO: HDR support - requires proper virtual display EDR configuration.
-        // request.preferHDR = preferHDR
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }

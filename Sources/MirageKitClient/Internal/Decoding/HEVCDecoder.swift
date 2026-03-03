@@ -17,6 +17,7 @@ actor HEVCDecoder {
     var decompressionSession: VTDecompressionSession?
     var formatDescription: CMFormatDescription?
     var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+    var preferredOutputBitDepth: MirageVideoBitDepth = .eightBit
 
     /// Cached parameter sets for resilience against corrupted keyframes
     /// When a keyframe fails to parse, we can continue with cached format description
@@ -94,7 +95,7 @@ actor HEVCDecoder {
 
     // Strip leading SEI NAL units from AVCC data
     // SEI NAL types: 39 (PREFIX_SEI_NUT), 40 (SUFFIX_SEI_NUT)
-    // Note: SEI contains HDR metadata but VideoToolbox may not decode properly if SEI precedes IDR
+    // Note: SEI can contain color metadata; VideoToolbox may not decode properly if SEI precedes IDR
 
     // Find where AVCC data begins after the last Annex B NAL unit (PPS)
     // AVCC uses 4-byte big-endian length prefixes instead of start codes
@@ -106,10 +107,22 @@ actor HEVCDecoder {
     // Flush pending frames
 }
 
+extension HEVCDecoder {
+    func preferredOutputPixelFormat(for bitDepth: MirageVideoBitDepth) -> OSType {
+        switch bitDepth {
+        case .eightBit:
+            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        case .tenBit:
+            return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+        }
+    }
+}
+
 /// Info passed through the decode callback
 final class DecodeInfo: @unchecked Sendable {
     let handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?
     let contentRect: CGRect
+    let isKeyframe: Bool
     let errorTracker: DecodeErrorTracker?
     let decodeStartTime: CFAbsoluteTime
     let performanceTracker: DecodePerformanceTracker?
@@ -120,6 +133,7 @@ final class DecodeInfo: @unchecked Sendable {
     init(
         handler: (@Sendable (CVPixelBuffer, CMTime, CGRect) -> Void)?,
         contentRect: CGRect,
+        isKeyframe: Bool,
         errorTracker: DecodeErrorTracker?,
         decodeStartTime: CFAbsoluteTime,
         performanceTracker: DecodePerformanceTracker?,
@@ -129,6 +143,7 @@ final class DecodeInfo: @unchecked Sendable {
     ) {
         self.handler = handler
         self.contentRect = contentRect
+        self.isKeyframe = isKeyframe
         self.errorTracker = errorTracker
         self.decodeStartTime = decodeStartTime
         self.performanceTracker = performanceTracker

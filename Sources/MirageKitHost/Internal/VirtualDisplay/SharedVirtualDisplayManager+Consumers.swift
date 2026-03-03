@@ -40,7 +40,6 @@ extension SharedVirtualDisplayManager {
     /// cap)
     ///   - refreshRate: Refresh rate in Hz (default 60, use 120 for high refresh rate clients)
     /// - Returns: The managed display context
-    // TODO: HDR support - add hdr: Bool parameter when EDR configuration is figured out
     func acquireDisplayForConsumer(
         _ consumer: DisplayConsumer,
         resolution: CGSize? = nil,

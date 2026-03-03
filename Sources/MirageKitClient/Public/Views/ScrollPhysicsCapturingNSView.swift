@@ -74,6 +74,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Track current modifier state
     private var currentModifiers: MirageModifierFlags = []
+    private var modifierPollTimer: Timer?
+    private let modifierPollInterval: TimeInterval = 0.1
 
     /// Last known mouse location (normalized) for scroll events
     private var lastMouseLocation: CGPoint?
@@ -212,19 +214,66 @@ final class ScrollPhysicsCapturingNSView: NSView {
         inputEnabled && window != nil
     }
 
+    private var isKeyboardInputActive: Bool {
+        guard isInputProcessingActive, let window else { return false }
+        return window.isKeyWindow && window.firstResponder === self
+    }
+
     private func handleInputActivityStateChange() {
         if isInputProcessingActive {
             updateCursorLockMode()
+            startModifierPollingIfNeeded()
+            syncModifierStateFromSystem(force: true)
         } else {
             stopLockedCursorSmoothing()
+            stopModifierPolling()
             cursorHiddenForTyping = false
             restoreCursorLockIfNeeded()
             lockedCursorView.isHidden = true
+            syncModifierState([], force: true)
         }
 
         lastForwardedMouseMoveLocation = nil
         lastForwardedMouseMoveTime = 0
         updateTrackingAreas()
+    }
+
+    private func startModifierPollingIfNeeded() {
+        guard modifierPollTimer == nil else { return }
+        let timer = Timer(timeInterval: modifierPollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.pollModifierState()
+            }
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        modifierPollTimer = timer
+    }
+
+    private func stopModifierPolling() {
+        modifierPollTimer?.invalidate()
+        modifierPollTimer = nil
+    }
+
+    private func syncModifierState(_ modifiers: MirageModifierFlags, force: Bool = false) {
+        guard force || modifiers != currentModifiers else { return }
+        currentModifiers = modifiers
+        onMouseEvent?(.flagsChanged(modifiers))
+    }
+
+    private func syncModifierStateFromSystem(force: Bool = false) {
+        syncModifierState(MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags), force: force)
+    }
+
+    private func pollModifierState() {
+        guard isKeyboardInputActive else { return }
+        let modifiers = MirageModifierFlags(nsEventFlags: NSEvent.modifierFlags)
+        if modifiers != currentModifiers {
+            syncModifierState(modifiers, force: true)
+            return
+        }
+
+        // Keep the host's held-modifier timestamps fresh for long holds.
+        if !modifiers.isEmpty { onMouseEvent?(.flagsChanged(modifiers)) }
     }
 
     /// Center the scroll view's content offset
@@ -755,12 +804,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     override var acceptsFirstResponder: Bool { true }
 
+    override func becomeFirstResponder() -> Bool {
+        let becameFirstResponder = super.becomeFirstResponder()
+        if becameFirstResponder { syncModifierStateFromSystem(force: true) }
+        return becameFirstResponder
+    }
+
     override func resignFirstResponder() -> Bool {
         // Clear modifier state when losing focus to prevent stuck modifiers
-        if !currentModifiers.isEmpty {
-            currentModifiers = []
-            onMouseEvent?(.flagsChanged(currentModifiers))
-        }
+        syncModifierState([], force: true)
         return super.resignFirstResponder()
     }
 
@@ -791,8 +843,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     override func flagsChanged(with event: NSEvent) {
         guard isInputProcessingActive else { return }
-        currentModifiers = MirageModifierFlags(nsEventFlags: event.modifierFlags)
-        onMouseEvent?(.flagsChanged(currentModifiers))
+        syncModifierState(MirageModifierFlags(nsEventFlags: event.modifierFlags), force: true)
     }
 
     /// Normalize mouse location to 0-1 range within view bounds
@@ -827,6 +878,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     deinit {
+        MainActor.assumeIsolated {
+            stopModifierPolling()
+        }
         if let registeredCursorStreamID { MirageCursorUpdateRouter.shared.unregister(streamID: registeredCursorStreamID) }
         MainActor.assumeIsolated {
             cursorHiddenForTyping = false

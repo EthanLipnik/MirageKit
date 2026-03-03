@@ -105,7 +105,6 @@ extension WindowCaptureEngine {
         case .sRGB:
             streamConfig.colorSpaceName = CGColorSpace.sRGB
         }
-        // TODO: HDR support - add .hdr case when EDR configuration is figured out
 
         // Capture settings
         streamConfig.showsCursor = false // Don't capture cursor - iPad shows its own
@@ -472,7 +471,6 @@ extension WindowCaptureEngine {
         case .sRGB:
             streamConfig.colorSpaceName = CGColorSpace.sRGB
         }
-        // TODO: HDR support - add .hdr case when EDR configuration is figured out
 
         // Capture settings - cursor visibility depends on use case:
         // - Login screen: show cursor (true) for user interaction

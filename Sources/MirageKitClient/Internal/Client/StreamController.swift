@@ -115,6 +115,7 @@ actor StreamController {
 
     /// HEVC decoder for this stream
     let decoder: HEVCDecoder
+    var preferredDecoderBitDepth: MirageVideoBitDepth = .eightBit
 
     /// Frame reassembler for this stream
     let reassembler: FrameReassembler

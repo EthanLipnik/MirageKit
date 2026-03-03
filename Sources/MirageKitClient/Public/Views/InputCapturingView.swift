@@ -436,7 +436,7 @@ public class InputCapturingView: UIView {
                 }
 
                 do {
-                    try await Task.sleep(for: .milliseconds(150))
+                    try await Task.sleep(for: Self.modifierRefreshPollInterval)
                 } catch {
                     return
                 }
@@ -612,6 +612,8 @@ public class InputCapturingView: UIView {
     var passthroughShortcutRepeatTimer: Timer?
     /// Polling interval for intercepted shortcut repeat sessions.
     static let passthroughShortcutRepeatPollInterval: TimeInterval = 1.0 / 60.0
+    /// Polling cadence for hardware modifier reconciliation while modifiers are held.
+    static let modifierRefreshPollInterval: Duration = .milliseconds(100)
 
     struct PassthroughShortcutRepeatState {
         let keyCode: UInt16

@@ -253,14 +253,11 @@ public enum MirageVideoBitDepth: String, Sendable, CaseIterable, Codable {
 package enum MirageColorSpace: String, Sendable, CaseIterable, Codable {
     case sRGB
     case displayP3 = "P3"
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // case hdr = "HDR"  // Rec. 2020 with PQ transfer function
 
     public var displayName: String {
         switch self {
         case .sRGB: "sRGB"
         case .displayP3: "Display P3"
-            // case .hdr: return "HDR (Rec. 2020)"
         }
     }
 }

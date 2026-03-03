@@ -118,9 +118,6 @@ package struct SelectAppMessage: Codable {
     package let maxConcurrentVisibleWindows: Int
     /// Client-requested shared bitrate allocation policy for multi-window app streaming.
     package let bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy?
-    // TODO: HDR support - requires proper virtual display EDR configuration
-    // /// Whether to stream in HDR (Rec. 2020 with PQ transfer function)
-    // var preferHDR: Bool = false
 
     enum CodingKeys: String, CodingKey {
         case bundleIdentifier

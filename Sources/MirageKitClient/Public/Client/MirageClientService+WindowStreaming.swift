@@ -135,7 +135,10 @@ public extension MirageClientService {
         beginPostResizeTransition: Bool = false
     )
     async {
+        let preferredDecoderBitDepth = resolvedDecoderBitDepth(for: streamID)
+
         if let existingController = controllersByStream[streamID] {
+            await existingController.setPreferredDecoderBitDepth(preferredDecoderBitDepth)
             await existingController.resetForNewSession()
             if beginPostResizeTransition {
                 await existingController.beginPostResizeTransition()
@@ -143,7 +146,10 @@ public extension MirageClientService {
             let tier = sessionStore.presentationTier(for: streamID)
             await existingController.updatePresentationTier(tier)
             adaptiveFallbackLastAppliedTime[streamID] = 0
-            MirageLogger.client("Reset existing controller for stream \(streamID)")
+            MirageLogger
+                .client(
+                    "Reset existing controller for stream \(streamID) (decoder bit depth \(preferredDecoderBitDepth.displayName))"
+                )
             return
         }
 
@@ -161,6 +167,8 @@ public extension MirageClientService {
             )
         }
         adaptiveFallbackLastAppliedTime[streamID] = 0
+
+        await controller.setPreferredDecoderBitDepth(preferredDecoderBitDepth)
 
         let capturedStreamID = streamID
         await controller.setCallbacks(
@@ -213,7 +221,16 @@ public extension MirageClientService {
         await controller.updatePresentationTier(sessionStore.presentationTier(for: streamID))
         await updateReassemblerSnapshot()
 
-        MirageLogger.client("Created new controller for stream \(streamID)")
+        MirageLogger
+            .client(
+                "Created new controller for stream \(streamID) (decoder bit depth \(preferredDecoderBitDepth.displayName))"
+            )
+    }
+
+    private func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
+        adaptiveFallbackBitDepthByStream[streamID] ??
+            adaptiveFallbackBaselineBitDepthByStream[streamID] ??
+            .eightBit
     }
 
     /// Handle resize event from StreamController.
