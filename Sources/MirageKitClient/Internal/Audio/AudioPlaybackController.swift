@@ -10,6 +10,9 @@
 import AVFAudio
 import Foundation
 import MirageKit
+#if os(iOS) || os(visionOS)
+import UIKit
+#endif
 
 @MainActor
 final class AudioPlaybackController {
@@ -31,6 +34,7 @@ final class AudioPlaybackController {
     private var isConfigured = false
 #if os(iOS) || os(visionOS)
     private var audioSessionConfigured = false
+    private var hasLoggedInactiveSessionDeferral = false
 #endif
 
     init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
@@ -55,6 +59,7 @@ final class AudioPlaybackController {
         configuredChannelCount = 0
 #if os(iOS) || os(visionOS)
         deactivateAudioSessionIfNeeded()
+        hasLoggedInactiveSessionDeferral = false
 #endif
     }
 
@@ -237,6 +242,15 @@ final class AudioPlaybackController {
 #if os(iOS) || os(visionOS)
     private func configureAudioSessionIfNeeded() -> Bool {
         if audioSessionConfigured { return true }
+        guard isApplicationActive else {
+            if !hasLoggedInactiveSessionDeferral {
+                MirageLogger.client("Deferring audio session activation until app becomes active")
+                hasLoggedInactiveSessionDeferral = true
+            }
+            return false
+        }
+        hasLoggedInactiveSessionDeferral = false
+
         let session = AVAudioSession.sharedInstance()
         do {
             // Keep existing media (for example, Music/Spotify) playing when a stream starts.
@@ -247,6 +261,10 @@ final class AudioPlaybackController {
             audioSessionConfigured = true
             return true
         } catch {
+            if shouldSuppressAudioSessionActivationError(error) {
+                MirageLogger.debug(.client, "Audio session activation deferred: \(error)")
+                return false
+            }
             MirageLogger.error(.client, error: error, message: "Audio session setup failed: ")
             return false
         }
@@ -260,6 +278,18 @@ final class AudioPlaybackController {
             MirageLogger.debug(.client, "Audio session deactivation failed: \(error)")
         }
         audioSessionConfigured = false
+    }
+
+    private var isApplicationActive: Bool {
+        UIApplication.shared.applicationState == .active
+    }
+
+    private func shouldSuppressAudioSessionActivationError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        let cannotStartPlayingCode = Int(AVAudioSession.ErrorCode.cannotStartPlaying.rawValue)
+        guard nsError.code == cannotStartPlayingCode else { return false }
+        return nsError.domain == NSOSStatusErrorDomain
+            || nsError.domain == "com.apple.coreaudio.avfaudio"
     }
 #endif
 }

@@ -264,6 +264,15 @@ extension WindowCaptureEngine {
         }
     }
 
+    var captureColorSpaceName: CFString {
+        switch configuration.colorSpace {
+        case .displayP3:
+            CGColorSpace.displayP3
+        case .sRGB:
+            CGColorSpace.sRGB
+        }
+    }
+
     static func alignedEvenPixel(_ value: CGFloat) -> Int {
         let rounded = Int(value.rounded())
         let even = rounded - (rounded % 2)

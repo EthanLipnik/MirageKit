@@ -423,7 +423,7 @@ private enum SpeechAuthorizationBridge {
 @available(iOS 26.0, visionOS 26.0, *)
 private final class AnalyzerInputSink: @unchecked Sendable {
     private let continuation: AsyncStream<AnalyzerInput>.Continuation
-    private let queue = DispatchQueue(label: "com.ethanlipnik.mirage.dictation.analyzer-input", qos: .userInitiated)
+    private let queue = DispatchQueue(label: "io.miragekit.client.dictation.analyzer-input", qos: .userInitiated)
     private var finished = false
 
     init(continuation: AsyncStream<AnalyzerInput>.Continuation) {

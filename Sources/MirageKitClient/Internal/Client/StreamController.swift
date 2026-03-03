@@ -180,6 +180,7 @@ actor StreamController {
     static let decodeStormThreshold: Int = 2
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
+    static let decodeErrorLogInterval: CFAbsoluteTime = 15.0
     static let decodeSubmissionMaximumLimit: Int = 3
     static let decodeSubmissionStressThreshold: Double = 0.80
     static let decodeSubmissionHealthyThreshold: Double = 0.95
@@ -239,6 +240,9 @@ actor StreamController {
     var recoveryRequestTimestamps: [CFAbsoluteTime] = []
     var decodeThresholdTimestamps: [CFAbsoluteTime] = []
     var decodeRecoveryEscalationTimestamps: [CFAbsoluteTime] = []
+    var consecutiveDecodeErrors: Int = 0
+    var lastDecodeErrorSignature: String?
+    var lastDecodeErrorLogTime: CFAbsoluteTime = 0
     var lastRecoveryRequestDispatchTime: CFAbsoluteTime = 0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
@@ -403,6 +407,9 @@ actor StreamController {
         lastQueueDropLogTime = 0
         decodeThresholdTimestamps.removeAll(keepingCapacity: false)
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+        consecutiveDecodeErrors = 0
+        lastDecodeErrorSignature = nil
+        lastDecodeErrorLogTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
         lastFreezeRecoveryTime = 0
@@ -433,8 +440,9 @@ actor StreamController {
                         isKeyframe: frame.isKeyframe,
                         contentRect: frame.contentRect
                     )
+                    await recordDecodeSuccessIfNeeded()
                 } catch {
-                    MirageLogger.error(.client, error: error, message: "Decode error: ")
+                    await recordDecodeFailure(error)
                 }
                 await decodeBudgetController.release(lease)
             }
@@ -479,6 +487,43 @@ actor StreamController {
         finishFrameQueue()
         frameProcessingTask?.cancel()
         frameProcessingTask = nil
+    }
+
+    private func recordDecodeSuccessIfNeeded() {
+        guard consecutiveDecodeErrors > 0 else { return }
+        MirageLogger.debug(
+            .client,
+            "Decode pipeline recovered after \(consecutiveDecodeErrors) consecutive error(s)"
+        )
+        consecutiveDecodeErrors = 0
+        lastDecodeErrorSignature = nil
+        lastDecodeErrorLogTime = 0
+    }
+
+    private func recordDecodeFailure(_ error: Error) {
+        let metadata = MirageDiagnosticsErrorMetadata(error: error)
+        let signature = "\(metadata.domain):\(metadata.code)"
+        let now = currentTime()
+        consecutiveDecodeErrors += 1
+
+        let shouldElevate = consecutiveDecodeErrors == 1 ||
+            signature != lastDecodeErrorSignature ||
+            now - lastDecodeErrorLogTime >= Self.decodeErrorLogInterval
+
+        if shouldElevate {
+            MirageLogger.error(
+                .client,
+                error: error,
+                message: "Decode error (attempt \(consecutiveDecodeErrors)): "
+            )
+            lastDecodeErrorSignature = signature
+            lastDecodeErrorLogTime = now
+        } else {
+            MirageLogger.debug(
+                .client,
+                "Decode error suppressed as repeat (attempt \(consecutiveDecodeErrors), signature \(signature))"
+            )
+        }
     }
 
     private func enqueueFrame(_ frame: FrameData) async {

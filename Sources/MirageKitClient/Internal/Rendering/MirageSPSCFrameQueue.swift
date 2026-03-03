@@ -12,6 +12,7 @@ import Foundation
 final class MirageSPSCFrameQueue: @unchecked Sendable {
     struct Snapshot: Sendable {
         let depth: Int
+        let queuedBytes: Int
         let oldestDecodeTime: CFAbsoluteTime?
         let latestSequence: UInt64
     }
@@ -20,28 +21,48 @@ final class MirageSPSCFrameQueue: @unchecked Sendable {
     private var head: Int = 0
     private var tail: Int = 0
     private var count: Int = 0
+    private var totalBytes: Int = 0
+    private var byteBudget: Int
     private(set) var capacity: Int
 
-    init(capacity: Int) {
+    init(capacity: Int, byteBudget: Int = 0) {
         let normalizedCapacity = max(1, capacity)
         self.capacity = normalizedCapacity
+        self.byteBudget = max(0, byteBudget)
         storage = Array(repeating: nil, count: normalizedCapacity)
     }
 
     func enqueue(_ frame: MirageRenderFrame) -> (dropped: Int, depth: Int) {
         var dropped = 0
+        let frameBytes = max(1, frame.approximateByteSize)
 
-        if count == capacity {
+        // Refuse frames that individually exceed the configured queue budget.
+        // This keeps the queue memory bound strict, even for pathological resolutions.
+        if byteBudget > 0, frameBytes > byteBudget {
+            return (dropped: 1, depth: count)
+        }
+
+        while count > 0 && (count == capacity || shouldEvictForByteBudget(incomingBytes: frameBytes)) {
+            if let evicted = storage[head] {
+                totalBytes = max(0, totalBytes - max(1, evicted.approximateByteSize))
+            }
             storage[head] = nil
             head = indexAfter(head)
             count -= 1
-            dropped = 1
+            dropped += 1
         }
 
         storage[tail] = frame
         tail = indexAfter(tail)
         count += 1
+        totalBytes += frameBytes
         return (dropped: dropped, depth: count)
+    }
+
+    @discardableResult
+    func updateByteBudget(_ newBudget: Int) -> Int {
+        byteBudget = max(0, newBudget)
+        return evictToBudgetIfNeeded()
     }
 
     func dequeue() -> MirageRenderFrame? {
@@ -52,6 +73,7 @@ final class MirageSPSCFrameQueue: @unchecked Sendable {
         storage[head] = nil
         head = indexAfter(head)
         count -= 1
+        totalBytes = max(0, totalBytes - max(1, frame.approximateByteSize))
         return frame
     }
 
@@ -63,6 +85,9 @@ final class MirageSPSCFrameQueue: @unchecked Sendable {
 
         let dropCount = count - clampedKeepDepth
         for _ in 0 ..< dropCount {
+            if let evicted = storage[head] {
+                totalBytes = max(0, totalBytes - max(1, evicted.approximateByteSize))
+            }
             storage[head] = nil
             head = indexAfter(head)
             count -= 1
@@ -81,6 +106,7 @@ final class MirageSPSCFrameQueue: @unchecked Sendable {
 
         return Snapshot(
             depth: depth,
+            queuedBytes: totalBytes,
             oldestDecodeTime: oldest,
             latestSequence: latestSequence
         )
@@ -97,6 +123,28 @@ final class MirageSPSCFrameQueue: @unchecked Sendable {
         head = 0
         tail = 0
         count = 0
+        totalBytes = 0
+    }
+
+    private func shouldEvictForByteBudget(incomingBytes: Int) -> Bool {
+        guard byteBudget > 0 else { return false }
+        return totalBytes + incomingBytes > byteBudget
+    }
+
+    private func evictToBudgetIfNeeded() -> Int {
+        guard byteBudget > 0 else { return 0 }
+
+        var dropped = 0
+        while count > 0, totalBytes > byteBudget {
+            if let evicted = storage[head] {
+                totalBytes = max(0, totalBytes - max(1, evicted.approximateByteSize))
+            }
+            storage[head] = nil
+            head = indexAfter(head)
+            count -= 1
+            dropped += 1
+        }
+        return dropped
     }
 
     private func indexAfter(_ index: Int) -> Int {

@@ -415,7 +415,7 @@ public final class MirageRemoteSignalingClient {
 
         guard (200 ... 299).contains(http.statusCode) else {
             let parsed = parseErrorPayload(data)
-            MirageLogger.error(
+            MirageLogger.debug(
                 .network,
                 "Remote signaling HTTP \(http.statusCode) \(method.uppercased()) \(path) error=\(parsed.errorCode ?? "none") detail=\(parsed.detail ?? "none")"
             )

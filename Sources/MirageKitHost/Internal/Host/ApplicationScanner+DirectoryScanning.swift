@@ -395,8 +395,11 @@ extension ApplicationScanner {
             )
         }
 
-        // Skip Mirage itself
-        if bundle.bundleIdentifier == "com.ethanlipnik.Mirage" { return nil }
+        // Skip the hosting app itself to avoid self-stream recursion.
+        if let hostingBundleIdentifier = Bundle.main.bundleIdentifier,
+           bundle.bundleIdentifier == hostingBundleIdentifier {
+            return nil
+        }
 
         let bundleID = bundle.bundleIdentifier ?? ""
         let isCoreServices = url.path.hasPrefix("/System/Library/CoreServices")

@@ -239,7 +239,7 @@ public final class MirageCloudKitHostProvider {
     -> MirageCloudKitHostInfo? {
         guard let deviceIDString = record[MirageCloudKitHostInfo.RecordKey.deviceID.rawValue] as? String,
               let deviceID = UUID(uuidString: deviceIDString) else {
-            MirageLogger.error(.appState, "Host record missing valid deviceID: \(record.recordID.recordName)")
+            MirageLogger.appState("Skipping host record with invalid deviceID: \(record.recordID.recordName)")
             return nil
         }
 

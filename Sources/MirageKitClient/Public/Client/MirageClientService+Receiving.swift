@@ -9,6 +9,7 @@
 
 import Foundation
 import MirageKit
+import Network
 
 @MainActor
 extension MirageClientService {
@@ -25,12 +26,21 @@ extension MirageClientService {
                 }
 
                 if let error {
-                    MirageLogger.error(.client, error: error, message: "Receive error: ")
-                    await handleDisconnect(
-                        reason: error.localizedDescription,
-                        state: .error(error.localizedDescription),
-                        notifyDelegate: true
-                    )
+                    if isExpectedReceiveTermination(error) {
+                        MirageLogger.client("Receive loop ended by peer/network: \(error.localizedDescription)")
+                        await handleDisconnect(
+                            reason: "Host disconnected",
+                            state: .disconnected,
+                            notifyDelegate: true
+                        )
+                    } else {
+                        MirageLogger.error(.client, error: error, message: "Receive error: ")
+                        await handleDisconnect(
+                            reason: error.localizedDescription,
+                            state: .error(error.localizedDescription),
+                            notifyDelegate: true
+                        )
+                    }
                     return
                 }
 
@@ -116,5 +126,33 @@ extension MirageClientService {
         if parseOffset > 0 {
             receiveBuffer.removeSubrange(0 ..< parseOffset)
         }
+    }
+
+    private func isExpectedReceiveTermination(_ error: Error) -> Bool {
+        if let nwError = error as? NWError {
+            switch nwError {
+            case let .posix(code):
+                return expectedReceivePOSIXErrors.contains(code)
+            default:
+                break
+            }
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain,
+           let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
+            return expectedReceivePOSIXErrors.contains(code)
+        }
+
+        return false
+    }
+
+    private var expectedReceivePOSIXErrors: Set<POSIXErrorCode> {
+        [
+            .ECONNABORTED,
+            .ECONNRESET,
+            .ENOTCONN,
+            .ETIMEDOUT,
+        ]
     }
 }

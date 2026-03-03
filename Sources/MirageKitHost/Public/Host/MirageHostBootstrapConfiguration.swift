@@ -13,8 +13,6 @@ import MirageKit
 #if os(macOS)
 
 public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
-    /// App group used by host app and bootstrap daemon.
-    public static let appGroupIdentifier = "group.com.ethanlipnik.Mirage"
     /// Defaults key used for serialized bootstrap configuration.
     public static let defaultsKey = "com.mirage.host.bootstrapConfiguration.v1"
 

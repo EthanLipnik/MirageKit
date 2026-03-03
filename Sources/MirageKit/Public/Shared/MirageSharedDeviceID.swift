@@ -14,9 +14,6 @@ import Foundation
 /// Uses App Groups to share a single UUID between both apps so the client can
 /// filter out its own host from discovered hosts.
 public enum MirageSharedDeviceID {
-    /// App Group suite name for shared UserDefaults.
-    public static let suiteName = "group.com.ethanlipnik.Mirage"
-
     /// UserDefaults key for the shared device ID.
     public static let key = "com.mirage.shared.deviceID"
 
@@ -26,9 +23,10 @@ public enum MirageSharedDeviceID {
     /// 1. Existing ID in shared App Group suite
     /// 2. Migration from old per-app keys
     /// 3. Create new ID
-    public static func getOrCreate() -> UUID {
-        if let sharedDefaults = UserDefaults(suiteName: suiteName),
-           let stored = sharedDefaults.string(forKey: key),
+    public static func getOrCreate(suiteName: String? = nil) -> UUID {
+        let sharedDefaults = userDefaults(suiteName: suiteName)
+
+        if let stored = sharedDefaults.string(forKey: key),
            let uuid = UUID(uuidString: stored) {
             return uuid
         }
@@ -37,13 +35,23 @@ public enum MirageSharedDeviceID {
         for oldKey in oldKeys {
             if let old = UserDefaults.standard.string(forKey: oldKey),
                let uuid = UUID(uuidString: old) {
-                UserDefaults(suiteName: suiteName)?.set(uuid.uuidString, forKey: key)
+                sharedDefaults.set(uuid.uuidString, forKey: key)
                 return uuid
             }
         }
 
         let newID = UUID()
-        UserDefaults(suiteName: suiteName)?.set(newID.uuidString, forKey: key)
+        sharedDefaults.set(newID.uuidString, forKey: key)
         return newID
+    }
+
+    private static func userDefaults(suiteName: String?) -> UserDefaults {
+        guard let suiteName = suiteName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !suiteName.isEmpty,
+              let sharedDefaults = UserDefaults(suiteName: suiteName) else {
+            return .standard
+        }
+
+        return sharedDefaults
     }
 }

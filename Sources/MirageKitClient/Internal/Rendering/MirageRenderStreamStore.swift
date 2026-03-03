@@ -68,15 +68,28 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         var uniquePresentedSamples: [CFAbsoluteTime] = []
         var uniquePresentedSampleStartIndex: Int = 0
 
-        init(capacity: Int) {
-            queue = MirageSPSCFrameQueue(capacity: capacity)
+        init(capacity: Int, byteBudget: Int) {
+            queue = MirageSPSCFrameQueue(
+                capacity: capacity,
+                byteBudget: byteBudget
+            )
         }
     }
 
     private let stateLock = NSLock()
     private var streams: [StreamID: StreamState] = [:]
+    private let memoryBudgetController = MirageRenderMemoryBudgetController()
 
+    #if os(iOS) || os(visionOS)
     private let defaultQueueCapacity = 24
+    private let defaultQueueByteBudget = 128 * 1024 * 1024
+    #elseif os(macOS)
+    private let defaultQueueCapacity = 24
+    private let defaultQueueByteBudget = 256 * 1024 * 1024
+    #else
+    private let defaultQueueCapacity = 24
+    private let defaultQueueByteBudget = 128 * 1024 * 1024
+    #endif
     private let sampleWindowSeconds: CFAbsoluteTime = 1.0
 
     private init() {}
@@ -96,6 +109,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let result: EnqueueResult
 
         state.lock.lock()
+        let effectiveByteBudget = memoryBudgetController.effectiveQueueBudgetBytes(
+            normalBudgetBytes: defaultQueueByteBudget
+        )
+        let pressureDrops = state.queue.updateByteBudget(effectiveByteBudget)
         state.nextSequence &+= 1
         let frame = MirageRenderFrame(
             pixelBuffer: pixelBuffer,
@@ -104,7 +121,8 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             decodeTime: decodeTime,
             presentationTime: presentationTime,
             metalTexture: metalTexture,
-            texture: texture
+            texture: texture,
+            approximateByteSize: MirageRenderFrame.estimatedByteSize(for: pixelBuffer)
         )
 
         let pushResult = state.queue.enqueue(frame)
@@ -121,7 +139,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             sequence: frame.sequence,
             queueDepth: snapshot.depth,
             oldestAgeMs: oldestAgeMs(snapshot: snapshot, now: now),
-            emergencyDrops: pushResult.dropped
+            emergencyDrops: pressureDrops + pushResult.dropped
         )
         state.lock.unlock()
 
@@ -349,7 +367,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             return existing
         }
 
-        let created = StreamState(capacity: defaultQueueCapacity)
+        let created = StreamState(
+            capacity: defaultQueueCapacity,
+            byteBudget: 0
+        )
         streams[streamID] = created
         stateLock.unlock()
         return created
