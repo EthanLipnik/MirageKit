@@ -41,6 +41,14 @@ extension StreamContext {
         onCapturedAudioBuffer = handler
     }
 
+    func setRequestedAudioChannelCount(_ channelCount: Int) {
+        requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(channelCount)
+    }
+
+    func getRequestedAudioChannelCount() -> Int {
+        requestedAudioChannelCount
+    }
+
     func isUsingVirtualDisplay() -> Bool {
         useVirtualDisplay && virtualDisplayContext != nil
     }

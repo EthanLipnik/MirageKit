@@ -276,6 +276,8 @@ actor StreamContext {
     var onEncodedPacket: (@Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void)?
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?
+    /// Requested ScreenCaptureKit audio capture channel count for this stream.
+    var requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount
 
     /// Serializes packet fragmentation/sending to preserve frame order
     var packetSender: StreamPacketSender?
@@ -345,12 +347,19 @@ actor StreamContext {
     nonisolated static let gameModeQueuePressureRatio: Double = 0.80
     nonisolated static let canonical6KWidth: Int = 6_016
     nonisolated static let canonical6KHeight: Int = 3_384
+    nonisolated static let minAudioCaptureChannelCount: Int = 1
+    nonisolated static let maxAudioCaptureChannelCount: Int = 8
+
+    nonisolated static func clampedAudioCaptureChannelCount(_ channelCount: Int) -> Int {
+        min(max(channelCount, minAudioCaptureChannelCount), maxAudioCaptureChannelCount)
+    }
 
     init(
         streamID: StreamID,
         windowID: WindowID,
         encoderConfig: MirageEncoderConfiguration,
         streamScale: CGFloat = 1.0,
+        requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount,
         maxPacketSize: Int = mirageDefaultMaxPacketSize,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         additionalFrameFlags: FrameFlags = [],
@@ -403,6 +412,7 @@ actor StreamContext {
             resolvedLowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap
         self.capturePressureProfile = resolvedCapturePressureProfile
+        self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
         activePixelFormat = resolvedEncoderConfig.pixelFormat
         let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
         let latencySensitive = resolvedLatencyMode == .lowestLatency

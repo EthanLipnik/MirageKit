@@ -41,8 +41,22 @@ struct MirageDiagnosticsActionabilityTests {
         #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
     }
 
-    @Test("Typed metadata wins over message fallback")
-    func typedMetadataWinsOverMessageFallback() {
+    @Test("Typed ScreenCaptureKit teardown metadata is filtered")
+    func typedScreenCaptureKitTeardownMetadataIsFiltered() {
+        let event = makeEvent(
+            message: "Error stopping capture",
+            metadata: MirageDiagnosticsErrorMetadata(
+                typeName: "NSError",
+                domain: "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+                code: -3808
+            )
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("Typed metadata ignores message text")
+    func typedMetadataIgnoresMessageText() {
         let event = makeEvent(
             message: "network is down",
             metadata: MirageDiagnosticsErrorMetadata(
@@ -55,14 +69,24 @@ struct MirageDiagnosticsActionabilityTests {
         #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event))
     }
 
-    @Test("Legacy message fallback applies when metadata is absent")
-    func messageFallbackAppliesOnlyWithoutMetadata() {
+    @Test("Typed runtime condition metadata is filtered")
+    func typedRuntimeConditionMetadataIsFiltered() {
+        let event = makeEvent(
+            message: "ignored",
+            metadata: MirageDiagnosticsErrorMetadata(error: MirageRuntimeConditionError.sessionLocked)
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("Events without metadata are captured")
+    func eventsWithoutMetadataAreCaptured() {
         let event = makeEvent(
             message: "The Internet connection appears to be offline",
             metadata: nil
         )
 
-        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event))
     }
 
     @Test("Fault severity is always captured")

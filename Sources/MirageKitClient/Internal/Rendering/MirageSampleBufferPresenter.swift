@@ -351,10 +351,26 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private func recoverDisplayLayerIfNeeded() {
         guard let displayLayer, displayLayer.status == .failed else { return }
         if !loggedLayerFailure {
-            let description = displayLayer.error?.localizedDescription ?? "unknown error"
-            MirageLogger.error(.renderer, "AVSampleBufferDisplayLayer failure: \(description)")
+            if Self.isExpectedDisplayLayerFailure(displayLayer.error) {
+                let description = displayLayer.error?.localizedDescription ?? "unknown error"
+                MirageLogger.renderer("AVSampleBufferDisplayLayer interruption during teardown: \(description)")
+            } else {
+                let description = displayLayer.error?.localizedDescription ?? "unknown error"
+                MirageLogger.error(.renderer, "AVSampleBufferDisplayLayer failure: \(description)")
+            }
             loggedLayerFailure = true
         }
         displayLayer.flushAndRemoveImage()
     }
+
+    private nonisolated static func isExpectedDisplayLayerFailure(_ error: Error?) -> Bool {
+        guard let nsError = error as NSError? else { return false }
+        guard nsError.domain == AVFoundationErrorDomain else { return false }
+        return expectedDisplayLayerAVErrorCodes.contains(nsError.code)
+    }
+
+    private nonisolated static let expectedDisplayLayerAVErrorCodes: Set<Int> = [
+        -11847, // AVErrorOperationInterrupted
+        -11818, // AVErrorSessionWasInterrupted
+    ]
 }

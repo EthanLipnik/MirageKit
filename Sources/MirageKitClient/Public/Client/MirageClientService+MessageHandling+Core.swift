@@ -546,7 +546,13 @@ extension MirageClientService {
     }
 
     func handleErrorMessage(_ message: ControlMessage) {
-        if let error = try? message.decode(ErrorMessage.self) { delegate?.clientService(self, didEncounterError: MirageError.protocolError(error.message)) }
+        if let errorMessage = try? message.decode(ErrorMessage.self) {
+            if let runtimeCondition = errorMessage.code.runtimeConditionError {
+                delegate?.clientService(self, didEncounterError: runtimeCondition)
+            } else {
+                delegate?.clientService(self, didEncounterError: MirageError.protocolError(errorMessage.message))
+            }
+        }
     }
 
     func handleDisconnectMessage(_ message: ControlMessage) async {

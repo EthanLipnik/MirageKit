@@ -14,16 +14,11 @@ import Testing
 #if os(macOS)
 @Suite("App Stream Startup Failure Classifier")
 struct AppStreamStartupFailureClassifierTests {
-    private struct StubError: LocalizedError {
-        let description: String
-
-        var errorDescription: String? { description }
-    }
-
     @Test("Virtual-display allocation failures are terminal and inventory-hidden")
     func virtualDisplayAllocationFailureIsTerminal() {
         let error = WindowStreamStartError.virtualDisplayStartFailed(
-            "Failed to create virtual display: Virtual display failed activation (Retina + 1x fallback)"
+            code: .virtualDisplayCreationFailed,
+            details: "Virtual display activation failed"
         )
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
@@ -33,8 +28,8 @@ struct AppStreamStartupFailureClassifierTests {
 
     @Test("SpawnProxy descriptor failures are terminal and inventory-hidden")
     func spawnProxyDescriptorFailureIsTerminal() {
-        let error = StubError(
-            description: "-[VirtualDisplayClient pluginWithOptions:]: spawnProxy message error kr=0x5((os/kern) failure)"
+        let error = SharedVirtualDisplayManager.SharedDisplayError.creationFailed(
+            "SpawnProxy descriptor allocation failed"
         )
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
@@ -43,8 +38,9 @@ struct AppStreamStartupFailureClassifierTests {
 
     @Test("Dedicated virtual-display startup failures remain retryable when allocation did not fail")
     func genericDedicatedVirtualDisplayFailureIsRetryable() {
-        let error = StubError(
-            description: "Dedicated virtual display start failed: window disappeared before stream startup"
+        let error = WindowStreamStartError.virtualDisplayStartFailed(
+            code: .unknown,
+            details: "Dedicated virtual display start failed"
         )
 
         #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
@@ -79,10 +75,12 @@ struct AppStreamStartupFailureClassifierTests {
     @Test("Owner conflict and mismatch details are non-retryable")
     func ownerConflictAndMismatchDetailsAreNonRetryable() {
         let ownerConflict = WindowStreamStartError.virtualDisplayStartFailed(
-            "Window 18769 already owned by stream 2; requested stream 3"
+            code: .windowOwnerConflict,
+            details: "Window already owned by another stream"
         )
         let ownerMismatch = WindowStreamStartError.virtualDisplayStartFailed(
-            "Window 18769 restore owner mismatch expected stream 3, actual stream 2"
+            code: .windowOwnerMismatch,
+            details: "Window restore owner mismatch"
         )
 
         #expect(!AppStreamStartupFailureClassifier.isRetryableWindowStartupError(ownerConflict))

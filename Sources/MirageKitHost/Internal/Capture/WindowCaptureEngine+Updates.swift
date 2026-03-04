@@ -40,6 +40,7 @@ extension WindowCaptureEngine {
                 resolution: config.resolution,
                 sourceRect: config.sourceRect,
                 showsCursor: config.showsCursor,
+                audioChannelCount: config.audioChannelCount,
                 excludedWindows: config.excludedWindows
             )
         }
@@ -112,6 +113,7 @@ extension WindowCaptureEngine {
                 resolution: CGSize(width: width, height: height),
                 sourceRect: config.sourceRect,
                 showsCursor: config.showsCursor,
+                audioChannelCount: config.audioChannelCount,
                 excludedWindows: config.excludedWindows
             )
         }
@@ -167,6 +169,7 @@ extension WindowCaptureEngine {
                 resolution: resolution,
                 sourceRect: resolvedSourceRect,
                 showsCursor: config.showsCursor,
+                audioChannelCount: config.audioChannelCount,
                 excludedWindows: config.excludedWindows
             )
             excludedWindows = config.excludedWindows
@@ -235,6 +238,7 @@ extension WindowCaptureEngine {
                 resolution: config.resolution,
                 sourceRect: config.sourceRect,
                 showsCursor: config.showsCursor,
+                audioChannelCount: config.audioChannelCount,
                 excludedWindows: windows
             )
         }

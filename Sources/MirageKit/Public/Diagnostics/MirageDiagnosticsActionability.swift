@@ -14,12 +14,8 @@ public enum MirageDiagnosticsActionability {
         // Always keep fault-level events. Noise filtering only applies to non-fatal errors.
         guard event.severity == .error else { return true }
 
-        if let metadata = event.metadata {
-            return isLikelyUserDependent(domain: metadata.domain, code: metadata.code) == false
-        }
-
-        // Legacy fallback for non-typed call sites.
-        return isLikelyUserDependentMessage(event.message) == false
+        guard let metadata = event.metadata else { return true }
+        return isLikelyUserDependent(domain: metadata.domain, code: metadata.code) == false
     }
 
     public static func isLikelyUserDependent(error: Error) -> Bool {
@@ -40,6 +36,10 @@ public enum MirageDiagnosticsActionability {
             return userDependentOSStatusErrorCodes.contains(code)
         }
 
+        if domain == MirageRuntimeConditionError.diagnosticsDomain {
+            return userDependentRuntimeConditionErrorCodes.contains(code)
+        }
+
         if domain == "Network.NWError" || domain == "NWErrorDomain" {
             return userDependentNWErrorCodes.contains(code)
         }
@@ -47,36 +47,8 @@ public enum MirageDiagnosticsActionability {
         if domain == "CKErrorDomain" {
             return userDependentCloudKitErrorCodes.contains(code)
         }
-
-        return false
-    }
-
-    private static func isLikelyUserDependentMessage(_ message: String) -> Bool {
-        let normalized = message.lowercased()
-
-        if normalized.contains("ended by peer/network") {
-            return true
-        }
-
-        if normalized.contains("network is down")
-            || normalized.contains("network is unreachable")
-            || normalized.contains("the internet connection appears to be offline")
-            || normalized.contains("could not connect to the server")
-            || normalized.contains("connection reset by peer")
-            || normalized.contains("operation canceled")
-            || normalized.contains("operation cancelled")
-            || normalized.contains("not connected") {
-            return true
-        }
-
-        if normalized.contains("remote signaling advertise failed"),
-           normalized.contains("auth_failed")
-            || normalized.contains("signature_verification_failed")
-            || normalized.contains("statuscode: 401")
-            || normalized.contains("statuscode: 403")
-            || normalized.contains("statuscode: 408")
-            || normalized.contains("statuscode: 429") {
-            return true
+        if domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" {
+            return userDependentSCStreamErrorCodes.contains(code)
         }
 
         return false
@@ -110,8 +82,14 @@ public enum MirageDiagnosticsActionability {
     ]
 
     private static let userDependentOSStatusErrorCodes: Set<Int> = [
+        -12900, // kVTPropertyNotSupportedErr
         -12909, // kVTVideoDecoderBadDataErr
         -12910, // VideoToolbox decode callback unsupported/reference data mismatch
+    ]
+
+    private static let userDependentRuntimeConditionErrorCodes: Set<Int> = [
+        MirageRuntimeConditionError.sessionLocked.rawValue,
+        MirageRuntimeConditionError.waitingForHostApproval.rawValue,
     ]
 
     private static let userDependentNWErrorCodes: Set<Int> = [
@@ -132,5 +110,9 @@ public enum MirageDiagnosticsActionability {
         6, // serviceUnavailable
         7, // requestRateLimited
         9, // notAuthenticated
+    ]
+
+    private static let userDependentSCStreamErrorCodes: Set<Int> = [
+        -3808, // Stopping an already-tearing-down stream.
     ]
 }

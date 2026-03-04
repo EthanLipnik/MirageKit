@@ -13,6 +13,44 @@ import Testing
 
 @Suite("Remote Signaling Security")
 struct MirageRemoteSignalingSecurityTests {
+    @Test("Remote signaling auth HTTP failures are marked permanent")
+    func remoteSignalingAuthHTTPFailuresArePermanent() {
+        let unauthorized = MirageRemoteSignalingError.http(
+            statusCode: 401,
+            errorCode: "auth_failed",
+            detail: "signature_verification_failed"
+        )
+        let forbidden = MirageRemoteSignalingError.http(
+            statusCode: 403,
+            errorCode: "auth_failed",
+            detail: nil
+        )
+
+        #expect(unauthorized.isAuthenticationFailure)
+        #expect(forbidden.isAuthenticationFailure)
+        #expect(unauthorized.isPermanentConfigurationFailure)
+        #expect(forbidden.isPermanentConfigurationFailure)
+    }
+
+    @Test("Remote signaling non-auth HTTP failures are not marked permanent")
+    func remoteSignalingNonAuthHTTPFailuresAreNotPermanent() {
+        let rateLimited = MirageRemoteSignalingError.http(
+            statusCode: 429,
+            errorCode: "rate_limited",
+            detail: nil
+        )
+
+        #expect(rateLimited.isAuthenticationFailure == false)
+        #expect(rateLimited.isPermanentConfigurationFailure == false)
+    }
+
+    @Test("Invalid signaling configuration is permanent")
+    func invalidSignalingConfigurationIsPermanent() {
+        let error = MirageRemoteSignalingError.invalidConfiguration
+        #expect(error.isAuthenticationFailure == false)
+        #expect(error.isPermanentConfigurationFailure)
+    }
+
     @MainActor
     @Test("Remote signaling rejects non-HTTPS base URL")
     func remoteSignalingRejectsNonHTTPSBaseURL() async {

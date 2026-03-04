@@ -150,11 +150,12 @@ extension MirageHostService {
                 pendingLightsOutSetup = false
                 await endPendingDesktopStreamLightsOutSetup()
             }
-            MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
-            let errorPayload = ErrorMessage(
-                code: .virtualDisplayStartFailed,
-                message: "Failed to start desktop stream: \(error.localizedDescription)"
-            )
+            if Self.isExpectedDesktopStartRejection(error) {
+                MirageLogger.host("Desktop stream request rejected: \(error.localizedDescription)")
+            } else {
+                MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
+            }
+            let errorPayload = Self.desktopStartErrorPayload(for: error)
             if let response = try? ControlMessage(type: .error, content: errorPayload) {
                 connection.send(content: response.serialize(), completion: .idempotent)
             }
@@ -177,6 +178,21 @@ extension MirageHostService {
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle stop desktop stream: ")
         }
+    }
+
+    private nonisolated static func isExpectedDesktopStartRejection(_ error: Error) -> Bool {
+        error is MirageRuntimeConditionError
+    }
+
+    private nonisolated static func desktopStartErrorPayload(for error: Error) -> ErrorMessage {
+        if let runtimeCondition = error as? MirageRuntimeConditionError {
+            return ErrorMessage(code: .init(runtimeCondition), message: runtimeCondition.message)
+        }
+
+        return ErrorMessage(
+            code: .virtualDisplayStartFailed,
+            message: "Failed to start desktop stream: \(error.localizedDescription)"
+        )
     }
 }
 

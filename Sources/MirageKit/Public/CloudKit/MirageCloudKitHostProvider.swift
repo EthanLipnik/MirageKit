@@ -50,6 +50,9 @@ public final class MirageCloudKitHostProvider {
     /// Zone ID for host records.
     private let hostZoneID: CKRecordZone.ID
 
+    /// Background parser used to decode host records off the main actor.
+    private let hostRecordParser = HostRecordSnapshotParser()
+
     // MARK: - Initialization
 
     /// Creates a host provider with the specified CloudKit manager.
@@ -100,11 +103,11 @@ public final class MirageCloudKitHostProvider {
         do {
             let (results, _) = try await database.records(matching: query, inZoneWith: hostZoneID)
 
-            var hosts: [MirageCloudKitHostInfo] = []
+            var snapshots: [HostRecordSnapshot] = []
             var processedCount = 0
             for (_, result) in results {
                 if case let .success(record) = result {
-                    if let hostInfo = parseHostRecord(record, isShared: false, ownerUserID: nil) { hosts.append(hostInfo) }
+                    snapshots.append(snapshot(from: record, isShared: false, ownerUserID: nil))
                 }
                 processedCount += 1
                 if processedCount.isMultiple(of: 25) {
@@ -112,6 +115,7 @@ public final class MirageCloudKitHostProvider {
                 }
             }
 
+            let hosts = await hostRecordParser.parse(snapshots)
             ownHosts = hosts.sorted { $0.name < $1.name }
             MirageLogger.appState("Fetched \(hosts.count) own hosts from CloudKit")
         } catch {
@@ -130,7 +134,7 @@ public final class MirageCloudKitHostProvider {
             // Get all shared zones
             let zones = try await sharedDatabase.allRecordZones()
 
-            var hosts: [MirageCloudKitHostInfo] = []
+            var snapshots: [HostRecordSnapshot] = []
             var processedCount = 0
 
             for zone in zones {
@@ -147,7 +151,7 @@ public final class MirageCloudKitHostProvider {
                         if case let .success(record) = result {
                             // Get owner user ID from the zone
                             let ownerUserID = zone.zoneID.ownerName
-                            if let hostInfo = parseHostRecord(record, isShared: true, ownerUserID: ownerUserID) { hosts.append(hostInfo) }
+                            snapshots.append(snapshot(from: record, isShared: true, ownerUserID: ownerUserID))
                         }
                         processedCount += 1
                         if processedCount.isMultiple(of: 25) {
@@ -159,6 +163,7 @@ public final class MirageCloudKitHostProvider {
                 }
             }
 
+            let hosts = await hostRecordParser.parse(snapshots)
             sharedHosts = hosts.sorted { $0.name < $1.name }
             MirageLogger.appState("Fetched \(hosts.count) shared hosts from CloudKit")
         } catch {
@@ -240,82 +245,33 @@ public final class MirageCloudKitHostProvider {
 
     // MARK: - Parsing
 
-    /// Parses a CKRecord into a MirageCloudKitHostInfo.
-    private func parseHostRecord(
-        _ record: CKRecord,
+    /// Captures a sendable snapshot of a CloudKit record for background parsing.
+    private func snapshot(
+        from record: CKRecord,
         isShared: Bool,
         ownerUserID: String?
-    )
-    -> MirageCloudKitHostInfo? {
-        guard let deviceIDString = record[MirageCloudKitHostInfo.RecordKey.deviceID.rawValue] as? String,
-              let deviceID = UUID(uuidString: deviceIDString) else {
-            MirageLogger.appState("Skipping host record with invalid deviceID: \(record.recordID.recordName)")
-            return nil
-        }
-
-        return parseHostRecordWithID(record, deviceID: deviceID, isShared: isShared, ownerUserID: ownerUserID)
-    }
-
-    private func parseHostRecordWithID(
-        _ record: CKRecord,
-        deviceID: UUID,
-        isShared: Bool,
-        ownerUserID: String?
-    )
-    -> MirageCloudKitHostInfo {
-        let name = record[MirageCloudKitHostInfo.RecordKey.name.rawValue] as? String ?? "Unknown Host"
-
-        let deviceTypeString = record[MirageCloudKitHostInfo.RecordKey.deviceType.rawValue] as? String ?? "mac"
-        let deviceType = DeviceType(rawValue: deviceTypeString) ?? .mac
-
-        // Parse capabilities
-        let maxFrameRate = (record[MirageCloudKitHostInfo.RecordKey.maxFrameRate.rawValue] as? Int64)
-            .map(Int.init) ?? 120
-        let supportsHEVC = (record[MirageCloudKitHostInfo.RecordKey.supportsHEVC.rawValue] as? Int64 ?? 1) != 0
-        let supportsP3 = (record[MirageCloudKitHostInfo.RecordKey.supportsP3.rawValue] as? Int64 ?? 1) != 0
-        let maxStreams = (record[MirageCloudKitHostInfo.RecordKey.maxStreams.rawValue] as? Int64).map(Int.init) ?? 4
-        let protocolVersion = (record[MirageCloudKitHostInfo.RecordKey.protocolVersion.rawValue] as? Int64)
-            .map(Int.init) ?? Int(MirageKit.protocolVersion)
-        let identityKeyID = record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] as? String
-        let identityPublicKey = record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] as? Data
-        let hardwareModelIdentifier = record[MirageCloudKitHostInfo.RecordKey.hardwareModelIdentifier.rawValue] as? String
-        let hardwareIconName = record[MirageCloudKitHostInfo.RecordKey.hardwareIconName.rawValue] as? String
-        let hardwareMachineFamily = record[MirageCloudKitHostInfo.RecordKey.hardwareMachineFamily.rawValue] as? String
-        let remoteEnabled = (record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] as? Int64 ?? 0) != 0
-        let bootstrapMetadataBlob = record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] as? Data
-        let bootstrapMetadata = bootstrapMetadataBlob.flatMap {
-            try? JSONDecoder().decode(MirageBootstrapMetadata.self, from: $0)
-        }
-
-        let capabilities = MirageHostCapabilities(
-            maxStreams: maxStreams,
-            supportsHEVC: supportsHEVC,
-            supportsP3ColorSpace: supportsP3,
-            maxFrameRate: maxFrameRate,
-            protocolVersion: protocolVersion,
-            deviceID: deviceID,
-            identityKeyID: identityKeyID,
-            hardwareModelIdentifier: hardwareModelIdentifier,
-            hardwareIconName: hardwareIconName,
-            hardwareMachineFamily: hardwareMachineFamily
-        )
-
-        let lastSeen = record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] as? Date ?? record
-            .modificationDate ?? Date.distantPast
-
-        return MirageCloudKitHostInfo(
-            id: deviceID,
-            name: name,
-            deviceType: deviceType,
-            capabilities: capabilities,
-            lastSeen: lastSeen,
-            ownerUserID: ownerUserID,
-            isShared: isShared,
+    ) -> HostRecordSnapshot {
+        HostRecordSnapshot(
             recordID: record.recordID.recordName,
-            identityKeyID: identityKeyID,
-            identityPublicKey: identityPublicKey,
-            remoteEnabled: remoteEnabled,
-            bootstrapMetadata: bootstrapMetadata
+            deviceIDString: record[MirageCloudKitHostInfo.RecordKey.deviceID.rawValue] as? String,
+            name: record[MirageCloudKitHostInfo.RecordKey.name.rawValue] as? String,
+            deviceTypeRawValue: record[MirageCloudKitHostInfo.RecordKey.deviceType.rawValue] as? String,
+            maxFrameRate: (record[MirageCloudKitHostInfo.RecordKey.maxFrameRate.rawValue] as? Int64).map(Int.init),
+            supportsHEVC: (record[MirageCloudKitHostInfo.RecordKey.supportsHEVC.rawValue] as? Int64).map { $0 != 0 },
+            supportsP3: (record[MirageCloudKitHostInfo.RecordKey.supportsP3.rawValue] as? Int64).map { $0 != 0 },
+            maxStreams: (record[MirageCloudKitHostInfo.RecordKey.maxStreams.rawValue] as? Int64).map(Int.init),
+            protocolVersion: (record[MirageCloudKitHostInfo.RecordKey.protocolVersion.rawValue] as? Int64).map(Int.init),
+            identityKeyID: record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] as? String,
+            identityPublicKey: record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] as? Data,
+            hardwareModelIdentifier: record[MirageCloudKitHostInfo.RecordKey.hardwareModelIdentifier.rawValue] as? String,
+            hardwareIconName: record[MirageCloudKitHostInfo.RecordKey.hardwareIconName.rawValue] as? String,
+            hardwareMachineFamily: record[MirageCloudKitHostInfo.RecordKey.hardwareMachineFamily.rawValue] as? String,
+            remoteEnabled: (record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] as? Int64).map { $0 != 0 },
+            bootstrapMetadataBlob: record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] as? Data,
+            lastSeen: record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] as? Date,
+            modificationDate: record.modificationDate,
+            ownerUserID: ownerUserID,
+            isShared: isShared
         )
     }
 
@@ -342,6 +298,75 @@ public final class MirageCloudKitHostProvider {
         }
 
         return recordIDs
+    }
+}
+
+private struct HostRecordSnapshot: Sendable {
+    let recordID: String
+    let deviceIDString: String?
+    let name: String?
+    let deviceTypeRawValue: String?
+    let maxFrameRate: Int?
+    let supportsHEVC: Bool?
+    let supportsP3: Bool?
+    let maxStreams: Int?
+    let protocolVersion: Int?
+    let identityKeyID: String?
+    let identityPublicKey: Data?
+    let hardwareModelIdentifier: String?
+    let hardwareIconName: String?
+    let hardwareMachineFamily: String?
+    let remoteEnabled: Bool?
+    let bootstrapMetadataBlob: Data?
+    let lastSeen: Date?
+    let modificationDate: Date?
+    let ownerUserID: String?
+    let isShared: Bool
+}
+
+private actor HostRecordSnapshotParser {
+    func parse(_ snapshots: [HostRecordSnapshot]) -> [MirageCloudKitHostInfo] {
+        snapshots.compactMap(parseHostRecord)
+    }
+
+    private func parseHostRecord(_ snapshot: HostRecordSnapshot) -> MirageCloudKitHostInfo? {
+        guard let rawDeviceID = snapshot.deviceIDString,
+              let deviceID = UUID(uuidString: rawDeviceID) else {
+            MirageLogger.appState("Skipping host record with invalid deviceID: \(snapshot.recordID)")
+            return nil
+        }
+
+        let deviceType = DeviceType(rawValue: snapshot.deviceTypeRawValue ?? "mac") ?? .mac
+        let bootstrapMetadata = snapshot.bootstrapMetadataBlob.flatMap {
+            try? JSONDecoder().decode(MirageBootstrapMetadata.self, from: $0)
+        }
+        let capabilities = MirageHostCapabilities(
+            maxStreams: snapshot.maxStreams ?? 4,
+            supportsHEVC: snapshot.supportsHEVC ?? true,
+            supportsP3ColorSpace: snapshot.supportsP3 ?? true,
+            maxFrameRate: snapshot.maxFrameRate ?? 120,
+            protocolVersion: snapshot.protocolVersion ?? Int(MirageKit.protocolVersion),
+            deviceID: deviceID,
+            identityKeyID: snapshot.identityKeyID,
+            hardwareModelIdentifier: snapshot.hardwareModelIdentifier,
+            hardwareIconName: snapshot.hardwareIconName,
+            hardwareMachineFamily: snapshot.hardwareMachineFamily
+        )
+
+        return MirageCloudKitHostInfo(
+            id: deviceID,
+            name: snapshot.name ?? "Unknown Host",
+            deviceType: deviceType,
+            capabilities: capabilities,
+            lastSeen: snapshot.lastSeen ?? snapshot.modificationDate ?? Date.distantPast,
+            ownerUserID: snapshot.ownerUserID,
+            isShared: snapshot.isShared,
+            recordID: snapshot.recordID,
+            identityKeyID: snapshot.identityKeyID,
+            identityPublicKey: snapshot.identityPublicKey,
+            remoteEnabled: snapshot.remoteEnabled ?? false,
+            bootstrapMetadata: bootstrapMetadata
+        )
     }
 }
 

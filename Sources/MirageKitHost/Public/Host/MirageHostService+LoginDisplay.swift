@@ -86,11 +86,15 @@ extension MirageHostService {
         let streamID = nextStreamID
         nextStreamID += 1
         let loginClientID = connectedClients.first?.id
+        let requestedLoginAudioChannelCount = connectedClients.first
+            .flatMap { audioConfigurationByClientID[$0.id]?.channelLayout.channelCount }
+            ?? MirageAudioConfiguration.default.channelLayout.channelCount
 
         let context = StreamContext(
             streamID: streamID,
             windowID: 0,
             encoderConfig: encoderConfig,
+            requestedAudioChannelCount: requestedLoginAudioChannelCount,
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: loginClientID.flatMap { mediaSecurityContextForMediaPayload(clientID: $0) },
             additionalFrameFlags: [.loginDisplay],
@@ -289,10 +293,9 @@ extension MirageHostService {
             repeating: loginDisplayWatchdogIntervalSeconds
         )
         timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            dispatchMainWork { [weak self] in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                await checkLoginDisplayHealth(generation: generation, streamID: streamID, context: context)
+                await self.checkLoginDisplayHealth(generation: generation, streamID: streamID, context: context)
             }
         }
         loginDisplayWatchdogTimer = timer
@@ -426,17 +429,16 @@ extension MirageHostService {
         let timer = DispatchSource.makeTimerSource(queue: transportWorker.dispatchQueue)
         timer.schedule(deadline: .now() + delay)
         timer.setEventHandler { [weak self] in
-            guard let self else { return }
-            dispatchMainWork { [weak self] in
+            Task { @MainActor [weak self] in
                 guard let self else { return }
-                loginDisplayRetryTimer?.cancel()
-                loginDisplayRetryTimer = nil
+                self.loginDisplayRetryTimer?.cancel()
+                self.loginDisplayRetryTimer = nil
 
-                guard sessionState != .active else { return }
-                guard !clientsByConnection.isEmpty else { return }
-                guard loginDisplayContext == nil else { return }
+                guard self.sessionState != .active else { return }
+                guard !self.clientsByConnection.isEmpty else { return }
+                guard self.loginDisplayContext == nil else { return }
 
-                await startLoginDisplayStreamIfNeeded()
+                await self.startLoginDisplayStreamIfNeeded()
             }
         }
         loginDisplayRetryTimer = timer

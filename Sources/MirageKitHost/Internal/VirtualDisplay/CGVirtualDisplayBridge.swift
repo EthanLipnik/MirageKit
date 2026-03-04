@@ -520,8 +520,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             Thread.sleep(forTimeInterval: 0.05)
         }
 
-        MirageLogger.error(
-            .host,
+        MirageLogger.host(
             modeValidationLogLine(
                 displayID: displayID,
                 serial: serial,
@@ -655,8 +654,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         serial: profile.serial
                     ) else {
                         let modeLabel = hiDPI ? "Retina" : "1x"
-                        MirageLogger.error(
-                            .host,
+                        MirageLogger.host(
                             "Virtual display \(modeLabel) activation failed for profile \(profile.label)"
                         )
                         let invalidateSelector = NSSelectorFromString("invalidate")
@@ -761,9 +759,9 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         }
 
         if hiDPI {
-            MirageLogger.error(.host, "Virtual display failed Retina activation for all descriptor profiles")
+            MirageLogger.host("Virtual display failed Retina activation for all descriptor profiles")
         } else {
-            MirageLogger.error(.host, "Virtual display failed 1x activation for all descriptor profiles")
+            MirageLogger.host("Virtual display failed 1x activation for all descriptor profiles")
         }
         return nil
     }

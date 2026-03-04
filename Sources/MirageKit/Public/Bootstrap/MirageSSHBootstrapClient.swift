@@ -255,15 +255,69 @@ private extension MirageDefaultSSHBootstrapClient {
     static func mapToBootstrapError(_ error: Error) -> MirageSSHBootstrapError {
         if let error = error as? MirageSSHBootstrapError { return error }
 
-        let description = error.localizedDescription.lowercased()
-        if description.contains("auth") || description.contains("permission denied") {
-            return .authenticationFailed
-        }
-        if description.contains("timed out") || description.contains("timeout") {
-            return .timedOut
+        if let channelError = error as? ChannelError {
+            switch channelError {
+            case .connectTimeout:
+                return .timedOut
+            default:
+                break
+            }
         }
 
-        return .connectionFailed(error.localizedDescription)
+        if let ioError = error as? IOError {
+            if isAuthenticationPOSIXError(ioError.errnoCode) {
+                return .authenticationFailed
+            }
+            if isTimeoutPOSIXError(ioError.errnoCode) {
+                return .timedOut
+            }
+            return .connectionFailed(ioError.localizedDescription)
+        }
+
+        if let sshError = error as? NIOSSHError,
+           sshError.type == .invalidUserAuthSignature {
+            return .authenticationFailed
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain {
+            let code = CInt(nsError.code)
+            if isAuthenticationPOSIXError(code) {
+                return .authenticationFailed
+            }
+            if isTimeoutPOSIXError(code) {
+                return .timedOut
+            }
+        }
+
+        if nsError.domain == NSURLErrorDomain {
+            if nsError.code == NSURLErrorTimedOut {
+                return .timedOut
+            }
+            if nsError.code == NSURLErrorUserAuthenticationRequired ||
+                nsError.code == NSURLErrorUserCancelledAuthentication {
+                return .authenticationFailed
+            }
+        }
+
+        return .connectionFailed(nsError.localizedDescription)
+    }
+
+    static func isAuthenticationPOSIXError(_ code: CInt) -> Bool {
+        guard let posix = POSIXErrorCode(rawValue: code) else { return false }
+        switch posix {
+        case .EACCES, .EPERM:
+            return true
+        default:
+            return false
+        }
+    }
+
+    static func isTimeoutPOSIXError(_ code: CInt) -> Bool {
+        if let posix = POSIXErrorCode(rawValue: code), posix == .ETIMEDOUT {
+            return true
+        }
+        return false
     }
 }
 

@@ -27,6 +27,9 @@ extension MirageHostService {
     )
     async {
         audioConfigurationByClientID[clientID] = configuration
+        if let streamContext = streamsByID[sourceStreamID] {
+            await streamContext.setRequestedAudioChannelCount(configuration.channelLayout.channelCount)
+        }
 
         guard configuration.enabled else {
             audioSourceStreamByClientID.removeValue(forKey: clientID)

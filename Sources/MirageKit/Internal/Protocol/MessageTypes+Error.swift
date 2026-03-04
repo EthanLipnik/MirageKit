@@ -28,11 +28,35 @@ package struct ErrorMessage: Codable {
         case permissionDenied
         case virtualDisplayStartFailed
         case virtualDisplayResizeFailed
+        case sessionLocked
+        case waitingForHostApproval
     }
 
     package init(code: ErrorCode, message: String, streamID: StreamID? = nil) {
         self.code = code
         self.message = message
         self.streamID = streamID
+    }
+}
+
+package extension ErrorMessage.ErrorCode {
+    init(_ runtimeCondition: MirageRuntimeConditionError) {
+        switch runtimeCondition {
+        case .sessionLocked:
+            self = .sessionLocked
+        case .waitingForHostApproval:
+            self = .waitingForHostApproval
+        }
+    }
+
+    var runtimeConditionError: MirageRuntimeConditionError? {
+        switch self {
+        case .sessionLocked:
+            return .sessionLocked
+        case .waitingForHostApproval:
+            return .waitingForHostApproval
+        default:
+            return nil
+        }
     }
 }

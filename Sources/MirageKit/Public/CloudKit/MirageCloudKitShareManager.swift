@@ -57,6 +57,9 @@ public final class MirageCloudKitShareManager {
     /// Custom zone for host records.
     private let hostZoneID: CKRecordZone.ID
 
+    /// Whether the production schema currently accepts bootstrap metadata writes.
+    private var cloudKitSchemaSupportsBootstrapMetadata = true
+
     // MARK: - Initialization
 
     /// Creates a share manager with the specified CloudKit manager.
@@ -276,34 +279,75 @@ public final class MirageCloudKitShareManager {
         // Clear binary icon payload field so host records remain metadata-only.
         record["hardwareIconPNGData"] = nil
         record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] = remoteEnabled ? 1 : 0
-        if let bootstrapMetadata {
-            record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = try? JSONEncoder()
-                .encode(bootstrapMetadata)
+        if cloudKitSchemaSupportsBootstrapMetadata, let bootstrapMetadata {
+            record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = try? JSONEncoder().encode(bootstrapMetadata)
         } else {
             record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = nil
         }
         record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] = Date()
 
         do {
-            let (saveResults, _) = try await database.modifyRecords(
-                saving: [record],
-                deleting: [],
-                savePolicy: .changedKeys
+            try await persistHostRecord(
+                record,
+                name: name,
+                database: database,
+                identityKeyID: identityKeyID,
+                identityPublicKey: identityPublicKey
             )
-            if let savedRecord = try saveResults[record.recordID]?.get() {
-                hostRecord = savedRecord
-                MirageLogger.appState("Registered host in CloudKit: \(name)")
-            }
-            if let identityKeyID, let identityPublicKey {
-                try await upsertParticipantIdentityRecord(
-                    keyID: identityKeyID,
-                    publicKey: identityPublicKey
-                )
-            }
+        } catch where shouldRetryHostRegistrationWithoutBootstrapMetadata(
+            error: error,
+            attemptedBootstrapMetadataWrite: cloudKitSchemaSupportsBootstrapMetadata && bootstrapMetadata != nil
+        ) {
+            cloudKitSchemaSupportsBootstrapMetadata = false
+            record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = nil
+            MirageLogger.appState(
+                "CloudKit schema rejected bootstrapMetadataBlob; retrying host registration without bootstrap metadata"
+            )
+            try await persistHostRecord(
+                record,
+                name: name,
+                database: database,
+                identityKeyID: identityKeyID,
+                identityPublicKey: identityPublicKey
+            )
         } catch {
             MirageLogger.error(.appState, error: error, message: "Failed to register host in CloudKit: ")
             throw error
         }
+    }
+
+    private func persistHostRecord(
+        _ record: CKRecord,
+        name: String,
+        database: CKDatabase,
+        identityKeyID: String?,
+        identityPublicKey: Data?
+    ) async throws {
+        let (saveResults, _) = try await database.modifyRecords(
+            saving: [record],
+            deleting: [],
+            savePolicy: .changedKeys
+        )
+        if let savedRecord = try saveResults[record.recordID]?.get() {
+            hostRecord = savedRecord
+            MirageLogger.appState("Registered host in CloudKit: \(name)")
+        }
+        if let identityKeyID, let identityPublicKey {
+            try await upsertParticipantIdentityRecord(
+                keyID: identityKeyID,
+                publicKey: identityPublicKey
+            )
+        }
+    }
+
+    private func shouldRetryHostRegistrationWithoutBootstrapMetadata(
+        error: Error,
+        attemptedBootstrapMetadataWrite: Bool
+    ) -> Bool {
+        guard attemptedBootstrapMetadataWrite else { return false }
+        let nsError = error as NSError
+        guard nsError.domain == CKError.errorDomain else { return false }
+        return nsError.code == CKError.Code.invalidArguments.rawValue
     }
 
     private func upsertParticipantIdentityRecord(keyID: String, publicKey: Data) async throws {

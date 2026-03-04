@@ -147,7 +147,8 @@ extension MirageClientService {
            let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
             return expectedReceivePOSIXErrors.contains(code)
         }
-        if nsError.domain == "Network.NWError", expectedNetworkReceiveErrorCodes.contains(nsError.code) {
+        if expectedNetworkReceiveErrorDomains.contains(nsError.domain),
+           expectedNetworkReceiveErrorCodes.contains(nsError.code) {
             return true
         }
 
@@ -161,8 +162,20 @@ extension MirageClientService {
             .ENOTCONN,
             .ETIMEDOUT,
             .ECANCELED,
+            .ENETDOWN,
+            .ENETUNREACH,
+            .ENETRESET,
+            .EHOSTUNREACH,
+            .EPIPE,
         ]
     }
+
+    private nonisolated static let expectedNetworkReceiveErrorDomains: Set<String> = [
+        "Network.NWError",
+        "NWErrorDomain",
+        "NWError",
+        "kNWErrorDomainPOSIX",
+    ]
 
     private nonisolated static var expectedNetworkReceiveErrorCodes: Set<Int> {
         [

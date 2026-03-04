@@ -162,6 +162,7 @@ actor WindowCaptureEngine {
         let resolution: CGSize?
         let sourceRect: CGRect?
         let showsCursor: Bool
+        let audioChannelCount: Int?
         let excludedWindows: [SCWindow]
     }
 

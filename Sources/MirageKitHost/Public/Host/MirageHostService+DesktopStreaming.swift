@@ -41,7 +41,7 @@ extension MirageHostService {
         await refreshSessionStateIfNeeded()
         guard sessionState == .active else {
             MirageLogger.host("Rejecting desktop stream while session is \(sessionState)")
-            throw MirageError.protocolError("Session is locked")
+            throw MirageRuntimeConditionError.sessionLocked
         }
 
         // Check if desktop stream is already active
@@ -216,6 +216,7 @@ extension MirageHostService {
             windowID: 0,
             encoderConfig: config,
             streamScale: clampedStreamScale,
+            requestedAudioChannelCount: audioConfiguration.channelLayout.channelCount,
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: clientContext.client.id),
             additionalFrameFlags: [.desktopStream],
@@ -466,7 +467,7 @@ extension MirageHostService {
                     try? await Task.sleep(for: .milliseconds(attemptDelayMs))
                     attemptDelayMs = min(1000, Int(Double(attemptDelayMs) * 1.6))
                 } else {
-                    MirageLogger.error(.host, "Failed to find SCDisplay after \(maxAttempts) attempts")
+                    MirageLogger.host("Failed to find SCDisplay after \(maxAttempts) attempts")
                     throw error
                 }
             }
@@ -483,7 +484,7 @@ extension MirageHostService {
                 return scDisplay
             } catch {
                 if attempt < maxAttempts { try await Task.sleep(for: .milliseconds(Int64(delayMs))) } else {
-                    MirageLogger.error(.host, "Failed to find main SCDisplay after \(maxAttempts) attempts")
+                    MirageLogger.host("Failed to find main SCDisplay after \(maxAttempts) attempts")
                     throw error
                 }
             }

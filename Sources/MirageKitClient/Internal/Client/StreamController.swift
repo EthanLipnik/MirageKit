@@ -181,6 +181,7 @@ actor StreamController {
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
     static let decodeErrorLogInterval: CFAbsoluteTime = 15.0
+    static let decodeErrorEscalationThreshold: Int = 3
     static let decodeSubmissionMaximumLimit: Int = 3
     static let decodeSubmissionStressThreshold: Double = 0.80
     static let decodeSubmissionHealthyThreshold: Double = 0.95
@@ -509,9 +510,14 @@ actor StreamController {
         let now = currentTime()
         consecutiveDecodeErrors += 1
 
-        let shouldElevate = consecutiveDecodeErrors == 1 ||
-            signature != lastDecodeErrorSignature ||
-            now - lastDecodeErrorLogTime >= Self.decodeErrorLogInterval
+        let reachedEscalationThreshold = consecutiveDecodeErrors >= Self.decodeErrorEscalationThreshold
+        let signatureChanged = signature != lastDecodeErrorSignature
+        let intervalElapsed = now - lastDecodeErrorLogTime >= Self.decodeErrorLogInterval
+        let shouldElevate = reachedEscalationThreshold && (
+            consecutiveDecodeErrors == Self.decodeErrorEscalationThreshold ||
+                signatureChanged ||
+                intervalElapsed
+        )
 
         if shouldElevate {
             MirageLogger.error(
@@ -522,10 +528,18 @@ actor StreamController {
             lastDecodeErrorSignature = signature
             lastDecodeErrorLogTime = now
         } else {
-            MirageLogger.debug(
-                .client,
-                "Decode error suppressed as repeat (attempt \(consecutiveDecodeErrors), signature \(signature))"
-            )
+            let threshold = Self.decodeErrorEscalationThreshold
+            if consecutiveDecodeErrors < threshold {
+                MirageLogger.debug(
+                    .client,
+                    "Decode error observed before escalation threshold (attempt \(consecutiveDecodeErrors)/\(threshold), signature \(signature))"
+                )
+            } else {
+                MirageLogger.debug(
+                    .client,
+                    "Decode error suppressed as repeat (attempt \(consecutiveDecodeErrors), signature \(signature))"
+                )
+            }
         }
     }
 

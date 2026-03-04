@@ -156,6 +156,20 @@ public enum MirageRemoteSignalingError: LocalizedError, Sendable {
             }
         }
     }
+
+    /// True when signaling request credentials are rejected as unauthorized.
+    public var isAuthenticationFailure: Bool {
+        guard case let .http(statusCode, _, _) = self else { return false }
+        return statusCode == 401 || statusCode == 403
+    }
+
+    /// True when retrying with the same configuration will not recover.
+    public var isPermanentConfigurationFailure: Bool {
+        if case .invalidConfiguration = self {
+            return true
+        }
+        return isAuthenticationFailure
+    }
 }
 
 /// Signed signaling API wrapper used by host and client remote coordination.

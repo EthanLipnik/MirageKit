@@ -328,12 +328,24 @@ extension HEVCEncoder {
             return .unsupported
         }
         let status = VTSessionSetProperty(session, key: key, value: value)
+        if key == kVTCompressionPropertyKey_MaxFrameDelayCount,
+           Self.unsupportedEncoderPropertyStatuses.contains(status) {
+            if !loggedUnsupportedKeys.contains(key) {
+                loggedUnsupportedKeys.insert(key)
+                MirageLogger.encoder("Encoder property unsupported: \(key) (status \(status))")
+            }
+            return .unsupported
+        }
         guard status == noErr else {
             MirageLogger.error(.encoder, "VTSessionSetProperty \(key) failed: \(status)")
             return .failed
         }
         return .applied
     }
+
+    private nonisolated static let unsupportedEncoderPropertyStatuses: Set<OSStatus> = [
+        -12900,
+    ]
 
     @discardableResult
     private func setPropertyTracked(

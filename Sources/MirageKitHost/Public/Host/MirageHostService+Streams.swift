@@ -13,8 +13,35 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+enum WindowStreamStartFailureCode: Int, Sendable, Equatable, Hashable, Comparable {
+    case unknown = 0
+    case virtualDisplayCreationFailed = 1
+    case virtualDisplayUnavailable = 2
+    case virtualDisplayDirectFallbackFailed = 3
+    case windowPlacementFailed = 4
+    case windowOwnerConflict = 5
+    case windowOwnerMismatch = 6
+    case windowAlreadyBound = 7
+    case windowNotFound = 8
+    case noSavedWindowState = 9
+    case operationTimedOut = 10
+    case runtimeConditionBlocked = 11
+
+    static func < (lhs: WindowStreamStartFailureCode, rhs: WindowStreamStartFailureCode) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+
+    var isOwnershipConflict: Bool {
+        self == .windowOwnerConflict || self == .windowOwnerMismatch || self == .windowAlreadyBound
+    }
+
+    var isNonRetryableVirtualDisplayAllocationFailure: Bool {
+        self == .virtualDisplayCreationFailed || self == .virtualDisplayUnavailable
+    }
+}
+
 enum WindowStreamStartError: Error {
-    case virtualDisplayStartFailed(String)
+    case virtualDisplayStartFailed(code: WindowStreamStartFailureCode, details: String)
     case windowAlreadyBound(windowID: WindowID, existingStreamID: StreamID)
 }
 
@@ -47,7 +74,7 @@ func windowPlacementRepairBackoffStep(
 extension WindowStreamStartError: LocalizedError {
     var errorDescription: String? {
         switch self {
-        case let .virtualDisplayStartFailed(details):
+        case let .virtualDisplayStartFailed(_, details):
             "Dedicated virtual display start failed: \(details)"
         case let .windowAlreadyBound(windowID, existingStreamID):
             "Window \(windowID) is already streamed by stream \(existingStreamID)"
@@ -162,11 +189,13 @@ public extension MirageHostService {
         } else {
             .baseline
         }
+        let resolvedAudioConfiguration = audioConfiguration ?? .default
         let context = StreamContext(
             streamID: streamID,
             windowID: updatedWindow.id,
             encoderConfig: effectiveEncoderConfig,
             streamScale: streamScale ?? 1.0,
+            requestedAudioChannelCount: resolvedAudioConfiguration.channelLayout.channelCount,
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: client.id),
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
@@ -207,7 +236,6 @@ public extension MirageHostService {
             }
         }
 
-        let resolvedAudioConfiguration = audioConfiguration ?? .default
         await activateAudioForClient(
             clientID: client.id,
             sourceStreamID: streamID,
@@ -400,7 +428,8 @@ public extension MirageHostService {
                 break virtualDisplayStartupLoop
             } catch let virtualDisplayError {
                 let activeOtherStreamIDs = Set(activeSessionByStreamID.keys).subtracting([streamID])
-                if isWindowOwnershipError(virtualDisplayError) {
+                let failureCode = classifyWindowStreamStartFailure(virtualDisplayError)
+                if failureCode.isOwnershipConflict {
                     if let conflictingOwnerStreamID = conflictingOwnerStreamID(from: virtualDisplayError),
                        activeOtherStreamIDs.contains(conflictingOwnerStreamID) {
                         await cleanupFailedStreamStart(
@@ -444,7 +473,7 @@ public extension MirageHostService {
                 let detail = virtualDisplayError.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 let renderedDetail = detail.isEmpty ? String(describing: virtualDisplayError) : detail
                 let allowOwnerFallbackAfterRecovery = hasAttemptedStaleOwnerRecovery &&
-                    isWindowOwnershipError(virtualDisplayError) &&
+                    failureCode.isOwnershipConflict &&
                     {
                         guard let conflictingOwnerStreamID = conflictingOwnerStreamID(from: virtualDisplayError) else {
                             return false
@@ -488,7 +517,8 @@ public extension MirageHostService {
                             .trimmingCharacters(in: .whitespacesAndNewlines)
                         let renderedFallbackDetail = fallbackDetail.isEmpty ? String(describing: error) : fallbackDetail
                         throw WindowStreamStartError.virtualDisplayStartFailed(
-                            "\(renderedDetail); direct fallback failed: \(renderedFallbackDetail)"
+                            code: .virtualDisplayDirectFallbackFailed,
+                            details: "\(renderedDetail); direct fallback failed: \(renderedFallbackDetail)"
                         )
                     }
                 } else {
@@ -502,7 +532,10 @@ public extension MirageHostService {
                         context: context,
                         windowID: updatedWindow.id
                     )
-                    throw WindowStreamStartError.virtualDisplayStartFailed(renderedDetail)
+                    throw WindowStreamStartError.virtualDisplayStartFailed(
+                        code: failureCode,
+                        details: renderedDetail
+                    )
                 }
             }
         }
@@ -596,54 +629,85 @@ public extension MirageHostService {
         return effectiveEncoderConfig
     }
 
+    private func classifyWindowStreamStartFailure(_ error: Error) -> WindowStreamStartFailureCode {
+        if let windowStartError = error as? WindowStreamStartError {
+            switch windowStartError {
+            case let .virtualDisplayStartFailed(code, _):
+                return code
+            case .windowAlreadyBound:
+                return .windowAlreadyBound
+            }
+        }
+
+        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+            switch windowSpaceError {
+            case .moveFailed:
+                return .windowPlacementFailed
+            case .ownerConflict:
+                return .windowOwnerConflict
+            case .ownerMismatch:
+                return .windowOwnerMismatch
+            case .windowNotFound:
+                return .windowNotFound
+            case .noOriginalState:
+                return .noSavedWindowState
+            }
+        }
+
+        if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
+            switch sharedDisplayError {
+            case .creationFailed:
+                return .virtualDisplayCreationFailed
+            case .apiNotAvailable, .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
+                return .virtualDisplayUnavailable
+            }
+        }
+
+        if error is MirageRuntimeConditionError {
+            return .runtimeConditionBlocked
+        }
+
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case .windowNotFound:
+                return .windowNotFound
+            case .timeout:
+                return .operationTimedOut
+            default:
+                return .unknown
+            }
+        }
+
+        return .unknown
+    }
+
     private func shouldFallbackToDirectWindowCapture(_ error: Error) -> Bool {
+        let failureCode = classifyWindowStreamStartFailure(error)
         if let windowStartError = error as? WindowStreamStartError {
             switch windowStartError {
             case .virtualDisplayStartFailed:
-                return true
+                return !failureCode.isOwnershipConflict
             case .windowAlreadyBound:
                 return false
             }
         }
-        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
-            switch windowSpaceError {
-            case .moveFailed:
-                return true
-            case .windowNotFound, .noOriginalState:
-                return false
-            case .ownerConflict, .ownerMismatch:
-                return false
-            }
-        }
-        let normalizedDescription = error.localizedDescription.lowercased()
-        if normalizedDescription.contains("placement verification failed") {
+
+        switch failureCode {
+        case .virtualDisplayCreationFailed,
+             .virtualDisplayUnavailable,
+             .windowPlacementFailed,
+             .windowNotFound,
+             .operationTimedOut:
             return true
+        case .virtualDisplayDirectFallbackFailed,
+             .windowOwnerConflict,
+             .windowOwnerMismatch,
+             .windowAlreadyBound,
+             .noSavedWindowState,
+             .runtimeConditionBlocked,
+             .unknown:
+            return false
         }
-        if normalizedDescription.contains("failed to move window") {
-            return true
-        }
-        if normalizedDescription.contains("dedicated virtual display start failed") {
-            return true
-        }
-        if normalizedDescription.contains("virtual-display stream start failed") {
-            return true
-        }
-        if normalizedDescription.contains("virtual display start failed") {
-            return true
-        }
-        if normalizedDescription.contains("failed to create virtual display") {
-            return true
-        }
-        if normalizedDescription.contains("virtual display failed activation") {
-            return true
-        }
-        if normalizedDescription.contains("spawnproxy message error") {
-            return true
-        }
-        if normalizedDescription.contains("pluginwithoptions") {
-            return true
-        }
-        return false
     }
 
     private func cleanupFailedStreamStart(
@@ -659,24 +723,16 @@ public extension MirageHostService {
         await deactivateAudioSourceIfNeeded(streamID: streamID)
     }
 
-    private func isWindowOwnershipError(_ error: Error) -> Bool {
-        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
-            switch windowSpaceError {
-            case .ownerConflict, .ownerMismatch:
-                return true
-            case .windowNotFound, .noOriginalState, .moveFailed:
-                return false
+    private func conflictingOwnerStreamID(from error: Error) -> StreamID? {
+        if let windowStartError = error as? WindowStreamStartError {
+            switch windowStartError {
+            case let .windowAlreadyBound(_, existingStreamID):
+                return existingStreamID
+            case .virtualDisplayStartFailed:
+                break
             }
         }
 
-        let normalizedDescription = error.localizedDescription.lowercased()
-        return normalizedDescription.contains("already owned by stream") ||
-            normalizedDescription.contains("restore owner mismatch") ||
-            normalizedDescription.contains("owner conflict") ||
-            normalizedDescription.contains("owner mismatch")
-    }
-
-    private func conflictingOwnerStreamID(from error: Error) -> StreamID? {
         if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
             switch windowSpaceError {
             case let .ownerConflict(_, existingStreamID, _):
@@ -688,34 +744,7 @@ public extension MirageHostService {
             }
         }
 
-        let normalizedDescription = error.localizedDescription.lowercased()
-        if let owner = parseOwnerStreamID(
-            in: normalizedDescription,
-            marker: "already owned by stream "
-        ) {
-            return owner
-        }
-        if let owner = parseOwnerStreamID(
-            in: normalizedDescription,
-            marker: "actual stream "
-        ) {
-            return owner
-        }
         return nil
-    }
-
-    private func parseOwnerStreamID(
-        in description: String,
-        marker: String
-    ) -> StreamID? {
-        guard let markerRange = description.range(of: marker) else { return nil }
-        let suffix = description[markerRange.upperBound...]
-        let digits = suffix.prefix { $0.isNumber }
-        guard !digits.isEmpty,
-              let value = UInt64(digits) else {
-            return nil
-        }
-        return StreamID(value)
     }
 
     private func virtualDisplayPlacementDriftReason(

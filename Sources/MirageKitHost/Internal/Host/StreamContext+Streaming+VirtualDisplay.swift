@@ -244,7 +244,8 @@ extension StreamContext {
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },
-            onAudio: onCapturedAudioBuffer
+            onAudio: onCapturedAudioBuffer,
+            audioChannelCount: requestedAudioChannelCount
         )
         await refreshCaptureCadence()
 
@@ -382,7 +383,8 @@ extension StreamContext {
                 onFrame: { [weak self] frame in
                     self?.enqueueCapturedFrame(frame)
                 },
-                onAudio: onCapturedAudioBuffer
+                onAudio: onCapturedAudioBuffer,
+                audioChannelCount: requestedAudioChannelCount
             )
             await refreshCaptureCadence()
 
@@ -442,7 +444,8 @@ extension StreamContext {
                         onFrame: { [weak self] frame in
                             self?.enqueueCapturedFrame(frame)
                         },
-                        onAudio: onCapturedAudioBuffer
+                        onAudio: onCapturedAudioBuffer,
+                        audioChannelCount: requestedAudioChannelCount
                     )
                     await refreshCaptureCadence()
                     await encoder?.forceKeyframe()

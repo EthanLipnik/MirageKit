@@ -73,6 +73,7 @@ extension WindowCaptureEngine {
                     resolution: config.resolution,
                     sourceRect: config.sourceRect,
                     showsCursor: config.showsCursor,
+                    audioChannelCount: config.audioChannelCount,
                     excludedWindows: config.excludedWindows
                 )
 

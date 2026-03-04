@@ -18,10 +18,26 @@ enum AppStreamStartupFailureClassifier {
             switch windowStartError {
             case .windowAlreadyBound:
                 return false
-            case let .virtualDisplayStartFailed(details):
-                if isNonRetryableOwnerConflictDescription(details.lowercased()) {
-                    return false
-                }
+            case let .virtualDisplayStartFailed(code, _):
+                if code.isOwnershipConflict { return false }
+                return true
+            }
+        }
+
+        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+            switch windowSpaceError {
+            case .moveFailed, .windowNotFound:
+                return true
+            case .noOriginalState, .ownerConflict, .ownerMismatch:
+                return false
+            }
+        }
+
+        if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
+            switch sharedDisplayError {
+            case .creationFailed, .apiNotAvailable:
+                return false
+            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
                 return true
             }
         }
@@ -43,17 +59,6 @@ enum AppStreamStartupFailureClassifier {
             }
         }
 
-        let normalizedDescription = error.localizedDescription.lowercased()
-        if isNonRetryableOwnerConflictDescription(normalizedDescription) {
-            return false
-        }
-        if normalizedDescription.contains("window not found") ||
-            normalizedDescription.contains("disappeared before stream startup") ||
-            normalizedDescription.contains("virtual-display stream start failed") ||
-            normalizedDescription.contains("dedicated virtual display start failed") {
-            return true
-        }
-
         return false
     }
 
@@ -63,28 +68,21 @@ enum AppStreamStartupFailureClassifier {
 
     static func isNonRetryableVirtualDisplayAllocationError(_ error: Error) -> Bool {
         if let windowStartError = error as? WindowStreamStartError {
-            if case let .virtualDisplayStartFailed(details) = windowStartError {
-                if isNonRetryableVirtualDisplayAllocationDescription(details.lowercased()) {
-                    return true
-                }
+            if case let .virtualDisplayStartFailed(code, _) = windowStartError {
+                return code.isNonRetryableVirtualDisplayAllocationFailure
             }
         }
 
-        return isNonRetryableVirtualDisplayAllocationDescription(error.localizedDescription.lowercased())
-    }
+        if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
+            switch sharedDisplayError {
+            case .creationFailed, .apiNotAvailable:
+                return true
+            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
+                return false
+            }
+        }
 
-    private static func isNonRetryableVirtualDisplayAllocationDescription(_ description: String) -> Bool {
-        description.contains("failed to create virtual display") ||
-            description.contains("virtual display failed activation") ||
-            description.contains("spawnproxy message error") ||
-            description.contains("pluginwithoptions")
-    }
-
-    private static func isNonRetryableOwnerConflictDescription(_ description: String) -> Bool {
-        description.contains("already owned by stream") ||
-            description.contains("restore owner mismatch") ||
-            description.contains("owner conflict") ||
-            description.contains("owner mismatch")
+        return false
     }
 }
 #endif

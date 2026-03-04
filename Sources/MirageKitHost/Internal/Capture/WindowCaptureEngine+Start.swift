@@ -29,6 +29,7 @@ extension WindowCaptureEngine {
         outputScale: CGFloat = 1.0,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onAudio: (@Sendable (CapturedAudioBuffer) -> Void)? = nil,
+        audioChannelCount: Int? = nil,
         onDimensionChange: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     )
         async throws {
@@ -39,6 +40,10 @@ extension WindowCaptureEngine {
         capturedFrameHandler = onFrame
         capturedAudioHandler = onAudio
         dimensionChangeHandler = onDimensionChange
+        let resolvedAudioChannelCount = resolvedAudioCaptureChannelCount(
+            isAudioEnabled: onAudio != nil,
+            requestedChannelCount: audioChannelCount
+        )
 
         currentDisplayRefreshRate = nil
         updateDisplayRefreshRate(for: display.displayID)
@@ -75,6 +80,7 @@ extension WindowCaptureEngine {
             resolution: nil,
             sourceRect: nil,
             showsCursor: false,
+            audioChannelCount: resolvedAudioChannelCount,
             excludedWindows: []
         )
 
@@ -109,9 +115,9 @@ extension WindowCaptureEngine {
         // Capture settings
         streamConfig.showsCursor = false // Don't capture cursor - iPad shows its own
         streamConfig.capturesAudio = onAudio != nil
-        if onAudio != nil {
+        if let resolvedAudioChannelCount {
             streamConfig.sampleRate = 48_000
-            streamConfig.channelCount = 2
+            streamConfig.channelCount = resolvedAudioChannelCount
         }
         streamConfig.queueDepth = captureQueueDepth
         if let override = configuration.captureQueueDepth, override > 0 { MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)") }
@@ -229,7 +235,11 @@ extension WindowCaptureEngine {
             try await stream?.stopCapture()
             MirageLogger.capture("event=stream_lifecycle phase=stop_success mode=\(captureMode == .display ? "display" : "window")")
         } catch {
-            MirageLogger.error(.capture, error: error, message: "Error stopping capture: ")
+            if Self.isExpectedStopCaptureError(error) {
+                MirageLogger.capture("Stop capture returned expected teardown status: \(error.localizedDescription)")
+            } else {
+                MirageLogger.error(.capture, error: error, message: "Error stopping capture: ")
+            }
         }
 
         stream = nil
@@ -246,6 +256,19 @@ extension WindowCaptureEngine {
             lastRestartAttemptTime = 0
         }
     }
+
+    private nonisolated static func isExpectedStopCaptureError(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        if nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain",
+           expectedStopCaptureCodes.contains(nsError.code) {
+            return true
+        }
+        return false
+    }
+
+    private nonisolated static let expectedStopCaptureCodes: Set<Int> = [
+        -3808, // Stream already stopped / interrupted during teardown.
+    ]
 
     func restartCapture(reason: String) async {
         cancelScheduledCaptureRestart(reason: "restart_begin")
@@ -349,6 +372,7 @@ extension WindowCaptureEngine {
                     outputScale: resolvedConfig.outputScale,
                     onFrame: onFrame,
                     onAudio: onAudio,
+                    audioChannelCount: resolvedConfig.audioChannelCount,
                     onDimensionChange: onDimensionChange
                 )
             case .display:
@@ -361,6 +385,7 @@ extension WindowCaptureEngine {
                     showsCursor: resolvedConfig.showsCursor,
                     onFrame: onFrame,
                     onAudio: onAudio,
+                    audioChannelCount: resolvedConfig.audioChannelCount,
                     onDimensionChange: onDimensionChange
                 )
             }
@@ -396,6 +421,7 @@ extension WindowCaptureEngine {
         showsCursor: Bool = true,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onAudio: (@Sendable (CapturedAudioBuffer) -> Void)? = nil,
+        audioChannelCount: Int? = nil,
         onDimensionChange: @escaping @Sendable (Int, Int) -> Void = { _, _ in }
     )
         async throws {
@@ -406,6 +432,10 @@ extension WindowCaptureEngine {
         capturedFrameHandler = onFrame
         capturedAudioHandler = onAudio
         dimensionChangeHandler = onDimensionChange
+        let resolvedAudioChannelCount = resolvedAudioCaptureChannelCount(
+            isAudioEnabled: onAudio != nil,
+            requestedChannelCount: audioChannelCount
+        )
 
         // Create stream configuration for display capture
         let streamConfig = SCStreamConfiguration()
@@ -427,6 +457,7 @@ extension WindowCaptureEngine {
             resolution: resolution,
             sourceRect: sourceRect,
             showsCursor: showsCursor,
+            audioChannelCount: resolvedAudioChannelCount,
             excludedWindows: excludedWindows
         )
         self.excludedWindows = excludedWindows
@@ -477,9 +508,9 @@ extension WindowCaptureEngine {
         // - Desktop streaming: hide cursor (false) - client renders its own
         streamConfig.showsCursor = showsCursor
         streamConfig.capturesAudio = onAudio != nil
-        if onAudio != nil {
+        if let resolvedAudioChannelCount {
             streamConfig.sampleRate = 48_000
-            streamConfig.channelCount = 2
+            streamConfig.channelCount = resolvedAudioChannelCount
         }
         streamConfig.queueDepth = captureQueueDepth
         if let override = configuration.captureQueueDepth, override > 0 { MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)") }
@@ -573,6 +604,15 @@ extension WindowCaptureEngine {
         MirageLogger.capture("event=stream_lifecycle phase=start_success mode=display")
 
         MirageLogger.capture("Display capture started for display \(display.displayID)")
+    }
+
+    private func resolvedAudioCaptureChannelCount(
+        isAudioEnabled: Bool,
+        requestedChannelCount: Int?
+    ) -> Int? {
+        guard isAudioEnabled else { return nil }
+        let requested = requestedChannelCount ?? MirageAudioChannelLayout.stereo.channelCount
+        return min(max(requested, 1), 8)
     }
 }
 

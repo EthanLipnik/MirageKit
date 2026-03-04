@@ -51,15 +51,13 @@ extension SharedVirtualDisplayManager {
                     delayMs = min(1000, Int(Double(delayMs) * 1.6))
                 } else {
                     let available = content.displays.map(\.displayID)
-                    MirageLogger.error(
-                        .host,
+                    MirageLogger.host(
                         "SCDisplay not found for displayID \(displayID) after \(maxAttempts) attempts. Available: \(available)"
                     )
                 }
             } catch {
                 if attempt < maxAttempts {
-                    MirageLogger.error(
-                        .host,
+                    MirageLogger.host(
                         "Failed to query SCShareableContent for displayID \(displayID) (attempt \(attempt)/\(maxAttempts)): \(error)"
                     )
                     try? await Task.sleep(for: .milliseconds(delayMs))
@@ -79,8 +77,7 @@ extension SharedVirtualDisplayManager {
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
         guard let scDisplay = content.displays.first(where: { $0.displayID == mainDisplayID }) else {
-            MirageLogger.error(
-                .host,
+            MirageLogger.host(
                 "Main SCDisplay not found for displayID \(mainDisplayID). Available: \(content.displays.map(\.displayID))"
             )
             throw SharedDisplayError.scDisplayNotFound(mainDisplayID)
