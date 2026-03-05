@@ -81,24 +81,24 @@ extension MirageClientService {
                         if data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) {
                             let streamID = header.streamID
 
-                            guard service.activeStreamIDsForFiltering.contains(streamID) else {
+                            guard let packetContext = service.fastPathState.videoPacketContext(for: streamID) else {
                                 receiveNext()
                                 return
                             }
 
-                            if service.takeStartupPacketPending(streamID) {
+                            if packetContext.consumedStartupPending {
                                 Task { @MainActor in
                                     service.logStartupFirstPacketIfNeeded(streamID: streamID)
                                     service.cancelStartupRegistrationRetry(streamID: streamID)
                                 }
                             }
 
-                            guard let reassembler = service.reassemblerForStream(streamID) else {
+                            guard let reassembler = packetContext.reassembler else {
                                 receiveNext()
                                 return
                             }
 
-                            let wirePayload = Data(data.dropFirst(mirageHeaderSize))
+                            let wirePayload = data.dropFirst(mirageHeaderSize)
                             let expectedWireLength = header.flags.contains(.encryptedPayload)
                                 ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
                                 : Int(header.payloadLength)
@@ -112,7 +112,7 @@ extension MirageClientService {
                             }
                             let payload: Data
                             if header.flags.contains(.encryptedPayload) {
-                                guard let mediaPacketKey = service.mediaSecurityPacketKeyForNetworking else {
+                                guard let mediaPacketKey = packetContext.mediaPacketKey else {
                                     MirageLogger.error(
                                         .client,
                                         "Dropping encrypted video packet without media security context (stream \(streamID))"
@@ -144,7 +144,7 @@ extension MirageClientService {
                                     return
                                 }
                             } else {
-                                payload = wirePayload
+                                payload = Data(wirePayload)
                             }
 
                             reassembler.processPacket(payload, header: header)

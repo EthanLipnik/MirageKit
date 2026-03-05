@@ -14,7 +14,7 @@ import Foundation
 import Testing
 
 #if os(macOS)
-@Suite("Stream Controller Recovery")
+@Suite("Stream Controller Recovery", .serialized)
 struct StreamControllerRecoveryTests {
     @Test("Freeze monitor uses tightened timeout and poll interval")
     func freezeMonitorUsesTightenedCadence() {

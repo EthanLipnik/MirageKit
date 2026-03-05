@@ -202,16 +202,19 @@ extension MirageClientService {
     }
 
     func handlePong(_: ControlMessage) {
-        pingContinuation?.resume()
-        pingContinuation = nil
+        completePingRequest(
+            expectedRequestID: pingRequestID,
+            result: .success(())
+        )
     }
 
     func handleQualityTestResult(_ message: ControlMessage) {
         guard let result = try? message.decode(QualityTestResultMessage.self) else { return }
         guard qualityTestPendingTestID == result.testID else { return }
-        qualityTestResultContinuation?.resume(returning: result)
-        qualityTestResultContinuation = nil
-        qualityTestPendingTestID = nil
+        completeQualityTestWaiter(
+            expectedTestID: result.testID,
+            result: result
+        )
     }
 
     private func estimatedThroughputStageCount(

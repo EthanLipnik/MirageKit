@@ -77,8 +77,8 @@ extension MirageClientService {
         setAudioDecodeTargetChannelCountForPipeline(2)
         audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
         audioPlaybackController.reset()
-        Task {
-            await audioDecodePipeline.reset()
+        Task { [audioPacketIngressQueue] in
+            await audioPacketIngressQueue.reset()
         }
     }
 
@@ -164,7 +164,7 @@ extension MirageClientService {
             Task { [weak self] in
                 guard let self else { return }
                 if previous != started {
-                    await self.audioDecodePipeline.reset()
+                    await self.audioPacketIngressQueue.reset()
                     self.audioPlaybackController.reset()
                 }
                 await self.ensureAudioTransportRegistered(for: started.streamID)
@@ -187,7 +187,7 @@ extension MirageClientService {
 
             Task { [weak self] in
                 guard let self else { return }
-                await self.audioDecodePipeline.reset()
+                await self.audioPacketIngressQueue.reset()
                 self.audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
                 self.audioPlaybackController.reset()
             }
@@ -219,7 +219,13 @@ extension MirageClientService {
                         return
                     }
 
-                    let wirePayload = Data(data.dropFirst(mirageAudioHeaderSize))
+                    guard let packetContext = service.fastPathState.audioPacketContext(for: header.streamID) else {
+                        receiveNext()
+                        return
+                    }
+
+                    let generation = service.audioPacketIngressQueue.currentGeneration()
+                    let wirePayload = data.dropFirst(mirageAudioHeaderSize)
                     let expectedWireLength = header.flags.contains(.encryptedPayload)
                         ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
                         : Int(header.payloadLength)
@@ -229,7 +235,7 @@ extension MirageClientService {
                     }
                     let payloadData: Data
                     if header.flags.contains(.encryptedPayload) {
-                        guard let mediaPacketKey = service.mediaSecurityPacketKeyForNetworking else {
+                        guard let mediaPacketKey = packetContext.mediaPacketKey else {
                             MirageLogger.error(
                                 .client,
                                 "Dropping encrypted audio packet without media security context (stream \(header.streamID))"
@@ -257,7 +263,7 @@ extension MirageClientService {
                             return
                         }
                     } else {
-                        payloadData = wirePayload
+                        payloadData = Data(wirePayload)
                     }
                     if Self.shouldValidateAudioChecksum(flags: header.flags, checksum: header.checksum) {
                         guard CRC32.calculate(payloadData) == header.checksum else {
@@ -266,18 +272,12 @@ extension MirageClientService {
                         }
                     }
 
-                    guard let activeAudioStreamID = service.activeAudioStreamIDForFiltering,
-                          activeAudioStreamID == header.streamID else {
-                        receiveNext()
-                        return
-                    }
-
-                    Task(priority: .userInitiated) { [weak service] in
-                        await service?.ingestAudioPacketOffMain(
-                            header: header,
-                            payload: payloadData
-                        )
-                    }
+                    service.audioPacketIngressQueue.enqueue(
+                        header: header,
+                        payload: payloadData,
+                        targetChannelCount: packetContext.targetChannelCount,
+                        generation: generation
+                    )
                 }
 
                 if let error {
@@ -303,7 +303,7 @@ extension MirageClientService {
         )
     }
 
-    private func enqueueDecodedAudioFrames(_ decodedFrames: [DecodedPCMFrame], for streamID: StreamID) {
+    func enqueueDecodedAudioFrames(_ decodedFrames: [DecodedPCMFrame], for streamID: StreamID) {
         guard audioConfiguration.enabled else { return }
         guard activeAudioStreamMessage?.streamID == streamID else { return }
         guard !decodedFrames.isEmpty else { return }
@@ -333,29 +333,6 @@ extension MirageClientService {
         _ = snapshot
         _ = fallbackTargetFPS
         return 0
-    }
-}
-
-extension MirageClientService {
-    nonisolated func ingestAudioPacketOffMain(
-        header: AudioPacketHeader,
-        payload: Data
-    ) async {
-        guard let activeAudioStreamID = activeAudioStreamIDForFiltering,
-              activeAudioStreamID == header.streamID else {
-            return
-        }
-
-        let decodedFrames = await audioDecodePipeline.ingestPacket(
-            header: header,
-            payload: payload,
-            targetChannelCount: audioDecodeTargetChannelCountForPipeline
-        )
-        guard !decodedFrames.isEmpty else { return }
-
-        await MainActor.run { [weak self] in
-            self?.enqueueDecodedAudioFrames(decodedFrames, for: header.streamID)
-        }
     }
 }
 

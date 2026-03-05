@@ -14,11 +14,9 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     nonisolated func handleQualityTestPacket(_ header: QualityTestPacketHeader, data: Data) {
-        qualityTestLock.lock()
-        let accumulator = qualityTestAccumulatorStorage
-        let activeTestID = qualityTestActiveTestIDStorage
-        qualityTestLock.unlock()
-
+        let context = fastPathState.qualityTestContext()
+        let accumulator = context.accumulator
+        let activeTestID = context.testID
         guard let accumulator, activeTestID == header.testID else { return }
         let payloadBytes = min(Int(header.payloadLength), max(0, data.count - mirageQualityTestHeaderSize))
         accumulator.record(header: header, payloadBytes: payloadBytes)
@@ -47,46 +45,52 @@ extension MirageClientService {
             throw MirageError.protocolError("Ping already in flight")
         }
 
+        pingRequestID &+= 1
+        let requestID = pingRequestID
         let message = ControlMessage(type: .ping)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
             pingContinuation = continuation
+            pingTimeoutTask?.cancel()
+            pingTimeoutTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                try? await Task.sleep(for: .seconds(1))
+                self.completePingRequest(
+                    expectedRequestID: requestID,
+                    result: .failure(MirageError.protocolError("Ping timed out"))
+                )
+            }
             connection.send(content: message.serialize(), completion: .contentProcessed { [weak self] error in
                 guard let error else { return }
                 Task { @MainActor [weak self] in
-                    guard let self else { return }
-                    pingContinuation?.resume(throwing: error)
-                    pingContinuation = nil
+                    self?.completePingRequest(
+                        expectedRequestID: requestID,
+                        result: .failure(error)
+                    )
                 }
             })
-
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                try? await Task.sleep(for: .seconds(1))
-                if let pingContinuation {
-                    pingContinuation.resume(throwing: MirageError.protocolError("Ping timed out"))
-                    self.pingContinuation = nil
-                }
-            }
         }
     }
 
     func awaitQualityTestResult(testID: UUID, timeout: Duration) async -> QualityTestResultMessage? {
         if let pending = qualityTestPendingTestID, pending != testID {
-            qualityTestResultContinuation?.resume(returning: nil)
-            qualityTestResultContinuation = nil
+            completeQualityTestWaiter(result: nil)
         }
 
+        qualityTestWaiterID &+= 1
+        let waiterID = qualityTestWaiterID
         qualityTestPendingTestID = testID
 
         return await withCheckedContinuation { continuation in
             qualityTestResultContinuation = continuation
-            Task { @MainActor [weak self] in
+            qualityTestTimeoutTask?.cancel()
+            qualityTestTimeoutTask = Task { @MainActor [weak self] in
                 guard let self else { return }
                 try? await Task.sleep(for: timeout)
-                guard let continuation = qualityTestResultContinuation else { return }
-                continuation.resume(returning: nil)
-                qualityTestResultContinuation = nil
-                qualityTestPendingTestID = nil
+                self.completeQualityTestWaiter(
+                    expectedWaiterID: waiterID,
+                    expectedTestID: testID,
+                    result: nil
+                )
             }
         }
     }
@@ -211,17 +215,42 @@ extension MirageClientService {
     }
 
     nonisolated func setQualityTestAccumulator(_ accumulator: QualityTestAccumulator, testID: UUID) {
-        qualityTestLock.lock()
-        qualityTestAccumulatorStorage = accumulator
-        qualityTestActiveTestIDStorage = testID
-        qualityTestLock.unlock()
+        fastPathState.setQualityTestAccumulator(accumulator, testID: testID)
     }
 
     func clearQualityTestAccumulator() {
-        qualityTestLock.lock()
-        qualityTestAccumulatorStorage = nil
-        qualityTestActiveTestIDStorage = nil
-        qualityTestLock.unlock()
+        fastPathState.clearQualityTestAccumulator()
+    }
+
+    func completePingRequest(
+        expectedRequestID: UInt64,
+        result: Result<Void, Error>
+    ) {
+        guard pingRequestID == expectedRequestID, let continuation = pingContinuation else { return }
+        pingContinuation = nil
+        pingTimeoutTask?.cancel()
+        pingTimeoutTask = nil
+        switch result {
+        case .success:
+            continuation.resume()
+        case let .failure(error):
+            continuation.resume(throwing: error)
+        }
+    }
+
+    func completeQualityTestWaiter(
+        expectedWaiterID: UInt64? = nil,
+        expectedTestID: UUID? = nil,
+        result: QualityTestResultMessage?
+    ) {
+        if let expectedWaiterID, qualityTestWaiterID != expectedWaiterID { return }
+        if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }
+        qualityTestPendingTestID = nil
+        qualityTestTimeoutTask?.cancel()
+        qualityTestTimeoutTask = nil
+        guard let continuation = qualityTestResultContinuation else { return }
+        qualityTestResultContinuation = nil
+        continuation.resume(returning: result)
     }
 }
 

@@ -123,8 +123,8 @@ package enum MirageMediaSecurity {
         )
     }
 
-    package static func decryptVideoPayload(
-        _ wirePayload: Data,
+    package static func decryptVideoPayload<Payload: DataProtocol>(
+        _ wirePayload: Payload,
         header: FrameHeader,
         context: MirageMediaSecurityContext,
         direction: MirageMediaDirection
@@ -137,8 +137,8 @@ package enum MirageMediaSecurity {
         )
     }
 
-    package static func decryptVideoPayload(
-        _ wirePayload: Data,
+    package static func decryptVideoPayload<Payload: DataProtocol>(
+        _ wirePayload: Payload,
         header: FrameHeader,
         key: MirageMediaPacketKey,
         direction: MirageMediaDirection
@@ -180,8 +180,8 @@ package enum MirageMediaSecurity {
         )
     }
 
-    package static func decryptAudioPayload(
-        _ wirePayload: Data,
+    package static func decryptAudioPayload<Payload: DataProtocol>(
+        _ wirePayload: Payload,
         header: AudioPacketHeader,
         context: MirageMediaSecurityContext,
         direction: MirageMediaDirection
@@ -194,8 +194,8 @@ package enum MirageMediaSecurity {
         )
     }
 
-    package static func decryptAudioPayload(
-        _ wirePayload: Data,
+    package static func decryptAudioPayload<Payload: DataProtocol>(
+        _ wirePayload: Payload,
         header: AudioPacketHeader,
         key: MirageMediaPacketKey,
         direction: MirageMediaDirection
@@ -231,7 +231,11 @@ package enum MirageMediaSecurity {
         return payload
     }
 
-    private static func open(_ wirePayload: Data, key: SymmetricKey, nonce: ChaChaPoly.Nonce) throws -> Data {
+    private static func open<Payload: DataProtocol>(
+        _ wirePayload: Payload,
+        key: SymmetricKey,
+        nonce: ChaChaPoly.Nonce
+    ) throws -> Data {
         guard wirePayload.count >= authTagLength else {
             throw MirageMediaSecurityError.invalidEncryptedPayloadLength
         }

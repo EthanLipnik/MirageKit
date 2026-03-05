@@ -432,6 +432,7 @@ public final class MirageClientService {
     /// Cursor store for pointer updates (decoupled from SwiftUI).
     public let cursorStore = MirageClientCursorStore()
     nonisolated let inputEventSender = MirageInputEventSender()
+    nonisolated let fastPathState = MirageClientFastPathState()
 
     var networkConfig: MirageNetworkConfiguration
     var connection: NWConnection?
@@ -444,9 +445,6 @@ public final class MirageClientService {
     var hasReceivedHelloResponse = false
     var pendingHelloNonce: String?
     var mediaSecurityContext: MirageMediaSecurityContext?
-    let mediaSecurityContextLock = NSLock()
-    nonisolated(unsafe) var mediaSecurityContextStorage: MirageMediaSecurityContext?
-    nonisolated(unsafe) var mediaSecurityPacketKeyStorage: MirageMediaPacketKey?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
@@ -475,12 +473,7 @@ public final class MirageClientService {
     var audioRegisteredStreamID: StreamID?
     var activeAudioStreamMessage: AudioStreamStartedMessage?
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
-    /// Thread-safe active audio stream ID for nonisolated UDP packet filtering.
-    let activeAudioStreamIDLock = NSLock()
-    nonisolated(unsafe) var activeAudioStreamIDStorage: StreamID?
-    /// Thread-safe preferred decode channel count for off-main audio decode.
-    let audioDecodeTargetChannelLock = NSLock()
-    nonisolated(unsafe) var audioDecodeTargetChannelCountStorage: Int = 2
+    nonisolated let audioPacketIngressQueue: ClientAudioPacketIngressQueue
     @ObservationIgnored let audioPlaybackController = AudioPlaybackController()
     public var audioConfiguration: MirageAudioConfiguration = .default {
         didSet {
@@ -507,102 +500,54 @@ public final class MirageClientService {
 
     // MARK: - Quality Test State
 
-    let qualityTestLock = NSLock()
-    nonisolated(unsafe) var qualityTestAccumulatorStorage: QualityTestAccumulator?
-    nonisolated(unsafe) var qualityTestActiveTestIDStorage: UUID?
     var qualityTestResultContinuation: CheckedContinuation<QualityTestResultMessage?, Never>?
     var qualityTestPendingTestID: UUID?
+    var qualityTestWaiterID: UInt64 = 0
+    var qualityTestTimeoutTask: Task<Void, Never>?
     var pingContinuation: CheckedContinuation<Void, Error>?
-    /// Thread-safe set of active stream IDs for packet filtering from UDP callback
-    let activeStreamIDsLock = NSLock()
-    nonisolated(unsafe) var activeStreamIDsStorage: Set<StreamID> = []
+    var pingRequestID: UInt64 = 0
+    var pingTimeoutTask: Task<Void, Never>?
 
     /// Thread-safe property to check if a stream is active from nonisolated contexts
     nonisolated var activeStreamIDsForFiltering: Set<StreamID> {
-        activeStreamIDsLock.lock()
-        defer { activeStreamIDsLock.unlock() }
-        return activeStreamIDsStorage
+        fastPathState.activeStreamIDsSnapshot()
     }
 
-    /// Thread-safe active audio stream ID for UDP packet filtering from nonisolated callbacks.
-    nonisolated var activeAudioStreamIDForFiltering: StreamID? {
-        activeAudioStreamIDLock.lock()
-        defer { activeAudioStreamIDLock.unlock() }
-        return activeAudioStreamIDStorage
-    }
-
-    /// Thread-safe target channel count for off-main audio decode.
-    nonisolated var audioDecodeTargetChannelCountForPipeline: Int {
-        audioDecodeTargetChannelLock.lock()
-        defer { audioDecodeTargetChannelLock.unlock() }
-        return max(1, audioDecodeTargetChannelCountStorage)
-    }
-
-    /// Thread-safe set of streams awaiting a first-packet startup log.
-    let startupPacketPendingLock = NSLock()
-    nonisolated(unsafe) var startupPacketPendingStorage: Set<StreamID> = []
     var startupRegistrationRetryTasks: [StreamID: Task<Void, Never>] = [:]
     let startupRegistrationRetryInterval: Duration = .seconds(1)
     let startupRegistrationRetryLimit: Int = 5
 
     nonisolated func isStartupPacketPending(_ streamID: StreamID) -> Bool {
-        startupPacketPendingLock.lock()
-        defer { startupPacketPendingLock.unlock() }
-        return startupPacketPendingStorage.contains(streamID)
-    }
-
-    nonisolated func takeStartupPacketPending(_ streamID: StreamID) -> Bool {
-        startupPacketPendingLock.lock()
-        defer { startupPacketPendingLock.unlock() }
-        if startupPacketPendingStorage.contains(streamID) {
-            startupPacketPendingStorage.remove(streamID)
-            return true
-        }
-        return false
+        fastPathState.isStartupPacketPending(streamID)
     }
 
     func markStartupPacketPending(_ streamID: StreamID) {
-        startupPacketPendingLock.lock()
-        startupPacketPendingStorage.insert(streamID)
-        startupPacketPendingLock.unlock()
+        fastPathState.markStartupPacketPending(streamID)
     }
 
     func clearStartupPacketPending(_ streamID: StreamID) {
-        startupPacketPendingLock.lock()
-        startupPacketPendingStorage.remove(streamID)
-        startupPacketPendingLock.unlock()
+        fastPathState.clearStartupPacketPending(streamID)
     }
 
     func setActiveAudioStreamIDForFiltering(_ streamID: StreamID?) {
-        activeAudioStreamIDLock.lock()
-        activeAudioStreamIDStorage = streamID
-        activeAudioStreamIDLock.unlock()
+        fastPathState.setActiveAudioStreamID(streamID)
     }
 
     func setAudioDecodeTargetChannelCountForPipeline(_ count: Int) {
-        audioDecodeTargetChannelLock.lock()
-        audioDecodeTargetChannelCountStorage = max(1, count)
-        audioDecodeTargetChannelLock.unlock()
+        fastPathState.setAudioDecodeTargetChannelCount(count)
     }
 
     nonisolated var mediaSecurityContextForNetworking: MirageMediaSecurityContext? {
-        mediaSecurityContextLock.lock()
-        defer { mediaSecurityContextLock.unlock() }
-        return mediaSecurityContextStorage
+        fastPathState.mediaSecurityContext()
     }
 
     nonisolated var mediaSecurityPacketKeyForNetworking: MirageMediaPacketKey? {
-        mediaSecurityContextLock.lock()
-        defer { mediaSecurityContextLock.unlock() }
-        return mediaSecurityPacketKeyStorage
+        fastPathState.mediaSecurityPacketKey()
     }
 
     func setMediaSecurityContext(_ context: MirageMediaSecurityContext?) {
         mediaSecurityContext = context
-        mediaSecurityContextLock.lock()
-        mediaSecurityContextStorage = context
-        mediaSecurityPacketKeyStorage = context.map { MirageMediaSecurity.makePacketKey(context: $0) }
-        mediaSecurityContextLock.unlock()
+        fastPathState.setMediaSecurityContext(context)
     }
 
     func startStartupRegistrationRetry(streamID: StreamID) {
@@ -634,10 +579,6 @@ public final class MirageClientService {
             task.cancel()
         }
     }
-
-    /// Thread-safe snapshot of reassemblers for packet routing from UDP callback
-    let reassemblersLock = NSLock()
-    nonisolated(unsafe) var reassemblersSnapshotStorage: [StreamID: FrameReassembler] = [:]
 
     /// Stream start synchronization - waits for server to assign stream ID
     var streamStartedContinuation: CheckedContinuation<StreamID, Error>?
@@ -678,7 +619,7 @@ public final class MirageClientService {
     let adaptiveFallbackBitrateStep: Double = 0.85
     let adaptiveRestoreBitrateStep: Double = 1.10
     let adaptiveFallbackBitrateFloorBps: Int = 8_000_000
-    nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
+    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
     // Internal for low-power policy extension.
     let decoderPowerStateMonitor = MiragePowerStateMonitor()
     var decoderPowerStateSnapshot = MiragePowerStateSnapshot(
@@ -746,6 +687,10 @@ public final class MirageClientService {
             UserDefaults.standard.set(newID.uuidString, forKey: Self.deviceIDKey)
             deviceID = newID
             MirageLogger.client("Generated new device ID: \(newID)")
+        }
+        audioPacketIngressQueue = ClientAudioPacketIngressQueue(pipeline: audioDecodePipeline)
+        audioPacketIngressQueue.setDeliverHandler { [weak self] decodedFrames, streamID in
+            self?.enqueueDecodedAudioFrames(decodedFrames, for: streamID)
         }
         identityManager = MirageIdentityManager.shared
         self.sessionStore.clientService = self

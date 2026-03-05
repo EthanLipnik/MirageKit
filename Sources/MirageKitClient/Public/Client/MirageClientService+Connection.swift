@@ -355,9 +355,7 @@ extension MirageClientService {
         pendingAppAdaptiveFallbackBitrate = nil
         pendingAppAdaptiveFallbackBitDepth = nil
         desktopDimensionTokenByStream.removeAll()
-        startupPacketPendingLock.withLock {
-            startupPacketPendingStorage.removeAll()
-        }
+        fastPathState.clearAllStartupPacketPending()
         for task in startupRegistrationRetryTasks.values { task.cancel() }
         startupRegistrationRetryTasks.removeAll()
         activeStreams.removeAll()
@@ -376,6 +374,13 @@ extension MirageClientService {
         loginDisplayResolution = nil
         isAwaitingManualApproval = false
         approvalWaitTask?.cancel()
+        pingTimeoutTask?.cancel()
+        pingTimeoutTask = nil
+        if let pingContinuation {
+            self.pingContinuation = nil
+            pingContinuation.resume(throwing: MirageError.protocolError(reason))
+        }
+        completeQualityTestWaiter(result: nil)
         hasReceivedHelloResponse = false
         negotiatedFeatures = []
         mediaPayloadEncryptionEnabled = true

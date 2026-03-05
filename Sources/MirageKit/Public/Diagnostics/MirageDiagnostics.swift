@@ -162,6 +162,42 @@ public extension MirageDiagnosticsSink {
 
 public typealias MirageDiagnosticsContextProvider = @Sendable () async -> MirageDiagnosticsContext
 
+private final class MirageDiagnosticsSinkRegistryState: @unchecked Sendable {
+    private let lock = NSLock()
+    private var sinkCount = 0
+
+    var hasRegisteredSinks: Bool {
+        withLock { sinkCount > 0 }
+    }
+
+    func setSinkCount(_ count: Int) {
+        withLock {
+            sinkCount = max(0, count)
+        }
+    }
+
+    private func withLock<T>(_ body: () -> T) -> T {
+        lock.lock()
+        defer { lock.unlock() }
+        return body()
+    }
+}
+
+private enum MirageDiagnosticsDispatchItem: Sendable {
+    case log(MirageDiagnosticsLogEvent)
+    case error(MirageDiagnosticsErrorEvent)
+}
+
+private let diagnosticsSinkRegistryState = MirageDiagnosticsSinkRegistryState()
+private let diagnosticsDispatchQueue = MirageAsyncDispatchQueue<MirageDiagnosticsDispatchItem>(priority: .utility) { item in
+    switch item {
+    case let .log(event):
+        await MirageDiagnosticsStore.shared.record(log: event)
+    case let .error(event):
+        await MirageDiagnosticsStore.shared.record(error: event)
+    }
+}
+
 actor MirageDiagnosticsStore {
     static let shared = MirageDiagnosticsStore()
 
@@ -172,15 +208,18 @@ actor MirageDiagnosticsStore {
     func addSink(_ sink: any MirageDiagnosticsSink) -> MirageDiagnosticsSinkToken {
         let token = MirageDiagnosticsSinkToken()
         sinks[token] = sink
+        diagnosticsSinkRegistryState.setSinkCount(sinks.count)
         return token
     }
 
     func removeSink(_ token: MirageDiagnosticsSinkToken) {
         sinks.removeValue(forKey: token)
+        diagnosticsSinkRegistryState.setSinkCount(sinks.count)
     }
 
     func removeAllSinks() {
         sinks.removeAll()
+        diagnosticsSinkRegistryState.setSinkCount(0)
     }
 
     func registerContextProvider(_ provider: @escaping MirageDiagnosticsContextProvider) -> MirageDiagnosticsContextProviderToken {
@@ -221,6 +260,10 @@ actor MirageDiagnosticsStore {
 }
 
 public enum MirageDiagnostics {
+    public static var hasRegisteredSinks: Bool {
+        diagnosticsSinkRegistryState.hasRegisteredSinks
+    }
+
     @discardableResult
     public static func addSink(_ sink: any MirageDiagnosticsSink) async -> MirageDiagnosticsSinkToken {
         await MirageDiagnosticsStore.shared.addSink(sink)
@@ -302,16 +345,12 @@ public enum MirageDiagnostics {
     }
 
     public static func record(log event: MirageDiagnosticsLogEvent) {
-        if Task.isCancelled { return }
-        Task {
-            await MirageDiagnosticsStore.shared.record(log: event)
-        }
+        guard diagnosticsSinkRegistryState.hasRegisteredSinks else { return }
+        diagnosticsDispatchQueue.yield(.log(event))
     }
 
     public static func record(error event: MirageDiagnosticsErrorEvent) {
-        if Task.isCancelled { return }
-        Task {
-            await MirageDiagnosticsStore.shared.record(error: event)
-        }
+        guard diagnosticsSinkRegistryState.hasRegisteredSinks else { return }
+        diagnosticsDispatchQueue.yield(.error(event))
     }
 }

@@ -406,6 +406,8 @@ Additional host operational concerns integrated into `MirageHostService` extensi
 - signed hello handling and host identity verification
 - stream/session state for window, desktop, login, and app modes
 - UDP video/audio transports and re-registration loops
+- `MirageClientFastPathState` lock-backed snapshots for nonisolated UDP receive paths
+- `ClientAudioPacketIngressQueue` single-worker audio decode ingress
 - per-stream controllers (`controllersByStream`)
 - metrics/cursor/session stores consumed by UI layers
 - local decoder low-power policy state:
@@ -444,9 +446,10 @@ Pipeline:
 1. start UDP connection to `hostDataPort`
 2. send stream registration (`MIRG` + `streamID` + `deviceID` + token)
 3. receive packet -> parse `FrameHeader`
-4. validate expected wire length
-5. decrypt if encrypted flag set
-6. feed `FrameReassembler`
+4. consult `MirageClientFastPathState` for active-stream membership, startup-pending marker, current reassembler, and cached media packet key
+5. validate expected wire length
+6. decrypt if encrypted flag set
+7. feed `FrameReassembler`
 
 `FrameReassembler` responsibilities:
 
@@ -509,12 +512,12 @@ Cross-platform render coordination:
 
 - UDP audio socket setup
 - registration (`MIRA` + stream/client/token)
-- receive/parse/decrypt/checksum
-- `AudioJitterBuffer` ingest
-- `AudioDecoder` decode
+- receive/parse/active-stream filter/decrypt/checksum
+- enqueue packets onto `ClientAudioPacketIngressQueue`
+- worker drains into `AudioJitterBuffer` + `AudioDecoder` sequentially
 - `AudioPlaybackController` enqueue/playback
 
-Audio is synchronized through runtime delay hooks driven by metrics snapshot policy.
+Audio ingress uses generation invalidation on stop/reset so stale queued packets are dropped instead of being delivered after stream teardown. Audio is synchronized through runtime delay hooks driven by metrics snapshot policy.
 
 ### 5.8 Desktop/App/Window Control Paths
 
@@ -545,6 +548,7 @@ Quality-test path combines:
 - control-side test plan request (`qualityTestRequest`)
 - UDP `MIRQ` packet loop with stage IDs and payload sizing
 - local decode benchmark + host benchmark summary result integration
+- request-scoped ping/result waiters with timeout ownership tied to the active request ID
 - adaptive stage growth/refinement to estimate stable bitrate envelope
 
 ## 6. Cross-Cutting Concurrency Model
@@ -561,10 +565,15 @@ Concurrency is intentionally mixed by latency sensitivity:
 
 - **Lock-protected structs for very hot paths**
   - `Locked<T>` in receive loops, transport registries, lightweight snapshots
+  - `MirageClientFastPathState` for client UDP packet filtering and cached routing/materialized state
 
 - **Dispatch queues for hard low-latency paths**
   - host input fast path (`inputQueue`)
   - transport worker queues for timed/serial operations
+
+- **Single-worker async dispatchers**
+  - `MirageAsyncDispatchQueue` for diagnostics fanout without task-per-event overhead
+  - `ClientAudioPacketIngressQueue` for audio decode ingress without task-per-packet overhead
 
 ## 7. Failure and Recovery Strategy
 

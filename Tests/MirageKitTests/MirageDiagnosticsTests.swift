@@ -189,6 +189,34 @@ struct MirageDiagnosticsTests {
         #expect(event.message.contains(sensitiveMessage) == false)
     }
 
+    @Test("Cancelled tasks still dispatch diagnostics events when sinks are present")
+    func cancelledTasksStillDispatchDiagnosticsEvents() async {
+        await MirageDiagnostics.removeAllSinks()
+
+        let sink = TestSink()
+        _ = await MirageDiagnostics.addSink(sink)
+
+        let event = MirageDiagnosticsLogEvent(
+            date: Date(),
+            category: .client,
+            level: .info,
+            message: "cancelled-task-log",
+            fileID: #fileID,
+            line: #line,
+            function: #function
+        )
+
+        let task = Task {
+            withUnsafeCurrentTask { currentTask in
+                currentTask?.cancel()
+            }
+            MirageDiagnostics.record(log: event)
+        }
+        _ = await task.result
+
+        #expect(await waitUntil { await sink.logCount() == 1 })
+    }
+
     private func waitUntil(
         timeout: Duration = .seconds(1),
         condition: @escaping @Sendable () async -> Bool
