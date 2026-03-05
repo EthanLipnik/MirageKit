@@ -296,6 +296,33 @@ struct MirageKitTests {
         #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000123")
     }
 
+    @Test("App list request decoding defaults missing optional protocol fields")
+    func appListRequestDecodingDefaultsForMissingFields() throws {
+        let legacyPayload = Data(#"{"forceRefresh":true}"#.utf8)
+        let envelope = ControlMessage(type: .appListRequest, payload: legacyPayload)
+        let decoded = try envelope.decode(AppListRequestMessage.self)
+
+        #expect(decoded.forceRefresh)
+        #expect(decoded.forceIconReset == false)
+        #expect(decoded.priorityBundleIdentifiers.isEmpty)
+        #expect(decoded.requestID.uuidString.count == 36)
+    }
+
+    @Test("App list request decoding tolerates invalid new-field types")
+    func appListRequestDecodingToleratesTypeMismatch() throws {
+        let payload = Data(
+            #"{"forceRefresh":true,"forceIconReset":"true","priorityBundleIdentifiers":"com.apple.mail","requestID":"00000000-0000-0000-0000-000000000abc"}"#
+                .utf8
+        )
+        let envelope = ControlMessage(type: .appListRequest, payload: payload)
+        let decoded = try envelope.decode(AppListRequestMessage.self)
+
+        #expect(decoded.forceRefresh)
+        #expect(decoded.forceIconReset == false)
+        #expect(decoded.priorityBundleIdentifiers.isEmpty)
+        #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000abc")
+    }
+
     @Test("Metadata app list and icon stream messages serialize")
     func appListAndIconStreamSerialization() throws {
         let metadataApps = [

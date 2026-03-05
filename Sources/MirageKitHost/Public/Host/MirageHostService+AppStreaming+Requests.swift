@@ -92,6 +92,21 @@ extension MirageHostService {
         return discoveryAttempt >= 3
     }
 
+    private func rejectMalformedAppListRequest(
+        from client: MirageConnectedClient,
+        connection: NWConnection,
+        reason: String
+    ) {
+        MirageLogger.host("Rejecting malformed app list request from \(client.name): \(reason)")
+        let payload = ErrorMessage(
+            code: .invalidMessage,
+            message: "Invalid app list request payload"
+        )
+        if let response = try? ControlMessage(type: .error, content: payload) {
+            connection.send(content: response.serialize(), completion: .idempotent)
+        }
+    }
+
     func handleAppListRequest(
         _ message: ControlMessage,
         from client: MirageConnectedClient,
@@ -119,14 +134,17 @@ extension MirageHostService {
 
             sendPendingAppListRequestIfPossible()
         } catch let decodeError as DecodingError {
-            MirageLogger.host("Rejecting malformed app list request from \(client.name): \(decodeError)")
-            let payload = ErrorMessage(
-                code: .invalidMessage,
-                message: "Invalid app list request payload"
+            rejectMalformedAppListRequest(
+                from: client,
+                connection: connection,
+                reason: String(describing: decodeError)
             )
-            if let response = try? ControlMessage(type: .error, content: payload) {
-                connection.send(content: response.serialize(), completion: .idempotent)
-            }
+        } catch let cocoaError as CocoaError {
+            rejectMalformedAppListRequest(
+                from: client,
+                connection: connection,
+                reason: String(describing: cocoaError)
+            )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle app list request: ")
         }

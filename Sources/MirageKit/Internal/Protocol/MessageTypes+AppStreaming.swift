@@ -66,6 +66,13 @@ package struct AppListRequestMessage: Codable {
     /// Client-generated request identifier for correlating metadata + icon updates.
     package let requestID: UUID
 
+    private enum CodingKeys: String, CodingKey {
+        case forceRefresh
+        case forceIconReset
+        case priorityBundleIdentifiers
+        case requestID
+    }
+
     package init(
         forceRefresh: Bool = false,
         forceIconReset: Bool = false,
@@ -76,6 +83,28 @@ package struct AppListRequestMessage: Codable {
         self.forceIconReset = forceIconReset
         self.priorityBundleIdentifiers = priorityBundleIdentifiers
         self.requestID = requestID
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        forceRefresh = Self.decodeValue(Bool.self, from: container, forKey: .forceRefresh, default: false)
+        forceIconReset = Self.decodeValue(Bool.self, from: container, forKey: .forceIconReset, default: false)
+        priorityBundleIdentifiers = Self.decodeValue(
+            [String].self,
+            from: container,
+            forKey: .priorityBundleIdentifiers,
+            default: []
+        )
+        requestID = Self.decodeValue(UUID.self, from: container, forKey: .requestID, default: UUID())
+    }
+
+    private static func decodeValue<T: Decodable>(
+        _ type: T.Type,
+        from container: KeyedDecodingContainer<CodingKeys>,
+        forKey key: CodingKeys,
+        default defaultValue: @autoclosure () -> T
+    ) -> T {
+        (try? container.decodeIfPresent(type, forKey: key)) ?? defaultValue()
     }
 }
 
