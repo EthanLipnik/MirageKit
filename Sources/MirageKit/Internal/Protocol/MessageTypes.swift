@@ -81,6 +81,8 @@ package enum ControlMessageType: UInt8, Codable {
     case menuActionResult = 0x92 // Host → Client: Action result
     case hostHardwareIconRequest = 0x93 // Client -> Host: Request host hardware icon payload
     case hostHardwareIcon = 0x94 // Host -> Client: Host hardware icon payload
+    case appIconUpdate = 0x95 // Host -> Client: Incremental app icon payload update
+    case appIconStreamComplete = 0x96 // Host -> Client: App icon update stream completion marker
 
     // Desktop streaming (full virtual display mirroring)
     case startDesktopStream = 0xA0 // Client → Host: Start full desktop stream
@@ -186,7 +188,7 @@ package struct ControlMessage: Codable {
         switch type {
         case .appList:
             MirageControlMessageLimits.maxAppListPayloadBytes
-        case .hostHardwareIcon:
+        case .hostHardwareIcon, .appIconUpdate:
             MirageControlMessageLimits.maxHostHardwareIconPayloadBytes
         default:
             MirageControlMessageLimits.maxPayloadBytes

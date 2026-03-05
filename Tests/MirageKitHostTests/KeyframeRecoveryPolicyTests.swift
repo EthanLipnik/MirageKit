@@ -16,8 +16,8 @@ import Testing
 #if os(macOS)
 @Suite("Keyframe Recovery Policy")
 struct KeyframeRecoveryPolicyTests {
-    @Test("First recovery request is soft, second request escalates hard")
-    func softThenHardEscalation() async throws {
+    @Test("First two recovery requests are soft, third request escalates hard")
+    func softSoftHardEscalation() async throws {
         let context = makeContext()
 
         await context.requestKeyframe()
@@ -28,7 +28,14 @@ struct KeyframeRecoveryPolicyTests {
 
         try await Task.sleep(for: .milliseconds(1100))
         await context.requestKeyframe()
-        #expect(await context.softRecoveryCount == 1)
+        #expect(await context.softRecoveryCount == 2)
+        #expect(await context.hardRecoveryCount == 0)
+        #expect(await context.pendingKeyframeRequiresReset == false)
+        #expect(await context.pendingKeyframeRequiresFlush == false)
+
+        try await Task.sleep(for: .milliseconds(1100))
+        await context.requestKeyframe()
+        #expect(await context.softRecoveryCount == 2)
         #expect(await context.hardRecoveryCount == 1)
         #expect(await context.pendingKeyframeRequiresReset == true)
         #expect(await context.pendingKeyframeRequiresFlush == true)

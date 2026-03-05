@@ -1131,6 +1131,7 @@ public extension MirageHostService {
         }
 
         await updateLightsOutState()
+        lockHostIfStreamingStopped()
 
         if activeStreams.isEmpty {
             // Disable power assertion when no more streams are active (including login display)

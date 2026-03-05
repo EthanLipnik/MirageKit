@@ -14,7 +14,10 @@ public enum MirageDiagnosticsActionability {
         // Always keep fault-level events. Noise filtering only applies to non-fatal errors.
         guard event.severity == .error else { return true }
 
-        guard let metadata = event.metadata else { return true }
+        guard let metadata = event.metadata else {
+            return isLikelyUserDependent(message: event.message, category: event.category) == false
+        }
+
         return isLikelyUserDependent(domain: metadata.domain, code: metadata.code) == false
     }
 
@@ -26,6 +29,10 @@ public enum MirageDiagnosticsActionability {
     private static func isLikelyUserDependent(domain: String, code: Int) -> Bool {
         if domain == NSURLErrorDomain || domain == "kCFErrorDomainCFNetwork" {
             return userDependentURLErrorCodes.contains(code)
+        }
+
+        if domain == NSCocoaErrorDomain {
+            return userDependentCocoaErrorCodes.contains(code)
         }
 
         if domain == NSPOSIXErrorDomain {
@@ -54,6 +61,23 @@ public enum MirageDiagnosticsActionability {
         return false
     }
 
+    private static func isLikelyUserDependent(message: String, category: LogCategory) -> Bool {
+        let normalized = message.lowercased()
+
+        if category == .host {
+            for marker in userDependentHostMessageMarkers where normalized.contains(marker) {
+                return true
+            }
+        }
+
+        if category == .appState,
+           normalized.contains("failed to start desktop stream: protocol error: virtual display acquisition failed") {
+            return true
+        }
+
+        return false
+    }
+
     private static let userDependentURLErrorCodes: Set<Int> = [
         -999, // cancelled
         -1200, // secureConnectionFailed
@@ -66,6 +90,10 @@ public enum MirageDiagnosticsActionability {
         -1004, // cannotConnectToHost
         -1003, // cannotFindHost
         -1001, // timedOut
+    ]
+
+    private static let userDependentCocoaErrorCodes: Set<Int> = [
+        4865, // Coder value not found (protocol/version mismatch payloads)
     ]
 
     private static let userDependentPOSIXErrorCodes: Set<Int> = [
@@ -85,6 +113,7 @@ public enum MirageDiagnosticsActionability {
         -12900, // kVTPropertyNotSupportedErr
         -12909, // kVTVideoDecoderBadDataErr
         -12910, // VideoToolbox decode callback unsupported/reference data mismatch
+        -17694, // kVTVideoDecoderReferenceMissingErr
     ]
 
     private static let userDependentRuntimeConditionErrorCodes: Set<Int> = [
@@ -114,5 +143,13 @@ public enum MirageDiagnosticsActionability {
 
     private static let userDependentSCStreamErrorCodes: Set<Int> = [
         -3808, // Stopping an already-tearing-down stream.
+    ]
+
+    private static let userDependentHostMessageMarkers: [String] = [
+        "virtual display mode validation failed:",
+        "virtual display retina activation failed for profile",
+        "virtual display failed retina activation for all descriptor profiles",
+        "virtual display failed 1x activation for all descriptor profiles",
+        "virtual display acquisition failed for desktop stream; fail-closed policy active:"
     ]
 }

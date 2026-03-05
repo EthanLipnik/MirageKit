@@ -263,7 +263,7 @@ extension SharedVirtualDisplayManager {
                 newResolution: newResolution,
                 refreshRate: refreshRate,
                 colorSpace: requestedColorSpace,
-                preferFastRecreate: consumer == .desktopStream
+                preferFastRecreate: false
             )
             if let updatedDisplay = sharedDisplay {
                 syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
@@ -282,31 +282,45 @@ extension SharedVirtualDisplayManager {
                     "Updating display \(display.displayID) for \(consumer) to \(Int(newResolution.width))x\(Int(newResolution.height))@\(refreshRate)Hz"
                 )
 
-            let useFastDesktopRecreatePath = consumer == .desktopStream && requiresResize
-            if useFastDesktopRecreatePath {
-                MirageLogger.host("Desktop resize using fast recreate path (skip in-place mode update)")
-                sharedDisplay = try await recreateDisplay(
-                    newResolution: newResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: requestedColorSpace,
-                    preferFastRecreate: true
-                )
-            } else {
-                let updated = await updateDisplayInPlace(
-                    newResolution: newResolution,
-                    refreshRate: refreshRate,
-                    colorSpace: requestedColorSpace
-                )
+            let updated = await updateDisplayInPlace(
+                newResolution: newResolution,
+                refreshRate: refreshRate,
+                colorSpace: requestedColorSpace
+            )
 
-                if !updated {
-                    if needsRefresh { MirageLogger.host("In-place refresh rate update failed, recreating display") } else {
-                        MirageLogger.host("In-place resize failed, recreating display")
+            if !updated {
+                if needsRefresh { MirageLogger.host("In-place refresh rate update failed, recreating display") } else {
+                    MirageLogger.host("In-place resize failed, recreating display")
+                }
+
+                if consumer == .desktopStream {
+                    do {
+                        MirageLogger.host("Desktop resize recreating shared display (guarded path)")
+                        sharedDisplay = try await recreateDisplay(
+                            newResolution: newResolution,
+                            refreshRate: refreshRate,
+                            colorSpace: requestedColorSpace,
+                            preferFastRecreate: false
+                        )
+                    } catch {
+                        MirageLogger
+                            .error(
+                                .host,
+                                "Desktop resize guarded recreate failed; retrying fast recreate path: \(error)"
+                            )
+                        sharedDisplay = try await recreateDisplay(
+                            newResolution: newResolution,
+                            refreshRate: refreshRate,
+                            colorSpace: requestedColorSpace,
+                            preferFastRecreate: true
+                        )
                     }
+                } else {
                     sharedDisplay = try await recreateDisplay(
                         newResolution: newResolution,
                         refreshRate: refreshRate,
                         colorSpace: requestedColorSpace,
-                        preferFastRecreate: consumer == .desktopStream
+                        preferFastRecreate: false
                     )
                 }
             }

@@ -111,8 +111,8 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
-    @Test("P-frame gaps continue forward delivery without recovery request")
-    func pFrameGapContinuesForwardDelivery() {
+    @Test("P-frame gaps trigger keyframe wait and recovery request")
+    func pFrameGapTriggersKeyframeRecovery() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
         let deliveredCounter = LockedCounter()
         let lossCounter = LockedCounter()
@@ -150,8 +150,9 @@ struct FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(deliveredCounter.value == 2)
-        #expect(lossCounter.value == 0)
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe())
 
         let pFrame23 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x23])
         reassembler.processPacket(
@@ -164,8 +165,8 @@ struct FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(deliveredCounter.value == 3)
-        #expect(lossCounter.value == 0)
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 1)
 
         let keyframe24 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x24])
         reassembler.processPacket(
@@ -178,7 +179,8 @@ struct FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(deliveredCounter.value == 4)
+        #expect(deliveredCounter.value == 2)
+        #expect(reassembler.isAwaitingKeyframe() == false)
 
         let pFrame25 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x25])
         reassembler.processPacket(
@@ -191,8 +193,8 @@ struct FrameReassemblerStaleKeyframeTests {
                 fragmentCount: 1
             )
         )
-        #expect(deliveredCounter.value == 5)
-        #expect(lossCounter.value == 0)
+        #expect(deliveredCounter.value == 3)
+        #expect(lossCounter.value == 1)
     }
 
     @Test("P-frame timeout does not force keyframe-only lockout")

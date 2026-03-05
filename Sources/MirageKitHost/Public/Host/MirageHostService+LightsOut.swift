@@ -65,6 +65,7 @@ extension MirageHostService {
     func endPendingAppStreamLightsOutSetup() async {
         pendingAppStreamStartCount = max(0, pendingAppStreamStartCount - 1)
         await updateLightsOutState()
+        lockHostIfStreamingStopped()
     }
 
     func beginPendingDesktopStreamLightsOutSetup() async {
@@ -75,6 +76,7 @@ extension MirageHostService {
     func endPendingDesktopStreamLightsOutSetup() async {
         pendingDesktopStreamStartCount = max(0, pendingDesktopStreamStartCount - 1)
         await updateLightsOutState()
+        lockHostIfStreamingStopped()
     }
 
     func updateLightsOutState() async {
@@ -226,8 +228,31 @@ extension MirageHostService {
         }
     }
 
-    func lockHostIfNeeded() {
-        guard lockHostOnDisconnect, sessionState == .active else { return }
+    nonisolated static func shouldLockHostWhenStreamingStops(
+        lockHostWhenStreamingStops: Bool,
+        sessionState: HostSessionState,
+        hasAppStreams: Bool,
+        hasDesktopStream: Bool,
+        hasPendingAppStreamStart: Bool,
+        hasPendingDesktopStreamStart: Bool
+    ) -> Bool {
+        guard lockHostWhenStreamingStops, sessionState == .active else { return false }
+        return !hasAppStreams &&
+            !hasDesktopStream &&
+            !hasPendingAppStreamStart &&
+            !hasPendingDesktopStreamStart
+    }
+
+    func lockHostIfStreamingStopped() {
+        guard Self.shouldLockHostWhenStreamingStops(
+            lockHostWhenStreamingStops: lockHostWhenStreamingStops,
+            sessionState: sessionState,
+            hasAppStreams: !activeStreams.isEmpty,
+            hasDesktopStream: desktopStreamContext != nil,
+            hasPendingAppStreamStart: pendingAppStreamStartCount > 0,
+            hasPendingDesktopStreamStart: pendingDesktopStreamStartCount > 0
+        ) else { return }
+
         if let lockHostHandler {
             lockHostHandler()
             return

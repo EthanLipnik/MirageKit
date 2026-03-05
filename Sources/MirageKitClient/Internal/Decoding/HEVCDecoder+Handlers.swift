@@ -25,6 +25,7 @@ extension HEVCDecoder {
         if let session = decompressionSession {
             VTDecompressionSessionInvalidate(session)
             decompressionSession = nil
+            pendingOutputTelemetryGeneration = 0
             MirageLogger.decoder(
                 "Decoder preferred output bit depth set to \(bitDepth.displayName); invalidated active session"
             )

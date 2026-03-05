@@ -18,6 +18,8 @@ actor HEVCDecoder {
     var formatDescription: CMFormatDescription?
     var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
     var preferredOutputBitDepth: MirageVideoBitDepth = .eightBit
+    var decompressionSessionGeneration: UInt64 = 0
+    var pendingOutputTelemetryGeneration: UInt64 = 0
 
     /// Cached parameter sets for resilience against corrupted keyframes
     /// When a keyframe fails to parse, we can continue with cached format description
@@ -116,6 +118,51 @@ extension HEVCDecoder {
             return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         }
     }
+
+    nonisolated static func isTenBitPixelFormat(_ pixelFormat: OSType) -> Bool {
+        switch pixelFormat {
+        case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+             kCVPixelFormatType_ARGB2101010LEPacked:
+            true
+        default:
+            false
+        }
+    }
+
+    nonisolated static func shouldWarnTenBitFallback(
+        preferredBitDepth: MirageVideoBitDepth,
+        actualOutputPixelFormat: OSType
+    )
+    -> Bool {
+        preferredBitDepth == .tenBit && !isTenBitPixelFormat(actualOutputPixelFormat)
+    }
+
+    nonisolated static func pixelFormatName(_ pixelFormat: OSType) -> String {
+        switch pixelFormat {
+        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+            return "420f (8-bit FullRange)"
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            return "420v (8-bit VideoRange)"
+        case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
+            return "x420 (10-bit FullRange)"
+        case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            return "xf20 (10-bit VideoRange)"
+        case kCVPixelFormatType_ARGB2101010LEPacked:
+            return "l10r (ARGB2101010)"
+        case kCVPixelFormatType_32BGRA:
+            return "BGRA (8-bit)"
+        default:
+            let bytes = [
+                UInt8((pixelFormat >> 24) & 0xFF),
+                UInt8((pixelFormat >> 16) & 0xFF),
+                UInt8((pixelFormat >> 8) & 0xFF),
+                UInt8(pixelFormat & 0xFF),
+            ]
+            let label = String(bytes: bytes, encoding: .ascii) ?? "????"
+            return "\(label) (\(pixelFormat))"
+        }
+    }
 }
 
 /// Info passed through the decode callback
@@ -126,6 +173,7 @@ final class DecodeInfo: @unchecked Sendable {
     let errorTracker: DecodeErrorTracker?
     let decodeStartTime: CFAbsoluteTime
     let performanceTracker: DecodePerformanceTracker?
+    let sessionGeneration: UInt64
     let onCompletion: (@Sendable () -> Void)?
     let releaseBuffer: (@Sendable () -> Void)?
     let data: Data
@@ -137,6 +185,7 @@ final class DecodeInfo: @unchecked Sendable {
         errorTracker: DecodeErrorTracker?,
         decodeStartTime: CFAbsoluteTime,
         performanceTracker: DecodePerformanceTracker?,
+        sessionGeneration: UInt64,
         onCompletion: (@Sendable () -> Void)?,
         releaseBuffer: (@Sendable () -> Void)?,
         data: Data
@@ -147,6 +196,7 @@ final class DecodeInfo: @unchecked Sendable {
         self.errorTracker = errorTracker
         self.decodeStartTime = decodeStartTime
         self.performanceTracker = performanceTracker
+        self.sessionGeneration = sessionGeneration
         self.onCompletion = onCompletion
         self.releaseBuffer = releaseBuffer
         self.data = data
@@ -172,6 +222,8 @@ final class DecodeErrorTracker: @unchecked Sendable {
     /// Number of errors to accumulate before retrying after initial request
     /// 10 errors balances fast retry with avoiding excessive keyframe requests
     let retryErrorThreshold: Int = 10
+    /// Minimum spacing between threshold dispatches across recovery episodes.
+    let thresholdDispatchCooldown: CFAbsoluteTime = 1.0
 
     /// Flag indicating session recreation has been attempted for current error episode.
     /// Set when session is recreated, cleared on successful decode.

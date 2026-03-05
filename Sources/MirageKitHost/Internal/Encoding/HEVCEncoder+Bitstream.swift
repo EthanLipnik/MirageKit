@@ -15,6 +15,34 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+enum HEVCLengthPrefixedValidationResult: Equatable, Sendable {
+    case valid
+    case emptyPayload
+    case zeroLengthNAL(offset: Int)
+    case truncatedNAL(offset: Int, declaredLength: Int, availableBytes: Int)
+    case trailingBytes(offset: Int)
+
+    var isValid: Bool {
+        if case .valid = self { return true }
+        return false
+    }
+
+    var logSummary: String {
+        switch self {
+        case .valid:
+            "valid"
+        case .emptyPayload:
+            "empty payload"
+        case let .zeroLengthNAL(offset):
+            "zero-length NAL at offset \(offset)"
+        case let .truncatedNAL(offset, declaredLength, availableBytes):
+            "truncated NAL at offset \(offset) (declared=\(declaredLength), available=\(availableBytes))"
+        case let .trailingBytes(offset):
+            "trailing bytes after NAL walk at offset \(offset)"
+        }
+    }
+}
+
 extension HEVCEncoder {
     static func isKeyframe(_ sampleBuffer: CMSampleBuffer) -> Bool {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
@@ -91,6 +119,37 @@ extension HEVCEncoder {
 
         MirageLogger.encoder("Extracted \(parameterSetCount) parameter sets")
         return result
+    }
+
+    static func validateLengthPrefixedHEVCBitstream(_ data: Data) -> HEVCLengthPrefixedValidationResult {
+        guard !data.isEmpty else { return .emptyPayload }
+
+        var cursor = 0
+        let count = data.count
+
+        while cursor + 4 <= count {
+            let nalLength = Int(data[cursor]) << 24 |
+                Int(data[cursor + 1]) << 16 |
+                Int(data[cursor + 2]) << 8 |
+                Int(data[cursor + 3])
+
+            guard nalLength > 0 else { return .zeroLengthNAL(offset: cursor) }
+            cursor += 4
+
+            let remaining = count - cursor
+            guard nalLength <= remaining else {
+                return .truncatedNAL(
+                    offset: cursor - 4,
+                    declaredLength: nalLength,
+                    availableBytes: remaining
+                )
+            }
+
+            cursor += nalLength
+        }
+
+        guard cursor == count else { return .trailingBytes(offset: cursor) }
+        return .valid
     }
 }
 

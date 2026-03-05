@@ -323,7 +323,7 @@ extension HEVCDecoder {
                         }
                     }
 
-                    self.outputPixelFormat = preferredOutputPixelFormat(for: desc)
+                    self.outputPixelFormat = self.preferredOutputPixelFormat(for: desc)
                     self.formatDescription = desc
                     self.cachedFormatDescription = desc
                     MirageLogger.decoder("Created format description successfully (\(newDims.width)x\(newDims.height))")
@@ -339,12 +339,11 @@ extension HEVCDecoder {
     }
 
     private func preferredOutputPixelFormat(for formatDescription: CMFormatDescription) -> OSType {
-        guard let extensions = CMFormatDescriptionGetExtensions(formatDescription) as? [CFString: Any],
-              let bits = extensions[kCMFormatDescriptionExtension_BitsPerComponent] as? Int else {
-            return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        _ = formatDescription
+        if preferredOutputBitDepth == .tenBit {
+            return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         }
-        return bits > 8 ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange :
-            kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
     }
 
     private func stripSEINALUnits(from data: Data) -> Data {

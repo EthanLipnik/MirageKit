@@ -146,6 +146,10 @@ actor StreamController {
     static let tierPromotionProbeDelay: Duration = .milliseconds(250)
     /// Global keyframe retry limiter (max 2 requests/sec).
     static let keyframeRecoveryRetryInterval: CFAbsoluteTime = 0.5
+    /// Minimum spacing between soft recoveries to avoid keyframe recovery storms.
+    static let softRecoveryMinimumInterval: CFAbsoluteTime = 1.0
+    /// Minimum spacing between hard recoveries to avoid repeated full pipeline resets.
+    static let hardRecoveryMinimumInterval: CFAbsoluteTime = 2.5
     /// Escalate decode-threshold recovery to a full reset only after repeated failures.
     static let decodeRecoveryEscalationWindow: CFAbsoluteTime = 8.0
     static let decodeRecoveryEscalationThreshold: Int = 3
@@ -247,6 +251,8 @@ actor StreamController {
     var lastDecodeErrorSignature: String?
     var lastDecodeErrorLogTime: CFAbsoluteTime = 0
     var lastRecoveryRequestDispatchTime: CFAbsoluteTime = 0
+    var lastSoftRecoveryRequestTime: CFAbsoluteTime = 0
+    var lastHardRecoveryStartTime: CFAbsoluteTime = 0
     var lastBackpressureLogTime: CFAbsoluteTime = 0
     var lastAdaptiveFallbackSignalTime: CFAbsoluteTime = 0
     var decodeSchedulerTargetFPS: Int = 60
@@ -341,6 +347,17 @@ actor StreamController {
         nowProvider()
     }
 
+    nonisolated static func shouldDispatchRecovery(
+        lastDispatchTime: CFAbsoluteTime?,
+        now: CFAbsoluteTime,
+        minimumInterval: CFAbsoluteTime
+    )
+    -> Bool {
+        guard minimumInterval > 0 else { return true }
+        guard let lastDispatchTime, lastDispatchTime > 0 else { return true }
+        return now - lastDispatchTime >= minimumInterval
+    }
+
     /// Start the controller - sets up decoder and reassembler callbacks
     func start() async {
         await GlobalDecodeBudgetController.shared.register(streamID: streamID, tier: presentationTier)
@@ -350,6 +367,8 @@ actor StreamController {
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         lastRecoveryRequestDispatchTime = 0
+        lastSoftRecoveryRequestTime = 0
+        lastHardRecoveryStartTime = 0
         stopFreezeMonitor()
         let presentationSnapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
         lastPresentedSequenceObserved = presentationSnapshot.sequence
@@ -658,6 +677,8 @@ actor StreamController {
         keyframeRecoveryTask = nil
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        lastSoftRecoveryRequestTime = 0
+        lastHardRecoveryStartTime = 0
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
         MirageFrameCache.shared.clear(for: streamID)

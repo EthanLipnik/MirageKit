@@ -390,6 +390,28 @@ extension StreamController {
     }
 
     private func requestSoftRecovery(reason: RecoveryReason) async {
+        let now = currentTime()
+        if !Self.shouldDispatchRecovery(
+            lastDispatchTime: lastSoftRecoveryRequestTime,
+            now: now,
+            minimumInterval: Self.softRecoveryMinimumInterval
+        ) {
+            let lastTime = lastSoftRecoveryRequestTime
+            let remainingMs = Int(
+                ((Self.softRecoveryMinimumInterval - (now - lastTime)) * 1000)
+                    .rounded(.up)
+            )
+            MirageLogger
+                .client(
+                    "Soft recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
+                )
+            if presentationTier == .activeLive {
+                startKeyframeRecoveryLoopIfNeeded()
+            }
+            return
+        }
+        lastSoftRecoveryRequestTime = now
+
         MirageLogger.client("Starting soft stream recovery (\(reason.logLabel)) for stream \(streamID)")
         await clearResizeState()
         clearQueuedFramesForRecovery()

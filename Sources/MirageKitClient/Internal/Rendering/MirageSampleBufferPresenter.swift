@@ -87,10 +87,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     func resetPresentationState() {
         cachedFormatKey = nil
         cachedFormatDescription = nil
-        lastEnqueuedSequence = 0
-        remotePresentationOrigin = nil
-        localPresentationOrigin = nil
-        lastMappedPresentationTime = .invalid
+        resetSequenceTrackingState()
         loggedLayerFailure = false
         clearCurrentFrameState()
     }
@@ -159,7 +156,19 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             ) else {
                 return
             }
-            guard frame.sequence > lastEnqueuedSequence else { continue }
+            if frame.sequence <= lastEnqueuedSequence {
+                let latestSequence = MirageFrameCache.shared.latestSequence(for: streamID)
+                if latestSequence > 0, latestSequence < lastEnqueuedSequence {
+                    MirageLogger
+                        .renderer(
+                            "Detected render sequence regression for stream \(streamID) (\(lastEnqueuedSequence) -> \(latestSequence)); rebasing presenter state"
+                        )
+                    resetSequenceTrackingState()
+                    refreshFrameListener(for: streamID)
+                } else {
+                    continue
+                }
+            }
 
             updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
             guard let sampleBuffer = makeSampleBuffer(
@@ -175,6 +184,13 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
             framesSubmitted += 1
         }
+    }
+
+    private func resetSequenceTrackingState() {
+        lastEnqueuedSequence = 0
+        remotePresentationOrigin = nil
+        localPresentationOrigin = nil
+        lastMappedPresentationTime = .invalid
     }
 
     private func updateLayerContentRect(_ contentRect: CGRect, pixelBuffer: CVPixelBuffer) {
@@ -346,6 +362,11 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         if listenerStreamID == streamID {
             listenerStreamID = nil
         }
+    }
+
+    private func refreshFrameListener(for streamID: StreamID) {
+        unregisterFrameListener(for: listenerStreamID)
+        registerFrameListener(for: streamID)
     }
 
     private func recoverDisplayLayerIfNeeded() {

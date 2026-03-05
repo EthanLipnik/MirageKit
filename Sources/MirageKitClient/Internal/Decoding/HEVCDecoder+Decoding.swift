@@ -30,6 +30,7 @@ extension HEVCDecoder {
         if let session = decompressionSession { VTDecompressionSessionInvalidate(session) }
         decompressionSession = nil
         formatDescription = nil
+        pendingOutputTelemetryGeneration = 0
 
         // Clear cached parameter sets
         cachedVPS = nil
@@ -46,7 +47,8 @@ extension HEVCDecoder {
         if let session = decompressionSession { VTDecompressionSessionInvalidate(session) }
         decompressionSession = nil
         formatDescription = nil
-        outputPixelFormat = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputBitDepth)
+        pendingOutputTelemetryGeneration = 0
 
         // Clear cached parameter sets so next keyframe is used fresh
         cachedVPS = nil
@@ -204,6 +206,7 @@ extension HEVCDecoder {
         // Decode
         var flags: VTDecodeInfoFlags = []
         await acquireDecodeSubmissionSlot()
+        let sessionGeneration = decompressionSessionGeneration
 
         let decodeInfo = DecodeInfo(
             handler: decodedFrameHandler,
@@ -212,6 +215,7 @@ extension HEVCDecoder {
             errorTracker: errorTracker,
             decodeStartTime: CFAbsoluteTimeGetCurrent(),
             performanceTracker: performanceTracker,
+            sessionGeneration: sessionGeneration,
             onCompletion: { [weak self] in
                 guard let self else { return }
                 Task { await self.releaseDecodeSubmissionSlot() }
@@ -236,7 +240,8 @@ extension HEVCDecoder {
                 case -12909: "BadData"
                 case -12911: "Malfunction"
                 case -12903: "InvalidSession"
-                case -12910: "ReferenceMissing"
+                case -12910: "UnsupportedDataFormat"
+                case -17694: "ReferenceMissing"
                 default: "Unknown"
                 }
                 let decodeError = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
@@ -262,6 +267,13 @@ extension HEVCDecoder {
             info.errorTracker?.recordSuccess()
             let decodeDurationMs = (CFAbsoluteTimeGetCurrent() - info.decodeStartTime) * 1000
             info.performanceTracker?.record(durationMs: decodeDurationMs)
+            let outputPixelFormat = CVPixelBufferGetPixelFormatType(pixelBuffer)
+            Task { [weak self] in
+                await self?.recordDecodedOutputPixelFormat(
+                    outputPixelFormat,
+                    sessionGeneration: info.sessionGeneration
+                )
+            }
             if info.handler != nil { info.handler?(pixelBuffer, presentationTime, info.contentRect) } else {
                 MirageLogger.error(.decoder, "Warning: no frame handler set")
             }

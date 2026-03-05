@@ -142,6 +142,19 @@ extension AppStreamManager {
         appScanTaskWithoutIcons = nil
     }
 
+    func iconDataForInstalledApp(
+        atPath appPath: String,
+        maxPixelSize: Int,
+        heifCompressionQuality: Double
+    ) async -> Data? {
+        let appURL = URL(fileURLWithPath: appPath, isDirectory: true)
+        return await applicationScanner.generateIconPayloadData(
+            for: appURL,
+            maxPixelSize: maxPixelSize,
+            heifCompressionQuality: heifCompressionQuality
+        )
+    }
+
     private func snapshotStatus() -> (runningApps: Set<String>, streamingApps: Set<String>) {
         let runningApps = Set(
             NSWorkspace.shared.runningApplications

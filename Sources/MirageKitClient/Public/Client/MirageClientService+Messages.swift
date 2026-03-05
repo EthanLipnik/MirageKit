@@ -45,6 +45,8 @@ extension MirageClientService {
             .menuBarUpdate: { [weak self] in self?.handleMenuBarUpdate($0) },
             .menuActionResult: { [weak self] in self?.handleMenuActionResult($0) },
             .hostHardwareIcon: { [weak self] in self?.handleHostHardwareIcon($0) },
+            .appIconUpdate: { [weak self] in self?.handleAppIconUpdate($0) },
+            .appIconStreamComplete: { [weak self] in self?.handleAppIconStreamComplete($0) },
             .pong: { [weak self] in self?.handlePong($0) },
             .qualityTestResult: { [weak self] in self?.handleQualityTestResult($0) },
             .audioStreamStarted: { [weak self] in self?.handleAudioStreamStarted($0) },

@@ -239,7 +239,7 @@ actor StreamContext {
 
     /// Two-tier recovery tracking.
     let softRecoveryWindow: CFAbsoluteTime = 4.0
-    let hardRecoveryThreshold: Int = 2
+    let hardRecoveryThreshold: Int = 3
     var recoveryWindowStart: CFAbsoluteTime = 0
     var recoveryRequestCount: Int = 0
     var softRecoveryCount: UInt64 = 0

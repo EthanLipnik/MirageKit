@@ -41,6 +41,34 @@ struct MirageDiagnosticsActionabilityTests {
         #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
     }
 
+    @Test("Typed VideoToolbox reference-missing metadata is filtered")
+    func typedDecoderReferenceMissingMetadataIsFiltered() {
+        let event = makeEvent(
+            message: "Decode callback failed",
+            metadata: MirageDiagnosticsErrorMetadata(
+                typeName: "NSError",
+                domain: NSOSStatusErrorDomain,
+                code: -17694
+            )
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("Typed Cocoa decode metadata is filtered")
+    func typedCocoaDecodeMetadataIsFiltered() {
+        let event = makeEvent(
+            message: "Failed to decode app list request",
+            metadata: MirageDiagnosticsErrorMetadata(
+                typeName: "Swift.DecodingError",
+                domain: NSCocoaErrorDomain,
+                code: 4865
+            )
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
     @Test("Typed ScreenCaptureKit teardown metadata is filtered")
     func typedScreenCaptureKitTeardownMetadataIsFiltered() {
         let event = makeEvent(
@@ -106,13 +134,47 @@ struct MirageDiagnosticsActionabilityTests {
         #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event))
     }
 
+    @Test("Host virtual-display fallback messages are filtered without metadata")
+    func hostVirtualDisplayFallbackMessagesAreFilteredWithoutMetadata() {
+        let event = makeEvent(
+            message: "Virtual display failed Retina activation for all descriptor profiles",
+            metadata: nil,
+            category: .host
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("Host virtual-display fail-closed messages are filtered without metadata")
+    func hostVirtualDisplayFailClosedMessagesAreFilteredWithoutMetadata() {
+        let event = makeEvent(
+            message: "Virtual display acquisition failed for desktop stream; fail-closed policy active: creationFailed(\"Virtual display failed activation\")",
+            metadata: nil,
+            category: .host
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("AppState virtual-display protocol errors are filtered without metadata")
+    func appStateVirtualDisplayProtocolErrorsAreFilteredWithoutMetadata() {
+        let event = makeEvent(
+            message: "Client error: protocolError(\"Failed to start desktop stream: Protocol error: Virtual display acquisition failed for desktop stream\")",
+            metadata: nil,
+            category: .appState
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
     private func makeEvent(
         message: String,
-        metadata: MirageDiagnosticsErrorMetadata?
+        metadata: MirageDiagnosticsErrorMetadata?,
+        category: LogCategory = .network
     ) -> MirageDiagnosticsErrorEvent {
         MirageDiagnosticsErrorEvent(
             date: Date(),
-            category: .network,
+            category: category,
             severity: .error,
             source: .logger,
             message: message,

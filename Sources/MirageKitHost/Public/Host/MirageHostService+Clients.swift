@@ -86,7 +86,6 @@ extension MirageHostService {
             await stopLoginDisplayStream(newState: sessionState)
             await cleanupSharedVirtualDisplayIfIdle()
             await forceDisableLightsOut(reason: "last client disconnected")
-            lockHostIfNeeded()
         }
 
         await restoreStageManagerAfterAppStreamingIfNeeded()

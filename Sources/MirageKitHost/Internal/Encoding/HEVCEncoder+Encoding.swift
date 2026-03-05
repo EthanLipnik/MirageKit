@@ -15,6 +15,20 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
+enum EncodedFrameExtractionError: Error, Equatable, Sendable {
+    case emptyData
+    case copyFailed(status: OSStatus, totalLength: Int, pointerStatus: OSStatus, contiguousLength: Int)
+
+    var logSummary: String {
+        switch self {
+        case .emptyData:
+            "sample buffer data is empty"
+        case let .copyFailed(status, totalLength, pointerStatus, contiguousLength):
+            "copy failed status=\(status), totalLength=\(totalLength), pointerStatus=\(pointerStatus), contiguousLength=\(contiguousLength)"
+        }
+    }
+}
+
 enum EncodeSkipReason: String {
     case dimensionUpdate = "dimension update"
     case encoderInactive = "encoder inactive"
@@ -258,19 +272,53 @@ extension HEVCEncoder {
             // Extract encoded data
             guard let dataBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
 
-            var length = 0
-            var dataPointer: UnsafeMutablePointer<Int8>?
-            CMBlockBufferGetDataPointer(
-                dataBuffer,
-                atOffset: 0,
-                lengthAtOffsetOut: nil,
-                totalLengthOut: &length,
-                dataPointerOut: &dataPointer
-            )
+            let rawFrameData: Data
+            do {
+                rawFrameData = try Self.extractEncodedFrameData(from: dataBuffer)
+            } catch let extractionError as EncodedFrameExtractionError {
+                let now = CFAbsoluteTimeGetCurrent()
+                if self.shouldLogBitstreamFailure(at: now) {
+                    MirageLogger
+                        .error(
+                            .encoder,
+                            "Dropping frame \(info.frameNumber): failed to extract encoded bytes (\(extractionError.logSummary))"
+                        )
+                }
+                Task { [weak self] in
+                    await self?.scheduleRecoveryKeyframe(reason: "encoded-frame-extraction")
+                }
+                return
+            } catch {
+                let now = CFAbsoluteTimeGetCurrent()
+                if self.shouldLogBitstreamFailure(at: now) {
+                    MirageLogger.error(
+                        .encoder,
+                        "Dropping frame \(info.frameNumber): unexpected extraction failure (\(error))"
+                    )
+                }
+                Task { [weak self] in
+                    await self?.scheduleRecoveryKeyframe(reason: "encoded-frame-extraction")
+                }
+                return
+            }
 
-            guard let pointer = dataPointer else { return }
+            let validation = Self.validateLengthPrefixedHEVCBitstream(rawFrameData)
+            guard validation.isValid else {
+                let now = CFAbsoluteTimeGetCurrent()
+                if self.shouldLogBitstreamFailure(at: now) {
+                    MirageLogger
+                        .error(
+                            .encoder,
+                            "Dropping frame \(info.frameNumber): invalid AVCC payload (\(validation.logSummary))"
+                        )
+                }
+                Task { [weak self] in
+                    await self?.scheduleRecoveryKeyframe(reason: "invalid-avcc")
+                }
+                return
+            }
 
-            var data = Data(bytes: pointer, count: length)
+            var data = rawFrameData
 
             // For keyframes, prepend VPS/SPS/PPS with Annex B start codes
             if isKeyframe {
@@ -313,6 +361,68 @@ extension HEVCEncoder {
             throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status)))
         }
         return .accepted
+    }
+
+    nonisolated static func extractEncodedFrameData(from dataBuffer: CMBlockBuffer) throws -> Data {
+        let totalLength = CMBlockBufferGetDataLength(dataBuffer)
+        guard totalLength > 0 else { throw EncodedFrameExtractionError.emptyData }
+
+        var contiguousLength = 0
+        var totalLengthOut = 0
+        var dataPointer: UnsafeMutablePointer<Int8>?
+        let pointerStatus = CMBlockBufferGetDataPointer(
+            dataBuffer,
+            atOffset: 0,
+            lengthAtOffsetOut: &contiguousLength,
+            totalLengthOut: &totalLengthOut,
+            dataPointerOut: &dataPointer
+        )
+
+        if pointerStatus == noErr,
+           totalLengthOut == totalLength,
+           contiguousLength == totalLength,
+           let dataPointer {
+            return Data(bytes: dataPointer, count: totalLength)
+        }
+
+        var copiedData = Data(count: totalLength)
+        let copyStatus = copiedData.withUnsafeMutableBytes { bytes -> OSStatus in
+            guard let baseAddress = bytes.baseAddress else { return -12700 }
+            return CMBlockBufferCopyDataBytes(
+                dataBuffer,
+                atOffset: 0,
+                dataLength: totalLength,
+                destination: baseAddress
+            )
+        }
+
+        guard copyStatus == noErr else {
+            throw EncodedFrameExtractionError.copyFailed(
+                status: copyStatus,
+                totalLength: totalLength,
+                pointerStatus: pointerStatus,
+                contiguousLength: contiguousLength
+            )
+        }
+
+        return copiedData
+    }
+
+    nonisolated func shouldLogBitstreamFailure(at now: CFAbsoluteTime) -> Bool {
+        bitstreamFailureLogLock.lock()
+        defer { bitstreamFailureLogLock.unlock() }
+        if lastBitstreamFailureLogTime > 0,
+           now - lastBitstreamFailureLogTime < Self.bitstreamFailureLogCooldown {
+            return false
+        }
+        lastBitstreamFailureLogTime = now
+        return true
+    }
+
+    func scheduleRecoveryKeyframe(reason: String) {
+        guard !forceNextKeyframe else { return }
+        forceNextKeyframe = true
+        MirageLogger.encoder("Scheduling recovery keyframe (\(reason))")
     }
 }
 

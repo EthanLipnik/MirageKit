@@ -314,6 +314,7 @@ public final class MirageHostService {
     var pendingAppListRequest: PendingAppListRequest?
     var appListRequestTask: Task<Void, Never>?
     var appListRequestToken: UUID = .init()
+    let appIconSignatureStore = HostAppIconSignatureStore()
 
     /// Menu bar passthrough - internal for extension access
     let menuBarMonitor = MenuBarMonitor()
@@ -331,8 +332,8 @@ public final class MirageHostService {
         }
     }
 
-    /// Whether to lock the host when the last client disconnects.
-    public var lockHostOnDisconnect: Bool = false
+    /// Whether to lock the host when all active streaming has stopped.
+    public var lockHostWhenStreamingStops: Bool = false
 
     /// Optional override for host lock behavior (defaults to CGSession if nil).
     public var lockHostHandler: (@MainActor () -> Void)?
@@ -409,8 +410,10 @@ public final class MirageHostService {
 
     struct PendingAppListRequest: Equatable {
         let clientID: UUID
-        var requestedIcons: Bool
+        var requestID: UUID
         var requestedForceRefresh: Bool
+        var forceIconReset: Bool
+        var priorityBundleIdentifiers: [String]
     }
 
     public init(
@@ -510,7 +513,7 @@ public final class MirageHostService {
             "host.remoteTransportEnabled": .bool(remoteTransportEnabled),
             "host.lightsOutEnabled": .bool(lightsOutEnabled),
             "host.lightsOutDisabledByEnvironment": .bool(lightsOutDisabledByEnvironment),
-            "host.lockHostOnDisconnect": .bool(lockHostOnDisconnect),
+            "host.lockHostWhenStreamingStops": .bool(lockHostWhenStreamingStops),
             "host.connectedClientsCount": .int(connectedClients.count),
             "host.activeStreamsCount": .int(activeStreams.count),
             "host.availableWindowsCount": .int(availableWindows.count),

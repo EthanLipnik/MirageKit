@@ -410,7 +410,11 @@ extension MirageClientService {
         ) {
             let lastTime = lastKeyframeRequestTime[streamID] ?? now
             let remaining = Int(((keyframeRequestCooldown - (now - lastTime)) * 1000).rounded())
-            MirageLogger.client("Keyframe request skipped (cooldown \(remaining)ms) for stream \(streamID)")
+            let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
+            MirageLogger
+                .client(
+                    "Keyframe request skipped (cooldown \(remaining)ms remaining of \(cooldownMs)ms) for stream \(streamID)"
+                )
             return
         }
         lastKeyframeRequestTime[streamID] = now
@@ -423,7 +427,8 @@ extension MirageClientService {
 
         let data = message.serialize()
         connection.send(content: data, completion: .idempotent)
-        MirageLogger.client("Sent keyframe request for stream \(streamID)")
+        let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
+        MirageLogger.client("Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)")
     }
 
     nonisolated static func shouldSendKeyframeRequest(

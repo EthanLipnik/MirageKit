@@ -281,6 +281,15 @@ public final class MirageClientService {
     /// Whether we've received the initial app list from the host
     public internal(set) var hasReceivedAppList: Bool = false
 
+    /// Request identifier for the latest app list snapshot received from the host.
+    var activeAppListRequestID: UUID?
+
+    /// App-icon stream state keyed by app-list request identifier.
+    var appIconStreamStateByRequestID: [UUID: AppIconStreamState] = [:]
+
+    /// Whether the next app-list request should force a full icon reset on host.
+    var pendingForceIconResetForNextAppListRequest: Bool = false
+
     /// Currently streaming app's bundle identifier
     public internal(set) var streamingAppBundleID: String?
     /// Latest host-owned inventory for the currently streamed app session.
@@ -327,6 +336,11 @@ public final class MirageClientService {
 
     /// Callback when app terminates
     public var onAppTerminated: ((AppTerminatedMessage) -> Void)?
+
+    struct AppIconStreamState {
+        var receivedBundleIdentifiers: Set<String> = []
+        var skippedBundleIdentifiers: Set<String> = []
+    }
 
     // MARK: - Menu Bar Passthrough Properties
 
@@ -420,7 +434,10 @@ public final class MirageClientService {
     // Track which streams have been registered with the host (prevents duplicate registrations)
     var registeredStreamIDs: Set<StreamID> = []
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
-    let keyframeRequestCooldown: CFAbsoluteTime = 0.5
+    let keyframeRequestCooldown: CFAbsoluteTime = 0.75
+    var lastDisplayResolutionRequestByStream: [StreamID: CGSize] = [:]
+    var lastDisplayResolutionRequestTimeByStream: [StreamID: CFAbsoluteTime] = [:]
+    let duplicateDisplayResolutionSuppressionWindow: CFAbsoluteTime = 0.2
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []

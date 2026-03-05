@@ -97,6 +97,26 @@ App-stream runtime control adds host-authoritative per-stream policy distributio
   - `policies: [MirageStreamPolicy]`
   - each policy includes `tier`, `targetFPS`, `targetBitrateBps`, `recoveryProfile`
 
+App-list transport is metadata-first with incremental icon streaming:
+
+- `appListRequest` (`AppListRequestMessage`)
+  - `requestID`
+  - `forceRefresh`
+  - `forceIconReset`
+  - `priorityBundleIdentifiers`
+- `appList` (`AppListMessage`)
+  - `requestID`
+  - `apps` metadata only (`iconData = nil`)
+- `appIconUpdate` (`AppIconUpdateMessage`)
+  - `requestID`
+  - `bundleIdentifier`
+  - `iconData` (HEIF preferred, PNG fallback)
+  - `iconSignature` (SHA-256 hex)
+- `appIconStreamComplete` (`AppIconStreamCompleteMessage`)
+  - `requestID`
+  - `sentIconCount`
+  - `skippedBundleIdentifiers`
+
 ### 3.2 Shared Security Architecture
 
 Security layers are composed, not monolithic:
@@ -326,7 +346,10 @@ App streaming is its own subsystem, centered on:
 
 Key properties:
 
-- app list retrieval + launch orchestration
+- app list metadata retrieval + launch orchestration
+- one-by-one icon updates after metadata snapshot (`appIconUpdate`)
+- icon diffing keyed by client + bundle identifier with `forceIconReset` override
+- persisted host-side icon signatures with 90-day retention
 - initial multi-window startup with retry/backoff and window classification
 - visible slot inventory + hidden inventory
 - slot swap transactions (`appWindowSwapRequest`/result)

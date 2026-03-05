@@ -669,6 +669,11 @@ extension MirageHostService {
                         "Desktop resize reset captured display \(captureDisplay.display.displayID) while shared display is \(activeDisplayID)"
                     )
             }
+            await logDesktopResizeColorPipelineValidation(
+                streamID: streamID,
+                displaySnapshot: postResizeSnapshot,
+                context: latestDesktopContext
+            )
 
             let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
             let inputBounds = resolvedDesktopInputBounds(
@@ -762,6 +767,54 @@ extension MirageHostService {
         }
         let suffix = noOp ? ", no-op" : ""
         MirageLogger.host("Sent desktop resize completion for stream \(streamID) (request #\(requestNumber)\(suffix))")
+    }
+
+    private func logDesktopResizeColorPipelineValidation(
+        streamID: StreamID,
+        displaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        context: StreamContext
+    )
+    async {
+        let settings = await context.getEncoderSettings()
+        let runtime = await context.getEncoderRuntimeValidationSnapshot()
+
+        let colorValidation = CGVirtualDisplayBridge.displayColorSpaceValidation(
+            displayID: displaySnapshot.displayID,
+            expectedColorSpace: settings.colorSpace
+        )
+        let displayColorMatches = colorValidation.matches == true
+        let displayColorObserved = colorValidation.observedName ?? "unknown"
+        let runtimePixelFormat = runtime?.pixelFormat.displayName ?? settings.pixelFormat.displayName
+        let runtimeProfile = runtime?.profileName ?? "unknown"
+        let runtimePrimaries = runtime?.colorPrimaries ?? "unknown"
+        let runtimeTransfer = runtime?.transferFunction ?? "unknown"
+        let runtimeMatrix = runtime?.yCbCrMatrix ?? "unknown"
+        let runtimeMain10P3Validated = runtime?.tenBitDisplayP3Validated == true
+        let expectsMain10P3 = settings.bitDepth == .tenBit && settings.colorSpace == .displayP3
+        let displayColorStatus = colorValidation.matches == true
+            ? "matched"
+            : (colorValidation.matches == false ? "mismatch" : "unresolved")
+
+        if expectsMain10P3, displayColorMatches, runtimeMain10P3Validated {
+            MirageLogger
+                .host(
+                    "Desktop resize validation passed for stream \(streamID): display=\(displaySnapshot.displayID) color=\(displayColorObserved), encoder=\(runtimePixelFormat), profile=\(runtimeProfile), target=Display P3 Main10"
+                )
+            return
+        }
+
+        let message =
+            "Desktop resize validation status=\(displayColorStatus) for stream \(streamID): " +
+            "display=\(displaySnapshot.displayID), expectedColor=\(settings.colorSpace.displayName), observedColor=\(displayColorObserved), " +
+            "encoderPixelFormat=\(runtimePixelFormat), encoderProfile=\(runtimeProfile), " +
+            "encoderPrimaries=\(runtimePrimaries), encoderTransfer=\(runtimeTransfer), encoderMatrix=\(runtimeMatrix), " +
+            "tenBitDisplayP3Validated=\(runtimeMain10P3Validated)"
+
+        if expectsMain10P3 {
+            MirageLogger.error(.host, message)
+        } else {
+            MirageLogger.host(message)
+        }
     }
 
     private func enqueueWindowResolutionChange(streamID: StreamID, logicalResolution: CGSize) async {

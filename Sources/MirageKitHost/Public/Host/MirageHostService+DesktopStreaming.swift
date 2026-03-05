@@ -197,10 +197,17 @@ extension MirageHostService {
             sharedVirtualDisplayGeneration = 0
             sharedVirtualDisplayScaleFactor = 1.0
             desktopDisplayBounds = nil
-            MirageLogger.error(
-                .host,
-                "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
-            )
+            if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError,
+               case .creationFailed = sharedDisplayError {
+                MirageLogger.host(
+                    "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
+                )
+            } else {
+                MirageLogger.error(
+                    .host,
+                    "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
+                )
+            }
             throw MirageError.protocolError(
                 "Virtual display acquisition failed for desktop stream: \(error)"
             )
@@ -340,6 +347,10 @@ extension MirageHostService {
             .host(
                 "Desktop stream started: streamID=\(streamID), resolution=\(encodedDimensions.width)x\(encodedDimensions.height)"
             )
+        await HostDesktopStreamTerminationTracker.shared.markDesktopStreamStarted(
+            streamID: streamID,
+            requestedPixelResolution: captureResolution
+        )
         MirageInstrumentation.record(.hostStreamDesktopStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
     }
 
@@ -348,7 +359,10 @@ extension MirageHostService {
         // Clear any stuck modifiers before stopping
         inputController.clearAllModifiers()
 
-        guard let streamID = desktopStreamID else { return }
+        guard let streamID = desktopStreamID else {
+            await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
+            return
+        }
 
         MirageLogger.host("Stopping desktop stream: streamID=\(streamID), reason=\(reason)")
         resetDesktopResizeTransactionState()
@@ -416,6 +430,7 @@ extension MirageHostService {
         if activeStreams.isEmpty, loginDisplayContext == nil { await PowerAssertionManager.shared.disable() }
 
         resumePendingAppListRequestIfNeeded()
+        await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
 
         await updateLightsOutState()
 

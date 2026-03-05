@@ -27,6 +27,7 @@ public extension MirageHostService {
             return
         }
 
+        await HostDesktopStreamTerminationTracker.shared.reportUncleanTerminationIfNeeded()
         state = .starting
         MirageLogger.host("Starting...")
 
@@ -85,6 +86,7 @@ public extension MirageHostService {
     func stop() async {
         sessionRefreshTask?.cancel()
         sessionRefreshTask = nil
+        await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
         clearAllPendingAppWindowCloseAlertTokens()
         stopLoginDisplayWatchdog()
         loginDisplayRetryTimer?.cancel()

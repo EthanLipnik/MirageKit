@@ -61,12 +61,15 @@ actor HEVCEncoder {
     nonisolated(unsafe) var encoderInFlightLimit: Int
     nonisolated(unsafe) var encoderInFlightCount: Int = 0
     nonisolated(unsafe) let encoderInFlightLock = NSLock()
+    nonisolated(unsafe) var lastBitstreamFailureLogTime: CFAbsoluteTime = 0
+    nonisolated(unsafe) let bitstreamFailureLogLock = NSLock()
 
     /// Session version counter - incremented on each dimension change
     /// Used to discard frames from old sessions during transitions
     /// nonisolated(unsafe) because it's accessed from VT callback (different thread)
     /// and needs to be compared atomically
     nonisolated(unsafe) var sessionVersion: UInt64 = 0
+    static let bitstreamFailureLogCooldown: CFAbsoluteTime = 1.0
 
     init(
         configuration: MirageEncoderConfiguration,

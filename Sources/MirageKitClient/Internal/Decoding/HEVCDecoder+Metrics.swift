@@ -26,6 +26,15 @@ extension DecodeErrorTracker {
         // Initial threshold fire
         if consecutiveErrors >= maxConsecutiveErrors, !thresholdFired {
             thresholdFired = true
+            let timeSinceLastThreshold = lastThresholdTime > 0 ? now - lastThresholdTime : .greatestFiniteMagnitude
+            guard lastThresholdTime == 0 || timeSinceLastThreshold >= thresholdDispatchCooldown else {
+                let remainingMs = Int(((thresholdDispatchCooldown - timeSinceLastThreshold) * 1000).rounded(.up))
+                MirageLogger.decoder(
+                    "Decode error threshold reached (\(consecutiveErrors) errors) - threshold dispatch throttled \(remainingMs)ms"
+                )
+                return
+            }
+
             lastThresholdTime = now
             // Call handler outside lock to avoid deadlocks
             lock.unlock()

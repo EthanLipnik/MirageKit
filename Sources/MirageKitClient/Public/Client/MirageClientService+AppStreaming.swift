@@ -14,17 +14,34 @@ import MirageKit
 @MainActor
 public extension MirageClientService {
     /// Request list of installed apps from host.
-    /// - Parameter includeIcons: Whether to include app icons (increases message size).
     /// - Parameter forceRefresh: Whether host-side app-list caches should be bypassed.
-    func requestAppList(includeIcons: Bool = true, forceRefresh: Bool = false) async throws {
+    /// - Parameter forceIconReset: Whether host-side icon-diff caches should be bypassed.
+    /// - Parameter priorityBundleIdentifiers: Client-preferred icon streaming order.
+    func requestAppList(
+        forceRefresh: Bool = false,
+        forceIconReset: Bool = false,
+        priorityBundleIdentifiers: [String] = []
+    ) async throws {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
 
+        let shouldForceIconReset = forceIconReset || pendingForceIconResetForNextAppListRequest
+        let normalizedPriority = Self.normalizedPriorityBundleIdentifiers(priorityBundleIdentifiers)
+        let requestID = UUID()
         MirageLogger.client(
-            "Requesting app list from host (includeIcons: \(includeIcons), forceRefresh: \(forceRefresh))"
+            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(shouldForceIconReset), priorityCount: \(normalizedPriority.count), requestID: \(requestID.uuidString))"
         )
-        let request = AppListRequestMessage(includeIcons: includeIcons, forceRefresh: forceRefresh)
+        let request = AppListRequestMessage(
+            forceRefresh: forceRefresh,
+            forceIconReset: shouldForceIconReset,
+            priorityBundleIdentifiers: normalizedPriority,
+            requestID: requestID
+        )
         let message = try ControlMessage(type: .appListRequest, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
+        activeAppListRequestID = requestID
+        appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
+        appIconStreamStateByRequestID[requestID] = AppIconStreamState()
+        pendingForceIconResetForNextAppListRequest = false
         MirageLogger.client("App list request sent")
     }
 
@@ -137,6 +154,38 @@ public extension MirageClientService {
         )
         let message = try ControlMessage(type: .appWindowCloseAlertActionRequest, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)
+    }
+
+    /// Clears cached icon payloads for the current in-memory app list snapshot.
+    func invalidateAvailableAppIcons() {
+        availableApps = availableApps.map { app in
+            MirageInstalledApp(
+                bundleIdentifier: app.bundleIdentifier,
+                name: app.name,
+                path: app.path,
+                iconData: nil,
+                version: app.version,
+                isRunning: app.isRunning,
+                isBeingStreamed: app.isBeingStreamed
+            )
+        }
+    }
+
+    private static func normalizedPriorityBundleIdentifiers(_ bundleIdentifiers: [String]) -> [String] {
+        var seen: Set<String> = []
+        var ordered: [String] = []
+        ordered.reserveCapacity(bundleIdentifiers.count)
+
+        for bundleIdentifier in bundleIdentifiers {
+            let normalized = bundleIdentifier
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalized.isEmpty else { continue }
+            guard seen.insert(normalized).inserted else { continue }
+            ordered.append(normalized)
+        }
+
+        return ordered
     }
 
 }

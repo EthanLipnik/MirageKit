@@ -110,5 +110,61 @@ struct LightsOutStatePolicyTests {
             )
         )
     }
+
+    @Test
+    func locksHostWhenStreamingBecomesIdle() {
+        #expect(
+            MirageHostService.shouldLockHostWhenStreamingStops(
+                lockHostWhenStreamingStops: true,
+                sessionState: .active,
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false
+            )
+        )
+    }
+
+    @Test
+    func doesNotLockHostWhileStillStreaming() {
+        #expect(
+            !MirageHostService.shouldLockHostWhenStreamingStops(
+                lockHostWhenStreamingStops: true,
+                sessionState: .active,
+                hasAppStreams: true,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false
+            )
+        )
+    }
+
+    @Test
+    func doesNotLockHostDuringPendingStreamTransition() {
+        #expect(
+            !MirageHostService.shouldLockHostWhenStreamingStops(
+                lockHostWhenStreamingStops: true,
+                sessionState: .active,
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: true,
+                hasPendingDesktopStreamStart: false
+            )
+        )
+    }
+
+    @Test
+    func doesNotLockHostWhenSettingIsDisabled() {
+        #expect(
+            !MirageHostService.shouldLockHostWhenStreamingStops(
+                lockHostWhenStreamingStops: false,
+                sessionState: .active,
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false
+            )
+        )
+    }
 }
 #endif

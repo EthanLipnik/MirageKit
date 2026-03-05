@@ -300,6 +300,9 @@ extension MirageClientService {
         hasReceivedWindowList = false
         availableApps = []
         hasReceivedAppList = false
+        activeAppListRequestID = nil
+        appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
+        pendingForceIconResetForNextAppListRequest = false
         streamingAppBundleID = nil
 
         for session in sessions {

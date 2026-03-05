@@ -394,6 +394,58 @@ struct StreamControllerRecoveryTests {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
+    @Test("Recovery dispatch helper enforces minimum intervals")
+    func recoveryDispatchHelperEnforcesMinimumIntervals() {
+        #expect(
+            StreamController.shouldDispatchRecovery(
+                lastDispatchTime: nil,
+                now: 10,
+                minimumInterval: 1
+            )
+        )
+        #expect(
+            !StreamController.shouldDispatchRecovery(
+                lastDispatchTime: 10,
+                now: 10.5,
+                minimumInterval: 1
+            )
+        )
+        #expect(
+            StreamController.shouldDispatchRecovery(
+                lastDispatchTime: 10,
+                now: 11.1,
+                minimumInterval: 1
+            )
+        )
+    }
+
+    @Test("Soft recovery cadence suppresses duplicate threshold recoveries within cooldown")
+    func softRecoveryCadenceSuppressesDuplicateThresholdRecoveries() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 145, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+        await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
+
+        await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(600))
+        await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(keyframeCounter.value == 1)
+
+        try await Task.sleep(for: .milliseconds(450))
+        await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(200))
+        #expect(keyframeCounter.value >= 2)
+
+        await controller.stop()
+    }
+
     @Test("Frame-loss bootstrap requests keyframe before first decoded frame")
     func frameLossBootstrapRequestsKeyframe() async throws {
         let keyframeCounter = LockedCounter()

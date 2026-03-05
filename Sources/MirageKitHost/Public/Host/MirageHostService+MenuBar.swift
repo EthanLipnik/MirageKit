@@ -118,10 +118,8 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
             let audioConfiguration = request.audioConfiguration ?? .default
 
-            if lightsOutEnabled {
-                pendingLightsOutSetup = true
-                await beginPendingDesktopStreamLightsOutSetup()
-            }
+            pendingLightsOutSetup = true
+            await beginPendingDesktopStreamLightsOutSetup()
             try await startDesktopStream(
                 to: clientContext,
                 displayResolution: CGSize(width: request.displayWidth, height: request.displayHeight),
@@ -181,7 +179,11 @@ extension MirageHostService {
     }
 
     private nonisolated static func isExpectedDesktopStartRejection(_ error: Error) -> Bool {
-        error is MirageRuntimeConditionError
+        if error is MirageRuntimeConditionError { return true }
+        if case let MirageError.protocolError(message) = error {
+            return message.contains("Virtual display acquisition failed for desktop stream:")
+        }
+        return false
     }
 
     private nonisolated static func desktopStartErrorPayload(for error: Error) -> ErrorMessage {

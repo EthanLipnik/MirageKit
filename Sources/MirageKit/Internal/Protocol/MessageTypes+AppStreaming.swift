@@ -57,24 +57,83 @@ public struct StreamPolicyUpdateMessage: Codable, Sendable, Equatable {
 
 /// Request for list of installed apps (Client → Host)
 package struct AppListRequestMessage: Codable {
-    /// Whether to include app icons in the response
-    package let includeIcons: Bool
     /// Whether host-side app-list caches should be bypassed for this request
     package let forceRefresh: Bool
+    /// Whether host should ignore icon-diff caches and resend all icon payloads.
+    package let forceIconReset: Bool
+    /// Preferred icon-priority ordering from the client (pinned/recent first).
+    package let priorityBundleIdentifiers: [String]
+    /// Client-generated request identifier for correlating metadata + icon updates.
+    package let requestID: UUID
 
-    package init(includeIcons: Bool, forceRefresh: Bool = false) {
-        self.includeIcons = includeIcons
+    package init(
+        forceRefresh: Bool = false,
+        forceIconReset: Bool = false,
+        priorityBundleIdentifiers: [String] = [],
+        requestID: UUID = UUID()
+    ) {
         self.forceRefresh = forceRefresh
+        self.forceIconReset = forceIconReset
+        self.priorityBundleIdentifiers = priorityBundleIdentifiers
+        self.requestID = requestID
     }
 }
 
 /// List of installed apps available for streaming (Host → Client)
 package struct AppListMessage: Codable {
+    /// Correlates this metadata snapshot with icon update/control messages.
+    package let requestID: UUID
     /// Available apps (filtered by host's allow/blocklist, excludes apps already streaming)
+    /// Metadata only: icon payloads are sent via incremental `.appIconUpdate` messages.
     package let apps: [MirageInstalledApp]
 
-    package init(apps: [MirageInstalledApp]) {
+    package init(requestID: UUID, apps: [MirageInstalledApp]) {
+        self.requestID = requestID
         self.apps = apps
+    }
+}
+
+/// Incremental app icon payload update (Host → Client)
+package struct AppIconUpdateMessage: Codable {
+    /// Request identifier that this update belongs to.
+    package let requestID: UUID
+    /// Bundle identifier of the updated app icon.
+    package let bundleIdentifier: String
+    /// Encoded icon payload (HEIF preferred, PNG fallback).
+    package let iconData: Data
+    /// SHA-256 digest (hex) of `iconData`.
+    package let iconSignature: String
+
+    package init(
+        requestID: UUID,
+        bundleIdentifier: String,
+        iconData: Data,
+        iconSignature: String
+    ) {
+        self.requestID = requestID
+        self.bundleIdentifier = bundleIdentifier
+        self.iconData = iconData
+        self.iconSignature = iconSignature
+    }
+}
+
+/// End-of-stream marker for app icon updates (Host → Client)
+package struct AppIconStreamCompleteMessage: Codable {
+    /// Request identifier that this completion belongs to.
+    package let requestID: UUID
+    /// Number of icon updates emitted for this request.
+    package let sentIconCount: Int
+    /// Bundle identifiers skipped by host-side icon diffing.
+    package let skippedBundleIdentifiers: [String]
+
+    package init(
+        requestID: UUID,
+        sentIconCount: Int,
+        skippedBundleIdentifiers: [String]
+    ) {
+        self.requestID = requestID
+        self.sentIconCount = max(0, sentIconCount)
+        self.skippedBundleIdentifiers = skippedBundleIdentifiers
     }
 }
 

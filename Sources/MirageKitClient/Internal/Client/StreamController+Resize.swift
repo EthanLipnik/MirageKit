@@ -72,6 +72,30 @@ extension StreamController {
         restartRecoveryLoop: Bool = true
     )
     async {
+        let now = currentTime()
+        if reason != .manualRecovery,
+           !Self.shouldDispatchRecovery(
+               lastDispatchTime: lastHardRecoveryStartTime,
+               now: now,
+               minimumInterval: Self.hardRecoveryMinimumInterval
+           ) {
+            let lastTime = lastHardRecoveryStartTime
+            let remainingMs = Int(
+                ((Self.hardRecoveryMinimumInterval - (now - lastTime)) * 1000)
+                    .rounded(.up)
+            )
+            MirageLogger
+                .client(
+                    "Hard recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
+                )
+            if restartRecoveryLoop, presentationTier == .activeLive {
+                startKeyframeRecoveryLoopIfNeeded()
+            }
+            await requestKeyframeRecovery(reason: reason)
+            return
+        }
+        lastHardRecoveryStartTime = now
+
         MirageLogger.client("Starting stream recovery (\(reason.logLabel)) for stream \(streamID)")
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)

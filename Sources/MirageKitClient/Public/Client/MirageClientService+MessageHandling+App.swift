@@ -7,7 +7,9 @@
 //  App-centric streaming message handling.
 //
 
+import CryptoKit
 import Foundation
+import ImageIO
 import MirageKit
 
 @MainActor
@@ -15,12 +17,109 @@ extension MirageClientService {
     func handleAppList(_ message: ControlMessage) {
         do {
             let appList = try message.decode(AppListMessage.self)
-            MirageLogger.client("Received app list with \(appList.apps.count) apps")
-            availableApps = appList.apps
+            MirageLogger.client("Received app list with \(appList.apps.count) apps requestID=\(appList.requestID.uuidString)")
+
+            let previousIconsByBundleID = availableIconsByBundleIdentifier(from: availableApps)
+            availableApps = appList.apps.map { app in
+                guard app.iconData == nil,
+                      let previousIcon = previousIconsByBundleID[app.bundleIdentifier.lowercased()]
+                else {
+                    return app
+                }
+                return appWithUpdatedIconData(app, iconData: previousIcon)
+            }
             hasReceivedAppList = true
-            onAppListReceived?(appList.apps)
+            appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
+            activeAppListRequestID = appList.requestID
+            appIconStreamStateByRequestID[appList.requestID] = AppIconStreamState()
+            onAppListReceived?(availableApps)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app list: ")
+        }
+    }
+
+    func handleAppIconUpdate(_ message: ControlMessage) {
+        do {
+            let update = try message.decode(AppIconUpdateMessage.self)
+            guard activeAppListRequestID == update.requestID else {
+                MirageLogger.client(
+                    "Ignoring app icon update for stale requestID=\(update.requestID.uuidString)"
+                )
+                return
+            }
+
+            let computedSignature = Self.sha256Hex(update.iconData)
+            guard computedSignature == update.iconSignature else {
+                pendingForceIconResetForNextAppListRequest = true
+                MirageLogger.client(
+                    "Rejected app icon update due to signature mismatch for bundleID=\(update.bundleIdentifier)"
+                )
+                return
+            }
+
+            let normalizedBundleID = update.bundleIdentifier.lowercased()
+            guard let appIndex = availableApps.firstIndex(where: {
+                $0.bundleIdentifier.lowercased() == normalizedBundleID
+            }) else {
+                MirageLogger.client(
+                    "Ignoring app icon update for unknown bundleID=\(update.bundleIdentifier)"
+                )
+                return
+            }
+
+            let updatedApp = appWithUpdatedIconData(availableApps[appIndex], iconData: update.iconData)
+            availableApps[appIndex] = updatedApp
+            appIconStreamStateByRequestID[update.requestID, default: AppIconStreamState()]
+                .receivedBundleIdentifiers
+                .insert(normalizedBundleID)
+
+            onAppListReceived?(availableApps)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app icon update: ")
+        }
+    }
+
+    func handleAppIconStreamComplete(_ message: ControlMessage) {
+        do {
+            let complete = try message.decode(AppIconStreamCompleteMessage.self)
+            guard activeAppListRequestID == complete.requestID else {
+                MirageLogger.client(
+                    "Ignoring app icon completion for stale requestID=\(complete.requestID.uuidString)"
+                )
+                return
+            }
+
+            var streamState = appIconStreamStateByRequestID[complete.requestID] ?? AppIconStreamState()
+            streamState.skippedBundleIdentifiers = Set(
+                complete.skippedBundleIdentifiers.map { $0.lowercased() }
+            )
+            appIconStreamStateByRequestID[complete.requestID] = streamState
+
+            let requiresForceReset = streamState.skippedBundleIdentifiers.contains { skippedBundleIdentifier in
+                guard let app = availableApps.first(where: {
+                    $0.bundleIdentifier.lowercased() == skippedBundleIdentifier
+                }) else {
+                    return false
+                }
+                guard let iconData = app.iconData else {
+                    return true
+                }
+                return !Self.isValidImagePayload(iconData)
+            }
+
+            if requiresForceReset {
+                pendingForceIconResetForNextAppListRequest = true
+                MirageLogger.client(
+                    "Queued force icon reset for next app-list request (desync detected for requestID=\(complete.requestID.uuidString))"
+                )
+            }
+
+            MirageLogger.client(
+                "App icon stream complete requestID=\(complete.requestID.uuidString) sent=\(complete.sentIconCount) skipped=\(complete.skippedBundleIdentifiers.count)"
+            )
+            appIconStreamStateByRequestID.removeValue(forKey: complete.requestID)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app icon stream completion: ")
         }
     }
 
@@ -162,5 +261,38 @@ extension MirageClientService {
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode stream policy update: ")
         }
+    }
+
+    private func appWithUpdatedIconData(_ app: MirageInstalledApp, iconData: Data?) -> MirageInstalledApp {
+        MirageInstalledApp(
+            bundleIdentifier: app.bundleIdentifier,
+            name: app.name,
+            path: app.path,
+            iconData: iconData,
+            version: app.version,
+            isRunning: app.isRunning,
+            isBeingStreamed: app.isBeingStreamed
+        )
+    }
+
+    private func availableIconsByBundleIdentifier(from apps: [MirageInstalledApp]) -> [String: Data] {
+        var iconsByBundleIdentifier: [String: Data] = [:]
+        iconsByBundleIdentifier.reserveCapacity(apps.count)
+        for app in apps {
+            guard let iconData = app.iconData else { continue }
+            iconsByBundleIdentifier[app.bundleIdentifier.lowercased()] = iconData
+        }
+        return iconsByBundleIdentifier
+    }
+
+    private static func isValidImagePayload(_ data: Data) -> Bool {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return false
+        }
+        return CGImageSourceCreateImageAtIndex(source, 0, nil) != nil
+    }
+
+    private static func sha256Hex(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
     }
 }
