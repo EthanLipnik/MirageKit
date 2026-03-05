@@ -208,6 +208,7 @@ public extension MirageClientService {
             onStallEvent: { [weak self] in
                 guard let self else { return }
                 self.stallEvents &+= 1
+                self.inputEventSender.activateTemporaryPointerCoalescing(for: capturedStreamID, duration: 1.2)
                 self.logAwdlExperimentTelemetryIfNeeded()
             }
         )
@@ -289,6 +290,7 @@ public extension MirageClientService {
         removeActiveStreamID(streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
+        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
 
         if let controller = controllersByStream[streamID] {
             await controller.stop()

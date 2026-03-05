@@ -113,6 +113,7 @@ extension MirageHostService {
 
         streamsByID[streamID] = context
         registerTypingBurstRoute(streamID: streamID, context: context)
+        await registerStallWindowPointerRoute(streamID: streamID, context: context)
         await syncAppListRequestDeferralForInteractiveWorkload()
         if let connectedClient = connectedClients.first {
             let configuration = audioConfigurationByClientID[connectedClient.id] ?? .default
@@ -139,6 +140,7 @@ extension MirageHostService {
             await context.stop()
             streamsByID.removeValue(forKey: streamID)
             unregisterTypingBurstRoute(streamID: streamID)
+            unregisterStallWindowPointerRoute(streamID: streamID)
             udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
             transportRegistry.unregisterVideoConnection(streamID: streamID)
             await deactivateAudioSourceIfNeeded(streamID: streamID)
@@ -271,6 +273,7 @@ extension MirageHostService {
         if !isBorrowed {
             streamsByID.removeValue(forKey: streamID)
             unregisterTypingBurstRoute(streamID: streamID)
+            unregisterStallWindowPointerRoute(streamID: streamID)
             udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
             transportRegistry.unregisterVideoConnection(streamID: streamID)
             await deactivateAudioSourceIfNeeded(streamID: streamID)

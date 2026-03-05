@@ -26,6 +26,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     enum StallStage: String, Sendable {
         case soft
         case hard
+        case resumed
     }
 
     struct StallSignal: Sendable {
@@ -98,7 +99,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     // Menu tracking/alerts can pause window capture for several seconds.
     // Use a longer stall threshold for window-based capture to avoid restart loops.
     private let windowStallThreshold: CFAbsoluteTime = 8.0
-    private let displayStallThreshold: CFAbsoluteTime = 1.5
+    private let displayStallThreshold: CFAbsoluteTime = 0.6
 
     private let poolMinimumBufferCount: Int
     private let frameCopier: CaptureFrameCopier?
@@ -235,14 +236,14 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     static func resolvedStallLimit(
         windowID: CGWindowID,
         configuredStallLimit: CFAbsoluteTime,
-        displayStallThreshold: CFAbsoluteTime = 1.5,
+        displayStallThreshold: CFAbsoluteTime = 0.6,
         windowStallThreshold: CFAbsoluteTime = 8.0
     )
     -> CFAbsoluteTime {
         if windowID == 0 {
             // Display capture can temporarily pause under compositor pressure.
-            // Keep restart responsiveness, but avoid overly eager 1.5s resets.
-            let minDisplayThreshold = max(displayStallThreshold, 2.0)
+            // Keep restart responsiveness while preventing pathological sub-600ms loops.
+            let minDisplayThreshold = max(0.6, min(displayStallThreshold, 1.0))
             let maxDisplayThreshold: CFAbsoluteTime = 4.0
             return min(max(configuredStallLimit, minDisplayThreshold), maxDisplayThreshold)
         }
@@ -402,6 +403,18 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             multiplier: fallbackResumeKeyframeGapMultiplier
         )
         let requiredMs = Int((requiredDuration * 1000).rounded())
+        let fallbackMsText = "\(fallbackMs)"
+        let requiredMsText = "\(requiredMs)"
+        onCaptureStall(
+            StallSignal(
+                stage: .resumed,
+                message: "stall resumed after \(fallbackMs)ms",
+                gapMs: fallbackMsText,
+                softThresholdMs: requiredMsText,
+                hardThresholdMs: requiredMsText,
+                restartEligible: false
+            )
+        )
         if fallbackDuration > requiredDuration {
             onKeyframeRequest(.fallbackResume)
             MirageLogger

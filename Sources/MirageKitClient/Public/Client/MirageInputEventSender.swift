@@ -12,9 +12,18 @@ import MirageKit
 import Network
 
 final class MirageInputEventSender: @unchecked Sendable {
+    private struct TemporaryPointerCoalescingState {
+        var deadline: CFAbsoluteTime = 0
+        var lastForwardedPointerTimestamp: CFAbsoluteTime = 0
+    }
+
+    private static let pointerCoalescingMinInterval: CFAbsoluteTime = 1.0 / 60.0
+
     private let sendQueue = DispatchQueue(label: "com.mirage.client.input-send", qos: .userInteractive)
     private let connectionLock = NSLock()
     private var controlConnection: NWConnection?
+    private let pointerCoalescingLock = NSLock()
+    private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
 
     func updateConnection(_ connection: NWConnection?) {
         connectionLock.lock()
@@ -22,7 +31,29 @@ final class MirageInputEventSender: @unchecked Sendable {
         connectionLock.unlock()
     }
 
+    func activateTemporaryPointerCoalescing(
+        for streamID: StreamID,
+        duration: CFAbsoluteTime = 1.2,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
+    ) {
+        let clampedDuration = max(0, duration)
+        pointerCoalescingLock.lock()
+        var state = temporaryPointerCoalescingByStreamID[streamID] ?? TemporaryPointerCoalescingState()
+        state.deadline = max(state.deadline, now + clampedDuration)
+        temporaryPointerCoalescingByStreamID[streamID] = state
+        pointerCoalescingLock.unlock()
+    }
+
+    func clearTemporaryPointerCoalescing(for streamID: StreamID) {
+        pointerCoalescingLock.lock()
+        temporaryPointerCoalescingByStreamID.removeValue(forKey: streamID)
+        pointerCoalescingLock.unlock()
+    }
+
     func sendInput(_ event: MirageInputEvent, streamID: StreamID) async throws {
+        if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
+            return
+        }
         let data = try makeInputMessageData(event: event, streamID: streamID)
         let connection = try currentConnectionOrThrow()
 
@@ -40,6 +71,10 @@ final class MirageInputEventSender: @unchecked Sendable {
     }
 
     func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
+        if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
+            return
+        }
+
         let data: Data
         do {
             data = try makeInputMessageData(event: event, streamID: streamID)
@@ -72,5 +107,59 @@ final class MirageInputEventSender: @unchecked Sendable {
             throw MirageError.protocolError("Not connected")
         }
         return connection
+    }
+
+    func shouldDropInputForTemporaryCoalescingForTesting(
+        _ event: MirageInputEvent,
+        streamID: StreamID,
+        now: CFAbsoluteTime,
+        minInterval: CFAbsoluteTime = 1.0 / 60.0
+    ) -> Bool {
+        shouldDropInputForTemporaryCoalescing(
+            event,
+            streamID: streamID,
+            now: now,
+            minInterval: minInterval
+        )
+    }
+
+    private func shouldDropInputForTemporaryCoalescing(
+        _ event: MirageInputEvent,
+        streamID: StreamID,
+        now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent(),
+        minInterval: CFAbsoluteTime = 1.0 / 60.0
+    ) -> Bool {
+        guard isPointerMoveOrDragEvent(event) else { return false }
+
+        pointerCoalescingLock.lock()
+        defer { pointerCoalescingLock.unlock() }
+        guard var state = temporaryPointerCoalescingByStreamID[streamID] else { return false }
+
+        if now > state.deadline {
+            temporaryPointerCoalescingByStreamID.removeValue(forKey: streamID)
+            return false
+        }
+
+        if state.lastForwardedPointerTimestamp > 0,
+           now - state.lastForwardedPointerTimestamp < minInterval {
+            temporaryPointerCoalescingByStreamID[streamID] = state
+            return true
+        }
+
+        state.lastForwardedPointerTimestamp = now
+        temporaryPointerCoalescingByStreamID[streamID] = state
+        return false
+    }
+
+    private func isPointerMoveOrDragEvent(_ event: MirageInputEvent) -> Bool {
+        switch event {
+        case .mouseMoved,
+             .mouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            true
+        default:
+            false
+        }
     }
 }

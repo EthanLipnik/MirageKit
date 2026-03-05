@@ -420,6 +420,7 @@ extension MirageClientService {
             removeActiveStreamID(streamID)
             registeredStreamIDs.remove(streamID)
             clearStreamRefreshRateOverride(streamID: streamID)
+            inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             clearAdaptiveFallbackState(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
             streamStartupBaseTimes.removeValue(forKey: streamID)
@@ -735,6 +736,7 @@ extension MirageClientService {
                 metricsStore.clear(streamID: streamID)
                 cursorStore.clear(streamID: streamID)
                 clearAdaptiveFallbackState(for: streamID)
+                inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
 
                 removeActiveStreamID(streamID)
                 registeredStreamIDs.remove(streamID)

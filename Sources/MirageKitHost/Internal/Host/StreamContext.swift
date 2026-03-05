@@ -118,6 +118,7 @@ actor StreamContext {
     var lastSyntheticLogTime: CFAbsoluteTime = 0
     var lastStreamStatsLogTime: CFAbsoluteTime = 0
     var metricsUpdateHandler: (@Sendable (StreamMetricsMessage) -> Void)?
+    var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
     var activeQuality: Float
     var qualityFloor: Float
     var qualityCeiling: Float

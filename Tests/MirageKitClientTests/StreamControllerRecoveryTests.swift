@@ -16,6 +16,12 @@ import Testing
 #if os(macOS)
 @Suite("Stream Controller Recovery")
 struct StreamControllerRecoveryTests {
+    @Test("Freeze monitor uses tightened timeout and poll interval")
+    func freezeMonitorUsesTightenedCadence() {
+        #expect(StreamController.freezeTimeout == 1.25)
+        #expect(StreamController.freezeCheckInterval == .milliseconds(250))
+    }
+
     @Test("Post-resize decode admission stays keyframe-only until first frame")
     func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstFrame() {
         let dropDecision = StreamController.postResizeDecodeAdmissionDecision(

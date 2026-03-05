@@ -168,10 +168,10 @@ actor StreamController {
     static let decodeRecoveryEscalationThreshold: Int = 3
 
     /// Duration without decoded frame presentation progress before recovery is requested.
-    static let freezeTimeout: CFAbsoluteTime = 5.0
+    static let freezeTimeout: CFAbsoluteTime = 1.25
 
     /// Interval for checking freeze state.
-    static let freezeCheckInterval: Duration = .milliseconds(500)
+    static let freezeCheckInterval: Duration = .milliseconds(250)
     static let freezeRecoveryCooldown: CFAbsoluteTime = 3.0
     static let freezeRecoveryEscalationThreshold: Int = 2
 

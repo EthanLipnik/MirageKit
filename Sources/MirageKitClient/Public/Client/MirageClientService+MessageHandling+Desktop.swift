@@ -153,6 +153,7 @@ extension MirageClientService {
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
             clearAdaptiveFallbackState(for: streamID)
+            inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             pendingDesktopAdaptiveFallbackBitrate = nil
             pendingDesktopAdaptiveFallbackBitDepth = nil
             activeJitterHoldMs = 0

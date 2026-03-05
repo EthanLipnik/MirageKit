@@ -97,6 +97,22 @@ extension MirageHostService {
         streamRegistry.unregisterTypingBurstHandler(streamID: streamID)
     }
 
+    @MainActor
+    func registerStallWindowPointerRoute(streamID: StreamID, context: StreamContext) async {
+        streamRegistry.registerPointerCoalescingRoute(streamID: streamID)
+        await context.setCaptureStallStageHandler { [weak self] stage in
+            self?.streamRegistry.noteCaptureStallStage(
+                streamID: streamID,
+                stage: stage
+            )
+        }
+    }
+
+    @MainActor
+    func unregisterStallWindowPointerRoute(streamID: StreamID) {
+        streamRegistry.unregisterPointerCoalescingRoute(streamID: streamID)
+    }
+
     nonisolated func sendVideoPacketForStream(
         _ streamID: StreamID,
         data: Data,

@@ -617,6 +617,9 @@ extension StreamContext {
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(displayWrapper.display.displayID)
         )
         captureEngine = restartCaptureEngine
+        if let captureStallStageHandler {
+            await restartCaptureEngine.setCaptureStallStageHandler(captureStallStageHandler)
+        }
         let frameInbox = self.frameInbox
         await restartCaptureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()

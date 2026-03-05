@@ -125,28 +125,44 @@ extension WindowCaptureEngine {
     nonisolated static func resolveStallPolicy(
         windowID: CGWindowID,
         captureMode: CaptureMode,
+        latencyMode: MirageStreamLatencyMode,
         frameRate: Int,
         configuredSoftStallLimit: CFAbsoluteTime,
-        displayStallThreshold: CFAbsoluteTime = 1.5,
+        displayStallThreshold: CFAbsoluteTime = 0.6,
         windowStallThreshold: CFAbsoluteTime = 8.0
     ) -> CaptureStallPolicy {
+        if captureMode == .display, windowID == 0 {
+            let safeConfiguredSoft = max(0, configuredSoftStallLimit)
+            let soft: CFAbsoluteTime
+            let hard: CFAbsoluteTime
+            let debounce: CFAbsoluteTime
+
+            switch latencyMode {
+            case .auto,
+                 .smoothest:
+                soft = min(max(safeConfiguredSoft, 0.60), 1.00)
+                hard = min(max(max(soft + 0.20, soft * 1.20), 1.10), 1.25)
+                debounce = 0.08
+            case .lowestLatency:
+                soft = min(max(safeConfiguredSoft, 1.20), 2.00)
+                hard = min(max(max(soft + 0.60, soft * 1.40), 1.80), 2.50)
+                debounce = 0.05
+            }
+
+            return CaptureStallPolicy(
+                softStallThreshold: soft,
+                hardRestartThreshold: hard,
+                restartDebounce: debounce,
+                cancellationGrace: 0.20
+            )
+        }
+
         let soft = CaptureStreamOutput.resolvedStallLimit(
             windowID: windowID,
             configuredStallLimit: configuredSoftStallLimit,
             displayStallThreshold: displayStallThreshold,
             windowStallThreshold: windowStallThreshold
         )
-
-        if captureMode == .display, windowID == 0 {
-            let hard = min(max(soft * 2.0, soft + 1.5), 8.0)
-            let debounce: CFAbsoluteTime = frameRate >= 120 ? 0.45 : 0.35
-            return CaptureStallPolicy(
-                softStallThreshold: soft,
-                hardRestartThreshold: hard,
-                restartDebounce: debounce,
-                cancellationGrace: 0.30
-            )
-        }
 
         if captureMode == .display {
             // App-stream display capture for a specific window can be quiescent for long periods.
@@ -174,6 +190,7 @@ extension WindowCaptureEngine {
         Self.resolveStallPolicy(
             windowID: windowID,
             captureMode: captureMode,
+            latencyMode: latencyMode,
             frameRate: frameRate,
             configuredSoftStallLimit: stallThreshold(for: frameRate)
         )

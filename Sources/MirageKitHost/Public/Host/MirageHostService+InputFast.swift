@@ -57,6 +57,12 @@ extension MirageHostService {
                 notifyTypingBurst(for: inputMessage.streamID)
             }
 
+            if cacheEntry.window.id == 0,
+               Self.shouldThrottlePointerEventForStallWindow(inputMessage.event),
+               streamRegistry.shouldCoalesceDesktopPointerEvent(streamID: inputMessage.streamID) {
+                return
+            }
+
             if let handler = onInputEventStorage { handler(inputMessage.event, cacheEntry.window, client) } else {
                 inputController.handleInputEvent(inputMessage.event, window: cacheEntry.window)
             }
@@ -67,6 +73,18 @@ extension MirageHostService {
 
     private nonisolated func notifyTypingBurst(for streamID: StreamID) {
         streamRegistry.notifyTypingBurst(streamID: streamID)
+    }
+
+    nonisolated static func shouldThrottlePointerEventForStallWindow(_ event: MirageInputEvent) -> Bool {
+        switch event {
+        case .mouseMoved,
+             .mouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            true
+        default:
+            false
+        }
     }
 }
 #endif

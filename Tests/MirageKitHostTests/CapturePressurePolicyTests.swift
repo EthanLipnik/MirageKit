@@ -77,19 +77,55 @@ struct CapturePressureProfileTests {
 
 @Suite("Capture Stall Policy")
 struct CaptureStallPolicyTests {
-    @Test("Display capture policy defers restart beyond soft stall threshold")
-    func displayPolicyDefersRestart() {
-        let policy = WindowCaptureEngine.resolveStallPolicy(
+    @Test("Auto desktop display policy uses aggressive restart thresholds")
+    func autoDesktopPolicyUsesAggressiveThresholds() {
+        let autoPolicy = WindowCaptureEngine.resolveStallPolicy(
             windowID: 0,
             captureMode: .display,
+            latencyMode: .auto,
+            frameRate: 60,
+            configuredSoftStallLimit: 2.0
+        )
+        let smoothestPolicy = WindowCaptureEngine.resolveStallPolicy(
+            windowID: 0,
+            captureMode: .display,
+            latencyMode: .smoothest,
             frameRate: 60,
             configuredSoftStallLimit: 2.0
         )
 
-        #expect(policy.softStallThreshold == 2.0)
-        #expect(policy.hardRestartThreshold > policy.softStallThreshold)
-        #expect(policy.restartDebounce > 0)
-        #expect(policy.cancellationGrace > 0)
+        #expect(abs(autoPolicy.softStallThreshold - 1.0) < 0.000_1)
+        #expect(abs(autoPolicy.hardRestartThreshold - 1.2) < 0.000_1)
+        #expect(autoPolicy.hardRestartThreshold <= 1.25)
+        #expect(autoPolicy.restartDebounce == 0.08)
+        #expect(autoPolicy.cancellationGrace == 0.2)
+
+        #expect(smoothestPolicy == autoPolicy)
+    }
+
+    @Test("Lowest-latency desktop policy is less aggressive but below legacy hard restart")
+    func lowestLatencyDesktopPolicyIsLessAggressiveThanAuto() {
+        let autoPolicy = WindowCaptureEngine.resolveStallPolicy(
+            windowID: 0,
+            captureMode: .display,
+            latencyMode: .auto,
+            frameRate: 60,
+            configuredSoftStallLimit: 2.0
+        )
+        let lowestLatencyPolicy = WindowCaptureEngine.resolveStallPolicy(
+            windowID: 0,
+            captureMode: .display,
+            latencyMode: .lowestLatency,
+            frameRate: 60,
+            configuredSoftStallLimit: 2.0
+        )
+
+        #expect(abs(lowestLatencyPolicy.softStallThreshold - 2.0) < 0.000_1)
+        #expect(abs(lowestLatencyPolicy.hardRestartThreshold - 2.5) < 0.000_1)
+        #expect(lowestLatencyPolicy.hardRestartThreshold > autoPolicy.hardRestartThreshold)
+        #expect(lowestLatencyPolicy.hardRestartThreshold < 4.0)
+        #expect(lowestLatencyPolicy.restartDebounce == 0.05)
+        #expect(lowestLatencyPolicy.cancellationGrace == 0.2)
     }
 
     @Test("Window capture policy keeps hard threshold equal to soft threshold")
@@ -97,6 +133,7 @@ struct CaptureStallPolicyTests {
         let policy = WindowCaptureEngine.resolveStallPolicy(
             windowID: 42,
             captureMode: .window,
+            latencyMode: .auto,
             frameRate: 60,
             configuredSoftStallLimit: 1.0
         )

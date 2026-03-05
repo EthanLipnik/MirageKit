@@ -224,6 +224,7 @@ public extension MirageHostService {
         // resolved live window before either stream reached registration.
         streamsByID[streamID] = context
         registerTypingBurstRoute(streamID: streamID, context: context)
+        await registerStallWindowPointerRoute(streamID: streamID, context: context)
         registerActiveStreamSession(session)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await context.setMetricsUpdateHandler { [weak self] metrics in
@@ -1107,6 +1108,7 @@ public extension MirageHostService {
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)
         unregisterTypingBurstRoute(streamID: session.id)
+        unregisterStallWindowPointerRoute(streamID: session.id)
         removeActiveStreamSession(streamID: session.id)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: session.id)

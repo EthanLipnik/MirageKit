@@ -57,6 +57,31 @@ struct CaptureRestartBackoffTests {
             ) == false
         )
     }
+
+    @Test("Resumed stall signal cancels pending capture restart")
+    func resumedStallSignalCancelsPendingRestart() async {
+        let engine = WindowCaptureEngine(
+            configuration: MirageEncoderConfiguration(targetFrameRate: 60),
+            latencyMode: .auto,
+            captureFrameRate: 60
+        )
+        await engine.setCaptureStateForTesting(isCapturing: true, captureMode: .display)
+        await engine.scheduleCaptureRestart(reason: "test-stall", debounce: 1.0)
+        #expect(await engine.hasScheduledCaptureRestartForTesting())
+
+        await engine.handleCaptureStallSignal(
+            CaptureStreamOutput.StallSignal(
+                stage: .resumed,
+                message: "stall resumed",
+                gapMs: "1200.0",
+                softThresholdMs: "1000.0",
+                hardThresholdMs: "1200.0",
+                restartEligible: false
+            )
+        )
+
+        #expect(await engine.hasScheduledCaptureRestartForTesting() == false)
+    }
 }
 
 @Suite("Recovery Reason Mapping")

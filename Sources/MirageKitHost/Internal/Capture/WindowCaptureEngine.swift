@@ -67,6 +67,7 @@ actor WindowCaptureEngine {
     var currentDisplayRefreshRate: Int?
     var admissionDropper: (@Sendable () -> Bool)?
     var pendingKeyframeRequest: CaptureKeyframeRequestReason?
+    var captureStallStageHandler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?
     var isCapturing = false
     var isRestarting = false
     var capturedFrameHandler: (@Sendable (CapturedFrame) -> Void)?
@@ -170,6 +171,10 @@ actor WindowCaptureEngine {
         admissionDropper = dropper
     }
 
+    func setCaptureStallStageHandler(_ handler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?) {
+        captureStallStageHandler = handler
+    }
+
     nonisolated func enqueueKeyframeRequest(_ reason: CaptureStreamOutput.KeyframeRequestReason) {
         Task(priority: .userInitiated) {
             await self.markKeyframeRequested(reason: reason)
@@ -183,6 +188,7 @@ actor WindowCaptureEngine {
     }
 
     func handleCaptureStallSignal(_ signal: CaptureStreamOutput.StallSignal) {
+        captureStallStageHandler?(signal.stage)
         switch signal.stage {
         case .soft:
             MirageLogger
@@ -196,6 +202,14 @@ actor WindowCaptureEngine {
                     "event=stall_detected stage=hard gapMs=\(signal.gapMs) " +
                         "softMs=\(signal.softThresholdMs) hardMs=\(signal.hardThresholdMs)"
                 )
+        case .resumed:
+            MirageLogger
+                .capture(
+                    "event=stall_resumed gapMs=\(signal.gapMs) " +
+                        "softMs=\(signal.softThresholdMs) hardMs=\(signal.hardThresholdMs)"
+                )
+            cancelScheduledCaptureRestart(reason: "frames_resumed_signal")
+            return
         }
 
         guard signal.restartEligible else { return }
@@ -250,6 +264,15 @@ actor WindowCaptureEngine {
 
         MirageLogger.capture("event=restart_executed reason=\(reason)")
         await restartCapture(reason: reason)
+    }
+
+    func hasScheduledCaptureRestartForTesting() -> Bool {
+        scheduledRestartTask != nil
+    }
+
+    func setCaptureStateForTesting(isCapturing: Bool, captureMode: CaptureMode?) {
+        self.isCapturing = isCapturing
+        self.captureMode = captureMode
     }
 }
 

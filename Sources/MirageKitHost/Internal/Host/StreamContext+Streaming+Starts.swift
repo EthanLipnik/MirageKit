@@ -148,6 +148,9 @@ extension StreamContext {
             usesDisplayRefreshCadence: false
         )
         self.captureEngine = captureEngine
+        if let captureStallStageHandler {
+            await captureEngine.setCaptureStallStageHandler(captureStallStageHandler)
+        }
         let frameInbox = self.frameInbox
         await captureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
@@ -310,6 +313,9 @@ extension StreamContext {
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
         )
         self.captureEngine = captureEngine
+        if let captureStallStageHandler {
+            await captureEngine.setCaptureStallStageHandler(captureStallStageHandler)
+        }
         let frameInbox = self.frameInbox
         await captureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
@@ -484,6 +490,9 @@ extension StreamContext {
             usesDisplayRefreshCadence: CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
         )
         self.captureEngine = captureEngine
+        if let captureStallStageHandler {
+            await captureEngine.setCaptureStallStageHandler(captureStallStageHandler)
+        }
         let frameInbox = self.frameInbox
         await captureEngine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()

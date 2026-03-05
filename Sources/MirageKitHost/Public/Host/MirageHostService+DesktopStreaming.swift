@@ -287,6 +287,7 @@ extension MirageHostService {
         desktopRequestedScaleFactor = resolvedClientScaleFactor
         streamsByID[streamID] = streamContext
         registerTypingBurstRoute(streamID: streamID, context: streamContext)
+        await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await activateAudioForClient(
             clientID: clientContext.client.id,
@@ -418,6 +419,7 @@ extension MirageHostService {
         desktopStreamMode = .mirrored
         streamsByID.removeValue(forKey: streamID)
         unregisterTypingBurstRoute(streamID: streamID)
+        unregisterStallWindowPointerRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
         streamStartupFirstPacketSent.remove(streamID)

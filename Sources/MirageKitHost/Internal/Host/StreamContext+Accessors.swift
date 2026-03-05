@@ -47,6 +47,13 @@ extension StreamContext {
         onCapturedAudioBuffer = handler
     }
 
+    func setCaptureStallStageHandler(_ handler: (@Sendable (CaptureStreamOutput.StallStage) -> Void)?) async {
+        captureStallStageHandler = handler
+        if let captureEngine {
+            await captureEngine.setCaptureStallStageHandler(handler)
+        }
+    }
+
     func setRequestedAudioChannelCount(_ channelCount: Int) {
         requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(channelCount)
     }
