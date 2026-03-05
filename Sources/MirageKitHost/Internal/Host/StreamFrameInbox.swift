@@ -13,6 +13,16 @@ import MirageKit
 /// Lock-protected inbox for captured frames.
 /// Keeps a bounded queue and drops oldest frames when full.
 final class StreamFrameInbox: @unchecked Sendable {
+    enum DrainPolicy {
+        case fifo
+        case newest
+    }
+
+    struct DrainResult {
+        let frame: CapturedFrame?
+        let droppedBeforeDelivery: Int
+    }
+
     private let lock = NSLock()
     private let capacity: Int
     private var buffer: [CapturedFrame?]
@@ -49,19 +59,46 @@ final class StreamFrameInbox: @unchecked Sendable {
         return shouldSchedule
     }
 
-    /// Take the oldest queued frame (FIFO).
-    func takeNext() -> CapturedFrame? {
+    func takeNext(policy: DrainPolicy = .fifo) -> DrainResult {
         lock.lock()
         guard !isEmpty else {
             lock.unlock()
-            return nil
+            return DrainResult(frame: nil, droppedBeforeDelivery: 0)
         }
-        let item = buffer[headIndex]
-        buffer[headIndex] = nil
-        headIndex = (headIndex + 1) % capacity
-        count -= 1
+
+        switch policy {
+        case .fifo:
+            let item = buffer[headIndex]
+            buffer[headIndex] = nil
+            headIndex = (headIndex + 1) % capacity
+            count -= 1
+            lock.unlock()
+            return DrainResult(frame: item, droppedBeforeDelivery: 0)
+
+        case .newest:
+            let newestIndex = (tailIndex - 1 + capacity) % capacity
+            let item = buffer[newestIndex]
+            let droppedBeforeDelivery = max(0, count - 1)
+            buffer = Array(repeating: nil, count: capacity)
+            headIndex = 0
+            tailIndex = 0
+            count = 0
+            lock.unlock()
+            return DrainResult(frame: item, droppedBeforeDelivery: droppedBeforeDelivery)
+        }
+    }
+
+    @discardableResult
+    func clear() -> Int {
+        lock.lock()
+        let clearedCount = count
+        if clearedCount > 0 { droppedCount += UInt64(clearedCount) }
+        buffer = Array(repeating: nil, count: capacity)
+        headIndex = 0
+        tailIndex = 0
+        count = 0
         lock.unlock()
-        return item
+        return clearedCount
     }
 
     /// Consume dropped-frame count since last read.
@@ -120,15 +157,6 @@ final class StreamFrameInbox: @unchecked Sendable {
         lock.unlock()
     }
 
-    func clear() {
-        lock.lock()
-        if !isEmpty { droppedCount += UInt64(count) }
-        buffer = Array(repeating: nil, count: capacity)
-        headIndex = 0
-        tailIndex = 0
-        count = 0
-        lock.unlock()
-    }
 }
 
 #endif

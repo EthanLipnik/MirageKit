@@ -94,6 +94,7 @@ extension MirageHostService {
         let context = StreamContext(
             streamID: streamID,
             windowID: 0,
+            streamKind: .loginDisplay,
             encoderConfig: encoderConfig,
             requestedAudioChannelCount: requestedLoginAudioChannelCount,
             maxPacketSize: networkConfig.maxPacketSize,

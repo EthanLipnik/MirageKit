@@ -68,6 +68,7 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
+            streamKind: .window,
             inFlightLimit: maxInFlightFrames,
             maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
@@ -234,6 +235,7 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
+            streamKind: .loginDisplay,
             inFlightLimit: maxInFlightFrames,
             maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
@@ -398,6 +400,7 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
+            streamKind: .desktop,
             inFlightLimit: maxInFlightFrames,
             maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )

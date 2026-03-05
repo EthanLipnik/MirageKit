@@ -21,6 +21,7 @@ struct EncoderSettingsSnapshot: Sendable {
     let colorSpace: MirageColorSpace
     let latencyMode: MirageStreamLatencyMode
     let performanceMode: MirageStreamPerformanceMode
+    let temporaryDegradationMode: MirageTemporaryDegradationMode
     let runtimeQualityAdjustmentEnabled: Bool
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
@@ -166,6 +167,7 @@ extension StreamContext {
             colorSpace: encoderConfig.colorSpace,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
+            temporaryDegradationMode: temporaryDegradationMode,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             capturePressureProfile: capturePressureProfile,

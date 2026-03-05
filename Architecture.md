@@ -299,6 +299,8 @@ Major responsibilities in `StreamContext`:
 - keyframe policy and recovery escalation
 - quality and backpressure adaptation
 - frame inbox and decode/encode pacing
+- latency-burst state for desktop typing that can clear buffered host work,
+  switch to freshest-frame delivery, and temporarily lower capture queue depth
 - packet send coordination (`StreamPacketSender`)
 - keyframe packet pacing with bitrate-budget token bucket shaping
 - optional encrypted payload wrapping
@@ -318,6 +320,10 @@ Host supports three stream families with separate orchestration:
    - `startDesktopStream(...)` / `stopDesktopStream(...)`.
    - mirrored vs secondary mode.
    - mirroring snapshot/suspend/restore logic around resize and mode transitions.
+   - auto typing bursts can temporarily switch desktop buffering to latency-first
+     behavior without changing requested resolution, bitrate, or bit depth.
+   - explicit high-resolution standard `Lowest Latency` avoids VT low-latency
+     rate control and keeps the stable real-time/no-reorder/max-frame-delay path.
    - transport marks the desktop stream as active in `HostTransportRegistry` so video packets bypass passive queue shedding.
 
 3. **Login display stream**

@@ -95,11 +95,44 @@ struct HEVCEncoderRateLimitTests {
         #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] == nil)
     }
 
-    @Test("Standard lowest-latency encoder specification enables low-latency rate control")
+    @Test("Standard lowest-latency encoder specification enables low-latency rate control for low-res desktop")
     func standardLowestLatencyEncoderSpecification() {
         let spec = HEVCEncoder.encoderSpecification(
             for: .standard,
-            latencyMode: .lowestLatency
+            latencyMode: .lowestLatency,
+            width: 2_560,
+            height: 1_440,
+            streamKind: .desktop
+        )
+
+        #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] as? Bool == true)
+    }
+
+    @Test("Standard lowest-latency desktop specification suppresses low-latency rate control at high resolution")
+    func standardLowestLatencyHighResDesktopSuppressesRateControl() {
+        let spec = HEVCEncoder.encoderSpecification(
+            for: .standard,
+            latencyMode: .lowestLatency,
+            width: 6_016,
+            height: 3_384,
+            streamKind: .desktop
+        )
+
+        #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] == nil)
+    }
+
+    @Test("Standard lowest-latency window specification keeps low-latency rate control at high resolution")
+    func standardLowestLatencyHighResWindowKeepsRateControl() {
+        let spec = HEVCEncoder.encoderSpecification(
+            for: .standard,
+            latencyMode: .lowestLatency,
+            width: 6_016,
+            height: 3_384,
+            streamKind: .window
         )
 
         #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)

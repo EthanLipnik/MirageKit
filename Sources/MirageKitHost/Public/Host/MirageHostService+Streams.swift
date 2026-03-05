@@ -100,6 +100,7 @@ public extension MirageHostService {
         performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = true,
+        temporaryDegradationMode: MirageTemporaryDegradationMode = .off,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
         allowDirectCaptureFallback: Bool = true,
@@ -193,6 +194,7 @@ public extension MirageHostService {
         let context = StreamContext(
             streamID: streamID,
             windowID: updatedWindow.id,
+            streamKind: .window,
             encoderConfig: effectiveEncoderConfig,
             streamScale: streamScale ?? 1.0,
             requestedAudioChannelCount: resolvedAudioConfiguration.channelLayout.channelCount,
@@ -200,6 +202,7 @@ public extension MirageHostService {
             mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: client.id),
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
+            temporaryDegradationMode: temporaryDegradationMode,
             disableResolutionCap: disableResolutionCap,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,

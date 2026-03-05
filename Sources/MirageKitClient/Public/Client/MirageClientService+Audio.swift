@@ -31,6 +31,8 @@ extension MirageClientService {
             preferredHost: mediaTransportHost,
             preferredIncludePeerToPeer: mediaTransportIncludePeerToPeer
         )
+        let candidateSummary = candidates.map { "\($0.label)=\($0.host):p2p=\($0.includePeerToPeer)" }.joined(separator: ", ")
+        MirageLogger.client("Audio UDP candidates: \(candidateSummary)")
         var lastError: Error?
         for (index, candidate) in candidates.enumerated() {
             do {

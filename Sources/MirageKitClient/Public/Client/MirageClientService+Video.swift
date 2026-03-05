@@ -17,6 +17,8 @@ extension MirageClientService {
     func startVideoConnection() async throws {
         guard hostDataPort > 0 else { throw MirageError.protocolError("Host data port not set") }
         let candidates = try resolveMediaTransportCandidates()
+        let candidateSummary = candidates.map { "\($0.label)=\($0.host):p2p=\($0.includePeerToPeer)" }.joined(separator: ", ")
+        MirageLogger.client("Video UDP candidates: \(candidateSummary)")
         var lastError: Error?
         for (index, candidate) in candidates.enumerated() {
             do {
@@ -233,9 +235,40 @@ extension MirageClientService {
     ) throws -> [UDPTransportCandidate] {
         guard let connection else { throw MirageError.protocolError("No TCP connection") }
 
+        let configuredPeerToPeer = networkConfig.enablePeerToPeer
+
+        let serviceHostName = connectedHost?.name ?? Self.serviceName(from: connection.endpoint)
+        let serviceHost = serviceHostName.map { NWEndpoint.Host($0) }
+        let remoteHost = Self.host(from: connection.currentPath?.remoteEndpoint)
+        let endpointHost = Self.host(from: connection.endpoint)
+
+        let candidates = Self.orderedMediaTransportCandidates(
+            preferredHost: preferredHost,
+            preferredIncludePeerToPeer: preferredIncludePeerToPeer,
+            serviceHost: serviceHost,
+            remoteHost: remoteHost,
+            endpointHost: endpointHost,
+            configuredPeerToPeer: configuredPeerToPeer,
+            controlPathKind: controlPathSnapshot?.kind
+        )
+
+        guard !candidates.isEmpty else {
+            throw MirageError.protocolError("Cannot determine host address")
+        }
+        return candidates
+    }
+
+    nonisolated static func orderedMediaTransportCandidates(
+        preferredHost: NWEndpoint.Host?,
+        preferredIncludePeerToPeer: Bool?,
+        serviceHost: NWEndpoint.Host?,
+        remoteHost: NWEndpoint.Host?,
+        endpointHost: NWEndpoint.Host?,
+        configuredPeerToPeer: Bool,
+        controlPathKind: MirageNetworkPathKind?
+    ) -> [UDPTransportCandidate] {
         var candidates: [UDPTransportCandidate] = []
         var seen: Set<String> = []
-        let configuredPeerToPeer = networkConfig.enablePeerToPeer
 
         func appendCandidate(host: NWEndpoint.Host, includePeerToPeer: Bool, label: String) {
             let key = "\(String(describing: host).lowercased())|p2p=\(includePeerToPeer)"
@@ -249,11 +282,6 @@ extension MirageClientService {
             )
         }
 
-        let serviceHostName = connectedHost?.name ?? Self.serviceName(from: connection.endpoint)
-        let serviceHost = serviceHostName.map { NWEndpoint.Host($0) }
-        let remoteHost = Self.host(from: connection.currentPath?.remoteEndpoint)
-        let endpointHost = Self.host(from: connection.endpoint)
-
         if let preferredHost {
             appendCandidate(
                 host: preferredHost,
@@ -262,8 +290,22 @@ extension MirageClientService {
             )
         }
 
+        let shouldPreferControlRemoteEndpoint = if let remoteHost {
+            controlPathKind == .wired && isLikelyPeerToPeerLinkLocalHost(remoteHost)
+        } else {
+            false
+        }
+
+        if shouldPreferControlRemoteEndpoint, let remoteHost {
+            appendCandidate(
+                host: remoteHost,
+                includePeerToPeer: configuredPeerToPeer,
+                label: "control-remote-endpoint"
+            )
+        }
+
         if let remoteHost,
-           Self.isLikelyPeerToPeerLinkLocalHost(remoteHost),
+           isLikelyPeerToPeerLinkLocalHost(remoteHost),
            let serviceHost {
             appendCandidate(
                 host: serviceHost,
@@ -272,7 +314,7 @@ extension MirageClientService {
             )
         }
 
-        if let remoteHost {
+        if !shouldPreferControlRemoteEndpoint, let remoteHost {
             appendCandidate(
                 host: remoteHost,
                 includePeerToPeer: configuredPeerToPeer,
@@ -303,9 +345,6 @@ extension MirageClientService {
             }
         }
 
-        guard !candidates.isEmpty else {
-            throw MirageError.protocolError("Cannot determine host address")
-        }
         return candidates
     }
 

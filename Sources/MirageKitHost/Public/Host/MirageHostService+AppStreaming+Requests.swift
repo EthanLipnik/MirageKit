@@ -727,6 +727,9 @@ extension MirageHostService {
                     .lowLatencyHighResolutionCompressionBoostEnabled ??
                     selectRequest.lowLatencyHighResolutionCompressionBoost ??
                     true,
+                temporaryDegradationMode: encoderSettings?.temporaryDegradationMode ??
+                    selectRequest.temporaryDegradationMode ??
+                    .off,
                 disableResolutionCap: disableResolutionCap,
                 allowBestEffortRemap: false,
                 audioConfiguration: audioConfiguration
@@ -1236,6 +1239,7 @@ extension MirageHostService {
             performanceMode: selectRequest.performanceMode ?? .standard,
             allowRuntimeQualityAdjustment: selectRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? true,
+            temporaryDegradationMode: selectRequest.temporaryDegradationMode ?? .off,
             disableResolutionCap: selectRequest.disableResolutionCap ?? false,
             allowBestEffortRemap: false,
             audioConfiguration: selectRequest.audioConfiguration ?? .default

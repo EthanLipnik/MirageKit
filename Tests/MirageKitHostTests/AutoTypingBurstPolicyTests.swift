@@ -19,15 +19,23 @@ struct AutoTypingBurstPolicyTests {
         let context = makeContext(latencyMode: .auto)
         let baseline = await context.typingBurstSnapshot()
         #expect(!baseline.isActive)
+        #expect(!baseline.latencyBurstActive)
         #expect(baseline.maxInFlightFrames == 3)
+        #expect(baseline.captureQueueDepthOverride == nil)
+        #expect(!baseline.newestFrameDrainEnabled)
 
         await context.noteTypingBurstActivity(at: 100.0, scheduleExpiry: false)
         let active = await context.typingBurstSnapshot()
+        let activeSettings = await context.getEncoderSettings()
         #expect(active.isActive)
+        #expect(active.latencyBurstActive)
         #expect(abs(active.deadline - 100.35) < 0.0001)
         #expect(active.maxInFlightFrames == 1)
-        #expect(abs(active.qualityCeiling - 0.62) < 0.0001)
-        #expect(active.activeQuality <= baseline.activeQuality)
+        #expect(active.captureQueueDepthOverride == 2)
+        #expect(active.newestFrameDrainEnabled)
+        #expect(activeSettings.captureQueueDepth == 2)
+        #expect(abs(active.qualityCeiling - baseline.qualityCeiling) < 0.0001)
+        #expect(abs(active.activeQuality - baseline.activeQuality) < 0.0001)
 
         await context.noteTypingBurstActivity(at: 100.2, scheduleExpiry: false)
         let extended = await context.typingBurstSnapshot()
@@ -41,25 +49,32 @@ struct AutoTypingBurstPolicyTests {
 
         await context.expireTypingBurstIfNeeded(at: 100.56)
         let restored = await context.typingBurstSnapshot()
+        let restoredSettings = await context.getEncoderSettings()
         #expect(!restored.isActive)
+        #expect(!restored.latencyBurstActive)
         #expect(restored.maxInFlightFrames == baseline.maxInFlightFrames)
+        #expect(restored.captureQueueDepthOverride == nil)
+        #expect(!restored.newestFrameDrainEnabled)
+        #expect(restoredSettings.captureQueueDepth == nil)
         #expect(abs(restored.qualityCeiling - baseline.qualityCeiling) < 0.0001)
-        #expect(restored.activeQuality <= active.activeQuality + 0.0001)
+        #expect(abs(restored.activeQuality - baseline.activeQuality) < 0.0001)
     }
 
-    @Test("Auto mode keeps quality monotonic across burst expiry")
-    func autoModeBurstQualityRemainsMonotonic() async {
+    @Test("Auto mode keeps quality unchanged across burst expiry")
+    func autoModeBurstQualityPreserved() async {
         let context = makeContext(latencyMode: .auto)
+        let baseline = await context.typingBurstSnapshot()
 
         await context.noteTypingBurstActivity(at: 400.0, scheduleExpiry: false)
         let duringBurst = await context.typingBurstSnapshot()
-        #expect(duringBurst.activeQuality <= duringBurst.qualityCeiling + 0.0001)
+        #expect(abs(duringBurst.activeQuality - baseline.activeQuality) < 0.0001)
+        #expect(abs(duringBurst.qualityCeiling - baseline.qualityCeiling) < 0.0001)
 
         await context.noteTypingBurstActivity(at: 400.2, scheduleExpiry: false)
         await context.expireTypingBurstIfNeeded(at: 400.6)
         let afterBurst = await context.typingBurstSnapshot()
         #expect(!afterBurst.isActive)
-        #expect(afterBurst.activeQuality <= duringBurst.activeQuality + 0.0001)
+        #expect(abs(afterBurst.activeQuality - baseline.activeQuality) < 0.0001)
     }
 
     @Test("Auto burst expiry restores smooth baseline in-flight target")
@@ -80,7 +95,10 @@ struct AutoTypingBurstPolicyTests {
         await context.noteTypingBurstActivity(at: 200.0, scheduleExpiry: false)
         let snapshot = await context.typingBurstSnapshot()
         #expect(!snapshot.isActive)
+        #expect(!snapshot.latencyBurstActive)
         #expect(snapshot.maxInFlightFrames == 1)
+        #expect(snapshot.captureQueueDepthOverride == nil)
+        #expect(!snapshot.newestFrameDrainEnabled)
     }
 
     @Test("Stream context default latency mode behaves as auto")
@@ -95,7 +113,9 @@ struct AutoTypingBurstPolicyTests {
         await context.noteTypingBurstActivity(at: 300.0, scheduleExpiry: false)
         let snapshot = await context.typingBurstSnapshot()
         #expect(snapshot.isActive)
+        #expect(snapshot.latencyBurstActive)
         #expect(snapshot.maxInFlightFrames == 1)
+        #expect(snapshot.captureQueueDepthOverride == 2)
     }
 
     private func makeContext(latencyMode: MirageStreamLatencyMode) -> StreamContext {

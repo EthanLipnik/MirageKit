@@ -16,15 +16,39 @@ import MirageKit
 import ScreenCaptureKit
 
 extension HEVCEncoder {
+    nonisolated static let standardDesktopLowLatencySuppressionPixelThreshold = 3_840 * 2_160
+
     nonisolated static func encoderSpecification(
         for performanceMode: MirageStreamPerformanceMode,
         latencyMode: MirageStreamLatencyMode
+    ) -> [CFString: Any] {
+        encoderSpecification(
+            for: performanceMode,
+            latencyMode: latencyMode,
+            width: 0,
+            height: 0,
+            streamKind: .window
+        )
+    }
+
+    nonisolated static func encoderSpecification(
+        for performanceMode: MirageStreamPerformanceMode,
+        latencyMode: MirageStreamLatencyMode,
+        width: Int,
+        height: Int,
+        streamKind: StreamKind
     ) -> [CFString: Any] {
         var spec: [CFString: Any] = [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
         ]
-        if performanceMode == .game || standardLowLatencyVTTuningEnabled(performanceMode: performanceMode, latencyMode: latencyMode) {
+        if performanceMode == .game || standardLowLatencyVTTuningEnabled(
+            performanceMode: performanceMode,
+            latencyMode: latencyMode,
+            width: width,
+            height: height,
+            streamKind: streamKind
+        ) {
             spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] = true
         }
         return spec
@@ -34,7 +58,55 @@ extension HEVCEncoder {
         performanceMode: MirageStreamPerformanceMode,
         latencyMode: MirageStreamLatencyMode
     ) -> Bool {
-        performanceMode == .standard && latencyMode == .lowestLatency
+        standardLowLatencyVTTuningEnabled(
+            performanceMode: performanceMode,
+            latencyMode: latencyMode,
+            width: 0,
+            height: 0,
+            streamKind: .window
+        )
+    }
+
+    nonisolated static func standardLowLatencyVTTuningEnabled(
+        performanceMode: MirageStreamPerformanceMode,
+        latencyMode: MirageStreamLatencyMode,
+        width: Int,
+        height: Int,
+        streamKind: StreamKind
+    ) -> Bool {
+        guard performanceMode == .standard, latencyMode == .lowestLatency else { return false }
+        return !shouldSuppressStandardDesktopLowLatencyTuning(
+            width: width,
+            height: height,
+            streamKind: streamKind
+        )
+    }
+
+    nonisolated static func shouldSuppressStandardDesktopLowLatencyTuning(
+        width: Int,
+        height: Int,
+        streamKind: StreamKind
+    ) -> Bool {
+        guard streamKind == .desktop else { return false }
+        let safeWidth = max(0, width)
+        let safeHeight = max(0, height)
+        return safeWidth * safeHeight >= standardDesktopLowLatencySuppressionPixelThreshold
+    }
+
+    nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
+        performanceMode: MirageStreamPerformanceMode,
+        latencyMode: MirageStreamLatencyMode,
+        width: Int,
+        height: Int,
+        streamKind: StreamKind
+    ) -> Bool {
+        performanceMode == .standard &&
+            latencyMode == .lowestLatency &&
+            shouldSuppressStandardDesktopLowLatencyTuning(
+                width: width,
+                height: height,
+                streamKind: streamKind
+            )
     }
 
     private struct GameModeRateControlPolicy {
@@ -145,7 +217,10 @@ extension HEVCEncoder {
 
         let baseSpec = Self.encoderSpecification(
             for: performanceMode,
-            latencyMode: resolvedSessionLatencyMode()
+            latencyMode: resolvedSessionLatencyMode(),
+            width: width,
+            height: height,
+            streamKind: streamKind
         )
 
         var status = VTCompressionSessionCreate(
@@ -190,7 +265,7 @@ extension HEVCEncoder {
 
         hardwareStatusRefreshAttempts = 0
         loadSupportedProperties(session)
-        try configureSession(session)
+        try configureSession(session, width: width, height: height)
         logHardwareStatus(session, reason: "session_create")
         compressionSession = session
 
@@ -214,6 +289,26 @@ extension HEVCEncoder {
         }
         if performanceMode == .game {
             MirageLogger.encoder("Encoder spec: game mode low-latency rate control requested")
+        } else if resolvedSessionLatencyMode() == .lowestLatency {
+            if Self.shouldSuppressStandardDesktopLowLatencyTuning(
+                width: width,
+                height: height,
+                streamKind: streamKind
+            ) {
+                MirageLogger.encoder(
+                    "Encoder spec: standard low-latency rate control suppressed for high-res desktop \(width)x\(height)"
+                )
+            } else if Self.standardLowLatencyVTTuningEnabled(
+                performanceMode: performanceMode,
+                latencyMode: resolvedSessionLatencyMode(),
+                width: width,
+                height: height,
+                streamKind: streamKind
+            ) {
+                MirageLogger.encoder(
+                    "Encoder spec: standard low-latency rate control requested for \(streamKind.rawValue) \(width)x\(height)"
+                )
+            }
         }
     }
 
@@ -626,11 +721,25 @@ extension HEVCEncoder {
         return (bytes: bytes, windowSeconds: windowSeconds)
     }
 
-    private func configureSession(_ session: VTCompressionSession) throws {
+    private func configureSession(
+        _ session: VTCompressionSession,
+        width: Int,
+        height: Int
+    ) throws {
         let resolvedLatencyMode = resolvedSessionLatencyMode()
         let standardLowLatencyTuningEnabled = Self.standardLowLatencyVTTuningEnabled(
             performanceMode: performanceMode,
-            latencyMode: resolvedLatencyMode
+            latencyMode: resolvedLatencyMode,
+            width: width,
+            height: height,
+            streamKind: streamKind
+        )
+        let suppressedStandardLowLatencyThroughputTuningEnabled = Self.shouldApplySuppressedStandardLowLatencyThroughputTuning(
+            performanceMode: performanceMode,
+            latencyMode: resolvedLatencyMode,
+            width: width,
+            height: height,
+            streamKind: streamKind
         )
         let gameModePolicy = performanceMode == .game ? GameModeRateControlPolicy(
             targetFrameRate: configuration.targetFrameRate
@@ -685,7 +794,7 @@ extension HEVCEncoder {
                 value: configuration.targetFrameRate as CFNumber
             )
 
-            if standardLowLatencyTuningEnabled {
+            if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
                 applyStandardLowLatencyThroughputSettings(
                     session,
                     status: &standardLowLatencyStatus
@@ -765,9 +874,10 @@ extension HEVCEncoder {
         } else {
             // Apply bitrate caps to keep encode time bounded for motion-heavy scenes.
             applyBitrateSettings(session)
-            if standardLowLatencyTuningEnabled {
+            if standardLowLatencyTuningEnabled || suppressedStandardLowLatencyThroughputTuningEnabled {
                 MirageLogger.encoder(
                     "event=encoder_standard_low_latency_tuning applied=\(standardLowLatencyStatus.appliedText) " +
+                        "suppressedRateControl=\(suppressedStandardLowLatencyThroughputTuningEnabled) " +
                         "unsupported=\(standardLowLatencyStatus.unsupportedText) " +
                         "failed=\(standardLowLatencyStatus.failedText)"
                 )

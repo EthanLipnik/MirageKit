@@ -18,6 +18,7 @@ import ScreenCaptureKit
 actor StreamContext {
     let streamID: StreamID
     var windowID: WindowID
+    let streamKind: HEVCEncoder.StreamKind
     var encoderConfig: MirageEncoderConfiguration
     var streamScale: CGFloat
     var baseCaptureSize: CGSize = .zero
@@ -154,10 +155,34 @@ actor StreamContext {
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
     let typingBurstWindow: CFAbsoluteTime = 0.35
     let typingBurstInFlightLimit = 1
-    let typingBurstQualityCap: Float = 0.62
+    let latencyBurstCaptureQueueDepth = 2
     var typingBurstDeadline: CFAbsoluteTime = 0
     var typingBurstActive = false
     var typingBurstExpiryTask: Task<Void, Never>?
+    var latencyBurstActive = false
+    var latencyBurstDrainsNewestFrames = false
+    var latencyBurstCaptureQueueDepthOverride: Int?
+    var preLatencyBurstCaptureQueueDepthOverride: Int?
+    let temporaryDegradationBitrateFloorBps: Int = 8_000_000
+    let temporaryDegradationRampStep: Double = 1.10
+    let temporaryDegradationBitrateStepFramerate: Double = 0.85
+    let temporaryDegradationBitrateStepVisuals: Double = 0.90
+    let temporaryDegradationStableThresholdRatio: Double = 0.95
+    let temporaryDegradationSevereThresholdRatio: Double = 0.70
+    let temporaryDegradationStableEncodeBudgetRatio: Double = 0.85
+    let temporaryDegradationOverBudgetRatio: Double = 1.05
+    let temporaryDegradationSevereEncodeBudgetRatio: Double = 1.35
+    let temporaryDegradationStableWindowsThreshold: Int = 2
+    let temporaryDegradationVisualBitDepthDropThreshold: Int = 3
+    var requestedTargetBitrate: Int?
+    let requestedTargetBitDepth: MirageVideoBitDepth
+    var startupBitrate: Int?
+    var temporaryDegradationCurrentBitrate: Int?
+    var temporaryDegradationCurrentBitDepth: MirageVideoBitDepth
+    var temporaryDegradationBelowTargetSince: CFAbsoluteTime = 0
+    var temporaryDegradationStableWindows: Int = 0
+    var temporaryDegradationOverloadWindows: Int = 0
+    var temporaryDegradationSevereOverloadWindows: Int = 0
 
     // Pipeline throughput metrics (interval counters)
     var captureIngressIntervalCount: UInt64 = 0
@@ -314,6 +339,8 @@ actor StreamContext {
     let runtimeQualityAdjustmentEnabled: Bool
     /// When true, lowest-latency high-resolution streams use stronger compression.
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
+    /// Policy for temporary bitrate/bit-depth degradation and recovery.
+    let temporaryDegradationMode: MirageTemporaryDegradationMode
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
     /// When true, request VideoToolbox power-efficiency preference on the encoder session.
@@ -349,6 +376,7 @@ actor StreamContext {
     nonisolated static let gameModeQueueCapBytes: Int = 12_000_000
     nonisolated static let gameModeBackpressureTriggerBytes: Int = 6_000_000
     nonisolated static let gameModeQueuePressureRatio: Double = 0.80
+    nonisolated static let temporaryDegradationBitrateFloorBpsDefault: Int = 8_000_000
     nonisolated static let canonical6KWidth: Int = 6_016
     nonisolated static let canonical6KHeight: Int = 3_384
     nonisolated static let minAudioCaptureChannelCount: Int = 1
@@ -361,6 +389,7 @@ actor StreamContext {
     init(
         streamID: StreamID,
         windowID: WindowID,
+        streamKind: HEVCEncoder.StreamKind = .window,
         encoderConfig: MirageEncoderConfiguration,
         streamScale: CGFloat = 1.0,
         requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount,
@@ -369,6 +398,7 @@ actor StreamContext {
         additionalFrameFlags: FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
+        temporaryDegradationMode: MirageTemporaryDegradationMode = .off,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
@@ -380,6 +410,12 @@ actor StreamContext {
         var resolvedRuntimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         var resolvedLowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
         var resolvedCapturePressureProfile = capturePressureProfile
+        let requestedTargetBitrate = resolvedEncoderConfig.bitrate
+        let initialTemporaryBitrate = Self.initialTemporaryDegradationBitrate(
+            mode: temporaryDegradationMode,
+            requestedBitrate: requestedTargetBitrate,
+            floor: Self.temporaryDegradationBitrateFloorBpsDefault
+        )
         if performanceMode == .game {
             resolvedLatencyMode = .lowestLatency
             // Sunshine-style game mode keeps latency-first VT policy but avoids
@@ -395,10 +431,13 @@ actor StreamContext {
             ) {
                 resolvedEncoderConfig.bitrate = normalizedBitrate
             }
+        } else if let initialTemporaryBitrate {
+            resolvedEncoderConfig.bitrate = initialTemporaryBitrate
         }
 
         self.streamID = streamID
         self.windowID = windowID
+        self.streamKind = streamKind
         self.encoderConfig = resolvedEncoderConfig
         self.latencyMode = resolvedLatencyMode
         self.performanceMode = performanceMode
@@ -415,10 +454,12 @@ actor StreamContext {
         self.runtimeQualityAdjustmentEnabled = resolvedRuntimeQualityAdjustmentEnabled
         self.lowLatencyHighResolutionCompressionBoostEnabled =
             resolvedLowLatencyHighResolutionCompressionBoostEnabled
+        self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.encoderLowPowerEnabled = encoderLowPowerEnabled
         self.capturePressureProfile = resolvedCapturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
+        requestedTargetBitDepth = encoderConfig.bitDepth
         activePixelFormat = resolvedEncoderConfig.pixelFormat
         let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
         let latencySensitive = resolvedLatencyMode == .lowestLatency
@@ -481,6 +522,15 @@ actor StreamContext {
         gameModeBaselineBitDepth = resolvedEncoderConfig.bitDepth
         gameModeBaselineBitrate = resolvedEncoderConfig.bitrate
         gameModeBaselineStreamScale = clampedScale
+        self.requestedTargetBitrate = requestedTargetBitrate
+        startupBitrate = initialTemporaryBitrate
+        temporaryDegradationCurrentBitrate = resolvedEncoderConfig.bitrate
+        temporaryDegradationCurrentBitDepth = resolvedEncoderConfig.bitDepth
+        if let requestedTargetBitrate,
+           let currentBitrate = resolvedEncoderConfig.bitrate,
+           currentBitrate < requestedTargetBitrate {
+            temporaryDegradationBelowTargetSince = gameModeStreamStartTime
+        }
 
         if performanceMode == .game {
             let bitrateText = String(resolvedEncoderConfig.bitrate ?? 0)
@@ -514,6 +564,26 @@ actor StreamContext {
     static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
         guard scale > 0 else { return 1.0 }
         return max(0.1, min(1.0, scale))
+    }
+
+    static func initialTemporaryDegradationBitrate(
+        mode: MirageTemporaryDegradationMode,
+        requestedBitrate: Int?,
+        floor: Int
+    ) -> Int? {
+        guard let requestedBitrate, requestedBitrate > 0 else { return nil }
+        let scale: Double = switch mode {
+        case .off:
+            1.0
+        case .prioritizeFramerate:
+            0.70
+        case .prioritizeVisuals:
+            0.85
+        }
+        let scaled = Int((Double(requestedBitrate) * scale).rounded(.down))
+        let clampedFloor = max(1, floor)
+        let result = max(clampedFloor, scaled)
+        return min(requestedBitrate, result)
     }
 
     func resolvedCaptureFrameRate(for targetFrameRate: Int) -> Int {

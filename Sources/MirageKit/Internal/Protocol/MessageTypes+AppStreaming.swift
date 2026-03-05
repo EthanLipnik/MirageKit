@@ -196,6 +196,8 @@ package struct SelectAppMessage: Codable {
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
+    /// Client-requested temporary degradation policy.
+    package var temporaryDegradationMode: MirageTemporaryDegradationMode?
     /// Client-requested override to bypass host/client resolution caps.
     package var disableResolutionCap: Bool?
     /// Client-requested stream scale (0.1-1.0)
@@ -222,6 +224,7 @@ package struct SelectAppMessage: Codable {
         case performanceMode
         case allowRuntimeQualityAdjustment
         case lowLatencyHighResolutionCompressionBoost
+        case temporaryDegradationMode
         case disableResolutionCap
         case streamScale
         case audioConfiguration
@@ -244,6 +247,7 @@ package struct SelectAppMessage: Codable {
         performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
+        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -264,6 +268,7 @@ package struct SelectAppMessage: Codable {
         self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+        self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration

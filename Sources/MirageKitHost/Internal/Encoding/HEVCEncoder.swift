@@ -15,6 +15,12 @@ import MirageKit
 
 /// Hardware-accelerated HEVC encoder using VideoToolbox
 actor HEVCEncoder {
+    enum StreamKind: String, Sendable {
+        case window
+        case desktop
+        case loginDisplay
+    }
+
     struct RuntimeValidationSnapshot: Sendable {
         let pixelFormat: MiragePixelFormat
         let profileName: String?
@@ -30,6 +36,7 @@ actor HEVCEncoder {
     var configuration: MirageEncoderConfiguration
     let latencyMode: MirageStreamLatencyMode
     let performanceMode: MirageStreamPerformanceMode
+    let streamKind: StreamKind
     var autoTypingBurstLowLatencyActive = false
     var activePixelFormat: MiragePixelFormat
     var activeProfileLevel: CFString?
@@ -76,12 +83,14 @@ actor HEVCEncoder {
         configuration: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode = .auto,
         performanceMode: MirageStreamPerformanceMode = .standard,
+        streamKind: StreamKind = .window,
         inFlightLimit: Int? = nil,
         maximizePowerEfficiencyEnabled: Bool = false
     ) {
         self.configuration = configuration
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode
+        self.streamKind = streamKind
         self.maximizePowerEfficiencyEnabled = maximizePowerEfficiencyEnabled
         activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1

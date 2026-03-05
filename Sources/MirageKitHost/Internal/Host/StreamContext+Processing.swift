@@ -147,11 +147,21 @@ extension StreamContext {
         typingBurstExpiryTask = nil
         typingBurstActive = false
         typingBurstDeadline = 0
+        if latencyBurstCaptureQueueDepthOverride != nil {
+            encoderConfig.captureQueueDepth = preLatencyBurstCaptureQueueDepthOverride
+        }
+        latencyBurstActive = false
+        latencyBurstDrainsNewestFrames = false
+        latencyBurstCaptureQueueDepthOverride = nil
+        preLatencyBurstCaptureQueueDepthOverride = nil
         if let encoder { scheduleEncoderTypingBurstUpdate(encoder, enabled: false) }
         maxInFlightFrames = resolvedPostTypingBurstInFlightLimit()
         qualityCeiling = resolvedQualityCeiling()
         if activeQuality > qualityCeiling { activeQuality = qualityCeiling }
         frameInbox.clear()
+        temporaryDegradationStableWindows = 0
+        temporaryDegradationOverloadWindows = 0
+        temporaryDegradationSevereOverloadWindows = 0
     }
 
     func clearBackpressureState(queueBytes: Int? = nil, log: Bool = true) {
@@ -195,7 +205,7 @@ extension StreamContext {
         return true
     }
 
-    /// Process pending frames (encodes using HEVC and keeps only the most recent).
+    /// Process pending frames (encodes using HEVC and can switch to freshest-frame delivery).
     func processPendingFrames() async {
         defer {
             frameInbox.markDrainComplete()
@@ -226,7 +236,21 @@ extension StreamContext {
         }
 
         while inFlightCount < maxInFlightFrames {
-            guard let frame = frameInbox.takeNext() else { return }
+            let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
+                .newest
+            } else {
+                .fifo
+            }
+            let drainResult = frameInbox.takeNext(policy: drainPolicy)
+            if drainResult.droppedBeforeDelivery > 0 {
+                let droppedCount = UInt64(drainResult.droppedBeforeDelivery)
+                captureDroppedIntervalCount += droppedCount
+                droppedFrameCount += droppedCount
+                MirageLogger.metrics(
+                    "Latency burst dropped \(drainResult.droppedBeforeDelivery) stale frames before encode for stream \(streamID)"
+                )
+            }
+            guard let frame = drainResult.frame else { return }
 
             let encoderStuck = inFlightCount > 0 && lastEncodeActivityTime > 0 &&
                 (CFAbsoluteTimeGetCurrent() - lastEncodeActivityTime) * 1000 > maxEncodeTimeMs
@@ -559,6 +583,13 @@ extension StreamContext {
                 capture: captureValidation,
                 encoder: encoderValidation
             )
+            let currentBitrate = temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate
+            let timeBelowTargetBitrateMs: Int? = if temporaryDegradationBelowTargetSince > 0 {
+                Int(((now - temporaryDegradationBelowTargetSince) * 1000).rounded())
+            } else {
+                nil
+            }
+            let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -566,6 +597,14 @@ extension StreamContext {
                 droppedFrames: droppedFrameCount,
                 activeQuality: activeQuality,
                 targetFrameRate: currentFrameRate,
+                currentBitrate: currentBitrate,
+                requestedTargetBitrate: requestedTargetBitrate,
+                startupBitrate: startupBitrate,
+                temporaryDegradationMode: temporaryDegradationMode,
+                temporaryDegradationBitDepth: temporaryDegradationCurrentBitDepth,
+                timeBelowTargetBitrateMs: timeBelowTargetBitrateMs,
+                captureAdmissionDrops: captureDroppedIntervalCount,
+                frameBudgetMs: frameBudgetMs,
                 averageEncodeMs: resolvedAverageEncodeMs,
                 usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
                 encoderGPURegistryID: encoderValidation?.encoderGPURegistryID,
@@ -734,6 +773,13 @@ extension StreamContext {
         await evaluateGameModeDeficitWindowIfNeeded(
             encodedFPS: encodeFPS,
             averageEncodeMs: encodeAvgMs,
+            at: now
+        )
+        await evaluateStandardTemporaryDegradationIfNeeded(
+            encodedFPS: encodeFPS,
+            averageEncodeMs: encodeAvgMs,
+            queueBytes: queueBytes,
+            captureDroppedFrames: captureDroppedIntervalCount,
             at: now
         )
 
@@ -913,6 +959,270 @@ extension StreamContext {
                 "event=game_mode_stage_restore stream=\(streamID) from=\(priorStage.logName) to=\(nextStage.logName) " +
                     "applied=\(applied) encodedFPS=\(encodedText) avgEncodeMs=\(avgText)"
             )
+    }
+
+    private func shouldUseStandardTemporaryDegradationGovernor() -> Bool {
+        performanceMode == .standard &&
+            streamKind == .desktop &&
+            temporaryDegradationMode != .off &&
+            (requestedTargetBitrate ?? 0) > 0
+    }
+
+    func evaluateStandardTemporaryDegradationIfNeeded(
+        encodedFPS: Double,
+        averageEncodeMs: Double,
+        queueBytes: Int,
+        captureDroppedFrames: UInt64,
+        at now: CFAbsoluteTime
+    ) async {
+        guard shouldUseStandardTemporaryDegradationGovernor(),
+              let requestedTargetBitrate,
+              requestedTargetBitrate > 0 else {
+            temporaryDegradationStableWindows = 0
+            temporaryDegradationOverloadWindows = 0
+            temporaryDegradationSevereOverloadWindows = 0
+            return
+        }
+
+        let currentBitrate = temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate ?? requestedTargetBitrate
+        updateTemporaryDegradationBelowTargetState(
+            now: now,
+            currentBitrate: currentBitrate,
+            requestedBitrate: requestedTargetBitrate
+        )
+
+        let targetFPS = Double(max(1, currentFrameRate))
+        let frameBudgetMs = 1000.0 / targetFPS
+        let fpsRatio = encodedFPS / targetFPS
+        let queuePressured = queueBytes > queuePressureBytes
+        let queueSeverelyPressured = queueBytes > maxQueuedBytes
+        let isStable = averageEncodeMs > 0 &&
+            fpsRatio >= temporaryDegradationStableThresholdRatio &&
+            averageEncodeMs <= frameBudgetMs * temporaryDegradationStableEncodeBudgetRatio &&
+            captureDroppedFrames == 0 &&
+            !queuePressured
+        let isOverloaded = fpsRatio < temporaryDegradationStableThresholdRatio ||
+            averageEncodeMs > frameBudgetMs * temporaryDegradationOverBudgetRatio ||
+            captureDroppedFrames > 0 ||
+            queuePressured
+        let isSeverelyOverloaded = fpsRatio < temporaryDegradationSevereThresholdRatio ||
+            averageEncodeMs > frameBudgetMs * temporaryDegradationSevereEncodeBudgetRatio ||
+            captureDroppedFrames >= 12 ||
+            queueSeverelyPressured
+
+        if isStable {
+            temporaryDegradationOverloadWindows = 0
+            temporaryDegradationSevereOverloadWindows = 0
+            temporaryDegradationStableWindows += 1
+            guard temporaryDegradationStableWindows >= temporaryDegradationStableWindowsThreshold else { return }
+            if await attemptTemporaryDegradationRestore(
+                currentBitrate: currentBitrate,
+                requestedBitrate: requestedTargetBitrate,
+                at: now
+            ) {
+                temporaryDegradationStableWindows = 0
+            }
+            return
+        }
+
+        temporaryDegradationStableWindows = 0
+        guard isOverloaded else {
+            temporaryDegradationOverloadWindows = 0
+            temporaryDegradationSevereOverloadWindows = 0
+            return
+        }
+
+        temporaryDegradationOverloadWindows += 1
+        if isSeverelyOverloaded {
+            temporaryDegradationSevereOverloadWindows += 1
+        } else {
+            temporaryDegradationSevereOverloadWindows = 0
+        }
+
+        if await attemptTemporaryDegradationRelief(
+            currentBitrate: currentBitrate,
+            requestedBitrate: requestedTargetBitrate,
+            severe: isSeverelyOverloaded,
+            at: now
+        ) {
+            temporaryDegradationOverloadWindows = 0
+            let shouldPreserveSevereWindowStreak = temporaryDegradationMode == .prioritizeVisuals &&
+                temporaryDegradationCurrentBitDepth == .tenBit &&
+                isSeverelyOverloaded
+            if !shouldPreserveSevereWindowStreak {
+                temporaryDegradationSevereOverloadWindows = 0
+            }
+        }
+    }
+
+    private func attemptTemporaryDegradationRestore(
+        currentBitrate: Int,
+        requestedBitrate: Int,
+        at now: CFAbsoluteTime
+    ) async -> Bool {
+        if currentBitrate < requestedBitrate {
+            let ramped = Int((Double(currentBitrate) * temporaryDegradationRampStep).rounded(.up))
+            let nextBitrate = min(requestedBitrate, max(currentBitrate + 1, ramped))
+            if nextBitrate > currentBitrate {
+                return await applyTemporaryDegradationAdjustment(
+                    bitDepth: nil,
+                    bitrate: nextBitrate,
+                    reason: "temporary degradation bitrate ramp",
+                    now: now
+                )
+            }
+        }
+
+        if temporaryDegradationCurrentBitDepth != requestedTargetBitDepth,
+           currentBitrate >= Int((Double(requestedBitrate) * 0.95).rounded(.down)) {
+            return await applyTemporaryDegradationAdjustment(
+                bitDepth: requestedTargetBitDepth,
+                bitrate: currentBitrate,
+                reason: "temporary degradation bit-depth restore",
+                now: now
+            )
+        }
+
+        updateTemporaryDegradationBelowTargetState(
+            now: now,
+            currentBitrate: currentBitrate,
+            requestedBitrate: requestedBitrate
+        )
+        return false
+    }
+
+    private func attemptTemporaryDegradationRelief(
+        currentBitrate: Int,
+        requestedBitrate: Int,
+        severe: Bool,
+        at now: CFAbsoluteTime
+    ) async -> Bool {
+        let floor = min(requestedBitrate, temporaryDegradationBitrateFloorBps)
+
+        switch temporaryDegradationMode {
+        case .off:
+            return false
+
+        case .prioritizeFramerate:
+            if requestedTargetBitDepth == .tenBit,
+               temporaryDegradationCurrentBitDepth == .tenBit {
+                return await applyTemporaryDegradationAdjustment(
+                    bitDepth: .eightBit,
+                    bitrate: currentBitrate,
+                    reason: "temporary degradation framerate-first bit-depth drop",
+                    now: now
+                )
+            }
+
+            let nextBitrate = max(
+                floor,
+                Int((Double(currentBitrate) * temporaryDegradationBitrateStepFramerate).rounded(.down))
+            )
+            guard nextBitrate < currentBitrate else { return false }
+            return await applyTemporaryDegradationAdjustment(
+                bitDepth: nil,
+                bitrate: nextBitrate,
+                reason: "temporary degradation framerate-first bitrate drop",
+                now: now
+            )
+
+        case .prioritizeVisuals:
+            if severe,
+               temporaryDegradationSevereOverloadWindows >= temporaryDegradationVisualBitDepthDropThreshold,
+               requestedTargetBitDepth == .tenBit,
+               temporaryDegradationCurrentBitDepth == .tenBit {
+                return await applyTemporaryDegradationAdjustment(
+                    bitDepth: .eightBit,
+                    bitrate: currentBitrate,
+                    reason: "temporary degradation visuals-first severe bit-depth drop",
+                    now: now
+                )
+            }
+
+            let nextBitrate = max(
+                floor,
+                Int((Double(currentBitrate) * temporaryDegradationBitrateStepVisuals).rounded(.down))
+            )
+            if nextBitrate < currentBitrate {
+                return await applyTemporaryDegradationAdjustment(
+                    bitDepth: nil,
+                    bitrate: nextBitrate,
+                    reason: "temporary degradation visuals-first bitrate drop",
+                    now: now
+                )
+            }
+
+            return false
+        }
+    }
+
+    private func applyTemporaryDegradationAdjustment(
+        bitDepth: MirageVideoBitDepth?,
+        bitrate: Int?,
+        reason: String,
+        now: CFAbsoluteTime
+    ) async -> Bool {
+        let desiredBitDepth = bitDepth ?? temporaryDegradationCurrentBitDepth
+        let desiredBitrate = bitrate ?? temporaryDegradationCurrentBitrate
+        guard desiredBitDepth != temporaryDegradationCurrentBitDepth ||
+            desiredBitrate != temporaryDegradationCurrentBitrate else {
+            return false
+        }
+
+        do {
+            if isRunning {
+                try await updateEncoderSettings(
+                    bitDepth: desiredBitDepth == temporaryDegradationCurrentBitDepth ? nil : desiredBitDepth,
+                    bitrate: desiredBitrate
+                )
+            } else {
+                encoderConfig = encoderConfig.withOverrides(
+                    bitDepth: desiredBitDepth == temporaryDegradationCurrentBitDepth ? nil : desiredBitDepth,
+                    bitrate: desiredBitrate
+                )
+                activePixelFormat = encoderConfig.pixelFormat
+                temporaryDegradationCurrentBitrate = encoderConfig.bitrate
+                temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
+                if currentEncodedSize != .zero {
+                    await applyDerivedQuality(for: currentEncodedSize, logLabel: "Temporary degradation")
+                }
+            }
+            temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
+            temporaryDegradationCurrentBitrate = encoderConfig.bitrate
+            updateTemporaryDegradationBelowTargetState(
+                now: now,
+                currentBitrate: temporaryDegradationCurrentBitrate ?? 0,
+                requestedBitrate: requestedTargetBitrate ?? 0
+            )
+            let bitrateText = (temporaryDegradationCurrentBitrate ?? 0)
+                .formatted(.number.grouping(.never))
+            MirageLogger.metrics(
+                "event=temporary_degradation_adjustment stream=\(streamID) mode=\(temporaryDegradationMode.rawValue) reason=\(reason) bitDepth=\(temporaryDegradationCurrentBitDepth.displayName) bitrate=\(bitrateText)"
+            )
+            return true
+        } catch {
+            MirageLogger.error(.stream, error: error, message: "Temporary degradation adjustment failed: ")
+            return false
+        }
+    }
+
+    private func updateTemporaryDegradationBelowTargetState(
+        now: CFAbsoluteTime,
+        currentBitrate: Int,
+        requestedBitrate: Int
+    ) {
+        guard requestedBitrate > 0 else {
+            temporaryDegradationBelowTargetSince = 0
+            return
+        }
+
+        if currentBitrate < requestedBitrate {
+            if temporaryDegradationBelowTargetSince == 0 {
+                temporaryDegradationBelowTargetSince = now
+            }
+        } else {
+            temporaryDegradationBelowTargetSince = 0
+        }
     }
 
     func adjustQualityForQueue(queueBytes: Int) async {

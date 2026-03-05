@@ -198,6 +198,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var performanceMode: MirageStreamPerformanceMode?
     public var allowRuntimeQualityAdjustment: Bool?
     public var lowLatencyHighResolutionCompressionBoost: Bool?
+    public var temporaryDegradationMode: MirageTemporaryDegradationMode?
     public var disableResolutionCap: Bool
 
     public init(
@@ -209,6 +210,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
+        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         disableResolutionCap: Bool = false
     ) {
         self.keyFrameInterval = keyFrameInterval
@@ -219,6 +221,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+        self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
     }
 }
@@ -428,6 +431,22 @@ public enum MirageStreamPerformanceMode: String, Sendable, CaseIterable, Codable
         switch self {
         case .standard: "Standard"
         case .game: "Game Mode"
+        }
+    }
+}
+
+/// Policy for temporary host-side degradation and recovery when a stream cannot
+/// sustain its requested bitrate, frame rate, and visual settings simultaneously.
+public enum MirageTemporaryDegradationMode: String, Sendable, CaseIterable, Codable {
+    case off
+    case prioritizeFramerate
+    case prioritizeVisuals
+
+    public var displayName: String {
+        switch self {
+        case .off: "Off"
+        case .prioritizeFramerate: "Prioritize Framerate"
+        case .prioritizeVisuals: "Prioritize Visuals"
         }
     }
 }

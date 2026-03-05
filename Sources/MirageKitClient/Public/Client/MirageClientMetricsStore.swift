@@ -22,6 +22,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostDroppedFrames: UInt64
     public var hostActiveQuality: Double
     public var hostTargetFrameRate: Int
+    public var hostCurrentBitrate: Int?
+    public var hostRequestedTargetBitrate: Int?
+    public var hostStartupBitrate: Int?
+    public var hostTemporaryDegradationMode: MirageTemporaryDegradationMode?
+    public var hostTemporaryDegradationBitDepth: MirageVideoBitDepth?
+    public var hostTimeBelowTargetBitrateMs: Int?
+    public var hostCaptureAdmissionDrops: UInt64?
+    public var hostFrameBudgetMs: Double?
     public var hostAverageEncodeMs: Double?
     public var hostUsingHardwareEncoder: Bool?
     public var hostEncoderGPURegistryID: UInt64?
@@ -49,6 +57,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostDroppedFrames: UInt64 = 0,
         hostActiveQuality: Double = 0,
         hostTargetFrameRate: Int = 0,
+        hostCurrentBitrate: Int? = nil,
+        hostRequestedTargetBitrate: Int? = nil,
+        hostStartupBitrate: Int? = nil,
+        hostTemporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
+        hostTemporaryDegradationBitDepth: MirageVideoBitDepth? = nil,
+        hostTimeBelowTargetBitrateMs: Int? = nil,
+        hostCaptureAdmissionDrops: UInt64? = nil,
+        hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
         hostUsingHardwareEncoder: Bool? = nil,
         hostEncoderGPURegistryID: UInt64? = nil,
@@ -75,6 +91,14 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostDroppedFrames = hostDroppedFrames
         self.hostActiveQuality = hostActiveQuality
         self.hostTargetFrameRate = hostTargetFrameRate
+        self.hostCurrentBitrate = hostCurrentBitrate
+        self.hostRequestedTargetBitrate = hostRequestedTargetBitrate
+        self.hostStartupBitrate = hostStartupBitrate
+        self.hostTemporaryDegradationMode = hostTemporaryDegradationMode
+        self.hostTemporaryDegradationBitDepth = hostTemporaryDegradationBitDepth
+        self.hostTimeBelowTargetBitrateMs = hostTimeBelowTargetBitrateMs
+        self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
+        self.hostFrameBudgetMs = hostFrameBudgetMs
         self.hostAverageEncodeMs = hostAverageEncodeMs
         self.hostUsingHardwareEncoder = hostUsingHardwareEncoder
         self.hostEncoderGPURegistryID = hostEncoderGPURegistryID
@@ -127,6 +151,14 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         droppedFrames: UInt64,
         activeQuality: Double,
         targetFrameRate: Int,
+        currentBitrate: Int? = nil,
+        requestedTargetBitrate: Int? = nil,
+        startupBitrate: Int? = nil,
+        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
+        temporaryDegradationBitDepth: MirageVideoBitDepth? = nil,
+        timeBelowTargetBitrateMs: Int? = nil,
+        captureAdmissionDrops: UInt64? = nil,
+        frameBudgetMs: Double? = nil,
         averageEncodeMs: Double?,
         usingHardwareEncoder: Bool?,
         encoderGPURegistryID: UInt64?,
@@ -147,6 +179,14 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostDroppedFrames = droppedFrames
         snapshot.hostActiveQuality = activeQuality
         snapshot.hostTargetFrameRate = targetFrameRate
+        snapshot.hostCurrentBitrate = currentBitrate
+        snapshot.hostRequestedTargetBitrate = requestedTargetBitrate
+        snapshot.hostStartupBitrate = startupBitrate
+        snapshot.hostTemporaryDegradationMode = temporaryDegradationMode
+        snapshot.hostTemporaryDegradationBitDepth = temporaryDegradationBitDepth
+        snapshot.hostTimeBelowTargetBitrateMs = timeBelowTargetBitrateMs
+        snapshot.hostCaptureAdmissionDrops = captureAdmissionDrops
+        snapshot.hostFrameBudgetMs = frameBudgetMs
         snapshot.hostAverageEncodeMs = averageEncodeMs
         snapshot.hostUsingHardwareEncoder = usingHardwareEncoder
         snapshot.hostEncoderGPURegistryID = encoderGPURegistryID

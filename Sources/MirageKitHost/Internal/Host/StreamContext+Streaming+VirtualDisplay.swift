@@ -140,6 +140,7 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
+            streamKind: .window,
             inFlightLimit: maxInFlightFrames,
             maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )

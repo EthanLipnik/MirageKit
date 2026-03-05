@@ -30,6 +30,7 @@ extension MirageHostService {
         performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool?,
         lowLatencyHighResolutionCompressionBoost: Bool,
+        temporaryDegradationMode: MirageTemporaryDegradationMode = .off,
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
@@ -117,6 +118,7 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream resolution cap disabled")
         }
         MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
+        MirageLogger.host("Desktop temporary degradation mode: \(temporaryDegradationMode.displayName)")
 
         if clampedStreamScale < 1.0 {
             MirageLogger.host(
@@ -125,6 +127,8 @@ extension MirageHostService {
             )
         }
         let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = if performanceMode == .game {
+            .tuned
+        } else if temporaryDegradationMode != .off {
             .tuned
         } else {
             resolvedDesktopCapturePressureProfile()
@@ -242,6 +246,7 @@ extension MirageHostService {
         let streamContext = StreamContext(
             streamID: streamID,
             windowID: 0,
+            streamKind: .desktop,
             encoderConfig: config,
             streamScale: clampedStreamScale,
             requestedAudioChannelCount: audioConfiguration.channelLayout.channelCount,
@@ -250,6 +255,7 @@ extension MirageHostService {
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
+            temporaryDegradationMode: temporaryDegradationMode,
             disableResolutionCap: disableResolutionCap,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,

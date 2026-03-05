@@ -562,6 +562,7 @@ struct MirageKitTests {
             performanceMode: .game,
             allowRuntimeQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
+            temporaryDegradationMode: .prioritizeFramerate,
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
@@ -576,6 +577,7 @@ struct MirageKitTests {
         #expect(decoded.bitDepth == .tenBit)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
+        #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
     }
 
     @Test("Select app request latency mode serialization")
@@ -595,6 +597,7 @@ struct MirageKitTests {
             performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: true,
+            temporaryDegradationMode: .prioritizeVisuals,
             disableResolutionCap: false,
             streamScale: 0.9,
             audioConfiguration: .default
@@ -607,6 +610,7 @@ struct MirageKitTests {
         #expect(decoded.performanceMode == .game)
         #expect(decoded.maxRefreshRate == 120)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
+        #expect(decoded.temporaryDegradationMode == .prioritizeVisuals)
     }
 
     @Test("Window removed from stream payload serialization")
@@ -747,6 +751,7 @@ struct MirageKitTests {
             performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: false,
+            temporaryDegradationMode: .prioritizeFramerate,
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
@@ -762,6 +767,7 @@ struct MirageKitTests {
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
+        #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
     }
 
     @Test("Start stream request omits performance mode when unset")

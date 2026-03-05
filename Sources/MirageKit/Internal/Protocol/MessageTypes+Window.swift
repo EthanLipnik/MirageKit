@@ -65,6 +65,8 @@ package struct StartStreamMessage: Codable {
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
+    /// Client-requested temporary degradation policy.
+    package var temporaryDegradationMode: MirageTemporaryDegradationMode?
     /// Client-requested override to bypass host/client resolution caps.
     package var disableResolutionCap: Bool?
     /// Client-requested stream scale (0.1-1.0)
@@ -91,6 +93,7 @@ package struct StartStreamMessage: Codable {
         case performanceMode
         case allowRuntimeQualityAdjustment
         case lowLatencyHighResolutionCompressionBoost
+        case temporaryDegradationMode
         case disableResolutionCap
         case streamScale
         case audioConfiguration
@@ -113,6 +116,7 @@ package struct StartStreamMessage: Codable {
         performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
+        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -133,6 +137,7 @@ package struct StartStreamMessage: Codable {
         self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
+        self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
@@ -218,6 +223,14 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let droppedFrames: UInt64
     package let activeQuality: Float
     package let targetFrameRate: Int
+    package let currentBitrate: Int?
+    package let requestedTargetBitrate: Int?
+    package let startupBitrate: Int?
+    package let temporaryDegradationMode: MirageTemporaryDegradationMode?
+    package let temporaryDegradationBitDepth: MirageVideoBitDepth?
+    package let timeBelowTargetBitrateMs: Int?
+    package let captureAdmissionDrops: UInt64?
+    package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
     package let usingHardwareEncoder: Bool?
     package let encoderGPURegistryID: UInt64?
@@ -238,6 +251,14 @@ package struct StreamMetricsMessage: Codable, Sendable {
         droppedFrames: UInt64,
         activeQuality: Float,
         targetFrameRate: Int,
+        currentBitrate: Int? = nil,
+        requestedTargetBitrate: Int? = nil,
+        startupBitrate: Int? = nil,
+        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
+        temporaryDegradationBitDepth: MirageVideoBitDepth? = nil,
+        timeBelowTargetBitrateMs: Int? = nil,
+        captureAdmissionDrops: UInt64? = nil,
+        frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
         usingHardwareEncoder: Bool? = nil,
         encoderGPURegistryID: UInt64? = nil,
@@ -257,6 +278,14 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.droppedFrames = droppedFrames
         self.activeQuality = activeQuality
         self.targetFrameRate = targetFrameRate
+        self.currentBitrate = currentBitrate
+        self.requestedTargetBitrate = requestedTargetBitrate
+        self.startupBitrate = startupBitrate
+        self.temporaryDegradationMode = temporaryDegradationMode
+        self.temporaryDegradationBitDepth = temporaryDegradationBitDepth
+        self.timeBelowTargetBitrateMs = timeBelowTargetBitrateMs
+        self.captureAdmissionDrops = captureAdmissionDrops
+        self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs
         self.usingHardwareEncoder = usingHardwareEncoder
         self.encoderGPURegistryID = encoderGPURegistryID

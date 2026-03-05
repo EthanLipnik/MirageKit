@@ -61,6 +61,8 @@ extension StreamContext {
 
         if updateMode == .bitrateOnly {
             encoderConfig = updatedConfig
+            temporaryDegradationCurrentBitrate = encoderConfig.bitrate
+            temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
             await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
             await encoder?.updateBitrate(encoderConfig.bitrate)
             if currentEncodedSize != .zero {
@@ -91,6 +93,8 @@ extension StreamContext {
             activePixelFormat = resolvedPixelFormat
             encoderConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         }
+        temporaryDegradationCurrentBitrate = encoderConfig.bitrate
+        temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
         updateQueueLimits()
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Encoder settings update")
