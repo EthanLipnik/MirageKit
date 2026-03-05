@@ -411,7 +411,8 @@ extension SharedVirtualDisplayManager {
             width: Int(newResolution.width),
             height: Int(newResolution.height),
             refreshRate: Double(refreshRate),
-            hiDPI: useHiDPI
+            hiDPI: useHiDPI,
+            colorSpace: display.colorSpace
         )
         guard success else { return nil }
 
@@ -423,6 +424,7 @@ extension SharedVirtualDisplayManager {
             scaleFactor: updatedScaleFactor,
             refreshRate: Double(refreshRate),
             colorSpace: display.colorSpace,
+            displayP3CoverageStatus: display.displayP3CoverageStatus,
             generation: display.generation,
             createdAt: display.createdAt,
             displayRef: display.displayRef
@@ -480,52 +482,54 @@ extension SharedVirtualDisplayManager {
         let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
         let fallbackPlan = Self.fallbackAttemptPlan(for: normalizedRequested)
         var attempts: [DisplayCreationAttempt] = []
+        if let cachedFallback = cachedFallbackAttempt(
+            requestedResolution: normalizedRequested,
+            refreshRate: refreshRate,
+            requestedColorSpace: colorSpace
+        ) {
+            attempts.append(cachedFallback)
+        }
+        let requestedRetina = fallbackPlan.first(where: { $0.rung == "requested-retina" })
+        let requestedOneX = fallbackPlan.first(where: { $0.rung == "requested-1x" })
+        let closestCandidates = fallbackPlan.filter { $0.rung.hasPrefix("closest-") }
 
-        for candidateColorSpace in colorFallbackOrder {
-            if let requestedRetina = fallbackPlan.first(where: { $0.rung == "requested-retina" }) {
-                attempts.append(
-                    DisplayCreationAttempt(
-                        resolution: requestedRetina.resolution,
-                        hiDPI: requestedRetina.hiDPI,
-                        colorSpace: candidateColorSpace,
-                        label: "\(requestedRetina.rung)-\(candidateColorSpace.rawValue)"
-                    )
-                )
+        let rungCandidates: [DisplayFallbackCandidate] = {
+            var ordered: [DisplayFallbackCandidate] = []
+            if let requestedRetina {
+                ordered.append(requestedRetina)
             }
-            if let cachedRetina = knownGoodRetinaCandidate(
-                requestedResolution: normalizedRequested,
-                colorSpace: candidateColorSpace,
-                allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
-            ),
-                needsResize(currentResolution: cachedRetina, targetResolution: normalizedRequested) {
-                attempts.append(
-                    DisplayCreationAttempt(
-                        resolution: cachedRetina,
-                        hiDPI: true,
-                        colorSpace: candidateColorSpace,
-                        label: "cached-retina-\(candidateColorSpace.rawValue)"
+            for candidateColorSpace in colorFallbackOrder {
+                if let cachedRetina = knownGoodRetinaCandidate(
+                    requestedResolution: normalizedRequested,
+                    colorSpace: candidateColorSpace,
+                    allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
+                ),
+                    needsResize(currentResolution: cachedRetina, targetResolution: normalizedRequested) {
+                    ordered.append(
+                        DisplayFallbackCandidate(
+                            resolution: cachedRetina,
+                            hiDPI: true,
+                            rung: "cached-retina-\(candidateColorSpace.rawValue)"
+                        )
                     )
-                )
+                }
             }
+            if let requestedOneX {
+                ordered.append(requestedOneX)
+            }
+            ordered.append(contentsOf: closestCandidates)
+            return ordered
+        }()
 
-            if let requestedOneX = fallbackPlan.first(where: { $0.rung == "requested-1x" }) {
+        // Build attempts rung-first so strict-P3 failures fall through to sRGB quickly at the same resolution.
+        for rung in rungCandidates {
+            for candidateColorSpace in colorFallbackOrder {
                 attempts.append(
                     DisplayCreationAttempt(
-                        resolution: requestedOneX.resolution,
-                        hiDPI: requestedOneX.hiDPI,
+                        resolution: rung.resolution,
+                        hiDPI: rung.hiDPI,
                         colorSpace: candidateColorSpace,
-                        label: "\(requestedOneX.rung)-\(candidateColorSpace.rawValue)"
-                    )
-                )
-            }
-
-            for candidate in fallbackPlan where candidate.rung.hasPrefix("closest-") {
-                attempts.append(
-                    DisplayCreationAttempt(
-                        resolution: candidate.resolution,
-                        hiDPI: candidate.hiDPI,
-                        colorSpace: candidateColorSpace,
-                        label: "\(candidate.rung)-\(candidateColorSpace.rawValue)"
+                        label: "\(rung.rung)-\(candidateColorSpace.rawValue)"
                     )
                 )
             }
@@ -593,7 +597,8 @@ extension SharedVirtualDisplayManager {
                 width: Int(effectivePixel.width.rounded()),
                 height: Int(effectivePixel.height.rounded()),
                 refreshRate: Double(refreshRate),
-                hiDPI: enforceHiDPI
+                hiDPI: enforceHiDPI,
+                colorSpace: attempt.colorSpace
             )
             guard enforced else {
                 invalidateAttemptDisplay()
@@ -640,10 +645,35 @@ extension SharedVirtualDisplayManager {
                 scaleFactor: displayScaleFactor,
                 refreshRate: displayContext.refreshRate,
                 colorSpace: displayContext.colorSpace,
+                displayP3CoverageStatus: displayContext.displayP3CoverageStatus,
                 generation: generation,
                 createdAt: Date(),
                 displayRef: UncheckedSendableBox(displayContext.display)
             )
+            let resolvedIsRetina = displayScaleFactor > 1.5
+            let resolvedMatchesRequestedResolution = !needsResize(
+                currentResolution: validatedPixelResolution,
+                targetResolution: normalizedRequested
+            )
+            let resolvedMatchesRequestedColor = managedContext.colorSpace == colorSpace
+            let resolvedUsesFallback = !resolvedIsRetina || !resolvedMatchesRequestedResolution || !resolvedMatchesRequestedColor
+            if resolvedUsesFallback {
+                cacheFallbackOutcome(
+                    requestedResolution: normalizedRequested,
+                    refreshRate: refreshRate,
+                    requestedColorSpace: colorSpace,
+                    resolvedResolution: validatedPixelResolution,
+                    resolvedScaleFactor: displayScaleFactor,
+                    resolvedColorSpace: managedContext.colorSpace,
+                    rungLabel: attempt.label
+                )
+            } else {
+                clearCachedFallbackOutcome(
+                    requestedResolution: normalizedRequested,
+                    refreshRate: refreshRate,
+                    requestedColorSpace: colorSpace
+                )
+            }
 
             if !attempt.hiDPI {
                 MirageLogger.host(
@@ -660,8 +690,20 @@ extension SharedVirtualDisplayManager {
             }
 
             if attempt.colorSpace != colorSpace {
+                if colorSpace == .displayP3, attempt.colorSpace == .sRGB {
+                    MirageLogger.host(
+                        "Virtual display color fallback engaged: requested Display P3, effectiveColor=sRGB, coverage=\(managedContext.displayP3CoverageStatus.rawValue)"
+                    )
+                } else {
+                    MirageLogger.host(
+                        "Virtual display color fallback engaged: requested \(colorSpace.displayName), using \(attempt.colorSpace.displayName)"
+                    )
+                }
+            }
+            if colorSpace == .displayP3,
+               managedContext.displayP3CoverageStatus.requiresCanonicalCoverageWarning {
                 MirageLogger.host(
-                    "Virtual display color fallback engaged: requested \(colorSpace.displayName), using \(attempt.colorSpace.displayName)"
+                    "Virtual display color fallback engaged: requested Display P3, coverage=\(managedContext.displayP3CoverageStatus.rawValue), effectiveColor=\(managedContext.colorSpace.displayName)"
                 )
             }
             let aspectDelta = Self.aspectRelativeDelta(

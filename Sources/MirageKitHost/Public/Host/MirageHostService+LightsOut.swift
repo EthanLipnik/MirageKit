@@ -54,28 +54,33 @@ extension MirageHostService {
         pendingDesktopStreamStartCount = 0
         lightsOutController.deactivate()
         await refreshLightsOutCaptureExclusions()
+        await syncAppListRequestDeferralForInteractiveWorkload()
         MirageLogger.host("Lights Out forcibly disabled (\(reason))")
     }
 
     func beginPendingAppStreamLightsOutSetup() async {
         pendingAppStreamStartCount += 1
         await updateLightsOutState()
+        await syncAppListRequestDeferralForInteractiveWorkload()
     }
 
     func endPendingAppStreamLightsOutSetup() async {
         pendingAppStreamStartCount = max(0, pendingAppStreamStartCount - 1)
         await updateLightsOutState()
+        await syncAppListRequestDeferralForInteractiveWorkload()
         lockHostIfStreamingStopped()
     }
 
     func beginPendingDesktopStreamLightsOutSetup() async {
         pendingDesktopStreamStartCount += 1
         await updateLightsOutState()
+        await syncAppListRequestDeferralForInteractiveWorkload()
     }
 
     func endPendingDesktopStreamLightsOutSetup() async {
         pendingDesktopStreamStartCount = max(0, pendingDesktopStreamStartCount - 1)
         await updateLightsOutState()
+        await syncAppListRequestDeferralForInteractiveWorkload()
         lockHostIfStreamingStopped()
     }
 

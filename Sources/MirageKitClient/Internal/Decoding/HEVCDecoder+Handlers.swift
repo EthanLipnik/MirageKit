@@ -14,6 +14,23 @@ import VideoToolbox
 import MirageKit
 
 extension HEVCDecoder {
+    func setMaximizePowerEfficiencyEnabled(_ enabled: Bool) {
+        guard maximizePowerEfficiencyEnabled != enabled else { return }
+        maximizePowerEfficiencyEnabled = enabled
+
+        guard let session = decompressionSession else {
+            MirageLogger.decoder("Decoder power preference updated: maximizePowerEfficiency=\(enabled) (deferred)")
+            return
+        }
+
+        let applied = applyMaximizePowerEfficiency(session)
+        if !applied {
+            MirageLogger.decoder(
+                "Decoder power preference updated: maximizePowerEfficiency=\(enabled) (deferred to next session)"
+            )
+        }
+    }
+
     func setPreferredOutputBitDepth(_ bitDepth: MirageVideoBitDepth) {
         let desiredPixelFormat = preferredOutputPixelFormat(for: bitDepth)
         let formatChanged = outputPixelFormat != desiredPixelFormat

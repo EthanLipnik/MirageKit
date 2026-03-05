@@ -34,6 +34,7 @@ struct ClientMetricsStoreTests {
             encoderColorPrimaries: "P3_D65",
             encoderTransferFunction: "sRGB",
             encoderYCbCrMatrix: "ITU_R_709_2",
+            displayP3CoverageStatus: .strictCanonical,
             tenBitDisplayP3Validated: true
         )
 
@@ -43,6 +44,7 @@ struct ClientMetricsStoreTests {
         #expect(snapshot?.hostEncoderGPURegistryID == 123_456)
         #expect(snapshot?.hostCapturePixelFormat == "xf20")
         #expect(snapshot?.hostEncoderProfile == "HEVC Main10")
+        #expect(snapshot?.hostDisplayP3CoverageStatus == .strictCanonical)
         #expect(snapshot?.hostTenBitDisplayP3Validated == true)
         #expect(snapshot?.hasHostMetrics == true)
     }

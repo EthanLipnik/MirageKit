@@ -355,8 +355,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Decode threshold recovery is soft-first and escalates to hard reset")
-    func decodeThresholdRecoveryEscalatesAfterRepeatedFailures() async throws {
+    @Test("Decode threshold recovery is deferred until sustained freeze")
+    func decodeThresholdRecoveryIsDeferredUntilSustainedFreeze() async throws {
         let streamID: StreamID = 44
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -369,25 +369,40 @@ struct StreamControllerRecoveryTests {
             onResizeEvent: nil
         )
 
-        _ = MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
-            contentRect: .zero,
-            decodeTime: CFAbsoluteTimeGetCurrent(),
-            metalTexture: nil,
-            texture: nil,
-            for: streamID
-        )
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
-
+        await controller.markFirstFramePresented()
         await controller.handleDecodeErrorThresholdSignal()
-        try await Task.sleep(for: .milliseconds(150))
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 1)
-
         await controller.handleDecodeErrorThresholdSignal()
         await controller.handleDecodeErrorThresholdSignal()
         try await Task.sleep(for: .milliseconds(250))
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
-        // Recovery requests are cooldown-gated, so threshold storms coalesce requests.
+        #expect(keyframeCounter.value == 0)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Decode threshold requests recovery after sustained freeze")
+    func decodeThresholdRequestsRecoveryAfterSustainedFreeze() async throws {
+        let streamID: StreamID = 144
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFramePresented()
+        let reassembler = await controller.getReassembler()
+        primeKeyframeAnchor(for: reassembler, streamID: streamID)
+        await controller.forcePresentationStallForTesting()
+
+        await controller.handleDecodeErrorThresholdSignal()
+        try await waitUntil("decode-threshold keyframe request after freeze") {
+            keyframeCounter.value >= 1
+        }
         #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
@@ -422,7 +437,12 @@ struct StreamControllerRecoveryTests {
     @Test("Soft recovery cadence suppresses duplicate threshold recoveries within cooldown")
     func softRecoveryCadenceSuppressesDuplicateThresholdRecoveries() async throws {
         let keyframeCounter = LockedCounter()
-        let controller = StreamController(streamID: 145, maxPayloadSize: 1200)
+        let clock = ManualTimeProvider(start: 500)
+        let controller = StreamController(
+            streamID: 145,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -433,14 +453,20 @@ struct StreamControllerRecoveryTests {
         await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
 
         await controller.handleDecodeErrorThresholdSignal()
-        try await Task.sleep(for: .milliseconds(600))
+        try await waitUntil("first decode-threshold keyframe request") {
+            keyframeCounter.value == 1
+        }
+
+        clock.advance(by: 0.6)
         await controller.handleDecodeErrorThresholdSignal()
-        try await Task.sleep(for: .milliseconds(200))
+        try await Task.sleep(for: .milliseconds(100))
         #expect(keyframeCounter.value == 1)
 
-        try await Task.sleep(for: .milliseconds(450))
+        clock.advance(by: 0.5)
         await controller.handleDecodeErrorThresholdSignal()
-        try await Task.sleep(for: .milliseconds(200))
+        try await waitUntil("second decode-threshold keyframe request") {
+            keyframeCounter.value >= 2
+        }
         #expect(keyframeCounter.value >= 2)
 
         await controller.stop()
@@ -514,7 +540,7 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Frame-loss after first decode without starvation does not request keyframe recovery")
+    @Test("Frame-loss after first decode without starvation does not request keyframe")
     func frameLossAfterFirstDecodeWithoutStarvationDoesNotRequestKeyframe() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 41, maxPayloadSize: 1200)
@@ -528,14 +554,14 @@ struct StreamControllerRecoveryTests {
 
         await controller.markFirstFramePresented()
         await controller.handleFrameLossSignal()
-        try await Task.sleep(for: .milliseconds(150))
+        try await Task.sleep(for: .milliseconds(300))
         #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }
 
-    @Test("Frame-loss after first decode while keyframe-starved requests recovery keyframe")
-    func frameLossAfterFirstDecodeWithStarvationRequestsKeyframe() async throws {
+    @Test("Frame-loss after first decode while keyframe-starved defers immediate keyframe request")
+    func frameLossAfterFirstDecodeWithStarvationDefersImmediateKeyframeRequest() async throws {
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: 42, maxPayloadSize: 1200)
 
@@ -551,10 +577,8 @@ struct StreamControllerRecoveryTests {
         reassembler.enterKeyframeOnlyMode()
 
         await controller.handleFrameLossSignal()
-        try await waitUntil("starved frame-loss keyframe request") {
-            keyframeCounter.value == 1
-        }
-        #expect(keyframeCounter.value == 1)
+        try await Task.sleep(for: .milliseconds(300))
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }

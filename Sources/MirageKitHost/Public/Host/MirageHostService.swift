@@ -43,6 +43,23 @@ public final class MirageHostService {
     /// Whether app-stream window close on the client should attempt to close the host window.
     public var closeHostWindowOnClientWindowClose: Bool = false
 
+    /// Preferred low-power policy for host encoder sessions.
+    public var encoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto {
+        didSet {
+            guard oldValue != encoderLowPowerModePreference else { return }
+            scheduleEncoderLowPowerPolicyApply(reason: "preference_change")
+        }
+    }
+
+    /// Whether battery-based low-power policy is currently supported on this host device.
+    public internal(set) var encoderLowPowerSupportsBatteryPolicy: Bool = false
+
+    /// Whether the host encoder is currently using low-power mode.
+    public internal(set) var isEncoderLowPowerModeActive: Bool = false
+
+    /// Callback fired when host battery-policy support changes.
+    public var onEncoderLowPowerBatteryPolicySupportChanged: ((Bool) -> Void)?
+
     /// Host delegate for events
     public weak var delegate: MirageHostDelegate?
 
@@ -98,6 +115,12 @@ public final class MirageHostService {
     let networkConfig: MirageNetworkConfiguration
     var hostID: UUID = .init()
     let handshakeReplayProtector = MirageReplayProtector()
+    // Internal for low-power policy extension.
+    let encoderPowerStateMonitor = MiragePowerStateMonitor()
+    var encoderPowerStateSnapshot = MiragePowerStateSnapshot(
+        isSystemLowPowerModeEnabled: false,
+        isOnBattery: nil
+    )
 
     /// Current capability payload advertised in Bonjour TXT records.
     public var currentAdvertisedCapabilities: MirageHostCapabilities {
@@ -255,6 +278,12 @@ public final class MirageHostService {
 
     /// Cursor monitoring - internal for extension access
     var cursorMonitor: CursorMonitor?
+    var cursorUpdateMessagesSinceLastSample: UInt64 = 0
+    var cursorPositionMessagesSinceLastSample: UInt64 = 0
+    var droppedCursorUpdateMessagesSinceLastSample: UInt64 = 0
+    var droppedCursorPositionMessagesSinceLastSample: UInt64 = 0
+    var lastCursorControlSampleTime: CFAbsoluteTime = 0
+    let cursorControlSampleInterval: CFAbsoluteTime = 1.0
 
     // Session state monitoring (for headless Mac unlock support) - internal for extension access
     var sessionStateMonitor: SessionStateMonitor?
@@ -310,10 +339,11 @@ public final class MirageHostService {
     var appStreamPolicyTransitionTasksByBundleID: [String: Task<Void, Never>] = [:]
     let appWindowReplacementCooldownDuration: Duration = .seconds(5)
 
-    /// Pending app list request to resume after desktop streaming.
+    /// Pending app list request to resume once interactive stream workload is idle.
     var pendingAppListRequest: PendingAppListRequest?
     var appListRequestTask: Task<Void, Never>?
     var appListRequestToken: UUID = .init()
+    var appListRequestDeferredForInteractiveWorkload: Bool = false
     let appIconSignatureStore = HostAppIconSignatureStore()
 
     /// Menu bar passthrough - internal for extension access
@@ -486,9 +516,14 @@ public final class MirageHostService {
 
         registerControlMessageHandlers()
         registerDiagnosticsContextProvider()
+        configureEncoderLowPowerMonitoring()
     }
 
     deinit {
+        let powerStateMonitor = encoderPowerStateMonitor
+        Task { @MainActor in
+            powerStateMonitor.stop()
+        }
         guard let diagnosticsContextProviderToken else { return }
         Task {
             await MirageDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)

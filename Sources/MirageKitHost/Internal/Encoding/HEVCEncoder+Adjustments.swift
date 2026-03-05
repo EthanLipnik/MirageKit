@@ -84,6 +84,25 @@ extension HEVCEncoder {
         encoderInFlightLock.unlock()
     }
 
+    func setMaximizePowerEfficiencyEnabled(_ enabled: Bool) {
+        guard maximizePowerEfficiencyEnabled != enabled else { return }
+        maximizePowerEfficiencyEnabled = enabled
+
+        guard let session = compressionSession else {
+            MirageLogger.encoder("Encoder power preference updated: maximizePowerEfficiency=\(enabled) (deferred)")
+            return
+        }
+
+        let applied = applyMaximizePowerEfficiency(session)
+        if applied {
+            MirageLogger.encoder("Encoder power preference updated: maximizePowerEfficiency=\(enabled) (applied)")
+        } else {
+            MirageLogger.encoder(
+                "Encoder power preference updated: maximizePowerEfficiency=\(enabled) (deferred to next session)"
+            )
+        }
+    }
+
     func updateDimensions(width: Int, height: Int) async throws {
         MirageLogger.encoder("Updating dimensions to \(width)x\(height)")
 

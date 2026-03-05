@@ -236,6 +236,10 @@ Key owned registries/state:
   - `streamsByID`
   - `activeSessionByStreamID`
   - `activeStreamIDByWindowID`
+- Local encoder low-power policy state:
+  - `encoderLowPowerModePreference` (`auto`, `on`, `onlyOnBattery`)
+  - current power snapshot from `MiragePowerStateMonitor`
+  - `isEncoderLowPowerModeActive` effective flag applied to active streams
 - Media security/policy maps:
   - `mediaSecurityByClientID`
   - `mediaEncryptionEnabledByClientID`
@@ -364,6 +368,11 @@ Input path is split for latency:
 - decoded `InputEventMessage` -> fast path (`handleInputEventFast`) on high-priority queue
 - ownership/activation policy checks
 - injection via `MirageHostInputController` (mouse, keyboard, scroll, tablet, gestures, desktop actions)
+- keyboard/modifier injection is domain-aware:
+  - app/window paths inject through session tap (`.cgSessionEventTap`)
+  - desktop/login paths inject through HID tap (`.cghidEventTap`)
+- stuck-modifier reconciliation reads modifier state from the matching domain source and
+  performs dual-domain clear on lifecycle transitions to avoid left/right modifier drift
 
 `InputStreamCacheActor` keeps stream/window/client routing state accessible to fast path.
 
@@ -399,6 +408,10 @@ Additional host operational concerns integrated into `MirageHostService` extensi
 - UDP video/audio transports and re-registration loops
 - per-stream controllers (`controllersByStream`)
 - metrics/cursor/session stores consumed by UI layers
+- local decoder low-power policy state:
+  - `decoderLowPowerModePreference` (`auto`, `on`, `onlyOnBattery`)
+  - current power snapshot from `MiragePowerStateMonitor`
+  - `isDecoderLowPowerModeActive` effective flag pushed into active decoders
 
 ### 5.2 Client Handshake Validation
 
@@ -466,6 +479,12 @@ Client runtime tiering is host-authoritative:
 - `GlobalDecodeBudgetController` enforces active-first decode-token admission across streams
 
 `HEVCDecoder` manages VT session lifecycle, parameter sets, in-flight submission limits, and decode error threshold callbacks.
+
+Codec power-efficiency policy is local-only per device:
+
+- host encoder applies `kVTCompressionPropertyKey_MaximizePowerEfficiency`
+- client decoder applies `kVTDecompressionPropertyKey_MaximizePowerEfficiency`
+- both attempt live runtime updates when a session exists, otherwise changes apply on the next session create
 
 ![Client Video Pipeline](Assets/Architecture-ClientPipeline.svg#gh-light-mode-only)
 ![Client Video Pipeline](Assets/Architecture-ClientPipeline-dark.svg#gh-dark-mode-only)

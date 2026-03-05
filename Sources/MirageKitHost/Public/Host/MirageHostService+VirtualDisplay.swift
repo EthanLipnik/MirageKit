@@ -782,7 +782,9 @@ extension MirageHostService {
             displayID: displaySnapshot.displayID,
             expectedColorSpace: settings.colorSpace
         )
-        let displayColorMatches = colorValidation.matches == true
+        let displayCoverageStatus = colorValidation.coverageStatus
+        let displayColorMatches = displayCoverageStatus == .strictCanonical || displayCoverageStatus == .wideGamutEquivalent
+        let measuredEquivalentCoverage = displayCoverageStatus == .wideGamutEquivalent
         let displayColorObserved = colorValidation.observedName ?? "unknown"
         let runtimePixelFormat = runtime?.pixelFormat.displayName ?? settings.pixelFormat.displayName
         let runtimeProfile = runtime?.profileName ?? "unknown"
@@ -791,15 +793,13 @@ extension MirageHostService {
         let runtimeMatrix = runtime?.yCbCrMatrix ?? "unknown"
         let runtimeMain10P3Validated = runtime?.tenBitDisplayP3Validated == true
         let expectsMain10P3 = settings.bitDepth == .tenBit && settings.colorSpace == .displayP3
-        let displayColorStatus = colorValidation.matches == true
-            ? "matched"
-            : (colorValidation.matches == false ? "mismatch" : "unresolved")
+        let displayColorStatus = displayCoverageStatus.rawValue
 
         if expectsMain10P3, displayColorMatches, runtimeMain10P3Validated {
-            MirageLogger
-                .host(
-                    "Desktop resize validation passed for stream \(streamID): display=\(displaySnapshot.displayID) color=\(displayColorObserved), encoder=\(runtimePixelFormat), profile=\(runtimeProfile), target=Display P3 Main10"
-                )
+            let coverageLabel = measuredEquivalentCoverage ? "measured-equivalent" : "canonical"
+            MirageLogger.host(
+                "Desktop resize validation passed for stream \(streamID): display=\(displaySnapshot.displayID) color=\(displayColorObserved), encoder=\(runtimePixelFormat), profile=\(runtimeProfile), target=Display P3 Main10 (\(coverageLabel))"
+            )
             return
         }
 

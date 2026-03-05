@@ -86,6 +86,10 @@ extension MirageHostService {
         await stopAllStreamsForDesktopMode()
         logDesktopStartStep("other streams stopped")
 
+        // Cancel any in-flight app icon/list streaming immediately so control-channel
+        // bandwidth stays available for interactive desktop input and state updates.
+        await syncAppListRequestDeferralForInteractiveWorkload()
+
         // Clear any stuck modifiers from previous streams
         inputController.clearAllModifiers()
         desktopStreamMode = mode
@@ -137,6 +141,8 @@ extension MirageHostService {
         )
         var captureDisplay: SCDisplayWrapper
         var captureResolution: CGSize
+        var captureDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus?
+        var captureDisplayColorSpace: MirageColorSpace?
 
         do {
             let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
@@ -150,6 +156,8 @@ extension MirageHostService {
             captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
             logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
             captureResolution = context.resolution
+            captureDisplayP3CoverageStatus = context.displayP3CoverageStatus
+            captureDisplayColorSpace = context.colorSpace
 
             desktopVirtualDisplayID = context.displayID
             var resolvedBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds()
@@ -187,9 +195,14 @@ extension MirageHostService {
                     "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
                 )
             }
+            if context.colorSpace != config.colorSpace {
+                MirageLogger.host(
+                    "Desktop display color space adjusted by virtual display manager: requested=\(config.colorSpace.displayName), effective=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue)"
+                )
+            }
             MirageLogger
                 .host(
-                    "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), color=\(config.colorSpace.displayName))"
+                    "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), requestedColor=\(config.colorSpace.displayName), effectiveColor=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue))"
                 )
         } catch {
             await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
@@ -213,6 +226,14 @@ extension MirageHostService {
             )
         }
 
+        if let captureDisplayColorSpace, captureDisplayColorSpace != config.colorSpace {
+            let requestedColorSpace = config.colorSpace
+            config = config.withInternalOverrides(colorSpace: captureDisplayColorSpace)
+            MirageLogger.host(
+                "Desktop stream runtime color state aligned to acquired display context: requested=\(requestedColorSpace.displayName), effective=\(captureDisplayColorSpace.displayName), bitDepth=\(config.bitDepth.rawValue)"
+            )
+        }
+
         let streamID = nextStreamID
         nextStreamID += 1
         streamStartupBaseTimes[streamID] = desktopStartTime
@@ -230,11 +251,15 @@ extension MirageHostService {
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
+            encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             performanceMode: performanceMode
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
+        if let captureDisplayP3CoverageStatus {
+            await streamContext.setDisplayP3CoverageStatusOverride(captureDisplayP3CoverageStatus)
+        }
         logDesktopStartStep("stream context created (\(streamID))")
         MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
         if performanceMode != .game, allowRuntimeQualityAdjustment == false {
@@ -262,6 +287,7 @@ extension MirageHostService {
         desktopRequestedScaleFactor = resolvedClientScaleFactor
         streamsByID[streamID] = streamContext
         registerTypingBurstRoute(streamID: streamID, context: streamContext)
+        await syncAppListRequestDeferralForInteractiveWorkload()
         await activateAudioForClient(
             clientID: clientContext.client.id,
             sourceStreamID: streamID,
@@ -270,8 +296,6 @@ extension MirageHostService {
 
         await updateLightsOutState()
         let excludedWindows = await resolveLightsOutExcludedWindows()
-
-        await suspendAppListRequestsForDesktopStream()
 
         // Register for input handling.
         // For mirrored virtual displays, use the aspect-fit content bounds within the
@@ -429,7 +453,7 @@ extension MirageHostService {
 
         if activeStreams.isEmpty, loginDisplayContext == nil { await PowerAssertionManager.shared.disable() }
 
-        resumePendingAppListRequestIfNeeded()
+        await syncAppListRequestDeferralForInteractiveWorkload()
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
 
         await updateLightsOutState()

@@ -16,7 +16,10 @@ import AppKit
 extension MirageHostService {
     /// Start monitoring cursor state for active streams
     func startCursorMonitoring() {
-        cursorMonitor = CursorMonitor(pollingRate: 30)
+        cursorMonitor = CursorMonitor(
+            pollingRate: Double(MirageInteractionCadence.targetFPS120),
+            windowFrameRefreshRate: 30
+        )
 
         Task {
             await cursorMonitor?.start(
@@ -25,20 +28,9 @@ extension MirageHostService {
 
                     var streams: [(StreamID, CGRect)] = []
 
-                    // Get current window frames for all active app/window streams
+                    // Use the latest known stream frames; avoid querying CGWindowList on every cursor tick.
                     let appStreams = activeStreams.compactMap { session -> (StreamID, CGRect)? in
-                        // Get the latest window frame from CGWindowList
-                        guard let frame = currentWindowFrame(for: session.window.id) else { return nil }
-                        // Convert from CGWindowList coordinates (top-left origin) to Cocoa (bottom-left origin)
-                        // NSEvent.mouseLocation uses Cocoa coordinates
-                        guard let screen = NSScreen.main else { return nil }
-                        let screenHeight = screen.frame.height
-                        let cocoaFrame = CGRect(
-                            x: frame.origin.x,
-                            y: screenHeight - frame.origin.y - frame.height,
-                            width: frame.width,
-                            height: frame.height
-                        )
+                        guard let cocoaFrame = cocoaFrame(fromCGWindowFrame: session.window.frame) else { return nil }
                         return (session.id, cocoaFrame)
                     }
                     streams.append(contentsOf: appStreams)
@@ -59,15 +51,15 @@ extension MirageHostService {
                     return streams
                 },
                 onCursorChange: { [weak self] streamID, cursorType, isVisible in
-                    Task { @MainActor [weak self] in
-                        await self?.sendCursorUpdate(streamID: streamID, cursorType: cursorType, isVisible: isVisible)
+                    await MainActor.run { [weak self] in
+                        self?.sendCursorUpdate(streamID: streamID, cursorType: cursorType, isVisible: isVisible)
                     }
                 },
                 onCursorPosition: { [weak self] streamID, position, isVisible in
-                    Task { @MainActor [weak self] in
+                    await MainActor.run { [weak self] in
                         guard let self else { return }
-                        guard streamID == desktopStreamID, desktopStreamMode == .secondary else { return }
-                        await sendCursorPositionUpdate(streamID: streamID, position: position, isVisible: isVisible)
+                        guard streamID == self.desktopStreamID, self.desktopStreamMode == .secondary else { return }
+                        self.sendCursorPositionUpdate(streamID: streamID, position: position, isVisible: isVisible)
                     }
                 }
             )
@@ -75,7 +67,7 @@ extension MirageHostService {
     }
 
     /// Send cursor update to the client for a specific stream
-    func sendCursorUpdate(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) async {
+    func sendCursorUpdate(streamID: StreamID, cursorType: MirageCursorType, isVisible: Bool) {
         // Find the client context - check both app streams and desktop stream
         let clientContext: ClientContext?
         if let session = activeSessionByStreamID[streamID] {
@@ -94,16 +86,15 @@ extension MirageHostService {
             isVisible: isVisible
         )
 
-        do {
-            try await clientContext.send(.cursorUpdate, content: message)
-            MirageLogger.host("Cursor update sent: \(cursorType) (visible: \(isVisible))")
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to send cursor update: ")
+        if clientContext.sendBestEffort(.cursorUpdate, content: message) {
+            recordCursorControlSendSample(updateSent: true, positionSent: false, updateDropped: false, positionDropped: false)
+        } else {
+            recordCursorControlSendSample(updateSent: false, positionSent: false, updateDropped: true, positionDropped: false)
         }
     }
 
     /// Send cursor position update to the client for a specific stream
-    func sendCursorPositionUpdate(streamID: StreamID, position: CGPoint, isVisible: Bool) async {
+    func sendCursorPositionUpdate(streamID: StreamID, position: CGPoint, isVisible: Bool) {
         guard streamID == desktopStreamID else { return }
         guard let clientContext = desktopStreamClientContext else { return }
 
@@ -116,11 +107,62 @@ extension MirageHostService {
             isVisible: isVisible
         )
 
-        do {
-            try await clientContext.send(.cursorPositionUpdate, content: message)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to send cursor position update: ")
+        if clientContext.sendBestEffort(.cursorPositionUpdate, content: message) {
+            recordCursorControlSendSample(updateSent: false, positionSent: true, updateDropped: false, positionDropped: false)
+        } else {
+            recordCursorControlSendSample(updateSent: false, positionSent: false, updateDropped: false, positionDropped: true)
         }
+    }
+
+    private func cocoaFrame(fromCGWindowFrame frame: CGRect) -> CGRect? {
+        guard let screen = NSScreen.main else { return nil }
+        let screenHeight = screen.frame.height
+        return CGRect(
+            x: frame.origin.x,
+            y: screenHeight - frame.origin.y - frame.height,
+            width: frame.width,
+            height: frame.height
+        )
+    }
+
+    private func recordCursorControlSendSample(
+        updateSent: Bool,
+        positionSent: Bool,
+        updateDropped: Bool,
+        positionDropped: Bool
+    ) {
+        if updateSent { cursorUpdateMessagesSinceLastSample &+= 1 }
+        if positionSent { cursorPositionMessagesSinceLastSample &+= 1 }
+        if updateDropped { droppedCursorUpdateMessagesSinceLastSample &+= 1 }
+        if positionDropped { droppedCursorPositionMessagesSinceLastSample &+= 1 }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastCursorControlSampleTime == 0 {
+            lastCursorControlSampleTime = now
+            return
+        }
+        guard now - lastCursorControlSampleTime >= cursorControlSampleInterval else { return }
+
+        let updateCount = cursorUpdateMessagesSinceLastSample
+        let positionCount = cursorPositionMessagesSinceLastSample
+        let droppedUpdateCount = droppedCursorUpdateMessagesSinceLastSample
+        let droppedPositionCount = droppedCursorPositionMessagesSinceLastSample
+        cursorUpdateMessagesSinceLastSample = 0
+        cursorPositionMessagesSinceLastSample = 0
+        droppedCursorUpdateMessagesSinceLastSample = 0
+        droppedCursorPositionMessagesSinceLastSample = 0
+        lastCursorControlSampleTime = now
+        guard updateCount > 0 || positionCount > 0 || droppedUpdateCount > 0 || droppedPositionCount > 0 else { return }
+
+        MirageLogger.host(
+            """
+            Cursor control sample (1s): \
+            cursorUpdatesSent=\(updateCount), \
+            cursorPositionsSent=\(positionCount), \
+            cursorUpdatesDropped=\(droppedUpdateCount), \
+            cursorPositionsDropped=\(droppedPositionCount)
+            """
+        )
     }
 
 }

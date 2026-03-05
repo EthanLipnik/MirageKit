@@ -20,7 +20,9 @@ actor SharedVirtualDisplayManager {
 
     static let shared = SharedVirtualDisplayManager()
 
-    private init() {}
+    private init() {
+        fallbackOutcomeByCondition = Self.loadFallbackOutcomeCache()
+    }
 
     // MARK: - Types
 
@@ -32,6 +34,7 @@ actor SharedVirtualDisplayManager {
         let scaleFactor: CGFloat
         let refreshRate: Double
         let colorSpace: MirageColorSpace
+        let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
         let generation: UInt64
         let createdAt: Date
 
@@ -47,6 +50,7 @@ actor SharedVirtualDisplayManager {
         let scaleFactor: CGFloat
         let refreshRate: Double
         let colorSpace: MirageColorSpace
+        let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
         let generation: UInt64
         let createdAt: Date
     }
@@ -139,6 +143,9 @@ actor SharedVirtualDisplayManager {
     /// Last successfully validated Retina pixel resolution by color space.
     /// Used as an optional fallback candidate when nearby requests fail.
     var lastKnownGoodRetinaResolutionByColorSpace: [MirageColorSpace: CGSize] = [:]
+
+    /// Persisted fallback outcomes keyed by requested display conditions.
+    var fallbackOutcomeByCondition: [DisplayFallbackCondition: DisplayFallbackOutcome] = [:]
 
     /// Display IDs that remained online after explicit invalidation + timeout.
     var orphanedDisplayIDs: Set<CGDirectDisplayID> = []

@@ -27,64 +27,44 @@ extension MirageClientService {
 
     func startAudioConnection() async throws {
         guard hostDataPort > 0 else { throw MirageError.protocolError("Host data port not set") }
-        guard let connection else { throw MirageError.protocolError("No TCP connection") }
-
-        let host: NWEndpoint.Host
-        if case let .hostPort(endpointHost, _) = connection.endpoint {
-            host = endpointHost
-        } else if let remoteEndpoint = connection.currentPath?.remoteEndpoint,
-                  case let .hostPort(endpointHost, _) = remoteEndpoint {
-            host = endpointHost
-        } else if case .service = connection.endpoint, let connectedHost {
-            host = NWEndpoint.Host(connectedHost.name)
-        } else {
-            throw MirageError.protocolError("Cannot determine host address for audio")
-        }
-
-        guard let port = NWEndpoint.Port(rawValue: hostDataPort) else {
-            throw MirageError.protocolError("Invalid host data port for audio")
-        }
-        let endpoint = NWEndpoint.hostPort(
-            host: host,
-            port: port
+        let candidates = try resolveMediaTransportCandidates(
+            preferredHost: mediaTransportHost,
+            preferredIncludePeerToPeer: mediaTransportIncludePeerToPeer
         )
-        let params = NWParameters.udp
-        params.serviceClass = .background
-        params.includePeerToPeer = networkConfig.enablePeerToPeer
-
-        let udpConn = NWConnection(to: endpoint, using: params)
-        audioConnection = udpConn
-        udpConn.pathUpdateHandler = { path in
-            let snapshot = MirageNetworkPathClassifier.classify(path)
-            MirageLogger.client("Audio UDP path updated: \(describeAudioNetworkPath(path))")
-            Task { @MainActor [weak service = self] in
-                service?.handleAudioPathUpdate(snapshot)
-            }
-        }
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let box = ContinuationBox<Void>(continuation)
-            udpConn.stateUpdateHandler = { [box] state in
-                switch state {
-                case .ready:
-                    box.resume()
-                case let .failed(error):
-                    box.resume(throwing: error)
-                case .cancelled:
-                    box.resume(throwing: MirageError.protocolError("Audio UDP connection cancelled"))
-                default:
-                    break
+        var lastError: Error?
+        for (index, candidate) in candidates.enumerated() {
+            do {
+                MirageLogger.client(
+                    "Connecting audio transport via \(candidate.label): \(candidate.host):\(hostDataPort) (p2p=\(candidate.includePeerToPeer))"
+                )
+                let udpConn = try await establishMediaUDPConnection(
+                    host: candidate.host,
+                    port: hostDataPort,
+                    includePeerToPeer: candidate.includePeerToPeer,
+                    serviceClass: .background,
+                    qos: .utility,
+                    pathDescription: describeAudioNetworkPath
+                ) { [weak self] snapshot in
+                    self?.handleAudioPathUpdate(snapshot)
                 }
+                audioConnection?.cancel()
+                audioConnection = udpConn
+                MirageLogger.client("Audio UDP connection established")
+                if let path = udpConn.currentPath {
+                    MirageLogger.client("Audio UDP path: \(describeAudioNetworkPath(path))")
+                    handleAudioPathUpdate(MirageNetworkPathClassifier.classify(path))
+                }
+                startReceivingAudio()
+                return
+            } catch {
+                lastError = error
+                MirageLogger.client(
+                    "Audio UDP attempt \(index + 1)/\(candidates.count) failed via \(candidate.label): \(error.localizedDescription)"
+                )
             }
-            udpConn.start(queue: .global(qos: .utility))
         }
 
-        MirageLogger.client("Audio UDP connection established")
-        if let path = udpConn.currentPath {
-            MirageLogger.client("Audio UDP path: \(describeAudioNetworkPath(path))")
-            handleAudioPathUpdate(MirageNetworkPathClassifier.classify(path))
-        }
-        startReceivingAudio()
+        throw lastError ?? MirageError.protocolError("Unable to establish audio UDP connection")
     }
 
     func stopAudioConnection() {
@@ -93,11 +73,12 @@ extension MirageClientService {
         audioPathSnapshot = nil
         audioRegisteredStreamID = nil
         activeAudioStreamMessage = nil
+        setActiveAudioStreamIDForFiltering(nil)
+        setAudioDecodeTargetChannelCountForPipeline(2)
         audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
         audioPlaybackController.reset()
         Task {
-            await audioJitterBuffer.reset()
-            await audioDecoder.reset()
+            await audioDecodePipeline.reset()
         }
     }
 
@@ -169,6 +150,11 @@ extension MirageClientService {
             let started = try message.decode(AudioStreamStartedMessage.self)
             let previous = activeAudioStreamMessage
             activeAudioStreamMessage = started
+            setActiveAudioStreamIDForFiltering(started.streamID)
+            let preferredChannels = audioPlaybackController.preferredChannelCount(
+                for: Int(started.channelCount)
+            )
+            setAudioDecodeTargetChannelCountForPipeline(preferredChannels)
 
             MirageLogger
                 .client(
@@ -178,8 +164,7 @@ extension MirageClientService {
             Task { [weak self] in
                 guard let self else { return }
                 if previous != started {
-                    await self.audioJitterBuffer.reset()
-                    await self.audioDecoder.reset()
+                    await self.audioDecodePipeline.reset()
                     self.audioPlaybackController.reset()
                 }
                 await self.ensureAudioTransportRegistered(for: started.streamID)
@@ -193,14 +178,16 @@ extension MirageClientService {
         do {
             let stopped = try message.decode(AudioStreamStoppedMessage.self)
             MirageLogger.client("Audio stream stopped: stream=\(stopped.streamID), reason=\(stopped.reason)")
-            if activeAudioStreamMessage?.streamID == stopped.streamID {
-                activeAudioStreamMessage = nil
-            }
+            let shouldReset = activeAudioStreamMessage?.streamID == stopped.streamID
+            guard shouldReset else { return }
+
+            activeAudioStreamMessage = nil
+            setActiveAudioStreamIDForFiltering(nil)
+            setAudioDecodeTargetChannelCountForPipeline(2)
 
             Task { [weak self] in
                 guard let self else { return }
-                await self.audioJitterBuffer.reset()
-                await self.audioDecoder.reset()
+                await self.audioDecodePipeline.reset()
                 self.audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
                 self.audioPlaybackController.reset()
             }
@@ -279,8 +266,17 @@ extension MirageClientService {
                         }
                     }
 
-                    Task { @MainActor [weak service] in
-                        await service?.handleAudioPacket(header: header, payload: payloadData)
+                    guard let activeAudioStreamID = service.activeAudioStreamIDForFiltering,
+                          activeAudioStreamID == header.streamID else {
+                        receiveNext()
+                        return
+                    }
+
+                    Task(priority: .userInitiated) { [weak service] in
+                        await service?.ingestAudioPacketOffMain(
+                            header: header,
+                            payload: payloadData
+                        )
                     }
                 }
 
@@ -307,19 +303,12 @@ extension MirageClientService {
         )
     }
 
-    private func handleAudioPacket(header: AudioPacketHeader, payload: Data) async {
+    private func enqueueDecodedAudioFrames(_ decodedFrames: [DecodedPCMFrame], for streamID: StreamID) {
         guard audioConfiguration.enabled else { return }
-        if let activeAudioStreamMessage, activeAudioStreamMessage.streamID != header.streamID { return }
-        updateAudioSyncDelay(for: header.streamID)
-
-        let encodedFrames = await audioJitterBuffer.ingest(header: header, payload: payload)
-        guard !encodedFrames.isEmpty else { return }
-
-        for frame in encodedFrames {
-            let preferredChannels = audioPlaybackController.preferredChannelCount(for: frame.channelCount)
-            guard let decodedFrame = await audioDecoder.decode(frame, targetChannelCount: preferredChannels) else {
-                continue
-            }
+        guard activeAudioStreamMessage?.streamID == streamID else { return }
+        guard !decodedFrames.isEmpty else { return }
+        updateAudioSyncDelay(for: streamID)
+        for decodedFrame in decodedFrames {
             audioPlaybackController.enqueue(decodedFrame)
         }
     }
@@ -344,6 +333,29 @@ extension MirageClientService {
         _ = snapshot
         _ = fallbackTargetFPS
         return 0
+    }
+}
+
+extension MirageClientService {
+    nonisolated func ingestAudioPacketOffMain(
+        header: AudioPacketHeader,
+        payload: Data
+    ) async {
+        guard let activeAudioStreamID = activeAudioStreamIDForFiltering,
+              activeAudioStreamID == header.streamID else {
+            return
+        }
+
+        let decodedFrames = await audioDecodePipeline.ingestPacket(
+            header: header,
+            payload: payload,
+            targetChannelCount: audioDecodeTargetChannelCountForPipeline
+        )
+        guard !decodedFrames.isEmpty else { return }
+
+        await MainActor.run { [weak self] in
+            self?.enqueueDecodedAudioFrames(decodedFrames, for: header.streamID)
+        }
     }
 }
 

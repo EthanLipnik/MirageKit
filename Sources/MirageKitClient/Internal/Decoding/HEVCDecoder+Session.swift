@@ -83,7 +83,11 @@ extension HEVCDecoder {
 
         guard status == noErr, let session else { throw MirageError.decodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
 
+        decoderHardwareStatusRefreshAttempts = 0
+        usingHardwareDecoder = nil
         VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+        _ = applyMaximizePowerEfficiency(session)
+        logHardwareDecoderStatus(session, reason: "session_create")
         decompressionSession = session
     }
 
@@ -105,6 +109,7 @@ extension HEVCDecoder {
     func recordDecodedOutputPixelFormat(_ pixelFormat: OSType, sessionGeneration: UInt64) {
         guard pendingOutputTelemetryGeneration == sessionGeneration else { return }
         pendingOutputTelemetryGeneration = 0
+        refreshHardwareDecoderStatusIfNeeded(reason: "first_output_generation_\(sessionGeneration)")
 
         let configuredName = Self.pixelFormatName(outputPixelFormat)
         let actualName = Self.pixelFormatName(pixelFormat)
@@ -128,5 +133,69 @@ extension HEVCDecoder {
                     "10-bit requested but decoder produced \(actualName); continuing with fallback"
                 )
         }
+    }
+
+    private func refreshHardwareDecoderStatusIfNeeded(reason: String) {
+        guard decoderHardwareStatusRefreshAttempts < maxDecoderHardwareStatusRefreshAttempts else { return }
+        guard usingHardwareDecoder == nil else { return }
+        guard let session = decompressionSession else { return }
+        logHardwareDecoderStatus(session, reason: reason)
+    }
+
+    @discardableResult
+    func applyMaximizePowerEfficiency(_ session: VTDecompressionSession) -> Bool {
+        let value: CFTypeRef = maximizePowerEfficiencyEnabled ? kCFBooleanTrue : kCFBooleanFalse
+        let status = VTSessionSetProperty(
+            session,
+            key: kVTDecompressionPropertyKey_MaximizePowerEfficiency,
+            value: value
+        )
+        guard status == noErr else {
+            MirageLogger.error(
+                .decoder,
+                "Failed to set decoder power preference maximizePowerEfficiency=\(maximizePowerEfficiencyEnabled): \(status)"
+            )
+            return false
+        }
+        MirageLogger.decoder(
+            "Decoder power preference applied: maximizePowerEfficiency=\(maximizePowerEfficiencyEnabled)"
+        )
+        return true
+    }
+
+    private func logHardwareDecoderStatus(_ session: VTDecompressionSession, reason: String) {
+        decoderHardwareStatusRefreshAttempts += 1
+        usingHardwareDecoder = nil
+
+        var hardwareProperty: Unmanaged<CFTypeRef>?
+        let hardwareStatus = VTSessionCopyProperty(
+            session,
+            key: kVTDecompressionPropertyKey_UsingHardwareAcceleratedVideoDecoder,
+            allocator: kCFAllocatorDefault,
+            valueOut: &hardwareProperty
+        )
+        if hardwareStatus == noErr,
+           let value = hardwareProperty?.takeRetainedValue(),
+           let boolValue = value as? Bool {
+            usingHardwareDecoder = boolValue
+        }
+
+        let usingHardwareText: String = if let usingHardwareDecoder {
+            String(usingHardwareDecoder)
+        } else {
+            "unknown(status=\(hardwareStatus))"
+        }
+        let healthText: String = if usingHardwareDecoder == true {
+            "active"
+        } else if usingHardwareDecoder == false {
+            "software_fallback"
+        } else {
+            "unknown"
+        }
+
+        MirageLogger.decoder(
+            "event=hardware_decoder_status reason=\(reason) usingHardware=\(usingHardwareText) " +
+                "status=\(healthText) enabledBySpec=true"
+        )
     }
 }

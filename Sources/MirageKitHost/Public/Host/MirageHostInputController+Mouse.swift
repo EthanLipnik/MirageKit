@@ -31,9 +31,8 @@ extension MirageHostInputController {
             // to avoid occasional frame-query jitter while drawing.
             resolvedFrame = windowFrame
         } else {
-            let actualFrame = currentWindowFrame(for: windowID)
-            let useActualFrame = actualFrame.map { framesAreClose($0, windowFrame) } ?? false
-            resolvedFrame = useActualFrame ? (actualFrame ?? windowFrame) : windowFrame
+            // Throttle CGWindowList frame validation to keep drag/move input path hot.
+            resolvedFrame = resolvedInputWindowFrame(for: windowID, streamFrame: windowFrame)
         }
 
         let localPoint = CGPoint(

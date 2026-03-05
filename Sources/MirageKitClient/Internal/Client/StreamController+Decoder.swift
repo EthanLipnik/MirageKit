@@ -13,6 +13,10 @@ import MirageKit
 extension StreamController {
     // MARK: - Decoder Control
 
+    func setDecoderLowPowerEnabled(_ enabled: Bool) async {
+        await decoder.setMaximizePowerEfficiencyEnabled(enabled)
+    }
+
     func setPreferredDecoderBitDepth(_ bitDepth: MirageVideoBitDepth) async {
         preferredDecoderBitDepth = bitDepth
         await decoder.setPreferredOutputBitDepth(bitDepth)

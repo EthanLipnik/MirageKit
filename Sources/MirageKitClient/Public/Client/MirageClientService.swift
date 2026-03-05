@@ -28,6 +28,27 @@ public final class MirageClientService {
         case quic
     }
 
+    public enum ControlUpdatePolicy: Sendable {
+        case normal
+        case interactiveStreaming
+    }
+
+    public struct DeferredControlRefreshRequirements: Sendable {
+        public var needsAppListRefresh: Bool
+        public var needsWindowListRefresh: Bool
+        public var needsHostSoftwareUpdateRefresh: Bool
+
+        public static let none = DeferredControlRefreshRequirements(
+            needsAppListRefresh: false,
+            needsWindowListRefresh: false,
+            needsHostSoftwareUpdateRefresh: false
+        )
+
+        public var hasAny: Bool {
+            needsAppListRefresh || needsWindowListRefresh || needsHostSoftwareUpdateRefresh
+        }
+    }
+
     public enum AdaptiveFallbackMode: Equatable, Sendable {
         case disabled
         case automatic
@@ -255,6 +276,23 @@ public final class MirageClientService {
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
 
+    /// Preferred low-power policy for local decoder sessions.
+    public var decoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto {
+        didSet {
+            guard oldValue != decoderLowPowerModePreference else { return }
+            scheduleDecoderLowPowerPolicyApply(reason: "preference_change")
+        }
+    }
+
+    /// Whether battery-based low-power policy is currently supported on this client device.
+    public internal(set) var decoderLowPowerSupportsBatteryPolicy: Bool = false
+
+    /// Whether the local decoder is currently using low-power mode.
+    public internal(set) var isDecoderLowPowerModeActive: Bool = false
+
+    /// Callback fired when client battery-policy support changes.
+    public var onDecoderLowPowerBatteryPolicySupportChanged: ((Bool) -> Void)?
+
     /// Callback when desktop stream starts
     public var onDesktopStreamStarted: ((StreamID, CGSize, Int) -> Void)?
 
@@ -289,6 +327,21 @@ public final class MirageClientService {
 
     /// Whether the next app-list request should force a full icon reset on host.
     var pendingForceIconResetForNextAppListRequest: Bool = false
+
+    /// Policy controlling whether non-essential control updates should be processed.
+    public private(set) var controlUpdatePolicy: ControlUpdatePolicy = .normal
+    /// Number of app-icon updates dropped while interactive-stream policy is active.
+    var droppedAppIconUpdateMessagesWhileSuppressed: Int = 0
+    /// Deferred refresh requirements gathered while non-essential updates are suppressed.
+    var deferredControlRefreshRequirements: DeferredControlRefreshRequirements = .none
+    /// Cursor update/control counters sampled at 1s windows to avoid per-message logging overhead.
+    var cursorUpdateMessagesSinceLastSample: UInt64 = 0
+    var cursorPositionMessagesSinceLastSample: UInt64 = 0
+    var lastCursorControlSampleTime: CFAbsoluteTime = 0
+    let cursorControlSampleInterval: CFAbsoluteTime = 1.0
+    var streamMetricsMessagesSinceLastSample: UInt64 = 0
+    var lastStreamMetricsSampleTime: CFAbsoluteTime = 0
+    let streamMetricsSampleInterval: CFAbsoluteTime = 1.0
 
     /// Currently streaming app's bundle identifier
     public internal(set) var streamingAppBundleID: String?
@@ -378,6 +431,7 @@ public final class MirageClientService {
     public let metricsStore = MirageClientMetricsStore()
     /// Cursor store for pointer updates (decoupled from SwiftUI).
     public let cursorStore = MirageClientCursorStore()
+    nonisolated let inputEventSender = MirageInputEventSender()
 
     var networkConfig: MirageNetworkConfiguration
     var connection: NWConnection?
@@ -412,13 +466,21 @@ public final class MirageClientService {
     // Video receiving
     var udpConnection: NWConnection?
     var hostDataPort: UInt16 = 0
+    var mediaTransportHost: NWEndpoint.Host?
+    var mediaTransportIncludePeerToPeer: Bool?
+    let mediaTransportConnectTimeout: Duration = .seconds(1)
 
     // Audio receiving (dedicated low-priority UDP connection)
     var audioConnection: NWConnection?
     var audioRegisteredStreamID: StreamID?
     var activeAudioStreamMessage: AudioStreamStartedMessage?
-    let audioJitterBuffer = AudioJitterBuffer(startupBufferSeconds: 0.150)
-    let audioDecoder = AudioDecoder()
+    nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
+    /// Thread-safe active audio stream ID for nonisolated UDP packet filtering.
+    let activeAudioStreamIDLock = NSLock()
+    nonisolated(unsafe) var activeAudioStreamIDStorage: StreamID?
+    /// Thread-safe preferred decode channel count for off-main audio decode.
+    let audioDecodeTargetChannelLock = NSLock()
+    nonisolated(unsafe) var audioDecodeTargetChannelCountStorage: Int = 2
     @ObservationIgnored let audioPlaybackController = AudioPlaybackController()
     public var audioConfiguration: MirageAudioConfiguration = .default {
         didSet {
@@ -462,6 +524,20 @@ public final class MirageClientService {
         return activeStreamIDsStorage
     }
 
+    /// Thread-safe active audio stream ID for UDP packet filtering from nonisolated callbacks.
+    nonisolated var activeAudioStreamIDForFiltering: StreamID? {
+        activeAudioStreamIDLock.lock()
+        defer { activeAudioStreamIDLock.unlock() }
+        return activeAudioStreamIDStorage
+    }
+
+    /// Thread-safe target channel count for off-main audio decode.
+    nonisolated var audioDecodeTargetChannelCountForPipeline: Int {
+        audioDecodeTargetChannelLock.lock()
+        defer { audioDecodeTargetChannelLock.unlock() }
+        return max(1, audioDecodeTargetChannelCountStorage)
+    }
+
     /// Thread-safe set of streams awaiting a first-packet startup log.
     let startupPacketPendingLock = NSLock()
     nonisolated(unsafe) var startupPacketPendingStorage: Set<StreamID> = []
@@ -495,6 +571,18 @@ public final class MirageClientService {
         startupPacketPendingLock.lock()
         startupPacketPendingStorage.remove(streamID)
         startupPacketPendingLock.unlock()
+    }
+
+    func setActiveAudioStreamIDForFiltering(_ streamID: StreamID?) {
+        activeAudioStreamIDLock.lock()
+        activeAudioStreamIDStorage = streamID
+        activeAudioStreamIDLock.unlock()
+    }
+
+    func setAudioDecodeTargetChannelCountForPipeline(_ count: Int) {
+        audioDecodeTargetChannelLock.lock()
+        audioDecodeTargetChannelCountStorage = max(1, count)
+        audioDecodeTargetChannelLock.unlock()
     }
 
     nonisolated var mediaSecurityContextForNetworking: MirageMediaSecurityContext? {
@@ -591,6 +679,12 @@ public final class MirageClientService {
     let adaptiveRestoreBitrateStep: Double = 1.10
     let adaptiveFallbackBitrateFloorBps: Int = 8_000_000
     nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
+    // Internal for low-power policy extension.
+    let decoderPowerStateMonitor = MiragePowerStateMonitor()
+    var decoderPowerStateSnapshot = MiragePowerStateSnapshot(
+        isSystemLowPowerModeEnabled: false,
+        isOnBattery: nil
+    )
 
     public enum ConnectionState: Equatable {
         case disconnected
@@ -664,9 +758,14 @@ public final class MirageClientService {
         }
         registerControlMessageHandlers()
         registerDiagnosticsContextProvider()
+        configureDecoderLowPowerMonitoring()
     }
 
     deinit {
+        let powerStateMonitor = decoderPowerStateMonitor
+        Task { @MainActor in
+            powerStateMonitor.stop()
+        }
         guard let diagnosticsContextProviderToken else { return }
         Task {
             await MirageDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
@@ -743,6 +842,27 @@ public final class MirageClientService {
         MirageLogger.client(
             "Updated network policy (p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
         )
+    }
+
+    /// Sets client control-update policy for active-stream workload isolation.
+    public func setControlUpdatePolicy(_ policy: ControlUpdatePolicy) {
+        guard controlUpdatePolicy != policy else { return }
+        controlUpdatePolicy = policy
+
+        guard policy == .normal else { return }
+        if droppedAppIconUpdateMessagesWhileSuppressed > 0 {
+            MirageLogger.client(
+                "Resumed normal control updates after dropping \(droppedAppIconUpdateMessagesWhileSuppressed) app icon updates"
+            )
+            droppedAppIconUpdateMessagesWhileSuppressed = 0
+        }
+    }
+
+    /// Consumes and clears deferred control refresh requirements accumulated while policy was suppressed.
+    public func consumeDeferredControlRefreshRequirements() -> DeferredControlRefreshRequirements {
+        let requirements = deferredControlRefreshRequirements
+        deferredControlRefreshRequirements = .none
+        return requirements
     }
 
     #if os(iOS) || os(visionOS)

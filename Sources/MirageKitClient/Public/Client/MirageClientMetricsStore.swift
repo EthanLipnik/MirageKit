@@ -32,6 +32,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostEncoderColorPrimaries: String?
     public var hostEncoderTransferFunction: String?
     public var hostEncoderYCbCrMatrix: String?
+    public var hostDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus?
     public var hostTenBitDisplayP3Validated: Bool?
     public var hasHostMetrics: Bool
 
@@ -58,6 +59,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostEncoderColorPrimaries: String? = nil,
         hostEncoderTransferFunction: String? = nil,
         hostEncoderYCbCrMatrix: String? = nil,
+        hostDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus? = nil,
         hostTenBitDisplayP3Validated: Bool? = nil,
         hasHostMetrics: Bool = false
     ) {
@@ -83,6 +85,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostEncoderColorPrimaries = hostEncoderColorPrimaries
         self.hostEncoderTransferFunction = hostEncoderTransferFunction
         self.hostEncoderYCbCrMatrix = hostEncoderYCbCrMatrix
+        self.hostDisplayP3CoverageStatus = hostDisplayP3CoverageStatus
         self.hostTenBitDisplayP3Validated = hostTenBitDisplayP3Validated
         self.hasHostMetrics = hasHostMetrics
     }
@@ -134,6 +137,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         encoderColorPrimaries: String?,
         encoderTransferFunction: String?,
         encoderYCbCrMatrix: String?,
+        displayP3CoverageStatus: MirageDisplayP3CoverageStatus?,
         tenBitDisplayP3Validated: Bool?
     ) {
         lock.lock()
@@ -153,6 +157,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostEncoderColorPrimaries = encoderColorPrimaries
         snapshot.hostEncoderTransferFunction = encoderTransferFunction
         snapshot.hostEncoderYCbCrMatrix = encoderYCbCrMatrix
+        snapshot.hostDisplayP3CoverageStatus = displayP3CoverageStatus
         snapshot.hostTenBitDisplayP3Validated = tenBitDisplayP3Validated
         snapshot.hasHostMetrics = true
         metricsByStream[streamID] = snapshot

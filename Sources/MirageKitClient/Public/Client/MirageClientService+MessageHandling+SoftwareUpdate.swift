@@ -13,6 +13,10 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     func handleHostSoftwareUpdateStatus(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsHostSoftwareUpdateRefresh = true
+            return
+        }
         do {
             let statusMessage = try message.decode(HostSoftwareUpdateStatusMessage.self)
             onHostSoftwareUpdateStatus?(mapHostSoftwareUpdateStatus(statusMessage))

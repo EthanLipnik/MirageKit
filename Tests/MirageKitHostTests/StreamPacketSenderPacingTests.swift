@@ -46,5 +46,24 @@ struct StreamPacketSenderPacingTests {
         )
         #expect(sleepMs == 12)
     }
+
+    @Test("Keyframe burst window remains stable across keyframe sizes")
+    func keyframeBurstWindowIsStableAcrossSizes() {
+        let baseline = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: true,
+            totalFragments: 100
+        )
+        let large = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: true,
+            totalFragments: 400
+        )
+        let huge = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: true,
+            totalFragments: 800
+        )
+
+        #expect(large == baseline)
+        #expect(huge == baseline)
+    }
 }
 #endif

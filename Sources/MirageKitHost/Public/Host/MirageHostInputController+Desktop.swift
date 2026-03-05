@@ -29,7 +29,7 @@ extension MirageHostInputController {
             switch event {
             case let .mouseDown(e):
                 flushPointerLerp()
-                clearUnexpectedSystemModifiers()
+                clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 injectDesktopMouseEvent(.leftMouseDown, e, at: point)
@@ -39,7 +39,7 @@ extension MirageHostInputController {
                 injectDesktopMouseEvent(.leftMouseUp, e, at: point)
             case let .rightMouseDown(e):
                 flushPointerLerp()
-                clearUnexpectedSystemModifiers()
+                clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 injectDesktopMouseEvent(.rightMouseDown, e, at: point)
@@ -49,7 +49,7 @@ extension MirageHostInputController {
                 injectDesktopMouseEvent(.rightMouseUp, e, at: point)
             case let .otherMouseDown(e):
                 flushPointerLerp()
-                clearUnexpectedSystemModifiers()
+                clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 injectDesktopMouseEvent(.otherMouseDown, e, at: point)
@@ -94,12 +94,12 @@ extension MirageHostInputController {
             case let .keyDown(e):
                 flushPointerLerp()
                 // Use HID tap for system-level UIs (screensaver, screenshot overlay)
-                postHIDKeyEvent(isKeyDown: true, e)
+                injectKeyEvent(isKeyDown: true, e, domain: .hid, app: nil)
             case let .keyUp(e):
                 flushPointerLerp()
-                postHIDKeyEvent(isKeyDown: false, e)
+                injectKeyEvent(isKeyDown: false, e, domain: .hid, app: nil)
             case let .flagsChanged(modifiers):
-                injectFlagsChanged(modifiers, app: nil)
+                injectFlagsChanged(modifiers, domain: .hid, app: nil)
             case let .magnify(e):
                 handleMagnifyGesture(e, windowFrame: bounds)
             case let .rotate(e):
@@ -147,21 +147,6 @@ extension MirageHostInputController {
 
         applyTabletFieldsIfNeeded(cgEvent, from: event, type: type, point: point)
         postStylusAwarePointerEvent(cgEvent, from: event, type: type, at: point)
-    }
-
-    /// Post a HID keyboard event for system-level UI compatibility.
-    /// Uses `.cghidEventTap` to work with screensaver, screenshot overlay, and other system UIs.
-    func postHIDKeyEvent(isKeyDown: Bool, _ event: MirageKeyEvent) {
-        guard let cgEvent = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(event.keyCode),
-            keyDown: isKeyDown
-        ) else {
-            return
-        }
-
-        cgEvent.flags = event.modifiers.cgEventFlags
-        MirageInjectedEventTag.postHID(cgEvent)
     }
 
     /// Inject scroll event for desktop streaming.

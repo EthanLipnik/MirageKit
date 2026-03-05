@@ -16,107 +16,44 @@ extension MirageClientService {
     /// Start UDP connection to host's data port for receiving video.
     func startVideoConnection() async throws {
         guard hostDataPort > 0 else { throw MirageError.protocolError("Host data port not set") }
-
-        guard let connection else { throw MirageError.protocolError("No TCP connection") }
-
-        let host: NWEndpoint.Host
-        if case let .hostPort(h, _) = connection.endpoint { host = h } else if let remoteEndpoint = connection.currentPath?.remoteEndpoint,
-                                                                               case let .hostPort(h, _) = remoteEndpoint {
-            host = h
-        } else {
-            MirageLogger.client("Using Bonjour endpoint for UDP")
-            if case .service = connection.endpoint {
-                if let connectedHost {
-                    let dataEndpoint = NWEndpoint.hostPort(
-                        host: NWEndpoint.Host(connectedHost.name),
-                        port: NWEndpoint.Port(rawValue: hostDataPort)!
-                    )
-                    MirageLogger
-                        .client("Connecting to host data port via hostname \(connectedHost.name):\(hostDataPort)")
-                    let params = NWParameters.udp
-                    params.serviceClass = .interactiveVideo
-                    params.includePeerToPeer = networkConfig.enablePeerToPeer
-
-                    let udpConn = NWConnection(to: dataEndpoint, using: params)
-                    udpConnection = udpConn
-                    udpConn.pathUpdateHandler = { path in
-                        let snapshot = MirageNetworkPathClassifier.classify(path)
-                        MirageLogger.client("UDP path updated: \(describeNetworkPath(path))")
-                        Task { @MainActor [weak service = self] in
-                            service?.handleVideoPathUpdate(snapshot)
-                        }
-                    }
-
-                    try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                        let box = ContinuationBox<Void>(continuation)
-                        udpConn.stateUpdateHandler = { [box] state in
-                            switch state {
-                            case .ready:
-                                box.resume()
-                            case let .failed(error):
-                                box.resume(throwing: error)
-                            case .cancelled:
-                                box.resume(throwing: MirageError.protocolError("UDP connection cancelled"))
-                            default:
-                                break
-                            }
-                        }
-                        udpConn.start(queue: .global(qos: .userInteractive))
-                    }
-                    MirageLogger.client("UDP connection established to host data port")
-                    if let path = udpConn.currentPath {
-                        MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
-                    }
-                    startReceivingVideo()
-                    return
+        let candidates = try resolveMediaTransportCandidates()
+        var lastError: Error?
+        for (index, candidate) in candidates.enumerated() {
+            do {
+                MirageLogger.client(
+                    "Connecting to host data port via \(candidate.label): \(candidate.host):\(hostDataPort) (p2p=\(candidate.includePeerToPeer))"
+                )
+                let udpConn = try await establishMediaUDPConnection(
+                    host: candidate.host,
+                    port: hostDataPort,
+                    includePeerToPeer: candidate.includePeerToPeer,
+                    serviceClass: .interactiveVideo,
+                    qos: .userInteractive,
+                    pathDescription: describeNetworkPath
+                ) { [weak self] snapshot in
+                    self?.handleVideoPathUpdate(snapshot)
                 }
-            }
-            throw MirageError.protocolError("Cannot determine host address")
-        }
-
-        let dataEndpoint = NWEndpoint.hostPort(host: host, port: NWEndpoint.Port(rawValue: hostDataPort)!)
-        MirageLogger.client("Connecting to host data port at \(host):\(hostDataPort)")
-
-        let params = NWParameters.udp
-        params.serviceClass = .interactiveVideo
-        params.includePeerToPeer = networkConfig.enablePeerToPeer
-
-        let udpConn = NWConnection(to: dataEndpoint, using: params)
-        udpConnection = udpConn
-        udpConn.pathUpdateHandler = { path in
-            let snapshot = MirageNetworkPathClassifier.classify(path)
-            MirageLogger.client("UDP path updated: \(describeNetworkPath(path))")
-            Task { @MainActor [weak service = self] in
-                service?.handleVideoPathUpdate(snapshot)
-            }
-        }
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let box = ContinuationBox<Void>(continuation)
-
-            udpConn.stateUpdateHandler = { [box] state in
-                switch state {
-                case .ready:
-                    box.resume()
-                case let .failed(error):
-                    box.resume(throwing: error)
-                case .cancelled:
-                    box.resume(throwing: MirageError.protocolError("UDP connection cancelled"))
-                default:
-                    break
+                udpConnection?.cancel()
+                udpConnection = udpConn
+                mediaTransportHost = candidate.host
+                mediaTransportIncludePeerToPeer = candidate.includePeerToPeer
+                MirageLogger.client("UDP connection established to host data port")
+                if let path = udpConn.currentPath {
+                    MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
+                    handleVideoPathUpdate(MirageNetworkPathClassifier.classify(path))
                 }
+                startReceivingVideo()
+                updateRegistrationRefreshLoopState()
+                return
+            } catch {
+                lastError = error
+                MirageLogger.client(
+                    "UDP attempt \(index + 1)/\(candidates.count) failed via \(candidate.label): \(error.localizedDescription)"
+                )
             }
-
-            udpConn.start(queue: .global(qos: .userInteractive))
         }
 
-        MirageLogger.client("UDP connection established to host data port")
-        if let path = udpConn.currentPath {
-            MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
-            handleVideoPathUpdate(MirageNetworkPathClassifier.classify(path))
-        }
-        startReceivingVideo()
-        updateRegistrationRefreshLoopState()
+        throw lastError ?? MirageError.protocolError("Unable to establish UDP connection to host data port")
     }
 
     /// Start receiving video data from UDP connection.
@@ -285,7 +222,195 @@ extension MirageClientService {
         udpConnection?.cancel()
         udpConnection = nil
         videoPathSnapshot = nil
+        mediaTransportHost = nil
+        mediaTransportIncludePeerToPeer = nil
         hostDataPort = 0
+    }
+
+    func resolveMediaTransportCandidates(
+        preferredHost: NWEndpoint.Host? = nil,
+        preferredIncludePeerToPeer: Bool? = nil
+    ) throws -> [UDPTransportCandidate] {
+        guard let connection else { throw MirageError.protocolError("No TCP connection") }
+
+        var candidates: [UDPTransportCandidate] = []
+        var seen: Set<String> = []
+        let configuredPeerToPeer = networkConfig.enablePeerToPeer
+
+        func appendCandidate(host: NWEndpoint.Host, includePeerToPeer: Bool, label: String) {
+            let key = "\(String(describing: host).lowercased())|p2p=\(includePeerToPeer)"
+            guard seen.insert(key).inserted else { return }
+            candidates.append(
+                UDPTransportCandidate(
+                    host: host,
+                    includePeerToPeer: includePeerToPeer,
+                    label: label
+                )
+            )
+        }
+
+        let serviceHostName = connectedHost?.name ?? Self.serviceName(from: connection.endpoint)
+        let serviceHost = serviceHostName.map { NWEndpoint.Host($0) }
+        let remoteHost = Self.host(from: connection.currentPath?.remoteEndpoint)
+        let endpointHost = Self.host(from: connection.endpoint)
+
+        if let preferredHost {
+            appendCandidate(
+                host: preferredHost,
+                includePeerToPeer: preferredIncludePeerToPeer ?? configuredPeerToPeer,
+                label: "preferred-route"
+            )
+        }
+
+        if let remoteHost,
+           Self.isLikelyPeerToPeerLinkLocalHost(remoteHost),
+           let serviceHost {
+            appendCandidate(
+                host: serviceHost,
+                includePeerToPeer: false,
+                label: "bonjour-hostname-no-p2p"
+            )
+        }
+
+        if let remoteHost {
+            appendCandidate(
+                host: remoteHost,
+                includePeerToPeer: configuredPeerToPeer,
+                label: "control-remote-endpoint"
+            )
+        }
+
+        if let endpointHost {
+            appendCandidate(
+                host: endpointHost,
+                includePeerToPeer: configuredPeerToPeer,
+                label: "control-endpoint"
+            )
+        }
+
+        if let serviceHost {
+            appendCandidate(
+                host: serviceHost,
+                includePeerToPeer: configuredPeerToPeer,
+                label: "bonjour-hostname"
+            )
+            if configuredPeerToPeer {
+                appendCandidate(
+                    host: serviceHost,
+                    includePeerToPeer: false,
+                    label: "bonjour-hostname-no-p2p"
+                )
+            }
+        }
+
+        guard !candidates.isEmpty else {
+            throw MirageError.protocolError("Cannot determine host address")
+        }
+        return candidates
+    }
+
+    func establishMediaUDPConnection(
+        host: NWEndpoint.Host,
+        port: UInt16,
+        includePeerToPeer: Bool,
+        serviceClass: NWParameters.ServiceClass,
+        qos: DispatchQoS.QoSClass,
+        pathDescription: @Sendable @escaping (NWPath) -> String,
+        onPathSnapshot: @Sendable @escaping @MainActor (MirageNetworkPathSnapshot) -> Void
+    ) async throws -> NWConnection {
+        guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
+            throw MirageError.protocolError("Invalid host data port")
+        }
+
+        let endpoint = NWEndpoint.hostPort(host: host, port: endpointPort)
+        let params = NWParameters.udp
+        params.serviceClass = serviceClass
+        params.includePeerToPeer = includePeerToPeer
+
+        let udpConn = NWConnection(to: endpoint, using: params)
+        udpConn.pathUpdateHandler = { path in
+            let snapshot = MirageNetworkPathClassifier.classify(path)
+            MirageLogger.client("UDP path updated: \(pathDescription(path))")
+            Task { @MainActor in
+                onPathSnapshot(snapshot)
+            }
+        }
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let box = ContinuationBox<Void>(continuation)
+            let timeoutTask = Task {
+                try? await Task.sleep(for: mediaTransportConnectTimeout)
+                guard !Task.isCancelled else { return }
+                box.resume(
+                    throwing: MirageError.protocolError(
+                        "UDP connection timed out after \(mediaTransportConnectTimeout)"
+                    )
+                )
+                udpConn.cancel()
+            }
+
+            udpConn.stateUpdateHandler = { [box, timeoutTask] state in
+                switch state {
+                case .ready:
+                    timeoutTask.cancel()
+                    box.resume()
+                case let .failed(error):
+                    timeoutTask.cancel()
+                    box.resume(throwing: error)
+                case .cancelled:
+                    timeoutTask.cancel()
+                    box.resume(throwing: MirageError.protocolError("UDP connection cancelled"))
+                case let .waiting(error):
+                    if Self.shouldFailFastForWaitingMediaError(error) {
+                        timeoutTask.cancel()
+                        box.resume(throwing: error)
+                        udpConn.cancel()
+                    } else {
+                        MirageLogger.client("UDP waiting for route to \(host):\(port): \(error)")
+                    }
+                default:
+                    break
+                }
+            }
+
+            udpConn.start(queue: .global(qos: qos))
+        }
+
+        return udpConn
+    }
+
+    nonisolated static func shouldFailFastForWaitingMediaError(_ error: NWError) -> Bool {
+        guard case let .posix(code) = error else {
+            return false
+        }
+
+        switch code {
+        case .ENETDOWN, .ENETUNREACH, .ENETRESET, .EHOSTUNREACH, .EADDRNOTAVAIL, .EAFNOSUPPORT:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated static func host(from endpoint: NWEndpoint?) -> NWEndpoint.Host? {
+        guard let endpoint else { return nil }
+        if case let .hostPort(host, _) = endpoint {
+            return host
+        }
+        return nil
+    }
+
+    nonisolated static func serviceName(from endpoint: NWEndpoint?) -> String? {
+        guard let endpoint else { return nil }
+        if case let .service(name, _, _, _) = endpoint {
+            return name
+        }
+        return nil
+    }
+
+    nonisolated static func isLikelyPeerToPeerLinkLocalHost(_ host: NWEndpoint.Host) -> Bool {
+        let value = String(describing: host).lowercased()
+        return value.hasPrefix("fe80:") || value.contains("%awdl")
     }
 
     func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
@@ -872,6 +997,12 @@ extension MirageClientService {
     func handleVideoPacket(_ data: Data, header: FrameHeader) async {
         delegate?.clientService(self, didReceiveVideoPacket: data, forStream: header.streamID)
     }
+}
+
+struct UDPTransportCandidate {
+    let host: NWEndpoint.Host
+    let includePeerToPeer: Bool
+    let label: String
 }
 
 private func describeNetworkPath(_ path: NWPath) -> String {

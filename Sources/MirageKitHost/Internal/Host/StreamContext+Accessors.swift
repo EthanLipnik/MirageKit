@@ -33,6 +33,12 @@ extension StreamContext {
         droppedFrameCount
     }
 
+    func setEncoderLowPowerEnabled(_ enabled: Bool) async {
+        guard encoderLowPowerEnabled != enabled else { return }
+        encoderLowPowerEnabled = enabled
+        await encoder?.setMaximizePowerEfficiencyEnabled(enabled)
+    }
+
     func setMetricsUpdateHandler(_ handler: (@Sendable (StreamMetricsMessage) -> Void)?) {
         metricsUpdateHandler = handler
     }
@@ -59,6 +65,10 @@ extension StreamContext {
 
     func getVirtualDisplaySnapshot() -> SharedVirtualDisplayManager.DisplaySnapshot? {
         virtualDisplayContext
+    }
+
+    func setDisplayP3CoverageStatusOverride(_ status: MirageDisplayP3CoverageStatus?) {
+        displayP3CoverageStatusOverride = status
     }
 
     func getVirtualDisplayVisibleBounds() -> CGRect {
@@ -88,6 +98,7 @@ extension StreamContext {
                 scaleFactor: snapshot.scaleFactor,
                 refreshRate: snapshot.refreshRate,
                 colorSpace: snapshot.colorSpace,
+                displayP3CoverageStatus: snapshot.displayP3CoverageStatus,
                 generation: ownerGeneration,
                 createdAt: snapshot.createdAt
             )

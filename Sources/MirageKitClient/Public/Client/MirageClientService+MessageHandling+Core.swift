@@ -258,6 +258,10 @@ extension MirageClientService {
     }
 
     func handleWindowList(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsWindowListRefresh = true
+            return
+        }
         do {
             let windowList = try message.decode(WindowListMessage.self)
             MirageLogger.client("Received window list with \(windowList.windows.count) windows")
@@ -273,6 +277,10 @@ extension MirageClientService {
     }
 
     func handleWindowUpdate(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsWindowListRefresh = true
+            return
+        }
         if let update = try? message.decode(WindowUpdateMessage.self) {
             for window in update.added where !availableWindows.contains(where: { $0.id == window.id }) {
                 availableWindows.append(window)
@@ -456,6 +464,7 @@ extension MirageClientService {
                 encoderColorPrimaries: metrics.encoderColorPrimaries,
                 encoderTransferFunction: metrics.encoderTransferFunction,
                 encoderYCbCrMatrix: metrics.encoderYCbCrMatrix,
+                displayP3CoverageStatus: metrics.displayP3CoverageStatus,
                 tenBitDisplayP3Validated: metrics.tenBitDisplayP3Validated
             )
             updateAdaptiveFallbackPressure(
@@ -567,7 +576,7 @@ extension MirageClientService {
 
     func handleCursorUpdate(_ message: ControlMessage) {
         if let update = try? message.decode(CursorUpdateMessage.self) {
-            MirageLogger.client("Cursor update received: \(update.cursorType) (visible: \(update.isVisible))")
+            recordCursorControlReceiveSample(updateReceived: true, positionReceived: false)
             let didChange = cursorStore.updateCursor(
                 streamID: update.streamID,
                 cursorType: update.cursorType,
@@ -580,6 +589,7 @@ extension MirageClientService {
 
     func handleCursorPositionUpdate(_ message: ControlMessage) {
         if let update = try? message.decode(CursorPositionUpdateMessage.self) {
+            recordCursorControlReceiveSample(updateReceived: false, positionReceived: true)
             let position = CGPoint(x: CGFloat(update.normalizedX), y: CGFloat(update.normalizedY))
             let didChange = cursorPositionStore.updatePosition(
                 streamID: update.streamID,
@@ -588,6 +598,29 @@ extension MirageClientService {
             )
             if didChange { MirageCursorUpdateRouter.shared.notify(streamID: update.streamID) }
         }
+    }
+
+    private func recordCursorControlReceiveSample(updateReceived: Bool, positionReceived: Bool) {
+        if updateReceived { cursorUpdateMessagesSinceLastSample &+= 1 }
+        if positionReceived { cursorPositionMessagesSinceLastSample &+= 1 }
+
+        let now = CFAbsoluteTimeGetCurrent()
+        if lastCursorControlSampleTime == 0 {
+            lastCursorControlSampleTime = now
+            return
+        }
+        guard now - lastCursorControlSampleTime >= cursorControlSampleInterval else { return }
+
+        let updateCount = cursorUpdateMessagesSinceLastSample
+        let positionCount = cursorPositionMessagesSinceLastSample
+        cursorUpdateMessagesSinceLastSample = 0
+        cursorPositionMessagesSinceLastSample = 0
+        lastCursorControlSampleTime = now
+        guard updateCount > 0 || positionCount > 0 else { return }
+
+        MirageLogger.client(
+            "Cursor control sample (1s): cursorUpdates=\(updateCount), cursorPositions=\(positionCount)"
+        )
     }
 
     func handleContentBoundsUpdate(_ message: ControlMessage) {

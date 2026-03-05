@@ -50,16 +50,20 @@ extension MirageHostInputController {
         if !stuckModifiers.isEmpty {
             MirageLogger.host("Clearing stuck modifiers: \(stuckModifiers)")
             let remainingModifiers = lastSentModifiers.subtracting(stuckModifiers)
-            injectFlagsChanged(remainingModifiers, app: nil)
+            injectFlagsChanged(
+                remainingModifiers,
+                domain: lastModifierInjectionDomain,
+                app: nil
+            )
         }
 
         // Also verify system state matches tracked state
-        clearUnexpectedSystemModifiers()
+        clearUnexpectedSystemModifiers(domain: lastModifierInjectionDomain)
     }
 
     /// Query the actual system modifier state and clear any modifiers that shouldn't be there.
-    func clearUnexpectedSystemModifiers() {
-        let systemFlags = CGEventSource.flagsState(.hidSystemState)
+    func clearUnexpectedSystemModifiers(domain: HostKeyboardInjectionDomain) {
+        let systemFlags = CGEventSource.flagsState(Self.systemStateSource(for: domain))
 
         var actualModifiers: MirageModifierFlags = []
         for (cgFlag, mirageFlag) in Self.cgFlagToMirageFlag {
@@ -71,23 +75,21 @@ extension MirageHostInputController {
 
         MirageLogger.host("Clearing unexpected system modifiers: \(unexpectedModifiers)")
 
-        for (flag, keyCode) in Self.modifierKeyCodes where unexpectedModifiers.contains(flag) {
+        for (flag, keyCodes) in Self.modifierRecoveryKeyCodes where unexpectedModifiers.contains(flag) {
             // Remove the flag before posting key-up so the event reflects the
             // post-release modifier state.
             actualModifiers.remove(flag)
-            if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
-                keyEvent.flags = actualModifiers.cgEventFlags
-                postEvent(keyEvent)
+            for keyCode in keyCodes {
+                if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+                    keyEvent.flags = actualModifiers.cgEventFlags
+                    postEvent(keyEvent, domain: domain)
+                }
+                heldModifierKeyCodes.remove(keyCode)
             }
-            heldModifierKeyCodes.remove(keyCode)
             modifierLastEventTimes.removeValue(forKey: flag)
         }
 
-        if let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
-            cgEvent.type = .flagsChanged
-            cgEvent.flags = lastSentModifiers.cgEventFlags
-            postEvent(cgEvent)
-        }
+        postFlagsChangedEvent(lastSentModifiers, domain: domain)
     }
 
     /// Clear all modifier state.
@@ -96,25 +98,21 @@ extension MirageHostInputController {
         accessibilityQueue.async { [weak self] in
             guard let self else { return }
 
-            guard !lastSentModifiers.isEmpty || !heldModifierKeyCodes.isEmpty else { return }
-
             MirageLogger.host("Clearing all modifiers on session change")
 
-            for keyCode in heldModifierKeyCodes {
-                if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
-                    keyEvent.flags = []
-                    postEvent(keyEvent)
+            for domain in HostKeyboardInjectionDomain.allCases {
+                for keyCode in Self.allModifierRecoveryKeyCodes {
+                    if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
+                        keyEvent.flags = []
+                        postEvent(keyEvent, domain: domain)
+                    }
                 }
+                postFlagsChangedEvent([], domain: domain)
             }
             heldModifierKeyCodes.removeAll()
 
-            if let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
-                cgEvent.type = .flagsChanged
-                cgEvent.flags = []
-                postEvent(cgEvent)
-            }
-
             lastSentModifiers = []
+            lastModifierInjectionDomain = .session
             modifierLastEventTimes.removeAll()
             stopModifierResetTimer()
         }

@@ -31,6 +31,8 @@ extension HEVCDecoder {
         decompressionSession = nil
         formatDescription = nil
         pendingOutputTelemetryGeneration = 0
+        usingHardwareDecoder = nil
+        decoderHardwareStatusRefreshAttempts = 0
 
         // Clear cached parameter sets
         cachedVPS = nil
@@ -49,6 +51,8 @@ extension HEVCDecoder {
         formatDescription = nil
         outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputBitDepth)
         pendingOutputTelemetryGeneration = 0
+        usingHardwareDecoder = nil
+        decoderHardwareStatusRefreshAttempts = 0
 
         // Clear cached parameter sets so next keyframe is used fresh
         cachedVPS = nil

@@ -62,8 +62,8 @@ extension MirageHostInputController {
 
         let timer = DispatchSource.makeTimerSource(queue: accessibilityQueue)
         timer.schedule(
-            deadline: .now() + .milliseconds(Int(scrollOutputIntervalMs)),
-            repeating: .milliseconds(Int(scrollOutputIntervalMs)),
+            deadline: .now() + .nanoseconds(scrollOutputIntervalNanoseconds),
+            repeating: .nanoseconds(scrollOutputIntervalNanoseconds),
             leeway: .milliseconds(1)
         )
         timer.setEventHandler { [weak self] in
@@ -93,7 +93,7 @@ extension MirageHostInputController {
         scrollRateX += (scrollTargetRateX - scrollRateX) * alpha
         scrollRateY += (scrollTargetRateY - scrollRateY) * alpha
 
-        let tickDuration = CGFloat(scrollOutputIntervalMs) / 1000.0
+        let tickDuration = CGFloat(scrollOutputIntervalNanoseconds) / 1_000_000_000.0
         let deltaX = scrollRateX * tickDuration
         let deltaY = scrollRateY * tickDuration
 

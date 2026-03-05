@@ -67,6 +67,7 @@ actor StreamContext {
     var virtualDisplayVisibleBounds: CGRect = .zero
     var virtualDisplayCaptureSourceRect: CGRect = .zero
     var virtualDisplayVisiblePixelResolution: CGSize = .zero
+    var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true
 
     var encoder: HEVCEncoder?
@@ -314,6 +315,8 @@ actor StreamContext {
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
+    /// When true, request VideoToolbox power-efficiency preference on the encoder session.
+    var encoderLowPowerEnabled: Bool
     /// Capture pressure profile for SCK buffering/copy behavior.
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     /// Current game-mode staged override progression.
@@ -366,6 +369,7 @@ actor StreamContext {
         runtimeQualityAdjustmentEnabled: Bool = true,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
         disableResolutionCap: Bool = false,
+        encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .auto,
         performanceMode: MirageStreamPerformanceMode = .standard
@@ -411,6 +415,7 @@ actor StreamContext {
         self.lowLatencyHighResolutionCompressionBoostEnabled =
             resolvedLowLatencyHighResolutionCompressionBoostEnabled
         self.disableResolutionCap = disableResolutionCap
+        self.encoderLowPowerEnabled = encoderLowPowerEnabled
         self.capturePressureProfile = resolvedCapturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
         activePixelFormat = resolvedEncoderConfig.pixelFormat

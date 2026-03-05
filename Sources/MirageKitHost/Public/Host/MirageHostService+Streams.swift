@@ -201,6 +201,7 @@ public extension MirageHostService {
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             disableResolutionCap: disableResolutionCap,
+            encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             performanceMode: performanceMode
@@ -224,6 +225,7 @@ public extension MirageHostService {
         streamsByID[streamID] = context
         registerTypingBurstRoute(streamID: streamID, context: context)
         registerActiveStreamSession(session)
+        await syncAppListRequestDeferralForInteractiveWorkload()
         await context.setMetricsUpdateHandler { [weak self] metrics in
             self?.dispatchControlWork(clientID: client.id) { [weak self] in
                 guard let self else { return }
@@ -720,6 +722,7 @@ public extension MirageHostService {
         clearVirtualDisplayState(windowID: windowID)
         streamsByID.removeValue(forKey: streamID)
         removeActiveStreamSession(streamID: streamID)
+        await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: streamID)
     }
 
@@ -1105,6 +1108,7 @@ public extension MirageHostService {
         streamsByID.removeValue(forKey: session.id)
         unregisterTypingBurstRoute(streamID: session.id)
         removeActiveStreamSession(streamID: session.id)
+        await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: session.id)
 
         // Remove from input cache (thread-safe)

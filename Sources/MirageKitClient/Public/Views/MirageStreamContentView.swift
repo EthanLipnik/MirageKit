@@ -1061,7 +1061,7 @@ public struct MirageStreamContentView: View {
 
 @MainActor
 private final class ScrollInputSampler {
-    private let outputInterval: TimeInterval = 1.0 / 120.0
+    private let outputInterval: TimeInterval = MirageInteractionCadence.frameInterval120Seconds
     private let decayDelay: TimeInterval = 0.03
     private let decayFactor: CGFloat = 0.85
     private let rateThreshold: CGFloat = 2.0
@@ -1113,10 +1113,11 @@ private final class ScrollInputSampler {
     }
 
     private func startTimer(send: @escaping (MirageScrollEvent) -> Void) {
+        let interval = DispatchTimeInterval.nanoseconds(MirageInteractionCadence.frameInterval120Nanoseconds)
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(
-            deadline: .now() + outputInterval,
-            repeating: outputInterval,
+            deadline: .now() + interval,
+            repeating: interval,
             leeway: .milliseconds(1)
         )
         timer.setEventHandler { [weak self] in
@@ -1187,20 +1188,26 @@ private final class PointerInputSampler {
         case otherDrag
     }
 
-    private let outputInterval: TimeInterval = 1.0 / 120.0
+    private let outputInterval: TimeInterval = MirageInteractionCadence.frameInterval120Seconds
     private let idleTimeout: TimeInterval = 0.05
 
     private var lastEvent: MirageMouseEvent?
     private var lastKind: Kind = .move
     private var lastInputTime: TimeInterval = 0
+    private var lastOutputTime: TimeInterval = 0
     private var timer: DispatchSourceTimer?
 
     func handle(kind: Kind, event: MirageMouseEvent, send: @escaping (MirageMouseEvent) -> Void) {
+        let now = CACurrentMediaTime()
         lastEvent = event
         lastKind = kind
-        lastInputTime = CACurrentMediaTime()
+        lastInputTime = now
 
-        send(event)
+        // Send immediately when starting or when the output cadence has fallen behind.
+        if shouldSendImmediately(now: now) {
+            send(event)
+            lastOutputTime = now
+        }
 
         if timer == nil { startTimer(send: send) }
     }
@@ -1209,13 +1216,15 @@ private final class PointerInputSampler {
         timer?.cancel()
         timer = nil
         lastEvent = nil
+        lastOutputTime = 0
     }
 
     private func startTimer(send: @escaping (MirageMouseEvent) -> Void) {
+        let interval = DispatchTimeInterval.nanoseconds(MirageInteractionCadence.frameInterval120Nanoseconds)
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(
-            deadline: .now() + outputInterval,
-            repeating: outputInterval,
+            deadline: .now() + interval,
+            repeating: interval,
             leeway: .milliseconds(1)
         )
         timer.setEventHandler { [weak self] in
@@ -1237,6 +1246,13 @@ private final class PointerInputSampler {
             return
         }
 
+        guard now - lastOutputTime >= outputInterval else { return }
         send(event)
+        lastOutputTime = now
+    }
+
+    private func shouldSendImmediately(now: TimeInterval) -> Bool {
+        guard timer != nil else { return true }
+        return now - lastOutputTime >= outputInterval
     }
 }

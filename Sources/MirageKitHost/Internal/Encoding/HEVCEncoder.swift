@@ -46,6 +46,7 @@ actor HEVCEncoder {
     var gameModeEmergencyQualityClampsEnabled = false
     let compressionQualityCeiling: Float = 0.94
     let performanceTracker = EncodePerformanceTracker()
+    var maximizePowerEfficiencyEnabled: Bool
 
     var isEncoding = false
     var frameNumber: UInt64 = 0
@@ -75,11 +76,13 @@ actor HEVCEncoder {
         configuration: MirageEncoderConfiguration,
         latencyMode: MirageStreamLatencyMode = .auto,
         performanceMode: MirageStreamPerformanceMode = .standard,
-        inFlightLimit: Int? = nil
+        inFlightLimit: Int? = nil,
+        maximizePowerEfficiencyEnabled: Bool = false
     ) {
         self.configuration = configuration
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode
+        self.maximizePowerEfficiencyEnabled = maximizePowerEfficiencyEnabled
         activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1
         encoderInFlightLimit = max(1, inFlightLimit ?? defaultLimit)

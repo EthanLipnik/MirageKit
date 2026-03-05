@@ -112,43 +112,73 @@ struct CaptureCadenceGateTests {
     func dropsOversupplyFramesBeforeCopy() {
         let targetFPS = 60.0
         let cadence120 = 1.0 / 120.0
-        var lastAdmitted: CFAbsoluteTime? = nil
+        var nextEmit: Double?
+        var dropped = 0
+        var admitted = 0
 
-        let firstDrop = CaptureStreamOutput.shouldDropForTargetCadence(
-            lastAdmittedTime: lastAdmitted,
-            captureTime: 0.0,
-            targetFrameRate: targetFPS,
-            isIdleFrame: false
-        )
-        #expect(firstDrop == false)
-        lastAdmitted = 0.0
+        for index in 0 ..< 120 {
+            let timestamp = Double(index) * cadence120
+            let decision = CaptureStreamOutput.cadenceDecision(
+                nextEmitPresentationTime: nextEmit,
+                presentationTime: timestamp,
+                targetFrameRate: targetFPS,
+                isIdleFrame: false
+            )
+            nextEmit = decision.nextEmitPresentationTime
+            if decision.shouldDrop {
+                dropped += 1
+            } else {
+                admitted += 1
+            }
+        }
 
-        let secondDrop = CaptureStreamOutput.shouldDropForTargetCadence(
-            lastAdmittedTime: lastAdmitted,
-            captureTime: cadence120,
-            targetFrameRate: targetFPS,
-            isIdleFrame: false
-        )
-        #expect(secondDrop == true)
+        #expect(admitted >= 58)
+        #expect(admitted <= 62)
+        #expect(dropped >= 58)
+        #expect(dropped <= 62)
+    }
 
-        let thirdDrop = CaptureStreamOutput.shouldDropForTargetCadence(
-            lastAdmittedTime: lastAdmitted,
-            captureTime: cadence120 * 2.0,
-            targetFrameRate: targetFPS,
-            isIdleFrame: false
-        )
-        #expect(thirdDrop == false)
+    @Test("Jittered 60 Hz cadence remains near 60 admitted fps")
+    func jitteredCadenceRemainsStable() {
+        let targetFPS = 60.0
+        let cadence60 = 1.0 / 60.0
+        let jitters: [Double] = [0.0004, -0.0003, 0.0002, -0.0002, 0.0003, -0.0004]
+
+        var nextEmit: Double?
+        var dropped = 0
+        var admitted = 0
+
+        for index in 0 ..< 120 {
+            let jitter = jitters[index % jitters.count]
+            let timestamp = (Double(index) * cadence60) + jitter
+            let decision = CaptureStreamOutput.cadenceDecision(
+                nextEmitPresentationTime: nextEmit,
+                presentationTime: timestamp,
+                targetFrameRate: targetFPS,
+                isIdleFrame: false
+            )
+            nextEmit = decision.nextEmitPresentationTime
+            if decision.shouldDrop {
+                dropped += 1
+            } else {
+                admitted += 1
+            }
+        }
+
+        #expect(admitted >= 116)
+        #expect(dropped <= 4)
     }
 
     @Test("Idle frames bypass cadence gate for continuity")
     func idleFramesBypassCadenceGate() {
-        let shouldDropIdle = CaptureStreamOutput.shouldDropForTargetCadence(
-            lastAdmittedTime: 10.0,
-            captureTime: 10.001,
+        let decision = CaptureStreamOutput.cadenceDecision(
+            nextEmitPresentationTime: 10.0,
+            presentationTime: 10.001,
             targetFrameRate: 60.0,
             isIdleFrame: true
         )
-        #expect(shouldDropIdle == false)
+        #expect(decision.shouldDrop == false)
+        #expect(decision.nextEmitPresentationTime == 10.0)
     }
 }
 #endif

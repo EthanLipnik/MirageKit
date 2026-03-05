@@ -77,6 +77,7 @@ struct ClientContext {
     }
 
     /// Queue a control message over TCP without awaiting contentProcessed.
+    /// Preferred for high-frequency real-time interaction updates where latest-state wins.
     /// Returns false when the message cannot be encoded.
     @discardableResult
     func sendBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {

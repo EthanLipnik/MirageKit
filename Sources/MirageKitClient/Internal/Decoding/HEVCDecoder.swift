@@ -18,8 +18,12 @@ actor HEVCDecoder {
     var formatDescription: CMFormatDescription?
     var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
     var preferredOutputBitDepth: MirageVideoBitDepth = .eightBit
+    var maximizePowerEfficiencyEnabled = false
     var decompressionSessionGeneration: UInt64 = 0
     var pendingOutputTelemetryGeneration: UInt64 = 0
+    var usingHardwareDecoder: Bool?
+    var decoderHardwareStatusRefreshAttempts: Int = 0
+    let maxDecoderHardwareStatusRefreshAttempts: Int = 4
 
     /// Cached parameter sets for resilience against corrupted keyframes
     /// When a keyframe fails to parse, we can continue with cached format description
@@ -337,6 +341,7 @@ final class FrameReassembler: @unchecked Sendable {
         let buffer: FrameBufferPool.Buffer
         var receivedMap: [Bool]
         var receivedCount: Int
+        var isComplete: Bool
         let totalFragments: UInt16
         let dataFragmentCount: Int
         var isKeyframe: Bool
@@ -351,6 +356,7 @@ final class FrameReassembler: @unchecked Sendable {
             buffer: FrameBufferPool.Buffer,
             receivedMap: [Bool],
             receivedCount: Int,
+            isComplete: Bool = false,
             totalFragments: UInt16,
             dataFragmentCount: Int,
             isKeyframe: Bool,
@@ -364,6 +370,7 @@ final class FrameReassembler: @unchecked Sendable {
             self.buffer = buffer
             self.receivedMap = receivedMap
             self.receivedCount = receivedCount
+            self.isComplete = isComplete
             self.totalFragments = totalFragments
             self.dataFragmentCount = dataFragmentCount
             self.isKeyframe = isKeyframe

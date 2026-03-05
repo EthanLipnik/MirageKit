@@ -228,6 +228,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let encoderColorPrimaries: String?
     package let encoderTransferFunction: String?
     package let encoderYCbCrMatrix: String?
+    package let displayP3CoverageStatus: MirageDisplayP3CoverageStatus?
     package let tenBitDisplayP3Validated: Bool?
 
     package init(
@@ -247,6 +248,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
         encoderColorPrimaries: String? = nil,
         encoderTransferFunction: String? = nil,
         encoderYCbCrMatrix: String? = nil,
+        displayP3CoverageStatus: MirageDisplayP3CoverageStatus? = nil,
         tenBitDisplayP3Validated: Bool? = nil
     ) {
         self.streamID = streamID
@@ -265,6 +267,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.encoderColorPrimaries = encoderColorPrimaries
         self.encoderTransferFunction = encoderTransferFunction
         self.encoderYCbCrMatrix = encoderYCbCrMatrix
+        self.displayP3CoverageStatus = displayP3CoverageStatus
         self.tenBitDisplayP3Validated = tenBitDisplayP3Validated
     }
 }

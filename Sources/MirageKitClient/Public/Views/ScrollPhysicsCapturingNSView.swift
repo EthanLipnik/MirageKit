@@ -81,7 +81,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var lastMouseLocation: CGPoint?
     private var lastForwardedMouseMoveLocation: CGPoint?
     private var lastForwardedMouseMoveTime: CFTimeInterval = 0
-    private let mouseMoveForwardInterval: CFTimeInterval = 1.0 / 120.0
+    private let mouseMoveForwardInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
 
     /// Locked cursor view for secondary display mode
     private let lockedCursorView = NSView(frame: .zero)
@@ -91,7 +91,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var lockedCursorTargetVisible: Bool = false
     private var lockedCursorSequence: UInt64 = 0
     private var lastLockedCursorRefreshTime: CFTimeInterval = 0
-    private let lockedCursorRefreshInterval: CFTimeInterval = 1.0 / 30.0
+    private let lockedCursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
     private var lastLockedCursorLocalInputTime: CFTimeInterval = 0
     private let lockedCursorLocalHoldInterval: CFTimeInterval = 0.12
     private let lockedCursorLerpAlpha: CGFloat = 0.25
@@ -241,9 +241,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func startModifierPollingIfNeeded() {
         guard modifierPollTimer == nil else { return }
         let timer = Timer(timeInterval: modifierPollInterval, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.pollModifierState()
-            }
+            self?.pollModifierState()
         }
         RunLoop.main.add(timer, forMode: .common)
         modifierPollTimer = timer
@@ -449,10 +447,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private func startLockedCursorSmoothingIfNeeded() {
         guard lockedCursorSmoothingTimer == nil else { return }
-        lockedCursorSmoothingTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
-            Task { @MainActor [weak self] in
-                self?.handleLockedCursorSmoothing()
-            }
+        lockedCursorSmoothingTimer = Timer.scheduledTimer(
+            withTimeInterval: MirageInteractionCadence.frameInterval120Seconds,
+            repeats: true
+        ) { [weak self] _ in
+            self?.handleLockedCursorSmoothing()
         }
     }
 

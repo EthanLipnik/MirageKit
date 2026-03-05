@@ -138,6 +138,7 @@ public extension MirageClientService {
         let preferredDecoderBitDepth = resolvedDecoderBitDepth(for: streamID)
 
         if let existingController = controllersByStream[streamID] {
+            await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
             await existingController.setPreferredDecoderBitDepth(preferredDecoderBitDepth)
             await existingController.resetForNewSession()
             if beginPostResizeTransition {
@@ -168,6 +169,7 @@ public extension MirageClientService {
         }
         adaptiveFallbackLastAppliedTime[streamID] = 0
 
+        await controller.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
         await controller.setPreferredDecoderBitDepth(preferredDecoderBitDepth)
 
         let capturedStreamID = streamID

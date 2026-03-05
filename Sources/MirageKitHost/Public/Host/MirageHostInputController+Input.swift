@@ -32,7 +32,7 @@ extension MirageHostInputController {
                     app: window.application,
                     trigger: .windowFocus
                 )
-                clearUnexpectedSystemModifiers()
+                clearUnexpectedSystemModifiers(domain: .session)
                 injectMouseEvent(.leftMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .mouseUp(e):
                 flushPointerLerp()
@@ -44,7 +44,7 @@ extension MirageHostInputController {
                     app: window.application,
                     trigger: .windowFocus
                 )
-                clearUnexpectedSystemModifiers()
+                clearUnexpectedSystemModifiers(domain: .session)
                 injectMouseEvent(.rightMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .rightMouseUp(e):
                 flushPointerLerp()
@@ -56,7 +56,7 @@ extension MirageHostInputController {
                     app: window.application,
                     trigger: .windowFocus
                 )
-                clearUnexpectedSystemModifiers()
+                clearUnexpectedSystemModifiers(domain: .session)
                 injectMouseEvent(.otherMouseDown, e, windowFrame, windowID: window.id, app: window.application)
             case let .otherMouseUp(e):
                 flushPointerLerp()
@@ -126,12 +126,22 @@ extension MirageHostInputController {
                     app: window.application,
                     trigger: .windowFocus
                 )
-                injectKeyEvent(isKeyDown: true, e, app: window.application)
+                injectKeyEvent(
+                    isKeyDown: true,
+                    e,
+                    domain: .session,
+                    app: window.application
+                )
             case let .keyUp(e):
                 flushPointerLerp()
-                injectKeyEvent(isKeyDown: false, e, app: window.application)
+                injectKeyEvent(
+                    isKeyDown: false,
+                    e,
+                    domain: .session,
+                    app: window.application
+                )
             case let .flagsChanged(modifiers):
-                injectFlagsChanged(modifiers, app: window.application)
+                injectFlagsChanged(modifiers, domain: .session, app: window.application)
             case let .magnify(e):
                 handleMagnifyGesture(e, windowFrame: windowFrame)
             case let .rotate(e):

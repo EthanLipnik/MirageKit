@@ -34,6 +34,13 @@ extension MirageHostService {
         case rejectVisibleSlotCapReached
     }
 
+    enum AppListRequestDeferralTransition: Equatable, Sendable {
+        case remainIdle
+        case beginDeferral
+        case remainDeferred
+        case resumeDeferred
+    }
+
     nonisolated static func initialAppWindowStartupDecision(
         startedWindowCount: Int
     ) -> InitialAppWindowStartupDecision {
@@ -50,6 +57,30 @@ extension MirageHostService {
         guard sessionState == .streaming else { return .rejectSessionNotStreaming }
         guard hasVisibleSlotCapacity else { return .rejectVisibleSlotCapReached }
         return .allowExpansion
+    }
+
+    nonisolated static func shouldDeferAppListRequestsForInteractiveWorkload(
+        hasActiveAppStreams: Bool,
+        hasDesktopStream: Bool,
+        hasLoginDisplayStream: Bool,
+        hasPendingAppStreamStart: Bool,
+        hasPendingDesktopStreamStart: Bool
+    ) -> Bool {
+        hasActiveAppStreams ||
+            hasDesktopStream ||
+            hasLoginDisplayStream ||
+            hasPendingAppStreamStart ||
+            hasPendingDesktopStreamStart
+    }
+
+    nonisolated static func appListRequestDeferralTransition(
+        wasDeferred: Bool,
+        shouldDefer: Bool
+    ) -> AppListRequestDeferralTransition {
+        if shouldDefer {
+            return wasDeferred ? .remainDeferred : .beginDeferral
+        }
+        return wasDeferred ? .resumeDeferred : .remainIdle
     }
 
     nonisolated static func appWindowStartupBatchRanges(
@@ -127,12 +158,7 @@ extension MirageHostService {
                 priorityBundleIdentifiers: request.priorityBundleIdentifiers
             )
 
-            if desktopStreamContext != nil {
-                MirageLogger.host("Deferring app list request while desktop stream is active")
-                return
-            }
-
-            sendPendingAppListRequestIfPossible()
+            await syncAppListRequestDeferralForInteractiveWorkload()
         } catch let decodeError as DecodingError {
             rejectMalformedAppListRequest(
                 from: client,
@@ -1287,16 +1313,47 @@ extension MirageHostService {
         connection.send(content: response.serialize(), completion: .idempotent)
     }
 
-    func suspendAppListRequestsForDesktopStream() async {
-        if appListRequestTask != nil { MirageLogger.host("Cancelling app list request for desktop streaming") }
-        appListRequestTask?.cancel()
-        appListRequestTask = nil
-        await appStreamManager.cancelAppListScans()
+    func isInteractiveWorkloadActiveForAppListRequests() -> Bool {
+        Self.shouldDeferAppListRequestsForInteractiveWorkload(
+            hasActiveAppStreams: !activeStreams.isEmpty,
+            hasDesktopStream: desktopStreamContext != nil,
+            hasLoginDisplayStream: loginDisplayContext != nil,
+            hasPendingAppStreamStart: pendingAppStreamStartCount > 0,
+            hasPendingDesktopStreamStart: pendingDesktopStreamStartCount > 0
+        )
     }
 
-    func resumePendingAppListRequestIfNeeded() {
-        guard desktopStreamContext == nil else { return }
-        sendPendingAppListRequestIfPossible()
+    func syncAppListRequestDeferralForInteractiveWorkload() async {
+        let shouldDefer = isInteractiveWorkloadActiveForAppListRequests()
+        let transition = Self.appListRequestDeferralTransition(
+            wasDeferred: appListRequestDeferredForInteractiveWorkload,
+            shouldDefer: shouldDefer
+        )
+
+        switch transition {
+        case .remainIdle:
+            if appListRequestTask == nil {
+                sendPendingAppListRequestIfPossible()
+            }
+        case .beginDeferral:
+            appListRequestDeferredForInteractiveWorkload = true
+            if appListRequestTask != nil {
+                MirageLogger.host("Cancelling app list request while interactive workload is active")
+            }
+            appListRequestTask?.cancel()
+            appListRequestTask = nil
+            await appStreamManager.cancelAppListScans()
+        case .remainDeferred:
+            if appListRequestTask != nil {
+                appListRequestTask?.cancel()
+                appListRequestTask = nil
+                await appStreamManager.cancelAppListScans()
+            }
+        case .resumeDeferred:
+            appListRequestDeferredForInteractiveWorkload = false
+            MirageLogger.host("Interactive workload idle; resuming deferred app list request if needed")
+            sendPendingAppListRequestIfPossible()
+        }
     }
 
     private func updatePendingAppListRequest(
@@ -1325,7 +1382,11 @@ extension MirageHostService {
     }
 
     private func sendPendingAppListRequestIfPossible() {
-        guard desktopStreamContext == nil else { return }
+        guard !isInteractiveWorkloadActiveForAppListRequests() else {
+            appListRequestDeferredForInteractiveWorkload = true
+            return
+        }
+        appListRequestDeferredForInteractiveWorkload = false
         guard let pending = pendingAppListRequest else { return }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
             pendingAppListRequest = nil

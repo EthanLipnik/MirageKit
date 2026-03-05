@@ -18,7 +18,12 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Key Event Injection (runs on accessibilityQueue)
 
-    func injectKeyEvent(isKeyDown: Bool, _ event: MirageKeyEvent, app _: MirageApplication?) {
+    func injectKeyEvent(
+        isKeyDown: Bool,
+        _ event: MirageKeyEvent,
+        domain: HostKeyboardInjectionDomain,
+        app _: MirageApplication?
+    ) {
         guard let cgEvent = CGEvent(
             keyboardEventSource: nil,
             virtualKey: CGKeyCode(event.keyCode),
@@ -31,7 +36,7 @@ extension MirageHostInputController {
 
         if event.isRepeat { cgEvent.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
 
-        postEvent(cgEvent)
+        postEvent(cgEvent, domain: domain)
 
         // Refresh timestamps only for modifiers tracked via flagsChanged state.
         // Shortcut key events can carry temporary modifier flags without implying
@@ -44,51 +49,44 @@ extension MirageHostInputController {
             }
         }
 
-        if !isKeyDown, !event.modifiers.isEmpty { clearUnexpectedSystemModifiers() }
+        if !isKeyDown, !event.modifiers.isEmpty {
+            clearUnexpectedSystemModifiers(domain: domain)
+        }
     }
 
-    func injectFlagsChanged(_ modifiers: MirageModifierFlags, app _: MirageApplication?) {
-        var newlyPressed: [CGKeyCode] = []
-        var newlyReleased: [CGKeyCode] = []
-
-        for (flag, keyCode) in Self.modifierKeyCodes {
-            let wasHeld = lastSentModifiers.contains(flag)
-            let isHeld = modifiers.contains(flag)
-
-            if isHeld, !wasHeld { newlyPressed.append(keyCode) } else if !isHeld, wasHeld {
-                newlyReleased.append(keyCode)
-            }
-        }
+    func injectFlagsChanged(
+        _ modifiers: MirageModifierFlags,
+        domain: HostKeyboardInjectionDomain,
+        app _: MirageApplication?
+    ) {
+        let transitionPlan = Self.modifierTransitionPlan(from: lastSentModifiers, to: modifiers)
 
         var cumulativeFlags = lastSentModifiers
-        for (flag, keyCode) in Self.modifierKeyCodes where newlyPressed.contains(keyCode) {
+        for (flag, keyCode) in Self.modifierKeyCodes where transitionPlan.pressed.contains(keyCode) {
             cumulativeFlags.insert(flag)
             if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: true) {
                 keyEvent.flags = cumulativeFlags.cgEventFlags
-                postEvent(keyEvent)
+                postEvent(keyEvent, domain: domain)
                 heldModifierKeyCodes.insert(keyCode)
             }
         }
 
         var releaseFlags = cumulativeFlags
-        for (flag, keyCode) in Self.modifierKeyCodes where newlyReleased.contains(keyCode) {
+        for (flag, keyCode) in Self.modifierKeyCodes where transitionPlan.released.contains(keyCode) {
             // Remove flag BEFORE posting so the event flags reflect the post-release state.
             // When physically releasing a key, macOS expects the key-up event to NOT contain
             // the modifier being released (e.g., releasing Command should have empty flags).
             releaseFlags.remove(flag)
             if let keyEvent = CGEvent(keyboardEventSource: nil, virtualKey: keyCode, keyDown: false) {
                 keyEvent.flags = releaseFlags.cgEventFlags
-                postEvent(keyEvent)
+                postEvent(keyEvent, domain: domain)
                 heldModifierKeyCodes.remove(keyCode)
             }
         }
 
-        if let cgEvent = CGEvent(keyboardEventSource: nil, virtualKey: 0, keyDown: true) {
-            cgEvent.type = .flagsChanged
-            cgEvent.flags = modifiers.cgEventFlags
-            postEvent(cgEvent)
-        }
+        postFlagsChangedEvent(modifiers, domain: domain)
 
+        lastModifierInjectionDomain = domain
         lastSentModifiers = modifiers
 
         // Update per-modifier timestamps
@@ -103,6 +101,23 @@ extension MirageHostInputController {
 
         if !modifiers.isEmpty { startModifierResetTimerIfNeeded() } else {
             stopModifierResetTimer()
+        }
+    }
+
+    func injectLoginDisplayKeyEvent(isKeyDown: Bool, event: MirageKeyEvent) {
+        accessibilityQueue.async { [weak self] in
+            self?.injectKeyEvent(
+                isKeyDown: isKeyDown,
+                event,
+                domain: .hid,
+                app: nil
+            )
+        }
+    }
+
+    func injectLoginDisplayModifiers(_ modifiers: MirageModifierFlags) {
+        accessibilityQueue.async { [weak self] in
+            self?.injectFlagsChanged(modifiers, domain: .hid, app: nil)
         }
     }
 }

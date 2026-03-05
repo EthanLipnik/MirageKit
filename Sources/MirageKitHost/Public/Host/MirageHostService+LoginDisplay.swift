@@ -65,6 +65,7 @@ extension MirageHostService {
             )
             loginDisplayInputState.update(streamID: desktopStreamID, bounds: mainBounds)
 
+            await syncAppListRequestDeferralForInteractiveWorkload()
             await broadcastLoginDisplayReady()
             return
         }
@@ -98,6 +99,7 @@ extension MirageHostService {
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: loginClientID.flatMap { mediaSecurityContextForMediaPayload(clientID: $0) },
             additionalFrameFlags: [.loginDisplay],
+            encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             latencyMode: .auto
         )
 
@@ -111,6 +113,7 @@ extension MirageHostService {
 
         streamsByID[streamID] = context
         registerTypingBurstRoute(streamID: streamID, context: context)
+        await syncAppListRequestDeferralForInteractiveWorkload()
         if let connectedClient = connectedClients.first {
             let configuration = audioConfigurationByClientID[connectedClient.id] ?? .default
             await activateAudioForClient(
@@ -155,6 +158,7 @@ extension MirageHostService {
                 await PowerAssertionManager.shared.disable()
                 loginDisplayPowerAssertionEnabled = false
             }
+            await syncAppListRequestDeferralForInteractiveWorkload()
         }
 
         defer {
@@ -251,6 +255,7 @@ extension MirageHostService {
             loginDisplayPowerAssertionEnabled = false
             loginDisplayInputState.clear()
             if sharedConsumerActive { await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.loginDisplay) }
+            await syncAppListRequestDeferralForInteractiveWorkload()
             return
         }
 
@@ -277,6 +282,7 @@ extension MirageHostService {
         }
 
         if sharedConsumerActive { await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.loginDisplay) }
+        await syncAppListRequestDeferralForInteractiveWorkload()
 
         await broadcastLoginDisplayStopped(streamID: streamID, newState: newState)
     }

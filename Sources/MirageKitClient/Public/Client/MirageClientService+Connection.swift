@@ -204,6 +204,7 @@ extension MirageClientService {
 
             // Store connection for receiving messages.
             self.connection = connection
+            inputEventSender.updateConnection(connection)
 
             connection.stateUpdateHandler = { [weak self] state in
                 guard let self else { return }
@@ -289,6 +290,7 @@ extension MirageClientService {
 
         connection?.cancel()
         connection = nil
+        inputEventSender.updateConnection(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
         pendingHelloNonce = nil
@@ -332,6 +334,8 @@ extension MirageClientService {
         controlPathSnapshot = nil
         videoPathSnapshot = nil
         audioPathSnapshot = nil
+        mediaTransportHost = nil
+        mediaTransportIncludePeerToPeer = nil
         activeJitterHoldMs = 0
         adaptiveFallbackBitrateByStream.removeAll()
         adaptiveFallbackBaselineBitrateByStream.removeAll()

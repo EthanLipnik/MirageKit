@@ -148,13 +148,19 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
 
         // Rotation gesture for trackpad (indirectPointer only)
         rotationGesture = UIRotationGestureRecognizer(target: self, action: #selector(handleRotation(_:)))
-        rotationGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        rotationGesture.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
         rotationGesture.delegate = self
         addGestureRecognizer(rotationGesture)
     }
 
     private func updatePanGestureAllowedTouchTypes() {
-        var touchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        var touchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
         if directTouchScrollEnabled {
             touchTypes.append(NSNumber(value: UITouch.TouchType.direct.rawValue))
         }

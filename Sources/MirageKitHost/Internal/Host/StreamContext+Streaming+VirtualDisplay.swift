@@ -140,7 +140,8 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
-            inFlightLimit: maxInFlightFrames
+            inFlightLimit: maxInFlightFrames,
+            maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
         self.encoder = encoder
         try await encoder.createSession(

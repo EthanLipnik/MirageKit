@@ -172,10 +172,10 @@ public class InputCapturingView: UIView {
     var pointerInteraction: UIPointerInteraction?
     var cursorSequence: UInt64 = 0
     var lastCursorRefreshTime: CFTimeInterval = 0
-    let cursorRefreshInterval: CFTimeInterval = 1.0 / 30.0
+    let cursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
     var lockedCursorSequence: UInt64 = 0
     var lastLockedCursorRefreshTime: CFTimeInterval = 0
-    let lockedCursorRefreshInterval: CFTimeInterval = 1.0 / 30.0
+    let lockedCursorRefreshInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
     // nonisolated(unsafe) allows access from deinit for cleanup
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
     private(set) var hardwareKeyboardPresent: Bool = false
@@ -261,6 +261,8 @@ public class InputCapturingView: UIView {
     // Track drag state
     var isDragging = false
     var lastPanLocation: CGPoint = .zero
+    var longPressButtonDown = false
+    var longPressCancelledForMultiTouch = false
 
     /// Track last cursor position for scroll events (normalized 0-1)
     var lastCursorPosition: CGPoint?
@@ -771,7 +773,10 @@ public class InputCapturingView: UIView {
 
     func updateVirtualTrackpadMode() {
         let directTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
-        let indirectTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        let indirectTouchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
 
         if cursorLockEnabled {
             longPressGesture.allowedTouchTypes = directTouchTypes
@@ -953,8 +958,23 @@ public class InputCapturingView: UIView {
     private func startLockedCursorSmoothingIfNeeded() {
         guard lockedCursorDisplayLink == nil else { return }
         let displayLink = CADisplayLink(target: self, selector: #selector(handleLockedCursorSmoothing(_:)))
+        configureInteractionDisplayLink(displayLink)
         displayLink.add(to: .main, forMode: .common)
         lockedCursorDisplayLink = displayLink
+    }
+
+    func configureInteractionDisplayLink(_ displayLink: CADisplayLink) {
+        let targetFPS = MirageInteractionCadence.targetFPS120
+        if #available(iOS 15.0, visionOS 1.0, *) {
+            let preferred = Float(targetFPS)
+            displayLink.preferredFrameRateRange = CAFrameRateRange(
+                minimum: preferred,
+                maximum: preferred,
+                preferred: preferred
+            )
+        } else {
+            displayLink.preferredFramesPerSecond = targetFPS
+        }
     }
 
     private func stopLockedCursorSmoothing() {

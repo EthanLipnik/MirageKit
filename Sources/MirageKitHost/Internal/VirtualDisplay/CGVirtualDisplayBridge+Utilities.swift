@@ -32,6 +32,12 @@ extension CGVirtualDisplayBridge {
         }
     }
 
+    private static func expectedColorSpaces(for colorSpace: MirageColorSpace) -> [CGColorSpace] {
+        expectedColorSpaceNames(for: colorSpace).compactMap { name in
+            CGColorSpace(name: name as CFString)
+        }
+    }
+
     private static func propertyListData(_ propertyList: CFPropertyList?) -> Data? {
         guard let propertyList else { return nil }
         guard let data = CFPropertyListCreateData(
@@ -309,6 +315,19 @@ extension CGVirtualDisplayBridge {
         return DisplayInsets(left: left, right: right, top: top, bottom: bottom)
     }
 
+    struct DisplayColorSpaceValidationResult: Sendable {
+        let coverageStatus: MirageDisplayP3CoverageStatus
+        let observedName: String?
+
+        var isStrictCanonical: Bool {
+            coverageStatus == .strictCanonical
+        }
+
+        var isAcceptableForDisplayP3: Bool {
+            coverageStatus == .strictCanonical || coverageStatus == .wideGamutEquivalent
+        }
+    }
+
     /// Build a display-capture source rect in display-local logical points.
     static func displayCaptureSourceRect(
         _ displayID: CGDirectDisplayID,
@@ -342,58 +361,111 @@ extension CGVirtualDisplayBridge {
     }
 
     static func displayColorSpaceValidation(
-        displayID: CGDirectDisplayID,
+        observedColorSpace: CGColorSpace,
         expectedColorSpace: MirageColorSpace
-    ) -> (matches: Bool?, observedName: String?) {
-        let observedColorSpace = CGDisplayCopyColorSpace(displayID)
-        let expectedName: String = switch expectedColorSpace {
-        case .displayP3:
-            CGColorSpace.displayP3 as String
-        case .sRGB:
-            CGColorSpace.sRGB as String
-        }
-        guard let expectedCGColorSpace = CGColorSpace(name: expectedName as CFString) else {
-            return (matches: nil, observedName: nil)
-        }
-
-        if let observedNameCF = observedColorSpace.name {
-            let observedName = observedNameCF as String
-            let matches = expectedColorSpaceNames(for: expectedColorSpace).contains(observedName)
-            return (matches: matches, observedName: observedName)
-        }
-
-        if CFEqual(observedColorSpace, expectedCGColorSpace) {
-            return (matches: true, observedName: "unnamed-equivalent")
-        }
-
-        if let observedICCData = observedColorSpace.copyICCData() as Data?,
-           let expectedICCData = expectedCGColorSpace.copyICCData() as Data?,
-           observedICCData == expectedICCData {
-            return (matches: true, observedName: "icc-match")
-        }
-
-        if let observedPropertyListData = propertyListData(observedColorSpace.copyPropertyList()),
-           let expectedPropertyListData = propertyListData(expectedCGColorSpace.copyPropertyList()),
-           observedPropertyListData == expectedPropertyListData {
-            return (matches: true, observedName: "property-list-match")
-        }
-
-        if observedColorSpace.model == .rgb {
-            let observedWideGamut = observedColorSpace.isWideGamutRGB
-            let expectedWideGamut = expectedColorSpace == .displayP3
-            if observedWideGamut == expectedWideGamut {
-                return (
-                    matches: true,
-                    observedName: observedWideGamut ? "wide-gamut-rgb" : "standard-gamut-rgb"
-                )
-            }
-            return (
-                matches: false,
-                observedName: observedWideGamut ? "wide-gamut-rgb" : "standard-gamut-rgb"
+    ) -> DisplayColorSpaceValidationResult {
+        let observedName = observedColorSpace.name.map { $0 as String }
+        let expectedNames = expectedColorSpaceNames(for: expectedColorSpace)
+        let expectedColorSpaces = expectedColorSpaces(for: expectedColorSpace)
+        let sRGBNames = expectedColorSpaceNames(for: .sRGB)
+        guard !expectedColorSpaces.isEmpty else {
+            return DisplayColorSpaceValidationResult(
+                coverageStatus: .unresolved,
+                observedName: observedName
             )
         }
 
-        return (matches: nil, observedName: "unknown")
+        if let observedName, expectedNames.contains(observedName) {
+            return DisplayColorSpaceValidationResult(
+                coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
+                observedName: observedName
+            )
+        }
+
+        if expectedColorSpaces.contains(where: { CFEqual(observedColorSpace, $0) }) {
+            return DisplayColorSpaceValidationResult(
+                coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
+                observedName: observedName ?? "strict-equivalent"
+            )
+        }
+
+        if let observedICCData = observedColorSpace.copyICCData() as Data?,
+           expectedColorSpaces.compactMap({ $0.copyICCData() as Data? }).contains(observedICCData) {
+            return DisplayColorSpaceValidationResult(
+                coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
+                observedName: observedName ?? "icc-match"
+            )
+        }
+
+        if let observedPropertyListData = propertyListData(observedColorSpace.copyPropertyList()) {
+            let expectedPropertyListData = expectedColorSpaces.compactMap { colorSpace in
+                propertyListData(colorSpace.copyPropertyList())
+            }
+            if expectedPropertyListData.contains(observedPropertyListData) {
+                return DisplayColorSpaceValidationResult(
+                    coverageStatus: expectedColorSpace == .displayP3 ? .strictCanonical : .sRGBFallback,
+                    observedName: observedName ?? "property-list-match"
+                )
+            }
+        }
+
+        switch expectedColorSpace {
+        case .displayP3:
+            if let observedName, sRGBNames.contains(observedName) {
+                return DisplayColorSpaceValidationResult(
+                    coverageStatus: .sRGBFallback,
+                    observedName: observedName
+                )
+            }
+
+            if observedColorSpace.model == .rgb {
+                let observedWideGamut = observedColorSpace.isWideGamutRGB
+                if observedName == nil {
+                    return DisplayColorSpaceValidationResult(
+                        coverageStatus: .wideGamutEquivalent,
+                        observedName: observedWideGamut ? "wide-gamut-rgb" : "unnamed-rgb"
+                    )
+                }
+                if observedWideGamut {
+                    return DisplayColorSpaceValidationResult(
+                        coverageStatus: .unresolved,
+                        observedName: observedName
+                    )
+                }
+                return DisplayColorSpaceValidationResult(
+                    coverageStatus: .sRGBFallback,
+                    observedName: observedName ?? "standard-gamut-rgb"
+                )
+            }
+
+            return DisplayColorSpaceValidationResult(
+                coverageStatus: .unresolved,
+                observedName: observedName ?? "unknown"
+            )
+
+        case .sRGB:
+            if observedColorSpace.model == .rgb, !observedColorSpace.isWideGamutRGB {
+                return DisplayColorSpaceValidationResult(
+                    coverageStatus: .sRGBFallback,
+                    observedName: observedName ?? "standard-gamut-rgb"
+                )
+            }
+            return DisplayColorSpaceValidationResult(
+                coverageStatus: .unresolved,
+                observedName: observedName ?? "unknown"
+            )
+        }
+    }
+
+    static func displayColorSpaceValidation(
+        displayID: CGDirectDisplayID,
+        expectedColorSpace: MirageColorSpace
+    ) -> DisplayColorSpaceValidationResult {
+        let observedColorSpace = CGDisplayCopyColorSpace(displayID)
+        return displayColorSpaceValidation(
+            observedColorSpace: observedColorSpace,
+            expectedColorSpace: expectedColorSpace
+        )
     }
 
     /// Returns true if the display is a Mirage-created virtual display.

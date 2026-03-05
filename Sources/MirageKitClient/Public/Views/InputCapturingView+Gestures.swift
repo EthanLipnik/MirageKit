@@ -20,6 +20,7 @@ extension InputCapturingView {
         longPressGesture.allowedTouchTypes = [
             NSNumber(value: UITouch.TouchType.direct.rawValue),
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
         ]
         longPressGesture.delegate = self
         addGestureRecognizer(longPressGesture)
@@ -27,7 +28,10 @@ extension InputCapturingView {
         // Right-click gesture (secondary click with pointer)
         rightClickGesture = UITapGestureRecognizer(target: self, action: #selector(handleRightClick(_:)))
         rightClickGesture.buttonMaskRequired = .secondary
-        rightClickGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        rightClickGesture.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
         addGestureRecognizer(rightClickGesture)
 
         // Scroll gesture - ONLY for direct touch (2-finger pan on screen)
@@ -44,13 +48,17 @@ extension InputCapturingView {
         hoverGesture = UIHoverGestureRecognizer(target: self, action: #selector(handleHover(_:)))
         hoverGesture.allowedTouchTypes = [
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
             NSNumber(value: UITouch.TouchType.pencil.rawValue),
         ]
         addGestureRecognizer(hoverGesture)
 
         // Locked pointer gestures (indirect pointer only)
         lockedPointerPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleLockedPointerPan(_:)))
-        lockedPointerPanGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        lockedPointerPanGesture.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
         lockedPointerPanGesture.allowedScrollTypesMask = []
         lockedPointerPanGesture.minimumNumberOfTouches = 1
         lockedPointerPanGesture.maximumNumberOfTouches = 1
@@ -63,7 +71,10 @@ extension InputCapturingView {
             action: #selector(handleLockedPointerPress(_:))
         )
         lockedPointerPressGesture.minimumPressDuration = 0
-        lockedPointerPressGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.indirectPointer.rawValue)]
+        lockedPointerPressGesture.allowedTouchTypes = [
+            NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
+            NSNumber(value: UITouch.TouchType.indirect.rawValue),
+        ]
         lockedPointerPressGesture.delegate = self
         lockedPointerPressGesture.isEnabled = false
         addGestureRecognizer(lockedPointerPressGesture)
@@ -151,6 +162,23 @@ extension InputCapturingView {
         let location = normalizedLocation(rawLocation)
         let eventModifiers = modifiers(from: gesture)
 
+        if gesture.numberOfTouches > 1 {
+            if longPressButtonDown {
+                let mouseEvent = MirageMouseEvent(
+                    button: .left,
+                    location: location,
+                    clickCount: currentClickCount,
+                    modifiers: eventModifiers
+                )
+                onInputEvent?(.mouseUp(mouseEvent))
+                longPressButtonDown = false
+            }
+            isDragging = false
+            longPressCancelledForMultiTouch = true
+            resetPrimaryClickTracking()
+            return
+        }
+
         if cursorLockEnabled {
             lockedCursorPosition = location
             noteLockedCursorLocalInput()
@@ -165,6 +193,7 @@ extension InputCapturingView {
 
         switch gesture.state {
         case .began:
+            longPressCancelledForMultiTouch = false
             let now = CACurrentMediaTime()
             currentClickCount = nextPrimaryClickCount(at: location, timestamp: now)
             isDragging = false
@@ -177,8 +206,10 @@ extension InputCapturingView {
                 modifiers: eventModifiers
             )
             onInputEvent?(.mouseDown(mouseEvent))
+            longPressButtonDown = true
 
         case .changed:
+            guard longPressButtonDown, !longPressCancelledForMultiTouch else { return }
             // Track all movement - no threshold, pixel-perfect dragging
             let distance = hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y)
             if distance > 0.0001 { // Any actual movement
@@ -191,6 +222,11 @@ extension InputCapturingView {
             }
 
         case .ended:
+            guard longPressButtonDown else {
+                isDragging = false
+                longPressCancelledForMultiTouch = false
+                return
+            }
             let mouseEvent = MirageMouseEvent(
                 button: .left,
                 location: location,
@@ -198,21 +234,28 @@ extension InputCapturingView {
                 modifiers: eventModifiers
             )
             onInputEvent?(.mouseUp(mouseEvent))
-            if !isDragging {
+            if !isDragging, !longPressCancelledForMultiTouch {
                 commitPrimaryClick(at: location, timestamp: CACurrentMediaTime(), clickCount: currentClickCount)
             }
             isDragging = false
+            longPressButtonDown = false
+            longPressCancelledForMultiTouch = false
 
-        case .cancelled:
+        case .cancelled,
+             .failed:
             // Send mouseUp on cancel to avoid stuck mouse state
-            let mouseEvent = MirageMouseEvent(
-                button: .left,
-                location: location,
-                clickCount: currentClickCount,
-                modifiers: eventModifiers
-            )
-            onInputEvent?(.mouseUp(mouseEvent))
+            if longPressButtonDown {
+                let mouseEvent = MirageMouseEvent(
+                    button: .left,
+                    location: location,
+                    clickCount: currentClickCount,
+                    modifiers: eventModifiers
+                )
+                onInputEvent?(.mouseUp(mouseEvent))
+            }
             isDragging = false
+            longPressButtonDown = false
+            longPressCancelledForMultiTouch = false
 
         default:
             break
@@ -627,6 +670,7 @@ extension InputCapturingView {
         virtualCursorVelocity = velocity
 
         let displayLink = CADisplayLink(target: self, selector: #selector(handleVirtualCursorDeceleration(_:)))
+        configureInteractionDisplayLink(displayLink)
         displayLink.add(to: .main, forMode: .common)
         virtualCursorDecelerationLink = displayLink
     }
@@ -650,6 +694,7 @@ extension InputCapturingView {
         touchScrollDecelerationLocation = location
 
         let displayLink = CADisplayLink(target: self, selector: #selector(handleTouchScrollDeceleration(_:)))
+        configureInteractionDisplayLink(displayLink)
         displayLink.add(to: .main, forMode: .common)
         touchScrollDecelerationLink = displayLink
     }
@@ -763,6 +808,11 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
 
         if (gestureRecognizer == virtualCursorPanGesture && otherGestureRecognizer == virtualCursorLongPressGesture) ||
             (gestureRecognizer == virtualCursorLongPressGesture && otherGestureRecognizer == virtualCursorPanGesture) {
+            return true
+        }
+
+        if (gestureRecognizer == longPressGesture && otherGestureRecognizer == scrollGesture) ||
+            (gestureRecognizer == scrollGesture && otherGestureRecognizer == longPressGesture) {
             return true
         }
 

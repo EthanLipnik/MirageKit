@@ -87,8 +87,12 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let deliveryStateLock = NSLock()
     private var rawFrameWindowCount: UInt64 = 0
     private var rawFrameWindowStartTime: CFAbsoluteTime = 0
-    private var lastCadenceAdmittedTime: CFAbsoluteTime = 0
+    private var lastCadenceAdmittedPresentationTime: Double = 0
+    private var nextCadenceAdmitPresentationTime: Double = 0
     private var cadenceDropCount: UInt64 = 0
+    private var cadencePassCount: UInt64 = 0
+    private var cadenceSkewTotalMs: Double = 0
+    private var cadenceSkewSampleCount: UInt64 = 0
     private var lastCadenceLogTime: CFAbsoluteTime = 0
 
     // Menu tracking/alerts can pause window capture for several seconds.
@@ -198,7 +202,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             frameGapThreshold = gapThreshold
             self.softStallThreshold = softStallThreshold
             self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
-            lastCadenceAdmittedTime = 0
+            lastCadenceAdmittedPresentationTime = 0
+            nextCadenceAdmitPresentationTime = 0
+            cadencePassCount = 0
+            cadenceSkewTotalMs = 0
+            cadenceSkewSampleCount = 0
         }
         deliveryStateLock.withLock {
             softStallSignaled = false
@@ -215,7 +223,11 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         fallbackStartTime = 0
         fallbackLock.unlock()
         expectationLock.withLock {
-            lastCadenceAdmittedTime = 0
+            lastCadenceAdmittedPresentationTime = 0
+            nextCadenceAdmitPresentationTime = 0
+            cadencePassCount = 0
+            cadenceSkewTotalMs = 0
+            cadenceSkewSampleCount = 0
         }
         MirageLogger.capture("Reset fallback state for resize")
     }
@@ -795,12 +807,17 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         frameInfo: CapturedFrameInfo,
         captureTime: CFAbsoluteTime
     ) {
-        if shouldDropForTargetCadence(captureTime: captureTime, isIdleFrame: frameInfo.isIdleFrame) {
+        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+        let presentationSeconds = CMTimeGetSeconds(presentationTime)
+        if shouldDropForTargetCadence(
+            presentationSeconds: presentationSeconds,
+            captureTime: captureTime,
+            isIdleFrame: frameInfo.isIdleFrame
+        ) {
             logCadenceDrop()
             return
         }
 
-        let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
         let duration = CMSampleBufferGetDuration(sampleBuffer)
         let emitFrame: @Sendable (CVPixelBuffer) -> Void = { [onFrame] pixelBuffer in
             let frame = CapturedFrame(
@@ -875,18 +892,46 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         return max(2, limit)
     }
 
-    nonisolated static func shouldDropForTargetCadence(
-        lastAdmittedTime: CFAbsoluteTime?,
-        captureTime: CFAbsoluteTime,
+    nonisolated static func cadenceDecision(
+        nextEmitPresentationTime: Double?,
+        presentationTime: Double,
         targetFrameRate: Double,
-        isIdleFrame: Bool
-    ) -> Bool {
-        guard !isIdleFrame else { return false }
-        guard targetFrameRate > 0 else { return false }
-        guard let lastAdmittedTime else { return false }
+        isIdleFrame: Bool,
+        earlyToleranceFloor: Double = 0.001,
+        earlyToleranceFraction: Double = 0.10
+    ) -> (shouldDrop: Bool, nextEmitPresentationTime: Double?) {
+        guard !isIdleFrame else {
+            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+        }
+        guard targetFrameRate > 0 else {
+            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+        }
+        guard presentationTime.isFinite, presentationTime >= 0 else {
+            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+        }
+
         let expectedInterval = 1.0 / targetFrameRate
-        let elapsed = captureTime - lastAdmittedTime
-        return elapsed < expectedInterval * 0.92
+        guard expectedInterval > 0 else {
+            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+        }
+
+        let tolerance = max(earlyToleranceFloor, expectedInterval * max(0.0, earlyToleranceFraction))
+        if let nextEmitPresentationTime, presentationTime + tolerance < nextEmitPresentationTime {
+            return (shouldDrop: true, nextEmitPresentationTime: nextEmitPresentationTime)
+        }
+
+        if let nextEmitPresentationTime {
+            let next: Double
+            if presentationTime >= nextEmitPresentationTime {
+                let intervalsAhead = floor((presentationTime - nextEmitPresentationTime) / expectedInterval) + 1.0
+                next = nextEmitPresentationTime + (intervalsAhead * expectedInterval)
+            } else {
+                next = nextEmitPresentationTime + expectedInterval
+            }
+            return (shouldDrop: false, nextEmitPresentationTime: next)
+        } else {
+            return (shouldDrop: false, nextEmitPresentationTime: presentationTime + expectedInterval)
+        }
     }
 
     private func logPoolDrop() {
@@ -936,17 +981,42 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
     }
 
-    private func shouldDropForTargetCadence(captureTime: CFAbsoluteTime, isIdleFrame: Bool) -> Bool {
+    private func shouldDropForTargetCadence(
+        presentationSeconds: Double,
+        captureTime: CFAbsoluteTime,
+        isIdleFrame: Bool
+    )
+    -> Bool {
         return expectationLock.withLock {
-            let lastAdmitted: CFAbsoluteTime? = lastCadenceAdmittedTime > 0 ? lastCadenceAdmittedTime : nil
-            let shouldDrop = Self.shouldDropForTargetCadence(
-                lastAdmittedTime: lastAdmitted,
-                captureTime: captureTime,
+            let resolvedPresentationTime: Double = if presentationSeconds.isFinite, presentationSeconds >= 0 {
+                presentationSeconds
+            } else {
+                captureTime
+            }
+            let nextEmitPresentationTime: Double? = nextCadenceAdmitPresentationTime > 0
+                ? nextCadenceAdmitPresentationTime
+                : nil
+            let decision = Self.cadenceDecision(
+                nextEmitPresentationTime: nextEmitPresentationTime,
+                presentationTime: resolvedPresentationTime,
                 targetFrameRate: targetFrameRate,
                 isIdleFrame: isIdleFrame
             )
-            if shouldDrop { return true }
-            lastCadenceAdmittedTime = captureTime
+
+            if decision.shouldDrop {
+                return true
+            }
+
+            if !isIdleFrame, targetFrameRate > 0 {
+                if let nextEmitPresentationTime {
+                    let skewMs = abs(resolvedPresentationTime - nextEmitPresentationTime) * 1000.0
+                    cadenceSkewTotalMs += skewMs
+                    cadenceSkewSampleCount += 1
+                }
+                cadencePassCount += 1
+                lastCadenceAdmittedPresentationTime = resolvedPresentationTime
+                nextCadenceAdmitPresentationTime = decision.nextEmitPresentationTime ?? 0
+            }
             return false
         }
     }
@@ -957,11 +1027,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             guard MirageLogger.isEnabled(.capture) else { return }
             let now = CFAbsoluteTimeGetCurrent()
             if lastCadenceLogTime == 0 || now - lastCadenceLogTime > 2.0 {
-                let targetFPS = expectationLock.withLock {
-                    Int(targetFrameRate.rounded())
+                let (targetFPS, cadencePasses, meanCadenceSkewMs) = expectationLock.withLock {
+                    let targetFPS = Int(targetFrameRate.rounded())
+                    let cadencePasses = cadencePassCount
+                    let meanCadenceSkewMs = if cadenceSkewSampleCount > 0 {
+                        cadenceSkewTotalMs / Double(cadenceSkewSampleCount)
+                    } else {
+                        0.0
+                    }
+                    cadencePassCount = 0
+                    cadenceSkewTotalMs = 0
+                    cadenceSkewSampleCount = 0
+                    return (targetFPS, cadencePasses, meanCadenceSkewMs)
                 }
+                let meanCadenceSkewText = meanCadenceSkewMs.formatted(.number.precision(.fractionLength(2)))
                 MirageLogger.capture(
-                    "Capture cadence gate: dropped \(cadenceDropCount) frames (target \(targetFPS)fps)"
+                    "Capture cadence gate: cadenceDrops=\(cadenceDropCount), target=\(targetFPS)fps, cadencePasses=\(cadencePasses), meanCadenceSkewMs=\(meanCadenceSkewText)"
                 )
                 cadenceDropCount = 0
                 lastCadenceLogTime = now

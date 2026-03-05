@@ -15,6 +15,10 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     func handleAppList(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsAppListRefresh = true
+            return
+        }
         do {
             let appList = try message.decode(AppListMessage.self)
             MirageLogger.client("Received app list with \(appList.apps.count) apps requestID=\(appList.requestID.uuidString)")
@@ -39,6 +43,10 @@ extension MirageClientService {
     }
 
     func handleAppIconUpdate(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsAppListRefresh = true
+            return
+        }
         do {
             let update = try message.decode(AppIconUpdateMessage.self)
             guard activeAppListRequestID == update.requestID else {
@@ -72,14 +80,16 @@ extension MirageClientService {
             appIconStreamStateByRequestID[update.requestID, default: AppIconStreamState()]
                 .receivedBundleIdentifiers
                 .insert(normalizedBundleID)
-
-            onAppListReceived?(availableApps)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app icon update: ")
         }
     }
 
     func handleAppIconStreamComplete(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsAppListRefresh = true
+            return
+        }
         do {
             let complete = try message.decode(AppIconStreamCompleteMessage.self)
             guard activeAppListRequestID == complete.requestID else {
@@ -117,6 +127,10 @@ extension MirageClientService {
             MirageLogger.client(
                 "App icon stream complete requestID=\(complete.requestID.uuidString) sent=\(complete.sentIconCount) skipped=\(complete.skippedBundleIdentifiers.count)"
             )
+
+            // Publish one consolidated update after icon streaming completes instead of
+            // emitting one full app-list callback per icon packet.
+            onAppListReceived?(availableApps)
             appIconStreamStateByRequestID.removeValue(forKey: complete.requestID)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app icon stream completion: ")

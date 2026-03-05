@@ -256,18 +256,20 @@ extension HEVCEncoder {
         usingHardwareEncoder = nil
         encoderGPURegistryID = nil
 
-        var hw: CFTypeRef?
+        var hw: Unmanaged<CFTypeRef>?
         let hwStatus = VTSessionCopyProperty(
             session,
             key: kVTCompressionPropertyKey_UsingHardwareAcceleratedVideoEncoder,
             allocator: kCFAllocatorDefault,
             valueOut: &hw
         )
-        if hwStatus == noErr, let value = hw, let boolValue = value as? Bool {
+        if hwStatus == noErr,
+           let value = hw?.takeRetainedValue(),
+           let boolValue = value as? Bool {
             usingHardwareEncoder = boolValue
         }
 
-        var gpu: CFTypeRef?
+        var gpu: Unmanaged<CFTypeRef>?
         let gpuStatus = VTSessionCopyProperty(
             session,
             key: kVTCompressionPropertyKey_UsingGPURegistryID,
@@ -275,7 +277,7 @@ extension HEVCEncoder {
             valueOut: &gpu
         )
         if gpuStatus == noErr,
-           let value = gpu,
+           let value = gpu?.takeRetainedValue(),
            let registry = value as? NSNumber {
             encoderGPURegistryID = registry.uint64Value
         }
@@ -292,10 +294,17 @@ extension HEVCEncoder {
         } else {
             "unknown(status=\(gpuStatus))"
         }
+        let healthText: String = if usingHardwareEncoder == true {
+            "active"
+        } else if usingHardwareEncoder == false {
+            "software_fallback"
+        } else {
+            "unknown"
+        }
 
         MirageLogger.encoder(
             "event=hardware_encoder_status reason=\(reason) usingHardware=\(usingHardwareText) " +
-                "gpuRegistryID=\(gpuText) requiredBySpec=true"
+                "status=\(healthText) gpuRegistryID=\(gpuText) requiredBySpec=true"
         )
     }
 
@@ -358,6 +367,33 @@ extension HEVCEncoder {
         let outcome = setPropertyOutcome(session, key: key, value: value)
         status.record(propertyName, outcome: outcome)
         return outcome.appliedBool
+    }
+
+    private var maximizePowerEfficiencyValue: CFTypeRef {
+        maximizePowerEfficiencyEnabled ? kCFBooleanTrue : kCFBooleanFalse
+    }
+
+    @discardableResult
+    func applyMaximizePowerEfficiency(_ session: VTCompressionSession) -> Bool {
+        setProperty(
+            session,
+            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
+            value: maximizePowerEfficiencyValue
+        )
+    }
+
+    @discardableResult
+    private func applyMaximizePowerEfficiencyTracked(
+        _ session: VTCompressionSession,
+        status: inout SessionPolicyStatus
+    ) -> Bool {
+        setPropertyTracked(
+            session,
+            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
+            value: maximizePowerEfficiencyValue,
+            propertyName: "maximizePowerEfficiency",
+            status: &status
+        )
     }
 
     func hevcProfileName(for profile: CFString) -> String {
@@ -654,6 +690,11 @@ extension HEVCEncoder {
                     session,
                     status: &standardLowLatencyStatus
                 )
+            } else {
+                let powerPreferenceApplied = applyMaximizePowerEfficiency(session)
+                MirageLogger.encoder(
+                    "event=encoder_power_preference maximizePowerEfficiency=\(maximizePowerEfficiencyEnabled)(\(powerPreferenceApplied))"
+                )
             }
         }
 
@@ -766,13 +807,7 @@ extension HEVCEncoder {
         _ session: VTCompressionSession,
         status: inout SessionPolicyStatus
     ) {
-        _ = setPropertyTracked(
-            session,
-            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
-            value: kCFBooleanFalse,
-            propertyName: "maximizePowerEfficiency",
-            status: &status
-        )
+        _ = applyMaximizePowerEfficiencyTracked(session, status: &status)
         _ = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_ReferenceBufferCount,
@@ -788,13 +823,7 @@ extension HEVCEncoder {
         status: inout SessionPolicyStatus
     ) {
         // Keep HEVC on the highest-throughput path for sustained high-resolution encoding.
-        let powerPreferenceApplied = setPropertyTracked(
-            session,
-            key: kVTCompressionPropertyKey_MaximizePowerEfficiency,
-            value: kCFBooleanFalse,
-            propertyName: "maximizePowerEfficiency",
-            status: &status
-        )
+        let powerPreferenceApplied = applyMaximizePowerEfficiencyTracked(session, status: &status)
         let referenceBuffersApplied = setPropertyTracked(
             session,
             key: kVTCompressionPropertyKey_ReferenceBufferCount,
@@ -818,7 +847,7 @@ extension HEVCEncoder {
         )
 
         MirageLogger.encoder(
-            "event=encoder_game_mode_tuning maximizePowerEfficiency=false(\(powerPreferenceApplied)) " +
+            "event=encoder_game_mode_tuning maximizePowerEfficiency=\(maximizePowerEfficiencyEnabled)(\(powerPreferenceApplied)) " +
                 "referenceBuffers=\(policy.referenceBufferCount)(\(referenceBuffersApplied)) allowOpenGOP=false(\(openGOPApplied)) " +
                 "allowTemporalCompression=\(policy.allowTemporalCompression)(\(temporalCompressionApplied))"
         )

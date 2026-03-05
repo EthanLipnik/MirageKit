@@ -17,6 +17,11 @@ import Foundation
 @_silgen_name("_AXUIElementGetWindow")
 func _AXUIElementGetWindow(_ element: AXUIElement, _ windowID: UnsafeMutablePointer<CGWindowID>) -> AXError
 
+enum HostKeyboardInjectionDomain: CaseIterable, Sendable {
+    case session
+    case hid
+}
+
 /// Manages input event processing, batching, scroll smoothing, and injection for remote input.
 ///
 /// Handles mouse batching, scroll smoothing (120Hz), and CGEvent injection on macOS hosts.
@@ -46,6 +51,12 @@ public final class MirageHostInputController: @unchecked Sendable {
         var isDesktop: Bool
     }
 
+    struct CachedInputWindowFrame {
+        var streamFrame: CGRect
+        var resolvedFrame: CGRect
+        var sampledAt: CFAbsoluteTime
+    }
+
     struct CachedTrafficLightClusterGeometry {
         var dynamicClusterSize: CGSize?
         var sampledWindowFrame: CGRect
@@ -73,11 +84,15 @@ public final class MirageHostInputController: @unchecked Sendable {
     var pointerLerpTimer: DispatchSourceTimer?
     var lastWindowActivationTime: CFAbsoluteTime?
     var lastActivatedWindowID: WindowID?
+    var inputWindowFrameCacheByWindowID: [WindowID: CachedInputWindowFrame] = [:]
 
-    let pointerOutputIntervalMs: UInt64 = 8
+    let pointerOutputIntervalNanoseconds: Int = MirageInteractionCadence.frameInterval120Nanoseconds
     let pointerLerpTimeConstant: TimeInterval = 0.025
     let pointerStopDelay: TimeInterval = 0.05
     let pointerSnapThreshold: CGFloat = 0.0005
+    let inputWindowFrameRefreshInterval: CFAbsoluteTime = 0.05
+    let inputWindowFrameCacheTTL: CFAbsoluteTime = 2.0
+    let inputWindowFrameSourceTolerance: CGFloat = 6
 
     // MARK: - Traffic Light Protection State (accessed from accessibilityQueue only)
 
@@ -104,6 +119,9 @@ public final class MirageHostInputController: @unchecked Sendable {
     /// Track which modifier key codes are currently held (for injecting keyUp on release).
     var heldModifierKeyCodes: Set<CGKeyCode> = []
 
+    /// Last domain used to inject modifier transitions.
+    var lastModifierInjectionDomain: HostKeyboardInjectionDomain = .session
+
     /// Timer to periodically check for stuck modifiers.
     var modifierResetTimer: DispatchSourceTimer?
 
@@ -122,6 +140,15 @@ public final class MirageHostInputController: @unchecked Sendable {
         (.capsLock, 0x39),
     ]
 
+    /// Recovery key codes used to clear potentially-stuck modifier state.
+    static let modifierRecoveryKeyCodes: [(flag: MirageModifierFlags, keyCodes: [CGKeyCode])] = [
+        (.shift, [0x38, 0x3C]),
+        (.control, [0x3B, 0x3E]),
+        (.option, [0x3A, 0x3D]),
+        (.command, [0x37, 0x36]),
+        (.capsLock, [0x39]),
+    ]
+
     /// Mapping from CGEventFlags to MirageModifierFlags for system state comparison.
     static let cgFlagToMirageFlag: [(cgFlag: CGEventFlags, mirageFlag: MirageModifierFlags)] = [
         (.maskShift, .shift),
@@ -130,6 +157,50 @@ public final class MirageHostInputController: @unchecked Sendable {
         (.maskCommand, .command),
         (.maskAlphaShift, .capsLock),
     ]
+
+    static func systemStateSource(for domain: HostKeyboardInjectionDomain) -> CGEventSourceStateID {
+        switch domain {
+        case .session:
+            .combinedSessionState
+        case .hid:
+            .hidSystemState
+        }
+    }
+
+    static func recoveryKeyCodes(for flag: MirageModifierFlags) -> [CGKeyCode] {
+        modifierRecoveryKeyCodes.first(where: { $0.flag == flag })?.keyCodes ?? []
+    }
+
+    static var allModifierRecoveryKeyCodes: Set<CGKeyCode> {
+        Set(modifierRecoveryKeyCodes.flatMap(\.keyCodes))
+    }
+
+    struct ModifierTransitionPlan: Equatable {
+        let pressed: [CGKeyCode]
+        let released: [CGKeyCode]
+    }
+
+    static func modifierTransitionPlan(
+        from previousModifiers: MirageModifierFlags,
+        to nextModifiers: MirageModifierFlags
+    )
+    -> ModifierTransitionPlan {
+        var newlyPressed: [CGKeyCode] = []
+        var newlyReleased: [CGKeyCode] = []
+
+        for (flag, keyCode) in modifierKeyCodes {
+            let wasHeld = previousModifiers.contains(flag)
+            let isHeld = nextModifiers.contains(flag)
+
+            if isHeld, !wasHeld {
+                newlyPressed.append(keyCode)
+            } else if !isHeld, wasHeld {
+                newlyReleased.append(keyCode)
+            }
+        }
+
+        return ModifierTransitionPlan(pressed: newlyPressed, released: newlyReleased)
+    }
 
     // MARK: - Scroll Rate Smoothing State (accessed from accessibilityQueue only)
 
@@ -164,7 +235,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     let scrollRateDecay: CGFloat = 0.85
     let scrollDecayDelay: TimeInterval = 0.03
     let scrollRateThreshold: CGFloat = 10.0
-    let scrollOutputIntervalMs: UInt64 = 8
+    let scrollOutputIntervalNanoseconds: Int = MirageInteractionCadence.frameInterval120Nanoseconds
 
     // MARK: - Gesture Translation State (accessed from accessibilityQueue only)
 

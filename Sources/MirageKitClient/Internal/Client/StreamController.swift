@@ -10,6 +10,19 @@ import CoreVideo
 import Foundation
 import MirageKit
 
+private final class FrameEnqueueOrderAllocator: @unchecked Sendable {
+    private let lock = NSLock()
+    private var nextOrder: UInt64 = 0
+
+    func allocate() -> UInt64 {
+        lock.lock()
+        let order = nextOrder
+        nextOrder &+= 1
+        lock.unlock()
+        return order
+    }
+}
+
 /// Controls the lifecycle and state of a single stream.
 /// Owned by MirageClientService, not by views. This ensures:
 /// - Decoder lifecycle is independent of SwiftUI lifecycle
@@ -231,6 +244,10 @@ actor StreamController {
 
     /// Bounded queue of frames waiting to be decoded.
     var queuedFrames = MirageRingBuffer<FrameData>(minimumCapacity: 32)
+    /// Frames received from callback tasks before their ordered enqueue slot is ready.
+    var pendingOrderedFrames: [UInt64: FrameData] = [:]
+    var nextExpectedEnqueueOrder: UInt64 = 0
+    var framePipelineGeneration: UInt64 = 0
 
     /// Continuation resumed when the decode task is waiting for a frame.
     var dequeueContinuation: CheckedContinuation<FrameData?, Never>?
@@ -425,6 +442,8 @@ actor StreamController {
     }
 
     func startFrameProcessingPipeline() async {
+        framePipelineGeneration &+= 1
+        let activePipelineGeneration = framePipelineGeneration
         finishFrameQueue()
         queueDropsSinceLastLog = 0
         lastQueueDropLogTime = 0
@@ -446,10 +465,13 @@ actor StreamController {
             limit: decodeSubmissionBaselineLimit,
             reason: "stream pipeline start"
         )
+        nextExpectedEnqueueOrder = 0
+        pendingOrderedFrames.removeAll(keepingCapacity: false)
 
         // Start the frame processing task - single task processes all frames sequentially
         let capturedDecoder = decoder
         let decodeBudgetController = GlobalDecodeBudgetController.shared
+        let enqueueOrderAllocator = FrameEnqueueOrderAllocator()
         frameProcessingTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
@@ -480,6 +502,7 @@ actor StreamController {
             -> Void = { [weak self] _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
                 let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
                 recordReceivedFrame()
+                let enqueueOrder = enqueueOrderAllocator.allocate()
 
                 let frame = FrameData(
                     data: frameData,
@@ -494,7 +517,11 @@ actor StreamController {
                         releaseBuffer()
                         return
                     }
-                    await self.enqueueFrame(frame)
+                    await self.enqueueFrame(
+                        frame,
+                        enqueueOrder: enqueueOrder,
+                        pipelineGeneration: activePipelineGeneration
+                    )
                 }
             }
         reassembler.setFrameHandler(reassemblerHandler)
@@ -507,6 +534,7 @@ actor StreamController {
     }
 
     func stopFrameProcessingPipeline() {
+        framePipelineGeneration &+= 1
         finishFrameQueue()
         frameProcessingTask?.cancel()
         frameProcessingTask = nil
@@ -562,7 +590,25 @@ actor StreamController {
         }
     }
 
-    private func enqueueFrame(_ frame: FrameData) async {
+    private func enqueueFrame(
+        _ frame: FrameData,
+        enqueueOrder: UInt64,
+        pipelineGeneration: UInt64
+    )
+    async {
+        guard pipelineGeneration == framePipelineGeneration else {
+            frame.releaseBuffer()
+            return
+        }
+
+        pendingOrderedFrames[enqueueOrder] = frame
+        while let nextFrame = pendingOrderedFrames.removeValue(forKey: nextExpectedEnqueueOrder) {
+            nextExpectedEnqueueOrder &+= 1
+            await enqueueFrameInOrder(nextFrame)
+        }
+    }
+
+    private func enqueueFrameInOrder(_ frame: FrameData) async {
         if Self.localResizeDecodeAdmissionDecision(
             decodePausedForLocalResize: decodePausedForLocalResize
         ) == .dropWhileLocalResizePaused {
@@ -636,16 +682,24 @@ actor StreamController {
             dequeueContinuation = nil
             continuation.resume(returning: nil)
         }
-        if queuedFrames.isEmpty { return }
-        let frames = queuedFrames.drain()
+        let queued = queuedFrames.drain()
+        let pending = Array(pendingOrderedFrames.values)
+        pendingOrderedFrames.removeAll(keepingCapacity: false)
+        nextExpectedEnqueueOrder = 0
+        if queued.isEmpty, pending.isEmpty { return }
+        let frames = queued + pending
         for frame in frames {
             frame.releaseBuffer()
         }
     }
 
     func clearQueuedFramesForRecovery() {
-        guard !queuedFrames.isEmpty else { return }
-        let frames = queuedFrames.drain()
+        let queued = queuedFrames.drain()
+        let pending = Array(pendingOrderedFrames.values)
+        pendingOrderedFrames.removeAll(keepingCapacity: false)
+        nextExpectedEnqueueOrder = 0
+        guard !queued.isEmpty || !pending.isEmpty else { return }
+        let frames = queued + pending
         for frame in frames {
             frame.releaseBuffer()
         }

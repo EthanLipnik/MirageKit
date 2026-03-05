@@ -109,11 +109,11 @@ extension MirageHostService {
                 let centerPoint = CGPoint(x: bounds.midX, y: bounds.midY)
                 clickToFocusLoginField(at: centerPoint)
             }
-            postHIDKeyEvent(isKeyDown: true, event: e)
+            inputController.injectLoginDisplayKeyEvent(isKeyDown: true, event: e)
         case let .keyUp(e):
-            postHIDKeyEvent(isKeyDown: false, event: e)
+            inputController.injectLoginDisplayKeyEvent(isKeyDown: false, event: e)
         case let .flagsChanged(modifiers):
-            postHIDFlagsChanged(modifiers)
+            inputController.injectLoginDisplayModifiers(modifiers)
         case .magnify,
              .pixelResize,
              .relativeResize,
@@ -155,35 +155,6 @@ extension MirageHostService {
 
         cgEvent.location = location
         cgEvent.flags = event.modifiers.cgEventFlags
-        MirageInjectedEventTag.postHID(cgEvent)
-    }
-
-    /// Post a HID keyboard event
-    nonisolated func postHIDKeyEvent(isKeyDown: Bool, event: MirageKeyEvent) {
-        guard let cgEvent = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: CGKeyCode(event.keyCode),
-            keyDown: isKeyDown
-        ) else {
-            return
-        }
-
-        cgEvent.flags = event.modifiers.cgEventFlags
-        MirageInjectedEventTag.postHID(cgEvent)
-    }
-
-    /// Post a HID flags changed event (modifier keys)
-    nonisolated func postHIDFlagsChanged(_ modifiers: MirageModifierFlags) {
-        guard let cgEvent = CGEvent(
-            keyboardEventSource: nil,
-            virtualKey: 0,
-            keyDown: true
-        ) else {
-            return
-        }
-
-        cgEvent.type = .flagsChanged
-        cgEvent.flags = modifiers.cgEventFlags
         MirageInjectedEventTag.postHID(cgEvent)
     }
 

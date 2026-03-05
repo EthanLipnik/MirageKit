@@ -13,19 +13,25 @@ public struct MirageStreamingSettings: Codable, Equatable {
     /// Whether closing a client app-stream window should attempt to close the host window.
     public var closeHostWindowOnClientWindowClose: Bool = false
 
+    /// Preferred low-power policy for local host encoder sessions.
+    public var encoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto
+
     /// Per-app settings keyed by bundle identifier.
     public var perAppSettings: [String: MirageAppStreamingSettings] = [:]
 
     public init(
         closeHostWindowOnClientWindowClose: Bool = false,
+        encoderLowPowerModePreference: MirageCodecLowPowerModePreference = .auto,
         perAppSettings: [String: MirageAppStreamingSettings] = [:]
     ) {
         self.closeHostWindowOnClientWindowClose = closeHostWindowOnClientWindowClose
+        self.encoderLowPowerModePreference = encoderLowPowerModePreference
         self.perAppSettings = perAppSettings
     }
 
     private enum CodingKeys: String, CodingKey {
         case closeHostWindowOnClientWindowClose
+        case encoderLowPowerModePreference
         case perAppSettings
     }
 
@@ -35,6 +41,10 @@ public struct MirageStreamingSettings: Codable, Equatable {
             Bool.self,
             forKey: .closeHostWindowOnClientWindowClose
         ) ?? false
+        encoderLowPowerModePreference = try container.decodeIfPresent(
+            MirageCodecLowPowerModePreference.self,
+            forKey: .encoderLowPowerModePreference
+        ) ?? .auto
         perAppSettings = try container.decodeIfPresent(
             [String: MirageAppStreamingSettings].self,
             forKey: .perAppSettings

@@ -41,7 +41,7 @@ extension FrameReassembler {
     }
 
     func processPacket(_ data: Data, header: FrameHeader) {
-        var completedFrame: CompletedFrame?
+        var completedFrames: [CompletedFrame] = []
         var completionHandler: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
             -> Void)?
         var shouldSignalFrameLoss = false
@@ -234,9 +234,19 @@ extension FrameReassembler {
         }
 
         // Check if frame is complete.
-        if frame.receivedCount == frame.dataFragmentCount {
+        if !frame.isComplete, frame.receivedCount == frame.dataFragmentCount {
+            frame.isComplete = true
             let completionResult = completeFrameLocked(frameNumber: frameNumber, frame: frame)
-            completedFrame = completionResult.frame
+            if let completedFrame = completionResult.frame {
+                completedFrames.append(completedFrame)
+                let drainResult = drainDeliverableFramesLocked()
+                if !drainResult.frames.isEmpty {
+                    completedFrames.append(contentsOf: drainResult.frames)
+                }
+                if drainResult.shouldSignalFrameLoss {
+                    shouldSignalFrameLoss = true
+                }
+            }
             if completionResult.shouldSignalFrameLoss {
                 shouldSignalFrameLoss = true
             }
@@ -261,15 +271,17 @@ extension FrameReassembler {
             if let onFrameLoss { onFrameLoss(streamID) }
         }
 
-        if let completedFrame, let completionHandler {
-            completionHandler(
-                streamID,
-                completedFrame.data,
-                completedFrame.isKeyframe,
-                completedFrame.timestamp,
-                completedFrame.contentRect,
-                completedFrame.releaseBuffer
-            )
+        if !completedFrames.isEmpty, let completionHandler {
+            for completedFrame in completedFrames {
+                completionHandler(
+                    streamID,
+                    completedFrame.data,
+                    completedFrame.isKeyframe,
+                    completedFrame.timestamp,
+                    completedFrame.contentRect,
+                    completedFrame.releaseBuffer
+                )
+            }
         }
     }
 
@@ -283,6 +295,12 @@ extension FrameReassembler {
 
     private struct FrameCompletionResult {
         let frame: CompletedFrame?
+        let shouldSignalFrameLoss: Bool
+        let retainedForInOrderDelivery: Bool
+    }
+
+    private struct DrainCompletionResult {
+        let frames: [CompletedFrame]
         let shouldSignalFrameLoss: Bool
     }
 
@@ -300,7 +318,8 @@ extension FrameReassembler {
     private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
         // Frame skipping logic: determine if we should deliver this frame
         let shouldDeliver: Bool
-        var shouldSignalFrameLoss = false
+        let shouldSignalFrameLoss = false
+        var retainedForInOrderDelivery = false
 
         if frame.isKeyframe {
             // Always deliver keyframes unless a newer keyframe was already delivered.
@@ -310,15 +329,18 @@ extension FrameReassembler {
                 hasDeliveredKeyframeAnchor = true
             }
         } else {
-            // For P-frames: require a delivered keyframe anchor and strict monotonic delivery.
-            // Any forward gap triggers keyframe-only recovery to avoid decode corruption from
-            // missing inter-frame references.
+            // For P-frames: require a delivered keyframe anchor and strict frame monotonicity.
+            // If a forward gap is detected, enter keyframe wait and recover from the next keyframe.
             guard hasDeliveredKeyframeAnchor else {
                 shouldDeliver = false
                 pendingFrames.removeValue(forKey: frameNumber)
                 frame.buffer.release()
                 droppedFrameCount += 1
-                return FrameCompletionResult(frame: nil, shouldSignalFrameLoss: false)
+                return FrameCompletionResult(
+                    frame: nil,
+                    shouldSignalFrameLoss: false,
+                    retainedForInOrderDelivery: false
+                )
             }
             let expectedNextFrame = lastCompletedFrame &+ 1
             let isForwardFrame = isFrameNewer(frameNumber, than: lastCompletedFrame)
@@ -326,14 +348,12 @@ extension FrameReassembler {
             let hasForwardGap = isForwardFrame && isFrameNewer(frameNumber, than: expectedNextFrame)
 
             if hasForwardGap {
-                let alreadyAwaitingKeyframe = awaitingKeyframe
-                beginAwaitingKeyframe()
-                packetsDiscardedAwaitingKeyframe += 1
                 shouldDeliver = false
-                shouldSignalFrameLoss = !alreadyAwaitingKeyframe
+                retainedForInOrderDelivery = true
+                let gapFrames = frameNumber &- expectedNextFrame
                 MirageLogger.log(
                     .frameAssembly,
-                    "Frame gap detected: expected \(expectedNextFrame), received \(frameNumber) - entering keyframe wait"
+                    "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames)"
                 )
             } else {
                 shouldDeliver = isForwardFrame && isAfterKeyframeAnchor
@@ -367,9 +387,18 @@ extension FrameReassembler {
                     contentRect: frame.contentRect,
                     releaseBuffer: releaseBuffer
                 ),
-                shouldSignalFrameLoss: shouldSignalFrameLoss
+                shouldSignalFrameLoss: shouldSignalFrameLoss,
+                retainedForInOrderDelivery: false
             )
         } else {
+            if retainedForInOrderDelivery {
+                return FrameCompletionResult(
+                    frame: nil,
+                    shouldSignalFrameLoss: shouldSignalFrameLoss,
+                    retainedForInOrderDelivery: true
+                )
+            }
+
             // This frame arrived too late - a newer frame was already delivered
             if frame.isKeyframe {
                 MirageLogger.log(
@@ -380,8 +409,41 @@ extension FrameReassembler {
             pendingFrames.removeValue(forKey: frameNumber)
             frame.buffer.release()
             droppedFrameCount += 1
-            return FrameCompletionResult(frame: nil, shouldSignalFrameLoss: shouldSignalFrameLoss)
+            return FrameCompletionResult(
+                frame: nil,
+                shouldSignalFrameLoss: shouldSignalFrameLoss,
+                retainedForInOrderDelivery: false
+            )
         }
+    }
+
+    private func drainDeliverableFramesLocked() -> DrainCompletionResult {
+        var drainedFrames: [CompletedFrame] = []
+        var shouldSignalFrameLoss = false
+
+        while hasDeliveredKeyframeAnchor {
+            let expectedFrameNumber = lastCompletedFrame &+ 1
+            guard let expectedFrame = pendingFrames[expectedFrameNumber], expectedFrame.isComplete else { break }
+
+            let completionResult = completeFrameLocked(
+                frameNumber: expectedFrameNumber,
+                frame: expectedFrame
+            )
+            if let completedFrame = completionResult.frame {
+                drainedFrames.append(completedFrame)
+            }
+            if completionResult.shouldSignalFrameLoss {
+                shouldSignalFrameLoss = true
+            }
+            if completionResult.retainedForInOrderDelivery {
+                break
+            }
+        }
+
+        return DrainCompletionResult(
+            frames: drainedFrames,
+            shouldSignalFrameLoss: shouldSignalFrameLoss
+        )
     }
 
     private func discardOlderPendingFramesLocked(olderThan frameNumber: UInt32) {
@@ -442,7 +504,7 @@ extension FrameReassembler {
         var timedOutPFrameCount: UInt64 = 0
         var timedOutKeyframeCount: UInt64 = 0
         var staleKeyframeCount: UInt64 = 0
-        var timedOutPFrameNumbers: [UInt32] = []
+        var timedOutExpectedPFrame = false
         var framesToRemove: [UInt32] = []
         for (frameNumber, frame) in pendingFrames {
             if frame.isKeyframe, isStaleKeyframeLocked(frameNumber) {
@@ -465,7 +527,10 @@ extension FrameReassembler {
                     timedOutKeyframeCount += 1
                 } else {
                     timedOutPFrameCount += 1
-                    timedOutPFrameNumbers.append(frameNumber)
+                    let expectedFrame = lastCompletedFrame &+ 1
+                    if frameNumber == expectedFrame {
+                        timedOutExpectedPFrame = true
+                    }
                 }
             }
             if !shouldKeep { framesToRemove.append(frameNumber) }
@@ -475,18 +540,9 @@ extension FrameReassembler {
         }
         droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
 
-        if hasDeliveredKeyframeAnchor, !timedOutPFrameNumbers.isEmpty {
-            let advanced = advanceCompletionCursorForTimedOutPFramesLocked(timedOutPFrameNumbers)
-            if advanced > 0 {
-                MirageLogger.log(
-                    .frameAssembly,
-                    "Advanced completion cursor by \(advanced) timed-out P-frame(s); lastCompleted=\(lastCompletedFrame)"
-                )
-            }
-        }
-
-        let keyframeAnchorCritical = timedOutPFrameCount > 0 && !hasDeliveredKeyframeAnchor
-        let shouldEnterAwaitingKeyframe = (timedOutKeyframeCount > 0 || keyframeAnchorCritical) && !awaitingKeyframe
+        // Enter keyframe wait when a keyframe times out, or when the next expected P-frame
+        // times out (which blocks in-order delivery and indicates sequence starvation).
+        let shouldEnterAwaitingKeyframe = (timedOutKeyframeCount > 0 || timedOutExpectedPFrame) && !awaitingKeyframe
 
         return TimeoutCleanupResult(
             timedOutPFrames: timedOutPFrameCount,
@@ -494,22 +550,6 @@ extension FrameReassembler {
             staleKeyframes: staleKeyframeCount,
             shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe
         )
-    }
-
-    private func advanceCompletionCursorForTimedOutPFramesLocked(_ frameNumbers: [UInt32]) -> Int {
-        guard !frameNumbers.isEmpty else { return 0 }
-
-        let timedOutSet = Set(frameNumbers)
-        var advanced = 0
-        var nextExpected = lastCompletedFrame &+ 1
-
-        while timedOutSet.contains(nextExpected) {
-            lastCompletedFrame = nextExpected
-            advanced += 1
-            nextExpected = nextExpected &+ 1
-        }
-
-        return advanced
     }
 
     func shouldRequestKeyframe() -> Bool {

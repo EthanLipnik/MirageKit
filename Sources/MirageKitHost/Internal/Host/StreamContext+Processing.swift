@@ -555,6 +555,10 @@ extension StreamContext {
             }
             let captureValidation = captureValidationSnapshot()
             let encoderValidation = await encoder?.runtimeValidationSnapshot()
+            let displayP3CoverageStatus = resolvedDisplayP3CoverageStatus(
+                capture: captureValidation,
+                encoder: encoderValidation
+            )
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -572,9 +576,11 @@ extension StreamContext {
                 encoderColorPrimaries: encoderValidation?.colorPrimaries,
                 encoderTransferFunction: encoderValidation?.transferFunction,
                 encoderYCbCrMatrix: encoderValidation?.yCbCrMatrix,
+                displayP3CoverageStatus: displayP3CoverageStatus,
                 tenBitDisplayP3Validated: tenBitDisplayP3Validation(
                     capture: captureValidation,
-                    encoder: encoderValidation
+                    encoder: encoderValidation,
+                    coverageStatus: displayP3CoverageStatus
                 )
             )
             metricsUpdateHandler(message)
@@ -624,12 +630,55 @@ extension StreamContext {
 
     private func tenBitDisplayP3Validation(
         capture: CaptureValidationSnapshot?,
-        encoder: HEVCEncoder.RuntimeValidationSnapshot?
+        encoder: HEVCEncoder.RuntimeValidationSnapshot?,
+        coverageStatus: MirageDisplayP3CoverageStatus?
     ) -> Bool? {
-        guard let encoder else { return nil }
-        guard let capture else { return nil }
-        guard let captureIsDisplayP3 = capture.isDisplayP3 else { return nil }
-        return capture.isTenBitP010 && captureIsDisplayP3 && encoder.tenBitDisplayP3Validated
+        Self.measuredTenBitDisplayP3Validation(
+            coverageStatus: coverageStatus,
+            captureIsTenBitP010: capture?.isTenBitP010,
+            captureIsDisplayP3: capture?.isDisplayP3,
+            encoderTenBitDisplayP3Validated: encoder?.tenBitDisplayP3Validated
+        )
+    }
+
+    static func measuredTenBitDisplayP3Validation(
+        coverageStatus: MirageDisplayP3CoverageStatus?,
+        captureIsTenBitP010: Bool?,
+        captureIsDisplayP3: Bool?,
+        encoderTenBitDisplayP3Validated: Bool?
+    ) -> Bool? {
+        guard let coverageStatus else { return nil }
+        let measuredCoveragePass = coverageStatus == .strictCanonical || coverageStatus == .wideGamutEquivalent
+        guard measuredCoveragePass else { return false }
+        guard let captureIsTenBitP010,
+              let captureIsDisplayP3,
+              let encoderTenBitDisplayP3Validated else { return nil }
+        return captureIsTenBitP010 && captureIsDisplayP3 && encoderTenBitDisplayP3Validated
+    }
+
+    private func resolvedDisplayP3CoverageStatus(
+        capture: CaptureValidationSnapshot?,
+        encoder: HEVCEncoder.RuntimeValidationSnapshot?
+    ) -> MirageDisplayP3CoverageStatus? {
+        if let override = displayP3CoverageStatusOverride {
+            return override
+        }
+        if let virtualDisplayContext {
+            return virtualDisplayContext.displayP3CoverageStatus
+        }
+        if encoderConfig.colorSpace == .sRGB {
+            return .sRGBFallback
+        }
+        guard encoderConfig.colorSpace == .displayP3 else { return nil }
+        guard let capture else { return .unresolved }
+        guard let captureIsDisplayP3 = capture.isDisplayP3 else { return .unresolved }
+        if captureIsDisplayP3, encoder?.tenBitDisplayP3Validated == true {
+            return .strictCanonical
+        }
+        if captureIsDisplayP3 {
+            return .wideGamutEquivalent
+        }
+        return .sRGBFallback
     }
 
     private func bufferAttachmentString(_ buffer: CVBuffer, key: CFString) -> String? {

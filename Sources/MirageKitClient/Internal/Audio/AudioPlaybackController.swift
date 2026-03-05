@@ -100,6 +100,9 @@ final class AudioPlaybackController {
 
     func enqueue(_ frame: DecodedPCMFrame) {
         guard configureIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount) else { return }
+#if os(iOS) || os(visionOS)
+        guard ensureAudioSessionConfiguredForPlayback() else { return }
+#endif
         pendingFrames.append(frame)
         pendingDurationSeconds += frame.durationSeconds
         drainPendingFramesIfNeeded()
@@ -130,7 +133,7 @@ final class AudioPlaybackController {
 
         engine.connect(playerNode, to: engine.mainMixerNode, format: format)
 #if os(iOS) || os(visionOS)
-        guard configureAudioSessionIfNeeded() else { return false }
+        guard ensureAudioSessionConfiguredForPlayback() else { return false }
 #endif
         do {
             try engine.start()
@@ -240,8 +243,7 @@ final class AudioPlaybackController {
     }
 
 #if os(iOS) || os(visionOS)
-    private func configureAudioSessionIfNeeded() -> Bool {
-        if audioSessionConfigured { return true }
+    private func ensureAudioSessionConfiguredForPlayback() -> Bool {
         guard isApplicationActive else {
             if !hasLoggedInactiveSessionDeferral {
                 MirageLogger.client("Deferring audio session activation until app becomes active")
@@ -255,9 +257,14 @@ final class AudioPlaybackController {
         do {
             // Keep existing media (for example, Music/Spotify) playing when a stream starts.
             // `.ambient` is the least disruptive while other audio is active; otherwise we keep `.playback`.
-            let category: AVAudioSession.Category = session.isOtherAudioPlaying ? .ambient : .playback
-            try session.setCategory(category, mode: .default, options: [.mixWithOthers])
-            try session.setActive(true, options: [])
+            let desiredCategory: AVAudioSession.Category = session.isOtherAudioPlaying ? .ambient : .playback
+            let needsReconfiguration = !audioSessionConfigured
+                || session.category != desiredCategory
+                || session.mode != .default
+            if needsReconfiguration {
+                try session.setCategory(desiredCategory, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true, options: [])
+            }
             audioSessionConfigured = true
             return true
         } catch {

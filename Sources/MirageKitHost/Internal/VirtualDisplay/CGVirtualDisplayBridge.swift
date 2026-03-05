@@ -6,6 +6,8 @@
 //
 
 import CoreGraphics
+import CoreVideo
+import Darwin
 import Foundation
 import MirageKit
 
@@ -31,17 +33,26 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     private nonisolated(unsafe) static var isLoaded = false
     private nonisolated(unsafe) static var cachedSerialNumbers: [MirageColorSpace: UInt32] = [:]
     private nonisolated(unsafe) static var cachedSerialSlots: [MirageColorSpace: SerialSlot] = [:]
+    private nonisolated(unsafe) static var cachedHardwareModel: String?
     nonisolated(unsafe) static var configuredDisplayOrigins: [CGDirectDisplayID: CGPoint] = [:]
     static let mirageVendorID: UInt32 = 0x1234
     static let mirageProductID: UInt32 = 0xE000
     private static let serialSlotDefaultsPrefix = "MirageVirtualDisplaySerialSlot"
     private static let descriptorProfileDefaultsPrefix = "MirageVirtualDisplayDescriptorProfile"
+    private static let validationHintDefaultsPrefix = "MirageVirtualDisplayValidationHint"
     private static let hiDPIDisabledSetting: UInt32 = 0
     private static let hiDPIEnabledSetting: UInt32 = 2
     private static let colorValidationAttempts = 6
     private static let colorValidationDelaySeconds: TimeInterval = 0.06
     private static let retinaQuantizedRelativeTolerance: CGFloat = 0.12
     private static let retinaQuantizedScaleTolerance: CGFloat = 0.12
+    private static let transferFunctionCodeSRGB = UInt32(
+        CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_sRGB)
+    )
+    private static let transferFunctionCode709 = UInt32(
+        CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_ITU_R_709_2)
+    )
+    private static let transferFunctionCodeUnknown: UInt32 = 2
 
     private enum SerialSlot: Int {
         case primary = 0
@@ -80,6 +91,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let resolution: CGSize
         let refreshRate: Double
         let colorSpace: MirageColorSpace
+        let displayP3CoverageStatus: MirageDisplayP3CoverageStatus
         let scaleFactor: CGFloat
     }
 
@@ -117,7 +129,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         modeClass: NSObject.Type,
         width: Int,
         height: Int,
-        refreshRate: Double
+        refreshRate: Double,
+        transferFunction: UInt32
     )
     -> AnyObject? {
         let allocSelector = NSSelectorFromString("alloc")
@@ -126,22 +139,51 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             return nil
         }
 
+        let initWithTransferFunctionSelector = NSSelectorFromString("initWithWidth:height:refreshRate:transferFunction:")
         let initSelector = NSSelectorFromString("initWithWidth:height:refreshRate:")
-        guard (allocatedMode as AnyObject).responds(to: initSelector) else {
-            MirageLogger.error(.host, "CGVirtualDisplayMode doesn't respond to initWithWidth:height:refreshRate:")
-            return nil
+        let setTransferFunctionSelector = NSSelectorFromString("setTransferFunction:")
+
+        let initialized: AnyObject
+        if (allocatedMode as AnyObject).responds(to: initWithTransferFunctionSelector) {
+            typealias InitModeWithTransferFunctionIMP = @convention(c)
+            (AnyObject, Selector, UInt32, UInt32, Double, UInt32) -> Unmanaged<AnyObject>
+            let initIMP = (allocatedMode as AnyObject).method(for: initWithTransferFunctionSelector)
+            let initialize = unsafeBitCast(initIMP, to: InitModeWithTransferFunctionIMP.self)
+            initialized = initialize(
+                allocatedMode as AnyObject,
+                initWithTransferFunctionSelector,
+                UInt32(width),
+                UInt32(height),
+                refreshRate,
+                transferFunction
+            ).takeRetainedValue()
+        } else {
+            guard (allocatedMode as AnyObject).responds(to: initSelector) else {
+                MirageLogger.error(
+                    .host,
+                    "CGVirtualDisplayMode doesn't respond to initWithWidth:height:refreshRate: or initWithWidth:height:refreshRate:transferFunction:"
+                )
+                return nil
+            }
+            typealias InitModeIMP = @convention(c) (AnyObject, Selector, UInt32, UInt32, Double) -> Unmanaged<AnyObject>
+            let initIMP = (allocatedMode as AnyObject).method(for: initSelector)
+            let initialize = unsafeBitCast(initIMP, to: InitModeIMP.self)
+            initialized = initialize(
+                allocatedMode as AnyObject,
+                initSelector,
+                UInt32(width),
+                UInt32(height),
+                refreshRate
+            ).takeRetainedValue()
         }
 
-        typealias InitModeIMP = @convention(c) (AnyObject, Selector, UInt32, UInt32, Double) -> Unmanaged<AnyObject>
-        let initIMP = (allocatedMode as AnyObject).method(for: initSelector)
-        let initialize = unsafeBitCast(initIMP, to: InitModeIMP.self)
-        let initialized = initialize(
-            allocatedMode as AnyObject,
-            initSelector,
-            UInt32(width),
-            UInt32(height),
-            refreshRate
-        ).takeRetainedValue()
+        if (initialized as AnyObject).responds(to: setTransferFunctionSelector) {
+            typealias SetTransferFunctionIMP = @convention(c) (AnyObject, Selector, UInt32) -> Void
+            let setTransferFunctionIMP = (initialized as AnyObject).method(for: setTransferFunctionSelector)
+            let setTransferFunction = unsafeBitCast(setTransferFunctionIMP, to: SetTransferFunctionIMP.self)
+            setTransferFunction(initialized as AnyObject, setTransferFunctionSelector, transferFunction)
+        }
+
         return initialized
     }
 
@@ -166,6 +208,11 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let modeWidth: Int
         let modeHeight: Int
         let hiDPISetting: UInt32
+        let label: String
+    }
+
+    private struct TransferFunctionAttempt {
+        let code: UInt32
         let label: String
     }
 
@@ -206,6 +253,39 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return deduped
     }
 
+    private static func transferFunctionAttempts(for colorSpace: MirageColorSpace) -> [TransferFunctionAttempt] {
+        let preferred = TransferFunctionAttempt(
+            code: transferFunctionCodeSRGB,
+            label: "sRGB(\(transferFunctionCodeSRGB))"
+        )
+        let rec709 = TransferFunctionAttempt(
+            code: transferFunctionCode709,
+            label: "ITU-R-709(\(transferFunctionCode709))"
+        )
+        let unknown = TransferFunctionAttempt(
+            code: transferFunctionCodeUnknown,
+            label: "unknown(\(transferFunctionCodeUnknown))"
+        )
+
+        // Display P3 and sRGB both use SDR transfer functions; prefer explicit sRGB tagging first.
+        let ordered = [preferred, rec709, unknown]
+        var deduped: [TransferFunctionAttempt] = []
+        var seen = Set<UInt32>()
+        for candidate in ordered where seen.insert(candidate.code).inserted {
+            deduped.append(candidate)
+        }
+        return deduped
+    }
+
+    private static func modeTransferFunction(_ mode: AnyObject) -> UInt32? {
+        let selector = NSSelectorFromString("transferFunction")
+        guard (mode as AnyObject).responds(to: selector) else { return nil }
+        typealias GetTransferFunctionIMP = @convention(c) (AnyObject, Selector) -> UInt32
+        let imp = (mode as AnyObject).method(for: selector)
+        let getter = unsafeBitCast(imp, to: GetTransferFunctionIMP.self)
+        return getter(mode as AnyObject, selector)
+    }
+
     private struct DescriptorAttempt {
         let profile: DescriptorProfile
         let serial: UInt32
@@ -213,46 +293,211 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         let label: String
     }
 
-    private enum DescriptorProfile: String, CaseIterable {
+    private enum DescriptorProfile: String, CaseIterable, Codable {
         case persistentMainQueue = "persistent-main-queue"
         case persistentGlobalQueue = "persistent-global-queue"
         case serial0GlobalQueue = "serial0-global-queue"
     }
 
-    private static func descriptorProfileDefaultsKey(for colorSpace: MirageColorSpace) -> String {
-        "\(descriptorProfileDefaultsPrefix).\(colorSpace.rawValue)"
+    private struct CachedValidationHint: Codable, Sendable {
+        let profile: DescriptorProfile
+        let serial: UInt32
+        let coverageStatus: MirageDisplayP3CoverageStatus
+    }
+
+    private static func hardwareModel() -> String {
+        if let cachedHardwareModel {
+            return cachedHardwareModel
+        }
+
+        var size: size_t = 0
+        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0, size > 1 else {
+            let fallback = "unknown-model"
+            cachedHardwareModel = fallback
+            return fallback
+        }
+
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        guard sysctlbyname("hw.model", &buffer, &size, nil, 0) == 0 else {
+            let fallback = "unknown-model"
+            cachedHardwareModel = fallback
+            return fallback
+        }
+
+        let model = String(cString: buffer)
+        cachedHardwareModel = model
+        return model
+    }
+
+    private static func machineModeCacheSuffix(
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) -> String {
+        let os = ProcessInfo.processInfo.operatingSystemVersion
+        let roundedRefresh = Int(refreshRate.rounded())
+        return "model=\(hardwareModel())|os=\(os.majorVersion).\(os.minorVersion).\(os.patchVersion)|mode=\(width)x\(height)@\(roundedRefresh)|hidpi=\(hiDPI ? 1 : 0)"
+    }
+
+    private static func descriptorProfileDefaultsKey(
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) -> String {
+        "\(descriptorProfileDefaultsPrefix).\(colorSpace.rawValue).\(machineModeCacheSuffix(width: width, height: height, refreshRate: refreshRate, hiDPI: hiDPI))"
+    }
+
+    private static func validationHintDefaultsKey(
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) -> String {
+        "\(validationHintDefaultsPrefix).\(colorSpace.rawValue).\(machineModeCacheSuffix(width: width, height: height, refreshRate: refreshRate, hiDPI: hiDPI))"
     }
 
     private static func preferredDescriptorProfile(
         for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
         hiDPI: Bool
     )
     -> DescriptorProfile? {
         let defaults = UserDefaults.standard
-        guard let raw = defaults.string(forKey: descriptorProfileDefaultsKey(for: colorSpace)),
+        guard let raw = defaults.string(
+            forKey: descriptorProfileDefaultsKey(
+                for: colorSpace,
+                width: width,
+                height: height,
+                refreshRate: refreshRate,
+                hiDPI: hiDPI
+            )
+        ),
               let profile = DescriptorProfile(rawValue: raw) else {
             return nil
         }
-
-        if hiDPI { return profile }
         return profile
     }
 
     private static func storePreferredDescriptorProfile(
         _ profile: DescriptorProfile,
-        for colorSpace: MirageColorSpace
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
     ) {
-        UserDefaults.standard.set(profile.rawValue, forKey: descriptorProfileDefaultsKey(for: colorSpace))
+        let key = descriptorProfileDefaultsKey(
+            for: colorSpace,
+            width: width,
+            height: height,
+            refreshRate: refreshRate,
+            hiDPI: hiDPI
+        )
+        UserDefaults.standard.set(profile.rawValue, forKey: key)
     }
 
     static func clearPreferredDescriptorProfile(for colorSpace: MirageColorSpace) {
-        UserDefaults.standard.removeObject(forKey: descriptorProfileDefaultsKey(for: colorSpace))
+        let defaults = UserDefaults.standard
+        let profilePrefix = "\(descriptorProfileDefaultsPrefix).\(colorSpace.rawValue)."
+        let hintPrefix = "\(validationHintDefaultsPrefix).\(colorSpace.rawValue)."
+        let keysToClear = defaults.dictionaryRepresentation().keys.filter {
+            $0.hasPrefix(profilePrefix) || $0.hasPrefix(hintPrefix)
+        }
+        for key in keysToClear {
+            defaults.removeObject(forKey: key)
+        }
+    }
+
+    private static func cachedValidationHint(
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) -> CachedValidationHint? {
+        let defaults = UserDefaults.standard
+        let key = validationHintDefaultsKey(
+            for: colorSpace,
+            width: width,
+            height: height,
+            refreshRate: refreshRate,
+            hiDPI: hiDPI
+        )
+        guard let data = defaults.data(forKey: key) else { return nil }
+        return try? JSONDecoder().decode(CachedValidationHint.self, from: data)
+    }
+
+    private static func storeValidationHint(
+        _ hint: CachedValidationHint,
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) {
+        guard let data = try? JSONEncoder().encode(hint) else { return }
+        let key = validationHintDefaultsKey(
+            for: colorSpace,
+            width: width,
+            height: height,
+            refreshRate: refreshRate,
+            hiDPI: hiDPI
+        )
+        UserDefaults.standard.set(data, forKey: key)
+    }
+
+    private static func clearValidationHint(
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) {
+        let key = validationHintDefaultsKey(
+            for: colorSpace,
+            width: width,
+            height: height,
+            refreshRate: refreshRate,
+            hiDPI: hiDPI
+        )
+        UserDefaults.standard.removeObject(forKey: key)
+    }
+
+    private static func descriptorQueue(for profile: DescriptorProfile) -> DispatchQueue {
+        switch profile {
+        case .persistentMainQueue:
+            .main
+        case .persistentGlobalQueue, .serial0GlobalQueue:
+            .global(qos: .userInteractive)
+        }
+    }
+
+    private static func descriptorSerial(
+        for profile: DescriptorProfile,
+        persistentSerial: UInt32
+    ) -> UInt32 {
+        switch profile {
+        case .serial0GlobalQueue:
+            0
+        case .persistentMainQueue, .persistentGlobalQueue:
+            persistentSerial
+        }
     }
 
     private static func descriptorAttempts(
         persistentSerial: UInt32,
         hiDPI: Bool,
-        colorSpace: MirageColorSpace
+        colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        cachedHint: CachedValidationHint?
     )
     -> [DescriptorAttempt] {
         let defaults: [DescriptorProfile] = hiDPI
@@ -260,7 +505,17 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             : [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
         var orderedProfiles: [DescriptorProfile] = []
 
-        if let preferred = preferredDescriptorProfile(for: colorSpace, hiDPI: hiDPI) {
+        if let cachedHint {
+            orderedProfiles.append(cachedHint.profile)
+        }
+
+        if let preferred = preferredDescriptorProfile(
+            for: colorSpace,
+            width: width,
+            height: height,
+            refreshRate: refreshRate,
+            hiDPI: hiDPI
+        ) {
             orderedProfiles.append(preferred)
         }
 
@@ -268,44 +523,59 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             orderedProfiles.append(profile)
         }
 
-        return orderedProfiles.map { profile in
-            switch profile {
-            case .persistentMainQueue:
-                DescriptorAttempt(
-                    profile: profile,
-                    serial: persistentSerial,
-                    queue: .main,
-                    label: profile.rawValue
-                )
-            case .persistentGlobalQueue:
-                DescriptorAttempt(
-                    profile: profile,
-                    serial: persistentSerial,
-                    queue: .global(qos: .userInteractive),
-                    label: profile.rawValue
-                )
-            case .serial0GlobalQueue:
-                DescriptorAttempt(
-                    profile: profile,
-                    serial: 0,
-                    queue: .global(qos: .userInteractive),
-                    label: profile.rawValue
+        var attempts: [DescriptorAttempt] = []
+        var seen = Set<String>()
+
+        if let cachedHint {
+            let key = "\(cachedHint.profile.rawValue)-\(cachedHint.serial)"
+            if seen.insert(key).inserted {
+                attempts.append(
+                    DescriptorAttempt(
+                        profile: cachedHint.profile,
+                        serial: cachedHint.serial,
+                        queue: descriptorQueue(for: cachedHint.profile),
+                        label: "\(cachedHint.profile.rawValue)-cached"
+                    )
                 )
             }
         }
+
+        for profile in orderedProfiles {
+            let serial = descriptorSerial(for: profile, persistentSerial: persistentSerial)
+            let key = "\(profile.rawValue)-\(serial)"
+            guard seen.insert(key).inserted else { continue }
+            attempts.append(
+                DescriptorAttempt(
+                    profile: profile,
+                    serial: serial,
+                    queue: descriptorQueue(for: profile),
+                    label: profile.rawValue
+                )
+            )
+        }
+
+        return attempts
     }
 
     private static func validatedDisplayColorSpace(
         displayID: CGDirectDisplayID,
         expectedColorSpace: MirageColorSpace
-    ) -> (matches: Bool?, observedName: String?) {
-        var latest: (matches: Bool?, observedName: String?) = (matches: nil, observedName: nil)
+    ) -> DisplayColorSpaceValidationResult {
+        var latest = DisplayColorSpaceValidationResult(
+            coverageStatus: .unresolved,
+            observedName: nil
+        )
         for attempt in 0 ..< colorValidationAttempts {
             latest = displayColorSpaceValidation(
                 displayID: displayID,
                 expectedColorSpace: expectedColorSpace
             )
-            if latest.matches == true { return latest }
+            switch expectedColorSpace {
+            case .displayP3:
+                if latest.isAcceptableForDisplayP3 { return latest }
+            case .sRGB:
+                if latest.coverageStatus == .sRGBFallback { return latest }
+            }
             if attempt < colorValidationAttempts - 1 {
                 Thread.sleep(forTimeInterval: colorValidationDelaySeconds)
             }
@@ -321,6 +591,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         pixelHeight: Int,
         refreshRate: Double,
         hiDPI: Bool,
+        colorSpace: MirageColorSpace,
         serial: UInt32?
     )
     -> Bool {
@@ -330,41 +601,51 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         )
         let requestedPixel = CGSize(width: pixelWidth, height: pixelHeight)
 
+        let transferFunctionCandidates = transferFunctionAttempts(for: colorSpace)
         for attempt in modeActivationAttempts(pixelWidth: pixelWidth, pixelHeight: pixelHeight, hiDPI: hiDPI) {
-            guard let displayMode = createDisplayMode(
-                modeClass: modeClass,
-                width: attempt.modeWidth,
-                height: attempt.modeHeight,
-                refreshRate: refreshRate
-            ) else { continue }
+            for transferFunction in transferFunctionCandidates {
+                guard let displayMode = createDisplayMode(
+                    modeClass: modeClass,
+                    width: attempt.modeWidth,
+                    height: attempt.modeHeight,
+                    refreshRate: refreshRate,
+                    transferFunction: transferFunction.code
+                ) else { continue }
 
-            let settings = settingsClass.init()
-            settings.setValue([displayMode], forKey: "modes")
-            settings.setValue(attempt.hiDPISetting, forKey: "hiDPI")
+                let settings = settingsClass.init()
+                settings.setValue([displayMode], forKey: "modes")
+                settings.setValue(attempt.hiDPISetting, forKey: "hiDPI")
 
-            MirageLogger.host(
-                "Applying virtual display mode attempt \(attempt.label): mode=\(attempt.modeWidth)x\(attempt.modeHeight)@\(refreshRate)Hz, hiDPISetting=\(attempt.hiDPISetting)"
-            )
+                let appliedTransferFunction = modeTransferFunction(displayMode).map(String.init) ?? "unknown"
+                MirageLogger.host(
+                    "Applying virtual display mode attempt \(attempt.label): mode=\(attempt.modeWidth)x\(attempt.modeHeight)@\(refreshRate)Hz, hiDPISetting=\(attempt.hiDPISetting), transferFunction=\(transferFunction.label), modeReadback=\(appliedTransferFunction)"
+                )
 
-            guard applySettings(settings, to: display) else {
-                MirageLogger.error(.host, "Failed to apply virtual display settings for attempt \(attempt.label)")
-                continue
-            }
+                guard applySettings(settings, to: display) else {
+                    MirageLogger.error(
+                        .host,
+                        "Failed to apply virtual display settings for attempt \(attempt.label) with transferFunction=\(transferFunction.label)"
+                    )
+                    continue
+                }
 
-            guard let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID, displayID != 0 else {
-                MirageLogger.error(.host, "Virtual display has invalid displayID after attempt \(attempt.label)")
-                continue
-            }
+                guard let displayID = (display as AnyObject).value(forKey: "displayID") as? CGDirectDisplayID, displayID != 0 else {
+                    MirageLogger.error(.host, "Virtual display has invalid displayID after attempt \(attempt.label)")
+                    continue
+                }
 
-            if validateModeActivation(
-                displayID: displayID,
-                requestedLogical: requestedLogical,
-                requestedPixel: requestedPixel,
-                hiDPISetting: attempt.hiDPISetting,
-                serial: serial
-            ) {
-                MirageLogger.host("Virtual display mode activation succeeded with attempt \(attempt.label)")
-                return true
+                if validateModeActivation(
+                    displayID: displayID,
+                    requestedLogical: requestedLogical,
+                    requestedPixel: requestedPixel,
+                    hiDPISetting: attempt.hiDPISetting,
+                    serial: serial
+                ) {
+                    MirageLogger.host(
+                        "Virtual display mode activation succeeded with attempt \(attempt.label) and transferFunction=\(transferFunction.label)"
+                    )
+                    return true
+                }
             }
         }
 
@@ -577,12 +858,22 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         var serialRetryAttempted = false
         while true {
             let persistentSerial = persistentSerialNumber(for: colorSpace)
+            let validationHint = cachedValidationHint(
+                for: colorSpace,
+                width: width,
+                height: height,
+                refreshRate: refreshRate,
+                hiDPI: hiDPI
+            )
             let descriptorProfiles = descriptorAttempts(
                 persistentSerial: persistentSerial,
                 hiDPI: hiDPI,
-                colorSpace: colorSpace
+                colorSpace: colorSpace,
+                width: width,
+                height: height,
+                refreshRate: refreshRate,
+                cachedHint: validationHint
             )
-            let requiresStrictColorValidation = colorSpace == .displayP3
             var sawColorValidationFailure = false
 
             for profile in descriptorProfiles {
@@ -651,6 +942,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         pixelHeight: height,
                         refreshRate: refreshRate,
                         hiDPI: hiDPI,
+                        colorSpace: colorSpace,
                         serial: profile.serial
                     ) else {
                         let modeLabel = hiDPI ? "Retina" : "1x"
@@ -680,32 +972,35 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         displayID: displayID,
                         expectedColorSpace: colorSpace
                     )
-                    if colorValidation.matches == true {
-                        let observed = colorValidation.observedName ?? "unknown"
+                    let observedColorName = colorValidation.observedName ?? "unknown"
+                    let coverageStatus = colorValidation.coverageStatus
+                    switch coverageStatus {
+                    case .strictCanonical:
                         MirageLogger.host(
-                            "Virtual display color profile validated (expected \(colorSpace.displayName), observed \(observed), profile \(profile.label), serial \(profile.serial))"
+                            "Virtual display color profile validated (color=\(colorSpace.displayName), coverage=\(coverageStatus.rawValue), observed \(observedColorName), profile \(profile.label), serial \(profile.serial))"
                         )
-                    }
-                    if let matches = colorValidation.matches, !matches {
-                        sawColorValidationFailure = true
-                        let observed = colorValidation.observedName ?? "unknown"
-                        MirageLogger.error(
-                            .host,
-                            "Virtual display color profile mismatch (expected \(colorSpace.displayName), observed \(observed), profile \(profile.label), serial \(profile.serial))"
-                        )
-                        let invalidateSelector = NSSelectorFromString("invalidate")
-                        if (display as AnyObject).responds(to: invalidateSelector) {
-                            _ = (display as AnyObject).perform(invalidateSelector)
+                    case .wideGamutEquivalent:
+                        if colorSpace == .displayP3 {
+                            MirageLogger.host(
+                                "Virtual display color profile validated (color=Display P3 equivalent-wide-gamut, coverage=\(coverageStatus.rawValue), observed \(observedColorName), profile \(profile.label), serial \(profile.serial))"
+                            )
+                        } else {
+                            MirageLogger.host(
+                                "Virtual display color profile mismatch tolerated for fallback (expected \(colorSpace.displayName), coverage=\(coverageStatus.rawValue), observed \(observedColorName), profile \(profile.label), serial \(profile.serial))"
+                            )
                         }
-                        return
-                    }
-                    if colorValidation.matches == nil {
-                        let observed = colorValidation.observedName ?? "unknown"
-                        if requiresStrictColorValidation {
+                    case .sRGBFallback, .unresolved:
+                        if colorSpace == .displayP3 {
                             sawColorValidationFailure = true
-                            MirageLogger.error(
-                                .host,
-                                "Virtual display color profile unresolved after retries (expected \(colorSpace.displayName), observed \(observed), profile \(profile.label), serial \(profile.serial))"
+                            clearValidationHint(
+                                for: colorSpace,
+                                width: width,
+                                height: height,
+                                refreshRate: refreshRate,
+                                hiDPI: hiDPI
+                            )
+                            MirageLogger.host(
+                                "WARNING: Virtual display color profile mismatch (expected \(colorSpace.displayName), coverage=\(coverageStatus.rawValue), observed \(observedColorName), profile \(profile.label), serial \(profile.serial))"
                             )
                             let invalidateSelector = NSSelectorFromString("invalidate")
                             if (display as AnyObject).responds(to: invalidateSelector) {
@@ -714,7 +1009,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                             return
                         } else {
                             MirageLogger.host(
-                                "Virtual display color profile unresolved (expected \(colorSpace.displayName), observed \(observed), continuing)"
+                                "Virtual display color profile mismatch tolerated for fallback (expected \(colorSpace.displayName), coverage=\(coverageStatus.rawValue), observed \(observedColorName), profile \(profile.label), serial \(profile.serial))"
                             )
                         }
                     }
@@ -734,12 +1029,32 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         resolution: CGSize(width: width, height: height),
                         refreshRate: refreshRate,
                         colorSpace: colorSpace,
+                        displayP3CoverageStatus: coverageStatus,
                         scaleFactor: resolvedScaleFactor(displayID: displayID, hiDPI: hiDPI)
                     )
                 }
 
                 if let creationResult {
-                    storePreferredDescriptorProfile(profile.profile, for: colorSpace)
+                    storePreferredDescriptorProfile(
+                        profile.profile,
+                        for: colorSpace,
+                        width: width,
+                        height: height,
+                        refreshRate: refreshRate,
+                        hiDPI: hiDPI
+                    )
+                    storeValidationHint(
+                        CachedValidationHint(
+                            profile: profile.profile,
+                            serial: profile.serial,
+                            coverageStatus: creationResult.displayP3CoverageStatus
+                        ),
+                        for: colorSpace,
+                        width: width,
+                        height: height,
+                        refreshRate: refreshRate,
+                        hiDPI: hiDPI
+                    )
                     return creationResult
                 }
 
@@ -855,7 +1170,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         width: Int,
         height: Int,
         refreshRate: Double = 60.0,
-        hiDPI: Bool = true
+        hiDPI: Bool = true,
+        colorSpace: MirageColorSpace = .displayP3
     )
     -> Bool {
         guard loadPrivateAPIs() else { return false }
@@ -873,6 +1189,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             pixelHeight: height,
             refreshRate: refreshRate,
             hiDPI: hiDPI,
+            colorSpace: colorSpace,
             serial: nil
         )
 

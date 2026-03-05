@@ -329,15 +329,13 @@ extension StreamController {
         let isAwaitingKeyframe = reassembler.isAwaitingKeyframe()
         if isAwaitingKeyframe {
             MirageLogger.client(
-                "Frame loss detected for stream \(streamID) while awaiting keyframe; requesting targeted recovery"
+                "Frame loss detected for stream \(streamID) while awaiting keyframe; deferring recovery until sustained freeze"
             )
-            startKeyframeRecoveryLoopIfNeeded()
-            await requestKeyframeRecovery(reason: .frameLoss)
             return
         }
 
         MirageLogger.client(
-            "Frame loss detected for stream \(streamID); continuing forward decode without keyframe recovery"
+            "Frame loss detected for stream \(streamID); strict monotonic recovery active, waiting for explicit keyframe-await state"
         )
     }
 
@@ -368,6 +366,12 @@ extension StreamController {
         }
 
         let now = currentTime()
+        guard shouldAttemptDecodeErrorRecovery(now: now) else {
+            maybeLogDeferredDecodeErrorRecovery(now: now)
+            decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+            return
+        }
+
         decodeRecoveryEscalationTimestamps.append(now)
         trimDecodeRecoveryEscalationWindow(now: now)
 
@@ -382,6 +386,42 @@ extension StreamController {
         }
 
         await requestSoftRecovery(reason: .decodeErrorThreshold)
+    }
+
+    func forcePresentationStallForTesting(now: CFAbsoluteTime? = nil) {
+        let referenceNow = now ?? currentTime()
+        if !hasPresentedFirstFrame {
+            hasPresentedFirstFrame = true
+        }
+        lastPresentedProgressTime = referenceNow - Self.freezeTimeout - 0.5
+    }
+
+    private func shouldAttemptDecodeErrorRecovery(now: CFAbsoluteTime) -> Bool {
+        let keyframeStarved = reassembler.isAwaitingKeyframe()
+
+        if hasPresentedFirstFrame {
+            guard lastPresentedProgressTime > 0 else { return false }
+            let stalledPresentation = now - lastPresentedProgressTime >= Self.freezeTimeout
+            guard stalledPresentation else { return false }
+
+            if keyframeStarved { return true }
+
+            let lastPacketTime = reassembler.latestPacketReceivedTime()
+            let hasRecentVideoPackets = lastPacketTime > 0 && now - lastPacketTime <= Self.freezeTimeout
+            return hasRecentVideoPackets
+        }
+
+        guard awaitingFirstPresentedFrame, firstPresentedFrameWaitStartTime > 0 else { return false }
+        let firstFrameWait = now - firstPresentedFrameWaitStartTime
+        return firstFrameWait >= Self.freezeTimeout
+    }
+
+    private func maybeLogDeferredDecodeErrorRecovery(now: CFAbsoluteTime) {
+        guard now - lastDecodeErrorLogTime >= Self.decodeErrorLogInterval else { return }
+        lastDecodeErrorLogTime = now
+        MirageLogger.client(
+            "Decode error threshold observed for stream \(streamID), deferring recovery until sustained presentation freeze"
+        )
     }
 
     private func trimDecodeRecoveryEscalationWindow(now: CFAbsoluteTime) {

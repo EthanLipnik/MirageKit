@@ -68,7 +68,8 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
-            inFlightLimit: maxInFlightFrames
+            inFlightLimit: maxInFlightFrames,
+            maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
         self.encoder = encoder
         try await encoder.createSession(width: Int(outputSize.width), height: Int(outputSize.height))
@@ -230,7 +231,8 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
-            inFlightLimit: maxInFlightFrames
+            inFlightLimit: maxInFlightFrames,
+            maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
         self.encoder = encoder
         try await encoder.createSession(width: width, height: height)
@@ -390,7 +392,8 @@ extension StreamContext {
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
-            inFlightLimit: maxInFlightFrames
+            inFlightLimit: maxInFlightFrames,
+            maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
         )
         self.encoder = encoder
         try await encoder.createSession(width: width, height: height)

@@ -18,6 +18,18 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Pointer Lerp (runs on accessibilityQueue)
 
+    nonisolated static func shouldEmitPointerUpdateImmediately(
+        hasCurrentLocation: Bool,
+        previousEventType: CGEventType?,
+        nextEventType: CGEventType,
+        secondsSinceLastSend: TimeInterval,
+        outputIntervalSeconds: TimeInterval
+    ) -> Bool {
+        guard hasCurrentLocation else { return true }
+        if previousEventType != nextEventType { return true }
+        return secondsSinceLastSend >= outputIntervalSeconds
+    }
+
     func queuePointerLerp(
         _ type: CGEventType,
         _ event: MirageMouseEvent,
@@ -28,6 +40,7 @@ extension MirageHostInputController {
     ) {
         let now = CACurrentMediaTime()
         pointerLastInputTime = now
+        let previousEventType = pointerContext?.type
         pointerContext = PointerLerpContext(
             type: type,
             event: event,
@@ -38,7 +51,15 @@ extension MirageHostInputController {
         )
         pointerTargetLocation = event.location
 
-        if pointerCurrentLocation == nil || now - pointerLastSendTime > pointerStopDelay {
+        let shouldEmitImmediately = Self.shouldEmitPointerUpdateImmediately(
+            hasCurrentLocation: pointerCurrentLocation != nil,
+            previousEventType: previousEventType,
+            nextEventType: type,
+            secondsSinceLastSend: now - pointerLastSendTime,
+            outputIntervalSeconds: pointerOutputIntervalSeconds
+        )
+
+        if shouldEmitImmediately {
             pointerCurrentLocation = event.location
             pointerLastSendTime = now
             emitPointerEvent(at: event.location)
@@ -52,8 +73,8 @@ extension MirageHostInputController {
 
         let timer = DispatchSource.makeTimerSource(queue: accessibilityQueue)
         timer.schedule(
-            deadline: .now() + .milliseconds(Int(pointerOutputIntervalMs)),
-            repeating: .milliseconds(Int(pointerOutputIntervalMs)),
+            deadline: .now() + .nanoseconds(pointerOutputIntervalNanoseconds),
+            repeating: .nanoseconds(pointerOutputIntervalNanoseconds),
             leeway: .milliseconds(1)
         )
         timer.setEventHandler { [weak self] in
@@ -76,18 +97,28 @@ extension MirageHostInputController {
         }
 
         let now = CACurrentMediaTime()
+        let current = pointerCurrentLocation ?? target
+        let distance = hypot(target.x - current.x, target.y - current.y)
+
+        if distance <= pointerSnapThreshold {
+            pointerCurrentLocation = target
+            if now - pointerLastInputTime > pointerStopDelay {
+                resetPointerLerp()
+            }
+            return
+        }
+
         let dt = max(0.001, min(now - pointerLastSendTime, 0.05))
         let alpha = min(1.0, dt / pointerLerpTimeConstant)
-        let current = pointerCurrentLocation ?? target
         let next = lerp(current, target, alpha: alpha)
 
         pointerCurrentLocation = next
         pointerLastSendTime = now
         emitPointerEvent(at: next, using: context)
 
-        let distance = hypot(target.x - next.x, target.y - next.y)
+        let distanceToTargetAfterStep = hypot(target.x - next.x, target.y - next.y)
         if now - pointerLastInputTime > pointerStopDelay {
-            if distance > pointerSnapThreshold {
+            if distanceToTargetAfterStep > pointerSnapThreshold {
                 pointerCurrentLocation = target
                 emitPointerEvent(at: target, using: context)
             }
@@ -145,6 +176,10 @@ extension MirageHostInputController {
             x: from.x + (to.x - from.x) * alpha,
             y: from.y + (to.y - from.y) * alpha
         )
+    }
+
+    private var pointerOutputIntervalSeconds: TimeInterval {
+        TimeInterval(pointerOutputIntervalNanoseconds) / 1_000_000_000.0
     }
 }
 

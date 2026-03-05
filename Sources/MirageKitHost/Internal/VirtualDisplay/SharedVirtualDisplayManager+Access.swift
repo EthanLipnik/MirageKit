@@ -23,6 +23,7 @@ extension SharedVirtualDisplayManager {
             scaleFactor: display.scaleFactor,
             refreshRate: display.refreshRate,
             colorSpace: display.colorSpace,
+            displayP3CoverageStatus: display.displayP3CoverageStatus,
             generation: display.generation,
             createdAt: display.createdAt
         )
