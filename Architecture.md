@@ -168,6 +168,7 @@ Host handshake consumes trust outcome and can emit auto-trust notice semantics (
   - `MirageCloudKitManager`
   - `MirageCloudKitHostProvider`
   - `MirageCloudKitShareManager`
+  - `MirageHostCloudKitRegistrar`: background actor for host-discovery record cleanup, registration, and `lastSeen` refresh so recurring host metadata traffic does not run on the UI actor.
   - `MirageCloudKitTrustProvider`
 
 - **Remote signaling**

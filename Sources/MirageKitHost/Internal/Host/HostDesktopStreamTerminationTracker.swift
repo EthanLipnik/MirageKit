@@ -26,7 +26,16 @@ actor HostDesktopStreamTerminationTracker {
     private let runID = UUID().uuidString
     private let defaults = UserDefaults.standard
 
+    nonisolated static func shouldTrackTerminationMarkers(bundleIdentifier: String?) -> Bool {
+        guard let bundleIdentifier else { return true }
+        return !bundleIdentifier.hasSuffix("-Debug")
+    }
+
     func reportUncleanTerminationIfNeeded() {
+        guard Self.shouldTrackTerminationMarkers(bundleIdentifier: Bundle.main.bundleIdentifier) else {
+            defaults.removeObject(forKey: Self.markerDefaultsKey)
+            return
+        }
         guard let data = defaults.data(forKey: Self.markerDefaultsKey) else { return }
         defer { defaults.removeObject(forKey: Self.markerDefaultsKey) }
 
@@ -49,6 +58,7 @@ actor HostDesktopStreamTerminationTracker {
     }
 
     func markDesktopStreamStarted(streamID: StreamID, requestedPixelResolution: CGSize) {
+        guard Self.shouldTrackTerminationMarkers(bundleIdentifier: Bundle.main.bundleIdentifier) else { return }
         let marker = ActiveDesktopStreamMarker(
             runID: runID,
             streamID: streamID,
