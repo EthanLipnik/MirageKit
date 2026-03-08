@@ -15,6 +15,35 @@ import ScreenCaptureKit
 // MARK: - Login Display Streaming
 
 extension MirageHostService {
+    nonisolated func handleLoginDisplayWatchdogTick(
+        generation: UInt64,
+        streamID: StreamID,
+        context: StreamContext
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.checkLoginDisplayHealth(
+                generation: generation,
+                streamID: streamID,
+                context: context
+            )
+        }
+    }
+
+    nonisolated func handleLoginDisplayRetryTimerFired() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.loginDisplayRetryTimer?.cancel()
+            self.loginDisplayRetryTimer = nil
+
+            guard self.sessionState != .active else { return }
+            guard !self.clientsByConnection.isEmpty else { return }
+            guard self.loginDisplayContext == nil else { return }
+
+            await self.startLoginDisplayStreamIfNeeded()
+        }
+    }
+
     /// Start login display stream if not already running
     func startLoginDisplayStreamIfNeeded() async {
         guard sessionState != .active else { return }
@@ -303,10 +332,11 @@ extension MirageHostService {
             repeating: loginDisplayWatchdogIntervalSeconds
         )
         timer.setEventHandler { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.checkLoginDisplayHealth(generation: generation, streamID: streamID, context: context)
-            }
+            self?.handleLoginDisplayWatchdogTick(
+                generation: generation,
+                streamID: streamID,
+                context: context
+            )
         }
         loginDisplayWatchdogTimer = timer
         timer.resume()
@@ -439,17 +469,7 @@ extension MirageHostService {
         let timer = DispatchSource.makeTimerSource(queue: transportWorker.dispatchQueue)
         timer.schedule(deadline: .now() + delay)
         timer.setEventHandler { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.loginDisplayRetryTimer?.cancel()
-                self.loginDisplayRetryTimer = nil
-
-                guard self.sessionState != .active else { return }
-                guard !self.clientsByConnection.isEmpty else { return }
-                guard self.loginDisplayContext == nil else { return }
-
-                await self.startLoginDisplayStreamIfNeeded()
-            }
+            self?.handleLoginDisplayRetryTimerFired()
         }
         loginDisplayRetryTimer = timer
         timer.resume()

@@ -11,6 +11,14 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+extension MirageHostService {
+    nonisolated func handleSessionStateMonitorUpdate(_ newState: HostSessionState) {
+        Task { @MainActor [weak self] in
+            await self?.handleSessionStateChange(newState)
+        }
+    }
+}
+
 @MainActor
 extension MirageHostService {
     func startSessionStateMonitoring() async {
@@ -20,11 +28,7 @@ extension MirageHostService {
 
         guard let sessionStateMonitor else { return }
 
-        await sessionStateMonitor.start { [weak self] newState in
-            Task { @MainActor [weak self] in
-                await self?.handleSessionStateChange(newState)
-            }
-        }
+        await sessionStateMonitor.start(onStateChange: handleSessionStateMonitorUpdate)
 
         let refreshed = await sessionStateMonitor.refreshState(notify: false)
         if refreshed != sessionState { await handleSessionStateChange(refreshed) }

@@ -60,7 +60,7 @@ extension MirageClientService {
         }
     }
 
-    private func processReceivedData() async {
+    func processReceivedData() async {
         var parseOffset = 0
 
         while parseOffset < receiveBuffer.count {
@@ -94,6 +94,10 @@ extension MirageClientService {
                 recordHighFrequencyControlMessageSampleIfNeeded(message.type)
                 if shouldLogReceivedControlMessage(message.type) {
                     MirageLogger.client("Received message type: \(message.type)")
+                }
+                if parseOffset > 0 {
+                    receiveBuffer.removeSubrange(0 ..< parseOffset)
+                    parseOffset = 0
                 }
                 await routeControlMessage(message)
             case .needMoreData:

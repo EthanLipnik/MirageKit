@@ -167,6 +167,17 @@ extension HEVCDecoder {
             return "\(label) (\(pixelFormat))"
         }
     }
+
+    nonisolated static func shouldRecreateSession(
+        isFirstKeyframe: Bool,
+        dimensionsChanged: Bool,
+        parameterSetsChanged: Bool,
+        shouldRecreateForErrors: Bool
+    )
+    -> Bool {
+        guard !isFirstKeyframe else { return false }
+        return dimensionsChanged || parameterSetsChanged || shouldRecreateForErrors
+    }
 }
 
 /// Info passed through the decode callback

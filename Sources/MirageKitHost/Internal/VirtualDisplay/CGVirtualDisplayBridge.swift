@@ -557,6 +557,37 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return attempts
     }
 
+    static func logVirtualDisplaySettingsProbeFailure(
+        attemptLabel: String,
+        transferFunctionLabel: String
+    ) {
+        MirageLogger.host(
+            "Virtual display settings probe failed for attempt \(attemptLabel) with transferFunction=\(transferFunctionLabel); trying next transfer function"
+        )
+    }
+
+    static func logVirtualDisplayCreationProbeFailure(profileLabel: String) {
+        MirageLogger.host(
+            "CGVirtualDisplay initialization failed for profile \(profileLabel); trying next descriptor profile"
+        )
+    }
+
+    static func logVirtualDisplayResolutionUpdateFailure(
+        hiDPI: Bool,
+        isTerminal: Bool
+    ) {
+        let modeLabel = hiDPI ? "Retina" : "1x"
+        let message = isTerminal
+            ? "Updated virtual display failed \(modeLabel) activation"
+            : "Virtual display resolution update probe failed \(modeLabel) activation; trying next display candidate"
+
+        if isTerminal {
+            MirageLogger.error(.host, message)
+        } else {
+            MirageLogger.host(message)
+        }
+    }
+
     private static func validatedDisplayColorSpace(
         displayID: CGDirectDisplayID,
         expectedColorSpace: MirageColorSpace
@@ -622,9 +653,9 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 )
 
                 guard applySettings(settings, to: display) else {
-                    MirageLogger.error(
-                        .host,
-                        "Failed to apply virtual display settings for attempt \(attempt.label) with transferFunction=\(transferFunction.label)"
+                    logVirtualDisplaySettingsProbeFailure(
+                        attemptLabel: attempt.label,
+                        transferFunctionLabel: transferFunction.label
                     )
                     continue
                 }
@@ -927,7 +958,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
 
                     guard let display = (allocatedDisplay as AnyObject).perform(initSelector, with: descriptor)?
                         .takeRetainedValue() else {
-                        MirageLogger.error(.host, "Failed to create CGVirtualDisplay for profile \(profile.label)")
+                        logVirtualDisplayCreationProbeFailure(profileLabel: profile.label)
                         return
                     }
 
@@ -1171,7 +1202,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         height: Int,
         refreshRate: Double = 60.0,
         hiDPI: Bool = true,
-        colorSpace: MirageColorSpace = .displayP3
+        colorSpace: MirageColorSpace = .displayP3,
+        isFallbackProbe: Bool = false
     )
     -> Bool {
         guard loadPrivateAPIs() else { return false }
@@ -1198,8 +1230,10 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 "Updated virtual display resolution to \(width)x\(height) @\(refreshRate)Hz, hiDPI=\(hiDPI)"
             )
         } else {
-            let modeLabel = hiDPI ? "Retina" : "1x"
-            MirageLogger.error(.host, "Updated virtual display failed \(modeLabel) activation")
+            logVirtualDisplayResolutionUpdateFailure(
+                hiDPI: hiDPI,
+                isTerminal: !isFallbackProbe
+            )
         }
 
         return success

@@ -598,7 +598,8 @@ extension SharedVirtualDisplayManager {
                 height: Int(effectivePixel.height.rounded()),
                 refreshRate: Double(refreshRate),
                 hiDPI: enforceHiDPI,
-                colorSpace: attempt.colorSpace
+                colorSpace: attempt.colorSpace,
+                isFallbackProbe: true
             )
             guard enforced else {
                 invalidateAttemptDisplay()

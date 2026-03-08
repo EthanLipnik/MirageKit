@@ -29,5 +29,30 @@ struct HostDesktopStreamTerminationTrackerTests {
             )
         )
     }
+
+    @Test("Unclean termination reporting requires a prior packet from a different run")
+    func requiresPriorPacketFromDifferentRun() {
+        #expect(
+            !HostDesktopStreamTerminationTracker.shouldReportUncleanTermination(
+                currentRunID: "current",
+                markerRunID: "current",
+                firstPacketSentAtUnix: 123
+            )
+        )
+        #expect(
+            !HostDesktopStreamTerminationTracker.shouldReportUncleanTermination(
+                currentRunID: "current",
+                markerRunID: "previous",
+                firstPacketSentAtUnix: nil
+            )
+        )
+        #expect(
+            HostDesktopStreamTerminationTracker.shouldReportUncleanTermination(
+                currentRunID: "current",
+                markerRunID: "previous",
+                firstPacketSentAtUnix: 123
+            )
+        )
+    }
 }
 #endif

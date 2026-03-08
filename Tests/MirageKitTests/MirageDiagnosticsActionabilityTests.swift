@@ -156,6 +156,47 @@ struct MirageDiagnosticsActionabilityTests {
         #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
     }
 
+    @Test("Remote signaling auth failures are filtered even with typed metadata")
+    func remoteSignalingAuthFailuresAreFilteredEvenWithTypedMetadata() {
+        let event = makeEvent(
+            message: "Remote signaling close failed: http(statusCode: 401, errorCode: Optional(\"app_auth_failed\"), detail: Optional(\"app_signature_verification_failed\"))",
+            metadata: MirageDiagnosticsErrorMetadata(
+                typeName: "MirageKit.MirageRemoteSignalingError",
+                domain: "MirageKit.MirageRemoteSignalingError",
+                code: 0
+            ),
+            category: .appState
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("Remote signaling invalid configuration metadata is filtered")
+    func remoteSignalingInvalidConfigurationMetadataIsFiltered() {
+        let event = makeEvent(
+            message: "Remote signaling configuration is invalid",
+            metadata: MirageDiagnosticsErrorMetadata(
+                typeName: "MirageKit.MirageRemoteSignalingError",
+                domain: "MirageKit.MirageRemoteSignalingError",
+                code: 1
+            ),
+            category: .appState
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
+    @Test("Bootstrap daemon permission failures are filtered without metadata")
+    func bootstrapDaemonPermissionFailuresAreFilteredWithoutMetadata() {
+        let event = makeEvent(
+            message: "Bootstrap daemon register failed for com.ethanlipnik.Mirage.HostBootstrapDaemon.plist: The operation couldn’t be completed. Operation not permitted",
+            metadata: nil,
+            category: .bootstrapHandoff
+        )
+
+        #expect(MirageDiagnosticsActionability.shouldCaptureNonFatal(event) == false)
+    }
+
     @Test("AppState virtual-display protocol errors are filtered without metadata")
     func appStateVirtualDisplayProtocolErrorsAreFilteredWithoutMetadata() {
         let event = makeEvent(

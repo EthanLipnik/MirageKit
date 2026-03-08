@@ -167,7 +167,6 @@ public final class MirageHostService {
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []
-    var streamStartupFirstPacketSent: Set<StreamID> = []
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"
     let lightsOutDisabledByEnvironment: Bool = MirageHostService.isLightsOutDisabledByEnvironment()

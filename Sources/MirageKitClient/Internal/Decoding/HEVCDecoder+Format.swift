@@ -20,9 +20,6 @@ extension HEVCDecoder {
             // Extract VPS, SPS, PPS from the parameter sets portion
             let (vps, sps, pps) = extractParameterSets(from: framed.parameterSets)
             if let vpsData = vps, let spsData = sps, let ppsData = pps {
-                cachedVPS = vpsData
-                cachedSPS = spsData
-                cachedPPS = ppsData
                 try updateFormatDescription(vpsData: vpsData, spsData: spsData, ppsData: ppsData)
                 // Return the frame data portion (already stripped of parameter sets)
                 var strippedData = framed.frameData
@@ -117,11 +114,6 @@ extension HEVCDecoder {
 
             return data // Return original data, will try again on next keyframe
         }
-
-        // Cache the parameter sets for resilience
-        cachedVPS = vpsData
-        cachedSPS = spsData
-        cachedPPS = ppsData
 
         try updateFormatDescription(vpsData: vpsData, spsData: spsData, ppsData: ppsData)
 
@@ -281,11 +273,20 @@ extension HEVCDecoder {
                     let dimensionsMismatch = oldDims.map { old in
                         old.width != newDims.width || old.height != newDims.height
                     } ?? false
+                    let parameterSetsChanged =
+                        self.cachedVPS != vpsData ||
+                        self.cachedSPS != spsData ||
+                        self.cachedPPS != ppsData
 
                     let isFirstKeyframe = oldDims == nil
                     let shouldRecreateForErrors = !isFirstKeyframe &&
                         (self.errorTracker?.shouldRecreateSession() ?? false)
-                    let shouldRecreateSession = dimensionsMismatch || shouldRecreateForErrors
+                    let shouldRecreateSession = Self.shouldRecreateSession(
+                        isFirstKeyframe: isFirstKeyframe,
+                        dimensionsChanged: dimensionsMismatch,
+                        parameterSetsChanged: parameterSetsChanged,
+                        shouldRecreateForErrors: shouldRecreateForErrors
+                    )
 
                     if isFirstKeyframe {
                         MirageLogger
@@ -304,6 +305,11 @@ extension HEVCDecoder {
                             MirageLogger
                                 .decoder(
                                     "Recreating session due to decode errors (dimensions unchanged: \(newDims.width)x\(newDims.height))"
+                                )
+                        } else if parameterSetsChanged {
+                            MirageLogger
+                                .decoder(
+                                    "Parameter sets changed without a dimension change - recreating session"
                                 )
                         }
 
@@ -325,6 +331,9 @@ extension HEVCDecoder {
 
                     self.outputPixelFormat = self.preferredOutputPixelFormat(for: desc)
                     self.formatDescription = desc
+                    self.cachedVPS = vpsData
+                    self.cachedSPS = spsData
+                    self.cachedPPS = ppsData
                     self.cachedFormatDescription = desc
                     MirageLogger.decoder("Created format description successfully (\(newDims.width)x\(newDims.height))")
 

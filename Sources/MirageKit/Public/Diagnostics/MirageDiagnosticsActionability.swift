@@ -18,7 +18,11 @@ public enum MirageDiagnosticsActionability {
             return isLikelyUserDependent(message: event.message, category: event.category) == false
         }
 
-        return isLikelyUserDependent(domain: metadata.domain, code: metadata.code) == false
+        if isLikelyUserDependent(domain: metadata.domain, code: metadata.code) {
+            return false
+        }
+
+        return isLikelyUserDependent(message: event.message, category: event.category) == false
     }
 
     public static func isLikelyUserDependent(error: Error) -> Bool {
@@ -51,6 +55,10 @@ public enum MirageDiagnosticsActionability {
             return userDependentNWErrorCodes.contains(code)
         }
 
+        if domain == "MirageKit.MirageRemoteSignalingError" {
+            return userDependentRemoteSignalingErrorCodes.contains(code)
+        }
+
         if domain == "CKErrorDomain" {
             return userDependentCloudKitErrorCodes.contains(code)
         }
@@ -70,9 +78,16 @@ public enum MirageDiagnosticsActionability {
             }
         }
 
-        if category == .appState,
-           normalized.contains("failed to start desktop stream: protocol error: virtual display acquisition failed") {
-            return true
+        if category == .appState {
+            for marker in userDependentAppStateMessageMarkers where normalized.contains(marker) {
+                return true
+            }
+        }
+
+        if category == .bootstrapHandoff {
+            for marker in userDependentBootstrapHandoffMessageMarkers where normalized.contains(marker) {
+                return true
+            }
         }
 
         return false
@@ -133,6 +148,10 @@ public enum MirageDiagnosticsActionability {
         89, // ECANCELED
     ]
 
+    private static let userDependentRemoteSignalingErrorCodes: Set<Int> = [
+        1, // invalidConfiguration
+    ]
+
     private static let userDependentCloudKitErrorCodes: Set<Int> = [
         3, // networkUnavailable
         4, // networkFailure
@@ -151,5 +170,16 @@ public enum MirageDiagnosticsActionability {
         "virtual display failed retina activation for all descriptor profiles",
         "virtual display failed 1x activation for all descriptor profiles",
         "virtual display acquisition failed for desktop stream; fail-closed policy active:"
+    ]
+
+    private static let userDependentAppStateMessageMarkers: [String] = [
+        "failed to start desktop stream: protocol error: virtual display acquisition failed",
+        "remote signaling paused due configuration/auth failure:",
+        "remote signaling close failed: http(statuscode: 401",
+        "remote signaling close failed: http(statuscode: 403",
+    ]
+
+    private static let userDependentBootstrapHandoffMessageMarkers: [String] = [
+        "bootstrap daemon register failed for",
     ]
 }

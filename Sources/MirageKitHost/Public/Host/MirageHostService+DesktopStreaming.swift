@@ -251,7 +251,6 @@ extension MirageHostService {
         nextStreamID += 1
         streamStartupBaseTimes[streamID] = desktopStartTime
         streamStartupRegistrationLogged.remove(streamID)
-        streamStartupFirstPacketSent.remove(streamID)
         let streamContext = StreamContext(
             streamID: streamID,
             windowID: 0,
@@ -335,6 +334,7 @@ extension MirageHostService {
         await PowerAssertionManager.shared.enable()
 
         // Start streaming the display
+        let firstSuccessfulVideoPacketSent = Locked(false)
         try await streamContext.startDesktopDisplay(
             displayWrapper: captureDisplay,
             resolution: captureResolution,
@@ -346,6 +346,21 @@ extension MirageHostService {
                 }
                 sendVideoPacketForStream(streamID, data: packetData) { [weak self] error in
                     releasePacket()
+                    if error == nil {
+                        let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
+                            guard !didMark else { return false }
+                            didMark = true
+                            return true
+                        }
+                        if shouldMarkFirstPacket {
+                            Task {
+                                await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
+                                    streamID: streamID
+                                )
+                            }
+                        }
+                        return
+                    }
                     guard let self, let error else { return }
                     dispatchMainWork {
                         await self.handleVideoSendError(streamID: streamID, error: error)
@@ -437,7 +452,6 @@ extension MirageHostService {
         unregisterStallWindowPointerRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
-        streamStartupFirstPacketSent.remove(streamID)
         udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
         transportRegistry.unregisterVideoConnection(streamID: streamID)
         inputStreamCacheActor.remove(streamID)
