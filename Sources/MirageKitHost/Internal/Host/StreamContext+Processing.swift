@@ -1073,16 +1073,6 @@ extension StreamContext {
             }
         }
 
-        if temporaryDegradationCurrentBitDepth != requestedTargetBitDepth,
-           currentBitrate >= Int((Double(requestedBitrate) * 0.95).rounded(.down)) {
-            return await applyTemporaryDegradationAdjustment(
-                bitDepth: requestedTargetBitDepth,
-                bitrate: currentBitrate,
-                reason: "temporary degradation bit-depth restore",
-                now: now
-            )
-        }
-
         updateTemporaryDegradationBelowTargetState(
             now: now,
             currentBitrate: currentBitrate,
@@ -1094,7 +1084,7 @@ extension StreamContext {
     private func attemptTemporaryDegradationRelief(
         currentBitrate: Int,
         requestedBitrate: Int,
-        severe: Bool,
+        severe _: Bool,
         at now: CFAbsoluteTime
     ) async -> Bool {
         let floor = min(requestedBitrate, temporaryDegradationBitrateFloorBps)
@@ -1104,16 +1094,6 @@ extension StreamContext {
             return false
 
         case .prioritizeFramerate:
-            if requestedTargetBitDepth == .tenBit,
-               temporaryDegradationCurrentBitDepth == .tenBit {
-                return await applyTemporaryDegradationAdjustment(
-                    bitDepth: .eightBit,
-                    bitrate: currentBitrate,
-                    reason: "temporary degradation framerate-first bit-depth drop",
-                    now: now
-                )
-            }
-
             let nextBitrate = max(
                 floor,
                 Int((Double(currentBitrate) * temporaryDegradationBitrateStepFramerate).rounded(.down))
@@ -1124,21 +1104,9 @@ extension StreamContext {
                 bitrate: nextBitrate,
                 reason: "temporary degradation framerate-first bitrate drop",
                 now: now
-            )
+                )
 
         case .prioritizeVisuals:
-            if severe,
-               temporaryDegradationSevereOverloadWindows >= temporaryDegradationVisualBitDepthDropThreshold,
-               requestedTargetBitDepth == .tenBit,
-               temporaryDegradationCurrentBitDepth == .tenBit {
-                return await applyTemporaryDegradationAdjustment(
-                    bitDepth: .eightBit,
-                    bitrate: currentBitrate,
-                    reason: "temporary degradation visuals-first severe bit-depth drop",
-                    now: now
-                )
-            }
-
             let nextBitrate = max(
                 floor,
                 Int((Double(currentBitrate) * temporaryDegradationBitrateStepVisuals).rounded(.down))

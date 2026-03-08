@@ -173,9 +173,7 @@ actor StreamContext {
     let temporaryDegradationOverBudgetRatio: Double = 1.05
     let temporaryDegradationSevereEncodeBudgetRatio: Double = 1.35
     let temporaryDegradationStableWindowsThreshold: Int = 2
-    let temporaryDegradationVisualBitDepthDropThreshold: Int = 3
     var requestedTargetBitrate: Int?
-    let requestedTargetBitDepth: MirageVideoBitDepth
     var startupBitrate: Int?
     var temporaryDegradationCurrentBitrate: Int?
     var temporaryDegradationCurrentBitDepth: MirageVideoBitDepth
@@ -459,7 +457,6 @@ actor StreamContext {
         self.encoderLowPowerEnabled = encoderLowPowerEnabled
         self.capturePressureProfile = resolvedCapturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
-        requestedTargetBitDepth = encoderConfig.bitDepth
         activePixelFormat = resolvedEncoderConfig.pixelFormat
         let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
         let latencySensitive = resolvedLatencyMode == .lowestLatency

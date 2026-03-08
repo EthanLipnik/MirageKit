@@ -43,6 +43,66 @@ func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopRes
     return .unchanged
 }
 
+struct DesktopBackingScaleResolution: Equatable {
+    let scaleFactor: CGFloat
+    let pixelResolution: CGSize
+    let predictedEncodedResolution: CGSize
+    let forcedOneX: Bool
+}
+
+func resolvedDesktopBackingScaleResolution(
+    logicalResolution: CGSize,
+    defaultScaleFactor: CGFloat,
+    streamScale: CGFloat,
+    disableResolutionCap: Bool
+) -> DesktopBackingScaleResolution {
+    let resolvedDefaultScaleFactor = max(1.0, defaultScaleFactor)
+    let clampedStreamScale = StreamContext.clampStreamScale(streamScale)
+
+    func alignedPixelResolution(
+        width: CGFloat,
+        height: CGFloat
+    ) -> CGSize {
+        CGSize(
+            width: CGFloat(StreamContext.alignedEvenPixel(width)),
+            height: CGFloat(StreamContext.alignedEvenPixel(height))
+        )
+    }
+
+    guard logicalResolution.width > 0, logicalResolution.height > 0 else {
+        return DesktopBackingScaleResolution(
+            scaleFactor: resolvedDefaultScaleFactor,
+            pixelResolution: logicalResolution,
+            predictedEncodedResolution: logicalResolution,
+            forcedOneX: false
+        )
+    }
+
+    let defaultPixelResolution = alignedPixelResolution(
+        width: logicalResolution.width * resolvedDefaultScaleFactor,
+        height: logicalResolution.height * resolvedDefaultScaleFactor
+    )
+    let predictedEncodedResolution = alignedPixelResolution(
+        width: defaultPixelResolution.width * clampedStreamScale,
+        height: defaultPixelResolution.height * clampedStreamScale
+    )
+    let forcedOneX = !disableResolutionCap &&
+        predictedEncodedResolution.width <= 1920 &&
+        predictedEncodedResolution.height <= 1080
+    let effectiveScaleFactor: CGFloat = forcedOneX ? 1.0 : resolvedDefaultScaleFactor
+    let pixelResolution = alignedPixelResolution(
+        width: logicalResolution.width * effectiveScaleFactor,
+        height: logicalResolution.height * effectiveScaleFactor
+    )
+
+    return DesktopBackingScaleResolution(
+        scaleFactor: effectiveScaleFactor,
+        pixelResolution: pixelResolution,
+        predictedEncodedResolution: predictedEncodedResolution,
+        forcedOneX: forcedOneX
+    )
+}
+
 enum WindowResizeNoOpDecision: Equatable {
     case noOp
     case apply
@@ -170,6 +230,18 @@ private enum DesktopResizeTransactionAbort: Error {
 extension MirageHostService {
     private func virtualDisplayScaleFactor(for _: MirageConnectedClient?) -> CGFloat {
         max(1.0, sharedVirtualDisplayScaleFactor)
+    }
+
+    func currentDesktopStartedResolution(fallback: CGSize? = nil) async -> CGSize {
+        if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
+            return snapshot.resolution
+        }
+        if let fallback,
+           fallback.width > 0,
+           fallback.height > 0 {
+            return fallback
+        }
+        return .zero
     }
 
     func virtualDisplayPixelResolution(
@@ -485,10 +557,13 @@ extension MirageHostService {
 
         if streamID == desktopStreamID {
             if let clientContext = desktopStreamClientContext {
+                let displayResolution = await currentDesktopStartedResolution(
+                    fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
+                )
                 let message = await DesktopStreamStartedMessage(
                     streamID: streamID,
-                    width: encodedDimensions.width,
-                    height: encodedDimensions.height,
+                    width: Int(displayResolution.width),
+                    height: Int(displayResolution.height),
                     frameRate: context.getTargetFrameRate(),
                     codec: context.getCodec(),
                     displayCount: 1,
@@ -500,7 +575,10 @@ extension MirageHostService {
             }
 
             if loginDisplayIsBorrowedStream, loginDisplayStreamID == streamID {
-                loginDisplayResolution = CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
+                let displayResolution = await currentDesktopStartedResolution(
+                    fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
+                )
+                loginDisplayResolution = displayResolution
                 await broadcastLoginDisplayReady()
             }
             return
@@ -751,12 +829,15 @@ extension MirageHostService {
 
         let dimensionToken = await context.getDimensionToken()
         let encodedDimensions = await context.getEncodedDimensions()
+        let displayResolution = await currentDesktopStartedResolution(
+            fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
+        )
         let updatedTargetFrameRate = await context.getTargetFrameRate()
         let codec = await context.getCodec()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
-            width: encodedDimensions.width,
-            height: encodedDimensions.height,
+            width: Int(displayResolution.width),
+            height: Int(displayResolution.height),
             frameRate: updatedTargetFrameRate,
             codec: codec,
             displayCount: 1,

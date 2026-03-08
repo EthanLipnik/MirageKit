@@ -65,14 +65,25 @@ extension MirageHostService {
         } else {
             nil
         }
-        let virtualDisplayResolution = virtualDisplayPixelResolution(
-            for: displayResolution,
-            client: clientContext.client,
-            scaleFactorOverride: resolvedClientScaleFactor
+        let clampedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
+        let defaultDesktopBackingScale = resolvedClientScaleFactor ?? max(1.0, sharedVirtualDisplayScaleFactor)
+        let desktopBackingScale = resolvedDesktopBackingScaleResolution(
+            logicalResolution: displayResolution,
+            defaultScaleFactor: defaultDesktopBackingScale,
+            streamScale: clampedStreamScale,
+            disableResolutionCap: disableResolutionCap
         )
+        let virtualDisplayResolution = desktopBackingScale.pixelResolution
         if let resolvedClientScaleFactor {
             let scaleText = Double(resolvedClientScaleFactor).formatted(.number.precision(.fractionLength(3)))
             MirageLogger.host("Desktop stream client scale factor: \(scaleText)x")
+        }
+        if desktopBackingScale.forcedOneX {
+            MirageLogger.host(
+                "Desktop backing scale forced to 1x because the predicted encoded target " +
+                    "\(Int(desktopBackingScale.predictedEncodedResolution.width))x\(Int(desktopBackingScale.predictedEncodedResolution.height)) " +
+                    "is at or below 1920x1080"
+            )
         }
         MirageLogger
             .host(
@@ -112,8 +123,6 @@ extension MirageHostService {
         }
 
         if let targetFrameRate { config = config.withTargetFrameRate(targetFrameRate) }
-
-        let clampedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
         if disableResolutionCap {
             MirageLogger.host("Desktop stream resolution cap disabled")
         }
@@ -290,7 +299,7 @@ extension MirageHostService {
         desktopStreamContext = streamContext
         desktopStreamID = streamID
         desktopStreamClientContext = clientContext
-        desktopRequestedScaleFactor = resolvedClientScaleFactor
+        desktopRequestedScaleFactor = desktopBackingScale.scaleFactor
         streamsByID[streamID] = streamContext
         registerTypingBurstRoute(streamID: streamID, context: streamContext)
         await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
@@ -353,15 +362,15 @@ extension MirageHostService {
 
         // Get dimension token from stream context
         let dimensionToken = await streamContext.getDimensionToken()
+        let startedDisplayResolution = await currentDesktopStartedResolution(fallback: captureResolution)
 
         // Send confirmation to client
-        let encodedDimensions = await streamContext.getEncodedDimensions()
         let targetFrameRate = await streamContext.getTargetFrameRate()
         let codec = await streamContext.getCodec()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
-            width: encodedDimensions.width,
-            height: encodedDimensions.height,
+            width: Int(startedDisplayResolution.width),
+            height: Int(startedDisplayResolution.height),
             frameRate: targetFrameRate,
             codec: codec,
             displayCount: 1,
@@ -376,7 +385,7 @@ extension MirageHostService {
 
         MirageLogger
             .host(
-                "Desktop stream started: streamID=\(streamID), resolution=\(encodedDimensions.width)x\(encodedDimensions.height)"
+                "Desktop stream started: streamID=\(streamID), resolution=\(Int(startedDisplayResolution.width))x\(Int(startedDisplayResolution.height))"
             )
         await HostDesktopStreamTerminationTracker.shared.markDesktopStreamStarted(
             streamID: streamID,

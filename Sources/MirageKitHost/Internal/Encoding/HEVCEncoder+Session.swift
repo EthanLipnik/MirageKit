@@ -16,8 +16,6 @@ import MirageKit
 import ScreenCaptureKit
 
 extension HEVCEncoder {
-    nonisolated static let standardDesktopLowLatencySuppressionPixelThreshold = 3_840 * 2_160
-
     nonisolated static func encoderSpecification(
         for performanceMode: MirageStreamPerformanceMode,
         latencyMode: MirageStreamLatencyMode
@@ -70,41 +68,32 @@ extension HEVCEncoder {
     nonisolated static func standardLowLatencyVTTuningEnabled(
         performanceMode: MirageStreamPerformanceMode,
         latencyMode: MirageStreamLatencyMode,
-        width: Int,
-        height: Int,
+        width _: Int,
+        height _: Int,
         streamKind: StreamKind
     ) -> Bool {
         guard performanceMode == .standard, latencyMode == .lowestLatency else { return false }
         return !shouldSuppressStandardDesktopLowLatencyTuning(
-            width: width,
-            height: height,
             streamKind: streamKind
         )
     }
 
     nonisolated static func shouldSuppressStandardDesktopLowLatencyTuning(
-        width: Int,
-        height: Int,
         streamKind: StreamKind
     ) -> Bool {
-        guard streamKind == .desktop else { return false }
-        let safeWidth = max(0, width)
-        let safeHeight = max(0, height)
-        return safeWidth * safeHeight >= standardDesktopLowLatencySuppressionPixelThreshold
+        streamKind == .desktop
     }
 
     nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
         performanceMode: MirageStreamPerformanceMode,
         latencyMode: MirageStreamLatencyMode,
-        width: Int,
-        height: Int,
+        width _: Int,
+        height _: Int,
         streamKind: StreamKind
     ) -> Bool {
         performanceMode == .standard &&
             latencyMode == .lowestLatency &&
             shouldSuppressStandardDesktopLowLatencyTuning(
-                width: width,
-                height: height,
                 streamKind: streamKind
             )
     }
@@ -291,12 +280,10 @@ extension HEVCEncoder {
             MirageLogger.encoder("Encoder spec: game mode low-latency rate control requested")
         } else if resolvedSessionLatencyMode() == .lowestLatency {
             if Self.shouldSuppressStandardDesktopLowLatencyTuning(
-                width: width,
-                height: height,
                 streamKind: streamKind
             ) {
                 MirageLogger.encoder(
-                    "Encoder spec: standard low-latency rate control suppressed for high-res desktop \(width)x\(height)"
+                    "Encoder spec: standard low-latency rate control suppressed for desktop \(width)x\(height)"
                 )
             } else if Self.standardLowLatencyVTTuningEnabled(
                 performanceMode: performanceMode,

@@ -577,6 +577,12 @@ public struct MirageStreamContentView: View {
             }
             latestDrawableDisplaySize = preferredDisplaySize
 
+            if desktopResizeStartupDecision(hasPresentedFrame: session.hasPresentedFrame) == .deferUntilFirstPresentation {
+                if !awaitingDesktopResizeAck, isResizing { isResizing = false }
+                desktopResizeMaskActive = false
+                return
+            }
+
             let acknowledgedPixelSize = currentDesktopAcknowledgedPixelSize()
             let pointScale = desktopPointScale(for: preferredDisplaySize)
             switch desktopResizeRequestDecision(
@@ -908,8 +914,7 @@ public struct MirageStreamContentView: View {
         let widthScale = displaySize.width > 0 ? basePixels.width / displaySize.width : 1.0
         let heightScale = displaySize.height > 0 ? basePixels.height / displaySize.height : 1.0
         let virtualDisplayScaleFactor = max(1.0, widthScale, heightScale)
-        let streamScale = resolvedDesktopStreamScale(for: displaySize)
-        return max(1.0, virtualDisplayScaleFactor * streamScale)
+        return virtualDisplayScaleFactor
     }
 
     private func scheduleStreamScaleUpdate(for displaySize: CGSize) {

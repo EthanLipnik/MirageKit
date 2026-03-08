@@ -95,7 +95,7 @@ struct HEVCEncoderRateLimitTests {
         #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] == nil)
     }
 
-    @Test("Standard lowest-latency encoder specification enables low-latency rate control for low-res desktop")
+    @Test("Standard lowest-latency desktop specification suppresses low-latency rate control for low-res desktop")
     func standardLowestLatencyEncoderSpecification() {
         let spec = HEVCEncoder.encoderSpecification(
             for: .standard,
@@ -107,7 +107,7 @@ struct HEVCEncoderRateLimitTests {
 
         #expect(spec[kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder] as? Bool == true)
         #expect(spec[kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder] as? Bool == true)
-        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] as? Bool == true)
+        #expect(spec[kVTVideoEncoderSpecification_EnableLowLatencyRateControl] == nil)
     }
 
     @Test("Standard lowest-latency desktop specification suppresses low-latency rate control at high resolution")
