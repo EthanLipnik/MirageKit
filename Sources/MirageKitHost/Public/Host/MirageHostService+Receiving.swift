@@ -55,15 +55,27 @@ extension MirageHostService {
                     case .complete:
                         MirageLogger.host("Client disconnected")
                     case let .fatalError(error):
-                        MirageLogger.error(
-                            .host,
-                            "Client \(client.name) fatal connection error - disconnecting: \(error)"
-                        )
+                        if LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                            MirageLogger.host(
+                                "Client \(client.name) disconnected after fatal transport error: \(error)"
+                            )
+                        } else {
+                            MirageLogger.error(
+                                .host,
+                                "Client \(client.name) fatal connection error - disconnecting: \(error)"
+                            )
+                        }
                     case let .persistentError(error):
-                        MirageLogger.error(
-                            .host,
-                            "Client \(client.name) persistent receive errors - disconnecting: \(error)"
-                        )
+                        if LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                            MirageLogger.host(
+                                "Client \(client.name) disconnected after persistent transport errors: \(error)"
+                            )
+                        } else {
+                            MirageLogger.error(
+                                .host,
+                                "Client \(client.name) persistent receive errors - disconnecting: \(error)"
+                            )
+                        }
                     case let .protocolViolation(reason):
                         MirageLogger.error(
                             .host,

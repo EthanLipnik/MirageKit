@@ -1196,11 +1196,25 @@ extension MirageHostService {
                     break
                 }
 
-                MirageLogger.error(
-                    .host,
-                    error: error,
-                    message: "Failed initial app stream attempt for window \(binding.candidate.window.id): "
-                )
+                let shouldElevateStartupFailure = switch failureDisposition {
+                case .retryScheduled, .suppressed:
+                    false
+                case .terminal:
+                    !shouldMoveToHiddenInventory &&
+                        !AppStreamStartupFailureClassifier.isExpectedWindowStartupRaceError(error)
+                }
+
+                if shouldElevateStartupFailure {
+                    MirageLogger.error(
+                        .host,
+                        error: error,
+                        message: "Failed initial app stream attempt for window \(binding.candidate.window.id): "
+                    )
+                } else {
+                    MirageLogger.host(
+                        "Initial app-stream startup failure handled without diagnostics escalation for \(binding.candidate.window.id): \(renderedDetail) (\(binding.candidate.logMetadata))"
+                    )
+                }
 
                 guard retryable, attempt < maxAttemptsPerWindow else { break }
                 guard case .retryScheduled = failureDisposition else { break }

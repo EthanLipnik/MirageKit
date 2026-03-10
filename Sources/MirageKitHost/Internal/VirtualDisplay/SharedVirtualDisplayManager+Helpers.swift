@@ -412,7 +412,8 @@ extension SharedVirtualDisplayManager {
             height: Int(newResolution.height),
             refreshRate: Double(refreshRate),
             hiDPI: useHiDPI,
-            colorSpace: display.colorSpace
+            colorSpace: display.colorSpace,
+            isFallbackProbe: true
         )
         guard success else { return nil }
 

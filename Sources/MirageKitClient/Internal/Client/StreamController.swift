@@ -556,14 +556,13 @@ actor StreamController {
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime()
         consecutiveDecodeErrors += 1
-
-        let reachedEscalationThreshold = consecutiveDecodeErrors >= Self.decodeErrorEscalationThreshold
-        let signatureChanged = signature != lastDecodeErrorSignature
-        let intervalElapsed = now - lastDecodeErrorLogTime >= Self.decodeErrorLogInterval
-        let shouldElevate = reachedEscalationThreshold && (
-            consecutiveDecodeErrors == Self.decodeErrorEscalationThreshold ||
-                signatureChanged ||
-                intervalElapsed
+        let shouldElevate = Self.shouldElevateDecodeFailure(
+            consecutiveDecodeErrors: consecutiveDecodeErrors,
+            signature: signature,
+            previousSignature: lastDecodeErrorSignature,
+            lastLogTime: lastDecodeErrorLogTime,
+            now: now,
+            recoveryActionable: shouldAttemptDecodeErrorRecovery(now: now)
         )
 
         if shouldElevate {
@@ -582,12 +581,39 @@ actor StreamController {
                     "Decode error observed before escalation threshold (attempt \(consecutiveDecodeErrors)/\(threshold), signature \(signature))"
                 )
             } else {
-                MirageLogger.debug(
-                    .client,
-                    "Decode error suppressed as repeat (attempt \(consecutiveDecodeErrors), signature \(signature))"
-                )
+                let recoveryActionable = shouldAttemptDecodeErrorRecovery(now: now)
+                if recoveryActionable {
+                    MirageLogger.debug(
+                        .client,
+                        "Decode error suppressed as repeat (attempt \(consecutiveDecodeErrors), signature \(signature))"
+                    )
+                } else {
+                    MirageLogger.debug(
+                        .client,
+                        "Decode error suppressed until presentation freeze makes recovery actionable (attempt \(consecutiveDecodeErrors), signature \(signature))"
+                    )
+                }
             }
         }
+    }
+
+    nonisolated static func shouldElevateDecodeFailure(
+        consecutiveDecodeErrors: Int,
+        signature: String,
+        previousSignature: String?,
+        lastLogTime: CFAbsoluteTime,
+        now: CFAbsoluteTime,
+        recoveryActionable: Bool
+    ) -> Bool {
+        guard recoveryActionable else { return false }
+        guard consecutiveDecodeErrors >= decodeErrorEscalationThreshold else { return false }
+        if consecutiveDecodeErrors == decodeErrorEscalationThreshold {
+            return true
+        }
+        if signature != previousSignature {
+            return true
+        }
+        return now - lastLogTime >= decodeErrorLogInterval
     }
 
     private func enqueueFrame(

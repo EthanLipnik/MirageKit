@@ -79,9 +79,21 @@ extension MirageHostService {
 
     /// Check if an error indicates a fatal, unrecoverable connection state.
     nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
+        let fatalPosixCodes: Set<POSIXErrorCode> = [.ECONNRESET, .ENOTCONN, .EPIPE]
+        if let nwError = error as? NWError {
+            switch nwError {
+            case let .posix(code):
+                return fatalPosixCodes.contains(code)
+            default:
+                break
+            }
+        }
+
         let nsError = error as NSError
-        let fatalPosixCodes = [54, 57, 32, 104]
-        if nsError.domain == NSPOSIXErrorDomain, fatalPosixCodes.contains(nsError.code) { return true }
+        if nsError.domain == NSPOSIXErrorDomain,
+           let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
+            return fatalPosixCodes.contains(code)
+        }
         if nsError.domain == "NWError", nsError.code == -65554 || nsError.code == -65555 { return true }
         return false
     }

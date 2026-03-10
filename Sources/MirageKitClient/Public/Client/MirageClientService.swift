@@ -447,6 +447,7 @@ public final class MirageClientService {
     public let deviceID: UUID
     let deviceName: String
     var receiveBuffer = Data()
+    var isProcessingReceivedData = false
     var approvalWaitTask: Task<Void, Never>?
     var hasReceivedHelloResponse = false
     var pendingHelloNonce: String?

@@ -89,7 +89,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         preloginDaemonReady = try container.decodeIfPresent(Bool.self, forKey: .preloginDaemonReady) ?? false
     }
 
-    public func toBootstrapMetadata() -> LoomBootstrapMetadata {
+    public func toBootstrapMetadata() -> LoomBootstrapMetadata? {
         var endpoints = autoEndpoints
         let trimmedHost = userEndpointHost.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedHost.isEmpty,
@@ -122,9 +122,12 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         let controlSecret = controlAuthSecret
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return LoomBootstrapMetadata(
+        let payload = BootstrapMetadataPayload(
+            version: 2,
             enabled: enabled,
             supportsPreloginDaemon: preloginDaemonReady,
+            supportsControlChannel: preloginDaemonReady,
+            supportsCredentialSubmission: remoteLoginReachable,
             endpoints: endpoints,
             sshPort: UInt16(clamping: sshPort),
             controlPort: UInt16(clamping: controlPort),
@@ -132,12 +135,31 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             controlAuthSecret: controlSecret.isEmpty ? nil : controlSecret,
             wakeOnLAN: wakeInfo
         )
+
+        guard let encoded = try? JSONEncoder().encode(payload) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(LoomBootstrapMetadata.self, from: encoded)
     }
 
     public static func makeDefaultControlAuthSecret() -> String {
         let bytes = (0 ..< 32).map { _ in UInt8.random(in: .min ... .max) }
         return Data(bytes).base64EncodedString()
     }
+}
+
+private struct BootstrapMetadataPayload: Codable {
+    let version: Int
+    let enabled: Bool
+    let supportsPreloginDaemon: Bool
+    let supportsControlChannel: Bool
+    let supportsCredentialSubmission: Bool
+    let endpoints: [LoomBootstrapEndpoint]
+    let sshPort: UInt16?
+    let controlPort: UInt16?
+    let sshHostKeyFingerprint: String?
+    let controlAuthSecret: String?
+    let wakeOnLAN: LoomWakeOnLANInfo?
 }
 
 private extension UInt16 {

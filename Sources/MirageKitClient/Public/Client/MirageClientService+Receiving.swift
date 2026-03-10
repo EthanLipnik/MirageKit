@@ -26,8 +26,13 @@ extension MirageClientService {
                 }
 
                 if let error {
-                    if isExpectedReceiveTermination(error) {
-                        MirageLogger.client("Receive loop ended by peer/network: \(error.localizedDescription)")
+                    if shouldTreatReceiveErrorAsDisconnect(error) {
+                        let phaseDescription = hasReceivedHelloResponse
+                            ? "peer/network"
+                            : "handshake"
+                        MirageLogger.client(
+                            "Receive loop ended during \(phaseDescription): \(error.localizedDescription)"
+                        )
                         await handleDisconnect(
                             reason: "Host disconnected",
                             state: .disconnected,
@@ -61,32 +66,25 @@ extension MirageClientService {
     }
 
     func processReceivedData() async {
-        var parseOffset = 0
+        guard !isProcessingReceivedData else { return }
+        isProcessingReceivedData = true
+        defer { isProcessingReceivedData = false }
 
-        while parseOffset < receiveBuffer.count {
-            let frameStart = receiveBuffer.index(receiveBuffer.startIndex, offsetBy: parseOffset)
-            let remaining = receiveBuffer.count - parseOffset
-            let firstByte = receiveBuffer[frameStart]
-
-            // Detect and reject video packets accidentally sent over the control channel.
-            if firstByte == 0x4D, remaining >= 4 {
-                let magicEnd = receiveBuffer.index(frameStart, offsetBy: 4)
-                let magic = receiveBuffer[frameStart ..< magicEnd]
-                if magic.elementsEqual([0x4D, 0x49, 0x52, 0x47]) {
-                    MirageLogger.client("Protocol violation: received video data on TCP control channel")
-                    receiveBuffer.removeAll(keepingCapacity: false)
-                    await handleDisconnect(
-                        reason: "Invalid control-channel payload",
-                        state: .error("Invalid control-channel payload"),
-                        notifyDelegate: true
-                    )
-                    return
-                }
+        while !receiveBuffer.isEmpty {
+            if receiveBuffer.count >= 4, receiveBuffer.prefix(4).elementsEqual([0x4D, 0x49, 0x52, 0x47]) {
+                MirageLogger.client("Protocol violation: received video data on TCP control channel")
+                receiveBuffer.removeAll(keepingCapacity: false)
+                await handleDisconnect(
+                    reason: "Invalid control-channel payload",
+                    state: .error("Invalid control-channel payload"),
+                    notifyDelegate: true
+                )
+                return
             }
 
-            switch ControlMessage.deserialize(from: receiveBuffer, offset: parseOffset) {
+            switch ControlMessage.deserialize(from: receiveBuffer, offset: 0) {
             case let .success(message, bytesConsumed):
-                parseOffset += bytesConsumed
+                receiveBuffer.removeSubrange(0 ..< bytesConsumed)
                 if shouldDropControlMessageWhileSuppressed(message.type) {
                     recordSuppressedControlMessage(message.type)
                     continue
@@ -95,15 +93,8 @@ extension MirageClientService {
                 if shouldLogReceivedControlMessage(message.type) {
                     MirageLogger.client("Received message type: \(message.type)")
                 }
-                if parseOffset > 0 {
-                    receiveBuffer.removeSubrange(0 ..< parseOffset)
-                    parseOffset = 0
-                }
                 await routeControlMessage(message)
             case .needMoreData:
-                if parseOffset > 0 {
-                    receiveBuffer.removeSubrange(0 ..< parseOffset)
-                }
                 if receiveBuffer.count > LoomMessageLimits.maxReceiveBufferBytes {
                     MirageLogger.client("Control receive buffer overflow (\(receiveBuffer.count) bytes)")
                     receiveBuffer.removeAll(keepingCapacity: false)
@@ -124,10 +115,6 @@ extension MirageClientService {
                 )
                 return
             }
-        }
-
-        if parseOffset > 0 {
-            receiveBuffer.removeSubrange(0 ..< parseOffset)
         }
     }
 
@@ -202,6 +189,14 @@ extension MirageClientService {
 
     private func isExpectedReceiveTermination(_ error: Error) -> Bool {
         Self.isExpectedTransportTermination(error)
+    }
+
+    private func shouldTreatReceiveErrorAsDisconnect(_ error: Error) -> Bool {
+        if isExpectedReceiveTermination(error) {
+            return true
+        }
+
+        return hasReceivedHelloResponse == false
     }
 
     nonisolated static func isExpectedTransportTermination(_ error: Error) -> Bool {

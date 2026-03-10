@@ -55,6 +55,40 @@ struct StreamControllerRecoveryTests {
         #expect(acceptDecision == .accept)
     }
 
+    @Test("Decode failure telemetry waits for actionable recovery state")
+    func decodeFailureTelemetryWaitsForActionableRecoveryState() {
+        #expect(
+            StreamController.shouldElevateDecodeFailure(
+                consecutiveDecodeErrors: 3,
+                signature: "MirageKit.MirageError:2",
+                previousSignature: nil,
+                lastLogTime: 0,
+                now: 10,
+                recoveryActionable: false
+            ) == false
+        )
+        #expect(
+            StreamController.shouldElevateDecodeFailure(
+                consecutiveDecodeErrors: 3,
+                signature: "MirageKit.MirageError:2",
+                previousSignature: nil,
+                lastLogTime: 0,
+                now: 10,
+                recoveryActionable: true
+            )
+        )
+        #expect(
+            StreamController.shouldElevateDecodeFailure(
+                consecutiveDecodeErrors: 8,
+                signature: "MirageKit.MirageError:2",
+                previousSignature: "MirageKit.MirageError:2",
+                lastLogTime: 8,
+                now: 10,
+                recoveryActionable: true
+            ) == false
+        )
+    }
+
     @Test("Suspend and resume local-resize decode toggles pause state")
     func suspendAndResumeLocalResizeDecodeTogglesPauseState() async {
         let controller = StreamController(streamID: 91, maxPayloadSize: 1200)

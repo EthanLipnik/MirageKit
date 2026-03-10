@@ -192,7 +192,6 @@ public actor MirageHostCloudKitRegistrar {
 
         let recordID = CKRecord.ID(recordName: deviceID.uuidString, zoneID: peerZoneID)
         let record = CKRecord(recordType: configuration.peerRecordType, recordID: recordID)
-        record[LoomCloudKitPeerInfo.RecordKey.createdAt.rawValue] = Date()
         peerRecordName = recordID.recordName
         return record
     }

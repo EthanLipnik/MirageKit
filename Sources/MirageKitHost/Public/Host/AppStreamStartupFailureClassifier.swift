@@ -66,6 +66,25 @@ enum AppStreamStartupFailureClassifier {
         isNonRetryableVirtualDisplayAllocationError(error)
     }
 
+    static func isExpectedWindowStartupRaceError(_ error: Error) -> Bool {
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case .streamNotFound, .windowNotFound:
+                return true
+            default:
+                break
+            }
+        }
+
+        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+            if case .windowNotFound = windowSpaceError {
+                return true
+            }
+        }
+
+        return false
+    }
+
     static func isNonRetryableVirtualDisplayAllocationError(_ error: Error) -> Bool {
         if let windowStartError = error as? WindowStreamStartError {
             if case let .virtualDisplayStartFailed(code, _) = windowStartError {

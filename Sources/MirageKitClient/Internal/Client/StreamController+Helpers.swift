@@ -396,7 +396,7 @@ extension StreamController {
         lastPresentedProgressTime = referenceNow - Self.freezeTimeout - 0.5
     }
 
-    private func shouldAttemptDecodeErrorRecovery(now: CFAbsoluteTime) -> Bool {
+    func shouldAttemptDecodeErrorRecovery(now: CFAbsoluteTime) -> Bool {
         let keyframeStarved = reassembler.isAwaitingKeyframe()
 
         if hasPresentedFirstFrame {
