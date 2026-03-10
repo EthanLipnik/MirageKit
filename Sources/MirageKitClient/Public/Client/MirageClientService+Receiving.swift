@@ -13,12 +13,18 @@ import Network
 
 @MainActor
 extension MirageClientService {
-    func startReceiving() {
-        guard let connection else { return }
+    func startReceiving(on expectedConnection: NWConnection? = nil) {
+        guard let receiveConnection = expectedConnection ?? connection else { return }
 
-        connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            Task { @MainActor [weak self] in
+        receiveConnection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
+            Task { @MainActor [weak self, receiveConnection] in
                 guard let self else { return }
+                guard Self.isCurrentControlReceiveSource(
+                    activeConnection: self.connection,
+                    callbackConnection: receiveConnection
+                ) else {
+                    return
+                }
 
                 if let data, !data.isEmpty {
                     receiveBuffer.append(data)
@@ -60,7 +66,7 @@ extension MirageClientService {
                 }
 
                 // Continue receiving.
-                startReceiving()
+                startReceiving(on: receiveConnection)
             }
         }
     }
@@ -121,6 +127,14 @@ extension MirageClientService {
     private func shouldDropControlMessageWhileSuppressed(_ type: ControlMessageType) -> Bool {
         guard controlUpdatePolicy == .interactiveStreaming else { return false }
         return Self.shouldDropNonEssentialControlMessageWhileInteractive(type)
+    }
+
+    nonisolated static func isCurrentControlReceiveSource(
+        activeConnection: AnyObject?,
+        callbackConnection: AnyObject
+    ) -> Bool {
+        guard let activeConnection else { return false }
+        return ObjectIdentifier(activeConnection) == ObjectIdentifier(callbackConnection)
     }
 
     nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
