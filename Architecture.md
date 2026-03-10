@@ -11,6 +11,7 @@ It is a package-internal reference for engineers working in:
 - `Tests/MirageKitTests`
 - `Tests/MirageKitClientTests`
 - `Tests/MirageKitHostTests`
+- `Tests/MirageHostBootstrapRuntimeTests`
 
 It does not describe app-target UI architecture in `Mirage/`, `Mirage Host/`, or daemon app bundles except where they call MirageKit APIs.
 
@@ -154,6 +155,7 @@ The bootstrap runtime is responsible for pre-login and unlock-oriented host cont
 
 Key types are:
 
+- `MirageHostBootstrapConfiguration`
 - `MirageHostBootstrapControlServer`
 - `MirageHostBootstrapUnlockService`
 - `MirageHostBootstrapDaemonStateMachine`
@@ -161,6 +163,7 @@ Key types are:
 This target owns:
 
 - bootstrap request handling
+- bootstrap configuration serialization and metadata projection
 - unlock orchestration
 - daemon state transitions
 - app-group queue handoff into the host app

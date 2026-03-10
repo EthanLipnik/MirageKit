@@ -68,6 +68,13 @@ let package = Package(
             dependencies: ["MirageKitHost"]
         ),
         .testTarget(
+            name: "MirageHostBootstrapRuntimeTests",
+            dependencies: [
+                "MirageHostBootstrapRuntime",
+                .product(name: "Loom", package: "Loom"),
+            ]
+        ),
+        .testTarget(
             name: "MirageKitClientTests",
             dependencies: ["MirageKitClient"]
         ),

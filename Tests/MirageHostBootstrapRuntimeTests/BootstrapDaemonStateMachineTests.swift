@@ -1,13 +1,13 @@
 //
 //  BootstrapDaemonStateMachineTests.swift
-//  MirageKitHostTests
+//  MirageKit
 //
-//  Created by Ethan Lipnik on 2/21/26.
+//  Created by Ethan Lipnik on 3/10/26.
 //
 //  Coverage for bootstrap daemon lifecycle state transitions.
 //
 
-@testable import MirageKitHost
+import MirageHostBootstrapRuntime
 import Testing
 
 @Suite("Bootstrap Daemon State Machine")

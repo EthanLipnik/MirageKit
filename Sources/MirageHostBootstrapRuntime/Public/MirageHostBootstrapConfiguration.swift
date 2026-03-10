@@ -2,13 +2,13 @@
 //  MirageHostBootstrapConfiguration.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 2/21/26.
+//  Created by Ethan Lipnik on 3/10/26.
 //
-//  Shared host wake/unlock bootstrap configuration.
+//  Shared bootstrap configuration for host wake, unlock, and daemon handoff.
 //
 
 import Foundation
-import MirageKit
+import Loom
 
 #if os(macOS)
 
