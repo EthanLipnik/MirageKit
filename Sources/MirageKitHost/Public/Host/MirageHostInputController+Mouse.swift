@@ -18,6 +18,42 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Mouse Event Injection (runs on accessibilityQueue)
 
+    func refreshPointerModifierState(
+        _ modifiers: MirageModifierFlags,
+        domain: HostKeyboardInjectionDomain
+    ) {
+        if modifiers != lastSentModifiers {
+            injectFlagsChanged(modifiers, domain: domain, app: nil)
+            return
+        }
+
+        guard !modifiers.isEmpty else { return }
+        let now = CACurrentMediaTime()
+        for (flag, _) in Self.modifierKeyCodes where modifiers.contains(flag) {
+            modifierLastEventTimes[flag] = now
+        }
+    }
+
+    func applyPointerEventMetadata(
+        _ cgEvent: CGEvent,
+        from event: MirageMouseEvent,
+        type: CGEventType
+    ) {
+        cgEvent.flags = event.modifiers.cgEventFlags
+
+        switch type {
+        case .leftMouseDown,
+             .leftMouseUp,
+             .otherMouseDown,
+             .otherMouseUp,
+             .rightMouseDown,
+             .rightMouseUp:
+            cgEvent.setIntegerValueField(.mouseEventClickState, value: Int64(event.clickCount))
+        default:
+            break
+        }
+    }
+
     func injectMouseEvent(
         _ type: CGEventType,
         _ event: MirageMouseEvent,
@@ -25,6 +61,8 @@ extension MirageHostInputController {
         windowID: WindowID,
         app: MirageApplication?
     ) {
+        refreshPointerModifierState(event.modifiers, domain: .session)
+
         let resolvedFrame: CGRect
         if appliesTabletSubtype(event) {
             // Stylus input is absolute and high-frequency; use the stream frame directly
@@ -81,18 +119,7 @@ extension MirageHostInputController {
             return
         }
 
-        switch type {
-        case .leftMouseDown,
-             .leftMouseUp,
-             .otherMouseDown,
-             .otherMouseUp,
-             .rightMouseDown,
-             .rightMouseUp:
-            cgEvent.setIntegerValueField(.mouseEventClickState, value: Int64(event.clickCount))
-        default:
-            break
-        }
-
+        applyPointerEventMetadata(cgEvent, from: event, type: type)
         applyTabletFieldsIfNeeded(cgEvent, from: event, type: type, point: screenPoint)
         postStylusAwarePointerEvent(cgEvent, from: event, type: type, at: screenPoint)
     }

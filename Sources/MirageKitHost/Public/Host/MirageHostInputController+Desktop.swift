@@ -124,6 +124,8 @@ extension MirageHostInputController {
 
     /// Inject mouse event at a specific screen point (for desktop streaming).
     func injectDesktopMouseEvent(_ type: CGEventType, _ event: MirageMouseEvent, at point: CGPoint) {
+        refreshPointerModifierState(event.modifiers, domain: .hid)
+
         guard let cgEvent = CGEvent(
             mouseEventSource: nil,
             mouseType: type,
@@ -133,18 +135,7 @@ extension MirageHostInputController {
             return
         }
 
-        switch type {
-        case .leftMouseDown,
-             .leftMouseUp,
-             .otherMouseDown,
-             .otherMouseUp,
-             .rightMouseDown,
-             .rightMouseUp:
-            cgEvent.setIntegerValueField(.mouseEventClickState, value: Int64(event.clickCount))
-        default:
-            break
-        }
-
+        applyPointerEventMetadata(cgEvent, from: event, type: type)
         applyTabletFieldsIfNeeded(cgEvent, from: event, type: type, point: point)
         postStylusAwarePointerEvent(cgEvent, from: event, type: type, at: point)
     }
