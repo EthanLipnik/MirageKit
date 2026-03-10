@@ -45,7 +45,13 @@ public actor MirageHostCloudKitRegistrar {
     private var peerRecordName: String?
     private var cloudKitSchemaSupportsBootstrapMetadata = true
     private var cloudKitSchemaSupportsOptionalPeerMetadata = true
+    private var cloudKitSchemaSupportsRichPeerMetadata = true
     private var cloudKitSchemaSupportsParticipantIdentityRecords = true
+
+    private struct PeerRecordPopulationAttempt {
+        let attemptedOptionalPeerMetadataWrite: Bool
+        let attemptedRichPeerMetadataWrite: Bool
+    }
 
     public init(configuration: LoomCloudKitConfiguration) {
         self.configuration = configuration
@@ -68,7 +74,17 @@ public actor MirageHostCloudKitRegistrar {
             predicate: NSPredicate(value: true)
         )
 
-        let (results, _) = try await database.records(matching: query, inZoneWith: peerZoneID)
+        let results: [(CKRecord.ID, Result<CKRecord, Error>)]
+        do {
+            let queryResult = try await database.records(matching: query, inZoneWith: peerZoneID)
+            results = queryResult.0
+        } catch where Self.shouldIgnoreStaleOwnHostsCleanupFailure(error) {
+            MirageLogger.appState(
+                "Skipping stale CloudKit host cleanup because the host record zone is not yet available"
+            )
+            return 0
+        }
+
         let normalizedCurrentName = normalizeHostName(currentHostName)
         var staleRecordIDs: [CKRecord.ID] = []
 
@@ -114,7 +130,7 @@ public actor MirageHostCloudKitRegistrar {
                 deviceID: request.deviceID,
                 database: database
             )
-            let attemptedOptionalPeerMetadataWrite = populate(record: record, from: request)
+            let populationAttempt = populate(record: record, from: request)
 
             do {
                 try await persistPeerRecord(
@@ -134,11 +150,19 @@ public actor MirageHostCloudKitRegistrar {
                 )
             } catch where Self.shouldRetryHostRegistrationWithoutOptionalHostMetadata(
                 error: error,
-                attemptedOptionalHostMetadataWrite: attemptedOptionalPeerMetadataWrite
+                attemptedOptionalHostMetadataWrite: populationAttempt.attemptedOptionalPeerMetadataWrite
             ) {
                 cloudKitSchemaSupportsOptionalPeerMetadata = false
                 MirageLogger.appState(
                     "CloudKit schema rejected optional peer metadata; retrying host registration with base fields only"
+                )
+            } catch where Self.shouldRetryHostRegistrationWithMinimalRecordFields(
+                error: error,
+                attemptedRichPeerMetadataWrite: populationAttempt.attemptedRichPeerMetadataWrite
+            ) {
+                cloudKitSchemaSupportsRichPeerMetadata = false
+                MirageLogger.appState(
+                    "CloudKit schema rejected rich peer metadata; retrying host registration with minimal legacy fields"
                 )
             }
         }
@@ -159,6 +183,11 @@ public actor MirageHostCloudKitRegistrar {
         do {
             _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
         } catch {
+            if Self.isUnknownItemCloudKitError(error) {
+                peerRecordName = nil
+                MirageLogger.appState("Skipping lastSeen update because the cached CloudKit host record no longer exists")
+                return
+            }
             MirageLogger.error(.appState, error: error, message: "Failed to update lastSeen: ")
         }
     }
@@ -186,6 +215,8 @@ public actor MirageHostCloudKitRegistrar {
                     return record
                 }
             }
+        } catch where Self.shouldIgnoreExistingHostRecordQueryFailure(error) {
+            MirageLogger.appState("Existing host record lookup missed in CloudKit; creating a replacement record")
         } catch {
             MirageLogger.error(.appState, error: error, message: "Failed to query existing host record: ")
         }
@@ -212,14 +243,24 @@ public actor MirageHostCloudKitRegistrar {
     }
 
     @discardableResult
-    private func populate(record: CKRecord, from request: RegistrationRequest) -> Bool {
+    private func populate(record: CKRecord, from request: RegistrationRequest) -> PeerRecordPopulationAttempt {
         record[LoomCloudKitPeerInfo.RecordKey.deviceID.rawValue] = request.deviceID.uuidString
         record[LoomCloudKitPeerInfo.RecordKey.name.rawValue] = request.name
-        record[LoomCloudKitPeerInfo.RecordKey.deviceType.rawValue] = (request.advertisement.deviceType ?? .mac).rawValue
-        record[LoomCloudKitPeerInfo.RecordKey.advertisementBlob.rawValue] = try? JSONEncoder().encode(request.advertisement)
+        let attemptedRichPeerMetadataWrite = cloudKitSchemaSupportsRichPeerMetadata
+        if attemptedRichPeerMetadataWrite {
+            record[LoomCloudKitPeerInfo.RecordKey.deviceType.rawValue] = (request.advertisement.deviceType ?? .mac).rawValue
+            record[LoomCloudKitPeerInfo.RecordKey.advertisementBlob.rawValue] = try? JSONEncoder().encode(request.advertisement)
+        } else {
+            record[LoomCloudKitPeerInfo.RecordKey.deviceType.rawValue] = nil
+            record[LoomCloudKitPeerInfo.RecordKey.advertisementBlob.rawValue] = nil
+        }
+        let attemptedOptionalPeerMetadataWrite = cloudKitSchemaSupportsOptionalPeerMetadata
         if cloudKitSchemaSupportsOptionalPeerMetadata {
             record[LoomCloudKitPeerInfo.RecordKey.identityPublicKey.rawValue] = request.identityPublicKey
             record[LoomCloudKitPeerInfo.RecordKey.remoteAccessEnabled.rawValue] = request.remoteEnabled ? 1 : 0
+        } else {
+            record[LoomCloudKitPeerInfo.RecordKey.identityPublicKey.rawValue] = nil
+            record[LoomCloudKitPeerInfo.RecordKey.remoteAccessEnabled.rawValue] = nil
         }
         if cloudKitSchemaSupportsBootstrapMetadata {
             if let bootstrapMetadata = request.bootstrapMetadata {
@@ -229,7 +270,10 @@ public actor MirageHostCloudKitRegistrar {
             }
         }
         record[LoomCloudKitPeerInfo.RecordKey.lastSeen.rawValue] = Date()
-        return cloudKitSchemaSupportsOptionalPeerMetadata
+        return PeerRecordPopulationAttempt(
+            attemptedOptionalPeerMetadataWrite: attemptedOptionalPeerMetadataWrite,
+            attemptedRichPeerMetadataWrite: attemptedRichPeerMetadataWrite
+        )
     }
 
     private func persistPeerRecord(
@@ -307,16 +351,35 @@ public actor MirageHostCloudKitRegistrar {
         isInvalidArgumentsCloudKitError(error)
     }
 
+    nonisolated static func shouldRetryHostRegistrationWithMinimalRecordFields(
+        error: Error,
+        attemptedRichPeerMetadataWrite: Bool
+    ) -> Bool {
+        attemptedRichPeerMetadataWrite && isInvalidArgumentsCloudKitError(error)
+    }
+
+    nonisolated static func shouldIgnoreExistingHostRecordQueryFailure(_ error: Error) -> Bool {
+        isUnknownItemCloudKitError(error)
+    }
+
+    nonisolated static func shouldIgnoreStaleOwnHostsCleanupFailure(_ error: Error) -> Bool {
+        isUnknownItemCloudKitError(error)
+    }
+
     nonisolated static func isInvalidArgumentsCloudKitError(_ error: Error) -> Bool {
         let nsError = error as NSError
         guard nsError.domain == CKError.errorDomain else { return false }
         return nsError.code == CKError.Code.invalidArguments.rawValue
     }
 
-    private func shouldResetCachedHostRecordName(for error: Error) -> Bool {
+    nonisolated static func isUnknownItemCloudKitError(_ error: Error) -> Bool {
         let nsError = error as NSError
         guard nsError.domain == CKError.errorDomain else { return false }
         return nsError.code == CKError.Code.unknownItem.rawValue
+    }
+
+    private func shouldResetCachedHostRecordName(for error: Error) -> Bool {
+        Self.isUnknownItemCloudKitError(error)
     }
 
     private func normalizeHostName(_ name: String) -> String {

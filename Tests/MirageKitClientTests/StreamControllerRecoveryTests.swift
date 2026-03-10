@@ -449,6 +449,33 @@ struct StreamControllerRecoveryTests {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
+    @Test("Decode threshold before first presented frame requests immediate startup recovery")
+    func decodeThresholdBeforeFirstPresentedFrameRequestsImmediateStartupRecovery() async throws {
+        let streamID: StreamID = 146
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+        await controller.updatePresentationTier(.activeLive)
+
+        await controller.handleDecodeErrorThresholdSignal()
+        try await waitUntil("startup decode-threshold recovery request") {
+            keyframeCounter.value == 1
+        }
+
+        #expect(await controller.firstPresentedFrameLastRecoveryRequestTime > 0)
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     @Test("Recovery dispatch helper enforces minimum intervals")
     func recoveryDispatchHelperEnforcesMinimumIntervals() {
         #expect(

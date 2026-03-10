@@ -366,6 +366,16 @@ extension StreamController {
         }
 
         let now = currentTime()
+        if shouldAttemptStartupDecodeErrorRecovery(now: now) {
+            firstPresentedFrameLastRecoveryRequestTime = now
+            decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+            MirageLogger.client(
+                "Decode error threshold observed before first presented frame for stream \(streamID); forcing startup hard recovery"
+            )
+            await requestRecovery(reason: .decodeErrorThreshold)
+            return
+        }
+
         guard shouldAttemptDecodeErrorRecovery(now: now) else {
             maybeLogDeferredDecodeErrorRecovery(now: now)
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
@@ -386,6 +396,11 @@ extension StreamController {
         }
 
         await requestSoftRecovery(reason: .decodeErrorThreshold)
+    }
+
+    func shouldAttemptStartupDecodeErrorRecovery(now _: CFAbsoluteTime) -> Bool {
+        guard !hasPresentedFirstFrame else { return false }
+        return awaitingFirstPresentedFrame
     }
 
     func forcePresentationStallForTesting(now: CFAbsoluteTime? = nil) {

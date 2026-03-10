@@ -67,12 +67,29 @@ extension MirageHostService {
         }
         let clampedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
         let defaultDesktopBackingScale = resolvedClientScaleFactor ?? max(1.0, sharedVirtualDisplayScaleFactor)
-        let desktopBackingScale = resolvedDesktopBackingScaleResolution(
-            logicalResolution: displayResolution,
-            defaultScaleFactor: defaultDesktopBackingScale,
-            streamScale: clampedStreamScale,
-            disableResolutionCap: disableResolutionCap
+        let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
+            for: targetFrameRate ?? 60
         )
+        let virtualDisplayStartupAttempts = desktopVirtualDisplayStartupAttempts(
+            logicalResolution: displayResolution,
+            requestedScaleFactor: defaultDesktopBackingScale,
+            streamScale: clampedStreamScale,
+            disableResolutionCap: disableResolutionCap,
+            requestedRefreshRate: virtualDisplayRefreshRate,
+            requestedColorSpace: encoderConfig.withOverrides(
+                keyFrameInterval: keyFrameInterval,
+                bitDepth: bitDepth,
+                captureQueueDepth: captureQueueDepth,
+                bitrate: bitrate
+            ).withTargetFrameRate(targetFrameRate ?? encoderConfig.targetFrameRate).colorSpace
+        )
+        let desktopBackingScale = virtualDisplayStartupAttempts.first?.backingScale ??
+            resolvedDesktopBackingScaleResolution(
+                logicalResolution: displayResolution,
+                defaultScaleFactor: defaultDesktopBackingScale,
+                streamScale: clampedStreamScale,
+                disableResolutionCap: disableResolutionCap
+            )
         let virtualDisplayResolution = desktopBackingScale.pixelResolution
         if let resolvedClientScaleFactor {
             let scaleText = Double(resolvedClientScaleFactor).formatted(.number.precision(.fractionLength(3)))
@@ -149,95 +166,140 @@ extension MirageHostService {
         // Acquire virtual display at the resolved streaming resolution.
         // The 5K cap is applied at the encoding layer, not the virtual display.
         // Pass the target frame rate to enable 120Hz when appropriate.
-        let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
-            for: targetFrameRate ?? 60
-        )
-        var captureDisplay: SCDisplayWrapper
-        var captureResolution: CGSize
-        var captureDisplayP3CoverageStatus: MirageDisplayP3CoverageStatus?
-        var captureDisplayColorSpace: MirageColorSpace?
+        var acquiredCaptureContext: (
+            display: SCDisplayWrapper,
+            resolution: CGSize,
+            p3CoverageStatus: MirageDisplayP3CoverageStatus?,
+            colorSpace: MirageColorSpace?
+        )?
+        var lastVirtualDisplayError: Error?
 
-        do {
-            let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
-                .desktopStream,
-                resolution: virtualDisplayResolution,
-                refreshRate: virtualDisplayRefreshRate,
-                colorSpace: config.colorSpace
-            )
-            logDesktopStartStep("virtual display acquired (\(context.displayID))")
+        acquisitionLoop: for (index, attempt) in virtualDisplayStartupAttempts.enumerated() {
+            let attemptConfig = config.withInternalOverrides(colorSpace: attempt.colorSpace)
+            let attemptResolution = attempt.backingScale.pixelResolution
+            let isFinalAttempt = index == virtualDisplayStartupAttempts.count - 1
 
-            captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
-            logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
-            captureResolution = context.resolution
-            captureDisplayP3CoverageStatus = context.displayP3CoverageStatus
-            captureDisplayColorSpace = context.colorSpace
-
-            desktopVirtualDisplayID = context.displayID
-            var resolvedBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds()
-            if resolvedBounds == nil { resolvedBounds = resolveDesktopDisplayBounds() }
-            guard let bounds = resolvedBounds else {
-                throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
+            if attempt.isConservativeRetry {
+                MirageLogger.host(
+                    "Retrying desktop virtual display acquisition with conservative settings: " +
+                        "\(Int(attemptResolution.width))x\(Int(attemptResolution.height)) px, " +
+                        "\(attempt.refreshRate)Hz, \(attempt.colorSpace.displayName), 1x backing"
+                )
             }
-            desktopDisplayBounds = bounds
-            sharedVirtualDisplayGeneration = await SharedVirtualDisplayManager.shared.getDisplayGeneration()
-            sharedVirtualDisplayScaleFactor = max(1.0, context.scaleFactor)
-            logDesktopStartStep("display bounds cached")
 
-            if desktopPrimaryPhysicalDisplayID == nil {
-                let primaryDisplayID = resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
-                desktopPrimaryPhysicalDisplayID = primaryDisplayID
-                desktopPrimaryPhysicalBounds = CGDisplayBounds(primaryDisplayID)
+            do {
+                let context = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
+                    .desktopStream,
+                    resolution: attemptResolution,
+                    refreshRate: attempt.refreshRate,
+                    colorSpace: attempt.colorSpace
+                )
+                config = attemptConfig
+                logDesktopStartStep("virtual display acquired (\(context.displayID), \(attempt.label))")
+
+                let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
+                logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
+                let captureResolution = context.resolution
+                let captureDisplayP3CoverageStatus = context.displayP3CoverageStatus
+                let captureDisplayColorSpace = context.colorSpace
+
+                desktopVirtualDisplayID = context.displayID
+                var resolvedBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds()
+                if resolvedBounds == nil { resolvedBounds = resolveDesktopDisplayBounds() }
+                guard let bounds = resolvedBounds else {
+                    throw MirageError.protocolError("Desktop stream display exists but couldn't get bounds")
+                }
+                desktopDisplayBounds = bounds
+                sharedVirtualDisplayGeneration = await SharedVirtualDisplayManager.shared.getDisplayGeneration()
+                sharedVirtualDisplayScaleFactor = max(1.0, context.scaleFactor)
+                logDesktopStartStep("display bounds cached")
+
+                if desktopPrimaryPhysicalDisplayID == nil {
+                    let primaryDisplayID = resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
+                    desktopPrimaryPhysicalDisplayID = primaryDisplayID
+                    desktopPrimaryPhysicalBounds = CGDisplayBounds(primaryDisplayID)
+                    MirageLogger
+                        .host(
+                            "Desktop primary physical display: \(primaryDisplayID), bounds=\(desktopPrimaryPhysicalBounds ?? .zero)"
+                        )
+                }
+
+                if mode == .mirrored {
+                    await setupDisplayMirroring(targetDisplayID: context.displayID)
+                    logDesktopStartStep("display mirroring configured")
+                } else {
+                    logDesktopStartStep("display mirroring skipped (secondary display)")
+                }
+
+                if captureDisplay.display.displayID != context.displayID {
+                    MirageLogger.error(
+                        .host,
+                        "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
+                    )
+                }
+                if context.colorSpace != config.colorSpace {
+                    MirageLogger.host(
+                        "Desktop display color space adjusted by virtual display manager: requested=\(config.colorSpace.displayName), effective=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue)"
+                    )
+                }
+                if attempt.isConservativeRetry {
+                    MirageLogger.host(
+                        "Desktop virtual display conservative retry succeeded for stream startup"
+                    )
+                }
                 MirageLogger
                     .host(
-                        "Desktop primary physical display: \(primaryDisplayID), bounds=\(desktopPrimaryPhysicalBounds ?? .zero)"
+                        "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), requestedColor=\(config.colorSpace.displayName), effectiveColor=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue))"
                     )
-            }
+                acquiredCaptureContext = (
+                    display: captureDisplay,
+                    resolution: captureResolution,
+                    p3CoverageStatus: captureDisplayP3CoverageStatus,
+                    colorSpace: captureDisplayColorSpace
+                )
+                break acquisitionLoop
+            } catch {
+                await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+                desktopVirtualDisplayID = nil
+                sharedVirtualDisplayGeneration = 0
+                sharedVirtualDisplayScaleFactor = 1.0
+                desktopDisplayBounds = nil
+                lastVirtualDisplayError = error
 
-            if mode == .mirrored {
-                // Set up display mirroring so physical displays mirror the virtual display.
-                // This lets the virtual display drive the streamed resolution.
-                await setupDisplayMirroring(targetDisplayID: context.displayID)
-                logDesktopStartStep("display mirroring configured")
-            } else {
-                logDesktopStartStep("display mirroring skipped (secondary display)")
-            }
+                if !isFinalAttempt {
+                    MirageLogger.host(
+                        "Desktop virtual display acquisition failed for \(attempt.label); retrying: \(error)"
+                    )
+                    continue
+                }
 
-            if captureDisplay.display.displayID != context.displayID {
-                MirageLogger.error(
-                    .host,
-                    "Desktop capture display mismatch: capture=\(captureDisplay.display.displayID), virtual=\(context.displayID)"
-                )
+                if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError,
+                   case .creationFailed = sharedDisplayError {
+                    MirageLogger.host(
+                        "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
+                    )
+                } else {
+                    MirageLogger.error(
+                        .host,
+                        "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
+                    )
+                }
             }
-            if context.colorSpace != config.colorSpace {
-                MirageLogger.host(
-                    "Desktop display color space adjusted by virtual display manager: requested=\(config.colorSpace.displayName), effective=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue)"
-                )
-            }
-            MirageLogger
-                .host(
-                    "Desktop capture source: Virtual Display (capture display \(captureDisplay.display.displayID), virtual \(context.displayID), requestedColor=\(config.colorSpace.displayName), effectiveColor=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue))"
-                )
-        } catch {
-            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
-            desktopVirtualDisplayID = nil
-            sharedVirtualDisplayGeneration = 0
-            sharedVirtualDisplayScaleFactor = 1.0
-            desktopDisplayBounds = nil
-            if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError,
-               case .creationFailed = sharedDisplayError {
-                MirageLogger.host(
-                    "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
-                )
-            } else {
-                MirageLogger.error(
-                    .host,
-                    "Virtual display acquisition failed for desktop stream; fail-closed policy active: \(error)"
-                )
-            }
+        }
+
+        if let lastVirtualDisplayError, desktopVirtualDisplayID == nil {
             throw MirageError.protocolError(
-                "Virtual display acquisition failed for desktop stream: \(error)"
+                "Virtual display acquisition failed for desktop stream: \(lastVirtualDisplayError)"
             )
         }
+
+        guard let acquiredCaptureContext else {
+            throw MirageError.protocolError("Desktop stream virtual display acquisition completed without a capture context")
+        }
+        let captureDisplay = acquiredCaptureContext.display
+        let captureResolution = acquiredCaptureContext.resolution
+        let captureDisplayP3CoverageStatus = acquiredCaptureContext.p3CoverageStatus
+        let captureDisplayColorSpace = acquiredCaptureContext.colorSpace
 
         if let captureDisplayColorSpace, captureDisplayColorSpace != config.colorSpace {
             let requestedColorSpace = config.colorSpace

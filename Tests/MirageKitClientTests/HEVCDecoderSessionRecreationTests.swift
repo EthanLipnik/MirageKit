@@ -29,4 +29,20 @@ struct HEVCDecoderSessionRecreationTests {
             shouldRecreateForErrors: false
         ))
     }
+
+    @Test("Handled decode callback failures stay out of non-fatal diagnostics")
+    func handledDecodeCallbackFailuresStayOutOfNonFatalDiagnostics() {
+        #expect(HEVCDecoder.shouldSuppressNonFatalCallbackFailure(status: -12909))
+        #expect(HEVCDecoder.shouldSuppressNonFatalCallbackFailure(status: -12911))
+        #expect(HEVCDecoder.shouldSuppressNonFatalCallbackFailure(status: -12903))
+        #expect(HEVCDecoder.shouldSuppressNonFatalCallbackFailure(status: -17694))
+        #expect(HEVCDecoder.shouldSuppressNonFatalCallbackFailure(status: -1) == false)
+    }
+
+    @Test("Only invalid-session and decoder-malfunction callback failures invalidate the session")
+    func callbackFailureSessionInvalidationOnlyAppliesToPoisonedDecoderStates() {
+        #expect(HEVCDecoder.shouldInvalidateSessionAfterCallbackFailure(status: -12903))
+        #expect(HEVCDecoder.shouldInvalidateSessionAfterCallbackFailure(status: -12911))
+        #expect(HEVCDecoder.shouldInvalidateSessionAfterCallbackFailure(status: -12909) == false)
+    }
 }

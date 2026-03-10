@@ -178,6 +178,46 @@ extension HEVCDecoder {
         guard !isFirstKeyframe else { return false }
         return dimensionsChanged || parameterSetsChanged || shouldRecreateForErrors
     }
+
+    nonisolated static func callbackFailureName(for status: OSStatus) -> String {
+        switch status {
+        case -12909:
+            "BadData"
+        case -12911:
+            "Malfunction"
+        case -12903:
+            "InvalidSession"
+        case -12910:
+            "UnsupportedDataFormat"
+        case -17694:
+            "ReferenceMissing"
+        default:
+            "Unknown"
+        }
+    }
+
+    nonisolated static func shouldSuppressNonFatalCallbackFailure(status: OSStatus) -> Bool {
+        switch status {
+        case -12909,
+             -12911,
+             -12903,
+             -12910,
+             -17694:
+            true
+        default:
+            false
+        }
+    }
+
+    nonisolated static func shouldInvalidateSessionAfterCallbackFailure(status: OSStatus) -> Bool {
+        switch status {
+        case -12911,
+             -12903:
+            true
+        default:
+            false
+        }
+    }
 }
 
 /// Info passed through the decode callback

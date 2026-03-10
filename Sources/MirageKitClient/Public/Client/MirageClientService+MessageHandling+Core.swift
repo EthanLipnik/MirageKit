@@ -565,6 +565,14 @@ extension MirageClientService {
 
     func handleErrorMessage(_ message: ControlMessage) {
         if let errorMessage = try? message.decode(ErrorMessage.self) {
+            let disposition = desktopStreamStartFailureDisposition(
+                errorCode: errorMessage.code,
+                desktopStartPending: desktopStreamMode != nil || desktopStreamRequestStartTime > 0,
+                hasActiveDesktopStream: desktopStreamID != nil
+            )
+            if disposition == .clearPendingStart {
+                clearPendingDesktopStreamStartState()
+            }
             if let runtimeCondition = errorMessage.code.runtimeConditionError {
                 delegate?.clientService(self, didEncounterError: runtimeCondition)
             } else {

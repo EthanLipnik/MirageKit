@@ -234,24 +234,26 @@ extension HEVCDecoder {
             sampleBuffer: sampleBuffer,
             flags: [._EnableAsynchronousDecompression],
             infoFlagsOut: &flags
-        ) { status, _, imageBuffer, presentationTime, _ in
+        ) { [weak self] status, _, imageBuffer, presentationTime, _ in
             if status != noErr {
-                // Common error codes:
-                // -12909 (kVTVideoDecoderBadDataErr): Corrupted/incompatible data
-                // -12911 (kVTVideoDecoderMalfunctionErr): Decoder malfunction
-                // -12903 (kVTInvalidSessionErr): Session invalid
-                let errorName = switch status {
-                case -12909: "BadData"
-                case -12911: "Malfunction"
-                case -12903: "InvalidSession"
-                case -12910: "UnsupportedDataFormat"
-                case -17694: "ReferenceMissing"
-                default: "Unknown"
-                }
+                let errorName = Self.callbackFailureName(for: status)
                 let decodeError = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-                MirageLogger.error(.decoder, error: decodeError, message: "Decode callback failed (\(errorName))")
-                // Track consecutive errors to detect when we need a fresh keyframe
                 let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
+                if Self.shouldSuppressNonFatalCallbackFailure(status: status) {
+                    MirageLogger.decoder(
+                        "Decode callback failed (\(errorName)); suppressing non-fatal report while recovery is in progress"
+                    )
+                } else {
+                    MirageLogger.error(.decoder, error: decodeError, message: "Decode callback failed (\(errorName))")
+                }
+                if Self.shouldInvalidateSessionAfterCallbackFailure(status: status) {
+                    Task { [weak self] in
+                        await self?.invalidateSessionIfCurrent(
+                            afterCallbackFailure: errorName,
+                            sessionGeneration: info.sessionGeneration
+                        )
+                    }
+                }
                 info.errorTracker?.recordError()
                 info.onCompletion?()
                 return

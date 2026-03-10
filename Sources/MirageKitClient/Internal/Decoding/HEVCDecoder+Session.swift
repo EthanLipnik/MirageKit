@@ -106,6 +106,21 @@ extension HEVCDecoder {
         }
     }
 
+    func invalidateSessionIfCurrent(afterCallbackFailure reason: String, sessionGeneration: UInt64) {
+        guard sessionGeneration == decompressionSessionGeneration else { return }
+        guard let session = decompressionSession else { return }
+
+        VTDecompressionSessionInvalidate(session)
+        decompressionSession = nil
+        pendingOutputTelemetryGeneration = 0
+        usingHardwareDecoder = nil
+        decoderHardwareStatusRefreshAttempts = 0
+
+        MirageLogger.decoder(
+            "Decoder session invalidated after callback failure (\(reason), generation \(sessionGeneration))"
+        )
+    }
+
     func recordDecodedOutputPixelFormat(_ pixelFormat: OSType, sessionGeneration: UInt64) {
         guard pendingOutputTelemetryGeneration == sessionGeneration else { return }
         pendingOutputTelemetryGeneration = 0

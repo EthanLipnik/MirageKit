@@ -35,7 +35,7 @@ extension MirageHostService {
     ) {
         let worker = controlWorker(for: clientID)
         worker.submit {
-            Task(priority: .userInitiated) {
+            Task(priority: .userInitiated) { @MainActor in
                 await work()
                 completion?()
             }
@@ -47,7 +47,7 @@ extension MirageHostService {
         _ work: @escaping @MainActor @Sendable () async -> Void
     ) {
         transportWorker.submit {
-            Task(priority: .userInitiated) {
+            Task(priority: .userInitiated) { @MainActor in
                 await work()
                 completion?()
             }
