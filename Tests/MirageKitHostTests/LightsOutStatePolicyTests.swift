@@ -116,7 +116,7 @@ struct LightsOutStatePolicyTests {
         #expect(
             MirageHostService.shouldLockHostWhenStreamingStops(
                 lockHostWhenStreamingStops: true,
-                sessionState: .active,
+                sessionState: .ready,
                 hasAppStreams: false,
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
@@ -130,7 +130,7 @@ struct LightsOutStatePolicyTests {
         #expect(
             !MirageHostService.shouldLockHostWhenStreamingStops(
                 lockHostWhenStreamingStops: true,
-                sessionState: .active,
+                sessionState: .ready,
                 hasAppStreams: true,
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
@@ -144,7 +144,7 @@ struct LightsOutStatePolicyTests {
         #expect(
             !MirageHostService.shouldLockHostWhenStreamingStops(
                 lockHostWhenStreamingStops: true,
-                sessionState: .active,
+                sessionState: .ready,
                 hasAppStreams: false,
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: true,
@@ -158,7 +158,7 @@ struct LightsOutStatePolicyTests {
         #expect(
             !MirageHostService.shouldLockHostWhenStreamingStops(
                 lockHostWhenStreamingStops: false,
-                sessionState: .active,
+                sessionState: .ready,
                 hasAppStreams: false,
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,

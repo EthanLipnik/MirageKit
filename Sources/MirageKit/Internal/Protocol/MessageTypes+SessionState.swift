@@ -8,62 +8,31 @@
 //
 
 import Foundation
+import Loom
 
 // MARK: - Session State Messages (Headless Mac Support)
-
-/// Host session state - indicates whether the Mac is accessible for streaming
-public enum HostSessionState: String, Codable, Sendable {
-    /// Screen is unlocked, ready for normal streaming
-    case active
-    /// Screen is locked (user logged in but screen locked, password only needed)
-    case screenLocked
-    /// At login window (no user session, username + password needed)
-    case loginScreen
-    /// Mac is asleep (needs wake before unlock)
-    case sleeping
-
-    /// Whether credentials are required to reach active state
-    public var requiresUnlock: Bool {
-        switch self {
-        case .active: false
-        case .loginScreen,
-             .screenLocked,
-             .sleeping: true
-        }
-    }
-
-    /// Whether username is needed in addition to password
-    public var requiresUsername: Bool {
-        switch self {
-        case .loginScreen: true
-        case .active,
-             .screenLocked,
-             .sleeping: false
-        }
-    }
-}
 
 /// Session state update sent from host to client
 /// Sent immediately after connection and whenever state changes
 package struct SessionStateUpdateMessage: Codable {
     /// Current session state
-    package let state: HostSessionState
+    package let state: LoomSessionAvailability
     /// Session token for this state (prevents replay attacks)
     package let sessionToken: String
     /// Whether username is needed for unlock
-    package let requiresUsername: Bool
+    package let requiresUserIdentifier: Bool
     /// Timestamp of this update
     package let timestamp: Date
 
     package init(
-        state: HostSessionState,
+        state: LoomSessionAvailability,
         sessionToken: String,
-        requiresUsername: Bool,
+        requiresUserIdentifier: Bool,
         timestamp: Date
     ) {
         self.state = state
         self.sessionToken = sessionToken
-        self.requiresUsername = requiresUsername
+        self.requiresUserIdentifier = requiresUserIdentifier
         self.timestamp = timestamp
     }
 }
@@ -89,7 +58,7 @@ package struct UnlockResponseMessage: Codable {
     /// Whether unlock was successful
     package let success: Bool
     /// New session state after attempt
-    package let newState: HostSessionState
+    package let newState: LoomSessionAvailability
     /// New session token (if state changed)
     package let newSessionToken: String?
     /// Error details if failed
@@ -103,7 +72,7 @@ package struct UnlockResponseMessage: Codable {
 
     package init(
         success: Bool,
-        newState: HostSessionState,
+        newState: LoomSessionAvailability,
         newSessionToken: String?,
         error: UnlockError?,
         canRetry: Bool,

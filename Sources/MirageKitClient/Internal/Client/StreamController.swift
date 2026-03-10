@@ -552,7 +552,7 @@ actor StreamController {
     }
 
     private func recordDecodeFailure(_ error: Error) {
-        let metadata = MirageDiagnosticsErrorMetadata(error: error)
+        let metadata = LoomDiagnosticsErrorMetadata(error: error)
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime()
         consecutiveDecodeErrors += 1

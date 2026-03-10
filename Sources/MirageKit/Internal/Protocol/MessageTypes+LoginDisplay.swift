@@ -21,9 +21,9 @@ package struct LoginDisplayReadyMessage: Codable {
     package let width: Int
     package let height: Int
     /// Current session state (screenLocked, loginScreen, etc.)
-    package let sessionState: HostSessionState
+    package let sessionState: LoomSessionAvailability
     /// Whether username is needed (true for loginScreen, false for screenLocked)
-    package let requiresUsername: Bool
+    package let requiresUserIdentifier: Bool
     /// Dimension token for rejecting old-dimension P-frames after resize.
     /// Client should update its reassembler with this token.
     package var dimensionToken: UInt16?
@@ -32,15 +32,15 @@ package struct LoginDisplayReadyMessage: Codable {
         streamID: UInt32,
         width: Int,
         height: Int,
-        sessionState: HostSessionState,
-        requiresUsername: Bool,
+        sessionState: LoomSessionAvailability,
+        requiresUserIdentifier: Bool,
         dimensionToken: UInt16? = nil
     ) {
         self.streamID = streamID
         self.width = width
         self.height = height
         self.sessionState = sessionState
-        self.requiresUsername = requiresUsername
+        self.requiresUserIdentifier = requiresUserIdentifier
         self.dimensionToken = dimensionToken
     }
 }
@@ -50,10 +50,10 @@ package struct LoginDisplayReadyMessage: Codable {
 package struct LoginDisplayStoppedMessage: Codable {
     /// The stream ID that was stopped
     package let streamID: UInt32
-    /// New session state (should be .active)
-    package let newState: HostSessionState
+    /// New session state (should be .ready)
+    package let newState: LoomSessionAvailability
 
-    package init(streamID: UInt32, newState: HostSessionState) {
+    package init(streamID: UInt32, newState: LoomSessionAvailability) {
         self.streamID = streamID
         self.newState = newState
     }

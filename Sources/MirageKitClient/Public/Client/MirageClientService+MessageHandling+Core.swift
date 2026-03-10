@@ -94,7 +94,7 @@ extension MirageClientService {
             }
 
             let identity = response.identity
-            guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
+            guard identity.keyID == LoomIdentityManager.keyID(for: identity.publicKey) else {
                 connectionState = .error("Invalid host identity key")
                 MirageLogger.client("Rejected hello response with invalid host key ID")
                 recordHelloValidationFailure(.invalidHostKeyID)
@@ -125,7 +125,7 @@ extension MirageClientService {
                 timestampMs: identity.timestampMs,
                 nonce: identity.nonce
             )
-            guard MirageIdentityManager.verify(
+            guard LoomIdentityManager.verify(
                 signature: identity.signature,
                 payload: signedPayload,
                 publicKey: identity.publicKey
@@ -167,8 +167,8 @@ extension MirageClientService {
                     recordHelloValidationFailure(.invalidUDPRegistrationToken)
                     return
                 }
-                let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
-                let localIdentity: MirageAccountIdentity
+                let resolvedIdentityManager = identityManager ?? LoomIdentityManager.shared
+                let localIdentity: LoomAccountIdentity
                 do {
                     localIdentity = try resolvedIdentityManager.currentIdentity()
                 } catch {
@@ -643,13 +643,13 @@ extension MirageClientService {
     func handleSessionStateUpdate(_ message: ControlMessage) {
         do {
             let update = try message.decode(SessionStateUpdateMessage.self)
-            MirageLogger.client("Host session state: \(update.state), requires username: \(update.requiresUsername)")
+            MirageLogger.client("Host session state: \(update.state), requires username: \(update.requiresUserIdentifier)")
             hostSessionState = update.state
             currentSessionToken = update.sessionToken
             delegate?.clientService(
                 self,
                 hostSessionStateChanged: update.state,
-                requiresUsername: update.requiresUsername
+                requiresUserIdentifier: update.requiresUserIdentifier
             )
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode session state update: ")
@@ -721,7 +721,7 @@ extension MirageClientService {
                 loginDisplayDidStart: StreamID(ready.streamID),
                 resolution: CGSize(width: ready.width, height: ready.height),
                 sessionState: ready.sessionState,
-                requiresUsername: ready.requiresUsername
+                requiresUserIdentifier: ready.requiresUserIdentifier
             )
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode login display ready: ")

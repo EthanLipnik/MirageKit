@@ -1,4 +1,4 @@
-import MirageBootstrapShared
+import Loom
 #if os(macOS)
 
 //
@@ -23,7 +23,7 @@ extension UnlockManager {
         timeout: TimeInterval = 25.0,
         pollInterval: TimeInterval = 0.35
     )
-    async -> HostSessionState {
+    async -> LoomSessionAvailability {
         let startTime = Date()
         var lastState = await sessionMonitor.refreshState(notify: false)
         var pollCount = 0
@@ -36,7 +36,7 @@ extension UnlockManager {
 
             let newState = await sessionMonitor.refreshState(notify: false)
 
-            if newState == .active {
+            if newState == .ready {
                 let elapsed = Date().timeIntervalSince(startTime)
                 let elapsedText = elapsed.formatted(.number.precision(.fractionLength(2)))
                 MirageLogger.host("Unlock detected after \(elapsedText)s (\(pollCount) polls)")

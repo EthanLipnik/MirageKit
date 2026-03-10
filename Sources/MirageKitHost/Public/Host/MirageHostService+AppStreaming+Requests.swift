@@ -1398,8 +1398,8 @@ extension MirageHostService {
         }
 
         appListRequestTask?.cancel()
-        if sessionState != .active {
-            MirageLogger.host("Session is \(sessionState); deferring app list request until active")
+        if sessionState != .ready {
+            MirageLogger.host("Session is \(sessionState); deferring app list request until ready")
             return
         }
         let forceRefresh = pending.requestedForceRefresh

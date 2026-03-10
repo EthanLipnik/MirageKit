@@ -46,7 +46,7 @@ package struct HelloMessage: Codable {
     package let deviceName: String
     package let deviceType: DeviceType
     package let protocolVersion: Int
-    package let capabilities: MirageHostCapabilities
+    package let advertisement: LoomPeerAdvertisement
     package let negotiation: MirageProtocolNegotiation
     /// iCloud user record ID for trust evaluation, if available.
     package let iCloudUserID: String?
@@ -60,7 +60,7 @@ package struct HelloMessage: Codable {
         deviceName: String,
         deviceType: DeviceType,
         protocolVersion: Int,
-        capabilities: MirageHostCapabilities,
+        advertisement: LoomPeerAdvertisement,
         negotiation: MirageProtocolNegotiation,
         iCloudUserID: String? = nil,
         identity: MirageIdentityEnvelope,
@@ -70,7 +70,7 @@ package struct HelloMessage: Codable {
         self.deviceName = deviceName
         self.deviceType = deviceType
         self.protocolVersion = protocolVersion
-        self.capabilities = capabilities
+        self.advertisement = advertisement
         self.negotiation = negotiation
         self.iCloudUserID = iCloudUserID
         self.identity = identity

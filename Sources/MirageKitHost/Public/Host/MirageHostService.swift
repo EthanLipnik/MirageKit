@@ -35,7 +35,7 @@ public final class MirageHostService {
     public internal(set) var state: HostState = .idle
 
     /// Current session state (locked, unlocked, sleeping, etc.)
-    public internal(set) var sessionState: HostSessionState = .active
+    public internal(set) var sessionState: LoomSessionAvailability = .ready
 
     /// Whether remote unlock is enabled (allows clients to unlock the Mac)
     public var remoteUnlockEnabled: Bool = true
@@ -68,14 +68,19 @@ public final class MirageHostService {
     /// If the provider returns `.trusted`, the connection is auto-approved.
     /// If the provider returns `.requiresApproval` or `.unavailable`, the delegate is consulted.
     /// If the provider returns `.denied`, the connection is rejected immediately.
-    public weak var trustProvider: (any MirageTrustProvider)?
+    public weak var trustProvider: (any LoomTrustProvider)? {
+        didSet {
+            loomNode.trustProvider = trustProvider
+        }
+    }
 
     /// Software update controller used for client-initiated host update status and install requests.
     public weak var softwareUpdateController: (any MirageHostSoftwareUpdateController)?
 
     /// Identity manager for signed handshake envelopes.
-    public var identityManager: MirageIdentityManager? = MirageIdentityManager.shared {
+    public var identityManager: LoomIdentityManager? = LoomIdentityManager.shared {
         didSet {
+            loomNode.identityManager = identityManager
             let keyID = Self.identityKeyID(for: identityManager)
             updateAdvertisedIdentityKeyID(keyID)
         }
@@ -107,14 +112,15 @@ public final class MirageHostService {
     /// This allows the app to resize and center the window via Accessibility API.
     public var onResizeWindowForStream: ((MirageWindow, CGSize) -> Void)?
 
-    let advertiser: BonjourAdvertiser
-    var advertisedCapabilities: MirageHostCapabilities
+    public let loomNode: LoomNode
+    var advertisedPeerAdvertisement: LoomPeerAdvertisement
     var udpListener: NWListener?
     var remoteControlListener: NWListener?
     let encoderConfig: MirageEncoderConfiguration
-    let networkConfig: MirageNetworkConfiguration
+    let networkConfig: LoomNetworkConfiguration
+    let serviceName: String
     var hostID: UUID = .init()
-    let handshakeReplayProtector = MirageReplayProtector()
+    let handshakeReplayProtector = LoomReplayProtector()
     // Internal for low-power policy extension.
     let encoderPowerStateMonitor = MiragePowerStateMonitor()
     var encoderPowerStateSnapshot = MiragePowerStateSnapshot(
@@ -122,9 +128,9 @@ public final class MirageHostService {
         isOnBattery: nil
     )
 
-    /// Current capability payload advertised in Bonjour TXT records.
-    public var currentAdvertisedCapabilities: MirageHostCapabilities {
-        advertisedCapabilities
+    /// Current peer advertisement payload published through Loom discovery.
+    public var currentPeerAdvertisement: LoomPeerAdvertisement {
+        advertisedPeerAdvertisement
     }
 
     // Stream management (internal for extension access)
@@ -137,7 +143,7 @@ public final class MirageHostService {
     var clientsByConnection: [ObjectIdentifier: ClientContext] = [:]
     var clientsByID: [UUID: ClientContext] = [:]
     var disconnectingClientIDs: Set<UUID> = []
-    var peerIdentityByClientID: [UUID: MiragePeerIdentity] = [:]
+    var peerIdentityByClientID: [UUID: LoomPeerIdentity] = [:]
     var singleClientConnectionID: ObjectIdentifier?
     nonisolated let transportRegistry = HostTransportRegistry()
     nonisolated let streamRegistry = HostStreamRegistry()
@@ -428,7 +434,7 @@ public final class MirageHostService {
         -> Void)?
     typealias ControlMessageHandler = @MainActor (ControlMessage, MirageConnectedClient, NWConnection) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
-    nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
+    nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
 
     public enum HostState: Equatable {
         case idle
@@ -449,10 +455,15 @@ public final class MirageHostService {
         hostName: String? = nil,
         deviceID: UUID? = nil,
         encoderConfiguration: MirageEncoderConfiguration = .highQuality,
-        networkConfiguration: MirageNetworkConfiguration = .default
+        loomConfiguration: LoomNetworkConfiguration = .default
     ) {
+        var resolvedConfiguration = loomConfiguration
+        if resolvedConfiguration.serviceType == Loom.serviceType {
+            resolvedConfiguration.serviceType = MirageKit.serviceType
+        }
+
         let name = hostName ?? Host.current().localizedName ?? "Mac"
-        let identityKeyID = Self.identityKeyID(for: MirageIdentityManager.shared)
+        let identityKeyID = Self.identityKeyID(for: LoomIdentityManager.shared)
         let hardwareModelIdentifier = Self.hardwareModelIdentifier()
         let hardwareColorCode = Self.hardwareColorCode()
         let hardwareIconName = Self.hardwareIconName(
@@ -463,32 +474,25 @@ public final class MirageHostService {
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName
         )
-        let capabilities = MirageHostCapabilities(
-            maxStreams: 4,
-            supportsHEVC: true,
-            supportsP3ColorSpace: true,
-            maxFrameRate: 120,
-            protocolVersion: Int(MirageKit.protocolVersion),
+        let peerAdvertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
             deviceID: deviceID,
             identityKeyID: identityKeyID,
-            hardwareModelIdentifier: hardwareModelIdentifier,
-            hardwareIconName: hardwareIconName,
-            hardwareMachineFamily: hardwareMachineFamily
+            modelIdentifier: hardwareModelIdentifier,
+            iconName: hardwareIconName,
+            machineFamily: hardwareMachineFamily
         )
         MirageLogger.host(
             "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil") color=\(hardwareColorCode?.description ?? "nil")"
         )
-        advertisedCapabilities = capabilities
-        hostID = capabilities.deviceID ?? UUID()
-
-        advertiser = BonjourAdvertiser(
-            serviceName: name,
-            capabilities: capabilities,
-            serviceType: networkConfiguration.serviceType,
-            enablePeerToPeer: networkConfiguration.enablePeerToPeer
+        advertisedPeerAdvertisement = peerAdvertisement
+        hostID = peerAdvertisement.deviceID ?? UUID()
+        serviceName = name
+        loomNode = LoomNode(
+            configuration: resolvedConfiguration,
+            identityManager: LoomIdentityManager.shared
         )
         encoderConfig = encoderConfiguration
-        networkConfig = networkConfiguration
+        networkConfig = resolvedConfiguration
 
         windowController.hostService = self
         inputController.hostService = self
@@ -525,21 +529,21 @@ public final class MirageHostService {
         }
         guard let diagnosticsContextProviderToken else { return }
         Task {
-            await MirageDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
+            await LoomDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
         }
     }
 
     private func registerDiagnosticsContextProvider() {
         Task { [weak self] in
             guard let self else { return }
-            diagnosticsContextProviderToken = await MirageDiagnostics.registerContextProvider { [weak self] in
+            diagnosticsContextProviderToken = await LoomDiagnostics.registerContextProvider { [weak self] in
                 guard let self else { return [:] }
                 return await MainActor.run { self.makeDiagnosticsContextSnapshot() }
             }
         }
     }
 
-    private func makeDiagnosticsContextSnapshot() -> MirageDiagnosticsContext {
+    private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
         [
             "host.state": .string(Self.diagnosticsHostStateName(state)),
             "host.sessionState": .string(String(describing: sessionState)),
@@ -577,26 +581,24 @@ public final class MirageHostService {
         environment[lightsOutDisableEnvironmentKey] == "1"
     }
 
-    private static func identityKeyID(for manager: MirageIdentityManager?) -> String? {
+    private static func identityKeyID(for manager: LoomIdentityManager?) -> String? {
         guard let manager else { return nil }
         return try? manager.currentIdentity().keyID
     }
 
-    /// Updates the identity key advertised in Bonjour TXT capabilities.
+    /// Updates the identity key advertised in the Loom discovery payload.
     public func updateAdvertisedIdentityKeyID(_ keyID: String?) {
-        advertisedCapabilities = MirageHostCapabilities(
-            maxStreams: advertisedCapabilities.maxStreams,
-            supportsHEVC: advertisedCapabilities.supportsHEVC,
-            supportsP3ColorSpace: advertisedCapabilities.supportsP3ColorSpace,
-            maxFrameRate: advertisedCapabilities.maxFrameRate,
-            protocolVersion: advertisedCapabilities.protocolVersion,
-            deviceID: advertisedCapabilities.deviceID,
+        advertisedPeerAdvertisement = LoomPeerAdvertisement(
+            protocolVersion: advertisedPeerAdvertisement.protocolVersion,
+            deviceID: advertisedPeerAdvertisement.deviceID,
             identityKeyID: keyID,
-            hardwareModelIdentifier: advertisedCapabilities.hardwareModelIdentifier,
-            hardwareIconName: advertisedCapabilities.hardwareIconName,
-            hardwareMachineFamily: advertisedCapabilities.hardwareMachineFamily
+            deviceType: advertisedPeerAdvertisement.deviceType,
+            modelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
+            iconName: advertisedPeerAdvertisement.iconName,
+            machineFamily: advertisedPeerAdvertisement.machineFamily,
+            metadata: advertisedPeerAdvertisement.metadata
         )
-        Task { await advertiser.updateCapabilities(advertisedCapabilities) }
+        Task { await loomNode.updateAdvertisement(advertisedPeerAdvertisement) }
     }
 
     private static func hardwareModelIdentifier() -> String? {

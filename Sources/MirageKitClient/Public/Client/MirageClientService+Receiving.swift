@@ -104,7 +104,7 @@ extension MirageClientService {
                 if parseOffset > 0 {
                     receiveBuffer.removeSubrange(0 ..< parseOffset)
                 }
-                if receiveBuffer.count > MirageControlMessageLimits.maxReceiveBufferBytes {
+                if receiveBuffer.count > LoomMessageLimits.maxReceiveBufferBytes {
                     MirageLogger.client("Control receive buffer overflow (\(receiveBuffer.count) bytes)")
                     receiveBuffer.removeAll(keepingCapacity: false)
                     await handleDisconnect(

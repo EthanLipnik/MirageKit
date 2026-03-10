@@ -23,7 +23,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
     public var controlPort: Int
     public var sshHostKeyFingerprint: String
     public var controlAuthSecret: String
-    public var autoEndpoints: [MirageBootstrapEndpoint]
+    public var autoEndpoints: [LoomBootstrapEndpoint]
     public var wakeOnLANMACAddress: String
     public var wakeOnLANBroadcasts: [String]
     public var remoteLoginReachable: Bool
@@ -37,7 +37,7 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         controlPort: Int = 9851,
         sshHostKeyFingerprint: String = "",
         controlAuthSecret: String = Self.makeDefaultControlAuthSecret(),
-        autoEndpoints: [MirageBootstrapEndpoint] = [],
+        autoEndpoints: [LoomBootstrapEndpoint] = [],
         wakeOnLANMACAddress: String = "",
         wakeOnLANBroadcasts: [String] = [],
         remoteLoginReachable: Bool = false,
@@ -82,20 +82,20 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         sshHostKeyFingerprint = try container.decodeIfPresent(String.self, forKey: .sshHostKeyFingerprint) ?? ""
         controlAuthSecret = try container.decodeIfPresent(String.self, forKey: .controlAuthSecret) ??
             Self.makeDefaultControlAuthSecret()
-        autoEndpoints = try container.decodeIfPresent([MirageBootstrapEndpoint].self, forKey: .autoEndpoints) ?? []
+        autoEndpoints = try container.decodeIfPresent([LoomBootstrapEndpoint].self, forKey: .autoEndpoints) ?? []
         wakeOnLANMACAddress = try container.decodeIfPresent(String.self, forKey: .wakeOnLANMACAddress) ?? ""
         wakeOnLANBroadcasts = try container.decodeIfPresent([String].self, forKey: .wakeOnLANBroadcasts) ?? []
         remoteLoginReachable = try container.decodeIfPresent(Bool.self, forKey: .remoteLoginReachable) ?? false
         preloginDaemonReady = try container.decodeIfPresent(Bool.self, forKey: .preloginDaemonReady) ?? false
     }
 
-    public func toBootstrapMetadata() -> MirageBootstrapMetadata {
+    public func toBootstrapMetadata() -> LoomBootstrapMetadata {
         var endpoints = autoEndpoints
         let trimmedHost = userEndpointHost.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmedHost.isEmpty,
            let userPort = UInt16(clamping: userEndpointPort) {
             endpoints.insert(
-                MirageBootstrapEndpoint(
+                LoomBootstrapEndpoint(
                     host: trimmedHost,
                     port: userPort,
                     source: .user
@@ -104,14 +104,14 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             )
         }
 
-        let wakeInfo: MirageWakeOnLANInfo? = {
+        let wakeInfo: LoomWakeOnLANInfo? = {
             let mac = wakeOnLANMACAddress.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !mac.isEmpty else { return nil }
             let broadcasts = wakeOnLANBroadcasts
                 .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
                 .filter { !$0.isEmpty }
             guard !broadcasts.isEmpty else { return nil }
-            return MirageWakeOnLANInfo(
+            return LoomWakeOnLANInfo(
                 macAddress: mac,
                 broadcastAddresses: broadcasts
             )
@@ -122,10 +122,9 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         let controlSecret = controlAuthSecret
             .trimmingCharacters(in: .whitespacesAndNewlines)
 
-        return MirageBootstrapMetadata(
+        return LoomBootstrapMetadata(
             enabled: enabled,
             supportsPreloginDaemon: preloginDaemonReady,
-            supportsAutomaticUnlock: true,
             endpoints: endpoints,
             sshPort: UInt16(clamping: sshPort),
             controlPort: UInt16(clamping: controlPort),

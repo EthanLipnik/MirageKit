@@ -61,7 +61,7 @@ struct MirageKitTests {
             deviceName: "Test Device",
             deviceType: .mac,
             protocolVersion: Int(MirageKit.protocolVersion),
-            capabilities: MirageHostCapabilities(),
+            advertisement: LoomPeerAdvertisement(),
             negotiation: MirageProtocolNegotiation.clientHello(
                 protocolVersion: Int(MirageKit.protocolVersion),
                 supportedFeatures: mirageSupportedFeatures
@@ -130,7 +130,7 @@ struct MirageKitTests {
     @Test("Control parser rejects oversized app list payload")
     func controlParserRejectsOversizedAppListPayload() {
         var data = Data([ControlMessageType.appList.rawValue])
-        let oversizedLength = UInt32(MirageControlMessageLimits.maxAppListPayloadBytes + 1)
+        let oversizedLength = UInt32(LoomMessageLimits.maxLargeMetadataPayloadBytes + 1)
         withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
 
         switch ControlMessage.deserialize(from: data) {
@@ -144,7 +144,7 @@ struct MirageKitTests {
     @Test("Control parser rejects oversized app icon payload")
     func controlParserRejectsOversizedAppIconPayload() {
         var data = Data([ControlMessageType.appIconUpdate.rawValue])
-        let oversizedLength = UInt32(MirageControlMessageLimits.maxHostHardwareIconPayloadBytes + 1)
+        let oversizedLength = UInt32(LoomMessageLimits.maxInlineAssetPayloadBytes + 1)
         withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
 
         switch ControlMessage.deserialize(from: data) {
@@ -162,7 +162,7 @@ struct MirageKitTests {
             deviceName: "Mismatch Test",
             deviceType: .iPad,
             protocolVersion: Int(MirageKit.protocolVersion),
-            capabilities: MirageHostCapabilities(),
+            advertisement: LoomPeerAdvertisement(),
             negotiation: MirageProtocolNegotiation.clientHello(
                 protocolVersion: Int(MirageKit.protocolVersion),
                 supportedFeatures: mirageSupportedFeatures
@@ -870,27 +870,35 @@ struct MirageKitTests {
         #expect(window1.hashValue == window2.hashValue)
     }
 
-    @Test("Host capabilities TXT record")
-    func capabilitiesTXTRecord() {
-        let capabilities = MirageHostCapabilities(
-            maxStreams: 4,
-            supportsHEVC: true,
-            supportsP3ColorSpace: true,
-            maxFrameRate: 120,
-            protocolVersion: Int(MirageKit.protocolVersion)
+    @Test("Peer advertisement TXT record")
+    func peerAdvertisementTXTRecord() {
+        let deviceID = UUID()
+        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
+            deviceID: deviceID,
+            identityKeyID: "test-key-id",
+            modelIdentifier: "Mac16,1",
+            iconName: "desktopcomputer",
+            machineFamily: "Mac"
         )
 
-        let txtRecord = capabilities.toTXTRecord()
-        #expect(txtRecord["maxStreams"] == "4")
-        #expect(txtRecord["hevc"] == "1")
-        #expect(txtRecord["p3"] == "1")
-        #expect(txtRecord["maxFps"] == "120")
+        let txtRecord = advertisement.toTXTRecord()
+        #expect(txtRecord["proto"] == String(Int(Loom.protocolVersion)))
+        #expect(txtRecord["did"] == deviceID.uuidString)
+        #expect(txtRecord["ikid"] == "test-key-id")
+        #expect(txtRecord["dt"] == DeviceType.mac.rawValue)
+        #expect(txtRecord["model"] == "Mac16,1")
+        #expect(txtRecord["icon"] == "desktopcomputer")
+        #expect(txtRecord["family"] == "Mac")
 
-        let decoded = MirageHostCapabilities.from(txtRecord: txtRecord)
-        #expect(decoded.maxStreams == 4)
-        #expect(decoded.supportsHEVC == true)
-        #expect(decoded.maxFrameRate == 120)
-        #expect(decoded.protocolVersion == Int(MirageKit.protocolVersion))
+        let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
+        #expect(decoded.protocolVersion == Int(Loom.protocolVersion))
+        #expect(decoded.deviceID == deviceID)
+        #expect(decoded.identityKeyID == "test-key-id")
+        #expect(decoded.deviceType == .mac)
+        #expect(MiragePeerAdvertisementMetadata.maxStreams(from: decoded) == 4)
+        #expect(MiragePeerAdvertisementMetadata.supportsHEVC(in: decoded) == true)
+        #expect(MiragePeerAdvertisementMetadata.supportsP3ColorSpace(in: decoded) == true)
+        #expect(MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
     }
 
     @Test("Stream statistics formatting")

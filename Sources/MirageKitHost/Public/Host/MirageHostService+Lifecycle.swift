@@ -34,9 +34,12 @@ public extension MirageHostService {
         do {
             // Start TCP listener for control connections (handler passed directly)
             MirageLogger.host("Starting TCP listener on port \(networkConfig.controlPort)...")
-            let controlPort = try await advertiser.start(port: networkConfig.controlPort) { [weak self] connection in
+            let controlPort = try await loomNode.startAdvertising(
+                serviceName: serviceName,
+                advertisement: advertisedPeerAdvertisement
+            ) { [weak self] session in
                 Task { @MainActor [weak self] in
-                    await self?.handleNewConnection(connection)
+                    await self?.handleNewConnection(session.connection)
                 }
             }
             MirageLogger.host("TCP listener started on port \(controlPort)")
@@ -48,7 +51,7 @@ public extension MirageHostService {
 
             state = .advertising(controlPort: controlPort, dataPort: dataPort)
             MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort)")
-            await advertiser.updateCapabilities(advertisedCapabilities)
+            await loomNode.updateAdvertisement(advertisedPeerAdvertisement)
             await updateRemoteControlListenerState()
 
             // Set up app streaming callbacks
@@ -121,7 +124,7 @@ public extension MirageHostService {
         // Force release power assertion on full stop
         await PowerAssertionManager.shared.forceDisable()
 
-        await advertiser.stop()
+        await loomNode.stopAdvertising()
         udpListener?.cancel()
         udpListener = nil
 

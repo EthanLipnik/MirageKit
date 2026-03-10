@@ -57,7 +57,7 @@ struct ClientMediaEncryptionPolicyTests {
     @Test("Client updates network policy at runtime")
     func clientNetworkPolicyRuntimeUpdate() {
         let service = MirageClientService(
-            networkConfiguration: MirageNetworkConfiguration(
+            loomConfiguration: LoomNetworkConfiguration(
                 enablePeerToPeer: true,
                 requireEncryptedMediaOnLocalNetwork: true
             )

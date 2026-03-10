@@ -15,7 +15,7 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     private struct ReceivedHello {
-        let deviceInfo: MirageDeviceInfo
+        let deviceInfo: LoomPeerDeviceInfo
         let negotiation: MirageProtocolNegotiation
         let requestNonce: String
         let identity: MirageIdentityEnvelope
@@ -23,7 +23,7 @@ extension MirageHostService {
     }
 
     private struct RejectedHello {
-        let deviceInfo: MirageDeviceInfo
+        let deviceInfo: LoomPeerDeviceInfo
         let requestNonce: String
         let negotiation: MirageProtocolNegotiation
         let reason: HelloRejectionReason
@@ -283,7 +283,7 @@ extension MirageHostService {
         await refreshSessionStateIfNeeded()
         await sendSessionState(to: clientContext)
 
-        if sessionState == .active { await sendWindowList(to: clientContext) } else {
+        if sessionState == .ready { await sendWindowList(to: clientContext) } else {
             await startLoginDisplayStreamIfNeeded()
             MirageLogger.host("Session is \(sessionState), client will show unlock form")
         }
@@ -317,10 +317,10 @@ extension MirageHostService {
                 break
             }
 
-            if receiveBuffer.count > MirageControlMessageLimits.maxHelloFrameBytes {
+            if receiveBuffer.count > LoomMessageLimits.maxHelloFrameBytes {
                 MirageLogger.error(
                     .host,
-                    "Rejected hello frame from \(endpoint): exceeded \(MirageControlMessageLimits.maxHelloFrameBytes) bytes"
+                    "Rejected hello frame from \(endpoint): exceeded \(LoomMessageLimits.maxHelloFrameBytes) bytes"
                 )
                 return nil
             }
@@ -361,7 +361,7 @@ extension MirageHostService {
         do {
             let hello = try message.decode(HelloMessage.self)
             let identity = hello.identity
-            guard identity.keyID == MirageIdentityManager.keyID(for: identity.publicKey) else {
+            guard identity.keyID == LoomIdentityManager.keyID(for: identity.publicKey) else {
                 MirageLogger.host("Rejected hello from \(hello.deviceName): invalid identity key ID")
                 return nil
             }
@@ -370,7 +370,7 @@ extension MirageHostService {
                 deviceName: hello.deviceName,
                 deviceType: hello.deviceType,
                 protocolVersion: hello.protocolVersion,
-                capabilities: hello.capabilities,
+                advertisement: hello.advertisement,
                 negotiation: hello.negotiation,
                 iCloudUserID: hello.iCloudUserID,
                 keyID: identity.keyID,
@@ -378,7 +378,7 @@ extension MirageHostService {
                 timestampMs: identity.timestampMs,
                 nonce: identity.nonce
             )
-            guard MirageIdentityManager.verify(
+            guard LoomIdentityManager.verify(
                 signature: identity.signature,
                 payload: signedPayload,
                 publicKey: identity.publicKey
@@ -395,7 +395,7 @@ extension MirageHostService {
                 return nil
             }
 
-            let deviceInfo = MirageDeviceInfo(
+            let deviceInfo = LoomPeerDeviceInfo(
                 id: hello.deviceID,
                 name: hello.deviceName,
                 deviceType: hello.deviceType,
@@ -485,10 +485,10 @@ extension MirageHostService {
     }
 
     /// Evaluates trust using the provider and falls back to delegate approval if needed.
-    private func evaluateTrustAndApproval(for deviceInfo: MirageDeviceInfo) async -> TrustApprovalDecision {
+    private func evaluateTrustAndApproval(for deviceInfo: LoomPeerDeviceInfo) async -> TrustApprovalDecision {
         // If a trust provider is set, consult it first
         if let trustProvider {
-            let peerIdentity = MiragePeerIdentity(
+            let peerIdentity = LoomPeerIdentity(
                 deviceID: deviceInfo.id,
                 name: deviceInfo.name,
                 deviceType: deviceInfo.deviceType,
@@ -541,7 +541,7 @@ extension MirageHostService {
     }
 
     private func awaitApprovalDecision(
-        for deviceInfo: MirageDeviceInfo,
+        for deviceInfo: LoomPeerDeviceInfo,
         connection: NWConnection
     ) async -> ApprovalOutcome {
         await withCheckedContinuation { continuation in
@@ -616,8 +616,8 @@ extension MirageHostService {
         return mediaSecurityByClientID[clientID]
     }
 
-    private func peerIdentity(from deviceInfo: MirageDeviceInfo) -> MiragePeerIdentity {
-        MiragePeerIdentity(
+    private func peerIdentity(from deviceInfo: LoomPeerDeviceInfo) -> LoomPeerIdentity {
+        LoomPeerIdentity(
             deviceID: deviceInfo.id,
             name: deviceInfo.name,
             deviceType: deviceInfo.deviceType,
@@ -631,7 +631,7 @@ extension MirageHostService {
 
     func handleProtocolMismatchUpdateRequestIfNeeded(
         hello: HelloMessage,
-        deviceInfo: MirageDeviceInfo
+        deviceInfo: LoomPeerDeviceInfo
     ) async -> (accepted: Bool, message: String)? {
         guard hello.requestHostUpdateOnProtocolMismatch == true else {
             return nil
@@ -670,7 +670,7 @@ extension MirageHostService {
 
     func shouldPreemptExistingClient(
         _ existingClient: MirageConnectedClient,
-        for incomingDeviceInfo: MirageDeviceInfo
+        for incomingDeviceInfo: LoomPeerDeviceInfo
     ) -> Bool {
         if existingClient.id == incomingDeviceInfo.id { return true }
 
@@ -682,7 +682,7 @@ extension MirageHostService {
         return existingIdentityKeyID == incomingIdentityKeyID
     }
 
-    func preemptExistingClientIfSuperseded(by incomingDeviceInfo: MirageDeviceInfo) async {
+    func preemptExistingClientIfSuperseded(by incomingDeviceInfo: LoomPeerDeviceInfo) async {
         guard let existingClient = clientsByConnection.values.first?.client else { return }
         guard shouldPreemptExistingClient(existingClient, for: incomingDeviceInfo) else { return }
 
@@ -712,7 +712,7 @@ extension MirageHostService {
         accepted: Bool,
         dataPort: UInt16,
         negotiation: MirageProtocolNegotiation,
-        deviceInfo: MirageDeviceInfo,
+        deviceInfo: LoomPeerDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
         mediaEncryptionEnabled: Bool = true,
@@ -801,7 +801,7 @@ extension MirageHostService {
         to connection: NWConnection,
         dataPort: UInt16,
         negotiation: MirageProtocolNegotiation,
-        deviceInfo: MirageDeviceInfo,
+        deviceInfo: LoomPeerDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
         mediaEncryptionEnabled: Bool = true,

@@ -149,7 +149,7 @@ public protocol MirageHostSoftwareUpdateController: AnyObject, Sendable {
     @MainActor
     func hostService(
         _ service: MirageHostService,
-        softwareUpdateStatusFor peer: MiragePeerIdentity,
+        softwareUpdateStatusFor peer: LoomPeerIdentity,
         forceRefresh: Bool
     ) async -> MirageHostSoftwareUpdateStatusSnapshot
 
@@ -157,7 +157,7 @@ public protocol MirageHostSoftwareUpdateController: AnyObject, Sendable {
     @MainActor
     func hostService(
         _ service: MirageHostService,
-        shouldAuthorizeSoftwareUpdateRequestFrom peer: MiragePeerIdentity,
+        shouldAuthorizeSoftwareUpdateRequestFrom peer: LoomPeerIdentity,
         trigger: MirageHostSoftwareUpdateInstallTrigger
     ) async -> Bool
 
@@ -165,7 +165,7 @@ public protocol MirageHostSoftwareUpdateController: AnyObject, Sendable {
     @MainActor
     func hostService(
         _ service: MirageHostService,
-        performSoftwareUpdateInstallFor peer: MiragePeerIdentity,
+        performSoftwareUpdateInstallFor peer: LoomPeerIdentity,
         trigger: MirageHostSoftwareUpdateInstallTrigger
     ) async -> MirageHostSoftwareUpdateInstallResult
 }

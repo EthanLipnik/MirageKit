@@ -8,13 +8,13 @@
 //
 
 import Foundation
-import MirageBootstrapShared
+import Loom
 
 #if os(macOS)
 
 public struct MirageHostBootstrapUnlockAttemptResult: Sendable, Equatable {
     public let success: Bool
-    public let state: HostSessionState
+    public let state: LoomSessionAvailability
     public let message: String?
     public let canRetry: Bool
     public let retriesRemaining: Int?
@@ -22,7 +22,7 @@ public struct MirageHostBootstrapUnlockAttemptResult: Sendable, Equatable {
 
     public init(
         success: Bool,
-        state: HostSessionState,
+        state: LoomSessionAvailability,
         message: String?,
         canRetry: Bool,
         retriesRemaining: Int?,
@@ -51,7 +51,7 @@ public actor MirageHostBootstrapUnlockService {
     }
 
     public func startMonitoring(
-        onStateChange: (@Sendable (HostSessionState) -> Void)? = nil
+        onStateChange: (@Sendable (LoomSessionAvailability) -> Void)? = nil
     ) async {
         guard !hasStartedMonitoring else { return }
         hasStartedMonitoring = true
@@ -66,7 +66,7 @@ public actor MirageHostBootstrapUnlockService {
         await sessionMonitor.stop()
     }
 
-    public func currentState() async -> HostSessionState {
+    public func currentState() async -> LoomSessionAvailability {
         await sessionMonitor.refreshState(notify: false)
     }
 
@@ -89,10 +89,10 @@ public actor MirageHostBootstrapUnlockService {
             )
         }
 
-        guard stateBeforeAttempt.requiresUnlock else {
+        guard stateBeforeAttempt.requiresCredentials else {
             return MirageHostBootstrapUnlockAttemptResult(
                 success: true,
-                state: .active,
+                state: .ready,
                 message: "Host session is already active.",
                 canRetry: false,
                 retriesRemaining: nil,
@@ -103,14 +103,14 @@ public actor MirageHostBootstrapUnlockService {
         let (result, retriesRemaining, retryAfterSeconds) = await unlockManager.attemptUnlock(
             username: username,
             password: trimmedPassword,
-            requiresUsername: stateBeforeAttempt.requiresUsername,
+            requiresUserIdentifier: stateBeforeAttempt.requiresUserIdentifier,
             clientID: daemonClientID
         )
         let refreshedState = await sessionMonitor.refreshState(notify: false)
 
         switch result {
         case .success:
-            let success = refreshedState == .active
+            let success = refreshedState == .ready
             let message = success ? "Host session is active." : "Unlock completed but session is \(refreshedState.rawValue)."
             return MirageHostBootstrapUnlockAttemptResult(
                 success: success,

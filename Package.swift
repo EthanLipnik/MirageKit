@@ -22,10 +22,6 @@ let package = Package(
             targets: ["MirageKit"]
         ),
         .library(
-            name: "MirageBootstrapShared",
-            targets: ["MirageBootstrapShared"]
-        ),
-        .library(
             name: "MirageHostBootstrapRuntime",
             targets: ["MirageHostBootstrapRuntime"]
         ),
@@ -39,25 +35,21 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/apple/swift-nio.git", from: "2.81.0"),
-        .package(url: "https://github.com/apple/swift-nio-ssh.git", from: "0.12.0"),
+        .package(url: "https://github.com/EthanLipnik/Loom.git", branch: "main"),
     ],
     targets: [
         .target(
             name: "MirageKit",
             dependencies: [
-                .product(name: "NIOCore", package: "swift-nio"),
-                .product(name: "NIOPosix", package: "swift-nio"),
-                .product(name: "NIOConcurrencyHelpers", package: "swift-nio"),
-                .product(name: "NIOSSH", package: "swift-nio-ssh"),
+                .product(name: "Loom", package: "Loom"),
+                .product(name: "LoomCloudKit", package: "Loom"),
             ]
         ),
         .target(
-            name: "MirageBootstrapShared"
-        ),
-        .target(
             name: "MirageHostBootstrapRuntime",
-            dependencies: ["MirageBootstrapShared"]
+            dependencies: [
+                .product(name: "Loom", package: "Loom"),
+            ]
         ),
         .target(
             name: "MirageKitClient",

@@ -60,7 +60,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         connection: NWConnection,
         clientName: String,
         maxControlBacklog: Int = 256,
-        maxReceiveBufferBytes: Int = MirageControlMessageLimits.maxReceiveBufferBytes,
+        maxReceiveBufferBytes: Int = LoomMessageLimits.maxReceiveBufferBytes,
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
@@ -83,7 +83,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     init(
         clientName: String,
         maxControlBacklog: Int = 256,
-        maxReceiveBufferBytes: Int = MirageControlMessageLimits.maxReceiveBufferBytes,
+        maxReceiveBufferBytes: Int = LoomMessageLimits.maxReceiveBufferBytes,
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         receiveChunk: @escaping @Sendable (
             @escaping @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void

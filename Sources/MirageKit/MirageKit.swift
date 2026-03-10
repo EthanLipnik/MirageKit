@@ -6,6 +6,8 @@
 //
 
 @_exported import Foundation
+@_exported import Loom
+@_exported import LoomCloudKit
 
 // Re-export all public types
 public typealias WindowID = UInt32
@@ -16,12 +18,25 @@ public typealias StreamSessionID = UUID
 
 public enum MirageKit {
     public static let version = "1.0.0"
-    public static let protocolVersion: UInt8 = mirageProtocolVersion
-
-    /// The Bonjour service type used for discovery
+    public static let protocolVersion: UInt8 = Loom.protocolVersion
     public static let serviceType = "_mirage._tcp"
+    public static let relayHeaderPrefix = "x-mirage"
+    public static let sharedDeviceIDKey = "com.mirage.shared.deviceID"
+    public static let sharedDeviceIDLegacyKeys = [
+        "com.mirage.client.deviceID",
+        "com.mirage.cloudkit.deviceID",
+        LoomSharedDeviceID.key,
+    ]
 
-    /// Default ports
-    public static let defaultControlPort: UInt16 = 9847
-    public static let defaultDataPort: UInt16 = 9848
+    public static func makeCloudKitConfiguration(containerIdentifier: String) -> LoomCloudKitConfiguration {
+        LoomCloudKitConfiguration(
+            containerIdentifier: containerIdentifier,
+            deviceRecordType: "MirageDevice",
+            peerRecordType: "MiragePeer",
+            peerZoneName: "MiragePeerZone",
+            participantIdentityRecordType: "MirageParticipantIdentity",
+            shareTitle: "Mirage Access",
+            deviceIDKey: "com.mirage.cloudkit.deviceID"
+        )
+    }
 }

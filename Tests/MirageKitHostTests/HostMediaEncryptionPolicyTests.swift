@@ -43,7 +43,7 @@ struct HostMediaEncryptionPolicyTests {
     @Test("Local-unencrypted policy can be disabled to force encrypted media")
     func localUnencryptedPolicyCanBeDisabled() {
         let host = MirageHostService(
-            networkConfiguration: MirageNetworkConfiguration(
+            loomConfiguration: LoomNetworkConfiguration(
                 requireEncryptedMediaOnLocalNetwork: true
             )
         )

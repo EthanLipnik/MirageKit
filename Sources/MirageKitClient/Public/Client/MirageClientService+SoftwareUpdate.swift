@@ -51,7 +51,7 @@ public extension MirageClientService {
     /// This does not modify current client connection state.
     /// - Parameter host: Host endpoint to target for the handshake request.
     /// - Returns: Protocol mismatch metadata including trigger acceptance result.
-    func requestHostUpdateViaMismatchHandshake(to host: MirageHost) async throws -> ProtocolMismatchInfo {
+    func requestHostUpdateViaMismatchHandshake(to host: LoomPeer) async throws -> ProtocolMismatchInfo {
         let parameters = controlParameters(for: .tcp)
         let transientConnection = NWConnection(to: host.endpoint, using: parameters)
         defer {

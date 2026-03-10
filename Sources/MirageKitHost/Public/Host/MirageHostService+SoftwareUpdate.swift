@@ -61,7 +61,7 @@ extension MirageHostService {
     }
 
     func resolveHostSoftwareUpdateStatus(
-        for peer: MiragePeerIdentity?,
+        for peer: LoomPeerIdentity?,
         forceRefresh: Bool
     ) async -> HostSoftwareUpdateStatusMessage {
         guard let softwareUpdateController,
@@ -77,7 +77,7 @@ extension MirageHostService {
     }
 
     func resolveHostSoftwareUpdateInstallResult(
-        for peer: MiragePeerIdentity?,
+        for peer: LoomPeerIdentity?,
         trigger: HostSoftwareUpdateInstallRequestMessage.Trigger
     ) async -> HostSoftwareUpdateInstallResultMessage {
         guard let softwareUpdateController else {

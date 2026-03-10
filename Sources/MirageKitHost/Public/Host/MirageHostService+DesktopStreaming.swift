@@ -38,9 +38,9 @@ extension MirageHostService {
         targetFrameRate: Int? = nil
     )
     async throws {
-        // Check session state - must be active
+        // Check session state - must be ready
         await refreshSessionStateIfNeeded()
-        guard sessionState == .active else {
+        guard sessionState == .ready else {
             MirageLogger.host("Rejecting desktop stream while session is \(sessionState)")
             throw MirageRuntimeConditionError.sessionLocked
         }
@@ -479,7 +479,7 @@ extension MirageHostService {
 
             if sharedConsumerActive { await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.loginDisplay) }
 
-            if sessionState != .active, !clientsByConnection.isEmpty { await startLoginDisplayStreamIfNeeded() }
+            if sessionState != .ready, !clientsByConnection.isEmpty { await startLoginDisplayStreamIfNeeded() }
         }
 
         if activeStreams.isEmpty, loginDisplayContext == nil { await PowerAssertionManager.shared.disable() }

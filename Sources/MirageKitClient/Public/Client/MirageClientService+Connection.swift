@@ -64,27 +64,24 @@ extension MirageClientService {
         requestHostUpdateOnProtocolMismatch: Bool? = nil
     ) throws -> (hello: HelloMessage, nonce: String) {
         let negotiation = MirageProtocolNegotiation.clientHello(
-            protocolVersion: Int(MirageKit.protocolVersion),
+            protocolVersion: Int(Loom.protocolVersion),
             supportedFeatures: mirageSupportedFeatures
         )
-        let capabilities = MirageHostCapabilities(
-            maxStreams: 4,
-            supportsHEVC: true,
-            supportsP3ColorSpace: true,
-            maxFrameRate: 120,
-            protocolVersion: Int(MirageKit.protocolVersion)
-        )
-
-        let resolvedIdentityManager = identityManager ?? MirageIdentityManager.shared
+        let resolvedIdentityManager = identityManager ?? LoomIdentityManager.shared
         let identity = try resolvedIdentityManager.currentIdentity()
+        let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
+            deviceID: deviceID,
+            deviceType: currentDeviceType,
+            identityKeyID: identity.keyID
+        )
         let timestampMs = MirageIdentitySigning.currentTimestampMs()
         let nonce = UUID().uuidString.lowercased()
         let payload = try MirageIdentitySigning.helloPayload(
             deviceID: deviceID,
             deviceName: deviceName,
             deviceType: currentDeviceType,
-            protocolVersion: Int(MirageKit.protocolVersion),
-            capabilities: capabilities,
+            protocolVersion: Int(Loom.protocolVersion),
+            advertisement: advertisement,
             negotiation: negotiation,
             iCloudUserID: iCloudUserID,
             keyID: identity.keyID,
@@ -97,8 +94,8 @@ extension MirageClientService {
             deviceID: deviceID,
             deviceName: deviceName,
             deviceType: currentDeviceType,
-            protocolVersion: Int(MirageKit.protocolVersion),
-            capabilities: capabilities,
+            protocolVersion: Int(Loom.protocolVersion),
+            advertisement: advertisement,
             negotiation: negotiation,
             iCloudUserID: iCloudUserID,
             identity: MirageIdentityEnvelope(
@@ -148,7 +145,7 @@ extension MirageClientService {
 
     /// Connect to a discovered host.
     public func connect(
-        to host: MirageHost,
+        to host: LoomPeer,
         controlTransport: ControlTransport = .tcp
     )
     async throws {
@@ -157,7 +154,7 @@ extension MirageClientService {
         MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name) using \(controlTransport)...")
         connectionState = .connecting
-        expectedHostIdentityKeyID = host.capabilities.identityKeyID
+        expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
@@ -204,6 +201,7 @@ extension MirageClientService {
 
             // Store connection for receiving messages.
             self.connection = connection
+            loomSession = loomNode.makeSession(connection: connection)
             inputEventSender.updateConnection(connection)
 
             connection.stateUpdateHandler = { [weak self] state in
@@ -290,6 +288,7 @@ extension MirageClientService {
 
         connection?.cancel()
         connection = nil
+        loomSession = nil
         inputEventSender.updateConnection(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil

@@ -33,10 +33,10 @@ private let notifyStatusOK: UInt32 = 0
 /// Uses CGSession APIs, Darwin notifications, and IOKit for comprehensive detection
 actor SessionStateMonitor {
     /// Current detected session state
-    private(set) var currentState: HostSessionState = .active
+    private(set) var currentState: LoomSessionAvailability = .ready
 
     /// Callback for state changes
-    private var onStateChange: (@Sendable (HostSessionState) -> Void)?
+    private var onStateChange: (@Sendable (LoomSessionAvailability) -> Void)?
 
     /// Darwin notification tokens for cleanup
     private var notifyTokens: [Int32] = []
@@ -51,7 +51,7 @@ actor SessionStateMonitor {
 
     /// Start monitoring session state
     /// - Parameter onStateChange: Callback invoked when state changes (called on arbitrary queue)
-    func start(onStateChange: @escaping @Sendable (HostSessionState) -> Void) {
+    func start(onStateChange: @escaping @Sendable (LoomSessionAvailability) -> Void) {
         guard !isMonitoring else { return }
         isMonitoring = true
         self.onStateChange = onStateChange
@@ -85,7 +85,7 @@ actor SessionStateMonitor {
     }
 
     /// Force a state refresh and return current state
-    func refreshState(notify: Bool = true) -> HostSessionState {
+    func refreshState(notify: Bool = true) -> LoomSessionAvailability {
         let newState = detectCurrentState()
         if newState != currentState {
             currentState = newState
@@ -97,9 +97,9 @@ actor SessionStateMonitor {
     // MARK: - State Detection
 
     /// Detect current session state using multiple sources
-    private func detectCurrentState() -> HostSessionState {
+    private func detectCurrentState() -> LoomSessionAvailability {
         // Check if system is sleeping via IOKit
-        if isSystemSleeping() { return .sleeping }
+        if isSystemSleeping() { return .unavailable }
 
         let loginWindowVisible = isLoginWindowVisible()
         if loginWindowVisible { MirageLogger.log(.host, "Login window visible (lock/login screen detected)") }
@@ -122,26 +122,26 @@ actor SessionStateMonitor {
             let anyLoginDoneFalse = consoleUsers.contains { $0.loginDone == false }
             let anyOffConsole = loggedInUsers.contains { $0.onConsole == false }
 
-            if loginWindowVisible || hasLoginWindowUser { return hasLoggedInUser ? .screenLocked : .loginScreen }
+            if loginWindowVisible || hasLoginWindowUser { return hasLoggedInUser ? .credentialsRequired : .credentialsAndUserIdentifierRequired }
 
-            if anyLoginDoneFalse, !hasLoggedInUser { return .loginScreen }
+            if anyLoginDoneFalse, !hasLoggedInUser { return .credentialsAndUserIdentifierRequired }
 
-            if anyLocked { return .screenLocked }
+            if anyLocked { return .credentialsRequired }
 
             if anyOffConsole {
                 let fallbackLocked = isScreenLocked()
                 if fallbackLocked {
                     MirageLogger.log(.host, "User session not on console and lock detected - treating as screenLocked")
-                    return .screenLocked
+                    return .credentialsRequired
                 }
                 MirageLogger.log(
                     .host,
                     "User session not on console but no lock detected - treating as active (headless console session)"
                 )
-                return .active
+                return .ready
             }
 
-            if hasLoggedInUser { return .active }
+            if hasLoggedInUser { return .ready }
         }
 
         // Use CGSession to check login and lock state
@@ -155,15 +155,15 @@ actor SessionStateMonitor {
                         .host,
                         "No CGSession dict but console user '\(consoleUser)' exists and lock detected - assuming screenLocked"
                     )
-                    return .screenLocked
+                    return .credentialsRequired
                 }
                 MirageLogger.log(
                     .host,
                     "No CGSession dict but console user '\(consoleUser)' exists without lock - assuming active (headless console session)"
                 )
-                return .active
+                return .ready
             }
-            return .loginScreen
+            return .credentialsAndUserIdentifierRequired
         }
 
         // Debug: log the session dictionary keys
@@ -190,39 +190,39 @@ actor SessionStateMonitor {
         // Alternative check: if we have a username, user is logged in
         if let user = userName, !user.isEmpty {
             // User is logged in - check if screen is locked
-            if isLocked { return .screenLocked }
+            if isLocked { return .credentialsRequired }
 
             if !onConsole {
                 if isLocked {
                     MirageLogger.log(.host, "User session not on console and lock detected - treating as screenLocked")
-                    return .screenLocked
+                    return .credentialsRequired
                 }
                 MirageLogger.log(
                     .host,
                     "User session not on console but not locked - treating as active (headless console session)"
                 )
-                return .active
+                return .ready
             }
 
             // If loginCompleted is false but we have a user, it might be a headless Mac
             // where the display session hasn't fully initialized
             if !loginCompleted {
                 MirageLogger.log(.host, "loginCompleted=false but user '\(user)' exists - treating as headless session")
-                return .active // User logged in, not locked
+                return .ready // User logged in, not locked
             }
 
-            return .active
+            return .ready
         }
 
-        if loginWindowVisible { return loginCompleted ? .screenLocked : .loginScreen }
+        if loginWindowVisible { return loginCompleted ? .credentialsRequired : .credentialsAndUserIdentifierRequired }
 
-        if !loginCompleted { return .loginScreen }
+        if !loginCompleted { return .credentialsAndUserIdentifierRequired }
 
         // Check if screen is locked
-        if isLocked { return .screenLocked }
+        if isLocked { return .credentialsRequired }
 
         // User is logged in and screen is unlocked
-        return .active
+        return .ready
     }
 
     /// Read console session info from IOConsoleUsers (more reliable on headless Macs).

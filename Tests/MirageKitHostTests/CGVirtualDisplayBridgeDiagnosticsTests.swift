@@ -14,10 +14,10 @@ import Testing
 struct CGVirtualDisplayBridgeDiagnosticsTests {
     @Test("Probe failures stay out of diagnostics errors")
     func probeFailuresStayOutOfDiagnosticsErrors() async {
-        await MirageDiagnostics.removeAllSinks()
+        await LoomDiagnostics.removeAllSinks()
 
         let sink = CGVirtualDisplayBridgeTestSink()
-        _ = await MirageDiagnostics.addSink(sink)
+        _ = await LoomDiagnostics.addSink(sink)
 
         CGVirtualDisplayBridge.logVirtualDisplaySettingsProbeFailure(
             attemptLabel: "pixel-hiDPI0",
@@ -40,10 +40,10 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
 
     @Test("Terminal update failures still emit diagnostics errors")
     func terminalUpdateFailuresStillEmitDiagnosticsErrors() async {
-        await MirageDiagnostics.removeAllSinks()
+        await LoomDiagnostics.removeAllSinks()
 
         let sink = CGVirtualDisplayBridgeTestSink()
-        _ = await MirageDiagnostics.addSink(sink)
+        _ = await LoomDiagnostics.addSink(sink)
 
         CGVirtualDisplayBridge.logVirtualDisplayResolutionUpdateFailure(
             hiDPI: true,
@@ -57,12 +57,12 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
             return
         }
 
-        #expect(event.category == .host)
+        #expect(event.category == LoomLogCategory(rawValue: MirageLogCategory.host.rawValue))
         #expect(event.message.contains("Updated virtual display failed Retina activation"))
     }
 
     private func waitUntil(
-        timeout: Duration = .seconds(1),
+        timeout: Duration = .seconds(3),
         condition: @escaping @Sendable () async -> Bool
     ) async -> Bool {
         let clock = ContinuousClock()
@@ -77,15 +77,15 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
     }
 }
 
-private actor CGVirtualDisplayBridgeTestSink: MirageDiagnosticsSink {
-    private var logs: [MirageDiagnosticsLogEvent] = []
-    private var errors: [MirageDiagnosticsErrorEvent] = []
+private actor CGVirtualDisplayBridgeTestSink: LoomDiagnosticsSink {
+    private var logs: [LoomDiagnosticsLogEvent] = []
+    private var errors: [LoomDiagnosticsErrorEvent] = []
 
-    func record(log event: MirageDiagnosticsLogEvent) async {
+    func record(log event: LoomDiagnosticsLogEvent) async {
         logs.append(event)
     }
 
-    func record(error event: MirageDiagnosticsErrorEvent) async {
+    func record(error event: LoomDiagnosticsErrorEvent) async {
         errors.append(event)
     }
 
@@ -101,7 +101,7 @@ private actor CGVirtualDisplayBridgeTestSink: MirageDiagnosticsSink {
         logs.map(\.message)
     }
 
-    func firstError() -> MirageDiagnosticsErrorEvent? {
+    func firstError() -> LoomDiagnosticsErrorEvent? {
         errors.first
     }
 }

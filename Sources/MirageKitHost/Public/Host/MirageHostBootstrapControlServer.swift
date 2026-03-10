@@ -34,7 +34,7 @@ public enum MirageHostBootstrapControlServerError: LocalizedError, Sendable {
 public actor MirageHostBootstrapControlServer {
     private let unlockService: MirageHostBootstrapUnlockService
     private let controlAuthSecret: String
-    private let replayProtector = MirageReplayProtector()
+    private let replayProtector = LoomReplayProtector()
     private let queue = DispatchQueue(label: "com.mirage.bootstrap.control", qos: .userInitiated)
     private var listener: NWListener?
 
@@ -84,13 +84,13 @@ public actor MirageHostBootstrapControlServer {
         do {
             let requestLine = try await receiveLine(
                 over: connection,
-                maxBytes: MirageControlMessageLimits.maxBootstrapControlLineBytes
+                maxBytes: LoomMessageLimits.maxBootstrapControlLineBytes
             )
-            let request = try JSONDecoder().decode(MirageBootstrapControlRequest.self, from: requestLine)
+            let request = try JSONDecoder().decode(LoomBootstrapControlRequest.self, from: requestLine)
             let response = await process(request: request)
             try await send(response: response, over: connection)
 
-            if response.state == .active {
+            if response.availability == .ready {
                 stop()
             }
         } catch {
@@ -98,14 +98,14 @@ public actor MirageHostBootstrapControlServer {
         }
     }
 
-    private func process(request: MirageBootstrapControlRequest) async -> MirageBootstrapControlResponse {
+    private func process(request: LoomBootstrapControlRequest) async -> LoomBootstrapControlResponse {
         let state = await unlockService.currentState()
 
         guard !controlAuthSecret.isEmpty else {
-            return MirageBootstrapControlResponse(
+            return LoomBootstrapControlResponse(
                 requestID: request.requestID,
                 success: false,
-                state: state,
+                availability: state,
                 message: "Bootstrap control auth is unavailable on host.",
                 canRetry: false,
                 retriesRemaining: nil,
@@ -115,14 +115,14 @@ public actor MirageHostBootstrapControlServer {
 
         let auth = request.auth
 
-        guard auth.keyID == MirageIdentityManager.keyID(for: auth.publicKey) else {
+        guard auth.keyID == LoomIdentityManager.keyID(for: auth.publicKey) else {
             return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Invalid auth key ID.")
         }
 
-        let encryptedPayloadSHA256 = MirageBootstrapControlSecurity.payloadSHA256Hex(request.encryptedUnlockPayload?.combined)
+        let encryptedPayloadSHA256 = LoomBootstrapControlSecurity.payloadSHA256Hex(request.credentialsPayload?.combined)
         let canonicalPayload: Data
         do {
-            canonicalPayload = try MirageBootstrapControlSecurity.canonicalPayload(
+            canonicalPayload = try LoomBootstrapControlSecurity.canonicalPayload(
                 requestID: request.requestID,
                 operation: request.operation,
                 encryptedPayloadSHA256: encryptedPayloadSHA256,
@@ -134,7 +134,7 @@ public actor MirageHostBootstrapControlServer {
             return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Canonical payload failed.")
         }
 
-        guard MirageIdentityManager.verify(
+        guard LoomIdentityManager.verify(
             signature: auth.signature,
             payload: canonicalPayload,
             publicKey: auth.publicKey
@@ -152,33 +152,33 @@ public actor MirageHostBootstrapControlServer {
 
         switch request.operation {
         case .status:
-            return MirageBootstrapControlResponse(
+            return LoomBootstrapControlResponse(
                 requestID: request.requestID,
                 success: true,
-                state: state,
+                availability: state,
                 message: "State probe complete.",
                 canRetry: false,
                 retriesRemaining: nil,
                 retryAfterSeconds: nil
             )
 
-        case .unlock:
-            guard let encryptedPayload = request.encryptedUnlockPayload else {
-                return MirageBootstrapControlResponse(
+        case .submitCredentials:
+            guard let encryptedPayload = request.credentialsPayload else {
+                return LoomBootstrapControlResponse(
                     requestID: request.requestID,
                     success: false,
-                    state: state,
+                    availability: state,
                     message: "Missing encrypted unlock payload.",
                     canRetry: false,
                     retriesRemaining: nil,
                     retryAfterSeconds: nil
                 )
             }
-            if encryptedPayload.combined.count > MirageControlMessageLimits.maxBootstrapCredentialCiphertextBytes {
-                return MirageBootstrapControlResponse(
+            if encryptedPayload.combined.count > LoomMessageLimits.maxBootstrapCredentialCiphertextBytes {
+                return LoomBootstrapControlResponse(
                     requestID: request.requestID,
                     success: false,
-                    state: state,
+                    availability: state,
                     message: "Encrypted unlock payload is too large.",
                     canRetry: false,
                     retriesRemaining: nil,
@@ -186,9 +186,9 @@ public actor MirageHostBootstrapControlServer {
                 )
             }
 
-            let credentials: MirageBootstrapUnlockCredentials
+            let credentials: LoomBootstrapCredentials
             do {
-                credentials = try MirageBootstrapControlSecurity.decryptUnlockCredentials(
+                credentials = try LoomBootstrapControlSecurity.decryptCredentials(
                     encryptedPayload,
                     sharedSecret: controlAuthSecret,
                     requestID: request.requestID,
@@ -196,10 +196,10 @@ public actor MirageHostBootstrapControlServer {
                     nonce: auth.nonce
                 )
             } catch {
-                return MirageBootstrapControlResponse(
+                return LoomBootstrapControlResponse(
                     requestID: request.requestID,
                     success: false,
-                    state: state,
+                    availability: state,
                     message: "Failed to decrypt unlock payload.",
                     canRetry: false,
                     retriesRemaining: nil,
@@ -208,13 +208,13 @@ public actor MirageHostBootstrapControlServer {
             }
 
             let result = await unlockService.attemptUnlock(
-                username: credentials.username,
-                password: credentials.password
+                username: credentials.userIdentifier,
+                password: credentials.secret
             )
-            return MirageBootstrapControlResponse(
+            return LoomBootstrapControlResponse(
                 requestID: request.requestID,
                 success: result.success,
-                state: result.state,
+                availability: result.state,
                 message: result.message,
                 canRetry: result.canRetry,
                 retriesRemaining: result.retriesRemaining,
@@ -224,14 +224,14 @@ public actor MirageHostBootstrapControlServer {
     }
 
     private func unauthorizedResponse(
-        state: HostSessionState,
+        state: LoomSessionAvailability,
         requestID: UUID,
         detail: String
-    ) -> MirageBootstrapControlResponse {
-        MirageBootstrapControlResponse(
+    ) -> LoomBootstrapControlResponse {
+        LoomBootstrapControlResponse(
             requestID: requestID,
             success: false,
-            state: state,
+            availability: state,
             message: "Unauthorized bootstrap control request (\(detail))",
             canRetry: false,
             retriesRemaining: nil,
@@ -239,7 +239,7 @@ public actor MirageHostBootstrapControlServer {
         )
     }
 
-    private func send(response: MirageBootstrapControlResponse, over connection: NWConnection) async throws {
+    private func send(response: LoomBootstrapControlResponse, over connection: NWConnection) async throws {
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.withoutEscapingSlashes]
         var payload = try encoder.encode(response)

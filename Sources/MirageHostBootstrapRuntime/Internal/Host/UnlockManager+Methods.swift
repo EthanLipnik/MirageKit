@@ -1,4 +1,4 @@
-import MirageBootstrapShared
+import Loom
 #if os(macOS)
 
 //
@@ -32,16 +32,16 @@ extension UnlockManager {
     }
 
     /// Try to unlock via HID-level keyboard simulation (with verified password)
-    func tryHIDUnlock(username: String?, password: String, requiresUsername: Bool) async -> Bool {
+    func tryHIDUnlock(username: String?, password: String, requiresUserIdentifier: Bool) async -> Bool {
         let stateBeforeInput = await sessionMonitor.refreshState(notify: false)
-        guard stateBeforeInput.requiresUnlock else {
+        guard stateBeforeInput.requiresCredentials else {
             MirageLogger.host("Skipping HID unlock because session no longer requires unlock")
             return false
         }
 
         await focusLoginField()
 
-        if requiresUsername, let username {
+        if requiresUserIdentifier, let username {
             await typeStringViaCGEvent(username)
             postKeyEvent(keyCode: UInt16(kVK_Tab), shift: false)
             try? await Task.sleep(for: .milliseconds(80))

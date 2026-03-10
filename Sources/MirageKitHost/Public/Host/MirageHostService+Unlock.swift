@@ -107,7 +107,7 @@ extension MirageHostService {
         let (result, retriesRemaining, retryAfter) = await unlockManager.attemptUnlock(
             username: request.username,
             password: request.password,
-            requiresUsername: sessionState.requiresUsername,
+            requiresUserIdentifier: sessionState.requiresUserIdentifier,
             clientID: client.id
         )
 
@@ -118,7 +118,7 @@ extension MirageHostService {
             MirageInstrumentation.record(.hostUnlockSucceeded)
             response = UnlockResponseMessage(
                 success: true,
-                newState: .active,
+                newState: .ready,
                 newSessionToken: currentSessionToken,
                 error: nil,
                 canRetry: false,

@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import MirageBootstrapShared
+import Loom
 
 #if os(macOS)
 
@@ -71,7 +71,7 @@ private actor MirageBootstrapDaemonTelemetryCoordinator {
     }
 
     func record(
-        kind: MirageBootstrapTelemetryEventKind,
+        kind: LoomBootstrapTelemetryEventKind,
         eventName: String,
         message: String?,
         metadata: [String: String]
@@ -79,7 +79,7 @@ private actor MirageBootstrapDaemonTelemetryCoordinator {
         guard let writer else { return }
         if kind == .diagnostic, !diagnosticsEnabled { return }
 
-        let event = MirageBootstrapTelemetryEventEnvelope(
+        let event = LoomBootstrapTelemetryEventEnvelope(
             kind: kind,
             eventName: eventName,
             message: message,

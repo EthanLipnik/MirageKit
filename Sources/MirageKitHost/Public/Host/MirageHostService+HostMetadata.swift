@@ -29,9 +29,9 @@ extension MirageHostService {
             let request = try message.decode(HostHardwareIconRequestMessage.self)
             let maxPixelSize = min(max(request.preferredMaxPixelSize, 128), 1024)
             guard let payload = Self.hostHardwareIconPayload(
-                preferredIconName: advertisedCapabilities.hardwareIconName,
-                hardwareMachineFamily: advertisedCapabilities.hardwareMachineFamily,
-                hardwareModelIdentifier: advertisedCapabilities.hardwareModelIdentifier,
+                preferredIconName: advertisedPeerAdvertisement.iconName,
+                hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily,
+                hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
                 maxPixelSize: maxPixelSize
             ) else {
                 MirageLogger.host("Host hardware icon request failed: no icon payload")
@@ -41,8 +41,8 @@ extension MirageHostService {
             let response = HostHardwareIconMessage(
                 pngData: payload.pngData,
                 iconName: payload.iconName,
-                hardwareModelIdentifier: advertisedCapabilities.hardwareModelIdentifier,
-                hardwareMachineFamily: advertisedCapabilities.hardwareMachineFamily
+                hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
+                hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily
             )
             try await clientContext.send(.hostHardwareIcon, content: response)
             MirageLogger.host("Sent host hardware icon payload bytes=\(payload.pngData.count) icon=\(payload.iconName)")

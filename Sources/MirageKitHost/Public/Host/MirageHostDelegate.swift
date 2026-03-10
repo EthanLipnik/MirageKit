@@ -17,7 +17,7 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     @MainActor
     func hostService(
         _ service: MirageHostService,
-        shouldAcceptConnectionFrom deviceInfo: MirageDeviceInfo,
+        shouldAcceptConnectionFrom deviceInfo: LoomPeerDeviceInfo,
         completion: @escaping @Sendable (Bool) -> Void
     )
 
@@ -55,7 +55,7 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     /// Called when the session state changes (locked, unlocked, sleeping, etc.)
     /// Use this to update UI or take action when the Mac becomes locked/unlocked
     @MainActor
-    func hostService(_ service: MirageHostService, sessionStateChanged state: HostSessionState)
+    func hostService(_ service: MirageHostService, sessionStateChanged state: LoomSessionAvailability)
 
     /// Called when a client requests to unlock the Mac
     /// Return true to allow the unlock attempt, false to deny
@@ -69,7 +69,7 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
 public extension MirageHostDelegate {
     func hostService(
         _: MirageHostService,
-        shouldAcceptConnectionFrom _: MirageDeviceInfo,
+        shouldAcceptConnectionFrom _: LoomPeerDeviceInfo,
         completion: @escaping @Sendable (Bool) -> Void
     ) {
         // Default: auto-accept all connections
@@ -97,7 +97,7 @@ public extension MirageHostDelegate {
 
     func hostService(_: MirageHostService, didEncounterError _: Error) {}
 
-    func hostService(_: MirageHostService, sessionStateChanged _: HostSessionState) {}
+    func hostService(_: MirageHostService, sessionStateChanged _: LoomSessionAvailability) {}
 
     func hostService(_: MirageHostService, shouldAllowUnlockFrom _: MirageConnectedClient) -> Bool {
         // Default: allow all connected clients to attempt unlock

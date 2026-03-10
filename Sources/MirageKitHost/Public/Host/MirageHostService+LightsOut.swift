@@ -40,7 +40,7 @@ extension MirageHostService {
 
         await forceDisableLightsOut(reason: "emergency recovery")
 
-        guard sessionState == .active else { return }
+        guard sessionState == .ready else { return }
         if let lockHostHandler {
             lockHostHandler()
             return
@@ -85,7 +85,7 @@ extension MirageHostService {
     }
 
     func updateLightsOutState() async {
-        guard sessionState == .active else {
+        guard sessionState == .ready else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
             return
@@ -235,13 +235,13 @@ extension MirageHostService {
 
     nonisolated static func shouldLockHostWhenStreamingStops(
         lockHostWhenStreamingStops: Bool,
-        sessionState: HostSessionState,
+        sessionState: LoomSessionAvailability,
         hasAppStreams: Bool,
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool
     ) -> Bool {
-        guard lockHostWhenStreamingStops, sessionState == .active else { return false }
+        guard lockHostWhenStreamingStops, sessionState == .ready else { return false }
         return !hasAppStreams &&
             !hasDesktopStream &&
             !hasPendingAppStreamStart &&

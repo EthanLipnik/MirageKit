@@ -8,7 +8,7 @@
 import CoreGraphics
 import Foundation
 import Security
-import MirageBootstrapShared
+import Loom
 
 #if os(macOS)
 import Carbon.HIToolbox
@@ -43,15 +43,15 @@ actor UnlockManager {
     /// Result of an unlock attempt
     enum UnlockResult: Equatable {
         case success
-        case failure(UnlockErrorCode, String)
+        case failure(LoomCredentialSubmissionErrorCode, String)
 
         var isSuccess: Bool {
             if case .success = self { return true }
             return false
         }
 
-        var error: UnlockError? {
-            if case let .failure(code, message) = self { return UnlockError(code: code, message: message) }
+        var error: LoomCredentialSubmissionError? {
+            if case let .failure(code, message) = self { return LoomCredentialSubmissionError(code: code, message: message) }
             return nil
         }
 

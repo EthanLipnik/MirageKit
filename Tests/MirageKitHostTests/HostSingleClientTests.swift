@@ -54,7 +54,7 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "existing-key"
         )
-        let incomingDevice = MirageDeviceInfo(
+        let incomingDevice = LoomPeerDeviceInfo(
             id: clientID,
             name: "Incoming iPad",
             deviceType: .iPad,
@@ -78,7 +78,7 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "shared-key"
         )
-        let incomingDevice = MirageDeviceInfo(
+        let incomingDevice = LoomPeerDeviceInfo(
             id: UUID(),
             name: "Incoming Mac",
             deviceType: .mac,
@@ -102,7 +102,7 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "existing-key"
         )
-        let incomingDevice = MirageDeviceInfo(
+        let incomingDevice = LoomPeerDeviceInfo(
             id: UUID(),
             name: "Incoming iPad",
             deviceType: .iPad,

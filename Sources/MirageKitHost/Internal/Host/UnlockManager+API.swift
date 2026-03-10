@@ -21,13 +21,13 @@ extension UnlockManager {
     /// - Parameters:
     ///   - username: Username to unlock (required when at login screen)
     ///   - password: Password to verify and use for unlock
-    ///   - requiresUsername: Whether login screen requires a username entry
+    ///   - requiresUserIdentifier: Whether login screen requires a username entry
     ///   - clientID: Client ID for rate limiting
     /// - Returns: Result of the unlock attempt with retry information
     func attemptUnlock(
         username: String?,
         password: String,
-        requiresUsername: Bool,
+        requiresUserIdentifier: Bool,
         clientID: UUID
     )
     async -> (result: UnlockResult, retriesRemaining: Int?, retryAfterSeconds: Int?) {
@@ -36,15 +36,15 @@ extension UnlockManager {
         if limit.isLimited { return (.failure(.rateLimited, "Too many attempts. Try again later."), limit.remaining, limit.retryAfter) }
 
         let detectedState = await sessionMonitor.refreshState(notify: false)
-        guard detectedState.requiresUnlock else {
+        guard detectedState.requiresCredentials else {
             MirageLogger.host("Skipping unlock attempt because host session is already active")
             return (.failure(.notLocked, "Host session is already unlocked."), limit.remaining, nil)
         }
 
-        let requiresUsernameForAttempt = detectedState.requiresUsername
-        if requiresUsernameForAttempt != requiresUsername {
+        let requiresUsernameForAttempt = detectedState.requiresUserIdentifier
+        if requiresUsernameForAttempt != requiresUserIdentifier {
             MirageLogger.host(
-                "Unlock request username requirement mismatch (request: \(requiresUsername), detected: \(requiresUsernameForAttempt)); using detected state"
+                "Unlock request username requirement mismatch (request: \(requiresUserIdentifier), detected: \(requiresUsernameForAttempt)); using detected state"
             )
         }
 
@@ -109,13 +109,13 @@ extension UnlockManager {
         let skylightResult = trySkyLightUnlock(username: resolvedUsername)
         if skylightResult {
             try? await Task.sleep(for: .milliseconds(300))
-            if await sessionMonitor.refreshState() == .active { unlocked = true }
+            if await sessionMonitor.refreshState() == .ready { unlocked = true }
         }
 
         // Method 2: HID-level typing (login screen or lock screen)
         if !unlocked {
             let stateBeforeHID = await sessionMonitor.refreshState(notify: false)
-            if !stateBeforeHID.requiresUnlock {
+            if !stateBeforeHID.requiresCredentials {
                 MirageLogger.host("Skipping HID unlock because host session became active")
                 unlocked = true
             } else {
@@ -138,7 +138,7 @@ extension UnlockManager {
                 unlocked = await tryHIDUnlock(
                     username: requiresUsernameForAttempt ? resolvedUsername : nil,
                     password: password,
-                    requiresUsername: requiresUsernameForAttempt
+                    requiresUserIdentifier: requiresUsernameForAttempt
                 )
             }
         }
@@ -156,7 +156,7 @@ extension UnlockManager {
         // This handles cases where unlock takes longer than expected on headless Macs
         let newState = await pollForUnlockCompletion(timeout: 25.0, pollInterval: 0.35)
 
-        if newState == .active {
+        if newState == .ready {
             MirageLogger.host("Unlock successful!")
             return (.success, remaining, nil)
         } else {

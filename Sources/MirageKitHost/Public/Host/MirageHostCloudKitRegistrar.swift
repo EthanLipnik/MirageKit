@@ -15,24 +15,24 @@ public actor MirageHostCloudKitRegistrar {
     public struct RegistrationRequest: Sendable {
         public let deviceID: UUID
         public let name: String
-        public let capabilities: MirageHostCapabilities
+        public let advertisement: LoomPeerAdvertisement
         public let identityKeyID: String?
         public let identityPublicKey: Data?
         public let remoteEnabled: Bool
-        public let bootstrapMetadata: MirageBootstrapMetadata?
+        public let bootstrapMetadata: LoomBootstrapMetadata?
 
         public init(
             deviceID: UUID,
             name: String,
-            capabilities: MirageHostCapabilities,
+            advertisement: LoomPeerAdvertisement,
             identityKeyID: String? = nil,
             identityPublicKey: Data? = nil,
             remoteEnabled: Bool = false,
-            bootstrapMetadata: MirageBootstrapMetadata? = nil
+            bootstrapMetadata: LoomBootstrapMetadata? = nil
         ) {
             self.deviceID = deviceID
             self.name = name
-            self.capabilities = capabilities
+            self.advertisement = advertisement
             self.identityKeyID = identityKeyID
             self.identityPublicKey = identityPublicKey
             self.remoteEnabled = remoteEnabled
@@ -40,17 +40,17 @@ public actor MirageHostCloudKitRegistrar {
         }
     }
 
-    private let configuration: MirageCloudKitConfiguration
-    private let hostZoneID: CKRecordZone.ID
-    private var hostRecordName: String?
+    private let configuration: LoomCloudKitConfiguration
+    private let peerZoneID: CKRecordZone.ID
+    private var peerRecordName: String?
     private var cloudKitSchemaSupportsBootstrapMetadata = true
-    private var cloudKitSchemaSupportsOptionalHostMetadata = true
+    private var cloudKitSchemaSupportsOptionalPeerMetadata = true
     private var cloudKitSchemaSupportsParticipantIdentityRecords = true
 
-    public init(configuration: MirageCloudKitConfiguration) {
+    public init(configuration: LoomCloudKitConfiguration) {
         self.configuration = configuration
-        hostZoneID = CKRecordZone.ID(
-            zoneName: configuration.hostZoneName,
+        peerZoneID = CKRecordZone.ID(
+            zoneName: configuration.peerZoneName,
             ownerName: CKCurrentUserDefaultName
         )
     }
@@ -64,11 +64,11 @@ public actor MirageHostCloudKitRegistrar {
 
         let database = container.privateCloudDatabase
         let query = CKQuery(
-            recordType: configuration.hostRecordType,
+            recordType: configuration.peerRecordType,
             predicate: NSPredicate(value: true)
         )
 
-        let (results, _) = try await database.records(matching: query, inZoneWith: hostZoneID)
+        let (results, _) = try await database.records(matching: query, inZoneWith: peerZoneID)
         let normalizedCurrentName = normalizeHostName(currentHostName)
         var staleRecordIDs: [CKRecord.ID] = []
 
@@ -79,10 +79,13 @@ public actor MirageHostCloudKitRegistrar {
             guard let recordDeviceID,
                   recordDeviceID != currentDeviceID else { continue }
 
-            let recordIdentityKeyID = record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] as? String
-            guard recordIdentityKeyID == currentIdentityKeyID else { continue }
+            let advertisementBlob = record[LoomCloudKitPeerInfo.RecordKey.advertisementBlob.rawValue] as? Data
+            let advertisement = advertisementBlob.flatMap {
+                try? JSONDecoder().decode(LoomPeerAdvertisement.self, from: $0)
+            }
+            guard advertisement?.identityKeyID == currentIdentityKeyID else { continue }
 
-            let recordName = (record[MirageCloudKitHostInfo.RecordKey.name.rawValue] as? String) ?? ""
+            let recordName = (record[LoomCloudKitPeerInfo.RecordKey.name.rawValue] as? String) ?? ""
             guard normalizeHostName(recordName) == normalizedCurrentName else { continue }
 
             staleRecordIDs.append(record.recordID)
@@ -99,7 +102,7 @@ public actor MirageHostCloudKitRegistrar {
 
     public func registerHost(_ request: RegistrationRequest) async throws {
         let database = container.privateCloudDatabase
-        let zone = CKRecordZone(zoneID: hostZoneID)
+        let zone = CKRecordZone(zoneID: peerZoneID)
         do {
             _ = try await database.modifyRecordZones(saving: [zone], deleting: [])
         } catch {
@@ -107,14 +110,14 @@ public actor MirageHostCloudKitRegistrar {
         }
 
         while true {
-            let record = try await fetchOrCreateHostRecord(
+            let record = try await fetchOrCreatePeerRecord(
                 deviceID: request.deviceID,
                 database: database
             )
-            let attemptedOptionalHostMetadataWrite = populate(record: record, from: request)
+            let attemptedOptionalPeerMetadataWrite = populate(record: record, from: request)
 
             do {
-                try await persistHostRecord(
+                try await persistPeerRecord(
                     record,
                     database: database,
                     identityKeyID: request.identityKeyID,
@@ -131,11 +134,11 @@ public actor MirageHostCloudKitRegistrar {
                 )
             } catch where Self.shouldRetryHostRegistrationWithoutOptionalHostMetadata(
                 error: error,
-                attemptedOptionalHostMetadataWrite: attemptedOptionalHostMetadataWrite
+                attemptedOptionalHostMetadataWrite: attemptedOptionalPeerMetadataWrite
             ) {
-                cloudKitSchemaSupportsOptionalHostMetadata = false
+                cloudKitSchemaSupportsOptionalPeerMetadata = false
                 MirageLogger.appState(
-                    "CloudKit schema rejected optional host metadata; retrying host registration with base fields only"
+                    "CloudKit schema rejected optional peer metadata; retrying host registration with base fields only"
                 )
             }
         }
@@ -145,13 +148,13 @@ public actor MirageHostCloudKitRegistrar {
         let database = container.privateCloudDatabase
         let cachedRecord: CKRecord?
         do {
-            cachedRecord = try await fetchCachedHostRecord(database: database)
+            cachedRecord = try await fetchCachedPeerRecord(database: database)
         } catch {
             return
         }
         guard let record = cachedRecord else { return }
 
-        record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] = Date()
+        record[LoomCloudKitPeerInfo.RecordKey.lastSeen.rawValue] = Date()
 
         do {
             _ = try await database.modifyRecords(saving: [record], deleting: [], savePolicy: .changedKeys)
@@ -164,22 +167,22 @@ public actor MirageHostCloudKitRegistrar {
         CKContainer(identifier: configuration.containerIdentifier)
     }
 
-    private func fetchOrCreateHostRecord(
+    private func fetchOrCreatePeerRecord(
         deviceID: UUID,
         database: CKDatabase
     ) async throws -> CKRecord {
-        if let cachedRecord = try await fetchCachedHostRecord(database: database) {
+        if let cachedRecord = try await fetchCachedPeerRecord(database: database) {
             return cachedRecord
         }
 
         let predicate = NSPredicate(format: "deviceID == %@", deviceID.uuidString)
-        let query = CKQuery(recordType: configuration.hostRecordType, predicate: predicate)
+        let query = CKQuery(recordType: configuration.peerRecordType, predicate: predicate)
 
         do {
-            let (results, _) = try await database.records(matching: query, inZoneWith: hostZoneID)
+            let (results, _) = try await database.records(matching: query, inZoneWith: peerZoneID)
             for (_, result) in results {
                 if case let .success(record) = result {
-                    hostRecordName = record.recordID.recordName
+                    peerRecordName = record.recordID.recordName
                     return record
                 }
             }
@@ -187,22 +190,22 @@ public actor MirageHostCloudKitRegistrar {
             MirageLogger.error(.appState, error: error, message: "Failed to query existing host record: ")
         }
 
-        let recordID = CKRecord.ID(recordName: deviceID.uuidString, zoneID: hostZoneID)
-        let record = CKRecord(recordType: configuration.hostRecordType, recordID: recordID)
-        record[MirageCloudKitHostInfo.RecordKey.createdAt.rawValue] = Date()
-        hostRecordName = recordID.recordName
+        let recordID = CKRecord.ID(recordName: deviceID.uuidString, zoneID: peerZoneID)
+        let record = CKRecord(recordType: configuration.peerRecordType, recordID: recordID)
+        record[LoomCloudKitPeerInfo.RecordKey.createdAt.rawValue] = Date()
+        peerRecordName = recordID.recordName
         return record
     }
 
-    private func fetchCachedHostRecord(database: CKDatabase) async throws -> CKRecord? {
-        guard let hostRecordName else { return nil }
-        let recordID = CKRecord.ID(recordName: hostRecordName, zoneID: hostZoneID)
+    private func fetchCachedPeerRecord(database: CKDatabase) async throws -> CKRecord? {
+        guard let peerRecordName else { return nil }
+        let recordID = CKRecord.ID(recordName: peerRecordName, zoneID: peerZoneID)
 
         do {
             return try await database.record(for: recordID)
         } catch {
             if shouldResetCachedHostRecordName(for: error) {
-                self.hostRecordName = nil
+                self.peerRecordName = nil
                 return nil
             }
             throw error
@@ -211,34 +214,26 @@ public actor MirageHostCloudKitRegistrar {
 
     @discardableResult
     private func populate(record: CKRecord, from request: RegistrationRequest) -> Bool {
-        record[MirageCloudKitHostInfo.RecordKey.deviceID.rawValue] = request.deviceID.uuidString
-        record[MirageCloudKitHostInfo.RecordKey.name.rawValue] = request.name
-        record[MirageCloudKitHostInfo.RecordKey.deviceType.rawValue] = DeviceType.mac.rawValue
-        record[MirageCloudKitHostInfo.RecordKey.maxFrameRate.rawValue] = Int64(request.capabilities.maxFrameRate)
-        record[MirageCloudKitHostInfo.RecordKey.supportsHEVC.rawValue] = request.capabilities.supportsHEVC ? 1 : 0
-        record[MirageCloudKitHostInfo.RecordKey.supportsP3.rawValue] = request.capabilities.supportsP3ColorSpace ? 1 : 0
-        record[MirageCloudKitHostInfo.RecordKey.maxStreams.rawValue] = Int64(request.capabilities.maxStreams)
-        record[MirageCloudKitHostInfo.RecordKey.protocolVersion.rawValue] = Int64(request.capabilities.protocolVersion)
-        if cloudKitSchemaSupportsOptionalHostMetadata {
-            record[MirageCloudKitHostInfo.RecordKey.identityKeyID.rawValue] = request.identityKeyID
-            record[MirageCloudKitHostInfo.RecordKey.identityPublicKey.rawValue] = request.identityPublicKey
-            record[MirageCloudKitHostInfo.RecordKey.hardwareModelIdentifier.rawValue] = request.capabilities.hardwareModelIdentifier
-            record[MirageCloudKitHostInfo.RecordKey.hardwareIconName.rawValue] = request.capabilities.hardwareIconName
-            record[MirageCloudKitHostInfo.RecordKey.hardwareMachineFamily.rawValue] = request.capabilities.hardwareMachineFamily
-            record[MirageCloudKitHostInfo.RecordKey.remoteEnabled.rawValue] = request.remoteEnabled ? 1 : 0
+        record[LoomCloudKitPeerInfo.RecordKey.deviceID.rawValue] = request.deviceID.uuidString
+        record[LoomCloudKitPeerInfo.RecordKey.name.rawValue] = request.name
+        record[LoomCloudKitPeerInfo.RecordKey.deviceType.rawValue] = (request.advertisement.deviceType ?? .mac).rawValue
+        record[LoomCloudKitPeerInfo.RecordKey.advertisementBlob.rawValue] = try? JSONEncoder().encode(request.advertisement)
+        if cloudKitSchemaSupportsOptionalPeerMetadata {
+            record[LoomCloudKitPeerInfo.RecordKey.identityPublicKey.rawValue] = request.identityPublicKey
+            record[LoomCloudKitPeerInfo.RecordKey.remoteAccessEnabled.rawValue] = request.remoteEnabled ? 1 : 0
         }
         if cloudKitSchemaSupportsBootstrapMetadata {
             if let bootstrapMetadata = request.bootstrapMetadata {
-                record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = try? JSONEncoder().encode(bootstrapMetadata)
+                record[LoomCloudKitPeerInfo.RecordKey.bootstrapMetadataBlob.rawValue] = try? JSONEncoder().encode(bootstrapMetadata)
             } else {
-                record[MirageCloudKitHostInfo.RecordKey.bootstrapMetadataBlob.rawValue] = nil
+                record[LoomCloudKitPeerInfo.RecordKey.bootstrapMetadataBlob.rawValue] = nil
             }
         }
-        record[MirageCloudKitHostInfo.RecordKey.lastSeen.rawValue] = Date()
-        return cloudKitSchemaSupportsOptionalHostMetadata
+        record[LoomCloudKitPeerInfo.RecordKey.lastSeen.rawValue] = Date()
+        return cloudKitSchemaSupportsOptionalPeerMetadata
     }
 
-    private func persistHostRecord(
+    private func persistPeerRecord(
         _ record: CKRecord,
         database: CKDatabase,
         identityKeyID: String?,
@@ -250,8 +245,8 @@ public actor MirageHostCloudKitRegistrar {
             savePolicy: .changedKeys
         )
         if let savedRecord = try saveResults[record.recordID]?.get() {
-            hostRecordName = savedRecord.recordID.recordName
-            MirageLogger.appState("Registered host in CloudKit: \(savedRecord.recordID.recordName)")
+            peerRecordName = savedRecord.recordID.recordName
+            MirageLogger.appState("Registered peer in CloudKit: \(savedRecord.recordID.recordName)")
         }
         if cloudKitSchemaSupportsParticipantIdentityRecords,
            let identityKeyID,
@@ -278,7 +273,7 @@ public actor MirageHostCloudKitRegistrar {
     ) async throws {
         let recordID = CKRecord.ID(
             recordName: "identity-\(keyID)",
-            zoneID: hostZoneID
+            zoneID: peerZoneID
         )
         let record = CKRecord(
             recordType: configuration.participantIdentityRecordType,
@@ -330,7 +325,7 @@ public actor MirageHostCloudKitRegistrar {
     }
 
     private func parseRecordDeviceID(_ record: CKRecord) -> UUID? {
-        if let rawDeviceID = record[MirageCloudKitHostInfo.RecordKey.deviceID.rawValue] as? String,
+        if let rawDeviceID = record[LoomCloudKitPeerInfo.RecordKey.deviceID.rawValue] as? String,
            let deviceID = UUID(uuidString: rawDeviceID) {
             return deviceID
         }

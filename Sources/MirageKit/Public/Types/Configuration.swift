@@ -350,50 +350,6 @@ public struct MirageAudioConfiguration: Sendable, Codable, Equatable {
     public static let `default` = MirageAudioConfiguration()
 }
 
-// MARK: - Network Configuration
-
-/// Configuration for network connections
-public struct MirageNetworkConfiguration: Sendable {
-    /// Bonjour service type
-    public var serviceType: String
-
-    /// Control channel port (TCP) - 0 for auto-assign
-    public var controlPort: UInt16
-
-    /// Data channel port (UDP) - 0 for auto-assign
-    public var dataPort: UInt16
-
-    /// Maximum UDP packet size (Mirage header + payload).
-    /// Keep <= 1232 to stay under IPv6 minimum MTU once IP/UDP headers are added.
-    public var maxPacketSize: Int
-
-    /// Whether to enable peer-to-peer WiFi (AWDL) for discovery and connections.
-    /// When enabled, devices can connect directly without needing the same WiFi network.
-    public var enablePeerToPeer: Bool
-
-    /// Whether local peer-to-peer sessions require encrypted media payloads.
-    /// Remote or non-local sessions always remain encrypted.
-    public var requireEncryptedMediaOnLocalNetwork: Bool
-
-    public init(
-        serviceType: String = MirageKit.serviceType,
-        controlPort: UInt16 = 0,
-        dataPort: UInt16 = 0,
-        maxPacketSize: Int = mirageDefaultMaxPacketSize,
-        enablePeerToPeer: Bool = true,
-        requireEncryptedMediaOnLocalNetwork: Bool = false
-    ) {
-        self.serviceType = serviceType
-        self.controlPort = controlPort
-        self.dataPort = dataPort
-        self.maxPacketSize = maxPacketSize
-        self.enablePeerToPeer = enablePeerToPeer
-        self.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
-    }
-
-    public static let `default` = MirageNetworkConfiguration()
-}
-
 // MARK: - Latency Mode
 
 /// Latency preference for stream buffering behavior.

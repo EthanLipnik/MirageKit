@@ -59,7 +59,7 @@ public final class MirageAccessibilityPermissionManager {
     /// Log a permission failure with rate limiting to avoid log spam.
     /// - Parameter eventType: Description of the event type that failed.
     /// - Returns: true if the failure was logged, false if suppressed due to rate limiting.
-    /// - Note: Failures are logged as `LogCategory.accessibility` errors.
+    /// - Note: Failures are logged as `MirageLogCategory.accessibility` errors.
     @discardableResult
     public func logInjectionFailure(eventType: String) -> Bool {
         let now = Date()

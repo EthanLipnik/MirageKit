@@ -162,17 +162,17 @@ package struct ControlMessage: Codable {
                 reason: "Control payload exceeds limit for \(type): \(payloadLengthInt) > \(payloadLimit)"
             )
         }
-        if payloadLengthInt > MirageControlMessageLimits.maxPayloadBytes,
+        if payloadLengthInt > LoomMessageLimits.maxPayloadBytes,
            payloadLimit < payloadLengthInt {
             return .invalidFrame(
-                reason: "Control payload exceeds global limit: \(payloadLengthInt) > \(MirageControlMessageLimits.maxPayloadBytes)"
+                reason: "Control payload exceeds global limit: \(payloadLengthInt) > \(LoomMessageLimits.maxPayloadBytes)"
             )
         }
 
         let totalLength = 5 + payloadLengthInt
-        if totalLength > MirageControlMessageLimits.maxFrameBytes {
+        if totalLength > LoomMessageLimits.maxFrameBytes {
             return .invalidFrame(
-                reason: "Control frame exceeds max bytes: \(totalLength) > \(MirageControlMessageLimits.maxFrameBytes)"
+                reason: "Control frame exceeds max bytes: \(totalLength) > \(LoomMessageLimits.maxFrameBytes)"
             )
         }
 
@@ -187,11 +187,11 @@ package struct ControlMessage: Codable {
     private static func maxPayloadBytes(for type: ControlMessageType) -> Int {
         switch type {
         case .appList:
-            MirageControlMessageLimits.maxAppListPayloadBytes
+            LoomMessageLimits.maxLargeMetadataPayloadBytes
         case .hostHardwareIcon, .appIconUpdate:
-            MirageControlMessageLimits.maxHostHardwareIconPayloadBytes
+            LoomMessageLimits.maxInlineAssetPayloadBytes
         default:
-            MirageControlMessageLimits.maxPayloadBytes
+            LoomMessageLimits.maxPayloadBytes
         }
     }
 }

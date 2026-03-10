@@ -60,7 +60,7 @@ package enum MirageMediaSecurity {
 
     @MainActor
     package static func deriveContext(
-        identityManager: MirageIdentityManager,
+        identityManager: LoomIdentityManager,
         peerPublicKey: Data,
         hostID: UUID,
         clientID: UUID,

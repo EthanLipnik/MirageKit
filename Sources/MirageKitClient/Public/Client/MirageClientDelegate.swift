@@ -44,8 +44,8 @@ public protocol MirageClientDelegate: AnyObject, Sendable {
     @MainActor
     func clientService(
         _ service: MirageClientService,
-        hostSessionStateChanged state: HostSessionState,
-        requiresUsername: Bool
+        hostSessionStateChanged state: LoomSessionAvailability,
+        requiresUserIdentifier: Bool
     )
 
     /// Called when an unlock attempt completes
@@ -71,26 +71,26 @@ public protocol MirageClientDelegate: AnyObject, Sendable {
     ///   - streamID: Stream ID for the login display
     ///   - resolution: Resolution of the login display
     ///   - sessionState: Current session state (screenLocked, loginScreen, etc.)
-    ///   - requiresUsername: Whether username is needed (true for loginScreen, false for screenLocked)
+    ///   - requiresUserIdentifier: Whether username is needed (true for loginScreen, false for screenLocked)
     @MainActor
     func clientService(
         _ service: MirageClientService,
         loginDisplayDidStart streamID: StreamID,
         resolution: CGSize,
-        sessionState: HostSessionState,
-        requiresUsername: Bool
+        sessionState: LoomSessionAvailability,
+        requiresUserIdentifier: Bool
     )
 
     /// Called when the login display stream stops (user logged in successfully)
     /// The client should transition to normal window selection mode
     /// - Parameters:
     ///   - streamID: Stream ID that was stopped
-    ///   - newState: New session state (should be .active)
+    ///   - newState: New session state (should be .ready)
     @MainActor
     func clientService(
         _ service: MirageClientService,
         loginDisplayDidStop streamID: StreamID,
-        newState: HostSessionState
+        newState: LoomSessionAvailability
     )
 }
 
@@ -101,7 +101,7 @@ public extension MirageClientDelegate {
     func clientService(_: MirageClientService, didDisconnectFromHost _: String) {}
     func clientService(_: MirageClientService, didEncounterError _: Error) {}
     func clientService(_: MirageClientService, didReceiveContentBoundsUpdate _: CGRect, forStream _: StreamID) {}
-    func clientService(_: MirageClientService, hostSessionStateChanged _: HostSessionState, requiresUsername _: Bool) {}
+    func clientService(_: MirageClientService, hostSessionStateChanged _: LoomSessionAvailability, requiresUserIdentifier _: Bool) {}
     func clientService(
         _: MirageClientService,
         unlockDidComplete _: Bool,
@@ -114,8 +114,8 @@ public extension MirageClientDelegate {
         _: MirageClientService,
         loginDisplayDidStart _: StreamID,
         resolution _: CGSize,
-        sessionState _: HostSessionState,
-        requiresUsername _: Bool
+        sessionState _: LoomSessionAvailability,
+        requiresUserIdentifier _: Bool
     ) {}
-    func clientService(_: MirageClientService, loginDisplayDidStop _: StreamID, newState _: HostSessionState) {}
+    func clientService(_: MirageClientService, loginDisplayDidStop _: StreamID, newState _: LoomSessionAvailability) {}
 }

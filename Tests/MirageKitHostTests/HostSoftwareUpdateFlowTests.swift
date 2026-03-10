@@ -211,7 +211,7 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
 
     func hostService(
         _: MirageHostService,
-        softwareUpdateStatusFor _: MiragePeerIdentity,
+        softwareUpdateStatusFor _: LoomPeerIdentity,
         forceRefresh: Bool
     ) async -> MirageHostSoftwareUpdateStatusSnapshot {
         lastStatusForceRefresh = forceRefresh
@@ -220,7 +220,7 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
 
     func hostService(
         _: MirageHostService,
-        shouldAuthorizeSoftwareUpdateRequestFrom _: MiragePeerIdentity,
+        shouldAuthorizeSoftwareUpdateRequestFrom _: LoomPeerIdentity,
         trigger _: MirageHostSoftwareUpdateInstallTrigger
     ) async -> Bool {
         authorizeResult
@@ -228,15 +228,15 @@ private final class MockHostSoftwareUpdateController: MirageHostSoftwareUpdateCo
 
     func hostService(
         _: MirageHostService,
-        performSoftwareUpdateInstallFor _: MiragePeerIdentity,
+        performSoftwareUpdateInstallFor _: LoomPeerIdentity,
         trigger _: MirageHostSoftwareUpdateInstallTrigger
     ) async -> MirageHostSoftwareUpdateInstallResult {
         installResult
     }
 }
 
-private func makePeerIdentity() -> MiragePeerIdentity {
-    MiragePeerIdentity(
+private func makePeerIdentity() -> LoomPeerIdentity {
+    LoomPeerIdentity(
         deviceID: UUID(),
         name: "Trusted iPad",
         deviceType: .iPad,
@@ -248,8 +248,8 @@ private func makePeerIdentity() -> MiragePeerIdentity {
     )
 }
 
-private func makeDeviceInfo() -> MirageDeviceInfo {
-    MirageDeviceInfo(
+private func makeDeviceInfo() -> LoomPeerDeviceInfo {
+    LoomPeerDeviceInfo(
         id: UUID(),
         name: "Trusted iPad",
         deviceType: .iPad,
@@ -267,7 +267,7 @@ private func makeHelloMessage(requestHostUpdateOnProtocolMismatch: Bool?) -> Hel
         deviceName: "Trusted iPad",
         deviceType: .iPad,
         protocolVersion: Int(MirageKit.protocolVersion),
-        capabilities: MirageHostCapabilities(),
+        advertisement: LoomPeerAdvertisement(),
         negotiation: MirageProtocolNegotiation.clientHello(
             protocolVersion: Int(MirageKit.protocolVersion),
             supportedFeatures: mirageSupportedFeatures

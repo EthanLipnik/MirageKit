@@ -133,7 +133,7 @@ extension MirageHostService {
             MirageLogger.host("Client requested stream for window \(request.windowID)")
 
             await refreshSessionStateIfNeeded()
-            guard sessionState == .active else {
+            guard sessionState == .ready else {
                 MirageLogger.host("Rejecting startStream while session is \(sessionState)")
                 if let clientContext = clientsByConnection[ObjectIdentifier(connection)] { await sendSessionState(to: clientContext) }
                 return

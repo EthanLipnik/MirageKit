@@ -58,14 +58,14 @@ extension MirageHostService {
         stunPort: UInt16 = 3478,
         timeout: Duration = .seconds(2)
     )
-    async -> MirageRemoteCandidate? {
+    async -> LoomRelayCandidate? {
         guard remoteTransportEnabled,
               let localPort = remoteControlPort else {
             MirageLogger.host("Remote candidate skipped (transport disabled or listener port unavailable)")
             return nil
         }
 
-        let result = await MirageStunProbe.run(
+        let result = await LoomSTUNProbe.run(
             host: stunHost,
             port: stunPort,
             localPort: localPort,
@@ -83,7 +83,7 @@ extension MirageHostService {
             return nil
         }
 
-        return MirageRemoteCandidate(
+        return LoomRelayCandidate(
             transport: .quic,
             address: mappedAddress,
             port: mappedPort

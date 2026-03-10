@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import MirageBootstrapShared
+import Loom
 
 #if os(macOS)
 
@@ -23,7 +23,7 @@ actor MirageBootstrapTelemetryQueueWriter {
         self.encoder = encoder
     }
 
-    func append(_ event: MirageBootstrapTelemetryEventEnvelope) async {
+    func append(_ event: LoomBootstrapTelemetryEventEnvelope) async {
         guard let queueURL = queueFileURL() else { return }
 
         let newLine: Data
@@ -55,7 +55,7 @@ actor MirageBootstrapTelemetryQueueWriter {
             return nil
         }
 
-        return containerURL.appendingPathComponent(MirageBootstrapTelemetryQueueConstants.fileName)
+        return containerURL.appendingPathComponent(LoomBootstrapTelemetryQueueConstants.fileName)
     }
 
     private func loadLines(from queueURL: URL) -> [Data] {
@@ -69,11 +69,11 @@ actor MirageBootstrapTelemetryQueueWriter {
     }
 
     private func enforceRetention(on lines: inout [Data]) {
-        while lines.count > MirageBootstrapTelemetryQueueConstants.maxEntries {
+        while lines.count > LoomBootstrapTelemetryQueueConstants.maxEntries {
             lines.removeFirst()
         }
 
-        while queueSizeBytes(lines) > MirageBootstrapTelemetryQueueConstants.maxFileBytes,
+        while queueSizeBytes(lines) > LoomBootstrapTelemetryQueueConstants.maxFileBytes,
               !lines.isEmpty {
             lines.removeFirst()
         }

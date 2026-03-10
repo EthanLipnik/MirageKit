@@ -1,26 +1,28 @@
 # MirageKit
 
-MirageKit is a window and desktop streaming framework for Apple platforms. It provides a macOS host service for capturing windows or virtual displays and a client service for discovering hosts, receiving low‑latency video over UDP, and forwarding input back to the host. SwiftUI views are included for rendering streams through a shared `AVSampleBufferDisplayLayer` presentation path on macOS, iOS, and visionOS.
+MirageKit is a window and desktop streaming framework for Apple platforms. It provides a macOS host service for capturing windows or virtual displays and a client service for discovering hosts, receiving low-latency video, and forwarding input back to the host. SwiftUI views are included for rendering streams through a shared `AVSampleBufferDisplayLayer` presentation path on macOS, iOS, and visionOS.
 
-> ⚠️ MirageKit is still in active development and may introduce breaking API updates.
+Networking is built on [Loom](https://github.com/EthanLipnik/Loom).
+
+> MirageKit is pre-release. API and architecture can still change.
 
 ## Features
 
 - Window, app, and full desktop streaming from macOS hosts
-- Bonjour discovery with TCP control + UDP video transport
-- Typed hello negotiation (protocol version + feature selection)
+- Bonjour discovery with TCP control plus UDP media transport
+- Typed hello negotiation with protocol version and feature selection
 - Peer-to-peer connections over AWDL
 - Encoder configuration helpers and per-stream overrides
-- Input forwarding (mouse, keyboard, scroll, gestures)
-- SwiftUI stream view for macOS, iOS, and visionOS
-- Session store + streaming content view for UI state
-- Host window + input controllers for macOS integration
-- Virtual display capture for pixel‑perfect rendering
-- Native-screen-based display sizing on iOS/visionOS (`nativeBounds` + `nativeScale`)
-- Remote session state + unlock support
-- Menu bar passthrough and app‑centric streaming utilities
-- Built-in trust store and app preference helpers
-- Registry-based control message dispatch in host/client services
+- Input forwarding for mouse, keyboard, scroll, and gestures
+- SwiftUI stream views for macOS, iOS, and visionOS
+- Session store and streaming content view for UI state
+- Host window and input controllers for macOS integration
+- Virtual display capture for pixel-perfect rendering
+- Native-screen-based display sizing on iOS and visionOS (`nativeBounds` + `nativeScale`)
+- Remote session state and unlock support
+- Menu bar passthrough and app-centric streaming utilities
+- Built-in trust hooks and app preference helpers
+- Registry-based control message dispatch in host and client services
 
 ## Requirements
 
@@ -37,12 +39,14 @@ Add MirageKit as a Swift Package Manager dependency.
 .package(url: "https://github.com/EthanLipnik/MirageKit.git", from: "0.0.1"),
 ```
 
-MirageKit ships three products:
-- `MirageKit` (shared types, protocol, logging)
-- `MirageKitClient` (client services + stream views)
-- `MirageKitHost` (host services + capture/encode helpers)
+MirageKit ships four products:
 
-Add `MirageKitClient` or `MirageKitHost` to the relevant target dependencies.
+- `MirageKit` (shared types, protocol, logging, and configuration helpers)
+- `MirageKitClient` (client services, session state, and stream views)
+- `MirageKitHost` (host services, capture, encode, and input helpers)
+- `MirageHostBootstrapRuntime` (host bootstrap and unlock runtime support)
+
+Add the relevant products to your target dependencies.
 
 ## Quick Start
 
@@ -82,7 +86,7 @@ final class ClientController: MirageClientDelegate {
         clientService.delegate = self
     }
 
-    func connect(to host: MirageHost) async throws {
+    func connect(to host: LoomPeer) async throws {
         try await clientService.connect(to: host)
         try await clientService.requestWindowList()
     }
@@ -91,8 +95,7 @@ final class ClientController: MirageClientDelegate {
 
 ### SwiftUI Stream View
 
-`MirageStreamViewRepresentable` reads frames from `MirageFrameCache` and does not require
-SwiftUI state updates per frame.
+`MirageStreamViewRepresentable` reads frames from `MirageFrameCache` and does not require SwiftUI state updates per frame.
 
 ```swift
 import MirageKitClient
@@ -115,8 +118,7 @@ struct StreamView: View {
 }
 ```
 
-MirageKit also includes a higher-level content view that wires input, focus, and
-resize logic to a `MirageClientSessionStore`:
+MirageKit also includes a higher-level content view that wires input, focus, and resize logic to a `MirageClientSessionStore`:
 
 ```swift
 let sessionStore = MirageClientSessionStore()
@@ -132,19 +134,19 @@ MirageStreamContentView(
 
 ## How It Works
 
-- Hosts advertise via Bonjour using `_mirage._tcp` and accept TCP control connections.
+- Hosts advertise via `_mirage._tcp` and accept control connections.
 - Hello handshake negotiates protocol compatibility and selected runtime features.
-- Video payloads stream over UDP; clients register stream IDs to receive data.
-- Host encode pipeline: limited in-flight frames with always-latest frame selection.
-- The host can create a shared virtual display sized to the client’s display for 1:1 pixels.
-- iOS/visionOS display sizing derives from native screen metrics, while live desktop resize follows drawable bounds.
-- Session state updates allow remote unlock flows (login screen vs locked session).
-- Menu bar passthrough enables clients to render native menu structures and send actions back.
+- Video payloads stream over UDP, and clients register stream IDs to receive media.
+- Host encode pipeline uses limited in-flight frames with always-latest frame selection.
+- The host can create a shared virtual display sized to the client's display for 1:1 pixels.
+- iOS and visionOS display sizing derives from native screen metrics, while live desktop resize follows drawable bounds.
+- Session state updates allow remote unlock flows for login-screen and locked-session cases.
+- Menu bar passthrough lets clients render native menu structures and send actions back.
 - Control message routing uses per-message-type handler registries in both host and client services.
 
 ## Architecture
 
-For a deeper dive into modules and data flows, see `Architecture.md`.
+For a deeper dive into modules and data flows, see [Architecture.md](Architecture.md).
 
 For ColorSync cleanup guidance, see [If-Your-Computer-Feels-Stuttery.md](If-Your-Computer-Feels-Stuttery.md).
 
@@ -162,20 +164,11 @@ Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe 
 
 - Use `.highQuality` or `.balanced` defaults.
 - Use `withOverrides` to apply client-specific intervals or encoder quality.
-- Use `withTargetFrameRate` to request the client’s target FPS (60/120 based on display capabilities).
+- Use `withTargetFrameRate` to request the client's target FPS (60/120 based on display capabilities).
 - `frameQuality` targets inter-frame quality and maps to QP bounds when supported.
 - `keyframeQuality` targets keyframe quality and should stay below `frameQuality`.
 
-### Networking
-
-`MirageNetworkConfiguration` defines discovery and transport behavior.
-
-- `serviceType` is used for Bonjour discovery.
-- `controlPort` (TCP) and `dataPort` (UDP) support explicit or auto-assigned ports (defaults: 9847/9848).
-- `enablePeerToPeer` turns on AWDL peer-to-peer discovery and connections.
-- `maxPacketSize` controls UDP payload sizing (default stays within IPv6 MTU).
-
-#### Host AWDL Transport Experiment
+### Host AWDL Transport Experiment
 
 Host runtime supports an AWDL transport stabilization experiment behind an environment variable:
 
@@ -183,7 +176,7 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 - The experiment path keeps stream quality settings unchanged (resolution, bitrate targets, and bit depth policies remain the same).
 - When the variable is unset, host and client runtime follow default transport behavior.
 
-#### Host Lights Out Kill Switch
+### Host Lights Out Kill Switch
 
 - `MIRAGE_DISABLE_LIGHTS_OUT=1` disables host Lights Out activation for desktop and app-stream sessions.
 
@@ -197,10 +190,10 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 
 - Input events are forwarded via `MirageInputEvent` types (mouse, key, scroll, magnify, rotate).
 - iPad clients always send Apple Pencil as drawing-tablet input with pressure and stylus orientation metadata for tablet-aware host apps.
-- Direct touch supports `normal`, `dragCursor`, and `pencilBased` modes; Pencil-based mode uses one-finger native scroll physics and reserves pointer clicks for Apple Pencil or indirect pointer input.
+- Direct touch supports `normal`, `dragCursor`, and `pencilBased` modes. Pencil-based mode uses one-finger native scroll physics and reserves pointer clicks for Apple Pencil or indirect pointer input.
 - Apple Pencil squeeze emits a secondary click at the hover location when available, or the latest pointer location.
 - `MirageStreamViewRepresentable` renders streams through `AVSampleBufferDisplayLayer` and exposes drawable size callbacks for resolution sync.
-- `MirageStreamContentView` + `MirageClientSessionStore` coordinate input, focus, and resize UI.
+- `MirageStreamContentView` and `MirageClientSessionStore` coordinate input, focus, and resize UI.
 - The host uses `MirageHostDelegate` and the client uses `MirageClientDelegate` for approvals and state updates.
 
 ## Permissions
@@ -214,7 +207,14 @@ Contributions are welcome. Most of this framework was built with agentic coding 
 ## Testing
 
 ```bash
-swift test
+swift build --package-path .
+swift test --package-path .
+```
+
+For host-integration-sensitive changes, also build:
+
+```bash
+xcodebuild -project ../Mirage.xcodeproj -scheme 'Mirage Host' -configuration Debug -destination 'platform=macOS' build
 ```
 
 ## License

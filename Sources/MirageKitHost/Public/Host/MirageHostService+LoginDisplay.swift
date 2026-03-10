@@ -36,7 +36,7 @@ extension MirageHostService {
             self.loginDisplayRetryTimer?.cancel()
             self.loginDisplayRetryTimer = nil
 
-            guard self.sessionState != .active else { return }
+            guard self.sessionState != .ready else { return }
             guard !self.clientsByConnection.isEmpty else { return }
             guard self.loginDisplayContext == nil else { return }
 
@@ -46,7 +46,7 @@ extension MirageHostService {
 
     /// Start login display stream if not already running
     func startLoginDisplayStreamIfNeeded() async {
-        guard sessionState != .active else { return }
+        guard sessionState != .ready else { return }
         guard !clientsByConnection.isEmpty else {
             MirageLogger.host("Skipping login display start: no connected clients")
             return
@@ -159,7 +159,7 @@ extension MirageHostService {
 
         func shouldContinueStart(expectedGeneration: UInt64) -> Bool {
             guard expectedGeneration == loginDisplayStartGeneration else { return false }
-            guard sessionState != .active else { return false }
+            guard sessionState != .ready else { return false }
             guard !clientsByConnection.isEmpty else { return false }
             guard loginDisplayStreamID == streamID else { return false }
             guard loginDisplayContext === context else { return false }
@@ -267,7 +267,7 @@ extension MirageHostService {
     }
 
     /// Stop the login display stream
-    func stopLoginDisplayStream(newState: HostSessionState) async {
+    func stopLoginDisplayStream(newState: LoomSessionAvailability) async {
         // Clear any stuck modifiers before stopping
         inputController.clearAllModifiers()
 
@@ -350,7 +350,7 @@ extension MirageHostService {
 
     func checkLoginDisplayHealth(generation: UInt64, streamID: StreamID, context: StreamContext) async {
         guard generation == loginDisplayWatchdogGeneration else { return }
-        guard sessionState != .active else {
+        guard sessionState != .ready else {
             stopLoginDisplayWatchdog()
             return
         }
@@ -390,7 +390,7 @@ extension MirageHostService {
     }
 
     func restartLoginDisplayStream(reason: String) async {
-        guard sessionState != .active else { return }
+        guard sessionState != .ready else { return }
         guard !clientsByConnection.isEmpty else {
             await stopLoginDisplayStream(newState: sessionState)
             return
@@ -424,7 +424,7 @@ extension MirageHostService {
             width: Int(resolution.width),
             height: Int(resolution.height),
             sessionState: sessionState,
-            requiresUsername: sessionState.requiresUsername,
+            requiresUserIdentifier: sessionState.requiresUserIdentifier,
             dimensionToken: dimensionToken
         )
 
@@ -434,7 +434,7 @@ extension MirageHostService {
     }
 
     /// Broadcast login display stopped to all connected clients
-    func broadcastLoginDisplayStopped(streamID: StreamID, newState: HostSessionState) async {
+    func broadcastLoginDisplayStopped(streamID: StreamID, newState: LoomSessionAvailability) async {
         let message = LoginDisplayStoppedMessage(
             streamID: UInt32(streamID),
             newState: newState
@@ -447,7 +447,7 @@ extension MirageHostService {
 
     func scheduleLoginDisplayRetry(reason: String) async {
         guard loginDisplayRetryTimer == nil else { return }
-        guard sessionState != .active else { return }
+        guard sessionState != .ready else { return }
         guard !clientsByConnection.isEmpty else { return }
         guard loginDisplayContext == nil else { return }
         guard loginDisplayRetryAttempts < loginDisplayRetryLimit else {

@@ -11,7 +11,7 @@ import Foundation
 
 package enum MirageIdentitySigning {
     package static func keyID(for publicKey: Data) -> String {
-        MirageIdentityManager.keyID(for: publicKey)
+        LoomIdentityManager.keyID(for: publicKey)
     }
 
     package static func helloPayload(
@@ -19,7 +19,7 @@ package enum MirageIdentitySigning {
         deviceName: String,
         deviceType: DeviceType,
         protocolVersion: Int,
-        capabilities: MirageHostCapabilities,
+        advertisement: LoomPeerAdvertisement,
         negotiation: MirageProtocolNegotiation,
         iCloudUserID: String?,
         keyID: String,
@@ -33,7 +33,7 @@ package enum MirageIdentitySigning {
             ("deviceName", deviceName),
             ("deviceType", deviceType.rawValue),
             ("protocolVersion", "\(protocolVersion)"),
-            ("capabilities", try stableJSONBase64(capabilities)),
+            ("advertisement", try stableJSONBase64(advertisement)),
             ("negotiation", try stableJSONBase64(negotiation)),
             ("iCloudUserID", iCloudUserID ?? "-"),
             ("keyID", keyID),

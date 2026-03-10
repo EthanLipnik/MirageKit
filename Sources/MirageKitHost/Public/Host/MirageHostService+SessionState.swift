@@ -12,7 +12,7 @@ import MirageKit
 
 #if os(macOS)
 extension MirageHostService {
-    nonisolated func handleSessionStateMonitorUpdate(_ newState: HostSessionState) {
+    nonisolated func handleSessionStateMonitorUpdate(_ newState: LoomSessionAvailability) {
         Task { @MainActor [weak self] in
             await self?.handleSessionStateChange(newState)
         }
@@ -42,7 +42,7 @@ extension MirageHostService {
         if refreshed != sessionState { await handleSessionStateChange(refreshed) }
     }
 
-    func handleSessionStateChange(_ newState: HostSessionState) async {
+    func handleSessionStateChange(_ newState: LoomSessionAvailability) async {
         sessionState = newState
         currentSessionToken = UUID().uuidString
 
@@ -52,7 +52,7 @@ extension MirageHostService {
             await sendSessionState(to: clientContext)
         }
 
-        if newState == .active {
+        if newState == .ready {
             await stopLoginDisplayStream(newState: newState)
             await unlockManager?.releaseDisplayAssertion()
             for clientContext in clientsByConnection.values {
@@ -70,7 +70,7 @@ extension MirageHostService {
         let message = SessionStateUpdateMessage(
             state: sessionState,
             sessionToken: currentSessionToken,
-            requiresUsername: sessionState.requiresUsername,
+            requiresUserIdentifier: sessionState.requiresUserIdentifier,
             timestamp: Date()
         )
 

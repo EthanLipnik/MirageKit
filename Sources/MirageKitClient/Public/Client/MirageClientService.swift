@@ -235,7 +235,7 @@ public final class MirageClientService {
     public internal(set) var hasReceivedWindowList: Bool = false
 
     /// Current session state of the connected host (locked, unlocked, etc.)
-    public internal(set) var hostSessionState: HostSessionState?
+    public internal(set) var hostSessionState: LoomSessionAvailability?
     /// Selected protocol features from handshake negotiation.
     var negotiatedFeatures: MirageFeatureSet = []
     /// Whether media payload encryption is active for the current host session.
@@ -414,7 +414,11 @@ public final class MirageClientService {
     public var iCloudUserID: String?
 
     /// Identity manager used for signed handshake envelopes.
-    public var identityManager: MirageIdentityManager?
+    public var identityManager: LoomIdentityManager? {
+        didSet {
+            loomNode.identityManager = identityManager
+        }
+    }
 
     /// Expected host key ID from discovery metadata, if available.
     var expectedHostIdentityKeyID: String?
@@ -423,7 +427,7 @@ public final class MirageClientService {
     public internal(set) var connectedHostIdentityKeyID: String?
 
     /// Replay protection for signed hello responses.
-    let handshakeReplayProtector = MirageReplayProtector()
+    let handshakeReplayProtector = LoomReplayProtector()
 
     /// Session store for UI state and stream coordination.
     public let sessionStore: MirageClientSessionStore
@@ -434,9 +438,11 @@ public final class MirageClientService {
     nonisolated let inputEventSender = MirageInputEventSender()
     nonisolated let fastPathState = MirageClientFastPathState()
 
-    var networkConfig: MirageNetworkConfiguration
+    public let loomNode: LoomNode
+    var networkConfig: LoomNetworkConfiguration
     var connection: NWConnection?
-    var connectedHost: MirageHost?
+    public internal(set) var loomSession: LoomSession?
+    var connectedHost: LoomPeer?
     /// Stable device identifier for the client, persisted in UserDefaults.
     public let deviceID: UUID
     let deviceName: String
@@ -619,7 +625,7 @@ public final class MirageClientService {
     let adaptiveFallbackBitrateStep: Double = 0.85
     let adaptiveRestoreBitrateStep: Double = 1.10
     let adaptiveFallbackBitrateFloorBps: Int = 8_000_000
-    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: MirageDiagnosticsContextProviderToken?
+    @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
     // Internal for low-power policy extension.
     let decoderPowerStateMonitor = MiragePowerStateMonitor()
     var decoderPowerStateSnapshot = MiragePowerStateSnapshot(
@@ -660,12 +666,12 @@ public final class MirageClientService {
 
     /// Client protocol version used for hello negotiation.
     public static var clientProtocolVersion: Int {
-        Int(MirageKit.protocolVersion)
+        Int(Loom.protocolVersion)
     }
 
     public init(
         deviceName: String? = nil,
-        networkConfiguration: MirageNetworkConfiguration = .default,
+        loomConfiguration: LoomNetworkConfiguration = .default,
         sessionStore: MirageClientSessionStore = MirageClientSessionStore()
     ) {
         #if os(macOS)
@@ -674,7 +680,16 @@ public final class MirageClientService {
         self.deviceName = deviceName ?? UIDevice.current.name
         #endif
 
-        networkConfig = networkConfiguration
+        var resolvedConfiguration = loomConfiguration
+        if resolvedConfiguration.serviceType == Loom.serviceType {
+            resolvedConfiguration.serviceType = MirageKit.serviceType
+        }
+
+        networkConfig = resolvedConfiguration
+        loomNode = LoomNode(
+            configuration: resolvedConfiguration,
+            identityManager: LoomIdentityManager.shared
+        )
         self.sessionStore = sessionStore
 
         // Load existing device ID or generate and persist a new one
@@ -692,7 +707,7 @@ public final class MirageClientService {
         audioPacketIngressQueue.setDeliverHandler { [weak self] decodedFrames, streamID in
             self?.enqueueDecodedAudioFrames(decodedFrames, for: streamID)
         }
-        identityManager = MirageIdentityManager.shared
+        identityManager = LoomIdentityManager.shared
         self.sessionStore.clientService = self
         self.sessionStore.onStreamPresentationTierChanged = { [weak self] streamID, tier in
             guard let self else { return }
@@ -713,21 +728,21 @@ public final class MirageClientService {
         }
         guard let diagnosticsContextProviderToken else { return }
         Task {
-            await MirageDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
+            await LoomDiagnostics.unregisterContextProvider(diagnosticsContextProviderToken)
         }
     }
 
     private func registerDiagnosticsContextProvider() {
         Task { [weak self] in
             guard let self else { return }
-            diagnosticsContextProviderToken = await MirageDiagnostics.registerContextProvider { [weak self] in
+            diagnosticsContextProviderToken = await LoomDiagnostics.registerContextProvider { [weak self] in
                 guard let self else { return [:] }
                 return await MainActor.run { self.makeDiagnosticsContextSnapshot() }
             }
         }
     }
 
-    private func makeDiagnosticsContextSnapshot() -> MirageDiagnosticsContext {
+    private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
         [
             "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
             "client.awaitingManualApproval": .bool(isAwaitingManualApproval),
@@ -740,7 +755,7 @@ public final class MirageClientService {
             "client.desktopStreamActive": .bool(desktopStreamID != nil),
             "client.loginDisplayStreamActive": .bool(loginDisplayStreamID != nil),
             "client.adaptiveFallbackMode": .string(diagnosticsAdaptiveFallbackModeName(adaptiveFallbackMode)),
-            "client.maxRefreshRateOverride": maxRefreshRateOverride.map(MirageDiagnosticsValue.int) ?? .null,
+            "client.maxRefreshRateOverride": maxRefreshRateOverride.map(LoomDiagnosticsValue.int) ?? .null,
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null
         ]
     }
@@ -784,6 +799,7 @@ public final class MirageClientService {
 
         networkConfig.enablePeerToPeer = enablePeerToPeer
         networkConfig.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
+        loomNode.configuration = networkConfig
         MirageLogger.client(
             "Updated network policy (p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
         )
