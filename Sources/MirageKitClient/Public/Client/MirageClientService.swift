@@ -442,7 +442,7 @@ public final class MirageClientService {
     var networkConfig: LoomNetworkConfiguration
     var connection: NWConnection?
     public internal(set) var loomSession: LoomSession?
-    var connectedHost: LoomPeer?
+    public internal(set) var connectedHost: LoomPeer?
     /// Stable device identifier for the client, persisted in UserDefaults.
     public let deviceID: UUID
     let deviceName: String
@@ -451,6 +451,7 @@ public final class MirageClientService {
     var approvalWaitTask: Task<Void, Never>?
     var hasReceivedHelloResponse = false
     var pendingHelloNonce: String?
+    var helloHandshakeContinuation: ContinuationBox<Void>?
     var mediaSecurityContext: MirageMediaSecurityContext?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
@@ -637,6 +638,7 @@ public final class MirageClientService {
     public enum ConnectionState: Equatable {
         case disconnected
         case connecting
+        case handshaking(host: String)
         case connected(host: String)
         case reconnecting
         case error(String)
@@ -645,6 +647,7 @@ public final class MirageClientService {
             switch (lhs, rhs) {
             case (.disconnected, .disconnected): true
             case (.connecting, .connecting): true
+            case let (.handshaking(a), .handshaking(b)): a == b
             case let (.connected(a), .connected(b)): a == b
             case (.reconnecting, .reconnecting): true
             case let (.error(a), .error(b)): a == b
@@ -767,6 +770,8 @@ public final class MirageClientService {
             return "disconnected"
         case .connecting:
             return "connecting"
+        case .handshaking:
+            return "handshaking"
         case .connected:
             return "connected"
         case .reconnecting:

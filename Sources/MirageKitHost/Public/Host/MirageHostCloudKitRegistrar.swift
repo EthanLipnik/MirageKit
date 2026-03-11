@@ -12,6 +12,14 @@ import MirageKit
 #if os(macOS)
 /// Serializes host-registration CloudKit traffic away from the main actor.
 public actor MirageHostCloudKitRegistrar {
+    public struct RegistrationResult: Sendable, Equatable {
+        public let peerRecordName: String
+
+        public init(peerRecordName: String) {
+            self.peerRecordName = peerRecordName
+        }
+    }
+
     public struct RegistrationRequest: Sendable {
         public let deviceID: UUID
         public let name: String
@@ -116,7 +124,7 @@ public actor MirageHostCloudKitRegistrar {
         return staleRecordIDs.count
     }
 
-    public func registerHost(_ request: RegistrationRequest) async throws {
+    public func registerHost(_ request: RegistrationRequest) async throws -> RegistrationResult {
         let database = container.privateCloudDatabase
         let zone = CKRecordZone(zoneID: peerZoneID)
         do {
@@ -133,13 +141,12 @@ public actor MirageHostCloudKitRegistrar {
             let populationAttempt = populate(record: record, from: request)
 
             do {
-                try await persistPeerRecord(
+                return try await persistPeerRecord(
                     record,
                     database: database,
                     identityKeyID: request.identityKeyID,
                     identityPublicKey: request.identityPublicKey
                 )
-                return
             } catch where Self.shouldRetryHostRegistrationWithoutBootstrapMetadata(
                 error: error,
                 attemptedBootstrapMetadataWrite: cloudKitSchemaSupportsBootstrapMetadata && request.bootstrapMetadata != nil
@@ -166,6 +173,16 @@ public actor MirageHostCloudKitRegistrar {
                 )
             }
         }
+    }
+
+    public func registeredPeerRecordID() -> CKRecord.ID? {
+        guard let peerRecordName else { return nil }
+        return CKRecord.ID(recordName: peerRecordName, zoneID: peerZoneID)
+    }
+
+    public func fetchRegisteredPeerRecord() async throws -> CKRecord? {
+        let database = container.privateCloudDatabase
+        return try await fetchCachedPeerRecord(database: database)
     }
 
     public func updateLastSeen() async {
@@ -281,16 +298,15 @@ public actor MirageHostCloudKitRegistrar {
         database: CKDatabase,
         identityKeyID: String?,
         identityPublicKey: Data?
-    ) async throws {
+    ) async throws -> RegistrationResult {
         let (saveResults, _) = try await database.modifyRecords(
             saving: [record],
             deleting: [],
             savePolicy: .changedKeys
         )
-        if let savedRecord = try saveResults[record.recordID]?.get() {
-            peerRecordName = savedRecord.recordID.recordName
-            MirageLogger.appState("Registered peer in CloudKit: \(savedRecord.recordID.recordName)")
-        }
+        let storedRecord = try saveResults[record.recordID]?.get() ?? record
+        let result = storeRegisteredPeerRecordName(storedRecord.recordID.recordName)
+        MirageLogger.appState("Registered peer in CloudKit: \(storedRecord.recordID.recordName)")
         if cloudKitSchemaSupportsParticipantIdentityRecords,
            let identityKeyID,
            let identityPublicKey {
@@ -307,6 +323,7 @@ public actor MirageHostCloudKitRegistrar {
                 )
             }
         }
+        return result
     }
 
     private func upsertParticipantIdentityRecord(
@@ -437,6 +454,11 @@ public actor MirageHostCloudKitRegistrar {
         }
 
         return UUID(uuidString: record.recordID.recordName)
+    }
+
+    func storeRegisteredPeerRecordName(_ recordName: String) -> RegistrationResult {
+        peerRecordName = recordName
+        return RegistrationResult(peerRecordName: recordName)
     }
 }
 #endif

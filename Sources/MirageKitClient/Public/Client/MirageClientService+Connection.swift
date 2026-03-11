@@ -143,6 +143,36 @@ extension MirageClientService {
         }
     }
 
+    func awaitHelloHandshake(
+        on connection: NWConnection,
+        provisionalHost: LoomPeer
+    ) async throws {
+        connectionState = .handshaking(host: provisionalHost.name)
+
+        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+            let continuationBox = ContinuationBox<Void>(continuation)
+            helloHandshakeContinuation = continuationBox
+
+            Task { @MainActor [weak self] in
+                guard let self else {
+                    continuationBox.resume(throwing: CancellationError())
+                    return
+                }
+
+                do {
+                    try await self.sendHelloMessage(connection: connection)
+                    self.startManualApprovalWaitTimer()
+                    self.startReceiving(on: connection)
+                } catch {
+                    if self.helloHandshakeContinuation === continuationBox {
+                        self.helloHandshakeContinuation = nil
+                    }
+                    continuationBox.resume(throwing: error)
+                }
+            }
+        }
+    }
+
     /// Connect to a discovered host.
     public func connect(
         to host: LoomPeer,
@@ -197,7 +227,6 @@ extension MirageClientService {
 
             MirageLogger.client("Connected to \(host.name)")
             MirageInstrumentation.record(.clientConnectionEstablished)
-            connectionState = .connected(host: host.name)
 
             // Store connection for receiving messages.
             self.connection = connection
@@ -209,18 +238,20 @@ extension MirageClientService {
                 switch state {
                 case let .failed(error):
                     Task { @MainActor in
+                        let shouldNotifyDelegate = self.hasReceivedHelloResponse
                         await self.handleDisconnect(
                             reason: error.localizedDescription,
                             state: .error(error.localizedDescription),
-                            notifyDelegate: true
+                            notifyDelegate: shouldNotifyDelegate
                         )
                     }
                 case .cancelled:
                     Task { @MainActor in
+                        let shouldNotifyDelegate = self.hasReceivedHelloResponse
                         await self.handleDisconnect(
                             reason: "Connection cancelled",
                             state: .disconnected,
-                            notifyDelegate: true
+                            notifyDelegate: shouldNotifyDelegate
                         )
                     }
                 default:
@@ -235,21 +266,24 @@ extension MirageClientService {
                 }
             }
 
-            // Send hello message with device info.
-            try await sendHelloMessage(connection: connection)
-            startManualApprovalWaitTimer()
-
-            // Start receiving messages from the server.
-            startReceiving()
+            try await awaitHelloHandshake(
+                on: connection,
+                provisionalHost: host
+            )
+            if let acceptedHost = connectedHost {
+                MirageLogger.client("Hello handshake accepted for \(acceptedHost.name)")
+            }
         } catch {
             pendingConnection?.cancel()
             MirageLogger.error(.client, error: error, message: "Connection failed: ")
             MirageInstrumentation.record(.clientConnectionFailed)
-            await handleDisconnect(
-                reason: error.localizedDescription,
-                state: .disconnected,
-                notifyDelegate: false
-            )
+            if requiresDisconnectCleanupAfterFailedConnect() {
+                await handleDisconnect(
+                    reason: error.localizedDescription,
+                    state: .disconnected,
+                    notifyDelegate: false
+                )
+            }
             throw error
         }
     }
@@ -279,9 +313,17 @@ extension MirageClientService {
     func handleDisconnect(reason: String, state: ConnectionState, notifyDelegate: Bool) async {
         if case .disconnected = connectionState { return }
 
-        if case .error = connectionState, case .error = state { return }
+        if case .error = connectionState {
+            if case .error = state { return }
+            if case .disconnected = state { return }
+        }
 
         MirageInstrumentation.record(.clientConnectionDisconnected)
+
+        if !hasReceivedHelloResponse, let helloHandshakeContinuation {
+            self.helloHandshakeContinuation = nil
+            helloHandshakeContinuation.resume(throwing: MirageError.protocolError(reason))
+        }
 
         let sessions = activeStreams
         let storedSessions = sessionStore.activeSessions
@@ -293,6 +335,7 @@ extension MirageClientService {
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
         pendingHelloNonce = nil
+        helloHandshakeContinuation = nil
         setMediaSecurityContext(nil)
         receiveBuffer = Data()
         stopRegistrationRefreshLoop()
@@ -396,11 +439,43 @@ extension MirageClientService {
         approvalWaitTask = Task { @MainActor [weak self] in
             try? await Task.sleep(for: .seconds(2.5))
             guard let self else { return }
-            guard !hasReceivedHelloResponse else { return }
+            guard Self.shouldActivateManualApprovalWaitIndicator(
+                hasReceivedHelloResponse: hasReceivedHelloResponse,
+                connectionState: connectionState
+            ) else {
+                return
+            }
 
-            if case .connected = connectionState {
+            if case .handshaking = connectionState {
                 isAwaitingManualApproval = true
             }
+        }
+    }
+
+    static func shouldActivateManualApprovalWaitIndicator(
+        hasReceivedHelloResponse: Bool,
+        connectionState: ConnectionState
+    ) -> Bool {
+        guard !hasReceivedHelloResponse else { return false }
+        if case .handshaking = connectionState {
+            return true
+        }
+        return false
+    }
+
+    private func requiresDisconnectCleanupAfterFailedConnect() -> Bool {
+        switch connectionState {
+        case .disconnected,
+             .error:
+            return connection != nil ||
+                loomSession != nil ||
+                pendingHelloNonce != nil ||
+                helloHandshakeContinuation != nil
+        case .connecting,
+             .handshaking,
+             .connected,
+             .reconnecting:
+            return true
         }
     }
 

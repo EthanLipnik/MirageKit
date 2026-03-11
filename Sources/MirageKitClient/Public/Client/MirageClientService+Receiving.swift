@@ -32,6 +32,7 @@ extension MirageClientService {
                 }
 
                 if let error {
+                    let shouldNotifyDelegate = hasReceivedHelloResponse
                     if shouldTreatReceiveErrorAsDisconnect(error) {
                         let phaseDescription = hasReceivedHelloResponse
                             ? "peer/network"
@@ -42,14 +43,14 @@ extension MirageClientService {
                         await handleDisconnect(
                             reason: "Host disconnected",
                             state: .disconnected,
-                            notifyDelegate: true
+                            notifyDelegate: shouldNotifyDelegate
                         )
                     } else {
                         MirageLogger.error(.client, error: error, message: "Receive error: ")
                         await handleDisconnect(
                             reason: error.localizedDescription,
                             state: .error(error.localizedDescription),
-                            notifyDelegate: true
+                            notifyDelegate: shouldNotifyDelegate
                         )
                     }
                     return
@@ -60,7 +61,7 @@ extension MirageClientService {
                     await handleDisconnect(
                         reason: "Host disconnected",
                         state: .disconnected,
-                        notifyDelegate: true
+                        notifyDelegate: hasReceivedHelloResponse
                     )
                     return
                 }
@@ -83,7 +84,7 @@ extension MirageClientService {
                 await handleDisconnect(
                     reason: "Invalid control-channel payload",
                     state: .error("Invalid control-channel payload"),
-                    notifyDelegate: true
+                    notifyDelegate: hasReceivedHelloResponse
                 )
                 return
             }
@@ -107,7 +108,7 @@ extension MirageClientService {
                     await handleDisconnect(
                         reason: "Control receive buffer overflow",
                         state: .error("Control receive buffer overflow"),
-                        notifyDelegate: true
+                        notifyDelegate: hasReceivedHelloResponse
                     )
                 }
                 return
@@ -117,7 +118,7 @@ extension MirageClientService {
                 await handleDisconnect(
                     reason: "Invalid control frame",
                     state: .error("Invalid control frame"),
-                    notifyDelegate: true
+                    notifyDelegate: hasReceivedHelloResponse
                 )
                 return
             }
