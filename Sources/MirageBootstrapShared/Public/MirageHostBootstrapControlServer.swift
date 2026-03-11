@@ -2,13 +2,12 @@
 //  MirageHostBootstrapControlServer.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 2/21/26.
-//
-//  Bootstrap daemon TCP control listener for status/unlock requests.
+//  Created by Ethan Lipnik on 3/10/26.
 //
 
 import Foundation
 import MirageKit
+import Loom
 import Network
 
 #if os(macOS)
@@ -30,7 +29,6 @@ public enum MirageHostBootstrapControlServerError: LocalizedError, Sendable {
     }
 }
 
-/// Host-side control server used by the pre-login bootstrap daemon.
 public actor MirageHostBootstrapControlServer {
     private let unlockService: MirageHostBootstrapUnlockService
     private let controlAuthSecret: String
@@ -115,7 +113,7 @@ public actor MirageHostBootstrapControlServer {
 
         let auth = request.auth
 
-        guard auth.keyID == LoomIdentityManager.keyID(for: auth.publicKey) else {
+        guard auth.keyID == LoomBootstrapIdentityVerification.keyID(for: auth.publicKey) else {
             return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Invalid auth key ID.")
         }
 
@@ -134,7 +132,7 @@ public actor MirageHostBootstrapControlServer {
             return unauthorizedResponse(state: state, requestID: request.requestID, detail: "Canonical payload failed.")
         }
 
-        guard LoomIdentityManager.verify(
+        guard LoomBootstrapIdentityVerification.verify(
             signature: auth.signature,
             payload: canonicalPayload,
             publicKey: auth.publicKey
@@ -259,18 +257,20 @@ public actor MirageHostBootstrapControlServer {
     private func receiveLine(
         over connection: NWConnection,
         maxBytes: Int
-    )
-    async throws -> Data {
+    ) async throws -> Data {
         var buffer = Data()
+
         while true {
             let chunk = try await receiveChunk(over: connection)
+
             if chunk.isEmpty {
                 throw MirageHostBootstrapControlServerError.protocolViolation("Connection closed before request line was received.")
             }
+
             buffer.append(chunk)
 
             if let newlineIndex = buffer.firstIndex(of: 0x0A) {
-                return Data(buffer[..<newlineIndex])
+                return buffer[..<newlineIndex].trimmingControlPrefixAndSuffix()
             }
 
             if buffer.count > maxBytes {
@@ -281,24 +281,47 @@ public actor MirageHostBootstrapControlServer {
 
     private func receiveChunk(over connection: NWConnection) async throws -> Data {
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Data, Error>) in
-            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, _, isComplete, error in
+            connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { content, _, _, error in
                 if let error {
                     continuation.resume(throwing: MirageHostBootstrapControlServerError.listenerFailed(error.localizedDescription))
-                    return
-                }
-                if let data {
-                    continuation.resume(returning: data)
-                    return
-                }
-                if isComplete {
+                } else if let content {
+                    continuation.resume(returning: content)
+                } else {
                     continuation.resume(returning: Data())
-                    return
                 }
-                continuation.resume(
-                    throwing: MirageHostBootstrapControlServerError.protocolViolation("Missing request payload.")
-                )
             }
         }
+    }
+}
+
+private extension Data.SubSequence {
+    func trimmingControlPrefixAndSuffix() -> Data {
+        guard !isEmpty else {
+            return Data()
+        }
+
+        var lower = startIndex
+        var upper = endIndex
+
+        while lower < upper,
+              let scalar = self[lower].asciiEscapedCharacter,
+              scalar.isWhitespace {
+            formIndex(after: &lower)
+        }
+
+        while upper > lower,
+              let scalar = self[index(before: upper)].asciiEscapedCharacter,
+              scalar.isWhitespace {
+            formIndex(before: &upper)
+        }
+
+        return Data(self[lower..<upper])
+    }
+}
+
+private extension UInt8 {
+    var asciiEscapedCharacter: Character? {
+        Character(UnicodeScalar(self))
     }
 }
 

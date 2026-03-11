@@ -7,6 +7,7 @@
 
 import CoreMedia
 import Foundation
+import MirageBootstrapShared
 import Network
 import Observation
 import MirageKit

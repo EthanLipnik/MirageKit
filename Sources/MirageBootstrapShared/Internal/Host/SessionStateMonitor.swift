@@ -2,19 +2,19 @@
 //  SessionStateMonitor.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 1/7/26.
+//  Created by Ethan Lipnik on 3/10/26.
 //
 
 import CoreGraphics
 import Foundation
 import MirageKit
+import Loom
 
 #if os(macOS)
 import IOKit
 import IOKit.pwr_mgt
 
-/// Darwin notification functions
-/// These are declared in notify.h but not exposed to Swift
+/// Darwin notification functions declared in `notify.h` but not exposed to Swift.
 @_silgen_name("notify_register_dispatch")
 func notify_register_dispatch(
     _ name: UnsafePointer<CChar>,
@@ -29,80 +29,64 @@ func notify_cancel(_ token: Int32) -> UInt32
 
 private let notifyStatusOK: UInt32 = 0
 
-/// Monitors the Mac's session state (locked, unlocked, sleeping, at login screen)
-/// Uses CGSession APIs, Darwin notifications, and IOKit for comprehensive detection
-actor SessionStateMonitor {
-    /// Current detected session state
-    private(set) var currentState: LoomSessionAvailability = .ready
+package actor SessionStateMonitor {
+    package private(set) var currentState: LoomSessionAvailability = .ready
 
-    /// Callback for state changes
     private var onStateChange: (@Sendable (LoomSessionAvailability) -> Void)?
-
-    /// Darwin notification tokens for cleanup
     private var notifyTokens: [Int32] = []
-
-    /// Whether monitoring is active
     private var isMonitoring = false
-
-    /// Dispatch queue for notifications
     private let notifyQueue = DispatchQueue(label: "com.mirage.sessionMonitor", qos: .userInitiated)
 
-    // MARK: - Public API
+    package init() {}
 
-    /// Start monitoring session state
-    /// - Parameter onStateChange: Callback invoked when state changes (called on arbitrary queue)
-    func start(onStateChange: @escaping @Sendable (LoomSessionAvailability) -> Void) {
+    package func start(onStateChange: @escaping @Sendable (LoomSessionAvailability) -> Void) {
         guard !isMonitoring else { return }
         isMonitoring = true
         self.onStateChange = onStateChange
 
-        // Get initial state
         let initialState = detectCurrentState()
         if initialState != currentState {
             currentState = initialState
             onStateChange(initialState)
         }
 
-        // Register for Darwin notifications
         registerNotifications()
-
         MirageLogger.log(.host, "SessionStateMonitor started, initial state: \(currentState)")
     }
 
-    /// Stop monitoring session state
-    func stop() {
+    package func stop() {
         guard isMonitoring else { return }
         isMonitoring = false
         onStateChange = nil
 
-        // Unregister Darwin notifications
         for token in notifyTokens {
-            notify_cancel(token)
+            _ = notify_cancel(token)
         }
         notifyTokens.removeAll()
 
         MirageLogger.log(.host, "SessionStateMonitor stopped")
     }
 
-    /// Force a state refresh and return current state
-    func refreshState(notify: Bool = true) -> LoomSessionAvailability {
+    package func refreshState(notify: Bool = true) -> LoomSessionAvailability {
         let newState = detectCurrentState()
         if newState != currentState {
             currentState = newState
-            if notify { onStateChange?(newState) }
+            if notify {
+                onStateChange?(newState)
+            }
         }
         return currentState
     }
 
-    // MARK: - State Detection
-
-    /// Detect current session state using multiple sources
     private func detectCurrentState() -> LoomSessionAvailability {
-        // Check if system is sleeping via IOKit
-        if isSystemSleeping() { return .unavailable }
+        if isSystemSleeping() {
+            return .unavailable
+        }
 
         let loginWindowVisible = isLoginWindowVisible()
-        if loginWindowVisible { MirageLogger.log(.host, "Login window visible (lock/login screen detected)") }
+        if loginWindowVisible {
+            MirageLogger.log(.host, "Login window visible (lock/login screen detected)")
+        }
 
         if let consoleUsers = getConsoleUserSessions(), !consoleUsers.isEmpty {
             let summary = consoleUsers.enumerated().map { index, info in
@@ -122,11 +106,17 @@ actor SessionStateMonitor {
             let anyLoginDoneFalse = consoleUsers.contains { $0.loginDone == false }
             let anyOffConsole = loggedInUsers.contains { $0.onConsole == false }
 
-            if loginWindowVisible || hasLoginWindowUser { return hasLoggedInUser ? .credentialsRequired : .credentialsAndUserIdentifierRequired }
+            if loginWindowVisible || hasLoginWindowUser {
+                return hasLoggedInUser ? .credentialsRequired : .credentialsAndUserIdentifierRequired
+            }
 
-            if anyLoginDoneFalse, !hasLoggedInUser { return .credentialsAndUserIdentifierRequired }
+            if anyLoginDoneFalse, !hasLoggedInUser {
+                return .credentialsAndUserIdentifierRequired
+            }
 
-            if anyLocked { return .credentialsRequired }
+            if anyLocked {
+                return .credentialsRequired
+            }
 
             if anyOffConsole {
                 let fallbackLocked = isScreenLocked()
@@ -141,14 +131,15 @@ actor SessionStateMonitor {
                 return .ready
             }
 
-            if hasLoggedInUser { return .ready }
+            if hasLoggedInUser {
+                return .ready
+            }
         }
 
-        // Use CGSession to check login and lock state
         guard let sessionDict = CGSessionCopyCurrentDictionary() as? [String: Any] else {
-            // No session dictionary - could be headless Mac or early boot
-            // Try alternative detection: check if console user exists
-            if let consoleUser = getConsoleUser(), !consoleUser.isEmpty, !isLoginWindowUserName(consoleUser) {
+            if let consoleUser = getConsoleUser(),
+               !consoleUser.isEmpty,
+               !isLoginWindowUserName(consoleUser) {
                 let locked = isScreenLocked()
                 if locked {
                     MirageLogger.log(
@@ -166,11 +157,8 @@ actor SessionStateMonitor {
             return .credentialsAndUserIdentifierRequired
         }
 
-        // Debug: log the session dictionary keys
         MirageLogger.log(.host, "CGSession keys: \(sessionDict.keys.sorted())")
 
-        // Check if at login window (no user has logged in).
-        // Also check kCGSSessionOnConsoleKey for console access.
         let loginCompleted = sessionDict["kCGSessionLoginDoneKey"] as? Bool ?? false
         let onConsole = sessionDict["kCGSSessionOnConsoleKey"] as? Bool ?? false
         let userName = sessionDict["kCGSSessionUserNameKey"] as? String
@@ -187,10 +175,10 @@ actor SessionStateMonitor {
             "Session: loginCompleted=\(loginCompleted), onConsole=\(onConsole), user=\(userName ?? "nil"), locked=\(isLocked)"
         )
 
-        // Alternative check: if we have a username, user is logged in
         if let user = userName, !user.isEmpty {
-            // User is logged in - check if screen is locked
-            if isLocked { return .credentialsRequired }
+            if isLocked {
+                return .credentialsRequired
+            }
 
             if !onConsole {
                 if isLocked {
@@ -204,28 +192,29 @@ actor SessionStateMonitor {
                 return .ready
             }
 
-            // If loginCompleted is false but we have a user, it might be a headless Mac
-            // where the display session hasn't fully initialized
             if !loginCompleted {
                 MirageLogger.log(.host, "loginCompleted=false but user '\(user)' exists - treating as headless session")
-                return .ready // User logged in, not locked
+                return .ready
             }
 
             return .ready
         }
 
-        if loginWindowVisible { return loginCompleted ? .credentialsRequired : .credentialsAndUserIdentifierRequired }
+        if loginWindowVisible {
+            return loginCompleted ? .credentialsRequired : .credentialsAndUserIdentifierRequired
+        }
 
-        if !loginCompleted { return .credentialsAndUserIdentifierRequired }
+        if !loginCompleted {
+            return .credentialsAndUserIdentifierRequired
+        }
 
-        // Check if screen is locked
-        if isLocked { return .credentialsRequired }
+        if isLocked {
+            return .credentialsRequired
+        }
 
-        // User is logged in and screen is unlocked
         return .ready
     }
 
-    /// Read console session info from IOConsoleUsers (more reliable on headless Macs).
     private struct ConsoleUserSession {
         let userName: String?
         let loginDone: Bool?
@@ -275,9 +264,7 @@ actor SessionStateMonitor {
         }
     }
 
-    /// Get the current console user (works even on headless Macs)
     private func getConsoleUser() -> String? {
-        // Use 'stat /dev/console' to get console owner
         let task = Process()
         task.executableURL = URL(fileURLWithPath: "/usr/bin/stat")
         task.arguments = ["-f", "%Su", "/dev/console"]
@@ -290,24 +277,27 @@ actor SessionStateMonitor {
             task.waitUntilExit()
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            if let user = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) { return user }
+            if let user = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) {
+                return user
+            }
         } catch {
-            // Ignore
         }
 
-        // Fallback: current process user (may not be console user)
         return NSUserName()
     }
 
-    /// Check if screen is locked via conservative lock indicators.
-    /// This intentionally avoids treating display sleep/off as lock.
     private func isScreenLocked() -> Bool {
-        // Fast path: look for loginwindow/screen saver shielding windows
-        if isLoginWindowVisible() { return true }
+        if isLoginWindowVisible() {
+            return true
+        }
 
         if let consoleUsers = getConsoleUserSessions(), !consoleUsers.isEmpty {
-            if consoleUsers.contains(where: { $0.locked == true }) { return true }
-            if consoleUsers.contains(where: { isLoginWindowUserName($0.userName) }) { return true }
+            if consoleUsers.contains(where: { $0.locked == true }) {
+                return true
+            }
+            if consoleUsers.contains(where: { isLoginWindowUserName($0.userName) }) {
+                return true
+            }
         }
 
         if let sessionDict = CGSessionCopyCurrentDictionary() as? [String: Any] {
@@ -315,13 +305,14 @@ actor SessionStateMonitor {
                 ?? sessionDict["kCGSSessionScreenIsLocked"] as? Bool
                 ?? sessionDict["kCGSessionScreenIsLocked"] as? Bool
                 ?? false
-            if lockedFlag { return true }
+            if lockedFlag {
+                return true
+            }
         }
 
         return false
     }
 
-    /// Check for loginwindow or screensaver shielding windows (indicates locked UI)
     private func isLoginWindowVisible() -> Bool {
         let shieldingLevel = CGShieldingWindowLevel()
         let screenSaverLevel = CGWindowLevelForKey(.screenSaverWindow)
@@ -355,70 +346,50 @@ actor SessionStateMonitor {
         return false
     }
 
-    /// Check if the system is sleeping using IOKit
     private func isSystemSleeping() -> Bool {
-        // Get the IOPMrootDomain
         let rootDomainEntry = IORegistryEntryFromPath(
             kIOMainPortDefault,
             "IOPower:/IOPowerConnection/IOPMrootDomain"
         )
 
         guard rootDomainEntry != MACH_PORT_NULL else { return false }
-
         defer { IOObjectRelease(rootDomainEntry) }
 
-        // Check CurrentPowerState - 0 typically means sleeping
         if let powerState = IORegistryEntryCreateCFProperty(
             rootDomainEntry,
             "CurrentPowerState" as CFString,
             kCFAllocatorDefault,
             0
         )?.takeRetainedValue() as? Int {
-            // Power state 0 = off/sleeping, higher = awake
             return powerState == 0
         }
 
         return false
     }
 
-    // MARK: - Darwin Notifications
-
-    /// Register for system state change notifications
     private func registerNotifications() {
-        // Screen lock/unlock notifications
         registerNotification("com.apple.screenIsLocked") { [weak self] in
             Task { await self?.handleStateChange() }
         }
-
         registerNotification("com.apple.screenIsUnlocked") { [weak self] in
             Task { await self?.handleStateChange() }
         }
-
-        // Session login/logout
         registerNotification("com.apple.sessionDidLogin") { [weak self] in
             Task { await self?.handleStateChange() }
         }
-
         registerNotification("com.apple.sessionDidLogout") { [weak self] in
             Task { await self?.handleStateChange() }
         }
-
-        // Display sleep/wake (indicates system wake)
         registerNotification("com.apple.screensaver.didstop") { [weak self] in
             Task { await self?.handleStateChange() }
         }
-
         registerNotification("com.apple.screensaver.didstart") { [weak self] in
             Task { await self?.handleStateChange() }
         }
     }
 
-    /// Register a single Darwin notification
     private func registerNotification(_ name: String, handler: @escaping @Sendable () -> Void) {
         var token: Int32 = 0
-
-        // Explicitly create the block as a typed escaping closure
-        // This prevents "closure argument passed as @noescape to Objective-C has escaped" runtime error
         let block: @convention(block) @Sendable (Int32) -> Void = { _ in
             handler()
         }
@@ -430,12 +401,13 @@ actor SessionStateMonitor {
             block
         )
 
-        if status == notifyStatusOK { notifyTokens.append(token) } else {
+        if status == notifyStatusOK {
+            notifyTokens.append(token)
+        } else {
             MirageLogger.error(.host, "Failed to register notification: \(name), status: \(status)")
         }
     }
 
-    /// Handle a state change notification
     private func handleStateChange() {
         let newState = detectCurrentState()
         if newState != currentState {

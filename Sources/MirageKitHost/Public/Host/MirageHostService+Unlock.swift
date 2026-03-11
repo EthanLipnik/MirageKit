@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import MirageBootstrapShared
 import Network
 import MirageKit
 
@@ -131,12 +132,13 @@ extension MirageHostService {
             await sendWindowList(to: clientContext)
 
         case let .failure(code, errorMessage):
-            MirageInstrumentation.record(.hostUnlockFailed(.init(name: code.rawValue)))
+            let mappedCode = mapUnlockErrorCode(code)
+            MirageInstrumentation.record(.hostUnlockFailed(.init(name: mappedCode.rawValue)))
             response = UnlockResponseMessage(
                 success: false,
                 newState: sessionState,
                 newSessionToken: nil,
-                error: UnlockError(code: code, message: errorMessage),
+                error: UnlockError(code: mappedCode, message: errorMessage),
                 canRetry: result.canRetry,
                 retriesRemaining: retriesRemaining,
                 retryAfterSeconds: retryAfter
@@ -145,6 +147,27 @@ extension MirageHostService {
         }
 
         try? await clientContext.send(.unlockResponse, content: response)
+    }
+
+    private func mapUnlockErrorCode(_ code: LoomCredentialSubmissionErrorCode) -> UnlockErrorCode {
+        switch code {
+        case .invalidCredentials:
+            .invalidCredentials
+        case .rateLimited:
+            .rateLimited
+        case .sessionExpired:
+            .sessionExpired
+        case .notReady:
+            .notLocked
+        case .notSupported:
+            .notSupported
+        case .notAuthorized:
+            .notAuthorized
+        case .timeout:
+            .timeout
+        case .internalError:
+            .internalError
+        }
     }
 }
 

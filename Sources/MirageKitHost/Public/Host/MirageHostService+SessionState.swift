@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import MirageBootstrapShared
 import MirageKit
 
 #if os(macOS)
@@ -24,7 +25,12 @@ extension MirageHostService {
     func startSessionStateMonitoring() async {
         if sessionStateMonitor == nil { sessionStateMonitor = SessionStateMonitor() }
 
-        if unlockManager == nil, let sessionStateMonitor { unlockManager = UnlockManager(sessionMonitor: sessionStateMonitor) }
+        if unlockManager == nil, let sessionStateMonitor {
+            unlockManager = UnlockManager(
+                sessionMonitor: sessionStateMonitor,
+                environment: .hostService
+            )
+        }
 
         guard let sessionStateMonitor else { return }
 

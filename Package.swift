@@ -22,6 +22,10 @@ let package = Package(
             targets: ["MirageKit"]
         ),
         .library(
+            name: "MirageBootstrapShared",
+            targets: ["MirageBootstrapShared"]
+        ),
+        .library(
             name: "MirageHostBootstrapRuntime",
             targets: ["MirageHostBootstrapRuntime"]
         ),
@@ -46,8 +50,16 @@ let package = Package(
             ]
         ),
         .target(
+            name: "MirageBootstrapShared",
+            dependencies: [
+                "MirageKit",
+                .product(name: "Loom", package: "Loom"),
+            ]
+        ),
+        .target(
             name: "MirageHostBootstrapRuntime",
             dependencies: [
+                "MirageBootstrapShared",
                 .product(name: "Loom", package: "Loom"),
             ]
         ),
@@ -57,7 +69,10 @@ let package = Package(
         ),
         .target(
             name: "MirageKitHost",
-            dependencies: ["MirageKit"]
+            dependencies: [
+                "MirageBootstrapShared",
+                "MirageKit",
+            ]
         ),
         .testTarget(
             name: "MirageKitTests",
