@@ -69,6 +69,7 @@ extension MirageHostService {
             await startLoginDisplayStreamIfNeeded()
         }
 
+        syncSharedClipboardState(reason: "session_state_changed")
         await updateLightsOutState()
     }
 

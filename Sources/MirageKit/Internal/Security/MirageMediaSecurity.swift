@@ -37,6 +37,7 @@ package enum MirageMediaSecurityError: Error {
     case invalidRegistrationTokenLength
     case invalidEncryptedPayloadLength
     case invalidNonce
+    case invalidClipboardTextEncoding
     case decryptFailed
 }
 
@@ -205,6 +206,43 @@ package enum MirageMediaSecurity {
             key: key.symmetricKey,
             nonce: audioNonce(for: header, direction: direction)
         )
+    }
+
+    package static func encryptClipboardText(
+        _ plaintext: String,
+        context: MirageMediaSecurityContext
+    ) throws -> Data {
+        guard let plaintextData = plaintext.data(using: .utf8) else {
+            throw MirageMediaSecurityError.invalidClipboardTextEncoding
+        }
+
+        let sealed = try ChaChaPoly.seal(plaintextData, using: SymmetricKey(data: context.sessionKey))
+        return sealed.combined
+    }
+
+    package static func decryptClipboardText<Payload: DataProtocol>(
+        _ encryptedText: Payload,
+        context: MirageMediaSecurityContext
+    ) throws -> String {
+        let combined = Data(encryptedText)
+        let box: ChaChaPoly.SealedBox
+        do {
+            box = try ChaChaPoly.SealedBox(combined: combined)
+        } catch {
+            throw MirageMediaSecurityError.invalidEncryptedPayloadLength
+        }
+
+        let plaintextData: Data
+        do {
+            plaintextData = try ChaChaPoly.open(box, using: SymmetricKey(data: context.sessionKey))
+        } catch {
+            throw MirageMediaSecurityError.decryptFailed
+        }
+
+        guard let plaintext = String(data: plaintextData, encoding: .utf8) else {
+            throw MirageMediaSecurityError.invalidClipboardTextEncoding
+        }
+        return plaintext
     }
 
     package static func constantTimeEqual(_ lhs: Data, _ rhs: Data) -> Bool {

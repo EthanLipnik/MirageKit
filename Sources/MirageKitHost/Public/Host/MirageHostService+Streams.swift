@@ -1055,6 +1055,8 @@ public extension MirageHostService {
         } else {
             activeStreams.append(session)
         }
+
+        syncSharedClipboardState(reason: "app_stream_registered")
     }
 
     func removeActiveStreamSession(streamID: StreamID) {
@@ -1074,6 +1076,8 @@ public extension MirageHostService {
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: mappedWindowID)
             windowPlacementRepairBackoffByWindowID.removeValue(forKey: mappedWindowID)
         }
+
+        syncSharedClipboardState(reason: "app_stream_removed")
     }
 
     func stopStream(

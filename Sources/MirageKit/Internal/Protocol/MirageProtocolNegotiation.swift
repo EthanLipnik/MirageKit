@@ -26,6 +26,8 @@ package struct MirageFeatureSet: OptionSet, Sendable, Codable {
     package static let udpRegistrationAuthV1 = MirageFeatureSet(rawValue: 1 << 3)
     /// Endpoints support end-to-end encrypted media payloads.
     package static let encryptedMediaV1 = MirageFeatureSet(rawValue: 1 << 4)
+    /// Endpoints support shared clipboard control messages.
+    package static let sharedClipboardV1 = MirageFeatureSet(rawValue: 1 << 5)
 }
 
 package struct MirageProtocolNegotiation: Codable, Sendable {

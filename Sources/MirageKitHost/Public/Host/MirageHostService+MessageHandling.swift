@@ -95,6 +95,9 @@ extension MirageHostService {
             },
             .hostSoftwareUpdateInstallRequest: { [weak self] message, client, connection in
                 await self?.handleHostSoftwareUpdateInstallRequest(message, from: client, connection: connection)
+            },
+            .sharedClipboardUpdate: { [weak self] message, client, connection in
+                await self?.handleSharedClipboardUpdate(message, from: client, connection: connection)
             }
         ]
     }

@@ -32,6 +32,8 @@ struct ControlUpdatePolicySuppressionTests {
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.streamStopped))
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.desktopStreamStarted))
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.audioStreamStarted))
+        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sharedClipboardStatus))
+        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sharedClipboardUpdate))
     }
 
     @Test("Deferred refresh requirements are tracked and consumed once")

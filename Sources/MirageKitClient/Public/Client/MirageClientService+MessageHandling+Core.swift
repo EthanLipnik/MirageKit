@@ -549,6 +549,8 @@ extension MirageClientService {
                 }
                 await updateReassemblerSnapshot()
             }
+
+            refreshSharedClipboardBridgeState()
         }
     }
 
@@ -940,6 +942,7 @@ extension MirageClientService {
         } else {
             activeStreams.append(session)
         }
+        refreshSharedClipboardBridgeState()
     }
 
     private func helloRejectionReason(_ reason: HelloRejectionReason?) -> MirageHelloRejectionStepReason {

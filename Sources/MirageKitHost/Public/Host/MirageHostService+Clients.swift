@@ -43,6 +43,7 @@ extension MirageHostService {
         peerIdentityByClientID.removeValue(forKey: client.id)
         mediaSecurityByClientID.removeValue(forKey: client.id)
         mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
+        sharedClipboardStatusByClientID.removeValue(forKey: client.id)
         qualityTestConnectionsByClientID.removeValue(forKey: client.id)
         qualityTestBenchmarkIDsByClientID.removeValue(forKey: client.id)
         if let task = qualityTestTasksByClientID.removeValue(forKey: client.id) {
@@ -89,6 +90,7 @@ extension MirageHostService {
         }
 
         await restoreStageManagerAfterAppStreamingIfNeeded()
+        syncSharedClipboardState(reason: "client_disconnected")
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {

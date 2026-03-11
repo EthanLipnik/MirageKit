@@ -331,6 +331,8 @@ extension MirageClientService {
         connection?.cancel()
         connection = nil
         loomSession = nil
+        sharedClipboardEnabled = false
+        sharedClipboardBridge?.setActive(false)
         inputEventSender.updateConnection(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
@@ -430,6 +432,7 @@ extension MirageClientService {
         desktopStreamResolution = nil
         desktopStreamMode = nil
         connectionState = state
+        refreshSharedClipboardBridgeState()
 
         if notifyDelegate { delegate?.clientService(self, didDisconnectFromHost: reason) }
     }

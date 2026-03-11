@@ -371,6 +371,7 @@ extension MirageHostService {
             configuration: audioConfiguration
         )
 
+        syncSharedClipboardState(reason: "desktop_stream_started")
         await updateLightsOutState()
         let excludedWindows = await resolveLightsOutExcludedWindows()
 
@@ -549,6 +550,7 @@ extension MirageHostService {
         await syncAppListRequestDeferralForInteractiveWorkload()
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
 
+        syncSharedClipboardState(reason: "desktop_stream_stopped")
         await updateLightsOutState()
 
         MirageLogger.host("Desktop stream stopped")

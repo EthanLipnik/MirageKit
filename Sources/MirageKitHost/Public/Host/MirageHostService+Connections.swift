@@ -264,6 +264,7 @@ extension MirageHostService {
 
         let clientContext = ClientContext(
             client: client,
+            negotiatedFeatures: hello.negotiation.selectedFeatures,
             tcpConnection: connection,
             udpConnection: nil
         )
@@ -290,6 +291,7 @@ extension MirageHostService {
         connectedClients.append(client)
         delegate?.hostService(self, didConnectClient: client)
         MirageInstrumentation.record(.hostClientConnected)
+        syncSharedClipboardState(reason: "client_connected", forceStatusBroadcast: true)
 
         startSessionRefreshLoopIfNeeded()
         await refreshSessionStateIfNeeded()

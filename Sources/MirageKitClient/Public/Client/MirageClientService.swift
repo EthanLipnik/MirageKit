@@ -236,6 +236,8 @@ public final class MirageClientService {
 
     /// Current session state of the connected host (locked, unlocked, etc.)
     public internal(set) var hostSessionState: LoomSessionAvailability?
+    /// Whether the host currently allows shared clipboard for this connection.
+    public internal(set) var sharedClipboardEnabled: Bool = false
     /// Selected protocol features from handshake negotiation.
     var negotiatedFeatures: MirageFeatureSet = []
     /// Whether media payload encryption is active for the current host session.
@@ -455,6 +457,7 @@ public final class MirageClientService {
     var mediaSecurityContext: MirageMediaSecurityContext?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
+    @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     var controlPathSnapshot: MirageNetworkPathSnapshot?
     var videoPathSnapshot: MirageNetworkPathSnapshot?

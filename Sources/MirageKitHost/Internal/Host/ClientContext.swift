@@ -14,6 +14,7 @@ import MirageKit
 /// Context for a connected client including their connections
 struct ClientContext {
     let client: MirageConnectedClient
+    let negotiatedFeatures: MirageFeatureSet
     let tcpConnection: NWConnection
     var udpConnection: NWConnection?
 

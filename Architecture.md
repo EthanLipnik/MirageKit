@@ -67,6 +67,7 @@ The shared target also owns:
 - protocol version and feature negotiation constants
 - stream lifecycle message payloads
 - app-stream inventory and icon streaming payloads
+- shared clipboard status and update control message contracts
 - menu bar and remote input message schemas
 - software update message contracts
 
@@ -77,6 +78,7 @@ Security is composed out of a few narrow pieces:
 - signed hello payloads with deterministic encoding
 - replay protection for handshake and bootstrap flows
 - session-derived media keys and registration tokens
+- session-key encryption for shared clipboard text on the control plane
 - per-packet authenticated encryption for video and audio payloads
 
 `MirageMediaSecurity` is the package-local boundary for media key derivation, token validation, and packet encryption/decryption.
@@ -127,6 +129,8 @@ Host startup is staged:
 
 The host keeps stream-specific policy local to the host runtime. That includes frame rate, bitrate, performance mode, window/app routing, virtual display ownership, and session-state behavior.
 
+Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active.
+
 ## 5. Client Target (`Sources/MirageKitClient`)
 
 `MirageClientService` is the top-level coordinator for client runtime.
@@ -139,6 +143,7 @@ Its responsibilities include:
 - registering for video, audio, and quality-test media
 - decoding audio and video payloads
 - forwarding local input events back to the host
+- bridging eligible local clipboard changes when the host enables shared clipboard for the connection
 - coordinating UI-facing state through `MirageClientSessionStore`
 
 Client presentation is split from transport:

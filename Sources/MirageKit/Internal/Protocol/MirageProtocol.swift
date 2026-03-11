@@ -18,7 +18,8 @@ package let mirageSupportedFeatures: MirageFeatureSet = [
     .protocolNegotiation,
     .identityAuthV2,
     .udpRegistrationAuthV1,
-    .encryptedMediaV1
+    .encryptedMediaV1,
+    .sharedClipboardV1,
 ]
 
 /// Registration packet magic values.

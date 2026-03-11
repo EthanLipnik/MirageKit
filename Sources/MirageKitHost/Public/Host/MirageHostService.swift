@@ -41,6 +41,14 @@ public final class MirageHostService {
     /// Whether remote unlock is enabled (allows clients to unlock the Mac)
     public var remoteUnlockEnabled: Bool = true
 
+    /// Whether shared clipboard sync is enabled for eligible active sessions.
+    public var sharedClipboardEnabled: Bool = false {
+        didSet {
+            guard oldValue != sharedClipboardEnabled else { return }
+            syncSharedClipboardState(reason: "setting_changed", forceStatusBroadcast: true)
+        }
+    }
+
     /// Whether app-stream window close on the client should attempt to close the host window.
     public var closeHostWindowOnClientWindowClose: Bool = false
 
@@ -351,6 +359,8 @@ public final class MirageHostService {
     var appListRequestToken: UUID = .init()
     var appListRequestDeferredForInteractiveWorkload: Bool = false
     let appIconSignatureStore = HostAppIconSignatureStore()
+    @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
+    @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]
 
     /// Menu bar passthrough - internal for extension access
     let menuBarMonitor = MenuBarMonitor()
