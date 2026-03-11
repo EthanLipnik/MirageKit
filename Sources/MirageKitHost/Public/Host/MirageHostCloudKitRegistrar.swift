@@ -366,6 +366,16 @@ public actor MirageHostCloudKitRegistrar {
         isUnknownItemCloudKitError(error)
     }
 
+    public nonisolated static func isMissingProductionSchemaRecordTypeError(
+        _ error: Error,
+        recordType: String
+    ) -> Bool {
+        let loweredExpectedMessage = "cannot create new type \(recordType.lowercased()) in production schema"
+        return cloudKitErrorMessages(for: error).contains { message in
+            message.lowercased().contains(loweredExpectedMessage)
+        }
+    }
+
     nonisolated static func isInvalidArgumentsCloudKitError(_ error: Error) -> Bool {
         let nsError = error as NSError
         guard nsError.domain == CKError.errorDomain else { return false }
@@ -380,6 +390,40 @@ public actor MirageHostCloudKitRegistrar {
 
     private func shouldResetCachedHostRecordName(for error: Error) -> Bool {
         Self.isUnknownItemCloudKitError(error)
+    }
+
+    private nonisolated static func cloudKitErrorMessages(for error: Error) -> [String] {
+        var messages: [String] = []
+        var visitedErrors = Set<ObjectIdentifier>()
+
+        func appendMessages(from value: Any) {
+            switch value {
+            case let nestedError as NSError:
+                let identifier = ObjectIdentifier(nestedError)
+                guard visitedErrors.insert(identifier).inserted else { return }
+                messages.append(nestedError.localizedDescription)
+                for nestedValue in nestedError.userInfo.values {
+                    appendMessages(from: nestedValue)
+                }
+            case let nestedError as Error:
+                appendMessages(from: nestedError as NSError)
+            case let array as [Any]:
+                for element in array {
+                    appendMessages(from: element)
+                }
+            case let dictionary as [AnyHashable: Any]:
+                for nestedValue in dictionary.values {
+                    appendMessages(from: nestedValue)
+                }
+            case let message as String:
+                messages.append(message)
+            default:
+                break
+            }
+        }
+
+        appendMessages(from: error)
+        return messages
     }
 
     private func normalizeHostName(_ name: String) -> String {

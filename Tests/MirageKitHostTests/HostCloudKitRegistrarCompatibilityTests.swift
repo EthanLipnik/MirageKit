@@ -102,4 +102,29 @@ struct HostCloudKitRegistrarCompatibilityTests {
             MirageHostCloudKitRegistrar.shouldIgnoreStaleOwnHostsCleanupFailure(CKError(.networkFailure)) == false
         )
     }
+
+    @Test("Production schema rejection for MiragePeer is classified explicitly")
+    func productionSchemaRejectionForMiragePeerIsClassifiedExplicitly() {
+        let error = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.Code.serverRejectedRequest.rawValue,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Error saving record <CKRecordID: 0x1; recordName=test, zoneID=MiragePeerZone:__defaultOwner__> to server: Cannot create new type MiragePeer in production schema"
+            ]
+        )
+
+        #expect(
+            MirageHostCloudKitRegistrar.isMissingProductionSchemaRecordTypeError(
+                error,
+                recordType: "MiragePeer"
+            )
+        )
+        #expect(
+            MirageHostCloudKitRegistrar.isMissingProductionSchemaRecordTypeError(
+                error,
+                recordType: "MirageParticipantIdentity"
+            ) == false
+        )
+    }
 }
