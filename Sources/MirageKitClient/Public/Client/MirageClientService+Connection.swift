@@ -350,6 +350,7 @@ extension MirageClientService {
         appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
         pendingForceIconResetForNextAppListRequest = false
         streamingAppBundleID = nil
+        hostDataPort = 0
 
         for session in sessions {
             await stopViewing(session)

@@ -44,6 +44,26 @@ extension MirageHostService {
         }
     }
 
+    nonisolated func loginDisplayWatchdogEventHandler(
+        generation: UInt64,
+        streamID: StreamID,
+        context: StreamContext
+    ) -> @Sendable () -> Void {
+        { [weak self] in
+            self?.handleLoginDisplayWatchdogTick(
+                generation: generation,
+                streamID: streamID,
+                context: context
+            )
+        }
+    }
+
+    nonisolated func loginDisplayRetryEventHandler() -> @Sendable () -> Void {
+        { [weak self] in
+            self?.handleLoginDisplayRetryTimerFired()
+        }
+    }
+
     /// Start login display stream if not already running
     func startLoginDisplayStreamIfNeeded() async {
         guard sessionState != .ready else { return }
@@ -331,13 +351,11 @@ extension MirageHostService {
             deadline: .now() + loginDisplayWatchdogIntervalSeconds,
             repeating: loginDisplayWatchdogIntervalSeconds
         )
-        timer.setEventHandler { [weak self] in
-            self?.handleLoginDisplayWatchdogTick(
-                generation: generation,
-                streamID: streamID,
-                context: context
-            )
-        }
+        timer.setEventHandler(handler: loginDisplayWatchdogEventHandler(
+            generation: generation,
+            streamID: streamID,
+            context: context
+        ))
         loginDisplayWatchdogTimer = timer
         timer.resume()
     }
@@ -468,9 +486,7 @@ extension MirageHostService {
 
         let timer = DispatchSource.makeTimerSource(queue: transportWorker.dispatchQueue)
         timer.schedule(deadline: .now() + delay)
-        timer.setEventHandler { [weak self] in
-            self?.handleLoginDisplayRetryTimerFired()
-        }
+        timer.setEventHandler(handler: loginDisplayRetryEventHandler())
         loginDisplayRetryTimer = timer
         timer.resume()
     }

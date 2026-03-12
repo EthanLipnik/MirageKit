@@ -226,7 +226,6 @@ extension MirageClientService {
         videoPathSnapshot = nil
         mediaTransportHost = nil
         mediaTransportIncludePeerToPeer = nil
-        hostDataPort = 0
     }
 
     func resolveMediaTransportCandidates(
@@ -237,10 +236,14 @@ extension MirageClientService {
 
         let configuredPeerToPeer = networkConfig.enablePeerToPeer
 
-        let serviceHostName = connectedHost?.name ?? Self.serviceName(from: connection.endpoint)
+        let connectedHostEndpoint = connectedHost?.endpoint
+        let serviceHostName = Self.serviceName(from: connectedHostEndpoint)
+            ?? connectedHost?.name
+            ?? Self.serviceName(from: connection.endpoint)
         let serviceHost = serviceHostName.map { NWEndpoint.Host($0) }
+        let connectedHostEndpointHost = Self.host(from: connectedHostEndpoint)
         let remoteHost = Self.host(from: connection.currentPath?.remoteEndpoint)
-        let endpointHost = Self.host(from: connection.endpoint)
+        let endpointHost = connectedHostEndpointHost ?? Self.host(from: connection.endpoint)
 
         let candidates = Self.orderedMediaTransportCandidates(
             preferredHost: preferredHost,
@@ -307,11 +310,13 @@ extension MirageClientService {
         if let remoteHost,
            isLikelyPeerToPeerLinkLocalHost(remoteHost),
            let serviceHost {
-            appendCandidate(
-                host: serviceHost,
-                includePeerToPeer: false,
-                label: "bonjour-hostname-no-p2p"
-            )
+            for candidateHost in expandedBonjourHosts(for: serviceHost) {
+                appendCandidate(
+                    host: candidateHost,
+                    includePeerToPeer: false,
+                    label: "bonjour-hostname-no-p2p"
+                )
+            }
         }
 
         if !shouldPreferControlRemoteEndpoint, let remoteHost {
@@ -331,17 +336,19 @@ extension MirageClientService {
         }
 
         if let serviceHost {
-            appendCandidate(
-                host: serviceHost,
-                includePeerToPeer: configuredPeerToPeer,
-                label: "bonjour-hostname"
-            )
-            if configuredPeerToPeer {
+            for candidateHost in expandedBonjourHosts(for: serviceHost) {
                 appendCandidate(
-                    host: serviceHost,
-                    includePeerToPeer: false,
-                    label: "bonjour-hostname-no-p2p"
+                    host: candidateHost,
+                    includePeerToPeer: configuredPeerToPeer,
+                    label: "bonjour-hostname"
                 )
+                if configuredPeerToPeer {
+                    appendCandidate(
+                        host: candidateHost,
+                        includePeerToPeer: false,
+                        label: "bonjour-hostname-no-p2p"
+                    )
+                }
             }
         }
 
@@ -445,6 +452,26 @@ extension MirageClientService {
             return name
         }
         return nil
+    }
+
+    nonisolated static func expandedBonjourHosts(for host: NWEndpoint.Host) -> [NWEndpoint.Host] {
+        if let localQualified = localQualifiedBonjourHost(for: host) {
+            return [localQualified]
+        }
+        return [host]
+    }
+
+    nonisolated static func localQualifiedBonjourHost(for host: NWEndpoint.Host) -> NWEndpoint.Host? {
+        let rawValue = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard shouldQualifyBonjourHostWithLocalDomain(rawValue) else { return nil }
+        return NWEndpoint.Host("\(rawValue).local")
+    }
+
+    nonisolated static func shouldQualifyBonjourHostWithLocalDomain(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        guard !value.contains("."), !value.contains(":"), !value.contains("%") else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
     }
 
     nonisolated static func isLikelyPeerToPeerLinkLocalHost(_ host: NWEndpoint.Host) -> Bool {

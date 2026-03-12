@@ -28,6 +28,7 @@ struct MediaTransportCandidateOrderingTests {
         #expect(candidates.count >= 2)
         #expect(candidates[0].label == "control-remote-endpoint")
         #expect(candidates[1].label == "bonjour-hostname-no-p2p")
+        #expect(String(describing: candidates[1].host) == "Altair.local")
     }
 
     @Test("Wi-Fi link-local keeps Bonjour no-p2p fallback ahead of remote endpoint")
@@ -45,6 +46,26 @@ struct MediaTransportCandidateOrderingTests {
         #expect(candidates.count >= 2)
         #expect(candidates[0].label == "bonjour-hostname-no-p2p")
         #expect(candidates[1].label == "control-remote-endpoint")
+        #expect(String(describing: candidates[0].host) == "Altair.local")
+    }
+
+    @Test("Qualified Bonjour names are not duplicated with another local suffix")
+    func qualifiedBonjourNamesAreNotDuplicated() {
+        let candidates = MirageClientService.orderedMediaTransportCandidates(
+            preferredHost: nil,
+            preferredIncludePeerToPeer: nil,
+            serviceHost: NWEndpoint.Host("altair.local"),
+            remoteHost: nil,
+            endpointHost: nil,
+            configuredPeerToPeer: true,
+            controlPathKind: .wifi
+        )
+
+        let matchingHosts = candidates
+            .filter { $0.label.hasPrefix("bonjour-hostname") }
+            .map { String(describing: $0.host) }
+        #expect(matchingHosts.contains("altair.local"))
+        #expect(!matchingHosts.contains("altair.local.local"))
     }
 }
 #endif

@@ -138,6 +138,36 @@ extension MirageHostService {
         }
     }
 
+    nonisolated static func isMalformedAppListRequestError(_ error: Error) -> Bool {
+        if error is DecodingError {
+            return true
+        }
+
+        let nsError = error as NSError
+        guard nsError.domain == NSCocoaErrorDomain else { return false }
+
+        switch nsError.code {
+        case CocoaError.Code.coderReadCorrupt.rawValue,
+             CocoaError.Code.coderValueNotFound.rawValue:
+            return true
+        default:
+            return false
+        }
+    }
+
+    nonisolated static func malformedAppListRequestReason(from error: Error) -> String {
+        if let decodeError = error as? DecodingError {
+            return String(describing: decodeError)
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSCocoaErrorDomain {
+            return nsError.localizedDescription
+        }
+
+        return String(describing: error)
+    }
+
     func handleAppListRequest(
         _ message: ControlMessage,
         from client: MirageConnectedClient,
@@ -159,19 +189,16 @@ extension MirageHostService {
             )
 
             await syncAppListRequestDeferralForInteractiveWorkload()
-        } catch let decodeError as DecodingError {
-            rejectMalformedAppListRequest(
-                from: client,
-                connection: connection,
-                reason: String(describing: decodeError)
-            )
-        } catch let cocoaError as CocoaError {
-            rejectMalformedAppListRequest(
-                from: client,
-                connection: connection,
-                reason: String(describing: cocoaError)
-            )
         } catch {
+            if Self.isMalformedAppListRequestError(error) {
+                rejectMalformedAppListRequest(
+                    from: client,
+                    connection: connection,
+                    reason: Self.malformedAppListRequestReason(from: error)
+                )
+                return
+            }
+
             MirageLogger.error(.host, error: error, message: "Failed to handle app list request: ")
         }
     }
