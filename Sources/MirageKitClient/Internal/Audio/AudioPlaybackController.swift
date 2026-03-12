@@ -43,11 +43,21 @@ final class AudioPlaybackController {
         engine.attach(playerNode)
     }
 
-    func reset() {
-        playerNode.stop()
+    private func tearDownPlaybackGraph() {
+        if playerNode.isPlaying {
+            playerNode.pause()
+        }
         playerNode.reset()
-        engine.stop()
-        engine.disconnectNodeOutput(playerNode)
+        if engine.isRunning {
+            engine.stop()
+        }
+        if isConfigured {
+            engine.disconnectNodeOutput(playerNode)
+        }
+    }
+
+    func reset() {
+        tearDownPlaybackGraph()
         pendingFrames.removeAll()
         pendingDurationSeconds = 0
         scheduledDurationSeconds = 0
@@ -117,10 +127,7 @@ final class AudioPlaybackController {
             return true
         }
 
-        playerNode.stop()
-        playerNode.reset()
-        engine.stop()
-        engine.disconnectNodeOutput(playerNode)
+        tearDownPlaybackGraph()
 
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,

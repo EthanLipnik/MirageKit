@@ -685,6 +685,26 @@ extension MirageClientService {
     }
 
     func handleAdaptiveFallbackTrigger(for streamID: StreamID) {
+        let resolvedBitDepth = resolvedDecoderBitDepth(for: streamID)
+        let now = CFAbsoluteTimeGetCurrent()
+        if Self.shouldApplyDecoderCompatibilityFallback(
+            mode: adaptiveFallbackMode,
+            resolvedBitDepth: resolvedBitDepth,
+            lastAppliedTime: adaptiveFallbackLastAppliedTime[streamID],
+            now: now,
+            cooldown: adaptiveFallbackCooldown
+        ) {
+            applyDecoderCompatibilityFallback(for: streamID, at: now)
+            return
+        }
+        if adaptiveFallbackMode == .disabled, resolvedBitDepth == .tenBit {
+            let lastApplied = adaptiveFallbackLastAppliedTime[streamID] ?? now
+            let remainingMs = Int(((adaptiveFallbackCooldown - (now - lastApplied)) * 1000).rounded(.up))
+            MirageLogger.client(
+                "Decoder compatibility fallback cooldown \(max(0, remainingMs))ms for stream \(streamID)"
+            )
+            return
+        }
         guard adaptiveFallbackEnabled else {
             MirageLogger.client("Adaptive fallback skipped (disabled) for stream \(streamID)")
             return
@@ -701,6 +721,48 @@ extension MirageClientService {
             handleAutomaticAdaptiveFallbackTrigger(for: streamID)
         case .customTemporary:
             handleCustomAdaptiveFallbackTrigger(for: streamID)
+        }
+    }
+
+    nonisolated static func shouldApplyDecoderCompatibilityFallback(
+        mode: AdaptiveFallbackMode,
+        resolvedBitDepth: MirageVideoBitDepth,
+        lastAppliedTime: CFAbsoluteTime?,
+        now: CFAbsoluteTime,
+        cooldown: CFAbsoluteTime
+    )
+    -> Bool {
+        guard mode == .disabled else { return false }
+        guard resolvedBitDepth == .tenBit else { return false }
+        guard let lastAppliedTime, lastAppliedTime > 0 else { return true }
+        return now - lastAppliedTime >= cooldown
+    }
+
+    private func applyDecoderCompatibilityFallback(for streamID: StreamID, at now: CFAbsoluteTime) {
+        adaptiveFallbackLastAppliedTime[streamID] = now
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                if let controller = controllersByStream[streamID] {
+                    await controller.setPreferredDecoderBitDepth(.eightBit)
+                }
+                try await sendStreamEncoderSettingsChange(
+                    streamID: streamID,
+                    bitDepth: .eightBit
+                )
+                adaptiveFallbackBitDepthByStream[streamID] = .eightBit
+                MirageLogger.client(
+                    "Decoder compatibility fallback forced bit depth 10-bit -> 8-bit for stream \(streamID)"
+                )
+                await controllersByStream[streamID]?.requestRecovery(reason: .manualRecovery)
+            } catch {
+                adaptiveFallbackLastAppliedTime.removeValue(forKey: streamID)
+                MirageLogger.error(
+                    .client,
+                    error: error,
+                    message: "Failed to apply decoder compatibility fallback for stream \(streamID): "
+                )
+            }
         }
     }
 

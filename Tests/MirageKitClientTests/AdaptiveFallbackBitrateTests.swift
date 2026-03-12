@@ -81,5 +81,58 @@ struct AdaptiveFallbackBitrateTests {
         #expect(service.adaptiveFallbackBitDepthByStream[streamID] == .tenBit)
         #expect(service.adaptiveFallbackLastAppliedTime[streamID] == 0)
     }
+
+    @Test("Disabled mode applies decoder compatibility fallback for ten-bit streams")
+    func disabledModeAppliesDecoderCompatibilityFallbackForTenBitStreams() {
+        #expect(
+            MirageClientService.shouldApplyDecoderCompatibilityFallback(
+                mode: .disabled,
+                resolvedBitDepth: .tenBit,
+                lastAppliedTime: nil,
+                now: 20,
+                cooldown: 15
+            )
+        )
+        #expect(
+            MirageClientService.shouldApplyDecoderCompatibilityFallback(
+                mode: .disabled,
+                resolvedBitDepth: .eightBit,
+                lastAppliedTime: nil,
+                now: 20,
+                cooldown: 15
+            ) == false
+        )
+        #expect(
+            MirageClientService.shouldApplyDecoderCompatibilityFallback(
+                mode: .automatic,
+                resolvedBitDepth: .tenBit,
+                lastAppliedTime: nil,
+                now: 20,
+                cooldown: 15
+            ) == false
+        )
+    }
+
+    @Test("Decoder compatibility fallback respects cooldown")
+    func decoderCompatibilityFallbackRespectsCooldown() {
+        #expect(
+            MirageClientService.shouldApplyDecoderCompatibilityFallback(
+                mode: .disabled,
+                resolvedBitDepth: .tenBit,
+                lastAppliedTime: 10,
+                now: 20,
+                cooldown: 15
+            ) == false
+        )
+        #expect(
+            MirageClientService.shouldApplyDecoderCompatibilityFallback(
+                mode: .disabled,
+                resolvedBitDepth: .tenBit,
+                lastAppliedTime: 10,
+                now: 26,
+                cooldown: 15
+            )
+        )
+    }
 }
 #endif

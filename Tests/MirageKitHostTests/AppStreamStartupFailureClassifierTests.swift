@@ -47,6 +47,21 @@ struct AppStreamStartupFailureClassifierTests {
         #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
     }
 
+    @Test("Recoverable CoreGraphics virtual-display startup errors map to direct-capture fallback")
+    func recoverableCoreGraphicsVirtualDisplayFailureFallsBackToDirectCapture() {
+        let error = NSError(domain: "CoreGraphicsErrorDomain", code: 1003)
+        let failureCode = windowStreamStartFailureCode(for: error)
+        let wrappedError = WindowStreamStartError.virtualDisplayStartFailed(
+            code: failureCode,
+            details: error.localizedDescription
+        )
+
+        #expect(failureCode == .windowPlacementFailed)
+        #expect(windowStreamStartShouldFallbackToDirectCapture(for: error))
+        #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(wrappedError))
+        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(wrappedError))
+    }
+
     @Test("Window-not-found and timeout remain retryable")
     func windowNotFoundAndTimeoutAreRetryable() {
         #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(MirageError.windowNotFound))

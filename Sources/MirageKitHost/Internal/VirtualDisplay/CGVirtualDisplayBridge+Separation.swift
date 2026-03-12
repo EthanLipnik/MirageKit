@@ -156,7 +156,7 @@ extension CGVirtualDisplayBridge {
                 MirageLogger.host("Display configuration attempt \(attempt) failed, retrying...")
                 Thread.sleep(forTimeInterval: 0.1) // Brief delay before retry
             } else {
-                MirageLogger.error(.host, "Display configuration failed after \(attempt) attempts")
+                MirageLogger.host("Display configuration failed after \(attempt) attempts")
             }
         }
 
@@ -180,7 +180,7 @@ extension CGVirtualDisplayBridge {
         var config: CGDisplayConfigRef?
         let beginResult = CGBeginDisplayConfiguration(&config)
         guard beginResult == .success, config != nil else {
-            MirageLogger.error(.host, "Failed to begin display configuration: \(beginResult)")
+            MirageLogger.host("Failed to begin display configuration: \(beginResult)")
             return false
         }
 
@@ -195,7 +195,7 @@ extension CGVirtualDisplayBridge {
                 MirageLogger.host("Disabling mirroring for display \(display) (mirrors \(mirrorSource))")
                 let result = CGConfigureDisplayMirrorOfDisplay(config, display, kCGNullDirectDisplay)
                 if result == .success { configurationChanged = true } else {
-                    MirageLogger.error(.host, "Failed to disable mirroring for display \(display): \(result)")
+                    MirageLogger.host("Failed to disable mirroring for display \(display): \(result)")
                 }
             }
         }
@@ -215,7 +215,7 @@ extension CGVirtualDisplayBridge {
                     configurationChanged = true
                     pendingVirtualOrigin = CGPoint(x: CGFloat(virtualX), y: CGFloat(virtualY))
                 } else {
-                    MirageLogger.error(.host, "Failed to position virtual display: \(result)")
+                    MirageLogger.host("Failed to position virtual display: \(result)")
                 }
             } else {
                 // No other displays - we are the only display, position at origin
@@ -225,7 +225,7 @@ extension CGVirtualDisplayBridge {
                     configurationChanged = true
                     pendingVirtualOrigin = CGPoint(x: 0, y: 0)
                 } else {
-                    MirageLogger.error(.host, "Failed to position virtual display at origin: \(result)")
+                    MirageLogger.host("Failed to position virtual display at origin: \(result)")
                 }
             }
         } else {
@@ -234,7 +234,7 @@ extension CGVirtualDisplayBridge {
                 MirageLogger.host("Restoring original main display \(originalMainDisplayID) to origin")
                 let result = CGConfigureDisplayOrigin(config, originalMainDisplayID, 0, 0)
                 if result == .success { configurationChanged = true } else {
-                    MirageLogger.error(.host, "Failed to restore original main display: \(result)")
+                    MirageLogger.host("Failed to restore original main display: \(result)")
                 }
             }
 
@@ -260,7 +260,7 @@ extension CGVirtualDisplayBridge {
                         configurationChanged = true
                         pendingVirtualOrigin = CGPoint(x: CGFloat(virtualX), y: CGFloat(virtualY))
                     } else {
-                        MirageLogger.error(.host, "Failed to position virtual display: \(result)")
+                        MirageLogger.host("Failed to position virtual display: \(result)")
                     }
                 } else {
                     MirageLogger.host("Anchor display \(anchorDisplayID) has invalid bounds: \(anchorBounds)")
@@ -274,7 +274,7 @@ extension CGVirtualDisplayBridge {
         if configurationChanged {
             let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
             if completeResult != .success {
-                MirageLogger.error(.host, "Failed to complete display configuration: \(completeResult)")
+                MirageLogger.host("Failed to complete display configuration: \(completeResult)")
                 CGCancelDisplayConfiguration(config)
                 return false
             } else {

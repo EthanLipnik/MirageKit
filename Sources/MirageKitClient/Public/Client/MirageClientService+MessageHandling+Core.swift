@@ -70,9 +70,9 @@ extension MirageClientService {
             metadata: sourceAdvertisement.metadata
         )
 
-        if let provisionalHost, provisionalHost.id != response.hostID {
+        if let provisionalHost, provisionalHost.deviceID != response.hostID {
             MirageLogger.client(
-                "Canonicalizing connected host identity provisional=\(provisionalHost.id.uuidString) accepted=\(response.hostID.uuidString)"
+                "Canonicalizing connected host identity provisional=\(provisionalHost.deviceID.uuidString) accepted=\(response.hostID.uuidString)"
             )
         }
 

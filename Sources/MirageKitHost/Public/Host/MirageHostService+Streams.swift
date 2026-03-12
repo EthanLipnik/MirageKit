@@ -82,6 +82,95 @@ extension WindowStreamStartError: LocalizedError {
     }
 }
 
+func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureCode {
+    if let windowStartError = error as? WindowStreamStartError {
+        switch windowStartError {
+        case let .virtualDisplayStartFailed(code, _):
+            return code
+        case .windowAlreadyBound:
+            return .windowAlreadyBound
+        }
+    }
+
+    if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+        switch windowSpaceError {
+        case .moveFailed:
+            return .windowPlacementFailed
+        case .ownerConflict:
+            return .windowOwnerConflict
+        case .ownerMismatch:
+            return .windowOwnerMismatch
+        case .windowNotFound:
+            return .windowNotFound
+        case .noOriginalState:
+            return .noSavedWindowState
+        }
+    }
+
+    if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
+        switch sharedDisplayError {
+        case .creationFailed:
+            return .virtualDisplayCreationFailed
+        case .apiNotAvailable, .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
+            return .virtualDisplayUnavailable
+        }
+    }
+
+    if let nsError = error as NSError?,
+       nsError.domain == "CoreGraphicsErrorDomain",
+       nsError.code == 1003 {
+        // Dedicated virtual-display startup can race the display graph even when direct
+        // window capture remains viable. Treat this as recoverable so the host degrades.
+        return .windowPlacementFailed
+    }
+
+    if error is MirageRuntimeConditionError {
+        return .runtimeConditionBlocked
+    }
+
+    if let mirageError = error as? MirageError {
+        switch mirageError {
+        case .windowNotFound:
+            return .windowNotFound
+        case .timeout:
+            return .operationTimedOut
+        default:
+            return .unknown
+        }
+    }
+
+    return .unknown
+}
+
+func windowStreamStartShouldFallbackToDirectCapture(for error: Error) -> Bool {
+    let failureCode = windowStreamStartFailureCode(for: error)
+    if let windowStartError = error as? WindowStreamStartError {
+        switch windowStartError {
+        case .virtualDisplayStartFailed:
+            return !failureCode.isOwnershipConflict
+        case .windowAlreadyBound:
+            return false
+        }
+    }
+
+    switch failureCode {
+    case .virtualDisplayCreationFailed,
+         .virtualDisplayUnavailable,
+         .windowPlacementFailed,
+         .windowNotFound,
+         .operationTimedOut:
+        return true
+    case .virtualDisplayDirectFallbackFailed,
+         .windowOwnerConflict,
+         .windowOwnerMismatch,
+         .windowAlreadyBound,
+         .noSavedWindowState,
+         .runtimeConditionBlocked,
+         .unknown:
+        return false
+    }
+}
+
 @MainActor
 public extension MirageHostService {
     func startStream(
@@ -636,84 +725,11 @@ public extension MirageHostService {
     }
 
     private func classifyWindowStreamStartFailure(_ error: Error) -> WindowStreamStartFailureCode {
-        if let windowStartError = error as? WindowStreamStartError {
-            switch windowStartError {
-            case let .virtualDisplayStartFailed(code, _):
-                return code
-            case .windowAlreadyBound:
-                return .windowAlreadyBound
-            }
-        }
-
-        if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
-            switch windowSpaceError {
-            case .moveFailed:
-                return .windowPlacementFailed
-            case .ownerConflict:
-                return .windowOwnerConflict
-            case .ownerMismatch:
-                return .windowOwnerMismatch
-            case .windowNotFound:
-                return .windowNotFound
-            case .noOriginalState:
-                return .noSavedWindowState
-            }
-        }
-
-        if let sharedDisplayError = error as? SharedVirtualDisplayManager.SharedDisplayError {
-            switch sharedDisplayError {
-            case .creationFailed:
-                return .virtualDisplayCreationFailed
-            case .apiNotAvailable, .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
-                return .virtualDisplayUnavailable
-            }
-        }
-
-        if error is MirageRuntimeConditionError {
-            return .runtimeConditionBlocked
-        }
-
-        if let mirageError = error as? MirageError {
-            switch mirageError {
-            case .windowNotFound:
-                return .windowNotFound
-            case .timeout:
-                return .operationTimedOut
-            default:
-                return .unknown
-            }
-        }
-
-        return .unknown
+        windowStreamStartFailureCode(for: error)
     }
 
     private func shouldFallbackToDirectWindowCapture(_ error: Error) -> Bool {
-        let failureCode = classifyWindowStreamStartFailure(error)
-        if let windowStartError = error as? WindowStreamStartError {
-            switch windowStartError {
-            case .virtualDisplayStartFailed:
-                return !failureCode.isOwnershipConflict
-            case .windowAlreadyBound:
-                return false
-            }
-        }
-
-        switch failureCode {
-        case .virtualDisplayCreationFailed,
-             .virtualDisplayUnavailable,
-             .windowPlacementFailed,
-             .windowNotFound,
-             .operationTimedOut:
-            return true
-        case .virtualDisplayDirectFallbackFailed,
-             .windowOwnerConflict,
-             .windowOwnerMismatch,
-             .windowAlreadyBound,
-             .noSavedWindowState,
-             .runtimeConditionBlocked,
-             .unknown:
-            return false
-        }
+        windowStreamStartShouldFallbackToDirectCapture(for: error)
     }
 
     private func cleanupFailedStreamStart(

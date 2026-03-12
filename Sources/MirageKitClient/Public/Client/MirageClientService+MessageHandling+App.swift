@@ -141,7 +141,7 @@ extension MirageClientService {
     func handleHostHardwareIcon(_ message: ControlMessage) {
         do {
             let hostIcon = try message.decode(HostHardwareIconMessage.self)
-            guard let hostID = connectedHost?.id else {
+            guard let hostID = connectedHost?.deviceID else {
                 MirageLogger.client("Ignoring host hardware icon payload without a connected host ID")
                 return
             }

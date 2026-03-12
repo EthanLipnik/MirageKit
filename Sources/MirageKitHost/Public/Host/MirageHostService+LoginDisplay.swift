@@ -280,7 +280,9 @@ extension MirageHostService {
 
             await broadcastLoginDisplayReady()
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to start login display stream: ")
+            let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+            let renderedDetail = detail.isEmpty ? String(describing: error) : detail
+            MirageLogger.host("Login display start failed; scheduling retry if budget remains: \(renderedDetail)")
             await cleanupOwnedStream(disablePowerAssertion: true)
             await scheduleLoginDisplayRetry(reason: "start failed: \(error.localizedDescription)")
         }

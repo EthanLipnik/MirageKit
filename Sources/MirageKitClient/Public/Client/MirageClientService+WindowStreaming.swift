@@ -230,7 +230,7 @@ public extension MirageClientService {
             )
     }
 
-    private func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
+    func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
         adaptiveFallbackBitDepthByStream[streamID] ??
             adaptiveFallbackBaselineBitDepthByStream[streamID] ??
             .eightBit
