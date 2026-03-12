@@ -116,6 +116,9 @@ public final class MirageHostService {
     /// Bound local port for the remote QUIC control listener.
     public internal(set) var remoteControlPort: UInt16?
 
+    /// Whether the remote QUIC control listener is currently ready to accept connections.
+    public internal(set) var remoteControlListenerReady = false
+
     /// Called when host should resize a window before streaming begins.
     /// The callback receives the window and the target size in points.
     /// This allows the app to resize and center the window via Accessibility API.
@@ -125,6 +128,7 @@ public final class MirageHostService {
     var advertisedPeerAdvertisement: LoomPeerAdvertisement
     var udpListener: NWListener?
     var remoteControlListener: NWListener?
+    var remoteRelayPublicationState = MirageRemoteRelayPublicationState()
     let encoderConfig: MirageEncoderConfiguration
     let networkConfig: LoomNetworkConfiguration
     let serviceName: String

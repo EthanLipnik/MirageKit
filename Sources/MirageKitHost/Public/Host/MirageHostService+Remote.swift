@@ -59,7 +59,44 @@ extension MirageHostService {
         timeout: Duration = .seconds(2)
     )
     async -> LoomRelayCandidate? {
+        await resolveFreshRemoteControlCandidate(
+            stunHost: stunHost,
+            stunPort: stunPort,
+            timeout: timeout
+        )
+    }
+
+    @_spi(HostApp)
+    public func resolveRemoteRelayPublicationDecision(
+        stunHost: String = "stun.cloudflare.com",
+        stunPort: UInt16 = 3478,
+        timeout: Duration = .seconds(2)
+    )
+    async -> MirageRemoteRelayPublicationDecision {
+        let freshCandidate = await resolveFreshRemoteControlCandidate(
+            stunHost: stunHost,
+            stunPort: stunPort,
+            timeout: timeout
+        )
+        return remoteRelayPublicationState.decision(
+            listenerReady: remoteControlListenerReady,
+            freshCandidate: freshCandidate
+        )
+    }
+
+    @_spi(HostApp)
+    public func recordRemoteRelayAdvertiseSuccess(candidate: LoomRelayCandidate) {
+        remoteRelayPublicationState.recordPublishedCandidate(candidate)
+    }
+
+    private func resolveFreshRemoteControlCandidate(
+        stunHost: String,
+        stunPort: UInt16,
+        timeout: Duration
+    )
+    async -> LoomRelayCandidate? {
         guard remoteTransportEnabled,
+              remoteControlListenerReady,
               let localPort = remoteControlPort else {
             MirageLogger.host("Remote candidate skipped (transport disabled or listener port unavailable)")
             return nil
@@ -113,6 +150,7 @@ extension MirageHostService {
 
         let listener = try NWListener(using: parameters, on: requestedPort)
         remoteControlListener = listener
+        remoteControlListenerReady = false
 
         listener.newConnectionHandler = { [weak self] connection in
             Task { @MainActor [weak self] in
@@ -123,6 +161,18 @@ extension MirageHostService {
         let completionFlag = RemoteListenerCompletionFlag()
         return try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<UInt16, Error>) in
             listener.stateUpdateHandler = { [weak self, completionFlag] state in
+                Task { @MainActor [weak self] in
+                    switch state {
+                    case .failed, .cancelled:
+                        self?.remoteControlListenerReady = false
+                        self?.remoteControlListener = nil
+                        self?.setRemoteControlPort(nil)
+
+                    default:
+                        break
+                    }
+                }
+
                 switch state {
                 case .ready:
                     guard completionFlag.completeOnce() else { return }
@@ -132,23 +182,16 @@ extension MirageHostService {
                     }
                     Task { @MainActor [weak self] in
                         self?.setRemoteControlPort(boundPort)
+                        self?.remoteControlListenerReady = true
                     }
                     continuation.resume(returning: boundPort)
 
                 case let .failed(error):
                     guard completionFlag.completeOnce() else { return }
-                    Task { @MainActor [weak self] in
-                        self?.remoteControlListener = nil
-                        self?.setRemoteControlPort(nil)
-                    }
                     continuation.resume(throwing: error)
 
                 case .cancelled:
                     guard completionFlag.completeOnce() else { return }
-                    Task { @MainActor [weak self] in
-                        self?.remoteControlListener = nil
-                        self?.setRemoteControlPort(nil)
-                    }
                     continuation.resume(throwing: MirageError.protocolError("Remote QUIC listener cancelled"))
 
                 default:
@@ -163,7 +206,9 @@ extension MirageHostService {
     private func stopRemoteControlListener() {
         remoteControlListener?.cancel()
         remoteControlListener = nil
+        remoteControlListenerReady = false
         setRemoteControlPort(nil)
+        remoteRelayPublicationState.reset()
     }
 }
 #endif

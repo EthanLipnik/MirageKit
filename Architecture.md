@@ -131,6 +131,8 @@ The host keeps stream-specific policy local to the host runtime. That includes f
 
 Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active.
 
+Remote relay signaling remains a direct-QUIC reachability system. Mirage does not relay control traffic through signaling; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
+
 ## 5. Client Target (`Sources/MirageKitClient`)
 
 `MirageClientService` is the top-level coordinator for client runtime.

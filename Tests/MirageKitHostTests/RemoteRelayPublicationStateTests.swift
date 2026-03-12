@@ -1,0 +1,104 @@
+//
+//  RemoteRelayPublicationStateTests.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 3/12/26.
+//
+//  Sticky remote relay candidate publication policy tests.
+//
+
+@_spi(HostApp) @testable import MirageKitHost
+import Testing
+
+#if os(macOS)
+import MirageKit
+
+@Suite("Remote Relay Publication State")
+struct RemoteRelayPublicationStateTests {
+    @Test("Cold start defers while listener is not ready")
+    func coldStartDefersWithoutPublishingEmptyCandidates() {
+        let state = MirageRemoteRelayPublicationState()
+
+        let decision = state.decision(
+            listenerReady: false,
+            freshCandidate: nil
+        )
+
+        #expect(decision == .`defer`(reason: .listenerNotReady))
+    }
+
+    @Test("Listener-ready STUN failures defer until first candidate exists")
+    func listenerReadyDefersWhenProbeFailsWithoutStickyCandidate() {
+        let state = MirageRemoteRelayPublicationState()
+
+        let decision = state.decision(
+            listenerReady: true,
+            freshCandidate: nil
+        )
+
+        #expect(decision == .`defer`(reason: .stunProbeFailed))
+    }
+
+    @Test("Fresh publish becomes sticky for later STUN failures")
+    func freshPublishBecomesSticky() {
+        var state = MirageRemoteRelayPublicationState()
+        let candidate = LoomRelayCandidate(
+            transport: .quic,
+            address: "203.0.113.10",
+            port: 4433
+        )
+
+        let initialDecision = state.decision(
+            listenerReady: true,
+            freshCandidate: candidate
+        )
+        #expect(initialDecision == .publish(candidate: candidate, source: .fresh))
+
+        state.recordPublishedCandidate(candidate)
+
+        let stickyDecision = state.decision(
+            listenerReady: true,
+            freshCandidate: nil
+        )
+        #expect(stickyDecision == .publish(candidate: candidate, source: .sticky(reason: .stunProbeFailed)))
+    }
+
+    @Test("Sticky candidate survives transient listener unavailability")
+    func stickyCandidateSurvivesListenerUnavailable() {
+        var state = MirageRemoteRelayPublicationState()
+        let candidate = LoomRelayCandidate(
+            transport: .quic,
+            address: "198.51.100.20",
+            port: 7443
+        )
+        state.recordPublishedCandidate(candidate)
+
+        let decision = state.decision(
+            listenerReady: false,
+            freshCandidate: nil
+        )
+
+        #expect(decision == .publish(candidate: candidate, source: .sticky(reason: .listenerNotReady)))
+    }
+
+    @Test("Reset clears sticky publication state")
+    func resetClearsStickyPublicationState() {
+        var state = MirageRemoteRelayPublicationState()
+        let candidate = LoomRelayCandidate(
+            transport: .quic,
+            address: "192.0.2.44",
+            port: 9443
+        )
+        state.recordPublishedCandidate(candidate)
+
+        state.reset()
+
+        let decision = state.decision(
+            listenerReady: true,
+            freshCandidate: nil
+        )
+
+        #expect(decision == .`defer`(reason: .stunProbeFailed))
+    }
+}
+#endif
