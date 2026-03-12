@@ -154,6 +154,12 @@ Client presentation is split from transport:
 
 That split keeps high-frequency media state out of SwiftUI update paths.
 
+Recovery policy is package-owned inside `MirageKitClient`:
+
+- desktop and app streams only clear client-side transport state from authoritative host stop/disconnect events
+- freeze detection distinguishes keyframe-starved stalls from packet-starved stalls
+- the first active-stream freeze uses bounded recovery, while repeated freezes escalate to the existing hard reset path
+
 ## 6. Bootstrap Runtime (`Sources/MirageHostBootstrapRuntime`)
 
 The bootstrap runtime is responsible for pre-login and unlock-oriented host control.

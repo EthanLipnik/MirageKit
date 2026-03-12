@@ -628,10 +628,17 @@ extension StreamController {
         let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
         let lastPacketTime = reassembler.latestPacketReceivedTime()
         let hasRecentVideoPacket = lastPacketTime > 0 && now - lastPacketTime <= Self.freezeTimeout
+        let packetStarved = lastPacketTime == 0 || !hasRecentVideoPacket
         let stalledPresentation = now - lastPresentedProgressTime > Self.freezeTimeout
-        let isFrozen = stalledPresentation && (pendingDepth > 0 || hasRecentVideoPacket)
+        let isFrozen = stalledPresentation && (pendingDepth > 0 || hasRecentVideoPacket || packetStarved)
         let keyframeStarved = reassembler.isAwaitingKeyframe()
-        if isFrozen { await maybeTriggerFreezeRecovery(now: now, keyframeStarved: keyframeStarved) }
+        if isFrozen {
+            await maybeTriggerFreezeRecovery(
+                now: now,
+                keyframeStarved: keyframeStarved,
+                packetStarved: packetStarved
+            )
+        }
         else {
             consecutiveFreezeRecoveries = 0
         }
@@ -651,7 +658,11 @@ extension StreamController {
         #endif
     }
 
-    private func maybeTriggerFreezeRecovery(now: CFAbsoluteTime, keyframeStarved: Bool) async {
+    private func maybeTriggerFreezeRecovery(
+        now: CFAbsoluteTime,
+        keyframeStarved: Bool,
+        packetStarved: Bool
+    ) async {
         if lastFreezeRecoveryTime > 0,
            now - lastFreezeRecoveryTime < Self.freezeRecoveryCooldown {
             return
@@ -662,33 +673,35 @@ extension StreamController {
             await self?.onStallEvent?()
         }
 
-        guard keyframeStarved else {
+        switch Self.freezeRecoveryDecision(
+            keyframeStarved: keyframeStarved,
+            packetStarved: packetStarved,
+            consecutiveFreezeRecoveries: consecutiveFreezeRecoveries
+        ) {
+        case let .monitor(kind):
             let attempt = consecutiveFreezeRecoveries
             consecutiveFreezeRecoveries = 0
             MirageLogger.client(
                 "Presentation stall detected (attempt \(attempt)) for stream \(streamID); " +
-                    "no keyframe starvation, monitoring only"
+                    "\(kind.rawValue), monitoring only"
             )
             return
-        }
-
-        if consecutiveFreezeRecoveries >= Self.freezeRecoveryEscalationThreshold {
+        case let .hard(kind):
             let attempt = consecutiveFreezeRecoveries
             consecutiveFreezeRecoveries = 0
             MirageLogger.client(
-                "Presentation stall persisted while awaiting keyframe (attempt \(attempt)) for stream \(streamID); " +
+                "Presentation stall persisted (\(kind.rawValue), attempt \(attempt)) for stream \(streamID); " +
                     "escalating to hard recovery"
             )
             await requestRecovery(reason: .freezeTimeout)
             return
+        case let .soft(kind):
+            MirageLogger.client(
+                "Presentation stall detected (\(kind.rawValue), attempt \(consecutiveFreezeRecoveries)) for stream \(streamID); " +
+                    "requesting bounded recovery"
+            )
+            await requestSoftRecovery(reason: .freezeTimeout)
         }
-
-        MirageLogger.client(
-            "Presentation stall while awaiting keyframe (attempt \(consecutiveFreezeRecoveries)) for stream \(streamID); " +
-                "requesting soft keyframe recovery"
-        )
-        startKeyframeRecoveryLoopIfNeeded()
-        await requestKeyframeRecovery(reason: .freezeTimeout)
     }
 
     func setResizeState(_ newState: ResizeState) async {

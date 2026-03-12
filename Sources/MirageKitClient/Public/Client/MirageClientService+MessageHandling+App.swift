@@ -80,6 +80,7 @@ extension MirageClientService {
             appIconStreamStateByRequestID[update.requestID, default: AppIconStreamState()]
                 .receivedBundleIdentifiers
                 .insert(normalizedBundleID)
+            onAppIconStreamProgress?(availableApps)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app icon update: ")
         }

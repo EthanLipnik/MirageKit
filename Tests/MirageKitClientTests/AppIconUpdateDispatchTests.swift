@@ -19,9 +19,15 @@ struct AppIconUpdateDispatchTests {
         let service = MirageClientService()
         var callbackCount = 0
         var latestApps: [MirageInstalledApp] = []
+        var progressCallbackCount = 0
+        var latestProgressApps: [MirageInstalledApp] = []
         service.onAppListReceived = { apps in
             callbackCount += 1
             latestApps = apps
+        }
+        service.onAppIconStreamProgress = { apps in
+            progressCallbackCount += 1
+            latestProgressApps = apps
         }
 
         let requestID = UUID()
@@ -56,7 +62,9 @@ struct AppIconUpdateDispatchTests {
 
         // Icon packet updates should not emit full app-list callbacks.
         #expect(callbackCount == 1)
+        #expect(progressCallbackCount == 1)
         #expect(service.availableApps.first?.iconData == iconData)
+        #expect(latestProgressApps.first?.iconData == iconData)
 
         let completion = AppIconStreamCompleteMessage(
             requestID: requestID,
@@ -67,6 +75,7 @@ struct AppIconUpdateDispatchTests {
         service.handleAppIconStreamComplete(completionEnvelope)
 
         #expect(callbackCount == 2)
+        #expect(progressCallbackCount == 1)
         #expect(latestApps.first?.iconData == iconData)
     }
 }

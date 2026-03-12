@@ -54,6 +54,40 @@ actor StreamController {
         }
     }
 
+    enum FreezeStallKind: String, Sendable, Equatable {
+        case keyframeStarved = "keyframe-starved"
+        case packetStarved = "packet-starved"
+        case monitoringOnly = "monitoring-only"
+    }
+
+    enum FreezeRecoveryDecision: Sendable, Equatable {
+        case soft(FreezeStallKind)
+        case hard(FreezeStallKind)
+        case monitor(FreezeStallKind)
+    }
+
+    nonisolated static func freezeRecoveryDecision(
+        keyframeStarved: Bool,
+        packetStarved: Bool,
+        consecutiveFreezeRecoveries: Int
+    ) -> FreezeRecoveryDecision {
+        if keyframeStarved {
+            if consecutiveFreezeRecoveries >= freezeRecoveryEscalationThreshold {
+                return .hard(.keyframeStarved)
+            }
+            return .soft(.keyframeStarved)
+        }
+
+        if packetStarved {
+            if consecutiveFreezeRecoveries >= freezeRecoveryEscalationThreshold {
+                return .hard(.packetStarved)
+            }
+            return .soft(.packetStarved)
+        }
+
+        return .monitor(.monitoringOnly)
+    }
+
     /// State of the resize operation
     enum ResizeState: Equatable, Sendable {
         case idle

@@ -650,41 +650,29 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Present-stall monitoring without keyframe starvation does not request keyframe recovery")
-    func presentStallWithoutStarvationDoesNotRequestKeyframeRecovery() async throws {
-        let streamID: StreamID = 4
-        let keyframeCounter = LockedCounter()
-        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
-
-        await controller.setCallbacks(
-            onKeyframeNeeded: {
-                keyframeCounter.increment()
-            },
-            onResizeEvent: nil,
-            onResizeStateChanged: nil,
-            onFrameDecoded: nil,
-            onFirstFramePresented: nil,
-            onAdaptiveFallbackNeeded: nil
+    @Test("Freeze recovery distinguishes packet-starved, keyframe-starved, and monitoring-only stalls")
+    func freezeRecoveryDecisionDistinguishesStallKinds() {
+        #expect(
+            StreamController.freezeRecoveryDecision(
+                keyframeStarved: false,
+                packetStarved: true,
+                consecutiveFreezeRecoveries: 1
+            ) == .soft(.packetStarved)
         )
-
-        let pixelBuffer = makePixelBuffer()
-        _ = MirageFrameCache.shared.enqueue(
-            pixelBuffer,
-            contentRect: .zero,
-            decodeTime: CFAbsoluteTimeGetCurrent() - 10,
-            metalTexture: nil,
-            texture: nil,
-            for: streamID
+        #expect(
+            StreamController.freezeRecoveryDecision(
+                keyframeStarved: true,
+                packetStarved: false,
+                consecutiveFreezeRecoveries: 1
+            ) == .soft(.keyframeStarved)
         )
-
-        await controller.recordDecodedFrame()
-
-        try await Task.sleep(for: .seconds(7))
-        #expect(keyframeCounter.value == 0)
-
-        await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        #expect(
+            StreamController.freezeRecoveryDecision(
+                keyframeStarved: false,
+                packetStarved: false,
+                consecutiveFreezeRecoveries: 1
+            ) == .monitor(.monitoringOnly)
+        )
     }
 
     @Test("Present-stall while keyframe-starved escalates from soft request to hard recovery")
@@ -725,6 +713,17 @@ struct StreamControllerRecoveryTests {
 
         await controller.stop()
         MirageFrameCache.shared.clear(for: streamID)
+    }
+
+    @Test("Packet-starved stalls escalate from bounded recovery to hard recovery")
+    func packetStarvedFreezeRecoveryEscalatesAfterRepeatedStalls() {
+        #expect(
+            StreamController.freezeRecoveryDecision(
+                keyframeStarved: false,
+                packetStarved: true,
+                consecutiveFreezeRecoveries: StreamController.freezeRecoveryEscalationThreshold
+            ) == .hard(.packetStarved)
+        )
     }
 
     private func waitUntil(

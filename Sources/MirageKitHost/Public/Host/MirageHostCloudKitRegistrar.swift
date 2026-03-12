@@ -393,6 +393,10 @@ public actor MirageHostCloudKitRegistrar {
         }
     }
 
+    public nonisolated static func isMissingProductionSchemaShareRecordError(_ error: Error) -> Bool {
+        isMissingProductionSchemaRecordTypeError(error, recordType: "cloudkit.share")
+    }
+
     nonisolated static func isInvalidArgumentsCloudKitError(_ error: Error) -> Bool {
         let nsError = error as NSError
         guard nsError.domain == CKError.errorDomain else { return false }

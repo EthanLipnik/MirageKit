@@ -353,6 +353,9 @@ public final class MirageClientService {
     /// Callback when app list is received
     public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
 
+    /// Callback when app-icon packets advance the in-memory app snapshot.
+    public var onAppIconStreamProgress: (([MirageInstalledApp]) -> Void)?
+
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
 

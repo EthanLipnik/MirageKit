@@ -35,6 +35,7 @@ struct HostCloudKitSharingCoordinatorTests {
         )
         let cloudKitManager = LoomCloudKitManager(configuration: configuration)
         let peerRecord = makePeerRecord(configuration: configuration, recordName: "peer-record")
+        let thumbnailData = Data([0xCA, 0xFE, 0xBA, 0xBE])
         let tracker = CloudKitSharingTracker()
         let coordinator = MirageHostCloudKitSharingCoordinator(
             cloudKitManager: cloudKitManager,
@@ -54,7 +55,8 @@ struct HostCloudKitSharingCoordinatorTests {
                     peerRecord.recordID: .success(peerRecord),
                     savedShare.recordID: .success(savedShare),
                 ]
-            }
+            },
+            makeShareThumbnailData: { _ in thumbnailData }
         )
 
         let share = try await coordinator.ensureShare()
@@ -63,8 +65,55 @@ struct HostCloudKitSharingCoordinatorTests {
         #expect(await tracker.loadedPeerRecordNames() == [peerRecord.recordID.recordName])
         #expect(savedRecordNames.contains(peerRecord.recordID.recordName))
         #expect(savedRecordNames.contains(share.recordID.recordName))
+        #expect(share[CKShare.SystemFieldKey.title] as? String == configuration.shareTitle)
+        #expect(share[CKShare.SystemFieldKey.thumbnailImageData] as? Data == thumbnailData)
+        #expect(share.publicPermission == .none)
         #expect(coordinator.hasPeerRecord)
         #expect(coordinator.activeShare?.recordID.recordName == share.recordID.recordName)
+    }
+
+    @MainActor
+    @Test("ensureShare refreshes thumbnail metadata on an existing share before reuse")
+    func ensureShareRefreshesThumbnailMetadataOnAnExistingShareBeforeReuse() async throws {
+        let configuration = MirageKit.makeCloudKitConfiguration(
+            containerIdentifier: "iCloud.com.ethanlipnik.Mirage"
+        )
+        let cloudKitManager = LoomCloudKitManager(configuration: configuration)
+        let peerRecord = makePeerRecord(configuration: configuration, recordName: "peer-record")
+        let existingShare = CKShare(rootRecord: peerRecord)
+        let thumbnailData = Data([0x0A, 0x0B, 0x0C, 0x0D])
+        existingShare[CKShare.SystemFieldKey.title] = "Old Title"
+        existingShare[CKShare.SystemFieldKey.thumbnailImageData] = Data([0x01, 0x02, 0x03])
+        existingShare.publicPermission = .readOnly
+
+        let tracker = CloudKitSharingTracker()
+        let coordinator = MirageHostCloudKitSharingCoordinator(
+            cloudKitManager: cloudKitManager,
+            loadRegisteredPeerRecord: {
+                await tracker.noteLoadedPeerRecord(recordID: peerRecord.recordID)
+                return peerRecord
+            },
+            fetchRecord: { recordID in
+                await tracker.noteFetchedRecord(recordID: recordID)
+                return existingShare
+            },
+            saveRecords: { records in
+                await tracker.noteSavedRecords(records)
+                let savedShare = try #require(records.compactMap { $0 as? CKShare }.first)
+                return [savedShare.recordID: .success(savedShare)]
+            },
+            makeShareThumbnailData: { _ in thumbnailData }
+        )
+
+        let share = try await coordinator.ensureShare()
+
+        #expect(await tracker.loadedPeerRecordNames() == [peerRecord.recordID.recordName])
+        #expect(await tracker.fetchedRecordNames() == [existingShare.recordID.recordName])
+        #expect(await tracker.savedRecordNames() == [existingShare.recordID.recordName])
+        #expect(share[CKShare.SystemFieldKey.title] as? String == configuration.shareTitle)
+        #expect(share[CKShare.SystemFieldKey.thumbnailImageData] as? Data == thumbnailData)
+        #expect(share.publicPermission == .none)
+        #expect(coordinator.activeShare?.recordID.recordName == existingShare.recordID.recordName)
     }
 
     @MainActor

@@ -127,4 +127,24 @@ struct HostCloudKitRegistrarCompatibilityTests {
             ) == false
         )
     }
+
+    @Test("Production schema rejection for CloudKit sharing is classified explicitly")
+    func productionSchemaRejectionForCloudKitSharingIsClassifiedExplicitly() {
+        let error = NSError(
+            domain: CKError.errorDomain,
+            code: CKError.Code.serverRejectedRequest.rawValue,
+            userInfo: [
+                NSLocalizedDescriptionKey:
+                    "Error saving record <CKRecordID: 0x1; recordName=Share-test, zoneID=MiragePeerZone:__defaultOwner__> to server: Cannot create new type cloudkit.share in production schema"
+            ]
+        )
+
+        #expect(MirageHostCloudKitRegistrar.isMissingProductionSchemaShareRecordError(error))
+        #expect(
+            MirageHostCloudKitRegistrar.isMissingProductionSchemaRecordTypeError(
+                error,
+                recordType: "MiragePeer"
+            ) == false
+        )
+    }
 }

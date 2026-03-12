@@ -15,6 +15,9 @@ import Observation
 @Observable
 @MainActor
 public final class MirageHostCloudKitSharingCoordinator {
+    private static let shareThumbnailMaxPixelSize = 512
+    private static let shareThumbnailCompressionQuality = 0.35
+
     public private(set) var activeShare: CKShare?
     public private(set) var hasPeerRecord = false
     public private(set) var isLoading = false
@@ -24,6 +27,7 @@ public final class MirageHostCloudKitSharingCoordinator {
     private let loadRegisteredPeerRecord: () async throws -> CKRecord?
     private let fetchRecord: (CKRecord.ID) async throws -> CKRecord
     private let saveRecords: ([CKRecord]) async throws -> [CKRecord.ID: Result<CKRecord, Error>]
+    private let makeShareThumbnailData: (CKRecord) -> Data?
 
     public init(
         cloudKitManager: LoomCloudKitManager,
@@ -32,6 +36,9 @@ public final class MirageHostCloudKitSharingCoordinator {
         self.cloudKitManager = cloudKitManager
         loadRegisteredPeerRecord = {
             try await registrar.fetchRegisteredPeerRecord()
+        }
+        makeShareThumbnailData = { record in
+            Self.shareThumbnailData(for: record)
         }
         fetchRecord = { recordID in
             guard let container = cloudKitManager.container else {
@@ -55,12 +62,14 @@ public final class MirageHostCloudKitSharingCoordinator {
         cloudKitManager: LoomCloudKitManager,
         loadRegisteredPeerRecord: @escaping () async throws -> CKRecord?,
         fetchRecord: @escaping (CKRecord.ID) async throws -> CKRecord,
-        saveRecords: @escaping ([CKRecord]) async throws -> [CKRecord.ID: Result<CKRecord, Error>]
+        saveRecords: @escaping ([CKRecord]) async throws -> [CKRecord.ID: Result<CKRecord, Error>],
+        makeShareThumbnailData: @escaping (CKRecord) -> Data? = { _ in nil }
     ) {
         self.cloudKitManager = cloudKitManager
         self.loadRegisteredPeerRecord = loadRegisteredPeerRecord
         self.fetchRecord = fetchRecord
         self.saveRecords = saveRecords
+        self.makeShareThumbnailData = makeShareThumbnailData
     }
 
     public func refresh() async {
@@ -103,13 +112,22 @@ public final class MirageHostCloudKitSharingCoordinator {
             hasPeerRecord = true
 
             if let existingShare = try await fetchShare(for: peerRecord) {
+                if configureShare(existingShare, from: peerRecord) {
+                    let saveResults = try await saveRecords([existingShare])
+                    guard let savedShare = try saveResults[existingShare.recordID]?.get() as? CKShare else {
+                        throw LoomCloudKitError.shareNotFound
+                    }
+
+                    activeShare = savedShare
+                    return savedShare
+                }
+
                 activeShare = existingShare
                 return existingShare
             }
 
             let share = CKShare(rootRecord: peerRecord)
-            share[CKShare.SystemFieldKey.title] = cloudKitManager.configuration.shareTitle
-            share.publicPermission = .none
+            configureShare(share, from: peerRecord)
 
             let saveResults = try await saveRecords([peerRecord, share])
             guard let savedShare = try saveResults[share.recordID]?.get() as? CKShare else {
@@ -138,6 +156,39 @@ public final class MirageHostCloudKitSharingCoordinator {
     private func fetchShare(for record: CKRecord) async throws -> CKShare? {
         guard let shareReference = record.share else { return nil }
         return try await fetchRecord(shareReference.recordID) as? CKShare
+    }
+
+    @discardableResult
+    private func configureShare(_ share: CKShare, from peerRecord: CKRecord) -> Bool {
+        let title = share[CKShare.SystemFieldKey.title] as? String
+        let thumbnailImageData = share[CKShare.SystemFieldKey.thumbnailImageData] as? Data
+        let expectedThumbnailImageData = makeShareThumbnailData(peerRecord)
+        let needsUpdate = title != cloudKitManager.configuration.shareTitle ||
+            thumbnailImageData != expectedThumbnailImageData ||
+            share.publicPermission != .none
+
+        share[CKShare.SystemFieldKey.title] = cloudKitManager.configuration.shareTitle
+        share[CKShare.SystemFieldKey.thumbnailImageData] = expectedThumbnailImageData
+        share.publicPermission = .none
+
+        return needsUpdate
+    }
+
+    private static func shareThumbnailData(for record: CKRecord) -> Data? {
+        guard
+            let advertisementBlob = record[LoomCloudKitPeerInfo.RecordKey.advertisementBlob.rawValue] as? Data,
+            let advertisement = try? JSONDecoder().decode(LoomPeerAdvertisement.self, from: advertisementBlob)
+        else {
+            return nil
+        }
+
+        return MirageHostHardwareIconResolver.cloudKitShareThumbnailData(
+            preferredIconName: advertisement.iconName,
+            hardwareMachineFamily: advertisement.machineFamily,
+            hardwareModelIdentifier: advertisement.modelIdentifier,
+            maxPixelSize: shareThumbnailMaxPixelSize,
+            compressionQuality: shareThumbnailCompressionQuality
+        )
     }
 }
 #endif
