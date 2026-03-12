@@ -167,17 +167,17 @@ The bootstrap runtime is responsible for pre-login and unlock-oriented host cont
 Key types are:
 
 - `MirageHostBootstrapConfiguration`
-- `MirageHostBootstrapControlServer`
 - `MirageHostBootstrapUnlockService`
 - `MirageHostBootstrapDaemonStateMachine`
 
 This target owns:
 
-- bootstrap request handling
 - bootstrap configuration serialization and metadata projection
 - unlock orchestration
 - daemon state transitions
 - app-group queue handoff into the host app
+
+Authenticated bootstrap network serving is provided by Loom's `LoomBootstrapControlServer`.
 
 Keeping that logic in its own product prevents the main host runtime from carrying daemon-only policy and lifecycle state.
 

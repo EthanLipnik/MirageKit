@@ -117,49 +117,20 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
             )
         }()
 
-        let fingerprint = sshHostKeyFingerprint
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let controlSecret = controlAuthSecret
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-
-        let payload = BootstrapMetadataPayload(
-            version: 2,
+        return LoomBootstrapMetadata(
             enabled: enabled,
             supportsPreloginDaemon: preloginDaemonReady,
-            supportsControlChannel: preloginDaemonReady,
-            supportsCredentialSubmission: remoteLoginReachable,
             endpoints: endpoints,
             sshPort: UInt16(clamping: sshPort),
             controlPort: UInt16(clamping: controlPort),
-            sshHostKeyFingerprint: fingerprint.isEmpty ? nil : fingerprint,
-            controlAuthSecret: controlSecret.isEmpty ? nil : controlSecret,
             wakeOnLAN: wakeInfo
         )
-
-        guard let encoded = try? JSONEncoder().encode(payload) else {
-            return nil
-        }
-        return try? JSONDecoder().decode(LoomBootstrapMetadata.self, from: encoded)
     }
 
     public static func makeDefaultControlAuthSecret() -> String {
         let bytes = (0 ..< 32).map { _ in UInt8.random(in: .min ... .max) }
         return Data(bytes).base64EncodedString()
     }
-}
-
-private struct BootstrapMetadataPayload: Codable {
-    let version: Int
-    let enabled: Bool
-    let supportsPreloginDaemon: Bool
-    let supportsControlChannel: Bool
-    let supportsCredentialSubmission: Bool
-    let endpoints: [LoomBootstrapEndpoint]
-    let sshPort: UInt16?
-    let controlPort: UInt16?
-    let sshHostKeyFingerprint: String?
-    let controlAuthSecret: String?
-    let wakeOnLAN: LoomWakeOnLANInfo?
 }
 
 private extension UInt16 {

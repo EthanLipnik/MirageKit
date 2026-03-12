@@ -74,12 +74,11 @@ struct MirageHostBootstrapConfigurationTests {
 
         let metadata = configuration.toBootstrapMetadata()
 
-        #expect(metadata?.version == 2)
+        #expect(metadata?.version == LoomBootstrapMetadata.currentVersion)
         #expect(metadata?.enabled == true)
+        #expect(metadata?.supportsPreloginDaemon == true)
         #expect(metadata?.sshPort == 2222)
         #expect(metadata?.controlPort == 9852)
-        #expect(metadata?.sshHostKeyFingerprint == "SHA256:test")
-        #expect(metadata?.controlAuthSecret == "control-secret")
         #expect(metadata?.endpoints.count == 2)
         #expect(metadata?.endpoints.first?.host == "host.local")
         #expect(metadata?.endpoints.first?.port == 2200)
