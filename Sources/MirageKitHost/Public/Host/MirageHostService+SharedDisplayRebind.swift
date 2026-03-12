@@ -88,7 +88,7 @@ extension MirageHostService {
         do {
             if desktopStreamMode == .mirrored {
                 await setupDisplayMirroring(targetDisplayID: newContext.displayID)
-            } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+            } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
                 await disableDisplayMirroring(displayID: newContext.displayID)
             }
 

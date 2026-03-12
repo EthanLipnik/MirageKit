@@ -12,6 +12,15 @@ import MirageKit
 import CoreGraphics
 import Foundation
 
+func desktopMirroringDisplayIDs(
+    displays: [CGDirectDisplayID],
+    targetDisplayID: CGDirectDisplayID,
+    isMirageDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isMirageDisplay($0) }
+)
+-> [CGDirectDisplayID] {
+    displays.filter { $0 != targetDisplayID && !isMirageDisplay($0) }
+}
+
 func displaySeparationAnchorDisplayID(
     displays: [CGDirectDisplayID],
     virtualDisplayID: CGDirectDisplayID,
@@ -83,8 +92,11 @@ extension CGVirtualDisplayBridge {
         return !hasPhysicalDisplay
     }
 
-    /// Get all displays to mirror during desktop streaming
-    /// Returns all online displays except the specified virtual display
+    /// Get all displays to mirror during desktop streaming.
+    /// Full-desktop mode should fan the shared Mirage display out to every other
+    /// online display, even if a vendor heuristic would otherwise classify the
+    /// endpoint as "virtual". Only Mirage-managed displays are excluded to avoid
+    /// self-mirroring the capture target or stale Mirage orphan displays.
     /// - Parameter excludingDisplayID: The virtual display ID to exclude (the one we're mirroring TO)
     /// - Returns: Array of display IDs to mirror
     static func getDisplaysToMirror(excludingDisplayID: CGDirectDisplayID) -> [CGDirectDisplayID] {
@@ -95,12 +107,14 @@ extension CGVirtualDisplayBridge {
         var displays = [CGDirectDisplayID](repeating: 0, count: Int(displayCount))
         CGGetOnlineDisplayList(displayCount, &displays, &displayCount)
 
-        // Simply exclude the virtual display we created - mirror everything else
-        let result = displays.filter { $0 != excludingDisplayID }
+        let result = desktopMirroringDisplayIDs(
+            displays: displays,
+            targetDisplayID: excludingDisplayID
+        )
 
         MirageLogger
             .host(
-                "getDisplaysToMirror: \(displays.count) online displays, \(result.count) to mirror (excluding virtual display \(excludingDisplayID))"
+                "getDisplaysToMirror: \(displays.count) online displays, \(result.count) to mirror (excluding Mirage display \(excludingDisplayID))"
             )
 
         return result

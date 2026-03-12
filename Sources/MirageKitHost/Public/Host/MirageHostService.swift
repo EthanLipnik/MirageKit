@@ -286,8 +286,8 @@ public final class MirageHostService {
     var desktopResizeInFlight: Bool = false
     var desktopResizeRequestCounter: UInt64 = 0
 
-    /// Physical displays that were mirrored during desktop streaming (for restoration)
-    var mirroredPhysicalDisplayIDs: Set<CGDirectDisplayID> = []
+    /// Displays mirrored during desktop streaming (for restoration).
+    var mirroredDesktopDisplayIDs: Set<CGDirectDisplayID> = []
     /// Snapshot of display mirroring state before desktop streaming.
     var desktopMirroringSnapshot: [CGDirectDisplayID: CGDirectDisplayID] = [:]
     /// Primary physical display information captured before mirroring.

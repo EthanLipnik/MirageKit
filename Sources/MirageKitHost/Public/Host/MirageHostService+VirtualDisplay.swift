@@ -761,7 +761,7 @@ extension MirageHostService {
             )
             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
             if mirroringPlan == .unchanged,
-               !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+               !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
                 await disableDisplayMirroring(displayID: activeDisplayID)
             }
             MirageLogger
@@ -785,7 +785,7 @@ extension MirageHostService {
                     await disableDisplayMirroring(displayID: restoreDisplayID)
                 } else if streamID == desktopStreamID, desktopStreamMode == .mirrored {
                     await setupDisplayMirroring(targetDisplayID: restoreDisplayID)
-                } else if !mirroredPhysicalDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+                } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
                     await disableDisplayMirroring(displayID: restoreDisplayID)
                 }
             }

@@ -640,9 +640,8 @@ extension MirageHostService {
         return displays.first { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
     }
 
-    func resolvePhysicalDisplaysToMirror(excluding targetDisplayID: CGDirectDisplayID) -> [CGDirectDisplayID] {
-        let candidates = CGVirtualDisplayBridge.getDisplaysToMirror(excludingDisplayID: targetDisplayID)
-        return candidates.filter { !CGVirtualDisplayBridge.isVirtualDisplay($0) }
+    func resolveDesktopDisplaysToMirror(excluding targetDisplayID: CGDirectDisplayID) -> [CGDirectDisplayID] {
+        CGVirtualDisplayBridge.getDisplaysToMirror(excludingDisplayID: targetDisplayID)
     }
 
     func captureDisplayMirroringSnapshot(for displayIDs: [CGDirectDisplayID])
@@ -655,7 +654,7 @@ extension MirageHostService {
     }
 
     func isDisplayMirroringRestored(targetDisplayID: CGDirectDisplayID) -> Bool {
-        let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+        let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
         guard !displaysToMirror.isEmpty else { return true }
         let mirroredCount = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }.count
         return mirroredCount == displaysToMirror.count
@@ -679,7 +678,7 @@ extension MirageHostService {
                 return true
             }
 
-            let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+            let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
             let mirroredCount = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }.count
             MirageLogger
                 .error(
@@ -747,10 +746,10 @@ extension MirageHostService {
         }
     }
 
-    /// Set up display mirroring so physical displays mirror the virtual display.
+    /// Set up display mirroring so every non-Mirage display mirrors the shared virtual display.
     /// This keeps the virtual display as the resolution source for streaming.
     func setupDisplayMirroring(targetDisplayID: CGDirectDisplayID) async {
-        let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+        let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
 
         guard !displaysToMirror.isEmpty else {
             MirageLogger.host("No displays found to mirror")
@@ -763,7 +762,7 @@ extension MirageHostService {
                 desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
                 MirageLogger.host("Captured display mirroring snapshot for \(desktopMirroringSnapshot.count) displays")
             }
-            mirroredPhysicalDisplayIDs = Set(displaysToMirror)
+            mirroredDesktopDisplayIDs = Set(displaysToMirror)
             MirageLogger.host("Display mirroring already enabled for \(displaysToMirror.count) displays")
             return
         }
@@ -811,7 +810,7 @@ extension MirageHostService {
             return
         }
 
-        mirroredPhysicalDisplayIDs = successfullyMirrored
+        mirroredDesktopDisplayIDs = successfullyMirrored
         MirageLogger
             .host(
                 "Display mirroring enabled for \(successfullyMirrored.count) displays → virtual display \(targetDisplayID)"
@@ -821,7 +820,7 @@ extension MirageHostService {
     /// Temporarily suspend desktop mirroring before a virtual-display resize.
     /// This keeps resize transactions deterministic and avoids resize+mirror contention.
     func suspendDisplayMirroringForResize(targetDisplayID: CGDirectDisplayID) async {
-        let displaysToMirror = resolvePhysicalDisplaysToMirror(excluding: targetDisplayID)
+        let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
         guard !displaysToMirror.isEmpty else { return }
 
         if desktopMirroringSnapshot.isEmpty {
@@ -859,7 +858,7 @@ extension MirageHostService {
             return
         }
 
-        mirroredPhysicalDisplayIDs.removeAll()
+        mirroredDesktopDisplayIDs.removeAll()
         MirageLogger.host("Temporarily suspended mirroring for \(suspendedCount) displays before resize")
     }
 
@@ -867,7 +866,7 @@ extension MirageHostService {
     func disableDisplayMirroring(displayID: CGDirectDisplayID) async {
         guard !desktopMirroringSnapshot.isEmpty else {
             MirageLogger.host("No display mirroring snapshot to restore")
-            mirroredPhysicalDisplayIDs.removeAll()
+            mirroredDesktopDisplayIDs.removeAll()
             return
         }
 
@@ -901,7 +900,7 @@ extension MirageHostService {
             CGCancelDisplayConfiguration(config)
         }
 
-        mirroredPhysicalDisplayIDs.removeAll()
+        mirroredDesktopDisplayIDs.removeAll()
         desktopMirroringSnapshot.removeAll()
     }
 }

@@ -319,5 +319,37 @@ struct DesktopResizeTransactionPolicyTests {
 
         #expect(anchor == display24)
     }
+
+    @Test("Desktop mirroring excludes only the target Mirage display")
+    func desktopMirroringExcludesOnlyMirageDisplays() {
+        let display1: CGDirectDisplayID = 1
+        let display2: CGDirectDisplayID = 2
+        let mirageDisplay23: CGDirectDisplayID = 23
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let displaysToMirror = desktopMirroringDisplayIDs(
+            displays: [display1, display2, mirageDisplay23, targetMirageDisplay24],
+            targetDisplayID: targetMirageDisplay24,
+            isMirageDisplay: { $0 == mirageDisplay23 || $0 == targetMirageDisplay24 }
+        )
+
+        #expect(displaysToMirror == [display1, display2])
+    }
+
+    @Test("Desktop mirroring preserves multi-display fan-out for one shared target")
+    func desktopMirroringPreservesMultiDisplayFanOut() {
+        let display1: CGDirectDisplayID = 1
+        let display2: CGDirectDisplayID = 2
+        let display3: CGDirectDisplayID = 3
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let displaysToMirror = desktopMirroringDisplayIDs(
+            displays: [display1, display2, display3, targetMirageDisplay24],
+            targetDisplayID: targetMirageDisplay24,
+            isMirageDisplay: { $0 == targetMirageDisplay24 }
+        )
+
+        #expect(displaysToMirror == [display1, display2, display3])
+    }
 }
 #endif
