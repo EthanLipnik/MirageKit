@@ -671,9 +671,6 @@ public final class MirageClientService {
         }
     }
 
-    /// UserDefaults key for persisting the device ID
-    private static let deviceIDKey = "com.mirage.client.deviceID"
-
     /// Client protocol version used for hello negotiation.
     public static var clientProtocolVersion: Int {
         Int(Loom.protocolVersion)
@@ -698,26 +695,22 @@ public final class MirageClientService {
         networkConfig = resolvedConfiguration
         loomNode = LoomNode(
             configuration: resolvedConfiguration,
-            identityManager: LoomIdentityManager.shared
+            identityManager: MirageKit.identityManager
         )
         self.sessionStore = sessionStore
 
-        // Load existing device ID or generate and persist a new one
-        if let savedIDString = UserDefaults.standard.string(forKey: Self.deviceIDKey),
-           let savedID = UUID(uuidString: savedIDString) {
-            deviceID = savedID
-            MirageLogger.client("Loaded existing device ID: \(savedID)")
-        } else {
-            let newID = UUID()
-            UserDefaults.standard.set(newID.uuidString, forKey: Self.deviceIDKey)
-            deviceID = newID
-            MirageLogger.client("Generated new device ID: \(newID)")
-        }
+        let persistedDeviceID = LoomSharedDeviceID.getOrCreate(
+            suiteName: MirageKit.sharedDeviceIDSuiteName,
+            key: MirageKit.sharedDeviceIDKey,
+            legacyKeys: MirageKit.sharedDeviceIDLegacyKeys
+        )
+        deviceID = persistedDeviceID
+        MirageLogger.client("Loaded shared device ID: \(persistedDeviceID)")
         audioPacketIngressQueue = ClientAudioPacketIngressQueue(pipeline: audioDecodePipeline)
         audioPacketIngressQueue.setDeliverHandler { [weak self] decodedFrames, streamID in
             self?.enqueueDecodedAudioFrames(decodedFrames, for: streamID)
         }
-        identityManager = LoomIdentityManager.shared
+        identityManager = MirageKit.identityManager
         self.sessionStore.clientService = self
         self.sessionStore.onStreamPresentationTierChanged = { [weak self] streamID, tier in
             guard let self else { return }

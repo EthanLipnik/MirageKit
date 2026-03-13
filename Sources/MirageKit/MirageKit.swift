@@ -21,12 +21,18 @@ public enum MirageKit {
     public static let protocolVersion: UInt8 = Loom.protocolVersion
     public static let serviceType = "_mirage._tcp"
     public static let relayHeaderPrefix = "x-mirage"
+    public static let legacyIdentityService = "com.mirage.identity.account.v2"
     public static let sharedDeviceIDKey = "com.mirage.shared.deviceID"
+    public static let sharedDeviceIDSuiteName = "group.com.ethanlipnik.Mirage"
     public static let sharedDeviceIDLegacyKeys = [
         "com.mirage.client.deviceID",
         "com.mirage.cloudkit.deviceID",
         LoomSharedDeviceID.key,
     ]
+    @MainActor
+    public static let identityManager = LoomIdentityManager(
+        service: legacyIdentityService
+    )
 
     public static func makeCloudKitConfiguration(containerIdentifier: String) -> LoomCloudKitConfiguration {
         LoomCloudKitConfiguration(
@@ -36,7 +42,8 @@ public enum MirageKit {
             peerZoneName: "MiragePeerZone",
             participantIdentityRecordType: "MirageParticipantIdentity",
             shareTitle: "Mirage Access",
-            deviceIDKey: "com.mirage.cloudkit.deviceID"
+            deviceIDKey: sharedDeviceIDKey,
+            deviceIDSuiteName: sharedDeviceIDSuiteName
         )
     }
 }
