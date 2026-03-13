@@ -62,7 +62,7 @@ extension MirageClientService {
             configureAdaptiveFallbackBaseline(
                 for: streamID,
                 bitrate: pendingDesktopAdaptiveFallbackBitrate,
-                bitDepth: pendingDesktopAdaptiveFallbackBitDepth
+                colorDepth: pendingDesktopAdaptiveFallbackColorDepth
             )
             if desktopStreamRequestStartTime > 0 {
                 let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStreamRequestStartTime) * 1000)
@@ -156,7 +156,7 @@ extension MirageClientService {
             clearAdaptiveFallbackState(for: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             pendingDesktopAdaptiveFallbackBitrate = nil
-            pendingDesktopAdaptiveFallbackBitDepth = nil
+            pendingDesktopAdaptiveFallbackColorDepth = nil
             activeJitterHoldMs = 0
 
             Task {

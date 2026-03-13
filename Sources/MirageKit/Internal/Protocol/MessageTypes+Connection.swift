@@ -93,6 +93,8 @@ package struct HelloResponseMessage: Codable {
     package let udpRegistrationToken: Data
     /// True when the host trust provider indicates a one-time auto-trust notice is appropriate.
     package let autoTrustGranted: Bool?
+    /// True when the host explicitly allows this client to reconnect over remote relay.
+    package let remoteAccessAllowed: Bool?
     /// Signed host identity envelope.
     package let identity: MirageIdentityEnvelope
     /// Explicit rejection reason when `accepted` is false.
@@ -115,6 +117,7 @@ package struct HelloResponseMessage: Codable {
         mediaEncryptionEnabled: Bool,
         udpRegistrationToken: Data,
         autoTrustGranted: Bool? = nil,
+        remoteAccessAllowed: Bool? = nil,
         identity: MirageIdentityEnvelope,
         rejectionReason: HelloRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
@@ -132,6 +135,7 @@ package struct HelloResponseMessage: Codable {
         self.mediaEncryptionEnabled = mediaEncryptionEnabled
         self.udpRegistrationToken = udpRegistrationToken
         self.autoTrustGranted = autoTrustGranted
+        self.remoteAccessAllowed = remoteAccessAllowed
         self.identity = identity
         self.rejectionReason = rejectionReason
         self.protocolMismatchHostVersion = protocolMismatchHostVersion

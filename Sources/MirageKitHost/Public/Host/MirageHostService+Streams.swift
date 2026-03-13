@@ -182,7 +182,7 @@ public extension MirageHostService {
         keyFrameInterval: Int? = nil,
         streamScale: CGFloat? = nil,
         targetFrameRate: Int? = nil,
-        bitDepth: MirageVideoBitDepth? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode = .auto,
@@ -260,7 +260,7 @@ public extension MirageHostService {
         let effectiveEncoderConfig = resolveEncoderConfiguration(
             keyFrameInterval: keyFrameInterval,
             targetFrameRate: targetFrameRate,
-            bitDepth: bitDepth,
+            colorDepth: colorDepth,
             captureQueueDepth: captureQueueDepth,
             bitrate: bitrate
         )
@@ -691,20 +691,29 @@ public extension MirageHostService {
     private func resolveEncoderConfiguration(
         keyFrameInterval: Int?,
         targetFrameRate: Int?,
-        bitDepth: MirageVideoBitDepth?,
+        colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?
     ) -> MirageEncoderConfiguration {
         var effectiveEncoderConfig = encoderConfig
-        if keyFrameInterval != nil || bitDepth != nil || captureQueueDepth != nil || bitrate != nil {
+        let requestedColorDepth = colorDepth
+        let resolvedColorDepth = effectiveColorDepth(for: requestedColorDepth)
+
+        if keyFrameInterval != nil || resolvedColorDepth != nil || captureQueueDepth != nil || bitrate != nil {
             effectiveEncoderConfig = encoderConfig.withOverrides(
                 keyFrameInterval: keyFrameInterval,
-                bitDepth: bitDepth,
+                colorDepth: resolvedColorDepth,
                 captureQueueDepth: captureQueueDepth,
                 bitrate: bitrate
             )
             if let interval = keyFrameInterval { MirageLogger.host("Using client-requested keyframe interval: \(interval) frames") }
-            if let bitDepth { MirageLogger.host("Using client-requested bit depth: \(bitDepth.displayName)") }
+            if let requestedColorDepth, let resolvedColorDepth, requestedColorDepth != resolvedColorDepth {
+                MirageLogger.host(
+                    "Color depth request downgraded: requested=\(requestedColorDepth.displayName), effective=\(resolvedColorDepth.displayName)"
+                )
+            } else if let resolvedColorDepth {
+                MirageLogger.host("Using client-requested color depth: \(resolvedColorDepth.displayName)")
+            }
             if let captureQueueDepth { MirageLogger.host("Using client-requested capture queue depth: \(captureQueueDepth)") }
             if let bitrate { MirageLogger.host("Using client-requested bitrate: \(bitrate)") }
         }

@@ -204,20 +204,21 @@ extension MirageClientService {
                 )
                 return
             }
-            let signedPayload = try MirageIdentitySigning.helloResponsePayload(
-                accepted: response.accepted,
-                hostID: response.hostID,
-                hostName: response.hostName,
-                requiresAuth: response.requiresAuth,
-                dataPort: response.dataPort,
-                negotiation: response.negotiation,
-                requestNonce: response.requestNonce,
-                mediaEncryptionEnabled: response.mediaEncryptionEnabled,
-                udpRegistrationToken: response.udpRegistrationToken,
-                keyID: identity.keyID,
-                publicKey: identity.publicKey,
-                timestampMs: identity.timestampMs,
-                nonce: identity.nonce
+        let signedPayload = try MirageIdentitySigning.helloResponsePayload(
+            accepted: response.accepted,
+            hostID: response.hostID,
+            hostName: response.hostName,
+            requiresAuth: response.requiresAuth,
+            dataPort: response.dataPort,
+            negotiation: response.negotiation,
+            requestNonce: response.requestNonce,
+            mediaEncryptionEnabled: response.mediaEncryptionEnabled,
+            udpRegistrationToken: response.udpRegistrationToken,
+            remoteAccessAllowed: response.remoteAccessAllowed == true,
+            keyID: identity.keyID,
+            publicKey: identity.publicKey,
+            timestampMs: identity.timestampMs,
+            nonce: identity.nonce
             )
             guard LoomIdentityManager.verify(
                 signature: identity.signature,
@@ -264,7 +265,7 @@ extension MirageClientService {
                     )
                     return
                 }
-                let resolvedIdentityManager = identityManager ?? LoomIdentityManager.shared
+                let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
                 let localIdentity: LoomAccountIdentity
                 do {
                     localIdentity = try resolvedIdentityManager.currentIdentity()
@@ -344,6 +345,7 @@ extension MirageClientService {
                 }
                 negotiatedFeatures = response.negotiation.selectedFeatures
                 hostDataPort = response.dataPort
+                connectedHostAllowsRemoteAccess = response.remoteAccessAllowed
                 let acceptedHost = finalizeAcceptedHelloResponse(
                     response,
                     hostIdentityKeyID: identity.keyID
@@ -572,7 +574,7 @@ extension MirageClientService {
                 requestedTargetBitrate: metrics.requestedTargetBitrate,
                 startupBitrate: metrics.startupBitrate,
                 temporaryDegradationMode: metrics.temporaryDegradationMode,
-                temporaryDegradationBitDepth: metrics.temporaryDegradationBitDepth,
+                temporaryDegradationColorDepth: metrics.temporaryDegradationColorDepth,
                 timeBelowTargetBitrateMs: metrics.timeBelowTargetBitrateMs,
                 captureAdmissionDrops: metrics.captureAdmissionDrops,
                 frameBudgetMs: metrics.frameBudgetMs,

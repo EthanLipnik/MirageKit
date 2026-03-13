@@ -171,7 +171,7 @@ extension MirageHostService {
             let targetFrameRate = resolvedTargetFrameRate(clientMaxRefreshRate)
 
             let keyFrameInterval = request.keyFrameInterval
-            let bitDepth = request.bitDepth
+            let colorDepth = request.colorDepth
             let bitrate = request.bitrate
             let latencyMode = request.latencyMode ?? .auto
             let performanceMode = request.performanceMode ?? .standard
@@ -196,7 +196,7 @@ extension MirageHostService {
                 keyFrameInterval: keyFrameInterval,
                 streamScale: requestedScale,
                 targetFrameRate: targetFrameRate,
-                bitDepth: bitDepth,
+                colorDepth: colorDepth,
                 captureQueueDepth: request.captureQueueDepth,
                 bitrate: bitrate,
                 latencyMode: latencyMode,
@@ -280,7 +280,7 @@ extension MirageHostService {
             MirageLogger
                 .host(
                     "Client requested encoder settings change for stream \(request.streamID): " +
-                        "bitDepth=\(request.bitDepth?.displayName ?? "unchanged"), " +
+                        "colorDepth=\(request.colorDepth?.displayName ?? "unchanged"), " +
                         "bitrate=\(request.bitrate.map(String.init) ?? "unchanged"), " +
                         "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged")"
                 )

@@ -225,8 +225,21 @@ extension HEVCEncoder {
             compressionSessionOut: &session
         )
 
-        if status != noErr, activePixelFormat == .p010 {
-            activePixelFormat = .nv12
+        while status != noErr {
+            let fallbackPixelFormat: MiragePixelFormat? = switch activePixelFormat {
+            case .xf44:
+                .p010
+            case .p010,
+                 .bgr10a2:
+                .nv12
+            case .bgra8,
+                 .nv12:
+                nil
+            }
+            guard let fallbackPixelFormat else { break }
+
+            let previousPixelFormat = activePixelFormat
+            activePixelFormat = fallbackPixelFormat
             let fallbackAttributes: CFDictionary = [
                 kCVPixelBufferPixelFormatTypeKey: pixelFormatType,
                 kCVPixelBufferWidthKey: width,
@@ -247,7 +260,12 @@ extension HEVCEncoder {
                 refcon: nil,
                 compressionSessionOut: &session
             )
-            if status == noErr { MirageLogger.encoder("P010 unsupported; using NV12") }
+
+            if status == noErr {
+                MirageLogger.encoder(
+                    "\(previousPixelFormat.displayName) unsupported; using \(fallbackPixelFormat.displayName)"
+                )
+            }
         }
 
         guard status == noErr, let session else { throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status))) }
@@ -263,6 +281,8 @@ extension HEVCEncoder {
         currentHeight = height
 
         let formatLabel = switch activePixelFormat {
+        case .xf44:
+            "xf44"
         case .p010:
             "P010"
         case .bgr10a2:
@@ -503,6 +523,10 @@ extension HEVCEncoder {
         }
 
         let candidates = requestedProfileLevels
+        guard !candidates.isEmpty else {
+            MirageLogger.encoder("Encoder profile: automatic")
+            return
+        }
         for (index, profile) in candidates.enumerated() {
             let status = VTSessionSetProperty(session, key: key, value: profile)
             guard status == noErr else {

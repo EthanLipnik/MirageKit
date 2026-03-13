@@ -20,6 +20,7 @@ extension MirageHostService {
         let requestNonce: String
         let identity: MirageIdentityEnvelope
         let pendingControlData: Data
+        let origin: MirageHostConnectionOrigin
     }
 
     private struct RejectedHello {
@@ -98,7 +99,10 @@ extension MirageHostService {
         return false
     }
 
-    func handleNewConnection(_ connection: NWConnection) async {
+    func handleNewConnection(
+        _ connection: NWConnection,
+        origin: MirageHostConnectionOrigin
+    ) async {
         MirageLogger.host("New client connection")
         MirageInstrumentation.record(.hostConnectionIncoming)
 
@@ -135,7 +139,11 @@ extension MirageHostService {
 
         MirageLogger.host("Waiting for hello message from \(endpointDescription)...")
 
-        guard let helloResult = await receiveHelloMessage(from: connection, endpoint: endpointDescription) else {
+        guard let helloResult = await receiveHelloMessage(
+            from: connection,
+            endpoint: endpointDescription,
+            origin: origin
+        ) else {
             MirageLogger.host("Closing connection without valid hello from \(endpointDescription)")
             connection.cancel()
             return
@@ -198,7 +206,11 @@ extension MirageHostService {
             if clientsByConnection[connectionID] == nil { releaseSingleClientSlot(for: connectionID) }
         }
 
-        let approvalOutcome = await awaitApprovalDecision(for: deviceInfo, connection: connection)
+        let approvalOutcome = await awaitApprovalDecision(
+            for: deviceInfo,
+            origin: hello.origin,
+            connection: connection
+        )
         connection.stateUpdateHandler = nil
 
         switch approvalOutcome {
@@ -211,7 +223,16 @@ extension MirageHostService {
         case .rejected:
             MirageInstrumentation.record(.hostConnectionApprovalResult(.rejected))
             MirageLogger.host("Connection rejected")
-            connection.cancel()
+            sendHelloResponse(
+                accepted: false,
+                to: connection,
+                dataPort: currentDataPort(),
+                negotiation: hello.negotiation,
+                deviceInfo: hello.deviceInfo,
+                requestNonce: hello.requestNonce,
+                rejectionReason: hello.origin.isRemote ? .unauthorized : .rejected,
+                cancelAfterSend: true
+            )
             return
         case .connectionClosed:
             MirageInstrumentation.record(.hostConnectionApprovalResult(.connectionClosed))
@@ -243,6 +264,7 @@ extension MirageHostService {
             deviceInfo: hello.deviceInfo,
             requestNonce: hello.requestNonce,
             autoTrustGranted: autoTrustGranted,
+            remoteAccessAllowed: delegate?.hostService(self, remoteAccessAllowedFor: deviceInfo) ?? false,
             mediaEncryptionEnabled: mediaEncryptionEnabled,
             cancelAfterSend: false
         )
@@ -259,7 +281,8 @@ extension MirageHostService {
             deviceType: deviceInfo.deviceType,
             connectedAt: Date(),
             identityKeyID: deviceInfo.identityKeyID,
-            autoTrustGranted: autoTrustGranted
+            autoTrustGranted: autoTrustGranted,
+            connectionOrigin: hello.origin
         )
 
         let clientContext = ClientContext(
@@ -310,7 +333,11 @@ extension MirageHostService {
     }
 
     /// Receive hello message from a connecting client.
-    private func receiveHelloMessage(from connection: NWConnection, endpoint: String) async -> ReceivedHelloResult? {
+    private func receiveHelloMessage(
+        from connection: NWConnection,
+        endpoint: String,
+        origin: MirageHostConnectionOrigin
+    ) async -> ReceivedHelloResult? {
         var receiveBuffer = Data()
         var helloMessage: ControlMessage?
         var helloBytesConsumed = 0
@@ -489,7 +516,8 @@ extension MirageHostService {
                     negotiation: responseNegotiation,
                     requestNonce: identity.nonce,
                     identity: identity,
-                    pendingControlData: pendingControlData
+                    pendingControlData: pendingControlData,
+                    origin: origin
                 )
             )
         } catch {
@@ -499,7 +527,24 @@ extension MirageHostService {
     }
 
     /// Evaluates trust using the provider and falls back to delegate approval if needed.
-    private func evaluateTrustAndApproval(for deviceInfo: LoomPeerDeviceInfo) async -> TrustApprovalDecision {
+    private func evaluateTrustAndApproval(
+        for deviceInfo: LoomPeerDeviceInfo,
+        origin: MirageHostConnectionOrigin
+    ) async -> TrustApprovalDecision {
+        if origin.isRemote {
+            MirageLogger.host("Evaluating explicit remote authorization for \(deviceInfo.name)")
+            return await withCheckedContinuation { continuation in
+                let box = SafeContinuationBox<TrustApprovalDecision>(continuation)
+                if let delegate {
+                    delegate.hostService(self, shouldAcceptConnectionFrom: deviceInfo, origin: origin) { accepted in
+                        box.resume(returning: accepted ? .accepted(autoTrustGranted: false) : .rejected)
+                    }
+                } else {
+                    box.resume(returning: .rejected)
+                }
+            }
+        }
+
         // If a trust provider is set, consult it first
         if let trustProvider {
             let peerIdentity = LoomPeerIdentity(
@@ -544,7 +589,7 @@ extension MirageHostService {
         return await withCheckedContinuation { continuation in
             let box = SafeContinuationBox<TrustApprovalDecision>(continuation)
             if let delegate {
-                delegate.hostService(self, shouldAcceptConnectionFrom: deviceInfo) { accepted in
+                delegate.hostService(self, shouldAcceptConnectionFrom: deviceInfo, origin: origin) { accepted in
                     box.resume(returning: accepted ? .accepted(autoTrustGranted: false) : .rejected)
                 }
             } else {
@@ -556,6 +601,7 @@ extension MirageHostService {
 
     private func awaitApprovalDecision(
         for deviceInfo: LoomPeerDeviceInfo,
+        origin: MirageHostConnectionOrigin,
         connection: NWConnection
     ) async -> ApprovalOutcome {
         await withCheckedContinuation { continuation in
@@ -563,7 +609,7 @@ extension MirageHostService {
             let gate = ApprovalDecisionGate(box: box)
 
             let approvalTask = Task { @MainActor in
-                let decision = await self.evaluateTrustAndApproval(for: deviceInfo)
+                let decision = await self.evaluateTrustAndApproval(for: deviceInfo, origin: origin)
                 switch decision {
                 case let .accepted(autoTrustGranted):
                     await gate.finish(.accepted(autoTrustGranted: autoTrustGranted))
@@ -729,6 +775,7 @@ extension MirageHostService {
         deviceInfo: LoomPeerDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
+        remoteAccessAllowed: Bool = false,
         mediaEncryptionEnabled: Bool = true,
         rejectionReason: HelloRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
@@ -770,16 +817,17 @@ extension MirageHostService {
             accepted: accepted,
             hostID: hostID,
             hostName: hostName,
-                requiresAuth: false,
-                dataPort: dataPort,
-                negotiation: negotiation,
-                requestNonce: requestNonce,
-                mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
-                udpRegistrationToken: udpRegistrationToken,
-                keyID: identity.keyID,
-                publicKey: identity.publicKey,
-                timestampMs: timestampMs,
-                nonce: nonce
+            requiresAuth: false,
+            dataPort: dataPort,
+            negotiation: negotiation,
+            requestNonce: requestNonce,
+            mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
+            udpRegistrationToken: udpRegistrationToken,
+            remoteAccessAllowed: accepted && remoteAccessAllowed,
+            keyID: identity.keyID,
+            publicKey: identity.publicKey,
+            timestampMs: timestampMs,
+            nonce: nonce
         )
         let signature = try identityManager.sign(payload)
         let response = HelloResponseMessage(
@@ -793,6 +841,7 @@ extension MirageHostService {
             mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
             udpRegistrationToken: udpRegistrationToken,
             autoTrustGranted: autoTrustGranted,
+            remoteAccessAllowed: accepted ? remoteAccessAllowed : nil,
             identity: MirageIdentityEnvelope(
                 keyID: identity.keyID,
                 publicKey: identity.publicKey,
@@ -818,6 +867,7 @@ extension MirageHostService {
         deviceInfo: LoomPeerDeviceInfo,
         requestNonce: String,
         autoTrustGranted: Bool = false,
+        remoteAccessAllowed: Bool = false,
         mediaEncryptionEnabled: Bool = true,
         rejectionReason: HelloRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
@@ -835,6 +885,7 @@ extension MirageHostService {
                 deviceInfo: deviceInfo,
                 requestNonce: requestNonce,
                 autoTrustGranted: autoTrustGranted,
+                remoteAccessAllowed: remoteAccessAllowed,
                 mediaEncryptionEnabled: mediaEncryptionEnabled,
                 rejectionReason: rejectionReason,
                 protocolMismatchHostVersion: protocolMismatchHostVersion,

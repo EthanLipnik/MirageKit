@@ -257,7 +257,7 @@ extension MirageClientService {
                 streamingAppBundleID = nil
                 appWindowInventory = nil
                 pendingAppAdaptiveFallbackBitrate = nil
-                pendingAppAdaptiveFallbackBitDepth = nil
+                pendingAppAdaptiveFallbackColorDepth = nil
             }
             onAppTerminated?(terminated)
         } catch {

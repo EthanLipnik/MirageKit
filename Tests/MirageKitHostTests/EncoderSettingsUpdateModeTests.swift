@@ -32,7 +32,7 @@ struct EncoderSettingsUpdateModeTests {
     func bitDepthRequiresFullReconfiguration() {
         let current = makeConfiguration()
 
-        let bitDepthChange = current.withOverrides(bitDepth: .eightBit)
+        let bitDepthChange = current.withOverrides(colorDepth: .standard)
         #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: bitDepthChange) == .fullReconfiguration)
     }
 

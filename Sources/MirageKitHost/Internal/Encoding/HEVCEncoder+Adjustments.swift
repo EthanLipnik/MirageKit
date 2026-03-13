@@ -203,7 +203,11 @@ extension HEVCEncoder {
                 yCbCrMatrix == (kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2 as String)
         }()
 
-        let validated = activePixelFormat == .p010 && usesMain10Profile && usesDisplayP3Tags
+        let tenBitDisplayP3Validated = activePixelFormat == .p010 && usesMain10Profile && usesDisplayP3Tags
+        let ultra444Validated = activePixelFormat == .xf44 &&
+            lastEncodedChromaSampling == .yuv444 &&
+            usesDisplayP3Tags &&
+            usingHardwareEncoder != false
         return RuntimeValidationSnapshot(
             pixelFormat: activePixelFormat,
             profileName: profileName,
@@ -212,8 +216,14 @@ extension HEVCEncoder {
             colorPrimaries: colorPrimaries,
             transferFunction: transferFunction,
             yCbCrMatrix: yCbCrMatrix,
-            tenBitDisplayP3Validated: validated
+            encodedChromaSampling: lastEncodedChromaSampling,
+            tenBitDisplayP3Validated: tenBitDisplayP3Validated,
+            ultra444Validated: ultra444Validated
         )
+    }
+
+    func recordEncodedChromaSampling(_ sampling: MirageStreamChromaSampling) {
+        lastEncodedChromaSampling = sampling
     }
 
     private func sessionStringProperty(_ key: CFString) -> String? {

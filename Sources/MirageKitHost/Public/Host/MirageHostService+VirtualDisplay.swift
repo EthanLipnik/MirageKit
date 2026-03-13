@@ -328,7 +328,7 @@ extension MirageHostService {
                 keyFrameInterval: encoderSettings.keyFrameInterval,
                 streamScale: streamScale,
                 targetFrameRate: targetFrameRate,
-                bitDepth: encoderSettings.bitDepth,
+                colorDepth: encoderSettings.colorDepth,
                 captureQueueDepth: encoderSettings.captureQueueDepth,
                 bitrate: encoderSettings.bitrate,
                 latencyMode: encoderSettings.latencyMode,
@@ -449,16 +449,16 @@ extension MirageHostService {
         let contextWindowID = await context.getWindowID()
         let isDedicatedVirtualDisplayStream = usesVirtualDisplay && contextWindowID != 0
 
-        let hasBitDepthChange = request.bitDepth != nil
+        let hasColorDepthChange = request.colorDepth != nil
         let hasBitrateChange = request.bitrate != nil
         let hasScaleChange = request.streamScale != nil && !isDedicatedVirtualDisplayStream
-        let shouldBroadcastStreamUpdate = hasBitDepthChange || hasScaleChange
+        let shouldBroadcastStreamUpdate = hasColorDepthChange || hasScaleChange
 
         let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
         do {
-            if hasBitDepthChange || hasBitrateChange {
+            if hasColorDepthChange || hasBitrateChange {
                 try await context.updateEncoderSettings(
-                    bitDepth: request.bitDepth,
+                    colorDepth: request.colorDepth,
                     bitrate: normalizedBitrate
                 )
             }

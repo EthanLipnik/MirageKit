@@ -37,6 +37,6 @@ extension MirageClientService {
         desktopStreamRequestStartTime = 0
         desktopStreamMode = nil
         pendingDesktopAdaptiveFallbackBitrate = nil
-        pendingDesktopAdaptiveFallbackBitDepth = nil
+        pendingDesktopAdaptiveFallbackColorDepth = nil
     }
 }

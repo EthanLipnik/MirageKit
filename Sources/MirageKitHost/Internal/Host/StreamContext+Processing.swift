@@ -583,6 +583,7 @@ extension StreamContext {
                 capture: captureValidation,
                 encoder: encoderValidation
             )
+            await applyUltraValidationDowngradeIfNeeded(encoderValidation)
             let currentBitrate = temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate
             let timeBelowTargetBitrateMs: Int? = if temporaryDegradationBelowTargetSince > 0 {
                 Int(((now - temporaryDegradationBelowTargetSince) * 1000).rounded())
@@ -601,7 +602,7 @@ extension StreamContext {
                 requestedTargetBitrate: requestedTargetBitrate,
                 startupBitrate: startupBitrate,
                 temporaryDegradationMode: temporaryDegradationMode,
-                temporaryDegradationBitDepth: temporaryDegradationCurrentBitDepth,
+                temporaryDegradationColorDepth: temporaryDegradationCurrentColorDepth,
                 timeBelowTargetBitrateMs: timeBelowTargetBitrateMs,
                 captureAdmissionDrops: captureDroppedIntervalCount,
                 frameBudgetMs: frameBudgetMs,
@@ -665,6 +666,57 @@ extension StreamContext {
             isTenBitP010: isTenBitP010,
             isDisplayP3: isDisplayP3
         )
+    }
+
+    private func applyUltraValidationDowngradeIfNeeded(
+        _ encoderValidation: HEVCEncoder.RuntimeValidationSnapshot?
+    )
+    async {
+        guard encoderConfig.colorDepth == .ultra else {
+            ultraValidationFailureHandled = false
+            ultraValidationSuccessLogged = false
+            return
+        }
+        guard let encoderValidation else { return }
+
+        if encoderValidation.ultra444Validated {
+            if !ultraValidationSuccessLogged {
+                let chromaText = encoderValidation.encodedChromaSampling?.rawValue ?? "unknown"
+                MirageLogger.stream(
+                    "Ultra color depth validation passed for stream \(streamID): " +
+                        "pixelFormat=\(encoderValidation.pixelFormat.displayName), chroma=\(chromaText), " +
+                        "profile=\(encoderValidation.profileName ?? "automatic")"
+                )
+                ultraValidationSuccessLogged = true
+            }
+            ultraValidationFailureHandled = false
+            return
+        }
+
+        guard encoderValidation.encodedChromaSampling != nil else { return }
+        guard !ultraValidationFailureHandled else { return }
+        ultraValidationFailureHandled = true
+
+        let chromaText = encoderValidation.encodedChromaSampling?.rawValue ?? "unknown"
+        MirageLogger.error(
+            .stream,
+            "Ultra color depth validation failed for stream \(streamID): " +
+                "pixelFormat=\(encoderValidation.pixelFormat.displayName), chroma=\(chromaText), " +
+                "profile=\(encoderValidation.profileName ?? "automatic"); downgrading to Pro"
+        )
+
+        do {
+            try await updateEncoderSettings(
+                colorDepth: .pro,
+                bitrate: encoderConfig.bitrate
+            )
+        } catch {
+            MirageLogger.error(
+                .stream,
+                error: error,
+                message: "Ultra color depth downgrade failed: "
+            )
+        }
     }
 
     private func tenBitDisplayP3Validation(
@@ -1047,7 +1099,7 @@ extension StreamContext {
         ) {
             temporaryDegradationOverloadWindows = 0
             let shouldPreserveSevereWindowStreak = temporaryDegradationMode == .prioritizeVisuals &&
-                temporaryDegradationCurrentBitDepth == .tenBit &&
+                temporaryDegradationCurrentColorDepth != .standard &&
                 isSeverelyOverloaded
             if !shouldPreserveSevereWindowStreak {
                 temporaryDegradationSevereOverloadWindows = 0
@@ -1065,7 +1117,7 @@ extension StreamContext {
             let nextBitrate = min(requestedBitrate, max(currentBitrate + 1, ramped))
             if nextBitrate > currentBitrate {
                 return await applyTemporaryDegradationAdjustment(
-                    bitDepth: nil,
+                    colorDepth: nil,
                     bitrate: nextBitrate,
                     reason: "temporary degradation bitrate ramp",
                     now: now
@@ -1100,7 +1152,7 @@ extension StreamContext {
             )
             guard nextBitrate < currentBitrate else { return false }
             return await applyTemporaryDegradationAdjustment(
-                bitDepth: nil,
+                colorDepth: nil,
                 bitrate: nextBitrate,
                 reason: "temporary degradation framerate-first bitrate drop",
                 now: now
@@ -1113,7 +1165,7 @@ extension StreamContext {
             )
             if nextBitrate < currentBitrate {
                 return await applyTemporaryDegradationAdjustment(
-                    bitDepth: nil,
+                    colorDepth: nil,
                     bitrate: nextBitrate,
                     reason: "temporary degradation visuals-first bitrate drop",
                     now: now
@@ -1125,14 +1177,14 @@ extension StreamContext {
     }
 
     private func applyTemporaryDegradationAdjustment(
-        bitDepth: MirageVideoBitDepth?,
+        colorDepth: MirageStreamColorDepth?,
         bitrate: Int?,
         reason: String,
         now: CFAbsoluteTime
     ) async -> Bool {
-        let desiredBitDepth = bitDepth ?? temporaryDegradationCurrentBitDepth
+        let desiredColorDepth = colorDepth ?? temporaryDegradationCurrentColorDepth
         let desiredBitrate = bitrate ?? temporaryDegradationCurrentBitrate
-        guard desiredBitDepth != temporaryDegradationCurrentBitDepth ||
+        guard desiredColorDepth != temporaryDegradationCurrentColorDepth ||
             desiredBitrate != temporaryDegradationCurrentBitrate else {
             return false
         }
@@ -1140,22 +1192,22 @@ extension StreamContext {
         do {
             if isRunning {
                 try await updateEncoderSettings(
-                    bitDepth: desiredBitDepth == temporaryDegradationCurrentBitDepth ? nil : desiredBitDepth,
+                    colorDepth: desiredColorDepth == temporaryDegradationCurrentColorDepth ? nil : desiredColorDepth,
                     bitrate: desiredBitrate
                 )
             } else {
                 encoderConfig = encoderConfig.withOverrides(
-                    bitDepth: desiredBitDepth == temporaryDegradationCurrentBitDepth ? nil : desiredBitDepth,
+                    colorDepth: desiredColorDepth == temporaryDegradationCurrentColorDepth ? nil : desiredColorDepth,
                     bitrate: desiredBitrate
                 )
                 activePixelFormat = encoderConfig.pixelFormat
                 temporaryDegradationCurrentBitrate = encoderConfig.bitrate
-                temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
+                temporaryDegradationCurrentColorDepth = encoderConfig.colorDepth
                 if currentEncodedSize != .zero {
                     await applyDerivedQuality(for: currentEncodedSize, logLabel: "Temporary degradation")
                 }
             }
-            temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
+            temporaryDegradationCurrentColorDepth = encoderConfig.colorDepth
             temporaryDegradationCurrentBitrate = encoderConfig.bitrate
             updateTemporaryDegradationBelowTargetState(
                 now: now,
@@ -1165,7 +1217,7 @@ extension StreamContext {
             let bitrateText = (temporaryDegradationCurrentBitrate ?? 0)
                 .formatted(.number.grouping(.never))
             MirageLogger.metrics(
-                "event=temporary_degradation_adjustment stream=\(streamID) mode=\(temporaryDegradationMode.rawValue) reason=\(reason) bitDepth=\(temporaryDegradationCurrentBitDepth.displayName) bitrate=\(bitrateText)"
+                "event=temporary_degradation_adjustment stream=\(streamID) mode=\(temporaryDegradationMode.rawValue) reason=\(reason) colorDepth=\(temporaryDegradationCurrentColorDepth.displayName) bitrate=\(bitrateText)"
             )
             return true
         } catch {

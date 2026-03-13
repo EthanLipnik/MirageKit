@@ -29,7 +29,9 @@ actor HEVCEncoder {
         let colorPrimaries: String?
         let transferFunction: String?
         let yCbCrMatrix: String?
+        let encodedChromaSampling: MirageStreamChromaSampling?
         let tenBitDisplayP3Validated: Bool
+        let ultra444Validated: Bool
     }
 
     var compressionSession: VTCompressionSession?
@@ -40,6 +42,7 @@ actor HEVCEncoder {
     var autoTypingBurstLowLatencyActive = false
     var activePixelFormat: MiragePixelFormat
     var activeProfileLevel: CFString?
+    var lastEncodedChromaSampling: MirageStreamChromaSampling?
     var usingHardwareEncoder: Bool?
     var encoderGPURegistryID: UInt64?
     var hardwareStatusRefreshAttempts: Int = 0
@@ -100,6 +103,8 @@ actor HEVCEncoder {
 
     var pixelFormatType: OSType {
         switch activePixelFormat {
+        case .xf44:
+            kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         case .p010:
             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         case .bgr10a2:
@@ -117,6 +122,8 @@ actor HEVCEncoder {
 
     static func requestedProfileLevels(for pixelFormat: MiragePixelFormat) -> [CFString] {
         switch pixelFormat {
+        case .xf44:
+            []
         case .bgr10a2:
             [
                 kVTProfileLevel_HEVC_Main42210_AutoLevel,

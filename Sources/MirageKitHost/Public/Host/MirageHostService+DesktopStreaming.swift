@@ -23,7 +23,7 @@ extension MirageHostService {
         clientScaleFactor: CGFloat? = nil,
         mode: MirageDesktopStreamMode,
         keyFrameInterval: Int?,
-        bitDepth: MirageVideoBitDepth?,
+        colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?,
         latencyMode: MirageStreamLatencyMode = .auto,
@@ -70,6 +70,12 @@ extension MirageHostService {
         let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(
             for: targetFrameRate ?? 60
         )
+        let resolvedColorDepth = effectiveColorDepth(for: colorDepth)
+        if let colorDepth, let resolvedColorDepth, colorDepth != resolvedColorDepth {
+            MirageLogger.host(
+                "Desktop color depth request downgraded: requested=\(colorDepth.displayName), effective=\(resolvedColorDepth.displayName)"
+            )
+        }
         let virtualDisplayStartupAttempts = desktopVirtualDisplayStartupAttempts(
             logicalResolution: displayResolution,
             requestedScaleFactor: defaultDesktopBackingScale,
@@ -78,7 +84,7 @@ extension MirageHostService {
             requestedRefreshRate: virtualDisplayRefreshRate,
             requestedColorSpace: encoderConfig.withOverrides(
                 keyFrameInterval: keyFrameInterval,
-                bitDepth: bitDepth,
+                colorDepth: resolvedColorDepth,
                 captureQueueDepth: captureQueueDepth,
                 bitrate: bitrate
             ).withTargetFrameRate(targetFrameRate ?? encoderConfig.targetFrameRate).colorSpace
@@ -128,7 +134,7 @@ extension MirageHostService {
         var config = encoderConfig
         config = config.withOverrides(
             keyFrameInterval: keyFrameInterval,
-            bitDepth: bitDepth,
+            colorDepth: resolvedColorDepth,
             captureQueueDepth: captureQueueDepth,
             bitrate: bitrate
         )

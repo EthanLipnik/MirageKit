@@ -85,7 +85,7 @@ public extension MirageClientService {
         } else {
             pendingDesktopAdaptiveFallbackBitrate = nil
         }
-        pendingDesktopAdaptiveFallbackBitDepth = request.bitDepth
+        pendingDesktopAdaptiveFallbackColorDepth = request.colorDepth
 
         let message = try ControlMessage(type: .startDesktopStream, content: request)
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()

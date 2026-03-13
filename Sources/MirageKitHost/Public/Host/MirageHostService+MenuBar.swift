@@ -126,7 +126,7 @@ extension MirageHostService {
                 clientScaleFactor: request.scaleFactor,
                 mode: request.mode ?? .mirrored,
                 keyFrameInterval: request.keyFrameInterval,
-                bitDepth: request.bitDepth,
+                colorDepth: request.colorDepth,
                 captureQueueDepth: request.captureQueueDepth,
                 bitrate: request.bitrate,
                 latencyMode: latencyMode,

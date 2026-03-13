@@ -25,8 +25,8 @@ package struct StartDesktopStreamMessage: Codable {
     package var keyFrameInterval: Int?
     /// Client-requested ScreenCaptureKit queue depth
     package var captureQueueDepth: Int?
-    /// Client-requested stream bit depth.
-    package var bitDepth: MirageVideoBitDepth?
+    /// Client-requested stream color depth preset.
+    package var colorDepth: MirageStreamColorDepth?
     /// Desktop stream mode (mirrored vs secondary display)
     package var mode: MirageDesktopStreamMode?
     /// Client-requested target bitrate (bits per second)
@@ -59,7 +59,7 @@ package struct StartDesktopStreamMessage: Codable {
         case displayHeight
         case keyFrameInterval
         case captureQueueDepth
-        case bitDepth
+        case colorDepth
         case mode
         case bitrate
         case latencyMode
@@ -80,7 +80,7 @@ package struct StartDesktopStreamMessage: Codable {
         displayHeight: Int,
         keyFrameInterval: Int? = nil,
         captureQueueDepth: Int? = nil,
-        bitDepth: MirageVideoBitDepth? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
         mode: MirageDesktopStreamMode? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
@@ -99,7 +99,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.displayHeight = displayHeight
         self.keyFrameInterval = keyFrameInterval
         self.captureQueueDepth = captureQueueDepth
-        self.bitDepth = bitDepth
+        self.colorDepth = colorDepth
         self.mode = mode
         self.bitrate = bitrate
         self.latencyMode = latencyMode

@@ -18,6 +18,7 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     func hostService(
         _ service: MirageHostService,
         shouldAcceptConnectionFrom deviceInfo: LoomPeerDeviceInfo,
+        origin: MirageHostConnectionOrigin,
         completion: @escaping @Sendable (Bool) -> Void
     )
 
@@ -63,6 +64,12 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     @MainActor
     func hostService(_ service: MirageHostService, shouldAllowUnlockFrom client: MirageConnectedClient)
         -> Bool
+
+    /// Called after an authenticated hello is accepted so the host can advertise whether
+    /// this client should remember remote relay access for future sessions.
+    @MainActor
+    func hostService(_ service: MirageHostService, remoteAccessAllowedFor deviceInfo: LoomPeerDeviceInfo)
+        -> Bool
 }
 
 /// Default implementations
@@ -70,6 +77,7 @@ public extension MirageHostDelegate {
     func hostService(
         _: MirageHostService,
         shouldAcceptConnectionFrom _: LoomPeerDeviceInfo,
+        origin _: MirageHostConnectionOrigin,
         completion: @escaping @Sendable (Bool) -> Void
     ) {
         // Default: auto-accept all connections
@@ -102,6 +110,10 @@ public extension MirageHostDelegate {
     func hostService(_: MirageHostService, shouldAllowUnlockFrom _: MirageConnectedClient) -> Bool {
         // Default: allow all connected clients to attempt unlock
         true
+    }
+
+    func hostService(_: MirageHostService, remoteAccessAllowedFor _: LoomPeerDeviceInfo) -> Bool {
+        false
     }
 }
 

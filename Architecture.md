@@ -90,7 +90,8 @@ Security is composed out of a few narrow pieces:
 - `_mirage._tcp` service discovery naming
 - shared device identifier keys
 - CloudKit record naming helpers
-- encoder configuration defaults
+- encoder configuration defaults and `MirageStreamColorDepth` tier mapping
+- internal color-depth descriptors that resolve bit depth, color space, chroma sampling, capture formats, encoder profile candidates, and decoder output preferences
 - quality test plans and stream policy types
 
 These values stay in the shared target so host and client behavior remain aligned.
@@ -129,9 +130,33 @@ Host startup is staged:
 
 The host keeps stream-specific policy local to the host runtime. That includes frame rate, bitrate, performance mode, window/app routing, virtual display ownership, and session-state behavior.
 
+Connection approval is also host-owned policy. `MirageHostService` distinguishes two control-plane origins:
+
+- local
+  direct LAN or peer-to-peer sessions discovered through Bonjour or other local reachability
+- remote
+  direct QUIC sessions established from relay-published presence
+
+That origin is passed into `MirageHostDelegate` so the app target can apply different approval policy without leaking app-specific trust rules into the package. Local sessions keep the existing trust-provider and manual-approval flow. Remote sessions are explicit opt-in: the app must decide whether a specific trusted client is allowed to reconnect over the internet.
+
+Remote relay authorization is intentionally not a package-level trust primitive. MirageKit only carries the handshake origin and the signed authorization result. The Mirage app targets own the persistence and UI for per-client remote grants.
+
+Color depth is now negotiated as a capability-driven tier instead of exposing raw bit depth on the wire:
+
+- `standard`
+  8-bit, sRGB, 4:2:0 (`NV12`)
+- `pro`
+  10-bit, Display P3, 4:2:0 (`P010`)
+- `ultra`
+  strict 10-bit 4:4:4 target (`xf44` preferred) that is only advertised when the host can validate the full path end to end
+
+The host advertises supported color-depth tiers in peer metadata, clamps incoming requests to the highest supported tier, and logs downgrades when a requested tier is unavailable. `Ultra` support is probed by creating a temporary `xf44` HEVC session and validating the encoded SPS `chroma_format_idc`; active streams repeat that validation at runtime and automatically downgrade to `pro` if the encoder falls below 4:4:4.
+
 Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active.
 
 Remote relay signaling remains a direct-QUIC reachability system. Mirage does not relay control traffic through signaling; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
+
+When the host accepts a hello, the signed `HelloResponseMessage` includes whether that client is currently allowed to reconnect remotely. That bit is part of the signed hello-response payload so clients can cache remote capability without trusting unsigned app metadata.
 
 ## 5. Client Target (`Sources/MirageKitClient`)
 
@@ -161,6 +186,9 @@ Recovery policy is package-owned inside `MirageKitClient`:
 - desktop and app streams only clear client-side transport state from authoritative host stop/disconnect events
 - freeze detection distinguishes keyframe-starved stalls from packet-starved stalls
 - the first active-stream freeze uses bounded recovery, while repeated freezes escalate to the existing hard reset path
+- adaptive color-depth fallback for custom quality mode steps `ultra -> pro -> standard` and restores in the reverse order
+
+The client also tracks whether the connected host explicitly granted remote relay access in the accepted hello response. MirageKit does not decide how that grant is surfaced in app UI, but it exposes the signed result so the app can remember remote-capable hosts independently from CloudKit sharing.
 
 ## 6. Bootstrap Runtime (`Sources/MirageHostBootstrapRuntime`)
 

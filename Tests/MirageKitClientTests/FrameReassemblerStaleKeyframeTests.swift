@@ -343,6 +343,82 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe() == false)
     }
 
+    @Test("Buffered forward gap without pending expected frame enters keyframe wait")
+    func bufferedForwardGapWithoutExpectedFrameEntersKeyframeWait() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = LockedCounter()
+        let lossCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+
+        let pFrame2 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x02])
+        reassembler.processPacket(
+            pFrame2,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 2,
+                payload: pFrame2,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+
+        try await Task.sleep(for: .milliseconds(700))
+
+        let pFrame4 = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x04])
+        reassembler.processPacket(
+            pFrame4,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 4,
+                payload: pFrame4,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value >= 1)
+        #expect(reassembler.isAwaitingKeyframe() == true)
+
+        let keyframe5 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x05])
+        reassembler.processPacket(
+            keyframe5,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 5,
+                payload: keyframe5,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+    }
+
     private func makeHeader(
         flags: FrameFlags,
         frameNumber: UInt32,

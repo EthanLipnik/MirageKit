@@ -43,6 +43,60 @@ enum HEVCLengthPrefixedValidationResult: Equatable, Sendable {
     }
 }
 
+private struct HEVCBitReader {
+    private let bytes: [UInt8]
+    private var byteIndex = 0
+    private var bitIndex = 0
+
+    init(bytes: [UInt8]) {
+        self.bytes = bytes
+    }
+
+    mutating func readBit() -> UInt8? {
+        guard byteIndex < bytes.count else { return nil }
+        let value = (bytes[byteIndex] >> (7 - bitIndex)) & 0x01
+        bitIndex += 1
+        if bitIndex == 8 {
+            bitIndex = 0
+            byteIndex += 1
+        }
+        return value
+    }
+
+    mutating func readBits(_ count: Int) -> UInt64? {
+        guard count >= 0 else { return nil }
+        var result: UInt64 = 0
+        for _ in 0 ..< count {
+            guard let bit = readBit() else { return nil }
+            result = (result << 1) | UInt64(bit)
+        }
+        return result
+    }
+
+    mutating func skipBits(_ count: Int) -> Bool {
+        readBits(count) != nil
+    }
+
+    mutating func readUnsignedExpGolomb() -> UInt64? {
+        var leadingZeroBits = 0
+        while let bit = readBit() {
+            if bit == 0 {
+                leadingZeroBits += 1
+                continue
+            }
+
+            guard leadingZeroBits < 63 else { return nil }
+            if leadingZeroBits == 0 {
+                return 0
+            }
+            guard let suffix = readBits(leadingZeroBits) else { return nil }
+            return (UInt64(1) << UInt64(leadingZeroBits)) - 1 + suffix
+        }
+
+        return nil
+    }
+}
+
 extension HEVCEncoder {
     static func isKeyframe(_ sampleBuffer: CMSampleBuffer) -> Bool {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
@@ -119,6 +173,124 @@ extension HEVCEncoder {
 
         MirageLogger.encoder("Extracted \(parameterSetCount) parameter sets")
         return result
+    }
+
+    static func chromaSampling(from formatDescription: CMFormatDescription) -> MirageStreamChromaSampling? {
+        guard let sps = hevcParameterSetData(from: formatDescription, index: 1) else {
+            return nil
+        }
+        return hevcChromaSampling(fromSPS: sps)
+    }
+
+    static func hevcChromaSampling(fromSPS sps: Data) -> MirageStreamChromaSampling? {
+        let rbsp = hevcRBSP(fromParameterSet: sps)
+        guard !rbsp.isEmpty else { return nil }
+
+        var reader = HEVCBitReader(bytes: rbsp)
+        guard reader.skipBits(4),
+              let maxSubLayersMinus1 = reader.readBits(3),
+              reader.skipBits(1),
+              skipHEVCProfileTierLevel(&reader, maxSubLayersMinus1: Int(maxSubLayersMinus1)),
+              reader.readUnsignedExpGolomb() != nil,
+              let chromaFormatIDC = reader.readUnsignedExpGolomb() else {
+            return nil
+        }
+
+        switch chromaFormatIDC {
+        case 1:
+            return .yuv420
+        case 2:
+            return .yuv422
+        case 3:
+            return .yuv444
+        default:
+            return nil
+        }
+    }
+
+    private static func hevcParameterSetData(
+        from formatDescription: CMFormatDescription,
+        index: Int
+    ) -> Data? {
+        var pointer: UnsafePointer<UInt8>?
+        var size = 0
+        let status = CMVideoFormatDescriptionGetHEVCParameterSetAtIndex(
+            formatDescription,
+            parameterSetIndex: index,
+            parameterSetPointerOut: &pointer,
+            parameterSetSizeOut: &size,
+            parameterSetCountOut: nil,
+            nalUnitHeaderLengthOut: nil
+        )
+        guard status == noErr, let pointer, size > 0 else {
+            return nil
+        }
+        return Data(bytes: pointer, count: size)
+    }
+
+    private static func hevcRBSP(fromParameterSet parameterSet: Data) -> [UInt8] {
+        let payload: Data
+        if parameterSet.count > 2 {
+            payload = parameterSet.dropFirst(2)
+        } else {
+            payload = parameterSet
+        }
+
+        var rbsp: [UInt8] = []
+        rbsp.reserveCapacity(payload.count)
+
+        var consecutiveZeros = 0
+        for byte in payload {
+            if consecutiveZeros == 2, byte == 0x03 {
+                consecutiveZeros = 0
+                continue
+            }
+
+            rbsp.append(byte)
+            if byte == 0 {
+                consecutiveZeros += 1
+            } else {
+                consecutiveZeros = 0
+            }
+        }
+
+        return rbsp
+    }
+
+    private static func skipHEVCProfileTierLevel(
+        _ reader: inout HEVCBitReader,
+        maxSubLayersMinus1: Int
+    ) -> Bool {
+        guard reader.skipBits(96) else { return false }
+
+        var profilePresentFlags: [Bool] = []
+        var levelPresentFlags: [Bool] = []
+        profilePresentFlags.reserveCapacity(maxSubLayersMinus1)
+        levelPresentFlags.reserveCapacity(maxSubLayersMinus1)
+
+        for _ in 0 ..< maxSubLayersMinus1 {
+            guard let profilePresent = reader.readBit(),
+                  let levelPresent = reader.readBit() else {
+                return false
+            }
+            profilePresentFlags.append(profilePresent == 1)
+            levelPresentFlags.append(levelPresent == 1)
+        }
+
+        if maxSubLayersMinus1 > 0 {
+            guard reader.skipBits((8 - maxSubLayersMinus1) * 2) else { return false }
+        }
+
+        for index in 0 ..< maxSubLayersMinus1 {
+            if profilePresentFlags[index], !reader.skipBits(88) {
+                return false
+            }
+            if levelPresentFlags[index], !reader.skipBits(8) {
+                return false
+            }
+        }
+
+        return true
     }
 
     static func validateLengthPrefixedHEVCBitstream(_ data: Data) -> HEVCLengthPrefixedValidationResult {

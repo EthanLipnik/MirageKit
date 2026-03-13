@@ -12,18 +12,18 @@ import Foundation
 
 package struct StreamEncoderSettingsChangeMessage: Codable {
     package let streamID: StreamID
-    package let bitDepth: MirageVideoBitDepth?
+    package let colorDepth: MirageStreamColorDepth?
     package let bitrate: Int?
     package let streamScale: CGFloat?
 
     package init(
         streamID: StreamID,
-        bitDepth: MirageVideoBitDepth? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         streamScale: CGFloat? = nil
     ) {
         self.streamID = streamID
-        self.bitDepth = bitDepth
+        self.colorDepth = colorDepth
         self.bitrate = bitrate
         self.streamScale = streamScale
     }

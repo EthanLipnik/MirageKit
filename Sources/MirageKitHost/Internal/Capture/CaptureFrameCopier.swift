@@ -551,6 +551,8 @@ final class CaptureFrameCopier: @unchecked Sendable {
             .biPlanar(luma: .r8Unorm, chroma: .rg8Unorm)
         case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange:
             .biPlanar(luma: .r16Unorm, chroma: .rg16Unorm)
+        case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
+            .biPlanar(luma: .r16Unorm, chroma: .rg16Unorm)
         default:
             nil
         }

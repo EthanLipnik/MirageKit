@@ -87,7 +87,7 @@ public final class MirageHostService {
     public weak var softwareUpdateController: (any MirageHostSoftwareUpdateController)?
 
     /// Identity manager for signed handshake envelopes.
-    public var identityManager: LoomIdentityManager? = LoomIdentityManager.shared {
+    public var identityManager: LoomIdentityManager? = MirageKit.identityManager {
         didSet {
             loomNode.identityManager = identityManager
             let keyID = Self.identityKeyID(for: identityManager)
@@ -133,6 +133,7 @@ public final class MirageHostService {
     let networkConfig: LoomNetworkConfiguration
     let serviceName: String
     var hostID: UUID = .init()
+    public internal(set) var supportedColorDepths: [MirageStreamColorDepth] = [.standard, .pro]
     let handshakeReplayProtector = LoomReplayProtector()
     // Internal for low-power policy extension.
     let encoderPowerStateMonitor = MiragePowerStateMonitor()
@@ -478,7 +479,7 @@ public final class MirageHostService {
         }
 
         let name = hostName ?? Host.current().localizedName ?? "Mac"
-        let identityKeyID = Self.identityKeyID(for: LoomIdentityManager.shared)
+        let identityKeyID = Self.identityKeyID(for: MirageKit.identityManager)
         let hardwareModelIdentifier = Self.hardwareModelIdentifier()
         let hardwareColorCode = Self.hardwareColorCode()
         let hardwareIconName = Self.hardwareIconName(
@@ -489,12 +490,14 @@ public final class MirageHostService {
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName
         )
+        let supportedColorDepths = Self.detectSupportedColorDepths()
         let peerAdvertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
             deviceID: deviceID,
             identityKeyID: identityKeyID,
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName,
-            machineFamily: hardwareMachineFamily
+            machineFamily: hardwareMachineFamily,
+            supportedColorDepths: supportedColorDepths
         )
         MirageLogger.host(
             "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil") color=\(hardwareColorCode?.description ?? "nil")"
@@ -504,10 +507,11 @@ public final class MirageHostService {
         serviceName = name
         loomNode = LoomNode(
             configuration: resolvedConfiguration,
-            identityManager: LoomIdentityManager.shared
+            identityManager: MirageKit.identityManager
         )
         encoderConfig = encoderConfiguration
         networkConfig = resolvedConfiguration
+        self.supportedColorDepths = supportedColorDepths
 
         windowController.hostService = self
         inputController.hostService = self
@@ -628,6 +632,63 @@ public final class MirageHostService {
         }
 
         return String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func detectSupportedColorDepths() -> [MirageStreamColorDepth] {
+        let ultraProbe = strictUltraColorDepthProbeResult()
+        var supported: [MirageStreamColorDepth] = [.standard]
+
+        if supportsProColorDepth() {
+            supported.append(.pro)
+        }
+        if ultraProbe.supportsUltra444 {
+            supported.append(.ultra)
+        }
+
+        let chromaText = ultraProbe.encodedChromaSampling?.rawValue ?? "unknown"
+        let hardwareText = ultraProbe.usingHardwareEncoder.map { String($0) } ?? "unknown"
+        MirageLogger.host(
+            "Color depth support: supported=\(supported.map(\.rawValue).joined(separator: ",")) " +
+                "ultraCaptureXF44=\(ultraProbe.captureAcceptsXF44) " +
+                "ultraSessionCreated=\(ultraProbe.encoderSessionCreated) " +
+                "ultraChroma=\(chromaText) " +
+                "ultraHardware=\(hardwareText)"
+        )
+
+        return supported
+    }
+
+    private static func supportsProColorDepth() -> Bool {
+        true
+    }
+
+    private static func supportsStrictUltraColorDepth() -> Bool {
+        strictUltraColorDepthProbeResult().supportsUltra444
+    }
+
+    private static func strictUltraColorDepthProbeResult() -> HEVCEncoderUltraProbeResult {
+        UltraColorDepthProbeCache.result
+    }
+
+    private enum UltraColorDepthProbeCache {
+        static let result = HEVCEncoder.probeStrictUltra444Support()
+    }
+
+    func effectiveColorDepth(
+        for requested: MirageStreamColorDepth?
+    ) -> MirageStreamColorDepth? {
+        guard let requested else { return nil }
+        if supportedColorDepths.contains(requested) {
+            return requested
+        }
+
+        return supportedColorDepths
+            .filter { $0.sortRank <= requested.sortRank }
+            .max(by: { lhs, rhs in
+                lhs.sortRank < rhs.sortRank
+            })
+            ?? supportedColorDepths.first
+            ?? .standard
     }
 
     private struct CoreTypesHostIconEntry {

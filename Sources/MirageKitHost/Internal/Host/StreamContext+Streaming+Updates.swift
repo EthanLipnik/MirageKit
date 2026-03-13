@@ -25,26 +25,26 @@ extension StreamContext {
         updated: MirageEncoderConfiguration
     )
     -> EncoderSettingsUpdateMode {
-        let bitDepthChanged = updated.bitDepth != current.bitDepth
+        let colorDepthChanged = updated.colorDepth != current.colorDepth
         let bitrateChanged = updated.bitrate != current.bitrate
 
-        guard bitDepthChanged || bitrateChanged else {
+        guard colorDepthChanged || bitrateChanged else {
             return .noChange
         }
-        if bitrateChanged, !bitDepthChanged {
+        if bitrateChanged, !colorDepthChanged {
             return .bitrateOnly
         }
         return .fullReconfiguration
     }
 
     func updateEncoderSettings(
-        bitDepth: MirageVideoBitDepth?,
+        colorDepth: MirageStreamColorDepth?,
         bitrate: Int?
     ) async throws {
         guard isRunning else { return }
 
         var updatedConfig = encoderConfig.withOverrides(
-            bitDepth: bitDepth,
+            colorDepth: colorDepth,
             bitrate: bitrate
         )
         if let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
@@ -62,7 +62,7 @@ extension StreamContext {
         if updateMode == .bitrateOnly {
             encoderConfig = updatedConfig
             temporaryDegradationCurrentBitrate = encoderConfig.bitrate
-            temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
+            temporaryDegradationCurrentColorDepth = encoderConfig.colorDepth
             await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
             await encoder?.updateBitrate(encoderConfig.bitrate)
             if currentEncodedSize != .zero {
@@ -84,6 +84,8 @@ extension StreamContext {
         resetPipelineStateForReconfiguration(reason: "encoder settings update")
 
         encoderConfig = updatedConfig
+        ultraValidationFailureHandled = false
+        ultraValidationSuccessLogged = false
 
         await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
         if let captureEngine { try await captureEngine.updateConfiguration(encoderConfig) }
@@ -94,7 +96,7 @@ extension StreamContext {
             encoderConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         }
         temporaryDegradationCurrentBitrate = encoderConfig.bitrate
-        temporaryDegradationCurrentBitDepth = encoderConfig.bitDepth
+        temporaryDegradationCurrentColorDepth = encoderConfig.colorDepth
         updateQueueLimits()
         if currentEncodedSize != .zero {
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Encoder settings update")
@@ -115,7 +117,7 @@ extension StreamContext {
         let bitrateText = encoderConfig.bitrate.map(String.init) ?? "auto"
         MirageLogger
             .stream(
-                "Encoder settings update applied: bitDepth=\(encoderConfig.bitDepth.displayName), bitrate=\(bitrateText)"
+                "Encoder settings update applied: colorDepth=\(encoderConfig.colorDepth.displayName), bitrate=\(bitrateText)"
             )
     }
 
@@ -163,11 +165,11 @@ extension StreamContext {
 
     @discardableResult
     func applyGameModeStage2BitDepthOverride() async -> Bool {
-        if encoderConfig.bitDepth == .tenBit {
+        if let fallbackColorDepth = encoderConfig.colorDepth.nextLowerFallback {
             if isRunning {
                 do {
                     try await updateEncoderSettings(
-                        bitDepth: .eightBit,
+                        colorDepth: fallbackColorDepth,
                         bitrate: encoderConfig.bitrate
                     )
                     return true
@@ -178,14 +180,16 @@ extension StreamContext {
             }
 
             encoderConfig = encoderConfig.withOverrides(
-                bitDepth: .eightBit,
+                colorDepth: fallbackColorDepth,
                 bitrate: encoderConfig.bitrate
             )
             activePixelFormat = encoderConfig.pixelFormat
             if currentEncodedSize != .zero {
                 await applyDerivedQuality(for: currentEncodedSize, logLabel: "Game mode stage 2")
             }
-            MirageLogger.stream("Game mode stage 2 applied without active capture: bitDepth=8-bit")
+            MirageLogger.stream(
+                "Game mode stage 2 applied without active capture: colorDepth=\(fallbackColorDepth.displayName)"
+            )
             return true
         }
 
@@ -245,7 +249,7 @@ extension StreamContext {
             if isRunning {
                 do {
                     try await updateEncoderSettings(
-                        bitDepth: nil,
+                        colorDepth: nil,
                         bitrate: normalizedCappedBitrate
                     )
                 } catch {
@@ -291,15 +295,15 @@ extension StreamContext {
     @discardableResult
     func restoreGameModeStage2BitDepthOverride() async -> Bool {
         let baselineScale = StreamContext.clampStreamScale(gameModeBaselineStreamScale)
-        let needsBitDepthRestore = encoderConfig.bitDepth != gameModeBaselineBitDepth
+        let needsColorDepthRestore = encoderConfig.colorDepth != gameModeBaselineColorDepth
         let needsScaleRestore = abs(streamScale - baselineScale) > 0.001
-        guard needsBitDepthRestore || needsScaleRestore else { return false }
+        guard needsColorDepthRestore || needsScaleRestore else { return false }
 
         if isRunning {
             do {
-                if needsBitDepthRestore {
+                if needsColorDepthRestore {
                     try await updateEncoderSettings(
-                        bitDepth: gameModeBaselineBitDepth,
+                        colorDepth: gameModeBaselineColorDepth,
                         bitrate: encoderConfig.bitrate
                     )
                 }
@@ -313,9 +317,9 @@ extension StreamContext {
             }
         }
 
-        if needsBitDepthRestore {
+        if needsColorDepthRestore {
             encoderConfig = encoderConfig.withOverrides(
-                bitDepth: gameModeBaselineBitDepth,
+                colorDepth: gameModeBaselineColorDepth,
                 bitrate: encoderConfig.bitrate
             )
             activePixelFormat = encoderConfig.pixelFormat
@@ -335,7 +339,7 @@ extension StreamContext {
         }
         let baselineScaleText = Double(baselineScale).formatted(.number.precision(.fractionLength(2)))
         MirageLogger.stream(
-            "Game mode stage 2 restored without active capture: bitDepth=\(gameModeBaselineBitDepth.displayName), " +
+            "Game mode stage 2 restored without active capture: colorDepth=\(gameModeBaselineColorDepth.displayName), " +
                 "streamScale=\(baselineScaleText)"
         )
         return true
@@ -354,7 +358,7 @@ extension StreamContext {
             if isRunning {
                 do {
                     try await updateEncoderSettings(
-                        bitDepth: nil,
+                        colorDepth: nil,
                         bitrate: gameModeBaselineBitrate
                     )
                     return true

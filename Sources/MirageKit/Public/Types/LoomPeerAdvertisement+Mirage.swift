@@ -20,6 +20,14 @@ public extension LoomPeerAdvertisement {
         MiragePeerAdvertisementMetadata.supportsP3ColorSpace(in: self)
     }
 
+    var mirageSupportedColorDepths: [MirageStreamColorDepth] {
+        MiragePeerAdvertisementMetadata.supportedColorDepths(in: self)
+    }
+
+    var mirageSupportsUltraColorDepth: Bool {
+        mirageSupportedColorDepths.contains(.ultra)
+    }
+
     var mirageMaxFrameRate: Int {
         MiragePeerAdvertisementMetadata.maxFrameRate(from: self)
     }

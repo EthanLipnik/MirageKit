@@ -50,7 +50,7 @@ actor StreamPolicyApplier {
         do {
             try await context.updateFrameRate(policy.targetFPS)
             try await context.updateEncoderSettings(
-                bitDepth: nil,
+                colorDepth: nil,
                 bitrate: policy.targetBitrateBps
             )
             if requestRecoveryKeyframe, policy.tier == .activeLive {

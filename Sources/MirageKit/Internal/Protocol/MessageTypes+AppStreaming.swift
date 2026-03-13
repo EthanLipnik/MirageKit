@@ -184,8 +184,8 @@ package struct SelectAppMessage: Codable {
     package var keyFrameInterval: Int?
     /// Client-requested ScreenCaptureKit queue depth
     package var captureQueueDepth: Int?
-    /// Client-requested stream bit depth.
-    package var bitDepth: MirageVideoBitDepth?
+    /// Client-requested stream color depth preset.
+    package var colorDepth: MirageStreamColorDepth?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
@@ -218,7 +218,7 @@ package struct SelectAppMessage: Codable {
         case maxRefreshRate
         case keyFrameInterval
         case captureQueueDepth
-        case bitDepth
+        case colorDepth
         case bitrate
         case latencyMode
         case performanceMode
@@ -241,7 +241,7 @@ package struct SelectAppMessage: Codable {
         maxRefreshRate: Int,
         keyFrameInterval: Int? = nil,
         captureQueueDepth: Int? = nil,
-        bitDepth: MirageVideoBitDepth? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         performanceMode: MirageStreamPerformanceMode? = nil,
@@ -262,7 +262,7 @@ package struct SelectAppMessage: Codable {
         self.maxRefreshRate = maxRefreshRate
         self.keyFrameInterval = keyFrameInterval
         self.captureQueueDepth = captureQueueDepth
-        self.bitDepth = bitDepth
+        self.colorDepth = colorDepth
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode

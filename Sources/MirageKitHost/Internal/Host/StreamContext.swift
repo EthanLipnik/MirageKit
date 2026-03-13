@@ -176,11 +176,13 @@ actor StreamContext {
     var requestedTargetBitrate: Int?
     var startupBitrate: Int?
     var temporaryDegradationCurrentBitrate: Int?
-    var temporaryDegradationCurrentBitDepth: MirageVideoBitDepth
+    var temporaryDegradationCurrentColorDepth: MirageStreamColorDepth
     var temporaryDegradationBelowTargetSince: CFAbsoluteTime = 0
     var temporaryDegradationStableWindows: Int = 0
     var temporaryDegradationOverloadWindows: Int = 0
     var temporaryDegradationSevereOverloadWindows: Int = 0
+    var ultraValidationFailureHandled = false
+    var ultraValidationSuccessLogged = false
 
     // Pipeline throughput metrics (interval counters)
     var captureIngressIntervalCount: UInt64 = 0
@@ -362,7 +364,7 @@ actor StreamContext {
     let gameModeAggressiveQualityDropStep: Float = 0.04
     let gameModeAggressiveQualityDropStepHighPressure: Float = 0.09
     let gameModeBaselineFrameRate: Int
-    let gameModeBaselineBitDepth: MirageVideoBitDepth
+    let gameModeBaselineColorDepth: MirageStreamColorDepth
     let gameModeBaselineBitrate: Int?
     let gameModeBaselineStreamScale: CGFloat
 
@@ -516,13 +518,13 @@ actor StreamContext {
         keyframeMaxIntervalSeconds = cadence.maxInterval
         gameModeStreamStartTime = CFAbsoluteTimeGetCurrent()
         gameModeBaselineFrameRate = resolvedEncoderConfig.targetFrameRate
-        gameModeBaselineBitDepth = resolvedEncoderConfig.bitDepth
+        gameModeBaselineColorDepth = resolvedEncoderConfig.colorDepth
         gameModeBaselineBitrate = resolvedEncoderConfig.bitrate
         gameModeBaselineStreamScale = clampedScale
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = initialTemporaryBitrate
         temporaryDegradationCurrentBitrate = resolvedEncoderConfig.bitrate
-        temporaryDegradationCurrentBitDepth = resolvedEncoderConfig.bitDepth
+        temporaryDegradationCurrentColorDepth = resolvedEncoderConfig.colorDepth
         if let requestedTargetBitrate,
            let currentBitrate = resolvedEncoderConfig.bitrate,
            currentBitrate < requestedTargetBitrate {
@@ -537,7 +539,7 @@ actor StreamContext {
                         "runtimeQuality=\(resolvedRuntimeQualityAdjustmentEnabled) lowLatencyBoost=\(resolvedLowLatencyHighResolutionCompressionBoostEnabled) " +
                         "captureProfile=\(resolvedCapturePressureProfile.rawValue) keyframeInterval=\(resolvedEncoderConfig.keyFrameInterval) " +
                         "bitrate=\(bitrateText) targetFPS=\(resolvedEncoderConfig.targetFrameRate) " +
-                        "bitDepth=\(resolvedEncoderConfig.bitDepth.rawValue) inFlight=\(resolvedInitialInFlight)/\(resolvedInFlightCap) " +
+                        "colorDepth=\(resolvedEncoderConfig.colorDepth.rawValue) inFlight=\(resolvedInitialInFlight)/\(resolvedInFlightCap) " +
                         "bufferDepth=\(bufferDepth)"
                 )
         }

@@ -167,7 +167,8 @@ enum HostTrafficLightCloneStampPlanner {
              kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
              kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
              kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
-             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+             kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+             kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
             return true
         default:
             return false
@@ -503,6 +504,29 @@ final class HostTrafficLightCloneStampCompositor {
 
         case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
              kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
+            guard let yTexture = makeTexture(
+                pixelBuffer: pixelBuffer,
+                planeIndex: 0,
+                width: CVPixelBufferGetWidthOfPlane(pixelBuffer, 0),
+                height: CVPixelBufferGetHeightOfPlane(pixelBuffer, 0),
+                pixelFormat: .r16Unorm,
+                attributes: textureAttributes,
+                textureCache: textureCache
+            ),
+            let uvTexture = makeTexture(
+                pixelBuffer: pixelBuffer,
+                planeIndex: 1,
+                width: CVPixelBufferGetWidthOfPlane(pixelBuffer, 1),
+                height: CVPixelBufferGetHeightOfPlane(pixelBuffer, 1),
+                pixelFormat: .rg16Unorm,
+                attributes: textureAttributes,
+                textureCache: textureCache
+            ) else {
+                return nil
+            }
+            return PlaneTextures(textures: [yTexture, uvTexture], fullWidth: fullWidth, fullHeight: fullHeight)
+
+        case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
             guard let yTexture = makeTexture(
                 pixelBuffer: pixelBuffer,
                 planeIndex: 0,

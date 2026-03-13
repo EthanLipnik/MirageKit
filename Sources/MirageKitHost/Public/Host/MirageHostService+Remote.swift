@@ -154,7 +154,7 @@ extension MirageHostService {
 
         listener.newConnectionHandler = { [weak self] connection in
             Task { @MainActor [weak self] in
-                await self?.handleNewConnection(connection)
+                await self?.handleNewConnection(connection, origin: .remote)
             }
         }
 

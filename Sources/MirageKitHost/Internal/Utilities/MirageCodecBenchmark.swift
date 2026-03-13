@@ -96,6 +96,7 @@ enum MirageCodecBenchmark {
         let config = MirageEncoderConfiguration(
             targetFrameRate: benchmarkFrameRate,
             keyFrameInterval: benchmarkFrameRate * 30,
+            colorDepth: .pro,
             colorSpace: .displayP3,
             pixelFormat: .p010,
             bitrate: targetBitrate
@@ -190,6 +191,7 @@ enum MirageCodecBenchmark {
         let config = MirageEncoderConfiguration(
             targetFrameRate: frameRate,
             keyFrameInterval: frameRate * 2,
+            colorDepth: isTenBit(effectivePixelFormat) ? .pro : .standard,
             colorSpace: colorSpace,
             pixelFormat: effectivePixelFormat,
             bitrate: targetBitrate
@@ -288,7 +290,7 @@ enum MirageCodecBenchmark {
 
     private static func probePixelFormat(for format: MiragePixelFormat) -> MiragePixelFormat {
         switch format {
-        case .p010, .nv12:
+        case .p010, .nv12, .xf44:
             return format
         case .bgr10a2:
             return .p010
@@ -670,6 +672,8 @@ enum MirageCodecBenchmark {
 
     private static func benchmarkPixelFormat(for format: MiragePixelFormat) -> OSType {
         switch format {
+        case .xf44:
+            return kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         case .p010, .bgr10a2:
             return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         case .bgra8, .nv12:
@@ -679,7 +683,7 @@ enum MirageCodecBenchmark {
 
     private static func isTenBit(_ format: MiragePixelFormat) -> Bool {
         switch format {
-        case .p010, .bgr10a2:
+        case .xf44, .p010, .bgr10a2:
             true
         case .bgra8, .nv12:
             false

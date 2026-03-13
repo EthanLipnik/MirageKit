@@ -53,8 +53,8 @@ package struct StartStreamMessage: Codable {
     package var keyFrameInterval: Int?
     /// Client-requested ScreenCaptureKit queue depth
     package var captureQueueDepth: Int?
-    /// Client-requested stream bit depth.
-    package var bitDepth: MirageVideoBitDepth?
+    /// Client-requested stream color depth preset.
+    package var colorDepth: MirageStreamColorDepth?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
@@ -87,7 +87,7 @@ package struct StartStreamMessage: Codable {
         case displayHeight
         case keyFrameInterval
         case captureQueueDepth
-        case bitDepth
+        case colorDepth
         case bitrate
         case latencyMode
         case performanceMode
@@ -110,7 +110,7 @@ package struct StartStreamMessage: Codable {
         displayHeight: Int? = nil,
         keyFrameInterval: Int? = nil,
         captureQueueDepth: Int? = nil,
-        bitDepth: MirageVideoBitDepth? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         performanceMode: MirageStreamPerformanceMode? = nil,
@@ -131,7 +131,7 @@ package struct StartStreamMessage: Codable {
         self.displayHeight = displayHeight
         self.keyFrameInterval = keyFrameInterval
         self.captureQueueDepth = captureQueueDepth
-        self.bitDepth = bitDepth
+        self.colorDepth = colorDepth
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode
@@ -227,7 +227,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let requestedTargetBitrate: Int?
     package let startupBitrate: Int?
     package let temporaryDegradationMode: MirageTemporaryDegradationMode?
-    package let temporaryDegradationBitDepth: MirageVideoBitDepth?
+    package let temporaryDegradationColorDepth: MirageStreamColorDepth?
     package let timeBelowTargetBitrateMs: Int?
     package let captureAdmissionDrops: UInt64?
     package let frameBudgetMs: Double?
@@ -255,7 +255,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
         requestedTargetBitrate: Int? = nil,
         startupBitrate: Int? = nil,
         temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
-        temporaryDegradationBitDepth: MirageVideoBitDepth? = nil,
+        temporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
         timeBelowTargetBitrateMs: Int? = nil,
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
@@ -282,7 +282,7 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.requestedTargetBitrate = requestedTargetBitrate
         self.startupBitrate = startupBitrate
         self.temporaryDegradationMode = temporaryDegradationMode
-        self.temporaryDegradationBitDepth = temporaryDegradationBitDepth
+        self.temporaryDegradationColorDepth = temporaryDegradationColorDepth
         self.timeBelowTargetBitrateMs = timeBelowTargetBitrateMs
         self.captureAdmissionDrops = captureAdmissionDrops
         self.frameBudgetMs = frameBudgetMs

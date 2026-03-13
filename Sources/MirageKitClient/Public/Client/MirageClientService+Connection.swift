@@ -67,7 +67,7 @@ extension MirageClientService {
             protocolVersion: Int(Loom.protocolVersion),
             supportedFeatures: mirageSupportedFeatures
         )
-        let resolvedIdentityManager = identityManager ?? LoomIdentityManager.shared
+        let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
         let identity = try resolvedIdentityManager.currentIdentity()
         let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
             deviceID: deviceID,
@@ -186,6 +186,7 @@ extension MirageClientService {
         connectionState = .connecting
         expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
+        connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
         await handshakeReplayProtector.reset()
@@ -340,6 +341,7 @@ extension MirageClientService {
         inputEventSender.updateConnection(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
+        connectedHostAllowsRemoteAccess = nil
         pendingHelloNonce = nil
         helloHandshakeContinuation = nil
         setMediaSecurityContext(nil)
@@ -388,8 +390,8 @@ extension MirageClientService {
         activeJitterHoldMs = 0
         adaptiveFallbackBitrateByStream.removeAll()
         adaptiveFallbackBaselineBitrateByStream.removeAll()
-        adaptiveFallbackBitDepthByStream.removeAll()
-        adaptiveFallbackBaselineBitDepthByStream.removeAll()
+        adaptiveFallbackColorDepthByStream.removeAll()
+        adaptiveFallbackBaselineColorDepthByStream.removeAll()
         adaptiveFallbackCollapseTimestampsByStream.removeAll()
         adaptiveFallbackPressureCountByStream.removeAll()
         adaptiveFallbackLastPressureTriggerTimeByStream.removeAll()
@@ -398,11 +400,11 @@ extension MirageClientService {
         adaptiveFallbackLastCollapseTimeByStream.removeAll()
         adaptiveFallbackLastAppliedTime.removeAll()
         pendingAdaptiveFallbackBitrateByWindowID.removeAll()
-        pendingAdaptiveFallbackBitDepthByWindowID.removeAll()
+        pendingAdaptiveFallbackColorDepthByWindowID.removeAll()
         pendingDesktopAdaptiveFallbackBitrate = nil
-        pendingDesktopAdaptiveFallbackBitDepth = nil
+        pendingDesktopAdaptiveFallbackColorDepth = nil
         pendingAppAdaptiveFallbackBitrate = nil
-        pendingAppAdaptiveFallbackBitDepth = nil
+        pendingAppAdaptiveFallbackColorDepth = nil
         desktopDimensionTokenByStream.removeAll()
         fastPathState.clearAllStartupPacketPending()
         for task in startupRegistrationRetryTasks.values { task.cancel() }

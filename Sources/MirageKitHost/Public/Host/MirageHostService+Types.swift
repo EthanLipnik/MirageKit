@@ -11,6 +11,15 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+public enum MirageHostConnectionOrigin: String, Sendable {
+    case local
+    case remote
+
+    public var isRemote: Bool {
+        self == .remote
+    }
+}
+
 public struct MirageConnectedClient: Identifiable, Sendable {
     public let id: UUID
     public let name: String
@@ -18,6 +27,7 @@ public struct MirageConnectedClient: Identifiable, Sendable {
     public let connectedAt: Date
     public let identityKeyID: String?
     public let autoTrustGranted: Bool
+    public let connectionOrigin: MirageHostConnectionOrigin
 
     public init(
         id: UUID,
@@ -25,7 +35,8 @@ public struct MirageConnectedClient: Identifiable, Sendable {
         deviceType: DeviceType,
         connectedAt: Date,
         identityKeyID: String? = nil,
-        autoTrustGranted: Bool = false
+        autoTrustGranted: Bool = false,
+        connectionOrigin: MirageHostConnectionOrigin = .local
     ) {
         self.id = id
         self.name = name
@@ -33,6 +44,7 @@ public struct MirageConnectedClient: Identifiable, Sendable {
         self.connectedAt = connectedAt
         self.identityKeyID = identityKeyID
         self.autoTrustGranted = autoTrustGranted
+        self.connectionOrigin = connectionOrigin
     }
 }
 

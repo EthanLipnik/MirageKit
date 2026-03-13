@@ -39,7 +39,7 @@ public extension MirageHostService {
                 advertisement: advertisedPeerAdvertisement
             ) { [weak self] session in
                 Task { @MainActor [weak self] in
-                    await self?.handleNewConnection(session.connection)
+                    await self?.handleNewConnection(session.connection, origin: .local)
                 }
             }
             MirageLogger.host("TCP listener started on port \(controlPort)")

@@ -12,6 +12,7 @@ package enum MiragePeerAdvertisementMetadata {
     private static let maxStreamsKey = "mirage.max-streams"
     private static let supportsHEVCKey = "mirage.supports-hevc"
     private static let supportsP3Key = "mirage.supports-p3"
+    private static let supportedColorDepthsKey = "mirage.color-depths"
     private static let maxFrameRateKey = "mirage.max-frame-rate"
 
     package static func makeHostAdvertisement(
@@ -19,9 +20,13 @@ package enum MiragePeerAdvertisementMetadata {
         identityKeyID: String?,
         modelIdentifier: String?,
         iconName: String?,
-        machineFamily: String?
+        machineFamily: String?,
+        supportedColorDepths: [MirageStreamColorDepth]
     ) -> LoomPeerAdvertisement {
-        LoomPeerAdvertisement(
+        let normalizedColorDepths = supportedColorDepths.sorted { lhs, rhs in
+            lhs.sortRank < rhs.sortRank
+        }
+        return LoomPeerAdvertisement(
             protocolVersion: Int(Loom.protocolVersion),
             deviceID: deviceID,
             identityKeyID: identityKeyID,
@@ -32,7 +37,8 @@ package enum MiragePeerAdvertisementMetadata {
             metadata: [
                 maxStreamsKey: "4",
                 supportsHEVCKey: "1",
-                supportsP3Key: "1",
+                supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
+                supportedColorDepthsKey: normalizedColorDepths.map(\.rawValue).joined(separator: ","),
                 maxFrameRateKey: "120",
             ]
         )
@@ -61,6 +67,26 @@ package enum MiragePeerAdvertisementMetadata {
 
     package static func supportsP3ColorSpace(in advertisement: LoomPeerAdvertisement) -> Bool {
         boolValue(supportsP3Key, in: advertisement, defaultValue: true)
+    }
+
+    package static func supportedColorDepths(in advertisement: LoomPeerAdvertisement) -> [MirageStreamColorDepth] {
+        if let rawValue = advertisement.metadata[supportedColorDepthsKey] {
+            let parsed = rawValue
+                .split(separator: ",")
+                .compactMap { MirageStreamColorDepth(rawValue: String($0)) }
+                .sorted { lhs, rhs in
+                    lhs.sortRank < rhs.sortRank
+                }
+            if !parsed.isEmpty {
+                return parsed
+            }
+        }
+
+        if supportsP3ColorSpace(in: advertisement) {
+            return [.standard, .pro]
+        }
+
+        return [.standard]
     }
 
     package static func maxFrameRate(from advertisement: LoomPeerAdvertisement) -> Int {

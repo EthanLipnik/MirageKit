@@ -26,7 +26,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostRequestedTargetBitrate: Int?
     public var hostStartupBitrate: Int?
     public var hostTemporaryDegradationMode: MirageTemporaryDegradationMode?
-    public var hostTemporaryDegradationBitDepth: MirageVideoBitDepth?
+    public var hostTemporaryDegradationColorDepth: MirageStreamColorDepth?
     public var hostTimeBelowTargetBitrateMs: Int?
     public var hostCaptureAdmissionDrops: UInt64?
     public var hostFrameBudgetMs: Double?
@@ -61,7 +61,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostRequestedTargetBitrate: Int? = nil,
         hostStartupBitrate: Int? = nil,
         hostTemporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
-        hostTemporaryDegradationBitDepth: MirageVideoBitDepth? = nil,
+        hostTemporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
         hostTimeBelowTargetBitrateMs: Int? = nil,
         hostCaptureAdmissionDrops: UInt64? = nil,
         hostFrameBudgetMs: Double? = nil,
@@ -95,7 +95,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostRequestedTargetBitrate = hostRequestedTargetBitrate
         self.hostStartupBitrate = hostStartupBitrate
         self.hostTemporaryDegradationMode = hostTemporaryDegradationMode
-        self.hostTemporaryDegradationBitDepth = hostTemporaryDegradationBitDepth
+        self.hostTemporaryDegradationColorDepth = hostTemporaryDegradationColorDepth
         self.hostTimeBelowTargetBitrateMs = hostTimeBelowTargetBitrateMs
         self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
         self.hostFrameBudgetMs = hostFrameBudgetMs
@@ -155,7 +155,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         requestedTargetBitrate: Int? = nil,
         startupBitrate: Int? = nil,
         temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
-        temporaryDegradationBitDepth: MirageVideoBitDepth? = nil,
+        temporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
         timeBelowTargetBitrateMs: Int? = nil,
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
@@ -183,7 +183,7 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostRequestedTargetBitrate = requestedTargetBitrate
         snapshot.hostStartupBitrate = startupBitrate
         snapshot.hostTemporaryDegradationMode = temporaryDegradationMode
-        snapshot.hostTemporaryDegradationBitDepth = temporaryDegradationBitDepth
+        snapshot.hostTemporaryDegradationColorDepth = temporaryDegradationColorDepth
         snapshot.hostTimeBelowTargetBitrateMs = timeBelowTargetBitrateMs
         snapshot.hostCaptureAdmissionDrops = captureAdmissionDrops
         snapshot.hostFrameBudgetMs = frameBudgetMs

@@ -324,6 +324,11 @@ extension HEVCEncoder {
             if isKeyframe {
                 // Extract parameter sets for keyframes
                 if let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+                    if let chromaSampling = Self.chromaSampling(from: formatDesc) {
+                        Task(priority: .utility) {
+                            await self.recordEncodedChromaSampling(chromaSampling)
+                        }
+                    }
                     if let parameterSets = Self.extractParameterSets(from: formatDesc) {
                         var framed = Data(capacity: 4 + parameterSets.count + data.count)
                         var parameterSetLength = UInt32(parameterSets.count).bigEndian

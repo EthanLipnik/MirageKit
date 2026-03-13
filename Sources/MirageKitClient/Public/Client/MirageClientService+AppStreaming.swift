@@ -99,7 +99,7 @@ public extension MirageClientService {
             displayHeight: effectiveDisplayResolution.height > 0 ? Int(effectiveDisplayResolution.height) : nil,
             maxRefreshRate: getScreenMaxRefreshRate(),
             keyFrameInterval: nil,
-            bitDepth: nil,
+            colorDepth: nil,
             bitrate: nil,
             streamScale: clampedStreamScale(),
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
@@ -115,7 +115,7 @@ public extension MirageClientService {
         } else {
             pendingAppAdaptiveFallbackBitrate = nil
         }
-        pendingAppAdaptiveFallbackBitDepth = request.bitDepth
+        pendingAppAdaptiveFallbackColorDepth = request.colorDepth
 
         let message = try ControlMessage(type: .selectApp, content: request)
         connection.send(content: message.serialize(), completion: .idempotent)

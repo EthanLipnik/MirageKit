@@ -87,6 +87,8 @@ enum MirageCodecBenchmark {
 
     private static func benchmarkPixelFormat(for format: MiragePixelFormat) -> OSType {
         switch format {
+        case .xf44:
+            kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         case .p010, .bgr10a2:
             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         case .bgra8, .nv12:

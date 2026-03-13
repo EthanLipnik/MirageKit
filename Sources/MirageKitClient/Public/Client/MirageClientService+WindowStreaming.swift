@@ -73,10 +73,10 @@ public extension MirageClientService {
         } else {
             pendingAdaptiveFallbackBitrateByWindowID.removeValue(forKey: window.id)
         }
-        if let bitDepth = request.bitDepth {
-            pendingAdaptiveFallbackBitDepthByWindowID[window.id] = bitDepth
+        if let colorDepth = request.colorDepth {
+            pendingAdaptiveFallbackColorDepthByWindowID[window.id] = colorDepth
         } else {
-            pendingAdaptiveFallbackBitDepthByWindowID.removeValue(forKey: window.id)
+            pendingAdaptiveFallbackColorDepthByWindowID.removeValue(forKey: window.id)
         }
 
         request.streamScale = clampedStreamScale()
@@ -104,11 +104,11 @@ public extension MirageClientService {
             self.streamStartedContinuation = continuation
         }
         let pendingBitrate = pendingAdaptiveFallbackBitrateByWindowID.removeValue(forKey: window.id)
-        let pendingBitDepth = pendingAdaptiveFallbackBitDepthByWindowID.removeValue(forKey: window.id)
+        let pendingColorDepth = pendingAdaptiveFallbackColorDepthByWindowID.removeValue(forKey: window.id)
         configureAdaptiveFallbackBaseline(
             for: realStreamID,
             bitrate: pendingBitrate,
-            bitDepth: pendingBitDepth
+            colorDepth: pendingColorDepth
         )
 
         MirageLogger.client("Stream started with ID \(realStreamID)")
@@ -158,13 +158,13 @@ public extension MirageClientService {
         let controller = StreamController(streamID: streamID, maxPayloadSize: payloadSize)
         controllersByStream[streamID] = controller
         if adaptiveFallbackBaselineBitrateByStream[streamID] == nil,
-           adaptiveFallbackBaselineBitDepthByStream[streamID] == nil,
+           adaptiveFallbackBaselineColorDepthByStream[streamID] == nil,
            (pendingAppAdaptiveFallbackBitrate != nil ||
-                pendingAppAdaptiveFallbackBitDepth != nil) {
+                pendingAppAdaptiveFallbackColorDepth != nil) {
             configureAdaptiveFallbackBaseline(
                 for: streamID,
                 bitrate: pendingAppAdaptiveFallbackBitrate,
-                bitDepth: pendingAppAdaptiveFallbackBitDepth
+                colorDepth: pendingAppAdaptiveFallbackColorDepth
             )
         }
         adaptiveFallbackLastAppliedTime[streamID] = 0
@@ -230,9 +230,9 @@ public extension MirageClientService {
             )
     }
 
-    func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
-        adaptiveFallbackBitDepthByStream[streamID] ??
-            adaptiveFallbackBaselineBitDepthByStream[streamID] ??
+    package func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
+        adaptiveFallbackColorDepthByStream[streamID]?.bitDepth ??
+            adaptiveFallbackBaselineColorDepthByStream[streamID]?.bitDepth ??
             .eightBit
     }
 

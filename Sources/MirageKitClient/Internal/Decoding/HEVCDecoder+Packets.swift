@@ -308,10 +308,11 @@ extension FrameReassembler {
         let timedOutPFrames: UInt64
         let timedOutKeyframes: UInt64
         let staleKeyframes: UInt64
+        let missingExpectedPFrameGapTimedOut: Bool
         let shouldEnterAwaitingKeyframe: Bool
 
         var shouldSignalFrameLoss: Bool {
-            timedOutPFrames + timedOutKeyframes > 0
+            timedOutPFrames + timedOutKeyframes > 0 || missingExpectedPFrameGapTimedOut
         }
     }
 
@@ -535,21 +536,67 @@ extension FrameReassembler {
             }
             if !shouldKeep { framesToRemove.append(frameNumber) }
         }
+        let missingExpectedPFrameGapTimedOut = hasDeliveredKeyframeAnchor &&
+            timedOutExpectedPFrame == false &&
+            hasTimedOutBufferedForwardGapLocked(now: now, timeout: pFrameTimeout)
         for frameNumber in framesToRemove {
             if let frame = pendingFrames.removeValue(forKey: frameNumber) { frame.buffer.release() }
         }
         droppedFrameCount += timedOutPFrameCount + timedOutKeyframeCount + staleKeyframeCount
 
         // Enter keyframe wait when a keyframe times out, or when the next expected P-frame
-        // times out (which blocks in-order delivery and indicates sequence starvation).
-        let shouldEnterAwaitingKeyframe = (timedOutKeyframeCount > 0 || timedOutExpectedPFrame) && !awaitingKeyframe
+        // times out, or when a buffered forward gap persists without the expected frame ever arriving.
+        let shouldEnterAwaitingKeyframe = (
+            timedOutKeyframeCount > 0 ||
+                timedOutExpectedPFrame ||
+                missingExpectedPFrameGapTimedOut
+        ) && !awaitingKeyframe
+
+        if missingExpectedPFrameGapTimedOut {
+            let expectedFrame = lastCompletedFrame &+ 1
+            if let earliestBufferedFrame = pendingFrames
+                .keys
+                .filter({ isFrameNewer($0, than: lastCompletedFrame) })
+                .min()
+            {
+                let gapFrames = earliestBufferedFrame &- expectedFrame
+                MirageLogger.log(
+                    .frameAssembly,
+                    "Forward gap timed out: expected=\(expectedFrame) earliestBuffered=\(earliestBufferedFrame) gapFrames=\(gapFrames)"
+                )
+            }
+        }
 
         return TimeoutCleanupResult(
             timedOutPFrames: timedOutPFrameCount,
             timedOutKeyframes: timedOutKeyframeCount,
             staleKeyframes: staleKeyframeCount,
+            missingExpectedPFrameGapTimedOut: missingExpectedPFrameGapTimedOut,
             shouldEnterAwaitingKeyframe: shouldEnterAwaitingKeyframe
         )
+    }
+
+    private func hasTimedOutBufferedForwardGapLocked(
+        now: Date,
+        timeout: TimeInterval
+    ) -> Bool {
+        let expectedFrame = lastCompletedFrame &+ 1
+        guard pendingFrames[expectedFrame] == nil else { return false }
+
+        guard let earliestBufferedForwardFrame = pendingFrames
+            .filter({ isFrameNewer($0.key, than: lastCompletedFrame) })
+            .min(by: { lhs, rhs in
+                if lhs.key == rhs.key {
+                    return lhs.value.receivedAt < rhs.value.receivedAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            })
+        else {
+            return false
+        }
+
+        guard isFrameNewer(earliestBufferedForwardFrame.key, than: expectedFrame) else { return false }
+        return now.timeIntervalSince(earliestBufferedForwardFrame.value.receivedAt) >= timeout
     }
 
     func shouldRequestKeyframe() -> Bool {

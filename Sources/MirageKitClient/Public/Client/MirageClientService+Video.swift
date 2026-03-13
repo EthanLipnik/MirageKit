@@ -658,18 +658,18 @@ extension MirageClientService {
 
     func sendStreamEncoderSettingsChange(
         streamID: StreamID,
-        bitDepth: MirageVideoBitDepth? = nil,
+        colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
         streamScale: CGFloat? = nil
     )
     async throws {
         guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
-        guard bitDepth != nil || bitrate != nil || streamScale != nil else { return }
+        guard colorDepth != nil || bitrate != nil || streamScale != nil else { return }
 
         let clampedScale = streamScale.map(clampStreamScale)
         let request = StreamEncoderSettingsChangeMessage(
             streamID: streamID,
-            bitDepth: bitDepth,
+            colorDepth: colorDepth,
             bitrate: bitrate,
             streamScale: clampedScale
         )
@@ -748,11 +748,11 @@ extension MirageClientService {
                 }
                 try await sendStreamEncoderSettingsChange(
                     streamID: streamID,
-                    bitDepth: .eightBit
+                    colorDepth: .standard
                 )
-                adaptiveFallbackBitDepthByStream[streamID] = .eightBit
+                adaptiveFallbackColorDepthByStream[streamID] = .standard
                 MirageLogger.client(
-                    "Decoder compatibility fallback forced bit depth 10-bit -> 8-bit for stream \(streamID)"
+                    "Decoder compatibility fallback forced color depth Pro/Ultra -> Standard for stream \(streamID)"
                 )
                 await controllersByStream[streamID]?.requestRecovery(reason: .manualRecovery)
             } catch {
@@ -769,7 +769,7 @@ extension MirageClientService {
     func configureAdaptiveFallbackBaseline(
         for streamID: StreamID,
         bitrate: Int?,
-        bitDepth: MirageVideoBitDepth?
+        colorDepth: MirageStreamColorDepth?
     ) {
         if let bitrate, bitrate > 0 {
             adaptiveFallbackBitrateByStream[streamID] = bitrate
@@ -778,12 +778,12 @@ extension MirageClientService {
             adaptiveFallbackBitrateByStream.removeValue(forKey: streamID)
             adaptiveFallbackBaselineBitrateByStream.removeValue(forKey: streamID)
         }
-        if let bitDepth {
-            adaptiveFallbackBitDepthByStream[streamID] = bitDepth
-            adaptiveFallbackBaselineBitDepthByStream[streamID] = bitDepth
+        if let colorDepth {
+            adaptiveFallbackColorDepthByStream[streamID] = colorDepth
+            adaptiveFallbackBaselineColorDepthByStream[streamID] = colorDepth
         } else {
-            adaptiveFallbackBitDepthByStream.removeValue(forKey: streamID)
-            adaptiveFallbackBaselineBitDepthByStream.removeValue(forKey: streamID)
+            adaptiveFallbackColorDepthByStream.removeValue(forKey: streamID)
+            adaptiveFallbackBaselineColorDepthByStream.removeValue(forKey: streamID)
         }
 
         adaptiveFallbackCollapseTimestampsByStream[streamID] = []
@@ -798,8 +798,8 @@ extension MirageClientService {
     func clearAdaptiveFallbackState(for streamID: StreamID) {
         adaptiveFallbackBitrateByStream.removeValue(forKey: streamID)
         adaptiveFallbackBaselineBitrateByStream.removeValue(forKey: streamID)
-        adaptiveFallbackBitDepthByStream.removeValue(forKey: streamID)
-        adaptiveFallbackBaselineBitDepthByStream.removeValue(forKey: streamID)
+        adaptiveFallbackColorDepthByStream.removeValue(forKey: streamID)
+        adaptiveFallbackBaselineColorDepthByStream.removeValue(forKey: streamID)
         adaptiveFallbackCollapseTimestampsByStream.removeValue(forKey: streamID)
         adaptiveFallbackPressureCountByStream.removeValue(forKey: streamID)
         adaptiveFallbackLastPressureTriggerTimeByStream.removeValue(forKey: streamID)
@@ -858,13 +858,13 @@ extension MirageClientService {
         guard adaptiveFallbackMutationsEnabled else { return }
         guard adaptiveFallbackEnabled, adaptiveFallbackMode == .customTemporary else { return }
 
-        let baselineBitDepth = adaptiveFallbackBaselineBitDepthByStream[streamID]
-        let currentBitDepth = adaptiveFallbackBitDepthByStream[streamID]
+        let baselineColorDepth = adaptiveFallbackBaselineColorDepthByStream[streamID]
+        let currentColorDepth = adaptiveFallbackColorDepthByStream[streamID]
         let baselineBitrate = adaptiveFallbackBaselineBitrateByStream[streamID]
         let currentBitrate = adaptiveFallbackBitrateByStream[streamID]
 
-        let bitDepthDegraded = if let baselineBitDepth, let currentBitDepth {
-            currentBitDepth != baselineBitDepth
+        let colorDepthDegraded = if let baselineColorDepth, let currentColorDepth {
+            currentColorDepth != baselineColorDepth
         } else {
             false
         }
@@ -873,7 +873,7 @@ extension MirageClientService {
         } else {
             false
         }
-        guard bitDepthDegraded || bitrateDegraded else {
+        guard colorDepthDegraded || bitrateDegraded else {
             adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
             return
         }
@@ -942,27 +942,27 @@ extension MirageClientService {
             return
         }
 
-        if bitDepthDegraded,
-           let baselineBitDepth,
-           let currentBitDepth,
-           let nextBitDepth = nextCustomRestoreBitDepth(current: currentBitDepth, baseline: baselineBitDepth) {
+        if colorDepthDegraded,
+           let baselineColorDepth,
+           let currentColorDepth,
+           let nextColorDepth = nextCustomRestoreColorDepth(current: currentColorDepth, baseline: baselineColorDepth) {
             Task { [weak self] in
                 guard let self else { return }
                 do {
                     try await sendStreamEncoderSettingsChange(
                         streamID: streamID,
-                        bitDepth: nextBitDepth
+                        colorDepth: nextColorDepth
                     )
-                    adaptiveFallbackBitDepthByStream[streamID] = nextBitDepth
+                    adaptiveFallbackColorDepthByStream[streamID] = nextColorDepth
                     adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
                     adaptiveFallbackLastRestoreTimeByStream[streamID] = CFAbsoluteTimeGetCurrent()
                     adaptiveFallbackStableSinceByStream[streamID] = CFAbsoluteTimeGetCurrent()
                     MirageLogger
                         .client(
-                            "Adaptive restore bit depth step \(currentBitDepth.displayName) → \(nextBitDepth.displayName) for stream \(streamID)"
+                            "Adaptive restore color depth step \(currentColorDepth.displayName) → \(nextColorDepth.displayName) for stream \(streamID)"
                         )
                 } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to restore bit depth for stream \(streamID): ")
+                    MirageLogger.error(.client, error: error, message: "Failed to restore color depth for stream \(streamID): ")
                 }
             }
         }
@@ -1033,22 +1033,22 @@ extension MirageClientService {
             return
         }
 
-        if let currentBitDepth = adaptiveFallbackBitDepthByStream[streamID],
-           let nextBitDepth = nextCustomFallbackBitDepth(currentBitDepth) {
+        if let currentColorDepth = adaptiveFallbackColorDepthByStream[streamID],
+           let nextColorDepth = nextCustomFallbackColorDepth(currentColorDepth) {
             Task { [weak self] in
                 guard let self else { return }
                 do {
                     try await sendStreamEncoderSettingsChange(
                         streamID: streamID,
-                        bitDepth: nextBitDepth
+                        colorDepth: nextColorDepth
                     )
-                    adaptiveFallbackBitDepthByStream[streamID] = nextBitDepth
+                    adaptiveFallbackColorDepthByStream[streamID] = nextColorDepth
                     adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
-                    let currentName = currentBitDepth.displayName
-                    let nextName = nextBitDepth.displayName
-                    MirageLogger.client("Adaptive fallback bit depth step \(currentName) → \(nextName) for stream \(streamID)")
+                    let currentName = currentColorDepth.displayName
+                    let nextName = nextColorDepth.displayName
+                    MirageLogger.client("Adaptive fallback color depth step \(currentName) → \(nextName) for stream \(streamID)")
                 } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to apply fallback bit depth for stream \(streamID): ")
+                    MirageLogger.error(.client, error: error, message: "Failed to apply fallback color depth for stream \(streamID): ")
                 }
             }
             return
@@ -1086,24 +1086,29 @@ extension MirageClientService {
         }
     }
 
-    private func nextCustomFallbackBitDepth(_ current: MirageVideoBitDepth) -> MirageVideoBitDepth? {
+    private func nextCustomFallbackColorDepth(_ current: MirageStreamColorDepth) -> MirageStreamColorDepth? {
         switch current {
-        case .tenBit:
-            .eightBit
-        case .eightBit:
+        case .ultra:
+            .pro
+        case .pro:
+            .standard
+        case .standard:
             nil
         }
     }
 
-    private func nextCustomRestoreBitDepth(
-        current: MirageVideoBitDepth,
-        baseline: MirageVideoBitDepth
-    ) -> MirageVideoBitDepth? {
+    private func nextCustomRestoreColorDepth(
+        current: MirageStreamColorDepth,
+        baseline: MirageStreamColorDepth
+    ) -> MirageStreamColorDepth? {
         if current == baseline { return nil }
         switch current {
-        case .eightBit:
-            return baseline == .tenBit ? .tenBit : nil
-        case .tenBit:
+        case .standard:
+            if baseline == .ultra { return .pro }
+            return baseline == .pro ? .pro : nil
+        case .pro:
+            return baseline == .ultra ? .ultra : nil
+        case .ultra:
             return nil
         }
     }

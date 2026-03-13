@@ -431,6 +431,9 @@ public final class MirageClientService {
     /// Last host identity key ID validated by hello response.
     public internal(set) var connectedHostIdentityKeyID: String?
 
+    /// Whether the connected host explicitly allows this client to use remote relay.
+    public internal(set) var connectedHostAllowsRemoteAccess: Bool?
+
     /// Replay protection for signed hello responses.
     let handshakeReplayProtector = LoomReplayProtector()
 
@@ -607,8 +610,8 @@ public final class MirageClientService {
 
     var adaptiveFallbackBitrateByStream: [StreamID: Int] = [:]
     var adaptiveFallbackBaselineBitrateByStream: [StreamID: Int] = [:]
-    var adaptiveFallbackBitDepthByStream: [StreamID: MirageVideoBitDepth] = [:]
-    var adaptiveFallbackBaselineBitDepthByStream: [StreamID: MirageVideoBitDepth] = [:]
+    var adaptiveFallbackColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
+    var adaptiveFallbackBaselineColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
     var adaptiveFallbackCollapseTimestampsByStream: [StreamID: [CFAbsoluteTime]] = [:]
     var adaptiveFallbackPressureCountByStream: [StreamID: Int] = [:]
     var adaptiveFallbackLastPressureTriggerTimeByStream: [StreamID: CFAbsoluteTime] = [:]
@@ -617,11 +620,11 @@ public final class MirageClientService {
     var adaptiveFallbackLastCollapseTimeByStream: [StreamID: CFAbsoluteTime] = [:]
     var adaptiveFallbackLastAppliedTime: [StreamID: CFAbsoluteTime] = [:]
     var pendingAdaptiveFallbackBitrateByWindowID: [WindowID: Int] = [:]
-    var pendingAdaptiveFallbackBitDepthByWindowID: [WindowID: MirageVideoBitDepth] = [:]
+    var pendingAdaptiveFallbackColorDepthByWindowID: [WindowID: MirageStreamColorDepth] = [:]
     var pendingDesktopAdaptiveFallbackBitrate: Int?
-    var pendingDesktopAdaptiveFallbackBitDepth: MirageVideoBitDepth?
+    var pendingDesktopAdaptiveFallbackColorDepth: MirageStreamColorDepth?
     var pendingAppAdaptiveFallbackBitrate: Int?
-    var pendingAppAdaptiveFallbackBitDepth: MirageVideoBitDepth?
+    var pendingAppAdaptiveFallbackColorDepth: MirageStreamColorDepth?
     let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     let customAdaptiveFallbackCollapseWindow: CFAbsoluteTime = 20.0
     let customAdaptiveFallbackCollapseThreshold: Int = 2

@@ -222,6 +222,42 @@ struct MirageKitTests {
         #expect(decoded.protocolMismatchUpdateTriggerMessage == "Update accepted")
     }
 
+    @Test("Accepted hello response remote access metadata serialization")
+    func helloResponseRemoteAccessMetadataSerialization() throws {
+        let response = HelloResponseMessage(
+            accepted: true,
+            hostID: UUID(),
+            hostName: "Host",
+            requiresAuth: false,
+            dataPort: 9848,
+            negotiation: MirageProtocolNegotiation.clientHello(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                supportedFeatures: mirageSupportedFeatures
+            ),
+            requestNonce: "request-nonce",
+            mediaEncryptionEnabled: true,
+            udpRegistrationToken: Data(
+                repeating: 0xAB,
+                count: MirageMediaSecurity.registrationTokenLength
+            ),
+            remoteAccessAllowed: true,
+            identity: MirageIdentityEnvelope(
+                keyID: "host-key-id",
+                publicKey: Data([0x10, 0x20]),
+                timestampMs: 10_000,
+                nonce: "host-nonce",
+                signature: Data([0x30, 0x40])
+            )
+        )
+
+        let envelope = try ControlMessage(type: .helloResponse, content: response)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
+
+        #expect(decoded.accepted == true)
+        #expect(decoded.remoteAccessAllowed == true)
+    }
+
     @Test("Audio control message serialization")
     func audioControlMessageSerialization() throws {
         let started = AudioStreamStartedMessage(
@@ -525,7 +561,7 @@ struct MirageKitTests {
     func streamEncoderSettingsSerialization() throws {
         let request = StreamEncoderSettingsChangeMessage(
             streamID: 7,
-            bitDepth: .tenBit,
+            colorDepth: .pro,
             bitrate: 120_000_000,
             streamScale: 0.75
         )
@@ -538,7 +574,7 @@ struct MirageKitTests {
 
         let decodedRequest = try decodedEnvelope.decode(StreamEncoderSettingsChangeMessage.self)
         #expect(decodedRequest.streamID == 7)
-        #expect(decodedRequest.bitDepth == .tenBit)
+        #expect(decodedRequest.colorDepth == .pro)
         #expect(decodedRequest.bitrate == 120_000_000)
         let scale = try #require(decodedRequest.streamScale)
         #expect(abs(Double(scale) - 0.75) < 0.0001)
@@ -556,7 +592,7 @@ struct MirageKitTests {
             displayHeight: 1080,
             keyFrameInterval: 1800,
             captureQueueDepth: 6,
-            bitDepth: .tenBit,
+            colorDepth: .pro,
             bitrate: 150_000_000,
             latencyMode: .smoothest,
             performanceMode: .game,
@@ -574,7 +610,7 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
         #expect(decoded.latencyMode == .smoothest)
         #expect(decoded.performanceMode == .game)
-        #expect(decoded.bitDepth == .tenBit)
+        #expect(decoded.colorDepth == .pro)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
         #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
@@ -591,7 +627,7 @@ struct MirageKitTests {
             maxRefreshRate: 120,
             keyFrameInterval: 1800,
             captureQueueDepth: 4,
-            bitDepth: .tenBit,
+            colorDepth: .pro,
             bitrate: 200_000_000,
             latencyMode: .lowestLatency,
             performanceMode: .game,
@@ -609,6 +645,7 @@ struct MirageKitTests {
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.performanceMode == .game)
         #expect(decoded.maxRefreshRate == 120)
+        #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
         #expect(decoded.temporaryDegradationMode == .prioritizeVisuals)
     }
@@ -744,7 +781,7 @@ struct MirageKitTests {
             displayHeight: 1692,
             keyFrameInterval: 1800,
             captureQueueDepth: 5,
-            bitDepth: .tenBit,
+            colorDepth: .pro,
             mode: .mirrored,
             bitrate: 500_000_000,
             latencyMode: .auto,
@@ -766,6 +803,7 @@ struct MirageKitTests {
         #expect(decoded.performanceMode == .game)
         #expect(decoded.displayWidth == 3008)
         #expect(decoded.displayHeight == 1692)
+        #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
         #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
     }
@@ -878,7 +916,8 @@ struct MirageKitTests {
             identityKeyID: "test-key-id",
             modelIdentifier: "Mac16,1",
             iconName: "desktopcomputer",
-            machineFamily: "Mac"
+            machineFamily: "Mac",
+            supportedColorDepths: [.standard, .pro]
         )
 
         let txtRecord = advertisement.toTXTRecord()
@@ -898,6 +937,7 @@ struct MirageKitTests {
         #expect(MiragePeerAdvertisementMetadata.maxStreams(from: decoded) == 4)
         #expect(MiragePeerAdvertisementMetadata.supportsHEVC(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportsP3ColorSpace(in: decoded) == true)
+        #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
         #expect(MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
     }
 

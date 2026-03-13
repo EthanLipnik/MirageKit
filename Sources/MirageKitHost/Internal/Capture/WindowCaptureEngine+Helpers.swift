@@ -270,6 +270,8 @@ extension WindowCaptureEngine {
 
     var pixelFormatType: OSType {
         switch configuration.pixelFormat {
+        case .xf44:
+            kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         case .p010:
             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
         case .bgr10a2:
