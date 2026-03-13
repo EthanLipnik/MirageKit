@@ -24,7 +24,7 @@ public enum MirageKit {
     public static let legacyIdentityService = "com.mirage.identity.account.v2"
     public static let sharedDeviceIDKey = "com.mirage.shared.deviceID"
     public static let sharedDeviceIDSuiteName = "group.com.ethanlipnik.Mirage"
-    public static let sharedDeviceIDLegacyKeys = [
+    private static let deprecatedSharedDeviceIDKeys = [
         "com.mirage.client.deviceID",
         "com.mirage.cloudkit.deviceID",
         LoomSharedDeviceID.key,
@@ -45,5 +45,25 @@ public enum MirageKit {
             deviceIDKey: sharedDeviceIDKey,
             deviceIDSuiteName: sharedDeviceIDSuiteName
         )
+    }
+
+    /// Returns Mirage's canonical shared device identifier and removes deprecated per-target keys.
+    public static func getOrCreateSharedDeviceID(suiteName: String? = sharedDeviceIDSuiteName) -> UUID {
+        let deviceID = LoomSharedDeviceID.getOrCreate(
+            suiteName: suiteName,
+            key: sharedDeviceIDKey
+        )
+        removeDeprecatedSharedDeviceIDValues(suiteName: suiteName)
+        return deviceID
+    }
+
+    private static func removeDeprecatedSharedDeviceIDValues(suiteName: String?) {
+        let trimmedSuiteName = suiteName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sharedDefaults = trimmedSuiteName.flatMap(UserDefaults.init(suiteName:))
+
+        for deprecatedKey in deprecatedSharedDeviceIDKeys {
+            UserDefaults.standard.removeObject(forKey: deprecatedKey)
+            sharedDefaults?.removeObject(forKey: deprecatedKey)
+        }
     }
 }

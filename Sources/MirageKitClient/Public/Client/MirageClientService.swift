@@ -702,10 +702,8 @@ public final class MirageClientService {
         )
         self.sessionStore = sessionStore
 
-        let persistedDeviceID = LoomSharedDeviceID.getOrCreate(
-            suiteName: MirageKit.sharedDeviceIDSuiteName,
-            key: MirageKit.sharedDeviceIDKey,
-            legacyKeys: MirageKit.sharedDeviceIDLegacyKeys
+        let persistedDeviceID = MirageKit.getOrCreateSharedDeviceID(
+            suiteName: MirageKit.sharedDeviceIDSuiteName
         )
         deviceID = persistedDeviceID
         MirageLogger.client("Loaded shared device ID: \(persistedDeviceID)")

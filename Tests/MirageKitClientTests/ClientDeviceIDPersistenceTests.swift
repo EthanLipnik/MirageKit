@@ -13,13 +13,17 @@ import Testing
 @Suite("Client Device ID Persistence", .serialized)
 struct ClientDeviceIDPersistenceTests {
     @MainActor
-    @Test("Client service migrates the legacy client device ID into the shared suite")
-    func clientServiceMigratesLegacyClientDeviceIDIntoSharedSuite() {
+    @Test("Client service ignores deprecated device ID keys and creates a fresh shared ID")
+    func clientServiceIgnoresDeprecatedDeviceIDKeysAndCreatesFreshSharedID() {
         let suiteName = MirageKit.sharedDeviceIDSuiteName
         let suiteDefaults = UserDefaults(suiteName: suiteName)!
         let standardDefaults = UserDefaults.standard
         let originalSuiteDomain = standardDefaults.persistentDomain(forName: suiteName)
-        let legacyKeys = MirageKit.sharedDeviceIDLegacyKeys
+        let legacyKeys = [
+            "com.mirage.client.deviceID",
+            "com.mirage.cloudkit.deviceID",
+            LoomSharedDeviceID.key,
+        ]
         let originalStandardValues = legacyKeys.reduce(into: [String: Any?]()) { values, key in
             values[key] = standardDefaults.object(forKey: key)
         }
@@ -51,9 +55,10 @@ struct ClientDeviceIDPersistenceTests {
 
         let service = MirageClientService(deviceName: "Regression Device")
 
-        #expect(service.deviceID == legacyDeviceID)
+        #expect(service.deviceID != legacyDeviceID)
         #expect(
-            suiteDefaults.string(forKey: MirageKit.sharedDeviceIDKey) == legacyDeviceID.uuidString
+            suiteDefaults.string(forKey: MirageKit.sharedDeviceIDKey) == service.deviceID.uuidString
         )
+        #expect(standardDefaults.string(forKey: "com.mirage.client.deviceID") == nil)
     }
 }
