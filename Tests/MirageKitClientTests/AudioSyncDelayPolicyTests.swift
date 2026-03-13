@@ -46,6 +46,13 @@ struct AudioSyncDelayPolicyTests {
         #expect(delay == 0)
     }
 
+    @Test("Playback session stays ambient by default")
+    func playbackSessionPolicyStaysAmbient() {
+        let configuration = PlaybackAudioSessionConfiguration.ambient
+
+        #expect(configuration == .ambient)
+    }
+
     @MainActor
     @Test("Playback controller applies and removes runtime delay")
     func playbackControllerDelayMutation() {

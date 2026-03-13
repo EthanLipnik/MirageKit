@@ -275,7 +275,11 @@ extension MirageClientService {
             }
         } catch {
             pendingConnection?.cancel()
-            MirageLogger.error(.client, error: error, message: "Connection failed: ")
+            if hasReceivedHelloResponse {
+                MirageLogger.error(.client, error: error, message: "Connection failed: ")
+            } else {
+                MirageLogger.client("Connection failed before hello response: \(error.localizedDescription)")
+            }
             MirageInstrumentation.record(.clientConnectionFailed)
             if requiresDisconnectCleanupAfterFailedConnect() {
                 await handleDisconnect(

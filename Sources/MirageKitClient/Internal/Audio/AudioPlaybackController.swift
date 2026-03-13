@@ -14,6 +14,18 @@ import MirageKit
 import UIKit
 #endif
 
+struct PlaybackAudioSessionConfiguration: Equatable {
+    static let ambient = PlaybackAudioSessionConfiguration()
+
+    private init() {}
+
+#if os(iOS) || os(visionOS)
+    var avCategory: AVAudioSession.Category {
+        .ambient
+    }
+#endif
+}
+
 @MainActor
 final class AudioPlaybackController {
     private let startupBufferSeconds: Double
@@ -261,16 +273,13 @@ final class AudioPlaybackController {
         hasLoggedInactiveSessionDeferral = false
 
         let session = AVAudioSession.sharedInstance()
+        let configuration = PlaybackAudioSessionConfiguration.ambient
         do {
-            // Keep existing media (for example, Music/Spotify) playing when a stream starts.
-            // `.ambient` is the least disruptive while other audio is active; otherwise we keep `.playback`.
-            let desiredCategory: AVAudioSession.Category = session.isOtherAudioPlaying ? .ambient : .playback
             let needsReconfiguration = !audioSessionConfigured
-                || session.category != desiredCategory
+                || session.category != configuration.avCategory
                 || session.mode != .default
             if needsReconfiguration {
-                try session.setCategory(desiredCategory, mode: .default, options: [.mixWithOthers])
-                try session.setActive(true, options: [])
+                try session.setCategory(configuration.avCategory, mode: .default, options: [.mixWithOthers])
             }
             audioSessionConfigured = true
             return true
@@ -285,12 +294,6 @@ final class AudioPlaybackController {
     }
 
     private func deactivateAudioSessionIfNeeded() {
-        guard audioSessionConfigured else { return }
-        do {
-            try AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        } catch {
-            MirageLogger.debug(.client, "Audio session deactivation failed: \(error)")
-        }
         audioSessionConfigured = false
     }
 

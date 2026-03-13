@@ -313,6 +313,8 @@ actor StreamController {
     var currentDecodeSubmissionLimit: Int = 2
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var presentationTier: StreamPresentationTier = .activeLive
+    var isRunning = false
+    var isStopping = false
 
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
@@ -411,6 +413,8 @@ actor StreamController {
 
     /// Start the controller - sets up decoder and reassembler callbacks
     func start() async {
+        isStopping = false
+        isRunning = true
         await GlobalDecodeBudgetController.shared.register(streamID: streamID, tier: presentationTier)
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
@@ -575,6 +579,12 @@ actor StreamController {
     }
 
     private func recordDecodeSuccessIfNeeded() {
+        guard isRunning, !isStopping else {
+            consecutiveDecodeErrors = 0
+            lastDecodeErrorSignature = nil
+            lastDecodeErrorLogTime = 0
+            return
+        }
         guard consecutiveDecodeErrors > 0 else { return }
         MirageLogger.debug(
             .client,
@@ -586,6 +596,7 @@ actor StreamController {
     }
 
     private func recordDecodeFailure(_ error: Error) {
+        guard isRunning, !isStopping else { return }
         let metadata = LoomDiagnosticsErrorMetadata(error: error)
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime()
@@ -779,11 +790,23 @@ actor StreamController {
 
     /// Stop the controller and clean up resources
     func stop() async {
+        guard !isStopping else { return }
+        isStopping = true
+        isRunning = false
+
         // Stop frame processing - finish stream and cancel task
         stopFrameProcessingPipeline()
         stopMetricsReporting()
         stopFreezeMonitor()
         stopFirstPresentedFrameMonitor()
+        onKeyframeNeeded = nil
+        onResizeEvent = nil
+        onResizeStateChanged = nil
+        onFrameDecoded = nil
+        onFirstFrameDecoded = nil
+        onFirstFramePresented = nil
+        onAdaptiveFallbackNeeded = nil
+        onStallEvent = nil
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
@@ -793,9 +816,15 @@ actor StreamController {
         lastRecoveryRequestTime = 0
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        consecutiveDecodeErrors = 0
+        lastDecodeErrorSignature = nil
+        lastDecodeErrorLogTime = 0
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
         MirageFrameCache.shared.clear(for: streamID)
+        await decoder.setErrorThresholdHandler {}
+        await decoder.setDimensionChangeHandler {}
+        await decoder.stopDecoding()
         await GlobalDecodeBudgetController.shared.unregister(streamID: streamID)
     }
 

@@ -469,7 +469,9 @@ struct StreamControllerRecoveryTests {
             keyframeCounter.value == 1
         }
 
-        #expect(await controller.firstPresentedFrameLastRecoveryRequestTime > 0)
+        #expect(await controller.awaitingFirstPresentedFrame)
+        #expect(await controller.firstPresentedFrameWaitStartTime > 0)
+        #expect(!(await controller.hasDecodedFirstFrame))
         #expect(keyframeCounter.value == 1)
 
         await controller.stop()

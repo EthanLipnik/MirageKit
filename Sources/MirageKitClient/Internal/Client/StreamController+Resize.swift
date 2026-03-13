@@ -72,6 +72,7 @@ extension StreamController {
         restartRecoveryLoop: Bool = true
     )
     async {
+        let shouldRestartStartupBootstrap = !hasPresentedFirstFrame
         let now = currentTime()
         if reason != .manualRecovery,
            !Self.shouldDispatchRecovery(
@@ -108,6 +109,13 @@ extension StreamController {
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
         reassembler.reset()
+        if shouldRestartStartupBootstrap {
+            stopFirstPresentedFrameMonitor()
+            hasDecodedFirstFrame = false
+            hasPresentedFirstFrame = false
+            awaitingFirstFrameAfterResize = false
+            decodePausedForLocalResize = false
+        }
         reassembler.enterKeyframeOnlyMode()
         if restartRecoveryLoop, presentationTier == .activeLive {
             startKeyframeRecoveryLoopIfNeeded()
@@ -115,6 +123,9 @@ extension StreamController {
             stopKeyframeRecoveryLoop()
         }
         await startFrameProcessingPipeline()
+        if shouldRestartStartupBootstrap, presentationTier == .activeLive {
+            armFirstPresentedFrameAwaiter(reason: "hard-recovery")
+        }
         await requestKeyframeRecovery(reason: reason)
     }
 }
