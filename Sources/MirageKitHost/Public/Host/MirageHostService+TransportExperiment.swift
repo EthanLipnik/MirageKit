@@ -15,6 +15,10 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     func handleVideoSendError(streamID: StreamID, error: NWError) async {
+        MirageLogger.error(
+            .host,
+            "Video transport send failed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled)): \(error)"
+        )
         guard awdlExperimentEnabled else { return }
         guard let context = streamsByID[streamID] else { return }
         let didTriggerRecovery = await context.handleTransportSendError(error)

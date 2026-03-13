@@ -81,6 +81,9 @@ extension MirageHostService {
             .hostHardwareIconRequest: { [weak self] message, client, connection in
                 await self?.handleHostHardwareIconRequest(message, from: client, connection: connection)
             },
+            .hostSupportLogArchiveRequest: { [weak self] message, client, connection in
+                await self?.handleHostSupportLogArchiveRequest(message, from: client, connection: connection)
+            },
             .startDesktopStream: { [weak self] message, client, connection in
                 await self?.handleStartDesktopStream(message, from: client, connection: connection)
             },

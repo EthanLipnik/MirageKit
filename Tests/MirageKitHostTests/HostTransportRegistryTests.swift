@@ -15,6 +15,50 @@ import Testing
 
 @Suite("Host Transport Registry")
 struct HostTransportRegistryTests {
+    @Test("Backlog pressure thresholds match export diagnostics expectations")
+    func backlogPressureThresholds() {
+        #expect(HostVideoTransportDiagnostics.backlogPressure(pendingPackets: 0, pendingBytes: 0) == .normal)
+        #expect(
+            HostVideoTransportDiagnostics.backlogPressure(
+                pendingPackets: HostVideoTransportDiagnostics.backlogElevatedPacketCount,
+                pendingBytes: 0
+            ) == .elevated
+        )
+        #expect(
+            HostVideoTransportDiagnostics.backlogPressure(
+                pendingPackets: 0,
+                pendingBytes: HostVideoTransportDiagnostics.backlogElevatedBytes
+            ) == .elevated
+        )
+        #expect(
+            HostVideoTransportDiagnostics.backlogPressure(
+                pendingPackets: HostVideoTransportDiagnostics.backlogCriticalPacketCount,
+                pendingBytes: 0
+            ) == .critical
+        )
+        #expect(
+            HostVideoTransportDiagnostics.backlogPressure(
+                pendingPackets: 0,
+                pendingBytes: HostVideoTransportDiagnostics.backlogCriticalBytes
+            ) == .critical
+        )
+    }
+
+    @Test("Send latency pressure thresholds surface stalled export sends")
+    func sendLatencyPressureThresholds() {
+        #expect(HostVideoTransportDiagnostics.sendLatencyPressure(elapsedMs: 0) == .normal)
+        #expect(
+            HostVideoTransportDiagnostics.sendLatencyPressure(
+                elapsedMs: HostVideoTransportDiagnostics.sendLatencyElevatedMs
+            ) == .elevated
+        )
+        #expect(
+            HostVideoTransportDiagnostics.sendLatencyPressure(
+                elapsedMs: HostVideoTransportDiagnostics.sendLatencyCriticalMs
+            ) == .critical
+        )
+    }
+
     @Test("Missing video registration completes queued-byte release callback")
     func missingVideoRegistrationStillCompletes() {
         let registry = HostTransportRegistry()

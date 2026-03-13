@@ -83,6 +83,8 @@ package enum ControlMessageType: UInt8, Codable {
     case hostHardwareIcon = 0x94 // Host -> Client: Host hardware icon payload
     case appIconUpdate = 0x95 // Host -> Client: Incremental app icon payload update
     case appIconStreamComplete = 0x96 // Host -> Client: App icon update stream completion marker
+    case hostSupportLogArchiveRequest = 0x97 // Client -> Host: Request host support log archive
+    case hostSupportLogArchive = 0x98 // Host -> Client: Zipped host support log archive
 
     // Desktop streaming (full virtual display mirroring)
     case startDesktopStream = 0xA0 // Client → Host: Start full desktop stream
@@ -190,7 +192,7 @@ package struct ControlMessage: Codable {
         switch type {
         case .appList:
             LoomMessageLimits.maxLargeMetadataPayloadBytes
-        case .hostHardwareIcon, .appIconUpdate:
+        case .hostHardwareIcon, .appIconUpdate, .hostSupportLogArchive:
             LoomMessageLimits.maxInlineAssetPayloadBytes
         default:
             LoomMessageLimits.maxPayloadBytes

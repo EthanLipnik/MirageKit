@@ -10,8 +10,53 @@ import Network
 import MirageKit
 
 #if os(macOS)
+enum HostVideoTransportPressure: Int, Comparable {
+    case normal = 0
+    case elevated = 1
+    case critical = 2
+
+    static func < (lhs: HostVideoTransportPressure, rhs: HostVideoTransportPressure) -> Bool {
+        lhs.rawValue < rhs.rawValue
+    }
+}
+
+enum HostVideoTransportDiagnostics {
+    static let backlogElevatedPacketCount = 128
+    static let backlogCriticalPacketCount = 384
+    static let backlogElevatedBytes = 512 * 1_024
+    static let backlogCriticalBytes = 2 * 1_024 * 1_024
+    static let sendLatencyElevatedMs = 40.0
+    static let sendLatencyCriticalMs = 150.0
+    static let repeatedProblemLogInterval: CFAbsoluteTime = 1.0
+    static let watchdogPollInterval: Duration = .milliseconds(250)
+
+    static func backlogPressure(
+        pendingPackets: Int,
+        pendingBytes: Int
+    ) -> HostVideoTransportPressure {
+        if pendingPackets >= backlogCriticalPacketCount || pendingBytes >= backlogCriticalBytes {
+            return .critical
+        }
+        if pendingPackets >= backlogElevatedPacketCount || pendingBytes >= backlogElevatedBytes {
+            return .elevated
+        }
+        return .normal
+    }
+
+    static func sendLatencyPressure(elapsedMs: Double) -> HostVideoTransportPressure {
+        if elapsedMs >= sendLatencyCriticalMs {
+            return .critical
+        }
+        if elapsedMs >= sendLatencyElevatedMs {
+            return .elevated
+        }
+        return .normal
+    }
+}
+
 private final class MediaConnectionScheduler: @unchecked Sendable {
     private struct QueuedPacket {
+        let streamID: StreamID
         let data: Data
         let onComplete: (@Sendable (NWError?) -> Void)?
     }
@@ -24,19 +69,37 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
         var passiveCursor = 0
         var sendInFlight = false
         var isClosed = false
+        var pendingPacketCount = 0
+        var pendingByteCount = 0
+        var backlogPressure: HostVideoTransportPressure = .normal
+        var lastBacklogLogTime: CFAbsoluteTime = 0
+        var lastLatencyLogTime: CFAbsoluteTime = 0
+        var inFlightStreamID: StreamID?
+        var inFlightPacketByteCount = 0
+        var inFlightStartedAt: CFAbsoluteTime = 0
+        var sendStallPressure: HostVideoTransportPressure = .normal
     }
 
     private let lock = NSLock()
     private let connection: NWConnection
     private let maxPassiveQueueDepth = 1
     private var state = State()
+    private var diagnosticsTask: Task<Void, Never>?
 
     init(connection: NWConnection) {
         self.connection = connection
+        diagnosticsTask = Task(priority: .utility) { [weak self] in
+            await self?.runDiagnosticsLoop()
+        }
+    }
+
+    deinit {
+        diagnosticsTask?.cancel()
     }
 
     func setStreamActive(_ streamID: StreamID, isActive: Bool) {
         var droppedPackets: [QueuedPacket] = []
+        var backlogLog: String?
         lock.lock()
         if isActive {
             state.activeStreams.insert(streamID)
@@ -47,10 +110,18 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
                 droppedPackets = Array(queue.prefix(max(0, queue.count - keepCount)))
                 queue = Array(queue.suffix(keepCount))
                 state.streamQueues[streamID] = queue
+                for packet in droppedPackets {
+                    state.pendingPacketCount = max(0, state.pendingPacketCount - 1)
+                    state.pendingByteCount = max(0, state.pendingByteCount - packet.data.count)
+                }
+                backlogLog = backlogTransitionMessageLocked(now: CFAbsoluteTimeGetCurrent())
             }
         }
         lock.unlock()
 
+        if let backlogLog {
+            MirageLogger.stream(backlogLog)
+        }
         for packet in droppedPackets {
             packet.onComplete?(nil)
         }
@@ -63,6 +134,7 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
     ) {
         var shouldKick = false
         var droppedPacket: QueuedPacket?
+        var backlogLog: String?
         lock.lock()
         if state.isClosed {
             lock.unlock()
@@ -73,22 +145,32 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
             state.streamOrder.append(streamID)
         }
         var queue = state.streamQueues[streamID] ?? []
-        let packet = QueuedPacket(data: data, onComplete: onComplete)
+        let packet = QueuedPacket(streamID: streamID, data: data, onComplete: onComplete)
         if state.activeStreams.contains(streamID) {
             queue.append(packet)
         } else {
             if queue.count >= maxPassiveQueueDepth {
                 droppedPacket = queue.removeFirst()
+                if let droppedPacket {
+                    state.pendingPacketCount = max(0, state.pendingPacketCount - 1)
+                    state.pendingByteCount = max(0, state.pendingByteCount - droppedPacket.data.count)
+                }
             }
             queue.append(packet)
         }
         state.streamQueues[streamID] = queue
+        state.pendingPacketCount += 1
+        state.pendingByteCount += data.count
+        backlogLog = backlogTransitionMessageLocked(now: CFAbsoluteTimeGetCurrent())
         if !state.sendInFlight {
             state.sendInFlight = true
             shouldKick = true
         }
         lock.unlock()
 
+        if let backlogLog {
+            MirageLogger.stream(backlogLog)
+        }
         droppedPacket?.onComplete?(nil)
         guard shouldKick else { return }
         sendNext()
@@ -96,10 +178,16 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
 
     func removeStream(_ streamID: StreamID) {
         let removedPackets: [QueuedPacket]
+        var backlogLog: String?
         lock.lock()
         removedPackets = state.streamQueues.removeValue(forKey: streamID) ?? []
         state.streamOrder.removeAll { $0 == streamID }
         state.activeStreams.remove(streamID)
+        for packet in removedPackets {
+            state.pendingPacketCount = max(0, state.pendingPacketCount - 1)
+            state.pendingByteCount = max(0, state.pendingByteCount - packet.data.count)
+        }
+        backlogLog = backlogTransitionMessageLocked(now: CFAbsoluteTimeGetCurrent())
         if state.activeCursor >= state.streamOrder.count {
             state.activeCursor = 0
         }
@@ -108,6 +196,9 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
         }
         lock.unlock()
 
+        if let backlogLog {
+            MirageLogger.stream(backlogLog)
+        }
         for packet in removedPackets {
             packet.onComplete?(nil)
         }
@@ -121,7 +212,15 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
         state.streamQueues.removeAll(keepingCapacity: false)
         state.streamOrder.removeAll(keepingCapacity: false)
         state.activeStreams.removeAll(keepingCapacity: false)
+        state.pendingPacketCount = 0
+        state.pendingByteCount = 0
+        state.backlogPressure = .normal
+        state.inFlightStreamID = nil
+        state.inFlightPacketByteCount = 0
+        state.inFlightStartedAt = 0
+        state.sendStallPressure = .normal
         lock.unlock()
+        diagnosticsTask?.cancel()
 
         for packet in packetsToComplete {
             packet.onComplete?(nil)
@@ -132,12 +231,26 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
         guard let packet = dequeueNextPayload() else {
             lock.lock()
             state.sendInFlight = false
+            state.inFlightStreamID = nil
+            state.inFlightPacketByteCount = 0
+            state.inFlightStartedAt = 0
+            state.sendStallPressure = .normal
             lock.unlock()
             return
         }
 
+        lock.lock()
+        state.inFlightStreamID = packet.streamID
+        state.inFlightPacketByteCount = packet.data.count
+        state.inFlightStartedAt = CFAbsoluteTimeGetCurrent()
+        lock.unlock()
+
         connection.send(content: packet.data, completion: .contentProcessed { [weak self] error in
+            let completionLog = self?.recordSendCompletion(packet: packet)
             packet.onComplete?(error)
+            if let completionLog {
+                MirageLogger.stream(completionLog)
+            }
             self?.sendNext()
         })
     }
@@ -180,6 +293,106 @@ private final class MediaConnectionScheduler: @unchecked Sendable {
             return packet
         }
         return nil
+    }
+
+    private func runDiagnosticsLoop() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(for: HostVideoTransportDiagnostics.watchdogPollInterval)
+            if let stallLog = stalledSendMessageIfNeeded(now: CFAbsoluteTimeGetCurrent()) {
+                MirageLogger.stream(stallLog)
+            }
+        }
+    }
+
+    private func recordSendCompletion(packet: QueuedPacket) -> String? {
+        let now = CFAbsoluteTimeGetCurrent()
+        var logMessages: [String] = []
+
+        lock.lock()
+        let elapsedMs = state.inFlightStartedAt > 0
+            ? max(0, (now - state.inFlightStartedAt) * 1_000)
+            : 0
+        let latencyPressure = HostVideoTransportDiagnostics.sendLatencyPressure(elapsedMs: elapsedMs)
+        if latencyPressure > .normal, state.sendStallPressure == .normal {
+            logMessages.append(
+                "Video export send latency \(latencyPressure == .critical ? "critical" : "elevated"): " +
+                    "stream \(packet.streamID), latency=\(Int(elapsedMs.rounded()))ms, " +
+                    "pending=\(state.pendingPacketCount) packets (\(pendingKilobytesLocked())KB)"
+            )
+            state.lastLatencyLogTime = now
+        } else if state.sendStallPressure > .normal {
+            logMessages.append(
+                "Video export send recovered: stream \(packet.streamID), latency=\(Int(elapsedMs.rounded()))ms, " +
+                    "pending=\(max(0, state.pendingPacketCount - 1)) packets"
+            )
+            state.lastLatencyLogTime = now
+        }
+
+        state.pendingPacketCount = max(0, state.pendingPacketCount - 1)
+        state.pendingByteCount = max(0, state.pendingByteCount - packet.data.count)
+        state.inFlightStreamID = nil
+        state.inFlightPacketByteCount = 0
+        state.inFlightStartedAt = 0
+        state.sendStallPressure = .normal
+
+        if let backlogLog = backlogTransitionMessageLocked(now: now) {
+            logMessages.append(backlogLog)
+        }
+        lock.unlock()
+
+        guard !logMessages.isEmpty else { return nil }
+        return logMessages.joined(separator: "\n")
+    }
+
+    private func stalledSendMessageIfNeeded(now: CFAbsoluteTime) -> String? {
+        lock.lock()
+        defer { lock.unlock() }
+        guard state.sendInFlight,
+              !state.isClosed,
+              state.inFlightStartedAt > 0,
+              let streamID = state.inFlightStreamID else {
+            return nil
+        }
+
+        let elapsedMs = max(0, (now - state.inFlightStartedAt) * 1_000)
+        let pressure = HostVideoTransportDiagnostics.sendLatencyPressure(elapsedMs: elapsedMs)
+        guard pressure > .normal else { return nil }
+
+        let shouldLog = pressure > state.sendStallPressure ||
+            state.lastLatencyLogTime == 0 ||
+            now - state.lastLatencyLogTime >= HostVideoTransportDiagnostics.repeatedProblemLogInterval
+        guard shouldLog else { return nil }
+
+        state.sendStallPressure = pressure
+        state.lastLatencyLogTime = now
+        return "Video export send stalled (\(pressure == .critical ? "critical" : "elevated")): " +
+            "stream \(streamID), elapsed=\(Int(elapsedMs.rounded()))ms, " +
+            "packet=\(state.inFlightPacketByteCount)B, pending=\(state.pendingPacketCount) packets (\(pendingKilobytesLocked())KB)"
+    }
+
+    private func backlogTransitionMessageLocked(now: CFAbsoluteTime) -> String? {
+        let nextPressure = HostVideoTransportDiagnostics.backlogPressure(
+            pendingPackets: state.pendingPacketCount,
+            pendingBytes: state.pendingByteCount
+        )
+        guard nextPressure != state.backlogPressure else { return nil }
+
+        let previousPressure = state.backlogPressure
+        state.backlogPressure = nextPressure
+        state.lastBacklogLogTime = now
+
+        if nextPressure == .normal, previousPressure > .normal {
+            return "Video export backlog recovered: pending=\(state.pendingPacketCount) packets (\(pendingKilobytesLocked())KB)"
+        }
+
+        guard nextPressure > .normal else { return nil }
+        return "Video export backlog \(nextPressure == .critical ? "critical" : "elevated"): " +
+            "pending=\(state.pendingPacketCount) packets (\(pendingKilobytesLocked())KB), " +
+            "streams=\(state.streamQueues.count), active=\(state.activeStreams.count)"
+    }
+
+    private func pendingKilobytesLocked() -> Int {
+        Int((Double(state.pendingByteCount) / 1_024.0).rounded())
     }
 }
 

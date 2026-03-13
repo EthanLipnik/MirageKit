@@ -432,6 +432,12 @@ extension MirageClientService {
             pingContinuation.resume(throwing: MirageError.protocolError(reason))
         }
         completeQualityTestWaiter(result: nil)
+        if let hostSupportLogArchiveContinuation {
+            self.hostSupportLogArchiveContinuation = nil
+            hostSupportLogArchiveTimeoutTask?.cancel()
+            hostSupportLogArchiveTimeoutTask = nil
+            hostSupportLogArchiveContinuation.resume(throwing: MirageError.protocolError(reason))
+        }
         hasReceivedHelloResponse = false
         negotiatedFeatures = []
         mediaPayloadEncryptionEnabled = true

@@ -14,18 +14,6 @@ import MirageKit
 import UIKit
 #endif
 
-struct PlaybackAudioSessionConfiguration: Equatable {
-    static let ambient = PlaybackAudioSessionConfiguration()
-
-    private init() {}
-
-#if os(iOS) || os(visionOS)
-    var avCategory: AVAudioSession.Category {
-        .ambient
-    }
-#endif
-}
-
 @MainActor
 final class AudioPlaybackController {
     private let startupBufferSeconds: Double
@@ -45,7 +33,6 @@ final class AudioPlaybackController {
     private var isDelayHoldActive = false
     private var isConfigured = false
 #if os(iOS) || os(visionOS)
-    private var audioSessionConfigured = false
     private var hasLoggedInactiveSessionDeferral = false
 #endif
 
@@ -272,16 +259,8 @@ final class AudioPlaybackController {
         }
         hasLoggedInactiveSessionDeferral = false
 
-        let session = AVAudioSession.sharedInstance()
-        let configuration = PlaybackAudioSessionConfiguration.ambient
         do {
-            let needsReconfiguration = !audioSessionConfigured
-                || session.category != configuration.avCategory
-                || session.mode != .default
-            if needsReconfiguration {
-                try session.setCategory(configuration.avCategory, mode: .default, options: [.mixWithOthers])
-            }
-            audioSessionConfigured = true
+            try MirageAudioSessionCoordinator.shared.activatePlaybackIfNeeded()
             return true
         } catch {
             if shouldSuppressAudioSessionActivationError(error) {
@@ -294,7 +273,7 @@ final class AudioPlaybackController {
     }
 
     private func deactivateAudioSessionIfNeeded() {
-        audioSessionConfigured = false
+        MirageAudioSessionCoordinator.shared.deactivatePlaybackIfNeeded()
     }
 
     private var isApplicationActive: Bool {

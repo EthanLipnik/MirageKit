@@ -136,7 +136,7 @@ extension InputCapturingView {
         if dictationAudioSessionActive {
             dictationAudioSessionActive = false
             Task { @MainActor in
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+                MirageAudioSessionCoordinator.shared.deactivateDictationIfNeeded()
             }
         }
     }
@@ -151,9 +151,7 @@ extension InputCapturingView {
 
     private func configureAudioSessionForDictation() async throws {
         if dictationAudioSessionActive { return }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker])
-        try session.setActive(true, options: [])
+        try MirageAudioSessionCoordinator.shared.activateDictationIfNeeded()
         dictationAudioSessionActive = true
     }
 

@@ -86,6 +86,9 @@ public final class MirageHostService {
     /// Software update controller used for client-initiated host update status and install requests.
     public weak var softwareUpdateController: (any MirageHostSoftwareUpdateController)?
 
+    /// Provider used for client-initiated host support log archive export.
+    public var hostSupportLogArchiveProvider: (@MainActor @Sendable () async throws -> MirageHostSupportLogArchive)?
+
     /// Identity manager for signed handshake envelopes.
     public var identityManager: LoomIdentityManager? = MirageKit.identityManager {
         didSet {
