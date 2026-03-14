@@ -14,7 +14,7 @@ import Testing
 struct ClientHelloHandshakeStateTests {
     @MainActor
     @Test("Accepted bootstrap canonicalizes connected host and transitions to connected")
-    func acceptedBootstrapCanonicalizesConnectedHost() throws {
+    func acceptedBootstrapCanonicalizesConnectedHost() async throws {
         let provisionalHostID = UUID()
         let acceptedHostID = UUID()
         let port = try #require(NWEndpoint.Port(rawValue: 9_848))
@@ -50,7 +50,7 @@ struct ClientHelloHandshakeStateTests {
             udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
         )
 
-        let acceptedHost = service.finalizeAcceptedBootstrap(
+        let acceptedHost = await service.finalizeAcceptedBootstrap(
             response,
             hostIdentityKeyID: "accepted-key"
         )

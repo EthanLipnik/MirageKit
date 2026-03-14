@@ -27,7 +27,7 @@ extension MirageClientService {
 
     func startAudioConnection() async throws {
         guard hostDataPort > 0 else { throw MirageError.protocolError("Host data port not set") }
-        let candidates = try resolveMediaTransportCandidates(
+        let candidates = try await resolveMediaTransportCandidates(
             preferredHost: mediaTransportHost,
             preferredIncludePeerToPeer: mediaTransportIncludePeerToPeer
         )

@@ -36,7 +36,7 @@ public extension MirageClientService {
         audioConfiguration: MirageAudioConfiguration? = nil
     )
     async throws -> ClientStreamSession {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
         var request = StartStreamMessage(windowID: window.id, dataPort: nil)
@@ -83,18 +83,8 @@ public extension MirageClientService {
         request.audioConfiguration = audioConfiguration ?? self.audioConfiguration
         request.maxRefreshRate = getScreenMaxRefreshRate()
 
-        let message = try ControlMessage(type: .startStream, content: request)
-        let messageData = message.serialize()
-
         MirageLogger.client("Sending startStream for window \(window.id)")
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: messageData, completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.startStream, content: request)
 
         // Wait for streamStarted response from server to get the real stream ID.
         let realStreamID = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<
@@ -280,9 +270,8 @@ public extension MirageClientService {
             minimizeWindow: minimizeWindow,
             origin: origin?.controlMessageOrigin
         )
-        if let message = try? ControlMessage(type: .stopStream, content: request),
-           let connection {
-            connection.send(content: message.serialize(), completion: .idempotent)
+        if let message = try? ControlMessage(type: .stopStream, content: request) {
+            _ = sendControlMessageBestEffort(message)
         }
 
         activeStreams.removeAll { $0.id == streamID }

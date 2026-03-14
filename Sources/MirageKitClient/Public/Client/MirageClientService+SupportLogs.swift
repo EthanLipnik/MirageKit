@@ -20,7 +20,7 @@ import UIKit
 public extension MirageClientService {
     /// Requests a zipped support log archive from the connected host and stores it in a temporary file.
     func requestHostSupportLogArchive() async throws -> URL {
-        guard case .connected = connectionState, let connection else {
+        guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
         guard hostSupportLogArchiveContinuation == nil else {
@@ -29,8 +29,6 @@ public extension MirageClientService {
 
         let requestID = UUID()
         let request = HostSupportLogArchiveRequestMessage(requestID: requestID)
-        let message = try ControlMessage(type: .hostSupportLogArchiveRequest, content: request)
-        let data = message.serialize()
 
         return try await withCheckedThrowingContinuation { continuation in
             hostSupportLogArchiveRequestID = requestID
@@ -48,7 +46,13 @@ public extension MirageClientService {
                     .failure(MirageError.protocolError("Timed out waiting for host support logs"))
                 )
             }
-            connection.send(content: data, completion: .idempotent)
+            Task { @MainActor [weak self] in
+                do {
+                    try await self?.sendControlMessage(.hostSupportLogArchiveRequest, content: request)
+                } catch {
+                    self?.completeHostSupportLogArchiveRequest(.failure(error))
+                }
+            }
         }
     }
 }
@@ -76,7 +80,7 @@ extension MirageClientService {
             throw MirageError.protocolError("No connected host")
         }
 
-        let endpoint = try supportLogTransferEndpoint(
+        let endpoint = try await supportLogTransferEndpoint(
             from: connectedHost.endpoint,
             advertisedPort: port
         )
@@ -149,23 +153,24 @@ extension MirageClientService {
     private func supportLogTransferEndpoint(
         from endpoint: NWEndpoint,
         advertisedPort: UInt16
-    ) throws -> NWEndpoint {
+    ) async throws -> NWEndpoint {
         guard advertisedPort > 0,
               let port = NWEndpoint.Port(rawValue: advertisedPort) else {
             throw MirageError.protocolError("Host returned an invalid Loom transfer port")
         }
 
+        let controlRemoteEndpoint = await currentControlRemoteEndpoint()
         let bonjourHost = {
-            if let serviceName = Self.serviceName(from: endpoint) ?? Self.serviceName(from: connection?.endpoint),
+            if let serviceName = Self.serviceName(from: endpoint) ?? Self.serviceName(from: controlRemoteEndpoint),
                !serviceName.isEmpty {
                 return Self.expandedBonjourHosts(for: NWEndpoint.Host(serviceName)).first
             }
             return nil
         }()
 
-        let host = Self.host(from: connection?.currentPath?.remoteEndpoint)
+        let host = Self.host(from: (await currentControlPathSnapshot())?.remoteEndpoint)
             ?? Self.host(from: endpoint)
-            ?? Self.host(from: connection?.endpoint)
+            ?? Self.host(from: controlRemoteEndpoint)
             ?? bonjourHost
 
         guard let host else {

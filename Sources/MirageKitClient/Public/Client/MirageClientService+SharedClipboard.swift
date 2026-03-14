@@ -43,7 +43,6 @@ extension MirageClientService {
     ) {
         guard case .connected = connectionState,
               sharedClipboardEnabled,
-              let connection,
               let mediaSecurityContext else {
             return
         }
@@ -59,8 +58,7 @@ extension MirageClientService {
                 sentAtMs: sentAtMs,
                 encryptedText: encryptedText
             )
-            let message = try ControlMessage(type: .sharedClipboardUpdate, content: update)
-            connection.send(content: message.serialize(), completion: .idempotent)
+            _ = sendControlMessageBestEffort(.sharedClipboardUpdate, content: update)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to send shared clipboard update: ")
         }

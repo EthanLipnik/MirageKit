@@ -30,7 +30,7 @@ public extension MirageClientService {
         audioConfiguration: MirageAudioConfiguration? = nil
     )
     async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let baseResolution = displayResolution ?? getMainDisplayResolution()
         guard baseResolution.width > 0, baseResolution.height > 0 else {
@@ -87,10 +87,9 @@ public extension MirageClientService {
         }
         pendingDesktopAdaptiveFallbackColorDepth = request.colorDepth
 
-        let message = try ControlMessage(type: .startDesktopStream, content: request)
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
         MirageLogger.client("Desktop start: request sent")
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.startDesktopStream, content: request)
 
         MirageLogger
             .client(
@@ -101,7 +100,7 @@ public extension MirageClientService {
 
     /// Stop the current desktop stream.
     func stopDesktopStream() async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         guard let streamID = desktopStreamID else {
             MirageLogger.client("No active desktop stream to stop")
@@ -109,8 +108,7 @@ public extension MirageClientService {
         }
 
         let request = StopDesktopStreamMessage(streamID: streamID)
-        let message = try ControlMessage(type: .stopDesktopStream, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.stopDesktopStream, content: request)
 
         MirageLogger.client("Requested stop desktop stream: \(streamID)")
     }

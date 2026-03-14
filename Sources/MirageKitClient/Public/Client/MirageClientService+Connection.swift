@@ -139,9 +139,9 @@ extension MirageClientService {
                 guard let controlChannel else {
                     throw MirageError.protocolError("Control channel unavailable")
                 }
-                try await controlChannel.stream.send(data)
+                try await controlChannel.sendSerialized(data)
             }
-            installControlConnectionObservers(controlChannel)
+            installControlSessionObservers(session)
             try await performBootstrap(over: controlChannel, provisionalHost: host)
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
@@ -218,6 +218,10 @@ extension MirageClientService {
         invalidateCurrentConnectAttempt()
         self.controlChannel = nil
         loomSession = nil
+        controlSessionStateObserverTask?.cancel()
+        controlSessionStateObserverTask = nil
+        controlSessionPathObserverTask?.cancel()
+        controlSessionPathObserverTask = nil
         sharedClipboardEnabled = false
         sharedClipboardBridge?.setActive(false)
         inputEventSender.updateSendHandler(nil)
@@ -661,39 +665,41 @@ extension MirageClientService {
         throw MirageError.protocolError("Control stream closed before receiving bootstrap response")
     }
 
-    private func installControlConnectionObservers(_ controlChannel: MirageControlChannel) {
-        let rawConnection = controlChannel.rawConnection
-        rawConnection.stateUpdateHandler = { [weak self] state in
+    private func installControlSessionObservers(_ session: LoomAuthenticatedSession) {
+        controlSessionStateObserverTask?.cancel()
+        controlSessionStateObserverTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            switch state {
-            case let .failed(error):
-                Task { @MainActor in
-                    guard self.connection === rawConnection else { return }
+            let observer = await session.makeStateObserver()
+            for await state in observer {
+                guard self.loomSession?.id == session.id else { break }
+                switch state {
+                case let .failed(reason):
                     await self.handleDisconnect(
-                        reason: error.localizedDescription,
-                        state: .error(error.localizedDescription),
+                        reason: reason,
+                        state: .error(reason),
                         notifyDelegate: self.hasCompletedBootstrap
                     )
-                }
-            case .cancelled:
-                Task { @MainActor in
-                    guard self.connection === rawConnection else { return }
+                case .cancelled:
                     await self.handleDisconnect(
                         reason: "Connection cancelled",
                         state: .disconnected,
                         notifyDelegate: self.hasCompletedBootstrap
                     )
+                default:
+                    continue
                 }
-            default:
                 break
             }
         }
-        rawConnection.pathUpdateHandler = { [weak self] path in
+
+        controlSessionPathObserverTask?.cancel()
+        controlSessionPathObserverTask = Task { @MainActor [weak self] in
             guard let self else { return }
-            let snapshot = MirageNetworkPathClassifier.classify(path)
-            MirageLogger.client("Control path updated: \(snapshot.signature)")
-            Task { @MainActor in
-                guard self.connection === rawConnection else { return }
+            let observer = await session.makePathObserver()
+            for await pathSnapshot in observer {
+                guard self.loomSession?.id == session.id else { break }
+                let snapshot = MirageNetworkPathClassifier.classify(pathSnapshot)
+                MirageLogger.client("Control path updated: \(snapshot.signature)")
                 self.handleControlPathUpdate(snapshot)
             }
         }

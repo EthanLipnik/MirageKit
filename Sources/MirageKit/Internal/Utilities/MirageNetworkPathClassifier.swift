@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Loom
 import Network
 
 package enum MirageNetworkPathKind: String, Sendable, Equatable {
@@ -55,6 +56,22 @@ package enum MirageNetworkPathClassifier {
             isConstrained: path.isConstrained,
             supportsIPv4: path.supportsIPv4,
             supportsIPv6: path.supportsIPv6
+        )
+    }
+
+    package static func classify(_ snapshot: LoomSessionNetworkPathSnapshot) -> MirageNetworkPathSnapshot {
+        classify(
+            interfaceNames: snapshot.interfaceNames,
+            usesWiFi: snapshot.usesWiFi,
+            usesWired: snapshot.usesWiredEthernet,
+            usesCellular: snapshot.usesCellular,
+            usesLoopback: snapshot.usesLoopback,
+            usesOther: snapshot.usesOther,
+            status: snapshot.status.rawValue,
+            isExpensive: snapshot.isExpensive,
+            isConstrained: snapshot.isConstrained,
+            supportsIPv4: snapshot.supportsIPv4,
+            supportsIPv6: snapshot.supportsIPv6
         )
     }
 

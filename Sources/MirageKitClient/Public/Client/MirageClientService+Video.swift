@@ -54,7 +54,7 @@ extension MirageClientService {
     /// Start UDP connection to host's data port for receiving video.
     func startVideoConnection() async throws {
         guard hostDataPort > 0 else { throw MirageError.protocolError("Host data port not set") }
-        let candidates = try resolveMediaTransportCandidates()
+        let candidates = try await resolveMediaTransportCandidates()
         let candidateSummary = candidates.map { "\($0.label)=\($0.host):p2p=\($0.includePeerToPeer)" }.joined(separator: ", ")
         MirageLogger.client("Video UDP candidates: \(candidateSummary)")
         var lastError: Error?
@@ -269,19 +269,20 @@ extension MirageClientService {
     func resolveMediaTransportCandidates(
         preferredHost: NWEndpoint.Host? = nil,
         preferredIncludePeerToPeer: Bool? = nil
-    ) throws -> [UDPTransportCandidate] {
-        guard let connection else { throw MirageError.protocolError("No TCP connection") }
-
+    ) async throws -> [UDPTransportCandidate] {
         let configuredPeerToPeer = networkConfig.enablePeerToPeer
 
         let connectedHostEndpoint = connectedHost?.endpoint
+        let controlRemoteEndpoint = await currentControlRemoteEndpoint()
+        let controlPathSnapshot = await currentControlPathSnapshot()
+        let controlPathKind = controlPathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
         let serviceHostName = Self.serviceName(from: connectedHostEndpoint)
             ?? connectedHost?.name
-            ?? Self.serviceName(from: connection.endpoint)
+            ?? Self.serviceName(from: controlRemoteEndpoint)
         let serviceHost = serviceHostName.map { NWEndpoint.Host($0) }
         let connectedHostEndpointHost = Self.host(from: connectedHostEndpoint)
-        let remoteHost = Self.host(from: connection.currentPath?.remoteEndpoint)
-        let endpointHost = connectedHostEndpointHost ?? Self.host(from: connection.endpoint)
+        let remoteHost = Self.host(from: controlPathSnapshot?.remoteEndpoint)
+        let endpointHost = connectedHostEndpointHost ?? Self.host(from: controlRemoteEndpoint)
 
         let candidates = Self.orderedMediaTransportCandidates(
             preferredHost: preferredHost,
@@ -290,7 +291,7 @@ extension MirageClientService {
             remoteHost: remoteHost,
             endpointHost: endpointHost,
             configuredPeerToPeer: configuredPeerToPeer,
-            controlPathKind: controlPathSnapshot?.kind
+            controlPathKind: controlPathKind
         )
 
         guard !candidates.isEmpty else {
@@ -626,7 +627,7 @@ extension MirageClientService {
 
     /// Request a keyframe from the host when decoder encounters errors.
     func sendKeyframeRequest(for streamID: StreamID) {
-        guard case .connected = connectionState, let connection else {
+        guard case .connected = connectionState else {
             MirageLogger.client("Cannot send keyframe request - not connected")
             return
         }
@@ -654,8 +655,7 @@ extension MirageClientService {
             return
         }
 
-        let data = message.serialize()
-        connection.send(content: data, completion: .idempotent)
+        _ = sendControlMessageBestEffort(message)
         let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
         MirageLogger.client("Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)")
     }
@@ -716,7 +716,7 @@ extension MirageClientService {
         streamScale: CGFloat? = nil
     )
     async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         guard colorDepth != nil || bitrate != nil || streamScale != nil else { return }
 
         let clampedScale = streamScale.map(clampStreamScale)
@@ -726,15 +726,7 @@ extension MirageClientService {
             bitrate: bitrate,
             streamScale: clampedScale
         )
-        let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.serialize(), completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.streamEncoderSettingsChange, content: request)
     }
 
     func handleAdaptiveFallbackTrigger(for streamID: StreamID) {

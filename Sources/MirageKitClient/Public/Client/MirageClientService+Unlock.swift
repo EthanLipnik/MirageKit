@@ -18,7 +18,7 @@ public extension MirageClientService {
     ///   - password: Password for the account.
     /// - Throws: Error if not connected or no session token.
     func sendUnlockRequest(username: String?, password: String) async throws {
-        guard let connection else { throw MirageError.protocolError("Not connected to host") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected to host") }
 
         guard let token = currentSessionToken else { throw MirageError.protocolError("No session token available") }
 
@@ -28,17 +28,8 @@ public extension MirageClientService {
             password: password
         )
 
-        let message = try ControlMessage(type: .unlockRequest, content: request)
-        let data = message.serialize()
-
         MirageInstrumentation.record(.clientUnlockRequested)
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    MirageLogger.client("Sent unlock request")
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.unlockRequest, content: request)
+        MirageLogger.client("Sent unlock request")
     }
 }

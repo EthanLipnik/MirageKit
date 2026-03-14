@@ -157,7 +157,7 @@ public extension MirageHostService {
 
         // Notify client that the app stream has ended
         var clientContext: ClientContext?
-        for context in clientsByConnection.values {
+        for context in clientsBySessionID.values {
             if context.client.id == session.clientID {
                 clientContext = context
                 break

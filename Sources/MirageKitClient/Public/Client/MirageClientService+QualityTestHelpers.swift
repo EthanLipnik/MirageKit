@@ -8,8 +8,8 @@
 //
 
 import Foundation
-import Network
 import MirageKit
+import Network
 
 @MainActor
 extension MirageClientService {
@@ -38,7 +38,7 @@ extension MirageClientService {
     }
 
     func sendPingAndAwaitPong() async throws {
-        guard case .connected = connectionState, let connection else {
+        guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
         guard pingContinuation == nil else {
@@ -59,15 +59,16 @@ extension MirageClientService {
                     result: .failure(MirageError.protocolError("Ping timed out"))
                 )
             }
-            connection.send(content: message.serialize(), completion: .contentProcessed { [weak self] error in
-                guard let error else { return }
-                Task { @MainActor [weak self] in
+            Task { @MainActor [weak self] in
+                do {
+                    try await self?.sendControlMessage(message)
+                } catch {
                     self?.completePingRequest(
                         expectedRequestID: requestID,
                         result: .failure(error)
                     )
                 }
-            })
+            }
         }
     }
 
@@ -141,8 +142,7 @@ extension MirageClientService {
         stageID: Int,
         targetBitrateBps: Int,
         durationMs: Int,
-        payloadBytes: Int,
-        connection: NWConnection
+        payloadBytes: Int
     ) async throws -> MirageQualityTestSummary.StageResult {
         let stage = MirageQualityTestPlan.Stage(
             id: stageID,
@@ -164,15 +164,7 @@ extension MirageClientService {
             plan: plan,
             payloadBytes: payloadBytes
         )
-        let message = try ControlMessage(type: .qualityTestRequest, content: request)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.serialize(), completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.qualityTestRequest, content: request)
 
         try await Task.sleep(for: .milliseconds(durationMs + 400))
         try Task.checkCancellation()

@@ -6,7 +6,6 @@
 //
 
 import Foundation
-import Network
 import MirageKit
 
 #if os(macOS)
@@ -41,7 +40,7 @@ extension MirageHostService {
         sharedClipboardStatusByClientID = sharedClipboardStatusByClientID.filter { connectedClientIDs.contains($0.key) }
 
         var hasEligibleActiveClient = false
-        for clientContext in clientsByConnection.values {
+        for clientContext in clientsBySessionID.values {
             guard Self.sharedClipboardFeatureNegotiated(clientContext.negotiatedFeatures) else {
                 sharedClipboardStatusByClientID.removeValue(forKey: clientContext.client.id)
                 continue
@@ -73,14 +72,9 @@ extension MirageHostService {
 
     func handleSharedClipboardUpdate(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
-        guard let clientContext = clientsByConnection[ObjectIdentifier(connection)],
-              clientContext.client.id == client.id else {
-            MirageLogger.host("Ignoring shared clipboard update from unknown client \(client.name)")
-            return
-        }
+        let client = clientContext.client
 
         guard Self.shouldEnableSharedClipboard(
             settingEnabled: sharedClipboardEnabled,
@@ -162,7 +156,7 @@ extension MirageHostService {
     ) {
         guard let clipboardText = MirageSharedClipboard.validatedText(text) else { return }
 
-        for clientContext in clientsByConnection.values {
+        for clientContext in clientsBySessionID.values {
             guard Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,
                 negotiatedFeatures: clientContext.negotiatedFeatures,

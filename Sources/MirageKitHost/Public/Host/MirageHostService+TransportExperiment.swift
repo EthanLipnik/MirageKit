@@ -74,7 +74,7 @@ extension MirageHostService {
            let context = clientsByID[session.client.id] {
             return context
         }
-        return clientsByConnection.values.first
+        return clientsBySessionID.values.first
     }
 }
 #endif

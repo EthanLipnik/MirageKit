@@ -17,19 +17,18 @@ public extension MirageClientService {
     /// Requests host software update status from the active host connection.
     /// - Parameter forceRefresh: When true, host refreshes update metadata before replying.
     func requestHostSoftwareUpdateStatus(forceRefresh: Bool = false) async throws {
-        guard case .connected = connectionState, let connection else {
+        guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
 
         let request = HostSoftwareUpdateStatusRequestMessage(forceRefresh: forceRefresh)
-        let message = try ControlMessage(type: .hostSoftwareUpdateStatusRequest, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.hostSoftwareUpdateStatusRequest, content: request)
     }
 
     /// Requests host software update installation from the active host connection.
     /// - Parameter trigger: Install trigger context used by host authorization logic.
     func requestHostSoftwareUpdateInstall(trigger: HostSoftwareUpdateInstallTrigger = .manual) async throws {
-        guard case .connected = connectionState, let connection else {
+        guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
 
@@ -44,8 +43,7 @@ public extension MirageClientService {
         let request = HostSoftwareUpdateInstallRequestMessage(
             trigger: requestTrigger
         )
-        let message = try ControlMessage(type: .hostSoftwareUpdateInstallRequest, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.hostSoftwareUpdateInstallRequest, content: request)
     }
 
     /// Performs a one-shot mismatch handshake requesting remote host update execution.

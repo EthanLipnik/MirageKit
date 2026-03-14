@@ -11,27 +11,19 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
-import Network
-
 @MainActor
 extension MirageHostService {
     func handleHostSoftwareUpdateStatusRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
-        guard let clientContext = clientsByConnection[ObjectIdentifier(connection)] else {
-            MirageLogger.host("Ignoring host software update status request from unknown connection")
-            return
-        }
-
         do {
             let request = try message.decode(HostSoftwareUpdateStatusRequestMessage.self)
-            let peer = peerIdentityByClientID[client.id]
+            let peer = peerIdentityByClientID[clientContext.client.id]
             let status = await resolveHostSoftwareUpdateStatus(for: peer, forceRefresh: request.forceRefresh)
 
             try await clientContext.send(.hostSoftwareUpdateStatus, content: status)
-            MirageLogger.host("Sent host software update status to \(client.name)")
+            MirageLogger.host("Sent host software update status to \(clientContext.client.name)")
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle host software update status request: ")
         }
@@ -39,21 +31,15 @@ extension MirageHostService {
 
     func handleHostSoftwareUpdateInstallRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
-        guard let clientContext = clientsByConnection[ObjectIdentifier(connection)] else {
-            MirageLogger.host("Ignoring host software update install request from unknown connection")
-            return
-        }
-
         do {
             let request = try message.decode(HostSoftwareUpdateInstallRequestMessage.self)
-            let peer = peerIdentityByClientID[client.id]
+            let peer = peerIdentityByClientID[clientContext.client.id]
             let result = await resolveHostSoftwareUpdateInstallResult(for: peer, trigger: request.trigger)
             try await clientContext.send(.hostSoftwareUpdateInstallResult, content: result)
             MirageLogger.host(
-                "Handled host software update install request from \(client.name): accepted=\(result.accepted)"
+                "Handled host software update install request from \(clientContext.client.name): accepted=\(result.accepted)"
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle host software update install request: ")

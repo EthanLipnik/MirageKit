@@ -46,11 +46,17 @@ Session setup is explicit:
 
 1. Control connection is established.
 2. Loom authenticates the peer identity and runs trust evaluation.
-3. Mirage exchanges bootstrap request/response control messages to negotiate protocol compatibility and media registration state.
+3. Mirage opens its control stream on top of the authenticated Loom session and exchanges bootstrap request/response control messages to negotiate protocol compatibility and media registration state.
 4. Client registers stream and audio channels.
 5. Host begins sending media packets once registration succeeds.
 
 This separation keeps connection ownership, protocol negotiation, and media throughput concerns isolated from one another.
+
+The control-plane transport boundary is strict:
+
+- Loom owns the authenticated control session lifecycle, remote endpoint observation, path observation, and multiplexed stream transport.
+- Mirage owns the `ControlMessage` schema, bootstrap semantics, and all post-bootstrap request/response handling carried over the Loom control stream.
+- Raw `NWConnection` access is reserved for non-control transport concerns such as UDP media/audio/quality-test sockets and temporary file-transfer listeners.
 
 ## 3. Shared Target (`Sources/MirageKit`)
 

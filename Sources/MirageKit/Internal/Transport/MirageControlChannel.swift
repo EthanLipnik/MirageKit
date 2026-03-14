@@ -7,23 +7,16 @@
 
 import Foundation
 import Loom
-import Network
 
 package final class MirageControlChannel: @unchecked Sendable {
     package static let label = "com.ethanlipnik.mirage.control.v1"
 
     package let session: LoomAuthenticatedSession
     package let stream: LoomMultiplexedStream
-    package let rawConnection: NWConnection
 
-    package init(
-        session: LoomAuthenticatedSession,
-        stream: LoomMultiplexedStream,
-        rawConnection: NWConnection
-    ) {
+    package init(session: LoomAuthenticatedSession, stream: LoomMultiplexedStream) {
         self.session = session
         self.stream = stream
-        self.rawConnection = rawConnection
     }
 
     package var incomingBytes: AsyncStream<Data> {
@@ -38,15 +31,25 @@ package final class MirageControlChannel: @unchecked Sendable {
         try await send(ControlMessage(type: type, content: content))
     }
 
+    package func sendSerialized(_ data: Data) async throws {
+        try await stream.send(data)
+    }
+
     package func sendBestEffort(_ message: ControlMessage) {
         Task {
-            try? await self.stream.send(message.serialize())
+            try? await self.sendSerialized(message.serialize())
         }
     }
 
     package func sendBestEffort(_ type: ControlMessageType, content: some Encodable) {
         guard let message = try? ControlMessage(type: type, content: content) else { return }
         sendBestEffort(message)
+    }
+
+    package func sendSerializedBestEffort(_ data: Data) {
+        Task {
+            try? await self.sendSerialized(data)
+        }
     }
 
     package func cancel() async {
@@ -56,15 +59,13 @@ package final class MirageControlChannel: @unchecked Sendable {
 
     package static func open(on session: LoomAuthenticatedSession) async throws -> MirageControlChannel {
         let stream = try await session.openStream(label: Self.label)
-        let rawConnection = await session.rawSession.connection
-        return MirageControlChannel(session: session, stream: stream, rawConnection: rawConnection)
+        return MirageControlChannel(session: session, stream: stream)
     }
 
     package static func accept(from session: LoomAuthenticatedSession) async throws -> MirageControlChannel {
-        let rawConnection = await session.rawSession.connection
         for await stream in session.incomingStreams {
             if stream.label == Self.label {
-                return MirageControlChannel(session: session, stream: stream, rawConnection: rawConnection)
+                return MirageControlChannel(session: session, stream: stream)
             }
         }
         throw MirageError.protocolError("Authenticated Loom session closed before Mirage control stream opened")

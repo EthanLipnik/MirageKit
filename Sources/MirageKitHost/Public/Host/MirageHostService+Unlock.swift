@@ -7,7 +7,6 @@
 
 import Foundation
 import MirageBootstrapShared
-import Network
 import MirageKit
 
 #if os(macOS)
@@ -18,17 +17,12 @@ extension MirageHostService {
     /// Handle an unlock request from a client
     func handleUnlockRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     )
     async {
+        let client = clientContext.client
         MirageLogger.host("Received unlock request from \(client.name)")
         MirageInstrumentation.record(.hostUnlockRequested)
-
-        guard let clientContext = clientsByConnection[ObjectIdentifier(connection)] else {
-            MirageLogger.error(.host, "No client context for unlock request")
-            return
-        }
 
         // Check if remote unlock is enabled
         guard remoteUnlockEnabled else {

@@ -8,11 +8,10 @@
 //
 
 @testable import MirageKitHost
+import Foundation
 import Testing
 
 #if os(macOS)
-import Network
-
 @Suite("Host Single-Client")
 struct HostSingleClientTests {
     @Test("Single-client slot is exclusive")
@@ -20,25 +19,16 @@ struct HostSingleClientTests {
     func singleClientSlotIsExclusive() {
         let host = MirageHostService()
 
-        let connectionA = NWConnection(
-            to: .hostPort(host: .ipv4(.loopback), port: 9),
-            using: .tcp
-        )
-        let connectionB = NWConnection(
-            to: .hostPort(host: .ipv4(.loopback), port: 9),
-            using: .tcp
-        )
+        let sessionIDA = UUID()
+        let sessionIDB = UUID()
 
-        let connectionIDA = ObjectIdentifier(connectionA)
-        let connectionIDB = ObjectIdentifier(connectionB)
+        #expect(host.reserveSingleClientSlot(for: sessionIDA))
+        #expect(host.singleClientSessionID == sessionIDA)
+        #expect(!host.reserveSingleClientSlot(for: sessionIDB))
 
-        #expect(host.reserveSingleClientSlot(for: connectionIDA))
-        #expect(host.singleClientConnectionID == connectionIDA)
-        #expect(!host.reserveSingleClientSlot(for: connectionIDB))
-
-        host.releaseSingleClientSlot(for: connectionIDA)
-        #expect(host.singleClientConnectionID == nil)
-        #expect(host.reserveSingleClientSlot(for: connectionIDB))
+        host.releaseSingleClientSlot(for: sessionIDA)
+        #expect(host.singleClientSessionID == nil)
+        #expect(host.reserveSingleClientSlot(for: sessionIDB))
     }
 
     @Test("Reconnect preemption matches same device ID")

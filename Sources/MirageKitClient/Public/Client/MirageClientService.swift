@@ -448,11 +448,12 @@ public final class MirageClientService {
     var networkConfig: LoomNetworkConfiguration
     var controlChannel: MirageControlChannel?
     public internal(set) var loomSession: LoomAuthenticatedSession?
+    @ObservationIgnored var controlSessionStateObserverTask: Task<Void, Never>?
+    @ObservationIgnored var controlSessionPathObserverTask: Task<Void, Never>?
     @ObservationIgnored var pendingConnectTask: Task<LoomAuthenticatedSession, Error>?
     @ObservationIgnored var pendingConnectTaskAttemptID: UUID?
     @ObservationIgnored var currentConnectAttemptID: UUID?
     public internal(set) var connectedHost: LoomPeer?
-    var connection: NWConnection? { controlChannel?.rawConnection }
     /// Stable device identifier for the client, persisted in UserDefaults.
     public let deviceID: UUID
     let deviceName: String

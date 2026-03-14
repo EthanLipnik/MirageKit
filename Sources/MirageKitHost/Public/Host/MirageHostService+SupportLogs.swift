@@ -10,21 +10,15 @@
 import Foundation
 import Loom
 import MirageKit
-
-#if os(macOS)
 import Network
 
+#if os(macOS)
 @MainActor
 extension MirageHostService {
     func handleHostSupportLogArchiveRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
-        guard let clientContext = clientsByConnection[ObjectIdentifier(connection)] else {
-            return
-        }
-
         do {
             let request = try message.decode(HostSupportLogArchiveRequestMessage.self)
 
@@ -42,7 +36,7 @@ extension MirageHostService {
             let listener = try await startHostSupportLogTransferListener(
                 requestID: request.requestID,
                 archiveURL: archiveURL,
-                expectedClient: client
+                expectedClient: clientContext.client
             )
 
             let transportKind = listener.transportKind
@@ -67,14 +61,12 @@ extension MirageHostService {
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle host support log archive request: ")
-            if let clientContext = clientsByConnection[ObjectIdentifier(connection)] {
-                let requestID = (try? message.decode(HostSupportLogArchiveRequestMessage.self))?.requestID
-                let response = HostSupportLogArchiveMessage(
-                    requestID: requestID,
-                    errorMessage: "Failed to export host logs."
-                )
-                try? await clientContext.send(.hostSupportLogArchive, content: response)
-            }
+            let requestID = (try? message.decode(HostSupportLogArchiveRequestMessage.self))?.requestID
+            let response = HostSupportLogArchiveMessage(
+                requestID: requestID,
+                errorMessage: "Failed to export host logs."
+            )
+            try? await clientContext.send(.hostSupportLogArchive, content: response)
         }
     }
 

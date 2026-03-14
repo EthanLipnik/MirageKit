@@ -14,28 +14,33 @@ import MirageKit
 
 /// Context for a connected client including their connections
 struct ClientContext {
+    let sessionID: UUID
     let client: MirageConnectedClient
     let negotiatedFeatures: MirageFeatureSet
     let controlChannel: MirageControlChannel
+    let remoteEndpoint: NWEndpoint?
+    let pathSnapshot: LoomSessionNetworkPathSnapshot?
     var udpConnection: NWConnection?
 
     /// Check if connection is peer-to-peer (local network, low latency)
     /// Returns true when connected over local WiFi or Ethernet to a local network address
     var isPeerToPeer: Bool {
-        Self.isPeerToPeerConnection(rawConnection)
+        Self.isPeerToPeerConnection(
+            remoteEndpoint: remoteEndpoint,
+            pathSnapshot: pathSnapshot
+        )
     }
 
-    var rawConnection: NWConnection {
-        controlChannel.rawConnection
-    }
+    static func isPeerToPeerConnection(
+        remoteEndpoint: NWEndpoint?,
+        pathSnapshot: LoomSessionNetworkPathSnapshot?
+    ) -> Bool {
+        guard let pathSnapshot else { return false }
 
-    static func isPeerToPeerConnection(_ connection: NWConnection) -> Bool {
-        guard let path = connection.currentPath else { return false }
-
-        let isLocalInterface = path.usesInterfaceType(.wifi) || path.usesInterfaceType(.wiredEthernet)
+        let isLocalInterface = pathSnapshot.usesWiFi || pathSnapshot.usesWiredEthernet
         guard isLocalInterface else { return false }
 
-        guard case let .hostPort(host, _) = connection.endpoint else { return false }
+        guard case let .hostPort(host, _) = remoteEndpoint ?? pathSnapshot.remoteEndpoint else { return false }
         return isLocalNetworkHost("\(host)")
     }
 
@@ -74,6 +79,10 @@ struct ClientContext {
         try await controlChannel.send(message)
     }
 
+    func send(_ message: ControlMessage) async throws {
+        try await controlChannel.send(message)
+    }
+
     /// Queue a control message over TCP without awaiting contentProcessed.
     /// Preferred for high-frequency real-time interaction updates where latest-state wins.
     /// Returns false when the message cannot be encoded.
@@ -82,6 +91,10 @@ struct ClientContext {
         guard let message = try? ControlMessage(type: type, content: content) else { return false }
         controlChannel.sendBestEffort(message)
         return true
+    }
+
+    func sendBestEffort(_ message: ControlMessage) {
+        controlChannel.sendBestEffort(message)
     }
 
     /// Send video data over UDP

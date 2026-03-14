@@ -276,7 +276,7 @@ extension MirageHostService {
 
     /// Send content bounds update to client
     func sendContentBoundsUpdate(streamID: StreamID, bounds: CGRect, to client: MirageConnectedClient) async {
-        guard let clientContext = clientsByConnection.values.first(where: { $0.client.id == client.id }) else { return }
+        guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) else { return }
 
         let message = ContentBoundsUpdateMessage(streamID: streamID, bounds: bounds)
         do {
@@ -591,7 +591,7 @@ extension MirageHostService {
         }
 
         guard let session = activeSessionByStreamID[streamID] else { return }
-        guard let clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id }) else { return }
+        guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id }) else { return }
 
         let message = await StreamStartedMessage(
             streamID: streamID,

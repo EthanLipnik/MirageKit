@@ -72,18 +72,11 @@ private final class MirageStreamReceiveSource: @unchecked Sendable {
 @MainActor
 extension MirageHostService {
     /// Continuously receive and handle control messages from a client.
-    func startReceivingFromClient(
-        controlChannel: MirageControlChannel,
-        client: MirageConnectedClient,
-        initialBuffer: Data = Data()
-    ) {
-        let connection = controlChannel.rawConnection
-        let connectionID = ObjectIdentifier(connection)
-
-        let source = MirageStreamReceiveSource(stream: controlChannel.incomingBytes)
+    func startReceivingFromClient(clientContext: ClientContext, initialBuffer: Data = Data()) {
+        let source = MirageStreamReceiveSource(stream: clientContext.controlChannel.incomingBytes)
 
         let receiveLoop = HostReceiveLoop(
-            clientName: client.name,
+            clientName: clientContext.client.name,
             maxControlBacklog: 256,
             errorTimeoutSeconds: clientErrorTimeoutSeconds,
             receiveChunk: source.receiveNext,
@@ -91,7 +84,7 @@ extension MirageHostService {
                 guard let self else { return }
                 self.inputQueue.async { [weak self] in
                     guard let self else { return }
-                    self.handleInputEventFast(message, from: client)
+                    self.handleInputEventFast(message, from: clientContext.client)
                 }
             },
             dispatchControlMessage: { [weak self] message, completion in
@@ -99,17 +92,17 @@ extension MirageHostService {
                     completion()
                     return
                 }
-                self.dispatchControlWork(clientID: client.id, completion: completion) { [weak self] in
+                self.dispatchControlWork(clientID: clientContext.client.id, completion: completion) { [weak self] in
                     guard let self else { return }
-                    guard self.clientsByID[client.id] != nil else { return }
-                    await self.handleClientMessage(message, from: client, connection: connection)
+                    guard let liveClientContext = self.clientsByID[clientContext.client.id] else { return }
+                    await self.handleClientMessage(message, from: liveClientContext)
                 }
             },
             onTerminal: { [weak self] reason in
                 guard let self else { return }
-                self.dispatchControlWork(clientID: client.id) { [weak self] in
+                self.dispatchControlWork(clientID: clientContext.client.id) { [weak self] in
                     guard let self else { return }
-                    self.removeReceiveLoop(connectionID: connectionID)
+                    self.removeReceiveLoop(sessionID: clientContext.sessionID)
 
                     switch reason {
                     case .complete:
@@ -117,39 +110,39 @@ extension MirageHostService {
                     case let .fatalError(error):
                         if LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
                             MirageLogger.host(
-                                "Client \(client.name) disconnected after fatal transport error: \(error)"
+                                "Client \(clientContext.client.name) disconnected after fatal transport error: \(error)"
                             )
                         } else {
                             MirageLogger.error(
                                 .host,
-                                "Client \(client.name) fatal connection error - disconnecting: \(error)"
+                                "Client \(clientContext.client.name) fatal connection error - disconnecting: \(error)"
                             )
                         }
                     case let .persistentError(error):
                         if LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
                             MirageLogger.host(
-                                "Client \(client.name) disconnected after persistent transport errors: \(error)"
+                                "Client \(clientContext.client.name) disconnected after persistent transport errors: \(error)"
                             )
                         } else {
                             MirageLogger.error(
                                 .host,
-                                "Client \(client.name) persistent receive errors - disconnecting: \(error)"
+                                "Client \(clientContext.client.name) persistent receive errors - disconnecting: \(error)"
                             )
                         }
                     case let .protocolViolation(reason):
                         MirageLogger.error(
                             .host,
-                            "Client \(client.name) protocol violation - disconnecting: \(reason)"
+                            "Client \(clientContext.client.name) protocol violation - disconnecting: \(reason)"
                         )
                     case let .receiveBufferOverflow(limit):
                         MirageLogger.error(
                             .host,
-                            "Client \(client.name) control receive buffer exceeded \(limit) bytes - disconnecting"
+                            "Client \(clientContext.client.name) control receive buffer exceeded \(limit) bytes - disconnecting"
                         )
                     }
 
-                    if self.clientsByID[client.id] != nil {
-                        await self.disconnectClient(client)
+                    if self.clientsByID[clientContext.client.id] != nil {
+                        await self.disconnectClient(clientContext.client)
                     }
                 }
             },
@@ -159,7 +152,7 @@ extension MirageHostService {
             }
         )
 
-        self.storeReceiveLoop(receiveLoop, connectionID: connectionID)
+        self.storeReceiveLoop(receiveLoop, sessionID: clientContext.sessionID)
         receiveLoop.start(initialBuffer: initialBuffer)
     }
 }

@@ -49,7 +49,7 @@ extension MirageHostService {
     }
 
     func findClientContext(clientID: UUID) -> ClientContext? {
-        clientsByConnection.values.first { $0.client.id == clientID }
+        clientsBySessionID.values.first { $0.client.id == clientID }
     }
 
     func setupAppStreamManagerCallbacks() {

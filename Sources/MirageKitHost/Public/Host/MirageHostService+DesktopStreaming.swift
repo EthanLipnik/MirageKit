@@ -548,7 +548,7 @@ extension MirageHostService {
 
             if sharedConsumerActive { await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.loginDisplay) }
 
-            if sessionState != .ready, !clientsByConnection.isEmpty { await startLoginDisplayStreamIfNeeded() }
+            if sessionState != .ready, !clientsBySessionID.isEmpty { await startLoginDisplayStreamIfNeeded() }
         }
 
         if activeStreams.isEmpty, loginDisplayContext == nil { await PowerAssertionManager.shared.disable() }

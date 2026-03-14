@@ -14,9 +14,7 @@ import MirageKit
 public extension MirageClientService {
     /// Request updated window list from host.
     func requestWindowList() async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
-
-        let message = ControlMessage(type: .windowListRequest)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        try await sendControlMessage(ControlMessage(type: .windowListRequest))
     }
 }

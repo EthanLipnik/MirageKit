@@ -54,18 +54,18 @@ extension MirageHostService {
 
         delegate?.hostService(self, sessionStateChanged: newState)
 
-        for clientContext in clientsByConnection.values {
+        for clientContext in clientsBySessionID.values {
             await sendSessionState(to: clientContext)
         }
 
         if newState == .ready {
             await stopLoginDisplayStream(newState: newState)
             await unlockManager?.releaseDisplayAssertion()
-            for clientContext in clientsByConnection.values {
+            for clientContext in clientsBySessionID.values {
                 await sendWindowList(to: clientContext)
             }
             await syncAppListRequestDeferralForInteractiveWorkload()
-        } else if !clientsByConnection.isEmpty {
+        } else if !clientsBySessionID.isEmpty {
             await startLoginDisplayStreamIfNeeded()
         }
 
@@ -100,7 +100,7 @@ extension MirageHostService {
 
     func startSessionRefreshLoopIfNeeded() {
         guard sessionRefreshTask == nil else { return }
-        guard !clientsByConnection.isEmpty else { return }
+        guard !clientsBySessionID.isEmpty else { return }
 
         let interval = sessionRefreshInterval
         sessionRefreshGeneration &+= 1
@@ -111,7 +111,7 @@ extension MirageHostService {
             while !Task.isCancelled {
                 try? await Task.sleep(for: interval)
                 if Task.isCancelled { break }
-                if clientsByConnection.isEmpty { break }
+                if clientsBySessionID.isEmpty { break }
                 await refreshSessionStateIfNeeded()
             }
             if generation == sessionRefreshGeneration { sessionRefreshTask = nil }
@@ -120,7 +120,7 @@ extension MirageHostService {
     }
 
     func stopSessionRefreshLoopIfIdle() {
-        guard clientsByConnection.isEmpty || connectedClients.isEmpty else { return }
+        guard clientsBySessionID.isEmpty || connectedClients.isEmpty else { return }
         sessionRefreshTask?.cancel()
         sessionRefreshTask = nil
         sessionRefreshGeneration &+= 1

@@ -124,17 +124,16 @@ extension MirageHostService {
     }
 
     private func rejectMalformedAppListRequest(
-        from client: MirageConnectedClient,
-        connection: NWConnection,
+        from clientContext: ClientContext,
         reason: String
     ) {
-        MirageLogger.host("Rejecting malformed app list request from \(client.name): \(reason)")
+        MirageLogger.host("Rejecting malformed app list request from \(clientContext.client.name): \(reason)")
         let payload = ErrorMessage(
             code: .invalidMessage,
             message: "Invalid app list request payload"
         )
         if let response = try? ControlMessage(type: .error, content: payload) {
-            connection.send(content: response.serialize(), completion: .idempotent)
+            clientContext.sendBestEffort(response)
         }
     }
 
@@ -170,18 +169,17 @@ extension MirageHostService {
 
     func handleAppListRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     )
     async {
         do {
             let request = try message.decode(AppListRequestMessage.self)
             MirageLogger.host(
-                "Client \(client.name) requested app list (requestID: \(request.requestID.uuidString), forceRefresh: \(request.forceRefresh), forceIconReset: \(request.forceIconReset), priorityCount: \(request.priorityBundleIdentifiers.count))"
+                "Client \(clientContext.client.name) requested app list (requestID: \(request.requestID.uuidString), forceRefresh: \(request.forceRefresh), forceIconReset: \(request.forceIconReset), priorityCount: \(request.priorityBundleIdentifiers.count))"
             )
 
             updatePendingAppListRequest(
-                clientID: client.id,
+                clientID: clientContext.client.id,
                 requestID: request.requestID,
                 requestedForceRefresh: request.forceRefresh,
                 forceIconReset: request.forceIconReset,
@@ -192,8 +190,7 @@ extension MirageHostService {
         } catch {
             if Self.isMalformedAppListRequestError(error) {
                 rejectMalformedAppListRequest(
-                    from: client,
-                    connection: connection,
+                    from: clientContext,
                     reason: Self.malformedAppListRequestReason(from: error)
                 )
                 return
@@ -205,13 +202,13 @@ extension MirageHostService {
 
     func handleSelectApp(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     )
     async {
         var pendingLightsOutSetup = false
         do {
             let request = try message.decode(SelectAppMessage.self)
+            let client = clientContext.client
             guard !disconnectingClientIDs.contains(client.id),
                   clientsByID[client.id] != nil else {
                 MirageLogger.host("Ignoring selectApp from disconnected client \(client.name)")
@@ -240,7 +237,7 @@ extension MirageHostService {
                     message: "App streaming requires displayWidth/displayHeight"
                 )
                 if let response = try? ControlMessage(type: .error, content: error) {
-                    connection.send(content: response.serialize(), completion: .idempotent)
+                    clientContext.sendBestEffort(response)
                 }
                 return
             }
@@ -260,7 +257,7 @@ extension MirageHostService {
             guard let app = apps
                 .first(where: { $0.bundleIdentifier.lowercased() == request.bundleIdentifier.lowercased() }) else {
                 MirageLogger.host("App \(request.bundleIdentifier) not found")
-                sendAppSelectionError(over: connection, code: .windowNotFound, message: "App not found: \(request.bundleIdentifier)")
+                sendAppSelectionError(to: clientContext, code: .windowNotFound, message: "App not found: \(request.bundleIdentifier)")
                 return
             }
 
@@ -280,30 +277,30 @@ extension MirageHostService {
                     break
                 case .rejectOtherClientOwner:
                     sendAppSelectionError(
-                        over: connection,
+                        to: clientContext,
                         code: .windowNotFound,
                         message: "\(app.name) is already being streamed to another client"
                     )
                     return
                 case .rejectSessionNotStreaming:
                     sendAppSelectionError(
-                        over: connection,
+                        to: clientContext,
                         code: .windowNotFound,
                         message: "\(app.name) is still starting; try again in a moment."
                     )
                     return
                 case .rejectVisibleSlotCapReached:
                     sendAppSelectionError(
-                        over: connection,
+                        to: clientContext,
                         code: .windowNotFound,
                         message: "Max app windows reached for \(app.name)"
                     )
                     return
                 }
                 guard !disconnectingClientIDs.contains(existingSession.clientID),
-                      let clientContext = findClientContext(clientID: existingSession.clientID) else {
+                      let existingClientContext = findClientContext(clientID: existingSession.clientID) else {
                     sendAppSelectionError(
-                        over: connection,
+                        to: clientContext,
                         code: .windowNotFound,
                         message: "Client context unavailable for \(app.name)"
                     )
@@ -313,14 +310,14 @@ extension MirageHostService {
                 let expansionResult = await startAdditionalStreamForExistingAppSession(
                     app: app,
                     session: existingSession,
-                    clientContext: clientContext,
+                    clientContext: existingClientContext,
                     selectRequest: request,
                     targetFrameRate: targetFrameRate,
                     requestedDisplayResolution: requestedDisplayResolution
                 )
                 switch expansionResult {
                 case let .success(added):
-                    try? await clientContext.send(.windowAddedToStream, content: added)
+                    try? await existingClientContext.send(.windowAddedToStream, content: added)
                     await sendAppWindowInventoryUpdate(bundleIdentifier: app.bundleIdentifier, clientID: client.id)
                     await startAppStreamGovernorsIfNeeded()
                     await markAppStreamInteraction(streamID: added.streamID, reason: "select app expansion")
@@ -334,7 +331,7 @@ extension MirageHostService {
                     return
                 case let .failure(reason):
                     sendAppSelectionError(
-                        over: connection,
+                        to: clientContext,
                         code: .windowNotFound,
                         message: reason
                     )
@@ -361,7 +358,7 @@ extension MirageHostService {
             ) != nil else {
                 MirageLogger.host("Failed to start app session for \(app.name)")
                 sendAppSelectionError(
-                    over: connection,
+                    to: clientContext,
                     code: .windowNotFound,
                     message: "\(app.name) is already being streamed to another client"
                 )
@@ -377,7 +374,7 @@ extension MirageHostService {
                 MirageLogger.host("Failed to launch app \(app.name)")
                 await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
                 sendAppSelectionError(
-                    over: connection,
+                    to: clientContext,
                     code: .windowNotFound,
                     message: "Failed to launch \(app.name)"
                 )
@@ -404,7 +401,7 @@ extension MirageHostService {
                 await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
                 await restoreStageManagerAfterAppStreamingIfNeeded()
                 sendAppSelectionError(
-                    over: connection,
+                    to: clientContext,
                     code: .windowNotFound,
                     message: "Failed to start \(app.name): \(startupResult.failureSummary)"
                 )
@@ -421,7 +418,7 @@ extension MirageHostService {
                 windows: startupResult.windows.sorted { $0.streamID < $1.streamID }
             )
             let responseMessage = try ControlMessage(type: .appStreamStarted, content: response)
-            connection.send(content: responseMessage.serialize(), completion: .idempotent)
+            clientContext.sendBestEffort(responseMessage)
             await sendAppWindowInventoryUpdate(bundleIdentifier: app.bundleIdentifier, clientID: client.id)
             await startAppStreamGovernorsIfNeeded()
             await recomputeAppSessionBitrateBudget(bundleIdentifier: app.bundleIdentifier, reason: "appStreamStarted")
@@ -440,8 +437,7 @@ extension MirageHostService {
 
     func handleAppWindowSwapRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
         do {
             let request = try message.decode(AppWindowSwapRequestMessage.self)
@@ -449,10 +445,10 @@ extension MirageHostService {
                 bundleIdentifier: request.bundleIdentifier,
                 targetSlotStreamID: request.targetSlotStreamID,
                 targetWindowID: request.targetWindowID,
-                clientID: client.id
+                clientID: clientContext.client.id
             )
             if let response = try? ControlMessage(type: .appWindowSwapResult, content: result) {
-                connection.send(content: response.serialize(), completion: .idempotent)
+                clientContext.sendBestEffort(response)
             }
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle app window swap request: ")
@@ -464,7 +460,7 @@ extension MirageHostService {
                 reason: error.localizedDescription
             )
             if let response = try? ControlMessage(type: .appWindowSwapResult, content: fallback) {
-                connection.send(content: response.serialize(), completion: .idempotent)
+                clientContext.sendBestEffort(response)
             }
         }
     }
@@ -1349,13 +1345,13 @@ extension MirageHostService {
     }
 
     private func sendAppSelectionError(
-        over connection: NWConnection,
+        to clientContext: ClientContext,
         code: ErrorMessage.ErrorCode,
         message: String
     ) {
         let error = ErrorMessage(code: code, message: message)
         guard let response = try? ControlMessage(type: .error, content: error) else { return }
-        connection.send(content: response.serialize(), completion: .idempotent)
+        clientContext.sendBestEffort(response)
     }
 
     func isInteractiveWorkloadActiveForAppListRequests() -> Bool {

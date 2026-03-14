@@ -157,14 +157,14 @@ public final class MirageHostService {
     var activeSessionByStreamID: [StreamID: MirageStreamSession] = [:]
     var activeStreamIDByWindowID: [WindowID: StreamID] = [:]
     var activeWindowIDByStreamID: [StreamID: WindowID] = [:]
-    var clientsByConnection: [ObjectIdentifier: ClientContext] = [:]
+    var clientsBySessionID: [UUID: ClientContext] = [:]
     var clientsByID: [UUID: ClientContext] = [:]
     var disconnectingClientIDs: Set<UUID> = []
     var peerIdentityByClientID: [UUID: LoomPeerIdentity] = [:]
-    var singleClientConnectionID: ObjectIdentifier?
+    var singleClientSessionID: UUID?
     nonisolated let transportRegistry = HostTransportRegistry()
     nonisolated let streamRegistry = HostStreamRegistry()
-    nonisolated let receiveLoopsByConnectionID = Locked<[ObjectIdentifier: HostReceiveLoop]>([:])
+    nonisolated let receiveLoopsBySessionID = Locked<[UUID: HostReceiveLoop]>([:])
     nonisolated let controlWorkersByClientID = Locked<[UUID: SerialWorker]>([:])
     nonisolated let transportWorker = SerialWorker(
         label: "com.mirage.host.transport",
@@ -202,9 +202,6 @@ public final class MirageHostService {
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
     var qualityTestBenchmarkIDsByClientID: [UUID: UUID] = [:]
 
-    // Track first error time per client for graceful disconnect on persistent errors
-    // If errors persist past the timeout, disconnect the client.
-    var clientFirstErrorTime: [ObjectIdentifier: CFAbsoluteTime] = [:]
     let clientErrorTimeoutSeconds: CFAbsoluteTime = 2.0
 
     /// Approval timeout to avoid wedging the single-client slot.
@@ -451,7 +448,7 @@ public final class MirageHostService {
         _ client: MirageConnectedClient
     )
         -> Void)?
-    typealias ControlMessageHandler = @MainActor (ControlMessage, MirageConnectedClient, NWConnection) async -> Void
+    typealias ControlMessageHandler = @MainActor (ControlMessage, ClientContext) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
 

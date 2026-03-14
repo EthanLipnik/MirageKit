@@ -37,7 +37,7 @@ extension MirageHostService {
             self.loginDisplayRetryTimer = nil
 
             guard self.sessionState != .ready else { return }
-            guard !self.clientsByConnection.isEmpty else { return }
+            guard !self.clientsBySessionID.isEmpty else { return }
             guard self.loginDisplayContext == nil else { return }
 
             await self.startLoginDisplayStreamIfNeeded()
@@ -67,7 +67,7 @@ extension MirageHostService {
     /// Start login display stream if not already running
     func startLoginDisplayStreamIfNeeded() async {
         guard sessionState != .ready else { return }
-        guard !clientsByConnection.isEmpty else {
+        guard !clientsBySessionID.isEmpty else {
             MirageLogger.host("Skipping login display start: no connected clients")
             return
         }
@@ -180,7 +180,7 @@ extension MirageHostService {
         func shouldContinueStart(expectedGeneration: UInt64) -> Bool {
             guard expectedGeneration == loginDisplayStartGeneration else { return false }
             guard sessionState != .ready else { return false }
-            guard !clientsByConnection.isEmpty else { return false }
+            guard !clientsBySessionID.isEmpty else { return false }
             guard loginDisplayStreamID == streamID else { return false }
             guard loginDisplayContext === context else { return false }
             return true
@@ -411,7 +411,7 @@ extension MirageHostService {
 
     func restartLoginDisplayStream(reason: String) async {
         guard sessionState != .ready else { return }
-        guard !clientsByConnection.isEmpty else {
+        guard !clientsBySessionID.isEmpty else {
             await stopLoginDisplayStream(newState: sessionState)
             return
         }
@@ -448,7 +448,7 @@ extension MirageHostService {
             dimensionToken: dimensionToken
         )
 
-        for clientContext in clientsByConnection.values {
+        for clientContext in clientsBySessionID.values {
             try? await clientContext.send(.loginDisplayReady, content: message)
         }
     }
@@ -460,7 +460,7 @@ extension MirageHostService {
             newState: newState
         )
 
-        for clientContext in clientsByConnection.values {
+        for clientContext in clientsBySessionID.values {
             try? await clientContext.send(.loginDisplayStopped, content: message)
         }
     }
@@ -468,7 +468,7 @@ extension MirageHostService {
     func scheduleLoginDisplayRetry(reason: String) async {
         guard loginDisplayRetryTimer == nil else { return }
         guard sessionState != .ready else { return }
-        guard !clientsByConnection.isEmpty else { return }
+        guard !clientsBySessionID.isEmpty else { return }
         guard loginDisplayContext == nil else { return }
         guard loginDisplayRetryAttempts < loginDisplayRetryLimit else {
             MirageLogger.error(

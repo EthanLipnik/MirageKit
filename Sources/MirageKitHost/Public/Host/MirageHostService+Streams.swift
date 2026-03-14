@@ -643,7 +643,7 @@ public extension MirageHostService {
         }
 
         // Only notify client AFTER capture successfully started
-        if let clientContext = clientsByConnection.values.first(where: { $0.client.id == client.id }) {
+        if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) {
             let streamWindow = session.window
             let minSize = minimumSizesByWindowID[streamWindow.id]
             let fallbackMin = fallbackMinimumSize(for: streamWindow.frame)
@@ -1226,7 +1226,7 @@ public extension MirageHostService {
             // Get updated dimension token after resize
             let dimensionToken = await context.getDimensionToken()
 
-            if let clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id }) {
+            if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id }) {
                 let minSize = minimumSizesByWindowID[updatedWindow.id]
                 let fallbackMin = fallbackMinimumSize(for: updatedWindow.frame)
                 let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))
@@ -1295,7 +1295,7 @@ public extension MirageHostService {
             let dimensionToken = await context.getDimensionToken()
 
             // Notify the client of the dimensions
-            if let clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id }) {
+            if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id }) {
                 let minSize = minimumSizesByWindowID[windowID]
                 let fallbackMin = fallbackMinimumSize(for: latestFrame)
                 let minWidth = Int(minSize?.width ?? CGFloat(fallbackMin.minWidth))

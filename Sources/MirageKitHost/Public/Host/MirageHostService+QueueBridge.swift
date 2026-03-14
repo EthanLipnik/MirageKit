@@ -56,22 +56,22 @@ extension MirageHostService {
 
     nonisolated func storeReceiveLoop(
         _ loop: HostReceiveLoop,
-        connectionID: ObjectIdentifier
+        sessionID: UUID
     ) {
-        receiveLoopsByConnectionID.withLock { loops in
-            loops[connectionID] = loop
+        receiveLoopsBySessionID.withLock { loops in
+            loops[sessionID] = loop
         }
     }
 
-    nonisolated func removeReceiveLoop(connectionID: ObjectIdentifier) {
-        receiveLoopsByConnectionID.withLock { loops in
-            loops.removeValue(forKey: connectionID)
+    nonisolated func removeReceiveLoop(sessionID: UUID) {
+        receiveLoopsBySessionID.withLock { loops in
+            loops.removeValue(forKey: sessionID)
         }
     }
 
-    nonisolated func stopReceiveLoop(connectionID: ObjectIdentifier) {
-        let loop = receiveLoopsByConnectionID.withLock { loops in
-            loops.removeValue(forKey: connectionID)
+    nonisolated func stopReceiveLoop(sessionID: UUID) {
+        let loop = receiveLoopsBySessionID.withLock { loops in
+            loops.removeValue(forKey: sessionID)
         }
         loop?.stop()
     }

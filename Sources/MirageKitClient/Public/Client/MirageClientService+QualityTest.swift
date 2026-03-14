@@ -17,7 +17,7 @@ extension MirageClientService {
         includeThroughput: Bool = true,
         onStageUpdate: (@MainActor (_ currentStage: Int, _ totalStages: Int) -> Void)? = nil
     ) async throws -> MirageQualityTestSummary {
-        guard case .connected = connectionState, let connection else {
+        guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
 
@@ -54,14 +54,7 @@ extension MirageClientService {
                 plan: requestPlan,
                 payloadBytes: payloadBytes
             )
-            let requestMessage = try ControlMessage(type: .qualityTestRequest, content: request)
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                connection.send(content: requestMessage.serialize(), completion: .contentProcessed { error in
-                    if let error { continuation.resume(throwing: error) } else {
-                        continuation.resume()
-                    }
-                })
-            }
+            try await sendControlMessage(.qualityTestRequest, content: request)
         }
 
         let minTargetBitrate = 20_000_000
@@ -103,8 +96,7 @@ extension MirageClientService {
                 stageID: stageID,
                 targetBitrateBps: targetBitrate,
                 durationMs: durationMs,
-                payloadBytes: payloadBytes,
-                connection: connection
+                payloadBytes: payloadBytes
             )
             stageResults.append(stage)
 

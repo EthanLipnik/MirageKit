@@ -203,7 +203,7 @@ extension MirageClientService {
 
     /// Send display size change (points) to host when the client view bounds change.
     public func sendDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let scaledResolution = scaledDisplayResolution(newResolution)
         let now = CFAbsoluteTimeGetCurrent()
@@ -230,8 +230,6 @@ extension MirageClientService {
             displayWidth: Int(scaledResolution.width),
             displayHeight: Int(scaledResolution.height)
         )
-        let message = try ControlMessage(type: .displayResolutionChange, content: request)
-
         MirageLogger
             .client(
                 "Sending display size change for stream \(streamID): " +
@@ -239,13 +237,7 @@ extension MirageClientService {
                     "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
             )
 
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.serialize(), completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.displayResolutionChange, content: request)
     }
 
     nonisolated static func shouldSuppressDuplicateDisplayResolutionChange(
@@ -267,24 +259,15 @@ extension MirageClientService {
         scale: CGFloat
     )
     async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let clampedScale = clampStreamScale(scale)
         let request = StreamScaleChangeMessage(
             streamID: streamID,
             streamScale: clampedScale
         )
-        let message = try ControlMessage(type: .streamScaleChange, content: request)
-
         MirageLogger.client("Sending stream scale change for stream \(streamID): \(clampedScale)")
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.serialize(), completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.streamScaleChange, content: request)
     }
 
     func sendStreamRefreshRateChange(
@@ -293,7 +276,7 @@ extension MirageClientService {
         forceDisplayRefresh: Bool = false
     )
     async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let clamped = clampRefreshRate(maxRefreshRate)
         let request = StreamRefreshRateChangeMessage(
@@ -301,17 +284,8 @@ extension MirageClientService {
             maxRefreshRate: clamped,
             forceDisplayRefresh: forceDisplayRefresh ? true : nil
         )
-        let message = try ControlMessage(type: .streamRefreshRateChange, content: request)
-
         MirageLogger.client("Sending refresh rate override for stream \(streamID): \(clamped)Hz")
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            connection.send(content: message.serialize(), completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await sendControlMessage(.streamRefreshRateChange, content: request)
     }
 
     func updateStreamRefreshRateOverride(streamID: StreamID, maxRefreshRate: Int) {

@@ -71,7 +71,7 @@ extension MirageHostService {
         // Find the client context - check both app streams and desktop stream
         let clientContext: ClientContext?
         if let session = activeSessionByStreamID[streamID] {
-            clientContext = clientsByConnection.values.first(where: { $0.client.id == session.client.id })
+            clientContext = clientsBySessionID.values.first(where: { $0.client.id == session.client.id })
         } else if streamID == desktopStreamID {
             clientContext = desktopStreamClientContext
         } else {

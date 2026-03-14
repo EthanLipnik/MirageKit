@@ -16,19 +16,19 @@ import MirageKit
 extension MirageHostService {
     func handleQualityTestRequest(
         _ message: ControlMessage,
-        from client: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
         guard let request = try? message.decode(QualityTestRequestMessage.self) else {
             MirageLogger.host("Failed to decode quality test request")
             return
         }
 
+        let client = clientContext.client
         let lastBenchmarkID = qualityTestBenchmarkIDsByClientID[client.id]
         if lastBenchmarkID != request.testID {
             qualityTestBenchmarkIDsByClientID[client.id] = request.testID
             Task.detached { [weak self] in
-                await self?.sendCodecBenchmarkResult(testID: request.testID, to: connection)
+                await self?.sendCodecBenchmarkResult(testID: request.testID, to: clientContext)
             }
         }
 
@@ -52,7 +52,7 @@ extension MirageHostService {
         qualityTestTasksByClientID[client.id] = task
     }
 
-    private func sendCodecBenchmarkResult(testID: UUID, to connection: NWConnection) async {
+    private func sendCodecBenchmarkResult(testID: UUID, to clientContext: ClientContext) async {
         let store = MirageCodecBenchmarkStore()
         let encodeMs = try? await MirageCodecBenchmark.runEncodeBenchmark()
         let record = MirageCodecBenchmarkStore.Record(
@@ -76,7 +76,7 @@ extension MirageHostService {
         )
 
         if let message = try? ControlMessage(type: .qualityTestResult, content: result) {
-            connection.send(content: message.serialize(), completion: .idempotent)
+            clientContext.sendBestEffort(message)
         }
     }
 

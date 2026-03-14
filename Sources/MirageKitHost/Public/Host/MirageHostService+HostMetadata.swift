@@ -11,19 +11,12 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
-import Network
-
 @MainActor
 extension MirageHostService {
     func handleHostHardwareIconRequest(
         _ message: ControlMessage,
-        from _: MirageConnectedClient,
-        connection: NWConnection
+        from clientContext: ClientContext
     ) async {
-        guard let clientContext = clientsByConnection[ObjectIdentifier(connection)] else {
-            return
-        }
-
         do {
             let request = try message.decode(HostHardwareIconRequestMessage.self)
             let maxPixelSize = min(max(request.preferredMaxPixelSize, 128), 1024)

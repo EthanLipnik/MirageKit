@@ -53,13 +53,17 @@ extension MirageHostService {
         }
 
         let peerIdentity = context.peerIdentity
-        let connection = await session.rawSession.connection
-        let connectionID = ObjectIdentifier(connection)
-        let origin: MirageHostConnectionOrigin = inferOrigin(for: connection)
+        let sessionID = session.id
+        let remoteEndpoint = await session.remoteEndpoint
+        let pathSnapshot = await session.pathSnapshot
+        let origin: MirageHostConnectionOrigin = inferOrigin(
+            remoteEndpoint: remoteEndpoint,
+            pathSnapshot: pathSnapshot
+        )
 
         await preemptExistingClientIfSuperseded(by: peerIdentity)
 
-        guard reserveSingleClientSlot(for: connectionID) else {
+        guard reserveSingleClientSlot(for: sessionID) else {
             let controlChannel = try? await MirageControlChannel.accept(from: session)
             if let controlChannel {
                 let response = MirageSessionBootstrapResponse(
@@ -81,8 +85,8 @@ extension MirageHostService {
         }
 
         defer {
-            if clientsByConnection[connectionID] == nil {
-                releaseSingleClientSlot(for: connectionID)
+            if clientsBySessionID[sessionID] == nil {
+                releaseSingleClientSlot(for: sessionID)
             }
         }
 
@@ -94,7 +98,8 @@ extension MirageHostService {
             let responseResult = try await makeBootstrapResponse(
                 for: bootstrap,
                 peerIdentity: peerIdentity,
-                connection: connection,
+                remoteEndpoint: remoteEndpoint,
+                pathSnapshot: pathSnapshot,
                 autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice
             )
             try await controlChannel.send(.sessionBootstrapResponse, content: responseResult.response)
@@ -118,20 +123,23 @@ extension MirageHostService {
             )
 
             let clientContext = ClientContext(
+                sessionID: sessionID,
                 client: client,
                 negotiatedFeatures: responseResult.response.selectedFeatures,
                 controlChannel: controlChannel,
+                remoteEndpoint: remoteEndpoint,
+                pathSnapshot: pathSnapshot,
                 udpConnection: nil
             )
             connectedClients.append(client)
-            clientsByConnection[connectionID] = clientContext
+            clientsBySessionID[sessionID] = clientContext
             clientsByID[client.id] = clientContext
             peerIdentityByClientID[client.id] = peerIdentity
             mediaSecurityByClientID[client.id] = responseResult.mediaSecurity
             mediaEncryptionEnabledByClientID[client.id] = responseResult.response.mediaEncryptionEnabled
-            singleClientConnectionID = connectionID
+            singleClientSessionID = sessionID
 
-            startReceivingFromClient(controlChannel: controlChannel, client: client)
+            startReceivingFromClient(clientContext: clientContext)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
             await session.cancel()
@@ -163,14 +171,21 @@ extension MirageHostService {
         throw MirageError.protocolError("Control stream closed before session bootstrap request")
     }
 
-    private func inferOrigin(for connection: NWConnection) -> MirageHostConnectionOrigin {
-        ClientContext.isPeerToPeerConnection(connection) ? .local : .remote
+    private func inferOrigin(
+        remoteEndpoint: NWEndpoint?,
+        pathSnapshot: LoomSessionNetworkPathSnapshot?
+    ) -> MirageHostConnectionOrigin {
+        ClientContext.isPeerToPeerConnection(
+            remoteEndpoint: remoteEndpoint,
+            pathSnapshot: pathSnapshot
+        ) ? .local : .remote
     }
 
     private func makeBootstrapResponse(
         for request: MirageSessionBootstrapRequest,
         peerIdentity: LoomPeerIdentity,
-        connection: NWConnection,
+        remoteEndpoint: NWEndpoint?,
+        pathSnapshot: LoomSessionNetworkPathSnapshot?,
         autoTrustGranted: Bool
     ) async throws -> (response: MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
         let hostName = Host.current().localizedName ?? "Mac"
@@ -226,7 +241,10 @@ extension MirageHostService {
         }
 
         let hostIdentity = try identityManager.currentIdentity()
-        let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(for: connection)
+        let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(
+            remoteEndpoint: remoteEndpoint,
+            pathSnapshot: pathSnapshot
+        )
         let udpRegistrationToken = MirageMediaSecurity.makeRegistrationToken()
         let mediaSecurity = try MirageMediaSecurity.deriveContextForAuthenticatedSession(
             identityManager: identityManager,
@@ -262,8 +280,16 @@ extension MirageHostService {
         return networkConfig.requireEncryptedMediaOnLocalNetwork
     }
 
-    func resolveAcceptedSessionMediaEncryptionPolicy(for connection: NWConnection) -> Bool {
-        mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: ClientContext.isPeerToPeerConnection(connection))
+    func resolveAcceptedSessionMediaEncryptionPolicy(
+        remoteEndpoint: NWEndpoint?,
+        pathSnapshot: LoomSessionNetworkPathSnapshot?
+    ) -> Bool {
+        mediaEncryptionEnabledForAcceptedSession(
+            isPeerToPeer: ClientContext.isPeerToPeerConnection(
+                remoteEndpoint: remoteEndpoint,
+                pathSnapshot: pathSnapshot
+            )
+        )
     }
 
     func mediaSecurityContextForMediaPayload(clientID: UUID) -> MirageMediaSecurityContext? {
@@ -310,7 +336,7 @@ extension MirageHostService {
     }
 
     func preemptExistingClientIfSuperseded(by incomingPeerIdentity: LoomPeerIdentity) async {
-        guard let existingClient = clientsByConnection.values.first?.client else { return }
+        guard let existingClient = clientsBySessionID.values.first?.client else { return }
         guard shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) else { return }
 
         MirageLogger.host(
@@ -319,21 +345,21 @@ extension MirageHostService {
         await disconnectClient(existingClient)
     }
 
-    func reserveSingleClientSlot(for connectionID: ObjectIdentifier) -> Bool {
-        if let reservedID = singleClientConnectionID, reservedID != connectionID { return false }
+    func reserveSingleClientSlot(for sessionID: UUID) -> Bool {
+        if let reservedID = singleClientSessionID, reservedID != sessionID { return false }
 
-        if let existingConnectionID = clientsByConnection.keys.first, existingConnectionID != connectionID {
-            singleClientConnectionID = existingConnectionID
+        if let existingSessionID = clientsBySessionID.keys.first, existingSessionID != sessionID {
+            singleClientSessionID = existingSessionID
             return false
         }
 
-        singleClientConnectionID = connectionID
+        singleClientSessionID = sessionID
         return true
     }
 
-    func releaseSingleClientSlot(for connectionID: ObjectIdentifier) {
-        if singleClientConnectionID == connectionID {
-            singleClientConnectionID = nil
+    func releaseSingleClientSlot(for sessionID: UUID) {
+        if singleClientSessionID == sessionID {
+            singleClientSessionID = nil
         }
     }
 }

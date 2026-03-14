@@ -33,11 +33,11 @@ extension MirageHostService {
 
         // Fail closed before asynchronous teardown work so queued handlers no longer
         // treat this client as active.
-        var removedConnectionID: ObjectIdentifier?
-        if let key = clientsByConnection.first(where: { $0.value.client.id == client.id })?.key {
-            clientsByConnection.removeValue(forKey: key)
-            removedConnectionID = key
-            stopReceiveLoop(connectionID: key)
+        var removedSessionID: UUID?
+        if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
+            clientsBySessionID.removeValue(forKey: key)
+            removedSessionID = key
+            stopReceiveLoop(sessionID: key)
         }
         clientsByID.removeValue(forKey: client.id)
         peerIdentityByClientID.removeValue(forKey: client.id)
@@ -50,7 +50,7 @@ extension MirageHostService {
             task.cancel()
         }
 
-        if let removedConnectionID, singleClientConnectionID == removedConnectionID { singleClientConnectionID = nil }
+        if let removedSessionID, singleClientSessionID == removedSessionID { singleClientSessionID = nil }
         removeControlWorker(clientID: client.id)
         connectedClients.removeAll { $0.id == client.id }
 
@@ -83,7 +83,7 @@ extension MirageHostService {
         if !hasConnectedClients {
             // Force local output unmute when the host no longer has any active clients.
             hostAudioMuteController.setMuted(false)
-            singleClientConnectionID = nil
+            singleClientSessionID = nil
             await stopLoginDisplayStream(newState: sessionState)
             await cleanupSharedVirtualDisplayIfIdle()
             await forceDisableLightsOut(reason: "last client disconnected")

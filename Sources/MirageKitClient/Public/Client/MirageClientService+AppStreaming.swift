@@ -22,7 +22,7 @@ public extension MirageClientService {
         forceIconReset: Bool = false,
         priorityBundleIdentifiers: [String] = []
     ) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let shouldForceIconReset = forceIconReset || pendingForceIconResetForNextAppListRequest
         let normalizedPriority = Self.normalizedPriorityBundleIdentifiers(priorityBundleIdentifiers)
@@ -36,8 +36,7 @@ public extension MirageClientService {
             priorityBundleIdentifiers: normalizedPriority,
             requestID: requestID
         )
-        let message = try ControlMessage(type: .appListRequest, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.appListRequest, content: request)
         activeAppListRequestID = requestID
         appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
         appIconStreamStateByRequestID[requestID] = AppIconStreamState()
@@ -48,11 +47,10 @@ public extension MirageClientService {
     /// Request the connected host's hardware icon payload.
     /// - Parameter preferredMaxPixelSize: Preferred max pixel size for the returned PNG.
     func requestHostHardwareIcon(preferredMaxPixelSize: Int = 512) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let request = HostHardwareIconRequestMessage(preferredMaxPixelSize: preferredMaxPixelSize)
-        let message = try ControlMessage(type: .hostHardwareIconRequest, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.hostHardwareIconRequest, content: request)
         MirageLogger.client("Host hardware icon request sent")
     }
 
@@ -77,7 +75,7 @@ public extension MirageClientService {
         bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow
     )
     async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         guard let displayResolution else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
@@ -117,8 +115,7 @@ public extension MirageClientService {
         }
         pendingAppAdaptiveFallbackColorDepth = request.colorDepth
 
-        let message = try ControlMessage(type: .selectApp, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.selectApp, content: request)
 
         streamingAppBundleID = bundleIdentifier
         MirageLogger.client("Requested to stream app: \(bundleIdentifier)")
@@ -130,14 +127,13 @@ public extension MirageClientService {
         targetSlotStreamID: StreamID,
         targetWindowID: WindowID
     ) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         let request = AppWindowSwapRequestMessage(
             bundleIdentifier: bundleIdentifier,
             targetSlotStreamID: targetSlotStreamID,
             targetWindowID: targetWindowID
         )
-        let message = try ControlMessage(type: .appWindowSwapRequest, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.appWindowSwapRequest, content: request)
     }
 
     /// Request execution of an actionable host close-blocking alert button.
@@ -146,14 +142,13 @@ public extension MirageClientService {
         actionID: String,
         presentingStreamID: StreamID
     ) async throws {
-        guard case .connected = connectionState, let connection else { throw MirageError.protocolError("Not connected") }
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         let request = AppWindowCloseAlertActionRequestMessage(
             alertToken: alertToken,
             actionID: actionID,
             presentingStreamID: presentingStreamID
         )
-        let message = try ControlMessage(type: .appWindowCloseAlertActionRequest, content: request)
-        connection.send(content: message.serialize(), completion: .idempotent)
+        try await sendControlMessage(.appWindowCloseAlertActionRequest, content: request)
     }
 
     /// Clears cached icon payloads for the current in-memory app list snapshot.

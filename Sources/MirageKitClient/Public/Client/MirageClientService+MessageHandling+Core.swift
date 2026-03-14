@@ -17,13 +17,13 @@ extension MirageClientService {
     func finalizeAcceptedBootstrap(
         _ response: MirageSessionBootstrapResponse,
         hostIdentityKeyID: String
-    ) -> LoomPeer {
+    ) async -> LoomPeer {
         connectedHostIdentityKeyID = hostIdentityKeyID
         hasCompletedBootstrap = true
         isAwaitingManualApproval = false
         approvalWaitTask?.cancel()
 
-        let acceptedHost = canonicalConnectedHost(
+        let acceptedHost = await canonicalConnectedHost(
             hostID: response.hostID,
             hostName: response.hostName,
             hostIdentityKeyID: hostIdentityKeyID
@@ -37,13 +37,14 @@ extension MirageClientService {
         hostID: UUID,
         hostName: String,
         hostIdentityKeyID: String
-    ) -> LoomPeer {
+    ) async -> LoomPeer {
         let provisionalHost = connectedHost
         let resolvedHostName = hostName
             .trimmingCharacters(in: .whitespacesAndNewlines)
             .isEmpty ? provisionalHost?.name ?? "Host" : hostName
+        let controlRemoteEndpoint = await currentControlRemoteEndpoint()
         let hostEndpoint: NWEndpoint = provisionalHost?.endpoint
-            ?? connection?.endpoint
+            ?? controlRemoteEndpoint
             ?? .service(
                 name: resolvedHostName,
                 type: MirageKit.serviceType,
@@ -196,7 +197,10 @@ extension MirageClientService {
             negotiatedFeatures = response.selectedFeatures
             hostDataPort = response.dataPort
             connectedHostAllowsRemoteAccess = response.remoteAccessAllowed
-            let acceptedHost = finalizeAcceptedBootstrap(response, hostIdentityKeyID: hostIdentityKeyID)
+            let acceptedHost = await finalizeAcceptedBootstrap(
+                response,
+                hostIdentityKeyID: hostIdentityKeyID
+            )
 
             if response.autoTrustGranted == true {
                 let hostComponent = response.hostID.uuidString.lowercased()
