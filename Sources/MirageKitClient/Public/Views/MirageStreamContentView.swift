@@ -1059,7 +1059,8 @@ public struct MirageStreamContentView: View {
         desktopResizeMaskActive = false
 
         scheduleResizeHoldoff()
-        clientService.requestStreamRecovery(for: session.streamID)
+        MirageLogger.client("Foreground recovery dispatch for stream \(session.streamID)")
+        clientService.requestApplicationActivationRecovery(for: session.streamID)
     }
     #endif
 }

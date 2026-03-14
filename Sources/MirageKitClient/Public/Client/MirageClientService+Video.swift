@@ -11,6 +11,44 @@ import Foundation
 import Network
 import MirageKit
 
+private enum MirageClientStreamRecoveryTrigger: Sendable {
+    case manual
+    case applicationActivation
+    case decoderCompatibilityFallback
+
+    var logLabel: String {
+        switch self {
+        case .manual:
+            "manual"
+        case .applicationActivation:
+            "application-activation"
+        case .decoderCompatibilityFallback:
+            "decoder-compatibility-fallback"
+        }
+    }
+
+    var awaitFirstPresentedFrame: Bool {
+        switch self {
+        case .manual:
+            false
+        case .applicationActivation,
+             .decoderCompatibilityFallback:
+            true
+        }
+    }
+
+    var firstPresentedFrameWaitReason: String? {
+        switch self {
+        case .manual:
+            nil
+        case .applicationActivation:
+            "application-activation-recovery"
+        case .decoderCompatibilityFallback:
+            "decoder-compatibility-recovery"
+        }
+    }
+}
+
 @MainActor
 extension MirageClientService {
     /// Start UDP connection to host's data port for receiving video.
@@ -633,18 +671,33 @@ extension MirageClientService {
 
     /// Request stream recovery by forcing a keyframe.
     public func requestStreamRecovery(for streamID: StreamID) {
+        requestStreamRecovery(for: streamID, trigger: .manual)
+    }
+
+    func requestApplicationActivationRecovery(for streamID: StreamID) {
+        requestStreamRecovery(for: streamID, trigger: .applicationActivation)
+    }
+
+    private func requestStreamRecovery(
+        for streamID: StreamID,
+        trigger: MirageClientStreamRecoveryTrigger
+    ) {
         guard case .connected = connectionState else {
-            MirageLogger.client("Stream recovery skipped - not connected")
+            MirageLogger.client("Stream recovery skipped (\(trigger.logLabel)) - not connected")
             return
         }
 
-        MirageLogger.client("Stream recovery requested for stream \(streamID)")
+        MirageLogger.client("Stream recovery requested for stream \(streamID) trigger=\(trigger.logLabel)")
 
         MirageFrameCache.shared.clear(for: streamID)
 
         Task { [weak self] in
             guard let self else { return }
-            await controllersByStream[streamID]?.requestRecovery(reason: .manualRecovery)
+            await controllersByStream[streamID]?.requestRecovery(
+                reason: .manualRecovery,
+                awaitFirstPresentedFrame: trigger.awaitFirstPresentedFrame,
+                firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason
+            )
 
             do {
                 if udpConnection == nil { try await startVideoConnection() }
@@ -754,7 +807,7 @@ extension MirageClientService {
                 MirageLogger.client(
                     "Decoder compatibility fallback forced color depth Pro/Ultra -> Standard for stream \(streamID)"
                 )
-                await controllersByStream[streamID]?.requestRecovery(reason: .manualRecovery)
+                requestStreamRecovery(for: streamID, trigger: .decoderCompatibilityFallback)
             } catch {
                 adaptiveFallbackLastAppliedTime.removeValue(forKey: streamID)
                 MirageLogger.error(

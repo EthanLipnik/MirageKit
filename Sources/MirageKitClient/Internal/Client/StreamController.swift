@@ -66,6 +66,11 @@ actor StreamController {
         case monitor(FreezeStallKind)
     }
 
+    enum FirstPresentedFrameAwaitMode: Sendable, Equatable {
+        case startup
+        case recovery
+    }
+
     nonisolated static func freezeRecoveryDecision(
         keyframeStarved: Bool,
         packetStarved: Bool,
@@ -265,8 +270,12 @@ actor StreamController {
     var awaitingFirstFrameAfterResize = false
     /// True while UI gating waits for the first newly presented frame.
     var awaitingFirstPresentedFrame = false
+    /// Startup watchdog vs recovery watchdog mode for the first-frame awaiter.
+    var firstPresentedFrameAwaitMode: FirstPresentedFrameAwaitMode = .startup
     /// Last presented sequence at the moment first-frame presentation waiting was armed.
     var firstPresentedFrameBaselineSequence: UInt64 = 0
+    /// Human-readable label describing why the first-frame wait was armed.
+    var firstPresentedFrameWaitReason: String?
     /// Start time for first-frame presentation wait latency logs.
     var firstPresentedFrameWaitStartTime: CFAbsoluteTime = 0
     /// Last time a first-frame presentation wait progress log was emitted.
@@ -601,6 +610,7 @@ actor StreamController {
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime()
         consecutiveDecodeErrors += 1
+        let logMessage = Self.decodeFailureLogMessage(for: error, attempt: consecutiveDecodeErrors)
         let shouldElevate = Self.shouldElevateDecodeFailure(
             consecutiveDecodeErrors: consecutiveDecodeErrors,
             signature: signature,
@@ -614,7 +624,7 @@ actor StreamController {
             MirageLogger.error(
                 .client,
                 error: error,
-                message: "Decode error (attempt \(consecutiveDecodeErrors)): "
+                message: logMessage
             )
             lastDecodeErrorSignature = signature
             lastDecodeErrorLogTime = now
@@ -630,16 +640,84 @@ actor StreamController {
                 if recoveryActionable {
                     MirageLogger.debug(
                         .client,
-                        "Decode error suppressed as repeat (attempt \(consecutiveDecodeErrors), signature \(signature))"
+                        "\(logMessage) [suppressed-repeat]"
                     )
                 } else {
                     MirageLogger.debug(
                         .client,
-                        "Decode error suppressed until presentation freeze makes recovery actionable (attempt \(consecutiveDecodeErrors), signature \(signature))"
+                        "\(logMessage) [suppressed-until-freeze-actionable]"
                     )
                 }
             }
         }
+    }
+
+    nonisolated static func decodeFailureLogMessage(for error: Error, attempt: Int) -> String {
+        "Decode error (attempt \(attempt)): \(decodeFailureDiagnosticSummary(for: error))"
+    }
+
+    nonisolated static func decodeFailureDiagnosticSummary(for error: Error) -> String {
+        var components: [String] = []
+        appendDiagnosticSummary(for: error, label: "error", into: &components)
+
+        if let nsUnderlyingError = (error as NSError).userInfo[NSUnderlyingErrorKey] as? Error {
+            appendDiagnosticSummary(for: nsUnderlyingError, label: "nsUnderlying", into: &components)
+        }
+
+        return components.joined(separator: " | ")
+    }
+
+    private nonisolated static func appendDiagnosticSummary(
+        for error: Error,
+        label: String,
+        into components: inout [String]
+    ) {
+        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let localizedDescription = sanitizedDiagnosticDescription(error.localizedDescription)
+        components.append(
+            "\(label){type=\(metadata.typeName),domain=\(metadata.domain),code=\(metadata.code),description=\(localizedDescription)}"
+        )
+
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case let .connectionFailed(underlyingError),
+                 let .encodingError(underlyingError),
+                 let .decodingError(underlyingError):
+                appendNestedDiagnosticSummary(
+                    for: underlyingError,
+                    parentLabel: label,
+                    into: &components
+                )
+            case let .protocolError(message):
+                components.append("\(label).protocol{\(sanitizedDiagnosticDescription(message))}")
+            case .alreadyAdvertising,
+                 .notAdvertising,
+                 .authenticationFailed,
+                 .streamNotFound,
+                 .windowNotFound,
+                 .permissionDenied,
+                 .timeout:
+                break
+            }
+        }
+    }
+
+    private nonisolated static func appendNestedDiagnosticSummary(
+        for error: Error,
+        parentLabel: String,
+        into components: inout [String]
+    ) {
+        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let localizedDescription = sanitizedDiagnosticDescription(error.localizedDescription)
+        components.append(
+            "\(parentLabel).underlying{type=\(metadata.typeName),domain=\(metadata.domain),code=\(metadata.code),description=\(localizedDescription)}"
+        )
+    }
+
+    private nonisolated static func sanitizedDiagnosticDescription(_ description: String) -> String {
+        description
+            .replacingOccurrences(of: "\n", with: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     nonisolated static func shouldElevateDecodeFailure(

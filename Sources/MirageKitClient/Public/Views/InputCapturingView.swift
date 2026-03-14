@@ -179,6 +179,7 @@ public class InputCapturingView: UIView {
     // nonisolated(unsafe) allows access from deinit for cleanup
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
     private(set) var hardwareKeyboardPresent: Bool = false
+    private var didResignActiveSinceLastActivation = false
     private var didEnterBackgroundSinceLastActive = false
 
     // Virtual cursor state (direct touch trackpad mode)
@@ -1103,6 +1104,7 @@ public class InputCapturingView: UIView {
 
     @objc
     private func appWillResignActive() {
+        didResignActiveSinceLastActivation = true
         // Clear all modifier and key repeat state when app loses focus
         stopAllKeyRepeats()
         resetAllModifiers()
@@ -1125,7 +1127,14 @@ public class InputCapturingView: UIView {
 
     @objc
     private func appDidBecomeActive() {
-        if window != nil { metalView.resumeRendering() }
+        let resignedActive = didResignActiveSinceLastActivation
+        let backgrounded = didEnterBackgroundSinceLastActive
+        let displayLayerFailed = metalView.hasDisplayLayerFailure
+        let shouldRequestRecovery = resignedActive || backgrounded || displayLayerFailed
+
+        if window != nil {
+            metalView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)
+        }
 
         sendModifierStateIfNeeded(force: true)
         #if canImport(GameController)
@@ -1134,9 +1143,16 @@ public class InputCapturingView: UIView {
         updateMouseInputHandler()
         #endif
 
-        let shouldRequestRecovery = didEnterBackgroundSinceLastActive || metalView.hasDisplayLayerFailure
+        didResignActiveSinceLastActivation = false
         didEnterBackgroundSinceLastActive = false
-        if shouldRequestRecovery { onBecomeActive?() }
+        guard shouldRequestRecovery else { return }
+
+        let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+        MirageLogger.client(
+            "Activation recovery requested for stream \(streamIDText) " +
+                "(resignedActive=\(resignedActive), backgrounded=\(backgrounded), displayLayerFailed=\(displayLayerFailed))"
+        )
+        onBecomeActive?()
     }
 
     #if canImport(GameController)

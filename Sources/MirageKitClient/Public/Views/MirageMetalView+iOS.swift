@@ -148,6 +148,14 @@ public class MirageMetalView: UIView {
         requestDraw()
     }
 
+    func resumeRenderingAfterApplicationActivation(resetPresentationState: Bool) {
+        if resetPresentationState {
+            presenter.resetPresentationState()
+        }
+        presenter.setRenderingSuspended(false, clearCurrentFrame: false)
+        requestDraw()
+    }
+
     public var hasDisplayLayerFailure: Bool {
         presenter.hasDisplayLayerFailure
     }

@@ -69,10 +69,13 @@ extension StreamController {
     /// Request stream recovery (keyframe + reassembler reset)
     func requestRecovery(
         reason: RecoveryReason = .manualRecovery,
-        restartRecoveryLoop: Bool = true
+        restartRecoveryLoop: Bool = true,
+        awaitFirstPresentedFrame: Bool = false,
+        firstPresentedFrameWaitReason: String? = nil
     )
     async {
         let shouldRestartStartupBootstrap = !hasPresentedFirstFrame
+        let shouldAwaitNextPresentedFrame = shouldRestartStartupBootstrap || awaitFirstPresentedFrame
         let now = currentTime()
         if reason != .manualRecovery,
            !Self.shouldDispatchRecovery(
@@ -123,8 +126,12 @@ extension StreamController {
             stopKeyframeRecoveryLoop()
         }
         await startFrameProcessingPipeline()
-        if shouldRestartStartupBootstrap, presentationTier == .activeLive {
-            armFirstPresentedFrameAwaiter(reason: "hard-recovery")
+        if shouldAwaitNextPresentedFrame, presentationTier == .activeLive {
+            let awaitMode: FirstPresentedFrameAwaitMode = shouldRestartStartupBootstrap ? .startup : .recovery
+            armFirstPresentedFrameAwaiter(
+                reason: firstPresentedFrameWaitReason ?? "hard-recovery",
+                mode: awaitMode
+            )
         }
         await requestKeyframeRecovery(reason: reason)
     }

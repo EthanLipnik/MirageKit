@@ -89,6 +89,25 @@ struct StreamControllerRecoveryTests {
         )
     }
 
+    @Test("Decode failure log message includes wrapped underlying error details")
+    func decodeFailureLogMessageIncludesWrappedUnderlyingErrorDetails() {
+        let underlyingError = NSError(
+            domain: NSOSStatusErrorDomain,
+            code: -12909,
+            userInfo: [NSLocalizedDescriptionKey: "Decoder callback bad data"]
+        )
+        let error = MirageError.decodingError(underlyingError)
+
+        let message = StreamController.decodeFailureLogMessage(for: error, attempt: 29)
+
+        #expect(message.contains("Decode error (attempt 29)"))
+        #expect(message.contains("error{type=MirageKit.MirageError"))
+        #expect(message.contains("error.underlying{type="))
+        #expect(message.contains("domain=\(NSOSStatusErrorDomain)"))
+        #expect(message.contains("code=-12909"))
+        #expect(message.contains("Decoder callback bad data"))
+    }
+
     @Test("Suspend and resume local-resize decode toggles pause state")
     func suspendAndResumeLocalResizeDecodeTogglesPauseState() async {
         let controller = StreamController(streamID: 91, maxPayloadSize: 1200)
@@ -583,6 +602,47 @@ struct StreamControllerRecoveryTests {
             }
             try await Task.sleep(for: .milliseconds(20))
         }
+        #expect(watchdogTriggered)
+
+        await controller.stop()
+    }
+
+    @Test("Manual recovery re-arms first-frame watchdog after prior presentation")
+    func manualRecoveryRearmsFirstFrameWatchdogAfterPriorPresentation() async throws {
+        let clock = ManualTimeProvider(start: 3_000)
+        let controller = StreamController(
+            streamID: 142,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.markFirstFramePresented()
+        #expect(await controller.hasPresentedFirstFrame)
+        #expect(!(await controller.awaitingFirstPresentedFrame))
+
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "application-activation-recovery"
+        )
+
+        #expect(await controller.awaitingFirstPresentedFrame)
+        #expect(await controller.firstPresentedFrameLastRecoveryRequestTime == 0)
+
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace + 0.1)
+
+        var watchdogTriggered = false
+        let timeoutAt = ContinuousClock.now + .seconds(2)
+        while ContinuousClock.now < timeoutAt {
+            if await controller.firstPresentedFrameLastRecoveryRequestTime > 0 {
+                watchdogTriggered = true
+                break
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+
         #expect(watchdogTriggered)
 
         await controller.stop()

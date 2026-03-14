@@ -89,10 +89,15 @@ extension StreamController {
         return next
     }
 
-    func armFirstPresentedFrameAwaiter(reason: String) {
+    func armFirstPresentedFrameAwaiter(
+        reason: String,
+        mode: FirstPresentedFrameAwaitMode = .startup
+    ) {
         let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
         awaitingFirstPresentedFrame = true
+        firstPresentedFrameAwaitMode = mode
         firstPresentedFrameBaselineSequence = snapshot.sequence
+        firstPresentedFrameWaitReason = reason
         firstPresentedFrameWaitStartTime = currentTime()
         firstPresentedFrameLastWaitLogTime = firstPresentedFrameWaitStartTime
         firstPresentedFrameLastRecoveryRequestTime = 0
@@ -108,7 +113,9 @@ extension StreamController {
         firstPresentedFrameTask?.cancel()
         firstPresentedFrameTask = nil
         awaitingFirstPresentedFrame = false
+        firstPresentedFrameAwaitMode = .startup
         firstPresentedFrameBaselineSequence = 0
+        firstPresentedFrameWaitReason = nil
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
@@ -208,9 +215,10 @@ extension StreamController {
         let elapsedMs = Int((now - firstPresentedFrameWaitStartTime) * 1000)
         let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
         let awaitingKeyframe = reassembler.isAwaitingKeyframe()
+        let reason = firstPresentedFrameWaitReason ?? "unknown"
         MirageLogger
             .client(
-                "Still waiting for first presented frame for stream \(streamID) (+\(elapsedMs)ms, " +
+                "Still waiting for first presented frame (\(reason)) for stream \(streamID) (+\(elapsedMs)ms, " +
                     "baseline=\(firstPresentedFrameBaselineSequence), latest=\(latestSequence), " +
                     "queueDepth=\(pendingDepth), awaitingKeyframe=\(awaitingKeyframe))"
             )
@@ -221,9 +229,15 @@ extension StreamController {
         latestSequence: UInt64
     ) async {
         guard awaitingFirstPresentedFrame else { return }
-        guard !hasPresentedFirstFrame else { return }
-        guard !hasDecodedFirstFrame else { return }
         guard firstPresentedFrameWaitStartTime > 0 else { return }
+
+        switch firstPresentedFrameAwaitMode {
+        case .startup:
+            guard !hasPresentedFirstFrame else { return }
+            guard !hasDecodedFirstFrame else { return }
+        case .recovery:
+            break
+        }
 
         let elapsed = now - firstPresentedFrameWaitStartTime
         guard elapsed >= Self.firstPresentedFrameBootstrapRecoveryGrace else { return }
@@ -246,17 +260,22 @@ extension StreamController {
 
         firstPresentedFrameLastRecoveryRequestTime = now
         let elapsedMs = Int(elapsed * 1000)
+        let reason = firstPresentedFrameWaitReason ?? "unknown"
         let packetAgeText: String
         if noVideoPacketsYet {
             packetAgeText = "none"
         } else {
             packetAgeText = "\(Int((now - lastPacketTime) * 1000))ms"
         }
-        MirageLogger.client(
-            "First-frame bootstrap watchdog triggered for stream \(streamID) (+\(elapsedMs)ms, " +
-                "latest=\(latestSequence), lastPacketAge=\(packetAgeText), awaitingKeyframe=\(awaitingKeyframe)); " +
-                "requesting recovery"
-        )
+        let logMessage =
+            "First-frame watchdog triggered (\(reason)) for stream \(streamID) (+\(elapsedMs)ms, " +
+            "latest=\(latestSequence), lastPacketAge=\(packetAgeText), awaitingKeyframe=\(awaitingKeyframe)); " +
+            "requesting recovery"
+        if firstPresentedFrameAwaitMode == .recovery {
+            MirageLogger.error(.client, logMessage)
+        } else {
+            MirageLogger.client(logMessage)
+        }
         await handleFrameLossSignal()
     }
 
