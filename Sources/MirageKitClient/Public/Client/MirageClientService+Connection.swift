@@ -434,6 +434,9 @@ extension MirageClientService {
         completeQualityTestWaiter(result: nil)
         if let hostSupportLogArchiveContinuation {
             self.hostSupportLogArchiveContinuation = nil
+            hostSupportLogArchiveRequestID = nil
+            hostSupportLogArchiveTransferTask?.cancel()
+            hostSupportLogArchiveTransferTask = nil
             hostSupportLogArchiveTimeoutTask?.cancel()
             hostSupportLogArchiveTimeoutTask = nil
             hostSupportLogArchiveContinuation.resume(throwing: MirageError.protocolError(reason))

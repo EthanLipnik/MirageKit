@@ -521,9 +521,11 @@ public final class MirageClientService {
     var qualityTestPendingTestID: UUID?
     var qualityTestWaiterID: UInt64 = 0
     var qualityTestTimeoutTask: Task<Void, Never>?
-    var hostSupportLogArchiveContinuation: CheckedContinuation<MirageHostSupportLogArchive, Error>?
+    var hostSupportLogArchiveContinuation: CheckedContinuation<URL, Error>?
+    var hostSupportLogArchiveRequestID: UUID?
+    var hostSupportLogArchiveTransferTask: Task<Void, Never>?
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
-    let hostSupportLogArchiveTimeout: Duration = .seconds(15)
+    let hostSupportLogArchiveTimeout: Duration = .seconds(30)
     var pingContinuation: CheckedContinuation<Void, Error>?
     var pingRequestID: UInt64 = 0
     var pingTimeoutTask: Task<Void, Never>?
