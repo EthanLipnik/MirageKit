@@ -21,6 +21,12 @@ private final class FrameEnqueueOrderAllocator: @unchecked Sendable {
         lock.unlock()
         return order
     }
+
+    func reset() {
+        lock.lock()
+        nextOrder = 0
+        lock.unlock()
+    }
 }
 
 /// Controls the lifecycle and state of a single stream.
@@ -294,6 +300,7 @@ actor StreamController {
     /// Frames received from callback tasks before their ordered enqueue slot is ready.
     var pendingOrderedFrames: [UInt64: FrameData] = [:]
     var nextExpectedEnqueueOrder: UInt64 = 0
+    private let enqueueOrderAllocator = FrameEnqueueOrderAllocator()
     var framePipelineGeneration: UInt64 = 0
 
     /// Continuation resumed when the decode task is waiting for a frame.
@@ -517,12 +524,12 @@ actor StreamController {
             reason: "stream pipeline start"
         )
         nextExpectedEnqueueOrder = 0
+        enqueueOrderAllocator.reset()
         pendingOrderedFrames.removeAll(keepingCapacity: false)
 
         // Start the frame processing task - single task processes all frames sequentially
         let capturedDecoder = decoder
         let decodeBudgetController = GlobalDecodeBudgetController.shared
-        let enqueueOrderAllocator = FrameEnqueueOrderAllocator()
         frameProcessingTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
@@ -549,6 +556,7 @@ actor StreamController {
         let recordReceivedFrame: @Sendable () -> Void = {
             metricsTracker.recordReceivedFrame()
         }
+        let enqueueOrderAllocator = enqueueOrderAllocator
         let reassemblerHandler: @Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
             -> Void = { [weak self] _, frameData, isKeyframe, timestamp, contentRect, releaseBuffer in
                 let presentationTime = CMTime(value: CMTimeValue(timestamp), timescale: 1_000_000_000)
@@ -839,6 +847,7 @@ actor StreamController {
         let pending = Array(pendingOrderedFrames.values)
         pendingOrderedFrames.removeAll(keepingCapacity: false)
         nextExpectedEnqueueOrder = 0
+        enqueueOrderAllocator.reset()
         if queued.isEmpty, pending.isEmpty { return }
         let frames = queued + pending
         for frame in frames {
@@ -851,6 +860,7 @@ actor StreamController {
         let pending = Array(pendingOrderedFrames.values)
         pendingOrderedFrames.removeAll(keepingCapacity: false)
         nextExpectedEnqueueOrder = 0
+        enqueueOrderAllocator.reset()
         guard !queued.isEmpty || !pending.isEmpty else { return }
         let frames = queued + pending
         for frame in frames {
