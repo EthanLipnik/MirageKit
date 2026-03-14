@@ -74,6 +74,12 @@ extension StreamController {
         firstPresentedFrameWaitReason: String? = nil
     )
     async {
+        guard isRunning, !isStopping else {
+            MirageLogger.client(
+                "Skipping stream recovery (\(reason.logLabel)) for inactive stream \(streamID)"
+            )
+            return
+        }
         let shouldRestartStartupBootstrap = !hasPresentedFirstFrame
         let shouldAwaitNextPresentedFrame = shouldRestartStartupBootstrap || awaitFirstPresentedFrame
         let now = currentTime()

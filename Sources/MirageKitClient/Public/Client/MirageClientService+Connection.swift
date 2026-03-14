@@ -208,16 +208,19 @@ extension MirageClientService {
 
         let sessions = activeStreams
         let storedSessions = sessionStore.activeSessions
+        let disconnectedControlChannel = controlChannel
+        let disconnectedLoomSession = loomSession
 
-        if let controlChannel {
-            await controlChannel.cancel()
+        self.controlChannel = nil
+        loomSession = nil
+
+        if let disconnectedControlChannel {
+            await disconnectedControlChannel.cancel()
         } else {
-            await loomSession?.cancel()
+            await disconnectedLoomSession?.cancel()
         }
         cancelPendingConnectTask()
         invalidateCurrentConnectAttempt()
-        self.controlChannel = nil
-        loomSession = nil
         controlSessionStateObserverTask?.cancel()
         controlSessionStateObserverTask = nil
         controlSessionPathObserverTask?.cancel()

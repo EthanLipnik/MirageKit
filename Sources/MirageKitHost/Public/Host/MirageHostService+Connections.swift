@@ -16,7 +16,7 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
-        let fatalPosixCodes: Set<POSIXErrorCode> = [.ECONNRESET, .ENOTCONN, .EPIPE]
+        let fatalPosixCodes: Set<POSIXErrorCode> = [.ECANCELED, .ECONNRESET, .ENOTCONN, .EPIPE]
         if let nwError = error as? NWError {
             switch nwError {
             case let .posix(code):
@@ -35,6 +35,23 @@ extension MirageHostService {
             return true
         }
         return false
+    }
+
+    func handleControlChannelSendFailure(
+        client: MirageConnectedClient,
+        error: Error,
+        operation: String
+    ) async {
+        if isFatalConnectionError(error) || LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+            MirageLogger.host(
+                "\(operation) skipped because the control channel closed for \(client.name): \(error.localizedDescription)"
+            )
+        } else {
+            MirageLogger.error(.host, error: error, message: "\(operation) failed: ")
+        }
+
+        guard clientsByID[client.id] != nil else { return }
+        await disconnectClient(client)
     }
 
     func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {

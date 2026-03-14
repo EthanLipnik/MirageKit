@@ -686,6 +686,12 @@ extension MirageClientService {
             MirageLogger.client("Stream recovery skipped (\(trigger.logLabel)) - not connected")
             return
         }
+        guard let controller = controllersByStream[streamID] else {
+            MirageLogger.client(
+                "Stream recovery skipped (\(trigger.logLabel)) - stream \(streamID) is no longer active"
+            )
+            return
+        }
 
         MirageLogger.client("Stream recovery requested for stream \(streamID) trigger=\(trigger.logLabel)")
 
@@ -693,7 +699,7 @@ extension MirageClientService {
 
         Task { [weak self] in
             guard let self else { return }
-            await controllersByStream[streamID]?.requestRecovery(
+            await controller.requestRecovery(
                 reason: .manualRecovery,
                 awaitFirstPresentedFrame: trigger.awaitFirstPresentedFrame,
                 firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason

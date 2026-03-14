@@ -648,6 +648,22 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Recovery requests are ignored after the controller stops")
+    func recoveryRequestsAreIgnoredAfterStop() async {
+        let controller = StreamController(streamID: 143, maxPayloadSize: 1200)
+
+        await controller.stop()
+        await controller.requestRecovery(
+            reason: .manualRecovery,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "post-stop"
+        )
+
+        #expect(!(await controller.awaitingFirstPresentedFrame))
+        #expect(await controller.firstPresentedFrameLastRecoveryRequestTime == 0)
+    }
+
     @Test("Active tier updates do not re-arm first-frame awaiter while waiting")
     func activeTierUpdatesDoNotRearmFirstFrameAwaiterWhileWaiting() async {
         let clock = ManualTimeProvider(start: 2_000)

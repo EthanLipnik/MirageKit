@@ -852,14 +852,14 @@ extension MirageHostService {
         let runtimePrimaries = runtime?.colorPrimaries ?? "unknown"
         let runtimeTransfer = runtime?.transferFunction ?? "unknown"
         let runtimeMatrix = runtime?.yCbCrMatrix ?? "unknown"
-        let runtimeMain10P3Validated = runtime?.tenBitDisplayP3Validated == true
-        let expectsMain10P3 = settings.bitDepth == .tenBit && settings.colorSpace == .displayP3
+        let runtimeDisplayP3Validated = runtime?.tenBitDisplayP3Validated == true || runtime?.ultra444Validated == true
+        let expectsTenBitDisplayP3 = settings.bitDepth == .tenBit && settings.colorSpace == .displayP3
         let displayColorStatus = displayCoverageStatus.rawValue
 
-        if expectsMain10P3, displayColorMatches, runtimeMain10P3Validated {
+        if expectsTenBitDisplayP3, displayColorMatches, runtimeDisplayP3Validated {
             let coverageLabel = measuredEquivalentCoverage ? "measured-equivalent" : "canonical"
             MirageLogger.host(
-                "Desktop resize validation passed for stream \(streamID): display=\(displaySnapshot.displayID) color=\(displayColorObserved), encoder=\(runtimePixelFormat), profile=\(runtimeProfile), target=Display P3 Main10 (\(coverageLabel))"
+                "Desktop resize validation passed for stream \(streamID): display=\(displaySnapshot.displayID) color=\(displayColorObserved), encoder=\(runtimePixelFormat), profile=\(runtimeProfile), target=Display P3 10-bit (\(coverageLabel))"
             )
             return
         }
@@ -869,9 +869,9 @@ extension MirageHostService {
             "display=\(displaySnapshot.displayID), expectedColor=\(settings.colorSpace.displayName), observedColor=\(displayColorObserved), " +
             "encoderPixelFormat=\(runtimePixelFormat), encoderProfile=\(runtimeProfile), " +
             "encoderPrimaries=\(runtimePrimaries), encoderTransfer=\(runtimeTransfer), encoderMatrix=\(runtimeMatrix), " +
-            "tenBitDisplayP3Validated=\(runtimeMain10P3Validated)"
+            "tenBitDisplayP3Validated=\(runtimeDisplayP3Validated)"
 
-        if expectsMain10P3 {
+        if expectsTenBitDisplayP3 {
             MirageLogger.error(.host, message)
         } else {
             MirageLogger.host(message)

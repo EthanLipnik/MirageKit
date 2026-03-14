@@ -1051,6 +1051,12 @@ public struct MirageStreamContentView: View {
     }
 
     private func handleForegroundRecovery() {
+        guard clientService.controller(for: session.streamID) != nil else {
+            MirageLogger.client(
+                "Foreground recovery skipped for stale stream \(session.streamID)"
+            )
+            return
+        }
         if awaitingDesktopResizeAck {
             finishDesktopResizeAwaitingAck()
         } else if isResizing {

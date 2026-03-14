@@ -1471,7 +1471,11 @@ extension MirageHostService {
                 try await clientContext.send(.appList, content: response)
                 MirageLogger.host("Sent metadata app list with \(apps.count) apps to \(clientContext.client.name)")
             } catch {
-                MirageLogger.error(.host, error: error, message: "Failed to handle app list request: ")
+                await handleControlChannelSendFailure(
+                    client: clientContext.client,
+                    error: error,
+                    operation: "App list response"
+                )
                 return
             }
 
@@ -1542,10 +1546,10 @@ extension MirageHostService {
                 signatureUpdates[normalizedBundleIdentifier] = iconSignature
                 persistedSignatures[normalizedBundleIdentifier] = iconSignature
             } catch {
-                MirageLogger.error(
-                    .host,
+                await handleControlChannelSendFailure(
+                    client: clientContext.client,
                     error: error,
-                    message: "Failed to send app icon update for \(app.bundleIdentifier): "
+                    operation: "App icon update for \(app.bundleIdentifier)"
                 )
                 return
             }
@@ -1569,7 +1573,11 @@ extension MirageHostService {
                 "App icon stream complete for \(clientContext.client.name) requestID=\(requestID.uuidString) sent=\(sentIconCount) skipped=\(skippedBundleIdentifiers.count)"
             )
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to send app icon stream completion: ")
+            await handleControlChannelSendFailure(
+                client: clientContext.client,
+                error: error,
+                operation: "App icon stream completion"
+            )
         }
     }
 

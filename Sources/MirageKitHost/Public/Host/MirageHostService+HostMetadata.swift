@@ -17,29 +17,41 @@ extension MirageHostService {
         _ message: ControlMessage,
         from clientContext: ClientContext
     ) async {
+        let request: HostHardwareIconRequestMessage
         do {
-            let request = try message.decode(HostHardwareIconRequestMessage.self)
-            let maxPixelSize = min(max(request.preferredMaxPixelSize, 128), 1024)
-            guard let payload = MirageHostHardwareIconResolver.payload(
-                preferredIconName: advertisedPeerAdvertisement.iconName,
-                hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily,
-                hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
-                maxPixelSize: maxPixelSize
-            ) else {
-                MirageLogger.host("Host hardware icon request failed: no icon payload")
-                return
-            }
+            request = try message.decode(HostHardwareIconRequestMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to decode host hardware icon request: ")
+            return
+        }
 
-            let response = HostHardwareIconMessage(
-                pngData: payload.pngData,
-                iconName: payload.iconName,
-                hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
-                hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily
-            )
+        let maxPixelSize = min(max(request.preferredMaxPixelSize, 128), 1024)
+        guard let payload = MirageHostHardwareIconResolver.payload(
+            preferredIconName: advertisedPeerAdvertisement.iconName,
+            hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily,
+            hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
+            maxPixelSize: maxPixelSize
+        ) else {
+            MirageLogger.host("Host hardware icon request failed: no icon payload")
+            return
+        }
+
+        let response = HostHardwareIconMessage(
+            pngData: payload.pngData,
+            iconName: payload.iconName,
+            hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
+            hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily
+        )
+
+        do {
             try await clientContext.send(.hostHardwareIcon, content: response)
             MirageLogger.host("Sent host hardware icon payload bytes=\(payload.pngData.count) icon=\(payload.iconName)")
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle host hardware icon request: ")
+            await handleControlChannelSendFailure(
+                client: clientContext.client,
+                error: error,
+                operation: "Host hardware icon response"
+            )
         }
     }
 }

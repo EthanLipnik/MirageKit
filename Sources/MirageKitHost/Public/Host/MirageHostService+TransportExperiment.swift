@@ -17,9 +17,10 @@ extension MirageHostService {
     func handleVideoSendError(streamID: StreamID, error: NWError) async {
         let transportWasAlreadyGone = !transportRegistry.hasVideoConnection(streamID: streamID)
         let fatalConnectionError = isFatalConnectionError(error)
-        if transportWasAlreadyGone || fatalConnectionError {
+        let userDependentError = LoomDiagnosticsActionability.isLikelyUserDependent(error: error)
+        if transportWasAlreadyGone || fatalConnectionError || userDependentError {
             MirageLogger.host(
-                "Video transport closed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled), fatal=\(fatalConnectionError)): \(error)"
+                "Video transport closed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled), fatal=\(fatalConnectionError), userDependent=\(userDependentError)): \(error)"
             )
             return
         }

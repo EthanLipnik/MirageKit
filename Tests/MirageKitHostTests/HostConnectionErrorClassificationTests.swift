@@ -17,6 +17,7 @@ struct HostConnectionErrorClassificationTests {
     func nwPosixDisconnectIsFatal() {
         let service = MirageHostService()
 
+        #expect(service.isFatalConnectionError(NWError.posix(.ECANCELED)))
         #expect(service.isFatalConnectionError(NWError.posix(.ENOTCONN)))
         #expect(service.isFatalConnectionError(NWError.posix(.ECONNRESET)))
     }
