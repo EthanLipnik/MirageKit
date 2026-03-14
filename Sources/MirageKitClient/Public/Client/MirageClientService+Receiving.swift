@@ -43,6 +43,11 @@ extension MirageClientService {
         defer { isProcessingReceivedData = false }
 
         while !receiveBuffer.isEmpty {
+            guard shouldContinueProcessingBufferedControlMessages else {
+                dropBufferedControlMessagesAfterConnectionStateChange()
+                return
+            }
+
             if receiveBuffer.count >= 4, receiveBuffer.prefix(4).elementsEqual([0x4D, 0x49, 0x52, 0x47]) {
                 MirageLogger.client("Protocol violation: received video data on TCP control channel")
                 receiveBuffer.removeAll(keepingCapacity: false)
@@ -87,6 +92,39 @@ extension MirageClientService {
                 )
                 return
             }
+        }
+    }
+
+    private var shouldContinueProcessingBufferedControlMessages: Bool {
+        if case .connected = connectionState {
+            return true
+        }
+        return false
+    }
+
+    private func dropBufferedControlMessagesAfterConnectionStateChange() {
+        let bufferedByteCount = receiveBuffer.count
+        guard bufferedByteCount > 0 else { return }
+        MirageLogger.client(
+            "Dropping \(bufferedByteCount) buffered control bytes because connection state is now \(bufferedControlMessageConnectionStateName)"
+        )
+        receiveBuffer.removeAll(keepingCapacity: false)
+    }
+
+    private var bufferedControlMessageConnectionStateName: String {
+        switch connectionState {
+        case .disconnected:
+            return "disconnected"
+        case .connecting:
+            return "connecting"
+        case .reconnecting:
+            return "reconnecting"
+        case .handshaking:
+            return "handshaking"
+        case .connected:
+            return "connected"
+        case .error:
+            return "error"
         }
     }
 

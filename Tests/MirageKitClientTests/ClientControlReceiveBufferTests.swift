@@ -28,6 +28,7 @@ struct ClientControlReceiveBufferTests {
         let message = ControlMessage(type: .pong)
 
         await MainActor.run {
+            service.connectionState = .connected(host: "Test Host")
             service.controlMessageHandlers[.pong] = { _ in
                 await counter.increment()
                 service.receiveBuffer.removeAll(keepingCapacity: false)
@@ -50,6 +51,7 @@ struct ClientControlReceiveBufferTests {
         let message = ControlMessage(type: .pong)
 
         await MainActor.run {
+            service.connectionState = .connected(host: "Test Host")
             service.controlMessageHandlers[.pong] = { _ in
                 let count = await counter.increment()
                 guard count == 1 else { return }
@@ -65,6 +67,30 @@ struct ClientControlReceiveBufferTests {
         let routedCount = await counter.value
         let remainingBufferCount = await MainActor.run { service.receiveBuffer.count }
         #expect(routedCount == 2)
+        #expect(remainingBufferCount == 0)
+    }
+
+    @Test("Buffered control messages are discarded after the client leaves the connected state")
+    func bufferedMessagesDropAfterDisconnectStateChange() async {
+        let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
+        let counter = ReceiveCounter()
+        let message = ControlMessage(type: .pong)
+
+        await MainActor.run {
+            service.connectionState = .connected(host: "Test Host")
+            service.controlMessageHandlers[.pong] = { _ in
+                let count = await counter.increment()
+                guard count == 1 else { return }
+                service.connectionState = .disconnected
+            }
+            service.receiveBuffer = message.serialize() + message.serialize()
+        }
+
+        await service.processReceivedData()
+
+        let routedCount = await counter.value
+        let remainingBufferCount = await MainActor.run { service.receiveBuffer.count }
+        #expect(routedCount == 1)
         #expect(remainingBufferCount == 0)
     }
 }

@@ -36,4 +36,17 @@ struct HostDataPortLifecycleTests {
 
         #expect(service.hostDataPort == 0)
     }
+
+    @MainActor
+    @Test("Application-activation recovery skips stale streams without touching UDP transport")
+    func applicationActivationRecoverySkipsStaleStreams() async throws {
+        let service = MirageClientService(deviceName: "Test Device")
+        service.connectionState = .connected(host: "Altair")
+
+        service.requestApplicationActivationRecovery(for: 99)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(service.controllersByStream.isEmpty)
+        #expect(service.udpConnection == nil)
+    }
 }

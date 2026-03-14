@@ -74,9 +74,9 @@ extension StreamController {
         firstPresentedFrameWaitReason: String? = nil
     )
     async {
-        guard isRunning, !isStopping else {
+        guard !isStopping else {
             MirageLogger.client(
-                "Skipping stream recovery (\(reason.logLabel)) for inactive stream \(streamID)"
+                "Skipping stream recovery (\(reason.logLabel)) for stopping stream \(streamID)"
             )
             return
         }
