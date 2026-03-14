@@ -125,7 +125,16 @@ extension MirageHostService {
             )
 
             let terminalProgress = await terminalProgress(from: outgoing.progressEvents)
-            guard terminalProgress?.state == .completed else {
+            switch terminalProgress?.state {
+            case .completed:
+                break
+            case .cancelled, .declined:
+                MirageLogger.host(
+                    "Host support log Loom transfer ended before completion requestID=\(requestID.uuidString.lowercased()) " +
+                        "state=\(terminalProgress?.state.rawValue ?? "unknown")"
+                )
+                return
+            default:
                 throw MirageError.protocolError("Host support log Loom transfer did not complete")
             }
 

@@ -11,7 +11,7 @@ import Foundation
 
 // MARK: - Connection Messages
 
-package enum HelloRejectionReason: String, Codable, Sendable {
+package enum MirageSessionBootstrapRejectionReason: String, Codable, Sendable {
     case protocolVersionMismatch
     case protocolFeaturesMismatch
     case hostBusy
@@ -19,74 +19,28 @@ package enum HelloRejectionReason: String, Codable, Sendable {
     case unauthorized
 }
 
-package struct MirageIdentityEnvelope: Codable, Sendable {
-    package let keyID: String
-    package let publicKey: Data
-    package let timestampMs: Int64
-    package let nonce: String
-    package let signature: Data
-
-    package init(
-        keyID: String,
-        publicKey: Data,
-        timestampMs: Int64,
-        nonce: String,
-        signature: Data
-    ) {
-        self.keyID = keyID
-        self.publicKey = publicKey
-        self.timestampMs = timestampMs
-        self.nonce = nonce
-        self.signature = signature
-    }
-}
-
-package struct HelloMessage: Codable {
-    package let deviceID: UUID
-    package let deviceName: String
-    package let deviceType: DeviceType
+package struct MirageSessionBootstrapRequest: Codable, Sendable {
     package let protocolVersion: Int
-    package let advertisement: LoomPeerAdvertisement
-    package let negotiation: MirageProtocolNegotiation
-    /// iCloud user record ID for trust evaluation, if available.
-    package let iCloudUserID: String?
-    /// Signed identity envelope proving possession of the account private key.
-    package let identity: MirageIdentityEnvelope
-    /// Optional one-shot signal asking the host to trigger a software update when protocol mismatch is detected.
+    package let requestedFeatures: MirageFeatureSet
     package let requestHostUpdateOnProtocolMismatch: Bool?
 
     package init(
-        deviceID: UUID,
-        deviceName: String,
-        deviceType: DeviceType,
         protocolVersion: Int,
-        advertisement: LoomPeerAdvertisement,
-        negotiation: MirageProtocolNegotiation,
-        iCloudUserID: String? = nil,
-        identity: MirageIdentityEnvelope,
+        requestedFeatures: MirageFeatureSet,
         requestHostUpdateOnProtocolMismatch: Bool? = nil
     ) {
-        self.deviceID = deviceID
-        self.deviceName = deviceName
-        self.deviceType = deviceType
         self.protocolVersion = protocolVersion
-        self.advertisement = advertisement
-        self.negotiation = negotiation
-        self.iCloudUserID = iCloudUserID
-        self.identity = identity
+        self.requestedFeatures = requestedFeatures
         self.requestHostUpdateOnProtocolMismatch = requestHostUpdateOnProtocolMismatch
     }
 }
 
-package struct HelloResponseMessage: Codable {
+package struct MirageSessionBootstrapResponse: Codable, Sendable {
     package let accepted: Bool
     package let hostID: UUID
     package let hostName: String
-    package let requiresAuth: Bool
+    package let selectedFeatures: MirageFeatureSet
     package let dataPort: UInt16
-    package let negotiation: MirageProtocolNegotiation
-    /// Echoed client hello nonce for request/response binding.
-    package let requestNonce: String
     /// Whether media payload encryption is required for this session.
     package let mediaEncryptionEnabled: Bool
     /// Auth token required for UDP registration packets.
@@ -95,10 +49,8 @@ package struct HelloResponseMessage: Codable {
     package let autoTrustGranted: Bool?
     /// True when the host explicitly allows this client to reconnect over remote relay.
     package let remoteAccessAllowed: Bool?
-    /// Signed host identity envelope.
-    package let identity: MirageIdentityEnvelope
     /// Explicit rejection reason when `accepted` is false.
-    package let rejectionReason: HelloRejectionReason?
+    package let rejectionReason: MirageSessionBootstrapRejectionReason?
     /// Optional metadata for protocol mismatch handling.
     package let protocolMismatchHostVersion: Int?
     package let protocolMismatchClientVersion: Int?
@@ -110,16 +62,13 @@ package struct HelloResponseMessage: Codable {
         accepted: Bool,
         hostID: UUID,
         hostName: String,
-        requiresAuth: Bool,
+        selectedFeatures: MirageFeatureSet,
         dataPort: UInt16,
-        negotiation: MirageProtocolNegotiation,
-        requestNonce: String,
         mediaEncryptionEnabled: Bool,
         udpRegistrationToken: Data,
         autoTrustGranted: Bool? = nil,
         remoteAccessAllowed: Bool? = nil,
-        identity: MirageIdentityEnvelope,
-        rejectionReason: HelloRejectionReason? = nil,
+        rejectionReason: MirageSessionBootstrapRejectionReason? = nil,
         protocolMismatchHostVersion: Int? = nil,
         protocolMismatchClientVersion: Int? = nil,
         protocolMismatchUpdateTriggerAccepted: Bool? = nil,
@@ -128,15 +77,12 @@ package struct HelloResponseMessage: Codable {
         self.accepted = accepted
         self.hostID = hostID
         self.hostName = hostName
-        self.requiresAuth = requiresAuth
+        self.selectedFeatures = selectedFeatures
         self.dataPort = dataPort
-        self.negotiation = negotiation
-        self.requestNonce = requestNonce
         self.mediaEncryptionEnabled = mediaEncryptionEnabled
         self.udpRegistrationToken = udpRegistrationToken
         self.autoTrustGranted = autoTrustGranted
         self.remoteAccessAllowed = remoteAccessAllowed
-        self.identity = identity
         self.rejectionReason = rejectionReason
         self.protocolMismatchHostVersion = protocolMismatchHostVersion
         self.protocolMismatchClientVersion = protocolMismatchClientVersion

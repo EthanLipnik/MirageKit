@@ -57,7 +57,7 @@ extension MirageHostService {
     /// Start menu bar monitoring for a stream
     func startMenuBarMonitoring(streamID: StreamID, app: MirageApplication, client: MirageConnectedClient) async {
         guard let clientContext = clientsByConnection.values.first(where: { $0.client.id == client.id }) else { return }
-        let connection = clientContext.tcpConnection
+        let connection = clientContext.rawConnection
 
         await menuBarMonitor.startMonitoring(
             streamID: streamID,

@@ -4,10 +4,11 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Client connection lifecycle and hello handshake.
+//  Client connection lifecycle and Loom session bootstrap.
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
@@ -19,30 +20,24 @@ import UIKit.UIDevice
 import AppKit
 #endif
 
+enum MirageControlEndpointAttemptSource: String, Sendable {
+    case direct = "direct"
+    case bonjourService = "bonjour_service"
+    case resolvedBonjourService = "resolved_bonjour_service"
+}
+
+struct MirageControlEndpointAttempt: Sendable {
+    let endpoint: NWEndpoint
+    let source: MirageControlEndpointAttemptSource
+}
+
 @MainActor
 extension MirageClientService {
-    /// Determine current device type.
-    private var currentDeviceType: DeviceType {
-        #if os(macOS)
-        return .mac
-        #elseif os(iOS)
-        if UIDevice.current.userInterfaceIdiom == .pad { return .iPad } else {
-            return .iPhone
-        }
-        #elseif os(visionOS)
-        return .vision
-        #else
-        return .unknown
-        #endif
-    }
-
     func controlParameters(for transport: ControlTransport) -> NWParameters {
         switch transport {
         case .tcp:
             let parameters = NWParameters.tcp
-            parameters.serviceClass = .interactiveVideo
             parameters.includePeerToPeer = networkConfig.enablePeerToPeer
-
             if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
                 tcpOptions.noDelay = true
                 tcpOptions.enableKeepalive = true
@@ -53,20 +48,25 @@ extension MirageClientService {
         case .quic:
             let options = NWProtocolQUIC.Options(alpn: ["mirage-v2"])
             let parameters = NWParameters(quic: options)
-            parameters.serviceClass = .interactiveVideo
             parameters.includePeerToPeer = networkConfig.enablePeerToPeer
             parameters.allowLocalEndpointReuse = true
             return parameters
         }
     }
 
-    func makeHelloMessage(
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
-    ) throws -> (hello: HelloMessage, nonce: String) {
-        let negotiation = MirageProtocolNegotiation.clientHello(
-            protocolVersion: Int(Loom.protocolVersion),
-            supportedFeatures: mirageSupportedFeatures
-        )
+    private var currentDeviceType: DeviceType {
+        #if os(macOS)
+        return .mac
+        #elseif os(iOS)
+        return UIDevice.current.userInterfaceIdiom == .pad ? .iPad : .iPhone
+        #elseif os(visionOS)
+        return .vision
+        #else
+        return .unknown
+        #endif
+    }
+
+    func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {
         let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
         let identity = try resolvedIdentityManager.currentIdentity()
         let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
@@ -74,113 +74,34 @@ extension MirageClientService {
             deviceType: currentDeviceType,
             identityKeyID: identity.keyID
         )
-        let timestampMs = MirageIdentitySigning.currentTimestampMs()
-        let nonce = UUID().uuidString.lowercased()
-        let payload = try MirageIdentitySigning.helloPayload(
+        return LoomSessionHelloRequest(
             deviceID: deviceID,
             deviceName: deviceName,
             deviceType: currentDeviceType,
-            protocolVersion: Int(Loom.protocolVersion),
             advertisement: advertisement,
-            negotiation: negotiation,
-            iCloudUserID: iCloudUserID,
-            keyID: identity.keyID,
-            publicKey: identity.publicKey,
-            timestampMs: timestampMs,
-            nonce: nonce
+            iCloudUserID: iCloudUserID
         )
-        let signature = try resolvedIdentityManager.sign(payload)
-        let hello = HelloMessage(
-            deviceID: deviceID,
-            deviceName: deviceName,
-            deviceType: currentDeviceType,
-            protocolVersion: Int(Loom.protocolVersion),
-            advertisement: advertisement,
-            negotiation: negotiation,
-            iCloudUserID: iCloudUserID,
-            identity: MirageIdentityEnvelope(
-                keyID: identity.keyID,
-                publicKey: identity.publicKey,
-                timestampMs: timestampMs,
-                nonce: nonce,
-                signature: signature
-            ),
+    }
+
+    func makeBootstrapRequest(
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
+    ) -> MirageSessionBootstrapRequest {
+        MirageSessionBootstrapRequest(
+            protocolVersion: Int(MirageKit.protocolVersion),
+            requestedFeatures: mirageSupportedFeatures,
             requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
         )
-        return (hello, nonce)
     }
 
-    /// Send hello message with device info to host.
-    private func sendHelloMessage(
-        connection: NWConnection,
-        requestHostUpdateOnProtocolMismatch: Bool? = nil
-    ) async throws {
-        do {
-            let helloRequest = try makeHelloMessage(
-                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
-            )
-            pendingHelloNonce = helloRequest.nonce
-            MirageInstrumentation.record(.clientHelloSent)
-            let message = try ControlMessage(type: .hello, content: helloRequest.hello)
-            let data = message.serialize()
-            MirageLogger.client("Sending hello: \(deviceName) (\(currentDeviceType.displayName))")
-
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                let continuationBox = ContinuationBox<Void>(continuation)
-                connection.send(content: data, completion: .contentProcessed { error in
-                    if let error {
-                        continuationBox.resume(throwing: error)
-                    } else {
-                        continuationBox.resume()
-                    }
-                })
-            }
-
-            MirageLogger.client("Hello sent successfully")
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to send hello message: ")
-            throw error
-        }
-    }
-
-    func awaitHelloHandshake(
-        on connection: NWConnection,
-        provisionalHost: LoomPeer
-    ) async throws {
-        connectionState = .handshaking(host: provisionalHost.name)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let continuationBox = ContinuationBox<Void>(continuation)
-            helloHandshakeContinuation = continuationBox
-
-            Task { @MainActor [weak self] in
-                guard let self else {
-                    continuationBox.resume(throwing: CancellationError())
-                    return
-                }
-
-                do {
-                    try await self.sendHelloMessage(connection: connection)
-                    self.startManualApprovalWaitTimer()
-                    self.startReceiving(on: connection)
-                } catch {
-                    if self.helloHandshakeContinuation === continuationBox {
-                        self.helloHandshakeContinuation = nil
-                    }
-                    continuationBox.resume(throwing: error)
-                }
-            }
-        }
-    }
-
-    /// Connect to a discovered host.
     public func connect(
         to host: LoomPeer,
         controlTransport: ControlTransport = .tcp
-    )
-    async throws {
-        guard connectionState.canConnect else { throw MirageError.protocolError("Already connected or connecting") }
+    ) async throws {
+        guard connectionState.canConnect else {
+            throw MirageError.protocolError("Already connected or connecting")
+        }
 
+        let attemptID = beginConnectAttempt()
         MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name) using \(controlTransport)...")
         connectionState = .connecting
@@ -189,97 +110,57 @@ extension MirageClientService {
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
-        await handshakeReplayProtector.reset()
         isAwaitingManualApproval = false
-        hasReceivedHelloResponse = false
+        hasCompletedBootstrap = false
         approvalWaitTask?.cancel()
         connectedHost = host
 
-        var pendingConnection: NWConnection?
+        var pendingChannel: MirageControlChannel?
+        let helloRequest = try makeSessionHelloRequest()
 
         do {
-            // Create a direct control connection to the endpoint.
-            let parameters = controlParameters(for: controlTransport)
-            let connection = NWConnection(to: host.endpoint, using: parameters)
-            pendingConnection = connection
-
-            // Wait for connection to be ready.
-            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-                let continuationBox = ContinuationBox<Void>(continuation)
-
-                connection.stateUpdateHandler = { [continuationBox] state in
-                    MirageLogger.client("Connection state: \(state)")
-                    switch state {
-                    case .ready:
-                        continuationBox.resume()
-                    case let .failed(error):
-                        continuationBox.resume(throwing: error)
-                    case .cancelled:
-                        continuationBox.resume(throwing: MirageError.protocolError("Connection cancelled"))
-                    case let .waiting(error):
-                        MirageLogger.client("Connection waiting: \(error)")
-                    default:
-                        break
-                    }
-                }
-
-                connection.start(queue: .global(qos: .userInitiated))
-            }
-
-            MirageLogger.client("Connected to \(host.name)")
-            MirageInstrumentation.record(.clientConnectionEstablished)
-
-            // Store connection for receiving messages.
-            self.connection = connection
-            loomSession = loomNode.makeSession(connection: connection)
-            inputEventSender.updateConnection(connection)
-
-            connection.stateUpdateHandler = { [weak self] state in
-                guard let self else { return }
-                switch state {
-                case let .failed(error):
-                    Task { @MainActor in
-                        let shouldNotifyDelegate = self.hasReceivedHelloResponse
-                        await self.handleDisconnect(
-                            reason: error.localizedDescription,
-                            state: .error(error.localizedDescription),
-                            notifyDelegate: shouldNotifyDelegate
-                        )
-                    }
-                case .cancelled:
-                    Task { @MainActor in
-                        let shouldNotifyDelegate = self.hasReceivedHelloResponse
-                        await self.handleDisconnect(
-                            reason: "Connection cancelled",
-                            state: .disconnected,
-                            notifyDelegate: shouldNotifyDelegate
-                        )
-                    }
-                default:
-                    break
-                }
-            }
-            connection.pathUpdateHandler = { [weak self] path in
-                let snapshot = MirageNetworkPathClassifier.classify(path)
-                MirageLogger.client("Control path updated: \(snapshot.signature)")
-                Task { @MainActor [weak self] in
-                    self?.handleControlPathUpdate(snapshot)
-                }
-            }
-
-            try await awaitHelloHandshake(
-                on: connection,
-                provisionalHost: host
+            let transportKind: LoomTransportKind = controlTransport == .quic ? .quic : .tcp
+            let session = try await connectSession(
+                to: host,
+                transportKind: transportKind,
+                hello: helloRequest,
+                attemptID: attemptID
             )
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
+            let controlChannel = try await MirageControlChannel.open(on: session)
+            pendingChannel = controlChannel
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
+
+            loomSession = session
+            self.controlChannel = controlChannel
+            inputEventSender.updateSendHandler { [weak controlChannel] data, _ in
+                guard let controlChannel else {
+                    throw MirageError.protocolError("Control channel unavailable")
+                }
+                try await controlChannel.stream.send(data)
+            }
+            installControlConnectionObservers(controlChannel)
+            try await performBootstrap(over: controlChannel, provisionalHost: host)
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
+            startReceiving()
+            finishConnectAttempt(attemptID)
+
             if let acceptedHost = connectedHost {
-                MirageLogger.client("Hello handshake accepted for \(acceptedHost.name)")
+                MirageLogger.client("Mirage bootstrap accepted for \(acceptedHost.name)")
             }
         } catch {
-            pendingConnection?.cancel()
-            if hasReceivedHelloResponse {
+            if let pendingChannel {
+                await pendingChannel.cancel()
+            }
+            cancelPendingConnectTask(attemptID: attemptID)
+            finishConnectAttempt(attemptID)
+            if hasCompletedBootstrap {
                 MirageLogger.error(.client, error: error, message: "Connection failed: ")
             } else {
-                MirageLogger.client("Connection failed before hello response: \(error.localizedDescription)")
+                MirageLogger.client("Connection failed before bootstrap completed: \(error.localizedDescription)")
             }
             MirageInstrumentation.record(.clientConnectionFailed)
             if requiresDisconnectCleanupAfterFailedConnect() {
@@ -293,19 +174,13 @@ extension MirageClientService {
         }
     }
 
-    /// Disconnect from the current host.
     public func disconnect() async {
-        // Send disconnect message to host before closing connection.
-        if let connection, case .connected = connectionState {
+        cancelPendingConnectTask()
+        invalidateCurrentConnectAttempt()
+
+        if let controlChannel, case .connected = connectionState {
             let disconnectMsg = DisconnectMessage(reason: .userRequested, message: nil)
-            if let message = try? ControlMessage(type: .disconnect, content: disconnectMsg) {
-                let data = message.serialize()
-                await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
-                    connection.send(content: data, completion: .contentProcessed { _ in
-                        continuation.resume()
-                    })
-                }
-            }
+            try? await controlChannel.send(.disconnect, content: disconnectMsg)
         }
 
         await handleDisconnect(
@@ -316,34 +191,39 @@ extension MirageClientService {
     }
 
     func handleDisconnect(reason: String, state: ConnectionState, notifyDelegate: Bool) async {
-        if case .disconnected = connectionState { return }
+        if case .disconnected = connectionState {
+            return
+        }
 
         if case .error = connectionState {
-            if case .error = state { return }
-            if case .disconnected = state { return }
+            if case .error = state {
+                return
+            }
+            if case .disconnected = state {
+                return
+            }
         }
 
         MirageInstrumentation.record(.clientConnectionDisconnected)
 
-        if !hasReceivedHelloResponse, let helloHandshakeContinuation {
-            self.helloHandshakeContinuation = nil
-            helloHandshakeContinuation.resume(throwing: MirageError.protocolError(reason))
-        }
-
         let sessions = activeStreams
         let storedSessions = sessionStore.activeSessions
 
-        connection?.cancel()
-        connection = nil
+        if let controlChannel {
+            await controlChannel.cancel()
+        } else {
+            await loomSession?.cancel()
+        }
+        cancelPendingConnectTask()
+        invalidateCurrentConnectAttempt()
+        self.controlChannel = nil
         loomSession = nil
         sharedClipboardEnabled = false
         sharedClipboardBridge?.setActive(false)
-        inputEventSender.updateConnection(nil)
+        inputEventSender.updateSendHandler(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
         connectedHostAllowsRemoteAccess = nil
-        pendingHelloNonce = nil
-        helloHandshakeContinuation = nil
         setMediaSecurityContext(nil)
         receiveBuffer = Data()
         stopRegistrationRefreshLoop()
@@ -362,13 +242,14 @@ extension MirageClientService {
             await stopViewing(session)
         }
 
-        if let loginDisplayStreamID { MirageFrameCache.shared.clear(for: loginDisplayStreamID) }
+        if let loginDisplayStreamID {
+            MirageFrameCache.shared.clear(for: loginDisplayStreamID)
+        }
         metricsStore.clearAll()
         cursorStore.clearAll()
         cursorPositionStore.clearAll()
         sessionStore.clearLoginDisplayState()
 
-        // Clean up video resources.
         stopVideoConnection()
         stopAudioConnection()
 
@@ -407,7 +288,9 @@ extension MirageClientService {
         pendingAppAdaptiveFallbackColorDepth = nil
         desktopDimensionTokenByStream.removeAll()
         fastPathState.clearAllStartupPacketPending()
-        for task in startupRegistrationRetryTasks.values { task.cancel() }
+        for task in startupRegistrationRetryTasks.values {
+            task.cancel()
+        }
         startupRegistrationRetryTasks.removeAll()
         activeStreams.removeAll()
         for session in storedSessions {
@@ -415,10 +298,8 @@ extension MirageClientService {
         }
         await updateReassemblerSnapshot()
 
-        // Clear active stream IDs (thread-safe).
         clearAllActiveStreamIDs()
 
-        // Reset session state.
         hostSessionState = nil
         currentSessionToken = nil
         loginDisplayStreamID = nil
@@ -441,7 +322,7 @@ extension MirageClientService {
             hostSupportLogArchiveTimeoutTask = nil
             hostSupportLogArchiveContinuation.resume(throwing: MirageError.protocolError(reason))
         }
-        hasReceivedHelloResponse = false
+        hasCompletedBootstrap = false
         negotiatedFeatures = []
         mediaPayloadEncryptionEnabled = true
         desktopStreamID = nil
@@ -450,7 +331,372 @@ extension MirageClientService {
         connectionState = state
         refreshSharedClipboardBridgeState()
 
-        if notifyDelegate { delegate?.clientService(self, didDisconnectFromHost: reason) }
+        if notifyDelegate {
+            delegate?.clientService(self, didDisconnectFromHost: reason)
+        }
+    }
+
+    private func connectSession(
+        to host: LoomPeer,
+        transportKind: LoomTransportKind,
+        hello: LoomSessionHelloRequest,
+        attemptID: UUID
+    ) async throws -> LoomAuthenticatedSession {
+        let initialAttempt = controlEndpointAttempts(for: host, transportKind: transportKind).first
+            ?? MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)
+
+        do {
+            return try await establishControlSession(
+                to: initialAttempt.endpoint,
+                source: initialAttempt.source,
+                hostName: host.name,
+                transportKind: transportKind,
+                hello: hello,
+                attemptID: attemptID
+            )
+        } catch {
+            guard shouldRetryWithResolvedBonjourEndpoint(for: host, after: error) else {
+                throw error
+            }
+
+            let resolvedEndpoint = try await resolvedBonjourFallbackEndpoint(
+                for: host,
+                transportKind: transportKind
+            )
+            let attempts = controlEndpointAttempts(
+                for: host,
+                transportKind: transportKind,
+                resolvedBonjourEndpoint: resolvedEndpoint
+            )
+            guard let fallbackAttempt = attempts.dropFirst().first else {
+                throw error
+            }
+
+            MirageLogger.client(
+                "Retrying \(transportKind) control session to \(host.name) via \(fallbackAttempt.source.rawValue) endpoint=\(fallbackAttempt.endpoint)"
+            )
+            return try await establishControlSession(
+                to: fallbackAttempt.endpoint,
+                source: fallbackAttempt.source,
+                hostName: host.name,
+                transportKind: transportKind,
+                hello: hello,
+                attemptID: attemptID
+            )
+        }
+    }
+
+    func controlEndpointAttempts(
+        for host: LoomPeer,
+        transportKind _: LoomTransportKind,
+        resolvedBonjourEndpoint: NWEndpoint? = nil
+    ) -> [MirageControlEndpointAttempt] {
+        guard case .service = host.endpoint else {
+            return [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)]
+        }
+
+        var attempts = [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .bonjourService)]
+        if let resolvedBonjourEndpoint,
+           resolvedBonjourEndpoint.debugDescription != host.endpoint.debugDescription {
+            attempts.append(
+                MirageControlEndpointAttempt(
+                    endpoint: resolvedBonjourEndpoint,
+                    source: .resolvedBonjourService
+                )
+            )
+        }
+        return attempts
+    }
+
+    private func establishControlSession(
+        to endpoint: NWEndpoint,
+        source: MirageControlEndpointAttemptSource,
+        hostName: String,
+        transportKind: LoomTransportKind,
+        hello: LoomSessionHelloRequest,
+        attemptID: UUID
+    ) async throws -> LoomAuthenticatedSession {
+        try throwIfConnectAttemptIsStale(attemptID)
+        MirageLogger.client(
+            "Starting \(transportKind) control session to \(hostName) via \(source.rawValue) endpoint=\(endpoint)"
+        )
+        let node = makeConnectNode(enablePeerToPeer: networkConfig.enablePeerToPeer)
+        let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
+            let session = try await node.connect(
+                to: endpoint,
+                using: transportKind,
+                hello: hello
+            )
+            let shouldCancelSession = await MainActor.run {
+                guard let self else { return true }
+                return !self.isCurrentConnectAttempt(attemptID)
+            }
+            if shouldCancelSession {
+                await session.cancel()
+                throw CancellationError()
+            }
+            return session
+        }
+        pendingConnectTask = connectTask
+        pendingConnectTaskAttemptID = attemptID
+
+        do {
+            let session = try await awaitConnectSession(
+                connectTask,
+                endpoint: endpoint,
+                transportKind: transportKind,
+                attemptID: attemptID
+            )
+            clearPendingConnectTaskIfNeeded(for: attemptID)
+            return session
+        } catch {
+            clearPendingConnectTaskIfNeeded(for: attemptID)
+            throw error
+        }
+    }
+
+    private func shouldRetryWithResolvedBonjourEndpoint(
+        for host: LoomPeer,
+        after error: Error
+    ) -> Bool {
+        guard case .service = host.endpoint else {
+            return false
+        }
+        if error is CancellationError {
+            return false
+        }
+        if let error = error as? LoomError {
+            switch error {
+            case .authenticationFailed, .protocolError:
+                return false
+            default:
+                break
+            }
+        }
+        return true
+    }
+
+    private func resolvedBonjourFallbackEndpoint(
+        for host: LoomPeer,
+        transportKind: LoomTransportKind
+    ) async throws -> NWEndpoint {
+        let endpoint = try await MirageBonjourServiceEndpointResolver.resolve(
+            endpoint: host.endpoint,
+            advertisement: host.advertisement,
+            transportKind: transportKind,
+            enablePeerToPeer: networkConfig.enablePeerToPeer
+        )
+        MirageLogger.client(
+            "Resolved Bonjour fallback endpoint for \(host.name) transport=\(transportKind) endpoint=\(endpoint)"
+        )
+        return endpoint
+    }
+
+    private func awaitConnectSession(
+        _ connectTask: Task<LoomAuthenticatedSession, Error>,
+        endpoint: NWEndpoint,
+        transportKind: LoomTransportKind,
+        attemptID: UUID
+    ) async throws -> LoomAuthenticatedSession {
+        do {
+            let timeout = controlSessionConnectTimeout
+            return try await withThrowingTaskGroup(of: LoomAuthenticatedSession.self) { group in
+                group.addTask {
+                    try await connectTask.value
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw MirageError.protocolError(
+                        "Timed out establishing \(transportKind) control session to \(endpoint)"
+                    )
+                }
+
+                let session = try await group.next() ?? {
+                    throw MirageError.protocolError("Control session establishment ended unexpectedly")
+                }()
+                group.cancelAll()
+                return session
+            }
+        } catch {
+            if isCurrentConnectAttempt(attemptID) {
+                cancelPendingConnectTask(attemptID: attemptID)
+            }
+            throw error
+        }
+    }
+
+    private func makeConnectNode(enablePeerToPeer: Bool) -> LoomNode {
+        var configuration = networkConfig
+        configuration.enablePeerToPeer = enablePeerToPeer
+        return LoomNode(
+            configuration: configuration,
+            identityManager: loomNode.identityManager,
+            trustProvider: loomNode.trustProvider
+        )
+    }
+
+    private func beginConnectAttempt() -> UUID {
+        let attemptID = UUID()
+        currentConnectAttemptID = attemptID
+        return attemptID
+    }
+
+    private func finishConnectAttempt(_ attemptID: UUID) {
+        guard currentConnectAttemptID == attemptID else { return }
+        currentConnectAttemptID = nil
+    }
+
+    private func invalidateCurrentConnectAttempt() {
+        currentConnectAttemptID = nil
+    }
+
+    private func isCurrentConnectAttempt(_ attemptID: UUID) -> Bool {
+        currentConnectAttemptID == attemptID
+    }
+
+    private func throwIfConnectAttemptIsStale(_ attemptID: UUID) throws {
+        guard isCurrentConnectAttempt(attemptID) else {
+            throw CancellationError()
+        }
+    }
+
+    private func cancelPendingConnectTask(attemptID: UUID? = nil) {
+        guard attemptID == nil || pendingConnectTaskAttemptID == attemptID else {
+            return
+        }
+        pendingConnectTask?.cancel()
+        pendingConnectTask = nil
+        pendingConnectTaskAttemptID = nil
+    }
+
+    private func clearPendingConnectTaskIfNeeded(for attemptID: UUID) {
+        guard pendingConnectTaskAttemptID == attemptID else { return }
+        pendingConnectTask = nil
+        pendingConnectTaskAttemptID = nil
+    }
+
+    private func performBootstrap(
+        over controlChannel: MirageControlChannel,
+        provisionalHost: LoomPeer,
+        requestHostUpdateOnProtocolMismatch: Bool? = nil
+    ) async throws {
+        connectionState = .handshaking(host: provisionalHost.name)
+        MirageInstrumentation.record(.clientHelloSent)
+        MirageLogger.client("Sending Mirage bootstrap request to \(provisionalHost.name)")
+        try await controlChannel.send(
+            .sessionBootstrapRequest,
+            content: makeBootstrapRequest(
+                requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
+            )
+        )
+        startManualApprovalWaitTimer()
+
+        MirageLogger.client("Waiting for Mirage bootstrap response from \(provisionalHost.name)")
+        let responseMessage = try await receiveSingleControlMessage(
+            from: controlChannel.incomingBytes,
+            timeout: bootstrapResponseTimeout,
+            timeoutMessage: "Timed out waiting for host bootstrap response from \(provisionalHost.name)"
+        )
+        guard responseMessage.type == .sessionBootstrapResponse else {
+            throw MirageError.protocolError("Expected Mirage session bootstrap response")
+        }
+        MirageLogger.client("Received Mirage bootstrap response from \(provisionalHost.name)")
+        let response = try responseMessage.decode(MirageSessionBootstrapResponse.self)
+        try await handleBootstrapResponse(
+            response,
+            provisionalHost: provisionalHost,
+            session: controlChannel.session
+        )
+    }
+
+    func receiveSingleControlMessage(
+        from stream: AsyncStream<Data>,
+        timeout: Duration? = nil,
+        timeoutMessage: String? = nil
+    ) async throws -> ControlMessage {
+        if let timeout,
+           let timeoutMessage {
+            return try await withThrowingTaskGroup(of: ControlMessage.self) { group in
+                group.addTask {
+                    try await self.receiveSingleControlMessageUnbounded(from: stream)
+                }
+                group.addTask {
+                    try await Task.sleep(for: timeout)
+                    throw MirageError.protocolError(timeoutMessage)
+                }
+
+                let message = try await group.next() ?? {
+                    throw MirageError.protocolError("Control message receive ended unexpectedly")
+                }()
+                group.cancelAll()
+                return message
+            }
+        }
+
+        return try await receiveSingleControlMessageUnbounded(from: stream)
+    }
+
+    private func receiveSingleControlMessageUnbounded(
+        from stream: AsyncStream<Data>
+    ) async throws -> ControlMessage {
+        var buffer = Data()
+
+        for await chunk in stream {
+            guard !chunk.isEmpty else { continue }
+            buffer.append(chunk)
+
+            switch ControlMessage.deserialize(from: buffer) {
+            case let .success(message, consumed):
+                if consumed < buffer.count {
+                    receiveBuffer = Data(buffer.dropFirst(consumed))
+                }
+                return message
+            case .needMoreData:
+                continue
+            case let .invalidFrame(reason):
+                throw MirageError.protocolError("Invalid control frame: \(reason)")
+            }
+        }
+
+        throw MirageError.protocolError("Control stream closed before receiving bootstrap response")
+    }
+
+    private func installControlConnectionObservers(_ controlChannel: MirageControlChannel) {
+        let rawConnection = controlChannel.rawConnection
+        rawConnection.stateUpdateHandler = { [weak self] state in
+            guard let self else { return }
+            switch state {
+            case let .failed(error):
+                Task { @MainActor in
+                    guard self.connection === rawConnection else { return }
+                    await self.handleDisconnect(
+                        reason: error.localizedDescription,
+                        state: .error(error.localizedDescription),
+                        notifyDelegate: self.hasCompletedBootstrap
+                    )
+                }
+            case .cancelled:
+                Task { @MainActor in
+                    guard self.connection === rawConnection else { return }
+                    await self.handleDisconnect(
+                        reason: "Connection cancelled",
+                        state: .disconnected,
+                        notifyDelegate: self.hasCompletedBootstrap
+                    )
+                }
+            default:
+                break
+            }
+        }
+        rawConnection.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            let snapshot = MirageNetworkPathClassifier.classify(path)
+            MirageLogger.client("Control path updated: \(snapshot.signature)")
+            Task { @MainActor in
+                guard self.connection === rawConnection else { return }
+                self.handleControlPathUpdate(snapshot)
+            }
+        }
     }
 
     private func startManualApprovalWaitTimer() {
@@ -459,7 +705,7 @@ extension MirageClientService {
             try? await Task.sleep(for: .seconds(2.5))
             guard let self else { return }
             guard Self.shouldActivateManualApprovalWaitIndicator(
-                hasReceivedHelloResponse: hasReceivedHelloResponse,
+                hasCompletedBootstrap: hasCompletedBootstrap,
                 connectionState: connectionState
             ) else {
                 return
@@ -472,10 +718,10 @@ extension MirageClientService {
     }
 
     static func shouldActivateManualApprovalWaitIndicator(
-        hasReceivedHelloResponse: Bool,
+        hasCompletedBootstrap: Bool,
         connectionState: ConnectionState
     ) -> Bool {
-        guard !hasReceivedHelloResponse else { return false }
+        guard !hasCompletedBootstrap else { return false }
         if case .handshaking = connectionState {
             return true
         }
@@ -484,18 +730,10 @@ extension MirageClientService {
 
     private func requiresDisconnectCleanupAfterFailedConnect() -> Bool {
         switch connectionState {
-        case .disconnected,
-             .error:
-            return connection != nil ||
-                loomSession != nil ||
-                pendingHelloNonce != nil ||
-                helloHandshakeContinuation != nil
-        case .connecting,
-             .handshaking,
-             .connected,
-             .reconnecting:
+        case .disconnected, .error:
+            return controlChannel != nil || loomSession != nil
+        case .connecting, .handshaking, .connected, .reconnecting:
             return true
         }
     }
-
 }

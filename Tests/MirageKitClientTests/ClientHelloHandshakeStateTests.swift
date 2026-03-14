@@ -10,11 +10,11 @@
 import Network
 import Testing
 
-@Suite("Client Hello Handshake State")
+@Suite("Client Bootstrap State")
 struct ClientHelloHandshakeStateTests {
     @MainActor
-    @Test("Accepted hello canonicalizes connected host and transitions to connected")
-    func acceptedHelloCanonicalizesConnectedHost() throws {
+    @Test("Accepted bootstrap canonicalizes connected host and transitions to connected")
+    func acceptedBootstrapCanonicalizesConnectedHost() throws {
         let provisionalHostID = UUID()
         let acceptedHostID = UUID()
         let port = try #require(NWEndpoint.Port(rawValue: 9_848))
@@ -38,40 +38,26 @@ struct ClientHelloHandshakeStateTests {
         let service = MirageClientService(deviceName: "Test Device")
         service.connectedHost = provisionalHost
         service.connectionState = .handshaking(host: provisionalHost.name)
-        service.pendingHelloNonce = "req-nonce"
         service.isAwaitingManualApproval = true
 
-        let response = HelloResponseMessage(
+        let response = MirageSessionBootstrapResponse(
             accepted: true,
             hostID: acceptedHostID,
             hostName: "Accepted Host",
-            requiresAuth: false,
+            selectedFeatures: mirageSupportedFeatures,
             dataPort: 9_848,
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            requestNonce: "req-nonce",
             mediaEncryptionEnabled: true,
-            udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength),
-            identity: MirageIdentityEnvelope(
-                keyID: "accepted-key",
-                publicKey: Data([0x01, 0x02]),
-                timestampMs: 1_234_567_890,
-                nonce: "host-nonce",
-                signature: Data([0x03, 0x04])
-            )
+            udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
         )
 
-        let acceptedHost = service.finalizeAcceptedHelloResponse(
+        let acceptedHost = service.finalizeAcceptedBootstrap(
             response,
             hostIdentityKeyID: "accepted-key"
         )
 
         #expect(service.connectionState == .connected(host: "Accepted Host"))
         #expect(service.connectedHostIdentityKeyID == "accepted-key")
-        #expect(service.pendingHelloNonce == nil)
-        #expect(service.hasReceivedHelloResponse == true)
+        #expect(service.hasCompletedBootstrap == true)
         #expect(service.isAwaitingManualApproval == false)
         #expect(acceptedHost.id == LoomPeerID(deviceID: acceptedHostID))
         #expect(service.connectedHost?.id == LoomPeerID(deviceID: acceptedHostID))
@@ -90,27 +76,59 @@ struct ClientHelloHandshakeStateTests {
     func manualApprovalWaitIndicatorOnlyActivatesDuringHandshaking() {
         #expect(
             MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasReceivedHelloResponse: false,
+                hasCompletedBootstrap: false,
                 connectionState: .handshaking(host: "Host")
             )
         )
         #expect(
             !MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasReceivedHelloResponse: false,
+                hasCompletedBootstrap: false,
                 connectionState: .connecting
             )
         )
         #expect(
             !MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasReceivedHelloResponse: false,
+                hasCompletedBootstrap: false,
                 connectionState: .connected(host: "Host")
             )
         )
         #expect(
             !MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasReceivedHelloResponse: true,
+                hasCompletedBootstrap: true,
                 connectionState: .handshaking(host: "Host")
             )
         )
+    }
+
+    @MainActor
+    @Test("Control transport parameters do not classify control as interactive video")
+    func controlTransportParametersDoNotUseInteractiveVideoQoS() {
+        let service = MirageClientService(deviceName: "Test Device")
+
+        let tcpParameters = service.controlParameters(for: .tcp)
+        let quicParameters = service.controlParameters(for: .quic)
+
+        #expect(tcpParameters.serviceClass == .bestEffort)
+        #expect(quicParameters.serviceClass == .bestEffort)
+    }
+
+    @MainActor
+    @Test("Bootstrap response wait times out with an explicit handshake error")
+    func bootstrapResponseWaitTimesOutWithExplicitHandshakeError() async {
+        let service = MirageClientService(deviceName: "Test Device")
+        let stream = AsyncStream<Data> { _ in }
+
+        do {
+            _ = try await service.receiveSingleControlMessage(
+                from: stream,
+                timeout: .milliseconds(50),
+                timeoutMessage: "Timed out waiting for host bootstrap response from Test Host"
+            )
+            Issue.record("Expected bootstrap response wait to time out.")
+        } catch let MirageError.protocolError(message) {
+            #expect(message == "Timed out waiting for host bootstrap response from Test Host")
+        } catch {
+            Issue.record("Unexpected timeout error: \(error.localizedDescription)")
+        }
     }
 }

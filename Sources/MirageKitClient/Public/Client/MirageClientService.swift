@@ -7,6 +7,7 @@
 
 import CoreGraphics
 import Foundation
+import Loom
 import Network
 import Observation
 import MirageKit
@@ -418,7 +419,7 @@ public final class MirageClientService {
     /// Set this before calling connect(to:) to enable iCloud-based auto-trust.
     public var iCloudUserID: String?
 
-    /// Identity manager used for signed handshake envelopes.
+    /// Identity manager used for Loom authenticated sessions.
     public var identityManager: LoomIdentityManager? {
         didSet {
             loomNode.identityManager = identityManager
@@ -428,14 +429,11 @@ public final class MirageClientService {
     /// Expected host key ID from discovery metadata, if available.
     var expectedHostIdentityKeyID: String?
 
-    /// Last host identity key ID validated by hello response.
+    /// Last host identity key ID validated by Loom session bootstrap.
     public internal(set) var connectedHostIdentityKeyID: String?
 
     /// Whether the connected host explicitly allows this client to use remote relay.
     public internal(set) var connectedHostAllowsRemoteAccess: Bool?
-
-    /// Replay protection for signed hello responses.
-    let handshakeReplayProtector = LoomReplayProtector()
 
     /// Session store for UI state and stream coordination.
     public let sessionStore: MirageClientSessionStore
@@ -448,18 +446,20 @@ public final class MirageClientService {
 
     public let loomNode: LoomNode
     var networkConfig: LoomNetworkConfiguration
-    var connection: NWConnection?
-    public internal(set) var loomSession: LoomSession?
+    var controlChannel: MirageControlChannel?
+    public internal(set) var loomSession: LoomAuthenticatedSession?
+    @ObservationIgnored var pendingConnectTask: Task<LoomAuthenticatedSession, Error>?
+    @ObservationIgnored var pendingConnectTaskAttemptID: UUID?
+    @ObservationIgnored var currentConnectAttemptID: UUID?
     public internal(set) var connectedHost: LoomPeer?
+    var connection: NWConnection? { controlChannel?.rawConnection }
     /// Stable device identifier for the client, persisted in UserDefaults.
     public let deviceID: UUID
     let deviceName: String
     var receiveBuffer = Data()
     var isProcessingReceivedData = false
     var approvalWaitTask: Task<Void, Never>?
-    var hasReceivedHelloResponse = false
-    var pendingHelloNonce: String?
-    var helloHandshakeContinuation: ContinuationBox<Void>?
+    var hasCompletedBootstrap = false
     var mediaSecurityContext: MirageMediaSecurityContext?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
@@ -477,6 +477,8 @@ public final class MirageClientService {
     var registrationRefreshTask: Task<Void, Never>?
     let registrationRefreshIntervalMs: UInt64 = 750
     let registrationRefreshJitterMs: UInt64 = 80
+    let controlSessionConnectTimeout: Duration = .seconds(6)
+    let bootstrapResponseTimeout: Duration = .seconds(6)
 
     // Video receiving
     var udpConnection: NWConnection?
@@ -525,7 +527,7 @@ public final class MirageClientService {
     var hostSupportLogArchiveRequestID: UUID?
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
-    let hostSupportLogArchiveTimeout: Duration = .seconds(30)
+    let hostSupportLogArchiveTimeout: Duration = .seconds(90)
     var pingContinuation: CheckedContinuation<Void, Error>?
     var pingRequestID: UInt64 = 0
     var pingTimeoutTask: Task<Void, Never>?

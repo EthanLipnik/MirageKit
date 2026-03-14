@@ -62,7 +62,7 @@ struct CursorUpdateRouterCoalescingTests {
         #expect(!MirageClientService.shouldLogControlMessage(.cursorUpdate))
         #expect(!MirageClientService.shouldLogControlMessage(.cursorPositionUpdate))
         #expect(!MirageClientService.shouldLogControlMessage(.streamMetricsUpdate))
-        #expect(MirageClientService.shouldLogControlMessage(.helloResponse))
+        #expect(MirageClientService.shouldLogControlMessage(.sessionBootstrapResponse))
     }
 }
 

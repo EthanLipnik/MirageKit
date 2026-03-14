@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
@@ -32,17 +33,27 @@ public extension MirageHostService {
         MirageLogger.host("Starting...")
 
         do {
-            // Start TCP listener for control connections (handler passed directly)
-            MirageLogger.host("Starting TCP listener on port \(networkConfig.controlPort)...")
-            let controlPort = try await loomNode.startAdvertising(
+            MirageLogger.host("Starting Loom authenticated listeners...")
+            let ports = try await loomNode.startAuthenticatedAdvertising(
                 serviceName: serviceName,
-                advertisement: advertisedPeerAdvertisement
+                helloProvider: { [weak self] in
+                    guard let self else {
+                        throw MirageError.protocolError("Host service deallocated during Loom hello creation")
+                    }
+                    return try await MainActor.run {
+                        try self.makeSessionHelloRequest()
+                    }
+                }
             ) { [weak self] session in
                 Task { @MainActor [weak self] in
-                    await self?.handleNewConnection(session.connection, origin: .local)
+                    await self?.handleIncomingSession(session)
                 }
             }
-            MirageLogger.host("TCP listener started on port \(controlPort)")
+            let controlPort = ports[.tcp] ?? 0
+            let directQUICPort = ports[.quic]
+            setRemoteControlPort(directQUICPort)
+            remoteControlListenerReady = directQUICPort != nil
+            MirageLogger.host("Loom authenticated listeners ready tcp=\(controlPort) quic=\(directQUICPort ?? 0)")
 
             // Start UDP listener for data
             MirageLogger.host("Starting UDP listener...")
@@ -52,7 +63,6 @@ public extension MirageHostService {
             state = .advertising(controlPort: controlPort, dataPort: dataPort)
             MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort)")
             await loomNode.updateAdvertisement(advertisedPeerAdvertisement)
-            await updateRemoteControlListenerState()
 
             // Set up app streaming callbacks
             setupAppStreamManagerCallbacks()
@@ -129,7 +139,8 @@ public extension MirageHostService {
         udpListener = nil
 
         state = .idle
-        await updateRemoteControlListenerState()
+        remoteControlListenerReady = false
+        setRemoteControlPort(nil)
     }
 
     func endAppStream(bundleIdentifier: String) async {
@@ -166,11 +177,7 @@ public extension MirageHostService {
                 hasRemainingWindows: hasRemaining
             )
             if let controlMessage = try? ControlMessage(type: .appTerminated, content: message) {
-                let data = controlMessage.serialize()
-                clientContext.tcpConnection.send(
-                    content: data,
-                    completion: NWConnection.SendCompletion.contentProcessed { _ in }
-                )
+                clientContext.controlChannel.sendBestEffort(controlMessage)
             }
         }
 

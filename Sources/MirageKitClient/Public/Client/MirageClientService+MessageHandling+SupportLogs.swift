@@ -54,7 +54,11 @@ extension MirageClientService {
                     completeHostSupportLogArchiveRequest(.success(archiveURL))
                 } catch {
                     completeHostSupportLogArchiveRequest(.failure(error))
-                    MirageLogger.error(.client, error: error, message: "Failed to download host support logs: ")
+                    if error is CancellationError {
+                        MirageLogger.client("Host support log transfer ended before completion")
+                    } else {
+                        MirageLogger.error(.client, error: error, message: "Failed to download host support logs: ")
+                    }
                 }
             }
         } catch {

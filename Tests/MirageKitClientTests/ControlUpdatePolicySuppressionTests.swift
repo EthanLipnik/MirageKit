@@ -27,7 +27,7 @@ struct ControlUpdatePolicySuppressionTests {
 
     @Test("Interactive policy never drops essential stream/control messages")
     func interactivePolicyEssentialMessagesRemainEnabled() {
-        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.helloResponse))
+        #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.sessionBootstrapResponse))
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.streamStarted))
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.streamStopped))
         #expect(!MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.desktopStreamStarted))

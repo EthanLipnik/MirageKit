@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
@@ -15,13 +16,17 @@ import MirageKit
 struct ClientContext {
     let client: MirageConnectedClient
     let negotiatedFeatures: MirageFeatureSet
-    let tcpConnection: NWConnection
+    let controlChannel: MirageControlChannel
     var udpConnection: NWConnection?
 
     /// Check if connection is peer-to-peer (local network, low latency)
     /// Returns true when connected over local WiFi or Ethernet to a local network address
     var isPeerToPeer: Bool {
-        Self.isPeerToPeerConnection(tcpConnection)
+        Self.isPeerToPeerConnection(rawConnection)
+    }
+
+    var rawConnection: NWConnection {
+        controlChannel.rawConnection
     }
 
     static func isPeerToPeerConnection(_ connection: NWConnection) -> Bool {
@@ -66,15 +71,7 @@ struct ClientContext {
     /// Send a control message over TCP
     func send(_ type: ControlMessageType, content: some Encodable) async throws {
         let message = try ControlMessage(type: type, content: content)
-        let data = message.serialize()
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            tcpConnection.send(content: data, completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
+        try await controlChannel.send(message)
     }
 
     /// Queue a control message over TCP without awaiting contentProcessed.
@@ -83,7 +80,7 @@ struct ClientContext {
     @discardableResult
     func sendBestEffort(_ type: ControlMessageType, content: some Encodable) -> Bool {
         guard let message = try? ControlMessage(type: type, content: content) else { return false }
-        tcpConnection.send(content: message.serialize(), completion: .idempotent)
+        controlChannel.sendBestEffort(message)
         return true
     }
 

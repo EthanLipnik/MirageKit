@@ -22,12 +22,21 @@ final class MirageInputEventSender: @unchecked Sendable {
     private let sendQueue = DispatchQueue(label: "com.mirage.client.input-send", qos: .userInteractive)
     private let connectionLock = NSLock()
     private var controlConnection: NWConnection?
+    private var sendHandler: (@Sendable (Data, Bool) async throws -> Void)?
     private let pointerCoalescingLock = NSLock()
     private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
 
     func updateConnection(_ connection: NWConnection?) {
         connectionLock.lock()
         controlConnection = connection
+        sendHandler = nil
+        connectionLock.unlock()
+    }
+
+    func updateSendHandler(_ handler: (@Sendable (Data, Bool) async throws -> Void)?) {
+        connectionLock.lock()
+        controlConnection = nil
+        sendHandler = handler
         connectionLock.unlock()
     }
 
@@ -55,6 +64,10 @@ final class MirageInputEventSender: @unchecked Sendable {
             return
         }
         let data = try makeInputMessageData(event: event, streamID: streamID)
+        if let sendHandler = currentSendHandler() {
+            try await sendHandler(data, true)
+            return
+        }
         let connection = try currentConnectionOrThrow()
 
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
@@ -84,7 +97,14 @@ final class MirageInputEventSender: @unchecked Sendable {
         }
 
         sendQueue.async { [weak self] in
-            guard let self, let connection = self.currentConnection() else { return }
+            guard let self else { return }
+            if let sendHandler = self.currentSendHandler() {
+                Task {
+                    try? await sendHandler(data, false)
+                }
+                return
+            }
+            guard let connection = self.currentConnection() else { return }
             connection.send(content: data, completion: .idempotent)
         }
     }
@@ -100,6 +120,13 @@ final class MirageInputEventSender: @unchecked Sendable {
         let connection = controlConnection
         connectionLock.unlock()
         return connection
+    }
+
+    private func currentSendHandler() -> (@Sendable (Data, Bool) async throws -> Void)? {
+        connectionLock.lock()
+        let handler = sendHandler
+        connectionLock.unlock()
+        return handler
     }
 
     private func currentConnectionOrThrow() throws -> NWConnection {

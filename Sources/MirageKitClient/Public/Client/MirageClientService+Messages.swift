@@ -14,7 +14,6 @@ import MirageKit
 extension MirageClientService {
     func registerControlMessageHandlers() {
         controlMessageHandlers = [
-            .helloResponse: { [weak self] in await self?.handleHelloResponse($0) },
             .windowList: { [weak self] in self?.handleWindowList($0) },
             .windowUpdate: { [weak self] in self?.handleWindowUpdate($0) },
             .streamStarted: { [weak self] in self?.handleStreamStarted($0) },

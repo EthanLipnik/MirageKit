@@ -94,6 +94,29 @@ package enum MirageMediaSecurity {
         )
     }
 
+    @MainActor
+    package static func deriveContextForAuthenticatedSession(
+        identityManager: LoomIdentityManager,
+        peerPublicKey: Data,
+        hostID: UUID,
+        clientID: UUID,
+        hostKeyID: String,
+        clientKeyID: String,
+        udpRegistrationToken: Data
+    ) throws -> MirageMediaSecurityContext {
+        try deriveContext(
+            identityManager: identityManager,
+            peerPublicKey: peerPublicKey,
+            hostID: hostID,
+            clientID: clientID,
+            hostKeyID: hostKeyID,
+            clientKeyID: clientKeyID,
+            hostNonce: "loom-authenticated-host",
+            clientNonce: "loom-authenticated-client",
+            udpRegistrationToken: udpRegistrationToken
+        )
+    }
+
     package static func encryptVideoPayload(
         _ plaintext: Data,
         header: FrameHeader,

@@ -17,26 +17,14 @@ struct ClientSoftwareUpdateHandlingTests {
     @Test("Protocol mismatch rejection maps to deterministic mismatch info")
     func protocolMismatchRejectionMapsToMismatchInfo() {
         let service = MirageClientService()
-        let response = HelloResponseMessage(
+        let response = MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            requiresAuth: false,
+            selectedFeatures: [],
             dataPort: 9848,
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            requestNonce: "req-nonce",
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
-            identity: MirageIdentityEnvelope(
-                keyID: "host-key",
-                publicKey: Data([0x01, 0x02]),
-                timestampMs: 987_654_321,
-                nonce: "host-nonce",
-                signature: Data([0x03, 0x04])
-            ),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 1,
             protocolMismatchClientVersion: 2,

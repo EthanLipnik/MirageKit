@@ -14,6 +14,18 @@ import MirageKit
 import UIKit
 #endif
 
+struct PlaybackAudioSessionConfiguration: Equatable {
+    static let ambient = PlaybackAudioSessionConfiguration()
+
+    private init() {}
+
+#if os(iOS) || os(visionOS)
+    var avCategory: AVAudioSession.Category {
+        .ambient
+    }
+#endif
+}
+
 @MainActor
 final class AudioPlaybackController {
     private let startupBufferSeconds: Double
@@ -33,6 +45,7 @@ final class AudioPlaybackController {
     private var isDelayHoldActive = false
     private var isConfigured = false
 #if os(iOS) || os(visionOS)
+    private var audioSessionConfigured = false
     private var hasLoggedInactiveSessionDeferral = false
 #endif
 
@@ -259,8 +272,16 @@ final class AudioPlaybackController {
         }
         hasLoggedInactiveSessionDeferral = false
 
+        let session = AVAudioSession.sharedInstance()
+        let configuration = PlaybackAudioSessionConfiguration.ambient
         do {
-            try MirageAudioSessionCoordinator.shared.activatePlaybackIfNeeded()
+            let needsReconfiguration = !audioSessionConfigured
+                || session.category != configuration.avCategory
+                || session.mode != .default
+            if needsReconfiguration {
+                try session.setCategory(configuration.avCategory, mode: .default, options: [.mixWithOthers])
+            }
+            audioSessionConfigured = true
             return true
         } catch {
             if shouldSuppressAudioSessionActivationError(error) {
@@ -273,7 +294,7 @@ final class AudioPlaybackController {
     }
 
     private func deactivateAudioSessionIfNeeded() {
-        MirageAudioSessionCoordinator.shared.deactivatePlaybackIfNeeded()
+        audioSessionConfigured = false
     }
 
     private var isApplicationActive: Bool {
@@ -282,10 +303,17 @@ final class AudioPlaybackController {
 
     private func shouldSuppressAudioSessionActivationError(_ error: Error) -> Bool {
         let nsError = error as NSError
-        let cannotStartPlayingCode = Int(AVAudioSession.ErrorCode.cannotStartPlaying.rawValue)
-        guard nsError.code == cannotStartPlayingCode else { return false }
-        return nsError.domain == NSOSStatusErrorDomain
-            || nsError.domain == "com.apple.coreaudio.avfaudio"
+        guard nsError.domain == NSOSStatusErrorDomain
+            || nsError.domain == "com.apple.coreaudio.avfaudio" else {
+            return false
+        }
+
+        let deferredCodes: Set<Int> = [
+            Int(AVAudioSession.ErrorCode.cannotStartPlaying.rawValue),
+            1836282486, // 'msrv': media services failed
+            561210739, // '!ses': session unavailable while mediaserverd is recovering
+        ]
+        return deferredCodes.contains(nsError.code)
     }
 #endif
 }

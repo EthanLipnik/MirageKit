@@ -8,67 +8,32 @@
 //
 
 import Foundation
+import Loom
 import MirageKit
 import Network
 
 @MainActor
 extension MirageClientService {
-    func startReceiving(on expectedConnection: NWConnection? = nil) {
-        guard let receiveConnection = expectedConnection ?? connection else { return }
+    func startReceiving() {
+        guard let controlChannel else { return }
 
-        receiveConnection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
-            Task { @MainActor [weak self, receiveConnection] in
-                guard let self else { return }
-                guard Self.isCurrentControlReceiveSource(
-                    activeConnection: self.connection,
-                    callbackConnection: receiveConnection
-                ) else {
-                    return
-                }
-
-                if let data, !data.isEmpty {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            for await data in controlChannel.incomingBytes {
+                guard self.controlChannel === controlChannel else { return }
+                if !data.isEmpty {
                     receiveBuffer.append(data)
                     await processReceivedData()
                 }
-
-                if let error {
-                    let shouldNotifyDelegate = hasReceivedHelloResponse
-                    if shouldTreatReceiveErrorAsDisconnect(error) {
-                        let phaseDescription = hasReceivedHelloResponse
-                            ? "peer/network"
-                            : "handshake"
-                        MirageLogger.client(
-                            "Receive loop ended during \(phaseDescription): \(error.localizedDescription)"
-                        )
-                        await handleDisconnect(
-                            reason: "Host disconnected",
-                            state: .disconnected,
-                            notifyDelegate: shouldNotifyDelegate
-                        )
-                    } else {
-                        MirageLogger.error(.client, error: error, message: "Receive error: ")
-                        await handleDisconnect(
-                            reason: error.localizedDescription,
-                            state: .error(error.localizedDescription),
-                            notifyDelegate: shouldNotifyDelegate
-                        )
-                    }
-                    return
-                }
-
-                if isComplete {
-                    MirageLogger.client("Connection closed by server")
-                    await handleDisconnect(
-                        reason: "Host disconnected",
-                        state: .disconnected,
-                        notifyDelegate: hasReceivedHelloResponse
-                    )
-                    return
-                }
-
-                // Continue receiving.
-                startReceiving(on: receiveConnection)
             }
+
+            guard self.controlChannel === controlChannel else { return }
+            MirageLogger.client("Control stream closed by server")
+            await handleDisconnect(
+                reason: "Host disconnected",
+                state: .disconnected,
+                notifyDelegate: hasCompletedBootstrap
+            )
         }
     }
 
@@ -84,7 +49,7 @@ extension MirageClientService {
                 await handleDisconnect(
                     reason: "Invalid control-channel payload",
                     state: .error("Invalid control-channel payload"),
-                    notifyDelegate: hasReceivedHelloResponse
+                    notifyDelegate: hasCompletedBootstrap
                 )
                 return
             }
@@ -108,7 +73,7 @@ extension MirageClientService {
                     await handleDisconnect(
                         reason: "Control receive buffer overflow",
                         state: .error("Control receive buffer overflow"),
-                        notifyDelegate: hasReceivedHelloResponse
+                        notifyDelegate: hasCompletedBootstrap
                     )
                 }
                 return
@@ -118,7 +83,7 @@ extension MirageClientService {
                 await handleDisconnect(
                     reason: "Invalid control frame",
                     state: .error("Invalid control frame"),
-                    notifyDelegate: hasReceivedHelloResponse
+                    notifyDelegate: hasCompletedBootstrap
                 )
                 return
             }
@@ -128,14 +93,6 @@ extension MirageClientService {
     private func shouldDropControlMessageWhileSuppressed(_ type: ControlMessageType) -> Bool {
         guard controlUpdatePolicy == .interactiveStreaming else { return false }
         return Self.shouldDropNonEssentialControlMessageWhileInteractive(type)
-    }
-
-    nonisolated static func isCurrentControlReceiveSource(
-        activeConnection: AnyObject?,
-        callbackConnection: AnyObject
-    ) -> Bool {
-        guard let activeConnection else { return false }
-        return ObjectIdentifier(activeConnection) == ObjectIdentifier(callbackConnection)
     }
 
     nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
@@ -211,7 +168,7 @@ extension MirageClientService {
             return true
         }
 
-        return hasReceivedHelloResponse == false
+        return hasCompletedBootstrap == false
     }
 
     nonisolated static func isExpectedTransportTermination(_ error: Error) -> Bool {

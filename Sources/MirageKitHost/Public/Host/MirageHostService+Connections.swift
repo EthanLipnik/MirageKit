@@ -4,81 +4,17 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  TCP connection lifecycle and hello handshake.
+//  Loom-authenticated control session lifecycle and Mirage bootstrap.
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    private struct ReceivedHello {
-        let deviceInfo: LoomPeerDeviceInfo
-        let negotiation: MirageProtocolNegotiation
-        let requestNonce: String
-        let identity: MirageIdentityEnvelope
-        let pendingControlData: Data
-        let origin: MirageHostConnectionOrigin
-    }
-
-    private struct RejectedHello {
-        let deviceInfo: LoomPeerDeviceInfo
-        let requestNonce: String
-        let negotiation: MirageProtocolNegotiation
-        let reason: HelloRejectionReason
-        let protocolMismatchHostVersion: Int?
-        let protocolMismatchClientVersion: Int?
-        let protocolMismatchUpdateTriggerAccepted: Bool?
-        let protocolMismatchUpdateTriggerMessage: String?
-    }
-
-    private enum ReceivedHelloResult {
-        case accepted(ReceivedHello)
-        case rejected(RejectedHello)
-    }
-
-    private enum ApprovalOutcome {
-        case accepted(autoTrustGranted: Bool)
-        case rejected
-        case connectionClosed
-        case timedOut
-    }
-
-    private enum TrustApprovalDecision {
-        case accepted(autoTrustGranted: Bool)
-        case rejected
-    }
-
-    private actor ApprovalDecisionGate {
-        private var didResume = false
-        private var tasks: [Task<Void, Never>] = []
-        private let box: SafeContinuationBox<ApprovalOutcome>
-
-        init(box: SafeContinuationBox<ApprovalOutcome>) {
-            self.box = box
-        }
-
-        func register(tasks: [Task<Void, Never>]) {
-            guard !didResume else {
-                for task in tasks { task.cancel() }
-                return
-            }
-            self.tasks = tasks
-        }
-
-        func finish(_ outcome: ApprovalOutcome) {
-            guard !didResume else { return }
-            didResume = true
-            let tasksToCancel = tasks
-            tasks = []
-            for task in tasksToCancel { task.cancel() }
-            box.resume(returning: outcome)
-        }
-    }
-
-    /// Check if an error indicates a fatal, unrecoverable connection state.
     nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
         let fatalPosixCodes: Set<POSIXErrorCode> = [.ECONNRESET, .ENOTCONN, .EPIPE]
         if let nwError = error as? NWError {
@@ -95,566 +31,225 @@ extension MirageHostService {
            let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
             return fatalPosixCodes.contains(code)
         }
-        if nsError.domain == "NWError", nsError.code == -65554 || nsError.code == -65555 { return true }
+        if nsError.domain == "NWError", nsError.code == -65554 || nsError.code == -65555 {
+            return true
+        }
         return false
     }
 
-    func handleNewConnection(
-        _ connection: NWConnection,
-        origin: MirageHostConnectionOrigin
-    ) async {
-        MirageLogger.host("New client connection")
-        MirageInstrumentation.record(.hostConnectionIncoming)
+    func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {
+        LoomSessionHelloRequest(
+            deviceID: hostID,
+            deviceName: serviceName,
+            deviceType: .mac,
+            advertisement: advertisedPeerAdvertisement
+        )
+    }
 
-        connection.start(queue: .global(qos: .userInitiated))
-
-        let isReady = await withCheckedContinuation { continuation in
-            let box = SafeContinuationBox<Bool>(continuation)
-            connection.stateUpdateHandler = { [box] state in
-                switch state {
-                case .ready:
-                    box.resume(returning: true)
-                case .cancelled,
-                     .failed:
-                    box.resume(returning: false)
-                default:
-                    break
-                }
-            }
-        }
-
-        guard isReady else {
-            MirageLogger.host("Client connection failed")
+    func handleIncomingSession(_ session: LoomAuthenticatedSession) async {
+        guard let context = await session.context else {
+            await session.cancel()
             return
         }
 
-        let endpointDescription: String = switch connection.endpoint {
-        case let .hostPort(host, port):
-            "\(host):\(port)"
-        case let .service(name, _, _, _):
-            name
-        default:
-            connection.endpoint.debugDescription
-        }
-
-        MirageLogger.host("Waiting for hello message from \(endpointDescription)...")
-
-        guard let helloResult = await receiveHelloMessage(
-            from: connection,
-            endpoint: endpointDescription,
-            origin: origin
-        ) else {
-            MirageLogger.host("Closing connection without valid hello from \(endpointDescription)")
-            connection.cancel()
-            return
-        }
-
-        let hello: ReceivedHello
-        switch helloResult {
-        case let .accepted(value):
-            hello = value
-        case let .rejected(rejection):
-            MirageInstrumentation.record(.hostHelloRejected(.init(name: rejection.reason.rawValue)))
-            MirageLogger.host(
-                "Sending hello rejection to \(rejection.deviceInfo.name) reason=\(rejection.reason.rawValue)"
-            )
-            sendHelloResponse(
-                accepted: false,
-                to: connection,
-                dataPort: currentDataPort(),
-                negotiation: rejection.negotiation,
-                deviceInfo: rejection.deviceInfo,
-                requestNonce: rejection.requestNonce,
-                rejectionReason: rejection.reason,
-                protocolMismatchHostVersion: rejection.protocolMismatchHostVersion,
-                protocolMismatchClientVersion: rejection.protocolMismatchClientVersion,
-                protocolMismatchUpdateTriggerAccepted: rejection.protocolMismatchUpdateTriggerAccepted,
-                protocolMismatchUpdateTriggerMessage: rejection.protocolMismatchUpdateTriggerMessage,
-                cancelAfterSend: true
-            )
-            return
-        }
-        let deviceInfo = hello.deviceInfo
-
+        let peerIdentity = context.peerIdentity
+        let connection = await session.rawSession.connection
         let connectionID = ObjectIdentifier(connection)
+        let origin: MirageHostConnectionOrigin = inferOrigin(for: connection)
 
-        await preemptExistingClientIfSuperseded(by: deviceInfo)
+        await preemptExistingClientIfSuperseded(by: peerIdentity)
 
         guard reserveSingleClientSlot(for: connectionID) else {
-            MirageInstrumentation.record(.hostHelloRejected(.hostBusy))
-            if let activeClient = clientsByConnection.values.first?.client {
-                MirageLogger.host(
-                    "Rejecting \(deviceInfo.name); host already has active client \(activeClient.name)"
+            let controlChannel = try? await MirageControlChannel.accept(from: session)
+            if let controlChannel {
+                let response = MirageSessionBootstrapResponse(
+                    accepted: false,
+                    hostID: hostID,
+                    hostName: serviceName,
+                    selectedFeatures: [],
+                    dataPort: currentDataPort(),
+                    mediaEncryptionEnabled: false,
+                    udpRegistrationToken: Data(),
+                    rejectionReason: .hostBusy
                 )
+                try? await controlChannel.send(.sessionBootstrapResponse, content: response)
+                await controlChannel.cancel()
             } else {
-                MirageLogger.host("Rejecting \(deviceInfo.name); host already has a pending client")
+                await session.cancel()
             }
-            sendHelloResponse(
-                accepted: false,
-                to: connection,
-                dataPort: currentDataPort(),
-                negotiation: hello.negotiation,
-                deviceInfo: hello.deviceInfo,
-                requestNonce: hello.requestNonce,
-                rejectionReason: .hostBusy,
-                cancelAfterSend: true
-            )
             return
         }
 
         defer {
-            if clientsByConnection[connectionID] == nil { releaseSingleClientSlot(for: connectionID) }
-        }
-
-        let approvalOutcome = await awaitApprovalDecision(
-            for: deviceInfo,
-            origin: hello.origin,
-            connection: connection
-        )
-        connection.stateUpdateHandler = nil
-
-        switch approvalOutcome {
-        case let .accepted(autoTrustGranted):
-            MirageInstrumentation.record(.hostConnectionApprovalResult(.accepted))
-            MirageLogger.host(
-                "Connection approved (\(autoTrustGranted ? "auto-trust" : "manual approval")), sending hello response..."
-            )
-            break
-        case .rejected:
-            MirageInstrumentation.record(.hostConnectionApprovalResult(.rejected))
-            MirageLogger.host("Connection rejected")
-            sendHelloResponse(
-                accepted: false,
-                to: connection,
-                dataPort: currentDataPort(),
-                negotiation: hello.negotiation,
-                deviceInfo: hello.deviceInfo,
-                requestNonce: hello.requestNonce,
-                rejectionReason: hello.origin.isRemote ? .unauthorized : .rejected,
-                cancelAfterSend: true
-            )
-            return
-        case .connectionClosed:
-            MirageInstrumentation.record(.hostConnectionApprovalResult(.connectionClosed))
-            MirageLogger.host("Connection closed while awaiting approval")
-            connection.cancel()
-            return
-        case .timedOut:
-            MirageInstrumentation.record(.hostConnectionApprovalResult(.timedOut))
-            MirageLogger.host("Connection approval timed out after \(Int(connectionApprovalTimeoutSeconds))s")
-            connection.cancel()
-            return
-        }
-
-        let autoTrustGranted: Bool
-        if case let .accepted(value) = approvalOutcome {
-            autoTrustGranted = value
-        } else {
-            autoTrustGranted = false
-        }
-        let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(for: connection)
-        if mediaEncryptionEnabled && !ClientContext.isPeerToPeerConnection(connection) {
-            MirageLogger.host("Media encryption forced on for non-local or relay session")
-        }
-        let responseResult = sendHelloResponse(
-            accepted: true,
-            to: connection,
-            dataPort: currentDataPort(),
-            negotiation: hello.negotiation,
-            deviceInfo: hello.deviceInfo,
-            requestNonce: hello.requestNonce,
-            autoTrustGranted: autoTrustGranted,
-            remoteAccessAllowed: delegate?.hostService(self, remoteAccessAllowedFor: deviceInfo) ?? false,
-            mediaEncryptionEnabled: mediaEncryptionEnabled,
-            cancelAfterSend: false
-        )
-        guard responseResult.sent else {
-            MirageLogger.error(.host, "Failed to send accepted hello response to \(deviceInfo.name)")
-            connection.cancel()
-            return
-        }
-        MirageInstrumentation.record(.hostHelloAccepted)
-
-        let client = MirageConnectedClient(
-            id: deviceInfo.id,
-            name: deviceInfo.name,
-            deviceType: deviceInfo.deviceType,
-            connectedAt: Date(),
-            identityKeyID: deviceInfo.identityKeyID,
-            autoTrustGranted: autoTrustGranted,
-            connectionOrigin: hello.origin
-        )
-
-        let clientContext = ClientContext(
-            client: client,
-            negotiatedFeatures: hello.negotiation.selectedFeatures,
-            tcpConnection: connection,
-            udpConnection: nil
-        )
-        if let mediaSecurity = responseResult.mediaSecurity {
-            mediaSecurityByClientID[client.id] = mediaSecurity
-            MirageLogger.host(
-                "Media security established for \(client.name) " +
-                    "(tokenBytes=\(mediaSecurity.udpRegistrationToken.count), keyBytes=\(mediaSecurity.sessionKey.count))"
-            )
-            mediaEncryptionEnabledByClientID[client.id] = responseResult.mediaEncryptionEnabled
-            MirageLogger.host(
-                "Media payload encryption for \(client.name): \(responseResult.mediaEncryptionEnabled ? "enabled" : "disabled (local opt-in)")"
-            )
-        } else {
-            MirageLogger.error(.host, "Missing media security context for accepted client \(client.name)")
-            connection.cancel()
-            return
-        }
-        clientsByConnection[ObjectIdentifier(connection)] = clientContext
-        clientsByID[client.id] = clientContext
-        peerIdentityByClientID[client.id] = peerIdentity(from: deviceInfo)
-        audioConfigurationByClientID[client.id] = .default
-
-        connectedClients.append(client)
-        delegate?.hostService(self, didConnectClient: client)
-        MirageInstrumentation.record(.hostClientConnected)
-        syncSharedClipboardState(reason: "client_connected", forceStatusBroadcast: true)
-
-        startSessionRefreshLoopIfNeeded()
-        await refreshSessionStateIfNeeded()
-        await sendSessionState(to: clientContext)
-
-        if sessionState == .ready { await sendWindowList(to: clientContext) } else {
-            await startLoginDisplayStreamIfNeeded()
-            MirageLogger.host("Session is \(sessionState), client will show unlock form")
-        }
-
-        startReceivingFromClient(
-            connection: connection,
-            client: client,
-            initialBuffer: hello.pendingControlData
-        )
-    }
-
-    /// Receive hello message from a connecting client.
-    private func receiveHelloMessage(
-        from connection: NWConnection,
-        endpoint: String,
-        origin: MirageHostConnectionOrigin
-    ) async -> ReceivedHelloResult? {
-        var receiveBuffer = Data()
-        var helloMessage: ControlMessage?
-        var helloBytesConsumed = 0
-
-        while helloMessage == nil {
-            switch ControlMessage.deserialize(from: receiveBuffer) {
-            case let .success(message, consumed):
-                helloMessage = message
-                helloBytesConsumed = consumed
-            case let .invalidFrame(reason):
-                MirageLogger.error(.host, "Rejected hello frame from \(endpoint): \(reason)")
-                return nil
-            case .needMoreData:
-                break
+            if clientsByConnection[connectionID] == nil {
+                releaseSingleClientSlot(for: connectionID)
             }
-
-            if helloMessage != nil {
-                break
-            }
-
-            if receiveBuffer.count > LoomMessageLimits.maxHelloFrameBytes {
-                MirageLogger.error(
-                    .host,
-                    "Rejected hello frame from \(endpoint): exceeded \(LoomMessageLimits.maxHelloFrameBytes) bytes"
-                )
-                return nil
-            }
-
-            let result: (
-                Data?,
-                NWConnection.ContentContext?,
-                Bool,
-                NWError?
-            ) = await withCheckedContinuation { continuation in
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, context, isComplete, error in
-                    continuation.resume(returning: (data, context, isComplete, error))
-                }
-            }
-
-            let (data, _, isComplete, error) = result
-            if let error {
-                MirageLogger.error(.host, error: error, message: "Error receiving hello: ")
-                return nil
-            }
-
-            if let data, !data.isEmpty {
-                receiveBuffer.append(data)
-            }
-
-            if isComplete {
-                MirageLogger.host("Connection closed before hello frame was complete")
-                return nil
-            }
-        }
-
-        guard let message = helloMessage else { return nil }
-        guard message.type == .hello else {
-            MirageLogger.host("Expected hello message, got \(message.type)")
-            return nil
         }
 
         do {
-            let hello = try message.decode(HelloMessage.self)
-            let identity = hello.identity
-            guard identity.keyID == LoomIdentityManager.keyID(for: identity.publicKey) else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): invalid identity key ID")
-                return nil
-            }
-            let signedPayload = try MirageIdentitySigning.helloPayload(
-                deviceID: hello.deviceID,
-                deviceName: hello.deviceName,
-                deviceType: hello.deviceType,
-                protocolVersion: hello.protocolVersion,
-                advertisement: hello.advertisement,
-                negotiation: hello.negotiation,
-                iCloudUserID: hello.iCloudUserID,
-                keyID: identity.keyID,
-                publicKey: identity.publicKey,
-                timestampMs: identity.timestampMs,
-                nonce: identity.nonce
+            let controlChannel = try await MirageControlChannel.accept(from: session)
+            MirageLogger.host("Accepted Mirage control channel from \(peerIdentity.name) origin=\(origin)")
+            let bootstrap = try await receiveBootstrapRequest(from: controlChannel)
+            MirageLogger.host("Received Mirage bootstrap request from \(peerIdentity.name)")
+            let responseResult = try await makeBootstrapResponse(
+                for: bootstrap,
+                peerIdentity: peerIdentity,
+                connection: connection,
+                autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice
             )
-            guard LoomIdentityManager.verify(
-                signature: identity.signature,
-                payload: signedPayload,
-                publicKey: identity.publicKey
-            ) else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): signature verification failed")
-                return nil
-            }
-            let replayValid = await handshakeReplayProtector.validate(
-                timestampMs: identity.timestampMs,
-                nonce: identity.nonce
-            )
-            guard replayValid else {
-                MirageLogger.host("Rejected hello from \(hello.deviceName): replay protection failed")
-                return nil
-            }
-
-            let deviceInfo = LoomPeerDeviceInfo(
-                id: hello.deviceID,
-                name: hello.deviceName,
-                deviceType: hello.deviceType,
-                endpoint: endpoint,
-                iCloudUserID: hello.iCloudUserID,
-                identityKeyID: identity.keyID,
-                identityPublicKey: identity.publicKey,
-                isIdentityAuthenticated: true
-            )
-            let selectedFeatures = hello.negotiation.supportedFeatures.intersection(mirageSupportedFeatures)
-            let responseNegotiation = MirageProtocolNegotiation(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures,
-                selectedFeatures: selectedFeatures
+            try await controlChannel.send(.sessionBootstrapResponse, content: responseResult.response)
+            MirageLogger.host(
+                "Sent Mirage bootstrap response to \(peerIdentity.name) accepted=\(responseResult.response.accepted)"
             )
 
-            let hostProtocolVersion = Int(MirageKit.protocolVersion)
-            if hello.protocolVersion != hostProtocolVersion || hello.negotiation.protocolVersion != hostProtocolVersion {
-                let triggerResult = await handleProtocolMismatchUpdateRequestIfNeeded(
-                    hello: hello,
-                    deviceInfo: deviceInfo
-                )
-                MirageLogger.host(
-                    "Rejected hello from \(hello.deviceName): protocol mismatch host=\(hostProtocolVersion) client=\(hello.negotiation.protocolVersion)"
-                )
-                return .rejected(
-                    RejectedHello(
-                        deviceInfo: deviceInfo,
-                        requestNonce: identity.nonce,
-                        negotiation: responseNegotiation,
-                        reason: .protocolVersionMismatch,
-                        protocolMismatchHostVersion: hostProtocolVersion,
-                        protocolMismatchClientVersion: hello.negotiation.protocolVersion,
-                        protocolMismatchUpdateTriggerAccepted: triggerResult?.accepted,
-                        protocolMismatchUpdateTriggerMessage: triggerResult?.message
-                    )
-                )
+            guard responseResult.response.accepted else {
+                await controlChannel.cancel()
+                return
             }
 
-            let requiredFeatures: MirageFeatureSet = [
-                .identityAuthV2,
-                .udpRegistrationAuthV1,
-                .encryptedMediaV1,
-            ]
-            guard hello.negotiation.supportedFeatures.contains(requiredFeatures) else {
-                MirageLogger.host(
-                    "Rejected hello from \(hello.deviceName): missing required features \(hello.negotiation.supportedFeatures)"
-                )
-                return .rejected(
-                    RejectedHello(
-                        deviceInfo: deviceInfo,
-                        requestNonce: identity.nonce,
-                        negotiation: responseNegotiation,
-                        reason: .protocolFeaturesMismatch,
-                        protocolMismatchHostVersion: nil,
-                        protocolMismatchClientVersion: nil,
-                        protocolMismatchUpdateTriggerAccepted: nil,
-                        protocolMismatchUpdateTriggerMessage: nil
-                    )
-                )
-            }
-
-            MirageLogger.host("Received hello from \(hello.deviceName) (\(hello.deviceType.displayName))")
-            MirageInstrumentation.record(.hostHelloReceived)
-            let pendingControlData = helloBytesConsumed < receiveBuffer.count
-                ? Data(receiveBuffer.dropFirst(helloBytesConsumed))
-                : Data()
-            if !pendingControlData.isEmpty {
-                MirageLogger.host(
-                    "Buffered \(pendingControlData.count) control bytes that arrived with hello from \(hello.deviceName)"
-                )
-            }
-
-            return .accepted(
-                ReceivedHello(
-                    deviceInfo: deviceInfo,
-                    negotiation: responseNegotiation,
-                    requestNonce: identity.nonce,
-                    identity: identity,
-                    pendingControlData: pendingControlData,
-                    origin: origin
-                )
+            let client = MirageConnectedClient(
+                id: peerIdentity.deviceID,
+                name: peerIdentity.name,
+                deviceType: peerIdentity.deviceType,
+                connectedAt: .now,
+                identityKeyID: peerIdentity.identityKeyID,
+                autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice,
+                connectionOrigin: origin
             )
+
+            let clientContext = ClientContext(
+                client: client,
+                negotiatedFeatures: responseResult.response.selectedFeatures,
+                controlChannel: controlChannel,
+                udpConnection: nil
+            )
+            connectedClients.append(client)
+            clientsByConnection[connectionID] = clientContext
+            clientsByID[client.id] = clientContext
+            peerIdentityByClientID[client.id] = peerIdentity
+            mediaSecurityByClientID[client.id] = responseResult.mediaSecurity
+            mediaEncryptionEnabledByClientID[client.id] = responseResult.response.mediaEncryptionEnabled
+            singleClientConnectionID = connectionID
+
+            startReceivingFromClient(controlChannel: controlChannel, client: client)
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to decode hello: ")
-            return nil
+            MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
+            await session.cancel()
         }
     }
 
-    /// Evaluates trust using the provider and falls back to delegate approval if needed.
-    private func evaluateTrustAndApproval(
-        for deviceInfo: LoomPeerDeviceInfo,
-        origin: MirageHostConnectionOrigin
-    ) async -> TrustApprovalDecision {
-        if origin.isRemote {
-            MirageLogger.host("Evaluating explicit remote authorization for \(deviceInfo.name)")
-            return await withCheckedContinuation { continuation in
-                let box = SafeContinuationBox<TrustApprovalDecision>(continuation)
-                if let delegate {
-                    delegate.hostService(self, shouldAcceptConnectionFrom: deviceInfo, origin: origin) { accepted in
-                        box.resume(returning: accepted ? .accepted(autoTrustGranted: false) : .rejected)
-                    }
-                } else {
-                    box.resume(returning: .rejected)
+    private func receiveBootstrapRequest(
+        from controlChannel: MirageControlChannel
+    ) async throws -> MirageSessionBootstrapRequest {
+        var buffer = Data()
+
+        for await chunk in controlChannel.incomingBytes {
+            guard !chunk.isEmpty else { continue }
+            buffer.append(chunk)
+
+            switch ControlMessage.deserialize(from: buffer) {
+            case let .success(message, _):
+                guard message.type == .sessionBootstrapRequest else {
+                    throw MirageError.protocolError("Expected Mirage session bootstrap request")
                 }
+                return try message.decode(MirageSessionBootstrapRequest.self)
+            case .needMoreData:
+                continue
+            case let .invalidFrame(reason):
+                throw MirageError.protocolError("Invalid control frame: \(reason)")
             }
         }
 
-        // If a trust provider is set, consult it first
-        if let trustProvider {
-            let peerIdentity = LoomPeerIdentity(
-                deviceID: deviceInfo.id,
-                name: deviceInfo.name,
-                deviceType: deviceInfo.deviceType,
-                iCloudUserID: deviceInfo.iCloudUserID,
-                identityKeyID: deviceInfo.identityKeyID,
-                identityPublicKey: deviceInfo.identityPublicKey,
-                isIdentityAuthenticated: deviceInfo.isIdentityAuthenticated,
-                endpoint: deviceInfo.endpoint
+        throw MirageError.protocolError("Control stream closed before session bootstrap request")
+    }
+
+    private func inferOrigin(for connection: NWConnection) -> MirageHostConnectionOrigin {
+        ClientContext.isPeerToPeerConnection(connection) ? .local : .remote
+    }
+
+    private func makeBootstrapResponse(
+        for request: MirageSessionBootstrapRequest,
+        peerIdentity: LoomPeerIdentity,
+        connection: NWConnection,
+        autoTrustGranted: Bool
+    ) async throws -> (response: MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
+        let hostName = Host.current().localizedName ?? "Mac"
+
+        guard request.protocolVersion == Int(MirageKit.protocolVersion) else {
+            let triggerResult = await handleProtocolMismatchUpdateRequestIfNeeded(
+                request: request,
+                peerIdentity: peerIdentity
             )
-
-            let trustOutcome = await trustProvider.evaluateTrustOutcome(for: peerIdentity)
-
-            switch trustOutcome.decision {
-            case .trusted:
-                MirageLogger.host(
-                    "Connection auto-approved by trust provider for \(deviceInfo.name) " +
-                        "(notice=\(trustOutcome.shouldShowAutoTrustNotice))"
-                )
-                return .accepted(autoTrustGranted: trustOutcome.shouldShowAutoTrustNotice)
-
-            case .denied:
-                MirageLogger.host("Connection denied by trust provider for \(deviceInfo.name)")
-                return .rejected
-
-            case .requiresApproval:
-                MirageLogger.host("Trust provider requires approval for \(deviceInfo.name)")
-                // Fall through to delegate
-
-            case let .unavailable(reason):
-                MirageLogger
-                    .host("Trust provider unavailable (\(reason)), falling back to delegate for \(deviceInfo.name)")
-                // Fall through to delegate
-            }
+            return (
+                MirageSessionBootstrapResponse(
+                    accepted: false,
+                    hostID: hostID,
+                    hostName: hostName,
+                    selectedFeatures: [],
+                    dataPort: currentDataPort(),
+                    mediaEncryptionEnabled: false,
+                    udpRegistrationToken: Data(),
+                    rejectionReason: .protocolVersionMismatch,
+                    protocolMismatchHostVersion: Int(MirageKit.protocolVersion),
+                    protocolMismatchClientVersion: request.protocolVersion,
+                    protocolMismatchUpdateTriggerAccepted: triggerResult?.accepted,
+                    protocolMismatchUpdateTriggerMessage: triggerResult?.message
+                ),
+                nil
+            )
         }
 
-        // Fall back to delegate-based approval
-        MirageLogger.host("Requesting approval for \(deviceInfo.name) (\(deviceInfo.deviceType.displayName))...")
-
-        return await withCheckedContinuation { continuation in
-            let box = SafeContinuationBox<TrustApprovalDecision>(continuation)
-            if let delegate {
-                delegate.hostService(self, shouldAcceptConnectionFrom: deviceInfo, origin: origin) { accepted in
-                    box.resume(returning: accepted ? .accepted(autoTrustGranted: false) : .rejected)
-                }
-            } else {
-                // No delegate and no trust provider decision - accept by default
-                box.resume(returning: .accepted(autoTrustGranted: false))
-            }
-        }
-    }
-
-    private func awaitApprovalDecision(
-        for deviceInfo: LoomPeerDeviceInfo,
-        origin: MirageHostConnectionOrigin,
-        connection: NWConnection
-    ) async -> ApprovalOutcome {
-        await withCheckedContinuation { continuation in
-            let box = SafeContinuationBox<ApprovalOutcome>(continuation)
-            let gate = ApprovalDecisionGate(box: box)
-
-            let approvalTask = Task { @MainActor in
-                let decision = await self.evaluateTrustAndApproval(for: deviceInfo, origin: origin)
-                switch decision {
-                case let .accepted(autoTrustGranted):
-                    await gate.finish(.accepted(autoTrustGranted: autoTrustGranted))
-                case .rejected:
-                    await gate.finish(.rejected)
-                }
-            }
-
-            let closureTask = Task { @MainActor in
-                await self.waitForConnectionClosure(connection)
-                await gate.finish(.connectionClosed)
-            }
-
-            let timeoutTask = Task {
-                let timeout = Duration.seconds(Int(self.connectionApprovalTimeoutSeconds))
-                try? await Task.sleep(for: timeout)
-                await gate.finish(.timedOut)
-            }
-
-            Task {
-                await gate.register(tasks: [approvalTask, closureTask, timeoutTask])
-            }
-        }
-    }
-
-    private func waitForConnectionClosure(_ connection: NWConnection) async {
-        let stream = AsyncStream<Void> { continuation in
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .failed,
-                     .cancelled:
-                    continuation.yield(())
-                    continuation.finish()
-                default:
-                    break
-                }
-            }
-            continuation.onTermination = { _ in
-                connection.stateUpdateHandler = nil
-            }
+        let selectedFeatures = request.requestedFeatures.intersection(mirageSupportedFeatures)
+        let requiredFeatures: MirageFeatureSet = [.udpRegistrationAuthV1, .encryptedMediaV1]
+        guard selectedFeatures.contains(requiredFeatures) else {
+            return (
+                MirageSessionBootstrapResponse(
+                    accepted: false,
+                    hostID: hostID,
+                    hostName: hostName,
+                    selectedFeatures: [],
+                    dataPort: currentDataPort(),
+                    mediaEncryptionEnabled: false,
+                    udpRegistrationToken: Data(),
+                    rejectionReason: .protocolFeaturesMismatch
+                ),
+                nil
+            )
         }
 
-        for await _ in stream {
-            break
+        guard let identityManager else {
+            throw MirageError.protocolError("Cannot bootstrap session without identity manager")
         }
+        guard let clientPublicKey = peerIdentity.identityPublicKey,
+              let clientKeyID = peerIdentity.identityKeyID else {
+            throw MirageError.protocolError("Authenticated Loom session is missing client identity metadata")
+        }
+
+        let hostIdentity = try identityManager.currentIdentity()
+        let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(for: connection)
+        let udpRegistrationToken = MirageMediaSecurity.makeRegistrationToken()
+        let mediaSecurity = try MirageMediaSecurity.deriveContextForAuthenticatedSession(
+            identityManager: identityManager,
+            peerPublicKey: clientPublicKey,
+            hostID: hostID,
+            clientID: peerIdentity.deviceID,
+            hostKeyID: hostIdentity.keyID,
+            clientKeyID: clientKeyID,
+            udpRegistrationToken: udpRegistrationToken
+        )
+
+        let response = MirageSessionBootstrapResponse(
+            accepted: true,
+            hostID: hostID,
+            hostName: hostName,
+            selectedFeatures: selectedFeatures,
+            dataPort: currentDataPort(),
+            mediaEncryptionEnabled: mediaEncryptionEnabled,
+            udpRegistrationToken: udpRegistrationToken,
+            autoTrustGranted: autoTrustGranted,
+            remoteAccessAllowed: delegate?.hostService(self, remoteAccessAllowedFor: peerIdentity.deviceInfo) ?? false
+        )
+        return (response, mediaSecurity)
     }
 
     private func currentDataPort() -> UInt16 {
@@ -676,78 +271,50 @@ extension MirageHostService {
         return mediaSecurityByClientID[clientID]
     }
 
-    private func peerIdentity(from deviceInfo: LoomPeerDeviceInfo) -> LoomPeerIdentity {
-        LoomPeerIdentity(
-            deviceID: deviceInfo.id,
-            name: deviceInfo.name,
-            deviceType: deviceInfo.deviceType,
-            iCloudUserID: deviceInfo.iCloudUserID,
-            identityKeyID: deviceInfo.identityKeyID,
-            identityPublicKey: deviceInfo.identityPublicKey,
-            isIdentityAuthenticated: deviceInfo.isIdentityAuthenticated,
-            endpoint: deviceInfo.endpoint
-        )
-    }
-
     func handleProtocolMismatchUpdateRequestIfNeeded(
-        hello: HelloMessage,
-        deviceInfo: LoomPeerDeviceInfo
+        request: MirageSessionBootstrapRequest,
+        peerIdentity: LoomPeerIdentity
     ) async -> (accepted: Bool, message: String)? {
-        guard hello.requestHostUpdateOnProtocolMismatch == true else {
-            return nil
-        }
-
+        guard request.requestHostUpdateOnProtocolMismatch == true else { return nil }
         guard let softwareUpdateController else {
-            return (
-                accepted: false,
-                message: "Host update service unavailable."
-            )
+            return (false, "Host update service unavailable.")
         }
 
-        let peer = peerIdentity(from: deviceInfo)
         let isAuthorized = await softwareUpdateController.hostService(
             self,
-            shouldAuthorizeSoftwareUpdateRequestFrom: peer,
+            shouldAuthorizeSoftwareUpdateRequestFrom: peerIdentity,
             trigger: .protocolMismatch
         )
         guard isAuthorized else {
-            return (
-                accepted: false,
-                message: "Remote update request denied for this device."
-            )
+            return (false, "Remote update request denied for this device.")
         }
 
         let result = await softwareUpdateController.hostService(
             self,
-            performSoftwareUpdateInstallFor: peer,
+            performSoftwareUpdateInstallFor: peerIdentity,
             trigger: .protocolMismatch
         )
-        return (
-            accepted: result.accepted,
-            message: result.message
-        )
+        return (result.accepted, result.message)
     }
 
     func shouldPreemptExistingClient(
         _ existingClient: MirageConnectedClient,
-        for incomingDeviceInfo: LoomPeerDeviceInfo
+        for incomingPeerIdentity: LoomPeerIdentity
     ) -> Bool {
-        if existingClient.id == incomingDeviceInfo.id { return true }
-
+        if existingClient.id == incomingPeerIdentity.deviceID { return true }
         guard let existingIdentityKeyID = existingClient.identityKeyID,
-              let incomingIdentityKeyID = incomingDeviceInfo.identityKeyID else {
+              let incomingIdentityKeyID = incomingPeerIdentity.identityKeyID else {
             return false
         }
-
         return existingIdentityKeyID == incomingIdentityKeyID
     }
 
-    func preemptExistingClientIfSuperseded(by incomingDeviceInfo: LoomPeerDeviceInfo) async {
+    func preemptExistingClientIfSuperseded(by incomingPeerIdentity: LoomPeerIdentity) async {
         guard let existingClient = clientsByConnection.values.first?.client else { return }
-        guard shouldPreemptExistingClient(existingClient, for: incomingDeviceInfo) else { return }
+        guard shouldPreemptExistingClient(existingClient, for: incomingPeerIdentity) else { return }
 
         MirageLogger.host(
-            "Preempting existing client \(existingClient.name) for reconnect from \(incomingDeviceInfo.name)"
+            "Preempting existing client \(existingClient.name) for reconnect from \(incomingPeerIdentity.name)"
         )
         await disconnectClient(existingClient)
     }
@@ -765,158 +332,24 @@ extension MirageHostService {
     }
 
     func releaseSingleClientSlot(for connectionID: ObjectIdentifier) {
-        if singleClientConnectionID == connectionID { singleClientConnectionID = nil }
+        if singleClientConnectionID == connectionID {
+            singleClientConnectionID = nil
+        }
     }
+}
 
-    func makeHelloResponseMessage(
-        accepted: Bool,
-        dataPort: UInt16,
-        negotiation: MirageProtocolNegotiation,
-        deviceInfo: LoomPeerDeviceInfo,
-        requestNonce: String,
-        autoTrustGranted: Bool = false,
-        remoteAccessAllowed: Bool = false,
-        mediaEncryptionEnabled: Bool = true,
-        rejectionReason: HelloRejectionReason? = nil,
-        protocolMismatchHostVersion: Int? = nil,
-        protocolMismatchClientVersion: Int? = nil,
-        protocolMismatchUpdateTriggerAccepted: Bool? = nil,
-        protocolMismatchUpdateTriggerMessage: String? = nil
-    )
-    throws -> (response: HelloResponseMessage, mediaSecurity: MirageMediaSecurityContext?) {
-        let hostName = Host.current().localizedName ?? "Mac"
-        guard let identityManager else {
-            throw MirageError.protocolError("Cannot send hello response without identity manager")
-        }
-        let identity = try identityManager.currentIdentity()
-        let timestampMs = MirageIdentitySigning.currentTimestampMs()
-        let nonce = UUID().uuidString.lowercased()
-        let resolvedMediaEncryptionEnabled = accepted && mediaEncryptionEnabled
-        let udpRegistrationToken = accepted ? MirageMediaSecurity.makeRegistrationToken() : Data()
-        let mediaSecurityContext: MirageMediaSecurityContext?
-        if accepted {
-            guard let clientPublicKey = deviceInfo.identityPublicKey,
-                  let clientKeyID = deviceInfo.identityKeyID else {
-                throw MirageError.protocolError("Cannot derive media key without client identity metadata")
-            }
-            mediaSecurityContext = try MirageMediaSecurity.deriveContext(
-                identityManager: identityManager,
-                peerPublicKey: clientPublicKey,
-                hostID: hostID,
-                clientID: deviceInfo.id,
-                hostKeyID: identity.keyID,
-                clientKeyID: clientKeyID,
-                hostNonce: nonce,
-                clientNonce: requestNonce,
-                udpRegistrationToken: udpRegistrationToken
-            )
-        } else {
-            mediaSecurityContext = nil
-        }
-        let payload = try MirageIdentitySigning.helloResponsePayload(
-            accepted: accepted,
-            hostID: hostID,
-            hostName: hostName,
-            requiresAuth: false,
-            dataPort: dataPort,
-            negotiation: negotiation,
-            requestNonce: requestNonce,
-            mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
-            udpRegistrationToken: udpRegistrationToken,
-            remoteAccessAllowed: accepted && remoteAccessAllowed,
-            keyID: identity.keyID,
-            publicKey: identity.publicKey,
-            timestampMs: timestampMs,
-            nonce: nonce
+private extension LoomPeerIdentity {
+    var deviceInfo: LoomPeerDeviceInfo {
+        LoomPeerDeviceInfo(
+            id: deviceID,
+            name: name,
+            deviceType: deviceType,
+            endpoint: endpoint.debugDescription,
+            iCloudUserID: iCloudUserID,
+            identityKeyID: identityKeyID,
+            identityPublicKey: identityPublicKey,
+            isIdentityAuthenticated: isIdentityAuthenticated
         )
-        let signature = try identityManager.sign(payload)
-        let response = HelloResponseMessage(
-            accepted: accepted,
-            hostID: hostID,
-            hostName: hostName,
-            requiresAuth: false,
-            dataPort: dataPort,
-            negotiation: negotiation,
-            requestNonce: requestNonce,
-            mediaEncryptionEnabled: resolvedMediaEncryptionEnabled,
-            udpRegistrationToken: udpRegistrationToken,
-            autoTrustGranted: autoTrustGranted,
-            remoteAccessAllowed: accepted ? remoteAccessAllowed : nil,
-            identity: MirageIdentityEnvelope(
-                keyID: identity.keyID,
-                publicKey: identity.publicKey,
-                timestampMs: timestampMs,
-                nonce: nonce,
-                signature: signature
-            ),
-            rejectionReason: rejectionReason,
-            protocolMismatchHostVersion: protocolMismatchHostVersion,
-            protocolMismatchClientVersion: protocolMismatchClientVersion,
-            protocolMismatchUpdateTriggerAccepted: protocolMismatchUpdateTriggerAccepted,
-            protocolMismatchUpdateTriggerMessage: protocolMismatchUpdateTriggerMessage
-        )
-        return (response, mediaSecurityContext)
-    }
-
-    @discardableResult
-    private func sendHelloResponse(
-        accepted: Bool,
-        to connection: NWConnection,
-        dataPort: UInt16,
-        negotiation: MirageProtocolNegotiation,
-        deviceInfo: LoomPeerDeviceInfo,
-        requestNonce: String,
-        autoTrustGranted: Bool = false,
-        remoteAccessAllowed: Bool = false,
-        mediaEncryptionEnabled: Bool = true,
-        rejectionReason: HelloRejectionReason? = nil,
-        protocolMismatchHostVersion: Int? = nil,
-        protocolMismatchClientVersion: Int? = nil,
-        protocolMismatchUpdateTriggerAccepted: Bool? = nil,
-        protocolMismatchUpdateTriggerMessage: String? = nil,
-        cancelAfterSend: Bool
-    )
-    -> (sent: Bool, mediaSecurity: MirageMediaSecurityContext?, mediaEncryptionEnabled: Bool) {
-        do {
-            let builtResponse = try makeHelloResponseMessage(
-                accepted: accepted,
-                dataPort: dataPort,
-                negotiation: negotiation,
-                deviceInfo: deviceInfo,
-                requestNonce: requestNonce,
-                autoTrustGranted: autoTrustGranted,
-                remoteAccessAllowed: remoteAccessAllowed,
-                mediaEncryptionEnabled: mediaEncryptionEnabled,
-                rejectionReason: rejectionReason,
-                protocolMismatchHostVersion: protocolMismatchHostVersion,
-                protocolMismatchClientVersion: protocolMismatchClientVersion,
-                protocolMismatchUpdateTriggerAccepted: protocolMismatchUpdateTriggerAccepted,
-                protocolMismatchUpdateTriggerMessage: protocolMismatchUpdateTriggerMessage
-            )
-            let response = builtResponse.response
-            let message = try ControlMessage(type: .helloResponse, content: response)
-            let data = message.serialize()
-
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error {
-                    MirageLogger.error(.host, error: error, message: "Failed to send hello response: ")
-                    if accepted { connection.cancel() }
-                } else if accepted {
-                    MirageLogger.host(
-                        "Sent hello response with dataPort \(dataPort), mediaEncryption=\(response.mediaEncryptionEnabled)"
-                    )
-                } else {
-                    MirageLogger.host("Sent rejection hello response")
-                }
-
-                if cancelAfterSend { connection.cancel() }
-            })
-            return (true, builtResponse.mediaSecurity, builtResponse.response.mediaEncryptionEnabled)
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to create hello response: ")
-            if cancelAfterSend { connection.cancel() }
-            return (false, nil, false)
-        }
     }
 }
 #endif

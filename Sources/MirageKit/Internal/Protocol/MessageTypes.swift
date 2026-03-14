@@ -11,8 +11,8 @@ import Foundation
 /// Control channel message types (sent over TCP)
 package enum ControlMessageType: UInt8, Codable {
     // Connection management
-    case hello = 0x01
-    case helloResponse = 0x02
+    case sessionBootstrapRequest = 0x01
+    case sessionBootstrapResponse = 0x02
     case disconnect = 0x03
     case ping = 0x04
     case pong = 0x05

@@ -19,6 +19,12 @@ import os
 /// - `metrics,timing,encoder` - Enable specific categories (comma-separated)
 /// - Not set - Default: essential logs only (host, client, appState)
 public struct MirageLogger: Sendable {
+    public struct SignpostInterval {
+        fileprivate let category: MirageLogCategory
+        fileprivate let name: StaticString
+        fileprivate let id: OSSignpostID
+    }
+
     /// Subsystem identifier for the system logger (appears in Console.app)
     private static let subsystem = "com.mirage"
 
@@ -27,6 +33,15 @@ public struct MirageLogger: Sendable {
         var result: [MirageLogCategory: Logger] = [:]
         for category in MirageLogCategory.allCases {
             result[category] = Logger(subsystem: subsystem, category: category.rawValue)
+        }
+        return result
+    }()
+
+    /// Cached OSLog instances used for signposts.
+    private static let signpostLogs: [MirageLogCategory: OSLog] = {
+        var result: [MirageLogCategory: OSLog] = [:]
+        for category in MirageLogCategory.allCases {
+            result[category] = OSLog(subsystem: subsystem, category: category.rawValue)
         }
         return result
     }()
@@ -246,6 +261,160 @@ public struct MirageLogger: Sendable {
 
     private static func logger(for category: MirageLogCategory) -> Logger {
         loggers[category] ?? Logger(subsystem: subsystem, category: category.rawValue)
+    }
+
+    private static func signpostLog(for category: MirageLogCategory) -> OSLog {
+        signpostLogs[category] ?? OSLog(subsystem: subsystem, category: category.rawValue)
+    }
+
+    private static func signpostMessage(
+        _ message: @autoclosure () -> String,
+        fileID: String,
+        line: UInt,
+        function: String
+    ) -> String {
+        let rawMessage = message()
+        guard !rawMessage.isEmpty else {
+            return sourcePrefix(fileID: fileID, line: line, function: function)
+        }
+        return "\(sourcePrefix(fileID: fileID, line: line, function: function)) \(rawMessage)"
+    }
+
+    public static func signpostEvent(
+        _ category: MirageLogCategory,
+        _ name: StaticString,
+        _ message: @autoclosure () -> String = "",
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        guard enabledCategories.contains(category) else { return }
+        let formattedMessage = signpostMessage(
+            message(),
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+        os_signpost(
+            .event,
+            log: signpostLog(for: category),
+            name: name,
+            "%{public}s",
+            formattedMessage
+        )
+    }
+
+    public static func beginInterval(
+        _ category: MirageLogCategory,
+        _ name: StaticString,
+        _ message: @autoclosure () -> String = "",
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) -> SignpostInterval {
+        let interval = SignpostInterval(
+            category: category,
+            name: name,
+            id: OSSignpostID(log: signpostLog(for: category))
+        )
+
+        guard enabledCategories.contains(category) else { return interval }
+        let formattedMessage = signpostMessage(
+            message(),
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+        os_signpost(
+            .begin,
+            log: signpostLog(for: category),
+            name: name,
+            signpostID: interval.id,
+            "%{public}s",
+            formattedMessage
+        )
+        return interval
+    }
+
+    public static func endInterval(
+        _ interval: SignpostInterval?,
+        _ message: @autoclosure () -> String = "",
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function
+    ) {
+        guard let interval else { return }
+        guard enabledCategories.contains(interval.category) else { return }
+        let formattedMessage = signpostMessage(
+            message(),
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+        os_signpost(
+            .end,
+            log: signpostLog(for: interval.category),
+            name: interval.name,
+            signpostID: interval.id,
+            "%{public}s",
+            formattedMessage
+        )
+    }
+
+    public static func withInterval<T>(
+        _ category: MirageLogCategory,
+        _ name: StaticString,
+        _ message: @autoclosure () -> String = "",
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function,
+        operation: () throws -> T
+    ) rethrows -> T {
+        let interval = beginInterval(
+            category,
+            name,
+            message(),
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+        defer {
+            endInterval(
+                interval,
+                fileID: fileID,
+                line: line,
+                function: function
+            )
+        }
+        return try operation()
+    }
+
+    public static func withInterval<T>(
+        _ category: MirageLogCategory,
+        _ name: StaticString,
+        _ message: @autoclosure () -> String = "",
+        fileID: String = #fileID,
+        line: UInt = #line,
+        function: String = #function,
+        operation: () async throws -> T
+    ) async rethrows -> T {
+        let interval = beginInterval(
+            category,
+            name,
+            message(),
+            fileID: fileID,
+            line: line,
+            function: function
+        )
+        defer {
+            endInterval(
+                interval,
+                fileID: fileID,
+                line: line,
+                function: function
+            )
+        }
+        return try await operation()
     }
 
     /// Parse MIRAGE_LOG environment variable

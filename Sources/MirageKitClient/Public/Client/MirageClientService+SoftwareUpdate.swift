@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
@@ -52,104 +53,37 @@ public extension MirageClientService {
     /// - Parameter host: Host endpoint to target for the handshake request.
     /// - Returns: Protocol mismatch metadata including trigger acceptance result.
     func requestHostUpdateViaMismatchHandshake(to host: LoomPeer) async throws -> ProtocolMismatchInfo {
-        let parameters = controlParameters(for: .tcp)
-        let transientConnection = NWConnection(to: host.endpoint, using: parameters)
+        let session = try await loomNode.connect(
+            to: host.endpoint,
+            using: .tcp,
+            hello: try makeSessionHelloRequest()
+        )
         defer {
-            transientConnection.cancel()
+            Task {
+                await session.cancel()
+            }
         }
 
-        try await waitForConnectionReady(transientConnection)
+        let controlChannel = try await MirageControlChannel.open(on: session)
+        try await controlChannel.send(
+            .sessionBootstrapRequest,
+            content: makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: true)
+        )
 
-        let helloRequest = try makeHelloMessage(requestHostUpdateOnProtocolMismatch: true)
-        let helloEnvelope = try ControlMessage(type: .hello, content: helloRequest.hello)
-        try await sendControlMessage(helloEnvelope, over: transientConnection)
-
-        let responseMessage = try await receiveSingleControlMessage(over: transientConnection)
-        guard responseMessage.type == ControlMessageType.helloResponse else {
-            throw MirageError.protocolError("Expected hello response")
+        let responseMessage = try await receiveSingleControlMessage(from: controlChannel.incomingBytes)
+        guard responseMessage.type == ControlMessageType.sessionBootstrapResponse else {
+            throw MirageError.protocolError("Expected session bootstrap response")
         }
 
-        let response = try responseMessage.decode(HelloResponseMessage.self)
-        guard response.requestNonce == helloRequest.nonce else {
-            throw MirageError.protocolError("Invalid handshake nonce")
-        }
-
+        let response = try responseMessage.decode(MirageSessionBootstrapResponse.self)
         if response.accepted {
             throw MirageError.protocolError("Host accepted session; mismatch update flow unavailable")
         }
 
         guard let mismatchInfo = protocolMismatchInfo(from: response) else {
-            throw MirageError.protocolError(helloRejectionDescription(for: response, mismatchInfo: nil))
+            throw MirageError.protocolError(bootstrapRejectionDescription(for: response, mismatchInfo: nil))
         }
 
         return mismatchInfo
-    }
-}
-
-private extension MirageClientService {
-    func waitForConnectionReady(_ connection: NWConnection) async throws {
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let continuationBox = ContinuationBox<Void>(continuation)
-            connection.stateUpdateHandler = { [continuationBox] state in
-                switch state {
-                case .ready:
-                    continuationBox.resume()
-                case let .failed(error):
-                    continuationBox.resume(throwing: error)
-                case .cancelled:
-                    continuationBox.resume(throwing: MirageError.protocolError("Connection cancelled"))
-                default:
-                    break
-                }
-            }
-            connection.start(queue: .global(qos: .userInitiated))
-        }
-    }
-
-    func sendControlMessage(_ message: ControlMessage, over connection: NWConnection) async throws {
-        let data = message.serialize()
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let continuationBox = ContinuationBox<Void>(continuation)
-            connection.send(content: data, completion: .contentProcessed { error in
-                if let error {
-                    continuationBox.resume(throwing: error)
-                } else {
-                    continuationBox.resume()
-                }
-            })
-        }
-    }
-
-    func receiveSingleControlMessage(over connection: NWConnection) async throws -> ControlMessage {
-        var buffer = Data()
-
-        while true {
-            let result: (Data?, NWConnection.ContentContext?, Bool, NWError?) = await withCheckedContinuation { continuation in
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 4096) { data, context, isComplete, error in
-                    continuation.resume(returning: (data, context, isComplete, error))
-                }
-            }
-
-            let (data, _, isComplete, error) = result
-            if let error {
-                throw error
-            }
-
-            if let data, !data.isEmpty {
-                buffer.append(data)
-                switch ControlMessage.deserialize(from: buffer) {
-                case let .success(message, _):
-                    return message
-                case .needMoreData:
-                    break
-                case let .invalidFrame(reason):
-                    throw MirageError.protocolError("Invalid control frame: \(reason)")
-                }
-            }
-
-            if isComplete {
-                throw MirageError.protocolError("Connection closed before hello response")
-            }
-        }
     }
 }

@@ -45,8 +45,8 @@ MirageKit is split into two runtime planes:
 Session setup is explicit:
 
 1. Control connection is established.
-2. Signed hello and hello-response messages validate identity and protocol compatibility.
-3. Host returns media registration state and session-specific transport metadata.
+2. Loom authenticates the peer identity and runs trust evaluation.
+3. Mirage exchanges bootstrap request/response control messages to negotiate protocol compatibility and media registration state.
 4. Client registers stream and audio channels.
 5. Host begins sending media packets once registration succeeds.
 
@@ -75,8 +75,7 @@ The shared target also owns:
 
 Security is composed out of a few narrow pieces:
 
-- signed hello payloads with deterministic encoding
-- replay protection for handshake and bootstrap flows
+- Loom-authenticated peer identity and trust evaluation
 - session-derived media keys and registration tokens
 - session-key encryption for shared clipboard text on the control plane
 - per-packet authenticated encryption for video and audio payloads
@@ -156,7 +155,7 @@ Shared clipboard is also coordinated at the host-service layer. It is negotiated
 
 Remote relay signaling remains a direct-QUIC reachability system. Mirage does not relay control traffic through signaling; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
 
-When the host accepts a hello, the signed `HelloResponseMessage` includes whether that client is currently allowed to reconnect remotely. That bit is part of the signed hello-response payload so clients can cache remote capability without trusting unsigned app metadata.
+When the host accepts a Loom-authenticated control session, the bootstrap response includes whether that client is currently allowed to reconnect remotely. Clients cache that remote capability only after Loom has authenticated the peer identity and Mirage has accepted the bootstrap request.
 
 ## 5. Client Target (`Sources/MirageKitClient`)
 

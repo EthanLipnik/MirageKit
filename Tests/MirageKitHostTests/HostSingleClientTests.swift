@@ -54,16 +54,18 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "existing-key"
         )
-        let incomingDevice = LoomPeerDeviceInfo(
-            id: clientID,
+        let incomingPeer = LoomPeerIdentity(
+            deviceID: clientID,
             name: "Incoming iPad",
             deviceType: .iPad,
-            endpoint: "127.0.0.1",
+            iCloudUserID: nil,
             identityKeyID: "different-key",
-            isIdentityAuthenticated: true
+            identityPublicKey: nil,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
         )
 
-        #expect(host.shouldPreemptExistingClient(existingClient, for: incomingDevice))
+        #expect(host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
     }
 
     @Test("Reconnect preemption matches same identity key ID")
@@ -78,16 +80,18 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "shared-key"
         )
-        let incomingDevice = LoomPeerDeviceInfo(
-            id: UUID(),
+        let incomingPeer = LoomPeerIdentity(
+            deviceID: UUID(),
             name: "Incoming Mac",
             deviceType: .mac,
-            endpoint: "127.0.0.1",
+            iCloudUserID: nil,
             identityKeyID: "shared-key",
-            isIdentityAuthenticated: true
+            identityPublicKey: nil,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
         )
 
-        #expect(host.shouldPreemptExistingClient(existingClient, for: incomingDevice))
+        #expect(host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
     }
 
     @Test("Reconnect preemption ignores unrelated clients")
@@ -102,16 +106,18 @@ struct HostSingleClientTests {
             connectedAt: Date(),
             identityKeyID: "existing-key"
         )
-        let incomingDevice = LoomPeerDeviceInfo(
-            id: UUID(),
+        let incomingPeer = LoomPeerIdentity(
+            deviceID: UUID(),
             name: "Incoming iPad",
             deviceType: .iPad,
-            endpoint: "127.0.0.1",
+            iCloudUserID: nil,
             identityKeyID: "incoming-key",
-            isIdentityAuthenticated: true
+            identityPublicKey: nil,
+            isIdentityAuthenticated: true,
+            endpoint: "127.0.0.1"
         )
 
-        #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingDevice))
+        #expect(!host.shouldPreemptExistingClient(existingClient, for: incomingPeer))
     }
 }
 #endif

@@ -15,37 +15,25 @@ import Testing
 @Suite("Host Software Update Flow")
 struct HostSoftwareUpdateFlowTests {
     @MainActor
-    @Test("Protocol mismatch metadata round-trips in hello rejection payload")
+    @Test("Protocol mismatch metadata round-trips in bootstrap rejection payload")
     func protocolMismatchMetadataRoundTrip() throws {
-        let response = HelloResponseMessage(
+        let response = MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            requiresAuth: false,
+            selectedFeatures: [],
             dataPort: 9848,
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            requestNonce: "req-nonce",
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
-            identity: MirageIdentityEnvelope(
-                keyID: "host-key",
-                publicKey: Data([0x01, 0x02]),
-                timestampMs: 987_654_321,
-                nonce: "host-nonce",
-                signature: Data([0x03, 0x04])
-            ),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 7,
             protocolMismatchClientVersion: 8,
             protocolMismatchUpdateTriggerAccepted: true,
             protocolMismatchUpdateTriggerMessage: "Update request accepted."
         )
-        let envelope = try ControlMessage(type: .helloResponse, content: response)
+        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
 
         #expect(!decoded.accepted)
         #expect(decoded.rejectionReason == .protocolVersionMismatch)
@@ -62,8 +50,8 @@ struct HostSoftwareUpdateFlowTests {
         let controller = MockHostSoftwareUpdateController()
         host.softwareUpdateController = controller
 
-        let deviceInfo = makeDeviceInfo()
-        let mismatchHello = makeHelloMessage(requestHostUpdateOnProtocolMismatch: true)
+        let peerIdentity = makePeerIdentity()
+        let mismatchRequest = makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: true)
 
         controller.authorizeResult = true
         controller.installResult = .init(
@@ -76,24 +64,24 @@ struct HostSoftwareUpdateFlowTests {
         )
 
         let acceptedResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
-            hello: mismatchHello,
-            deviceInfo: deviceInfo
+            request: mismatchRequest,
+            peerIdentity: peerIdentity
         )
         #expect(acceptedResult?.accepted == true)
         #expect(acceptedResult?.message == "Install started.")
 
         controller.authorizeResult = false
         let deniedResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
-            hello: mismatchHello,
-            deviceInfo: deviceInfo
+            request: mismatchRequest,
+            peerIdentity: peerIdentity
         )
         #expect(deniedResult?.accepted == false)
         #expect(deniedResult?.message == "Remote update request denied for this device.")
 
-        let noRequestHello = makeHelloMessage(requestHostUpdateOnProtocolMismatch: nil)
+        let noRequestRequest = makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: nil)
         let noRequestResult = await host.handleProtocolMismatchUpdateRequestIfNeeded(
-            hello: noRequestHello,
-            deviceInfo: deviceInfo
+            request: noRequestRequest,
+            peerIdentity: peerIdentity
         )
         #expect(noRequestResult == nil)
     }
@@ -248,37 +236,10 @@ private func makePeerIdentity() -> LoomPeerIdentity {
     )
 }
 
-private func makeDeviceInfo() -> LoomPeerDeviceInfo {
-    LoomPeerDeviceInfo(
-        id: UUID(),
-        name: "Trusted iPad",
-        deviceType: .iPad,
-        endpoint: "127.0.0.1",
-        iCloudUserID: "ck-user",
-        identityKeyID: "peer-key",
-        identityPublicKey: Data([0x01, 0x02]),
-        isIdentityAuthenticated: true
-    )
-}
-
-private func makeHelloMessage(requestHostUpdateOnProtocolMismatch: Bool?) -> HelloMessage {
-    HelloMessage(
-        deviceID: UUID(),
-        deviceName: "Trusted iPad",
-        deviceType: .iPad,
+private func makeBootstrapRequest(requestHostUpdateOnProtocolMismatch: Bool?) -> MirageSessionBootstrapRequest {
+    MirageSessionBootstrapRequest(
         protocolVersion: Int(MirageKit.protocolVersion),
-        advertisement: LoomPeerAdvertisement(),
-        negotiation: MirageProtocolNegotiation.clientHello(
-            protocolVersion: Int(MirageKit.protocolVersion),
-            supportedFeatures: mirageSupportedFeatures
-        ),
-        identity: MirageIdentityEnvelope(
-            keyID: "peer-key",
-            publicKey: Data([0x01, 0x02]),
-            timestampMs: 123_456_789,
-            nonce: "nonce",
-            signature: Data([0x03, 0x04])
-        ),
+        requestedFeatures: mirageSupportedFeatures,
         requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
     )
 }

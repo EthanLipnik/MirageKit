@@ -104,7 +104,13 @@ extension MirageClientService {
         try await incomingTransfer.accept(using: sink)
 
         let terminalProgress = await terminalProgress(from: incomingTransfer.progressEvents)
-        guard terminalProgress?.state == .completed else {
+        switch terminalProgress?.state {
+        case .completed:
+            break
+        case .cancelled, .declined:
+            try? FileManager.default.removeItem(at: destinationURL)
+            throw CancellationError()
+        default:
             try? FileManager.default.removeItem(at: destinationURL)
             throw MirageError.protocolError("Host support log transfer did not complete")
         }

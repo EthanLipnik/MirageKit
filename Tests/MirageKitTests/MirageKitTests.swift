@@ -56,34 +56,21 @@ struct MirageKitTests {
 
     @Test("Control message serialization")
     func controlMessageSerialization() throws {
-        let hello = HelloMessage(
-            deviceID: UUID(),
-            deviceName: "Test Device",
-            deviceType: .mac,
+        let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            advertisement: LoomPeerAdvertisement(),
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            identity: MirageIdentityEnvelope(
-                keyID: "test-key-id",
-                publicKey: Data([0x01, 0x02]),
-                timestampMs: 1_234,
-                nonce: "nonce",
-                signature: Data([0x03, 0x04])
-            )
+            requestedFeatures: mirageSupportedFeatures
         )
 
-        let message = try ControlMessage(type: .hello, content: hello)
+        let message = try ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
         let data = message.serialize()
 
         let (deserialized, consumed) = try requireParsedControlMessage(from: data)
         #expect(consumed == data.count)
-        #expect(deserialized.type == ControlMessageType.hello)
+        #expect(deserialized.type == .sessionBootstrapRequest)
 
-        let decodedHello = try deserialized.decode(HelloMessage.self)
-        #expect(decodedHello.deviceName == "Test Device")
+        let decodedBootstrap = try deserialized.decode(MirageSessionBootstrapRequest.self)
+        #expect(decodedBootstrap.protocolVersion == Int(MirageKit.protocolVersion))
+        #expect(decodedBootstrap.requestedFeatures == mirageSupportedFeatures)
     }
 
     @Test("Control parser rejects unknown control type")
@@ -115,7 +102,7 @@ struct MirageKitTests {
 
     @Test("Control parser returns needMoreData for truncated payload")
     func controlParserReturnsNeedMoreDataForTruncatedPayload() {
-        var data = Data([ControlMessageType.hello.rawValue])
+        var data = Data([ControlMessageType.sessionBootstrapRequest.rawValue])
         withUnsafeBytes(of: UInt32(8).littleEndian) { data.append(contentsOf: $0) }
         data.append(contentsOf: [0x01, 0x02, 0x03])
 
@@ -155,56 +142,30 @@ struct MirageKitTests {
         }
     }
 
-    @Test("Hello message optional mismatch update flag serialization")
-    func helloOptionalMismatchUpdateFlagSerialization() throws {
-        let hello = HelloMessage(
-            deviceID: UUID(),
-            deviceName: "Mismatch Test",
-            deviceType: .iPad,
+    @Test("Bootstrap request optional mismatch update flag serialization")
+    func bootstrapRequestOptionalMismatchUpdateFlagSerialization() throws {
+        let bootstrap = MirageSessionBootstrapRequest(
             protocolVersion: Int(MirageKit.protocolVersion),
-            advertisement: LoomPeerAdvertisement(),
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            identity: MirageIdentityEnvelope(
-                keyID: "test-key-id",
-                publicKey: Data([0x01, 0x02]),
-                timestampMs: 9_999,
-                nonce: "nonce",
-                signature: Data([0x03, 0x04])
-            ),
+            requestedFeatures: mirageSupportedFeatures,
             requestHostUpdateOnProtocolMismatch: true
         )
 
-        let message = try ControlMessage(type: .hello, content: hello)
+        let message = try ControlMessage(type: .sessionBootstrapRequest, content: bootstrap)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: message.serialize())
-        let decodedHello = try decodedEnvelope.decode(HelloMessage.self)
-        #expect(decodedHello.requestHostUpdateOnProtocolMismatch == true)
+        let decodedBootstrap = try decodedEnvelope.decode(MirageSessionBootstrapRequest.self)
+        #expect(decodedBootstrap.requestHostUpdateOnProtocolMismatch == true)
     }
 
-    @Test("Hello response mismatch metadata serialization")
-    func helloResponseMismatchMetadataSerialization() throws {
-        let response = HelloResponseMessage(
+    @Test("Bootstrap response mismatch metadata serialization")
+    func bootstrapResponseMismatchMetadataSerialization() throws {
+        let response = MirageSessionBootstrapResponse(
             accepted: false,
             hostID: UUID(),
             hostName: "Host",
-            requiresAuth: false,
+            selectedFeatures: [],
             dataPort: 9848,
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            requestNonce: "request-nonce",
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
-            identity: MirageIdentityEnvelope(
-                keyID: "host-key-id",
-                publicKey: Data([0x10, 0x20]),
-                timestampMs: 10_000,
-                nonce: "host-nonce",
-                signature: Data([0x30, 0x40])
-            ),
             rejectionReason: .protocolVersionMismatch,
             protocolMismatchHostVersion: 1,
             protocolMismatchClientVersion: 2,
@@ -212,9 +173,9 @@ struct MirageKitTests {
             protocolMismatchUpdateTriggerMessage: "Update accepted"
         )
 
-        let envelope = try ControlMessage(type: .helloResponse, content: response)
+        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
         #expect(decoded.rejectionReason == .protocolVersionMismatch)
         #expect(decoded.protocolMismatchHostVersion == 1)
         #expect(decoded.protocolMismatchClientVersion == 2)
@@ -222,37 +183,25 @@ struct MirageKitTests {
         #expect(decoded.protocolMismatchUpdateTriggerMessage == "Update accepted")
     }
 
-    @Test("Accepted hello response remote access metadata serialization")
-    func helloResponseRemoteAccessMetadataSerialization() throws {
-        let response = HelloResponseMessage(
+    @Test("Accepted bootstrap response remote access metadata serialization")
+    func bootstrapResponseRemoteAccessMetadataSerialization() throws {
+        let response = MirageSessionBootstrapResponse(
             accepted: true,
             hostID: UUID(),
             hostName: "Host",
-            requiresAuth: false,
+            selectedFeatures: mirageSupportedFeatures,
             dataPort: 9848,
-            negotiation: MirageProtocolNegotiation.clientHello(
-                protocolVersion: Int(MirageKit.protocolVersion),
-                supportedFeatures: mirageSupportedFeatures
-            ),
-            requestNonce: "request-nonce",
             mediaEncryptionEnabled: true,
             udpRegistrationToken: Data(
                 repeating: 0xAB,
                 count: MirageMediaSecurity.registrationTokenLength
             ),
-            remoteAccessAllowed: true,
-            identity: MirageIdentityEnvelope(
-                keyID: "host-key-id",
-                publicKey: Data([0x10, 0x20]),
-                timestampMs: 10_000,
-                nonce: "host-nonce",
-                signature: Data([0x30, 0x40])
-            )
+            remoteAccessAllowed: true
         )
 
-        let envelope = try ControlMessage(type: .helloResponse, content: response)
+        let envelope = try ControlMessage(type: .sessionBootstrapResponse, content: response)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decoded = try decodedEnvelope.decode(HelloResponseMessage.self)
+        let decoded = try decodedEnvelope.decode(MirageSessionBootstrapResponse.self)
 
         #expect(decoded.accepted == true)
         #expect(decoded.remoteAccessAllowed == true)
