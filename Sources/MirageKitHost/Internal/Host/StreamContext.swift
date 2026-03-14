@@ -164,7 +164,7 @@ actor StreamContext {
     var latencyBurstCaptureQueueDepthOverride: Int?
     var preLatencyBurstCaptureQueueDepthOverride: Int?
     let temporaryDegradationBitrateFloorBps: Int = 8_000_000
-    let temporaryDegradationRampStep: Double = 1.10
+    let temporaryDegradationRampStep: Double = 1.30
     let temporaryDegradationBitrateStepFramerate: Double = 0.85
     let temporaryDegradationBitrateStepVisuals: Double = 0.90
     let temporaryDegradationStableThresholdRatio: Double = 0.95
@@ -173,6 +173,7 @@ actor StreamContext {
     let temporaryDegradationOverBudgetRatio: Double = 1.05
     let temporaryDegradationSevereEncodeBudgetRatio: Double = 1.35
     let temporaryDegradationStableWindowsThreshold: Int = 2
+    var bitrateAdaptationCeiling: Int?
     var requestedTargetBitrate: Int?
     var startupBitrate: Int?
     var temporaryDegradationCurrentBitrate: Int?
@@ -343,6 +344,10 @@ actor StreamContext {
     let temporaryDegradationMode: MirageTemporaryDegradationMode
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
+    /// Maximum encoded width in pixels for host-computed stream scaling.
+    var encoderMaxWidth: Int?
+    /// Maximum encoded height in pixels for host-computed stream scaling.
+    var encoderMaxHeight: Int?
     /// When true, request VideoToolbox power-efficiency preference on the encoder session.
     var encoderLowPowerEnabled: Bool
     /// Capture pressure profile for SCK buffering/copy behavior.
@@ -403,7 +408,10 @@ actor StreamContext {
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .auto,
-        performanceMode: MirageStreamPerformanceMode = .standard
+        performanceMode: MirageStreamPerformanceMode = .standard,
+        bitrateAdaptationCeiling: Int? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil
     ) {
         var resolvedEncoderConfig = encoderConfig
         var resolvedLatencyMode = latencyMode
@@ -456,6 +464,8 @@ actor StreamContext {
             resolvedLowLatencyHighResolutionCompressionBoostEnabled
         self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
+        self.encoderMaxWidth = encoderMaxWidth
+        self.encoderMaxHeight = encoderMaxHeight
         self.encoderLowPowerEnabled = encoderLowPowerEnabled
         self.capturePressureProfile = resolvedCapturePressureProfile
         self.requestedAudioChannelCount = Self.clampedAudioCaptureChannelCount(requestedAudioChannelCount)
@@ -521,6 +531,7 @@ actor StreamContext {
         gameModeBaselineColorDepth = resolvedEncoderConfig.colorDepth
         gameModeBaselineBitrate = resolvedEncoderConfig.bitrate
         gameModeBaselineStreamScale = clampedScale
+        self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = initialTemporaryBitrate
         temporaryDegradationCurrentBitrate = resolvedEncoderConfig.bitrate
@@ -575,9 +586,9 @@ actor StreamContext {
         case .off:
             1.0
         case .prioritizeFramerate:
-            0.70
-        case .prioritizeVisuals:
             0.85
+        case .prioritizeVisuals:
+            0.92
         }
         let scaled = Int((Double(requestedBitrate) * scale).rounded(.down))
         let clampedFloor = max(1, floor)

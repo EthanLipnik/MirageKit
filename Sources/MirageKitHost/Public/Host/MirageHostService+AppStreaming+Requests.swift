@@ -755,7 +755,10 @@ extension MirageHostService {
                     .off,
                 disableResolutionCap: disableResolutionCap,
                 allowBestEffortRemap: false,
-                audioConfiguration: audioConfiguration
+                audioConfiguration: audioConfiguration,
+                bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
+                encoderMaxWidth: selectRequest.encoderMaxWidth,
+                encoderMaxHeight: selectRequest.encoderMaxHeight
             )
             let resolvedWindowEvent = Self.resolvedWindowAddedEvent(from: streamSession)
             let resolvedWindowID = resolvedWindowEvent.windowID
@@ -1279,7 +1282,10 @@ extension MirageHostService {
             temporaryDegradationMode: selectRequest.temporaryDegradationMode ?? .off,
             disableResolutionCap: selectRequest.disableResolutionCap ?? false,
             allowBestEffortRemap: false,
-            audioConfiguration: selectRequest.audioConfiguration ?? .default
+            audioConfiguration: selectRequest.audioConfiguration ?? .default,
+            bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
+            encoderMaxWidth: selectRequest.encoderMaxWidth,
+            encoderMaxHeight: selectRequest.encoderMaxHeight
         )
 
         let resolvedWindow = streamSession.window

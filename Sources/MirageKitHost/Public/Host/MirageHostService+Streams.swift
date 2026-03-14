@@ -193,7 +193,10 @@ public extension MirageHostService {
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
         allowDirectCaptureFallback: Bool = true,
-        audioConfiguration: MirageAudioConfiguration? = nil
+        audioConfiguration: MirageAudioConfiguration? = nil,
+        bitrateAdaptationCeiling: Int? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil
     )
     async throws -> MirageStreamSession {
         // Clear any stuck modifier state from previous streams
@@ -296,7 +299,10 @@ public extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
-            performanceMode: performanceMode
+            performanceMode: performanceMode,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight
         )
         if disableResolutionCap {
             MirageLogger.host("Resolution cap disabled for stream \(streamID)")

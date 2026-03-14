@@ -709,7 +709,7 @@ extension MirageClientService {
         }
     }
 
-    func sendStreamEncoderSettingsChange(
+    public func sendStreamEncoderSettingsChange(
         streamID: StreamID,
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,

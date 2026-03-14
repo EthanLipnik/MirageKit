@@ -129,7 +129,10 @@ extension MirageHostService {
                 streamScale: request.streamScale,
                 audioConfiguration: audioConfiguration,
                 dataPort: request.dataPort,
-                targetFrameRate: targetFrameRate
+                targetFrameRate: targetFrameRate,
+                bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+                encoderMaxWidth: request.encoderMaxWidth,
+                encoderMaxHeight: request.encoderMaxHeight
             )
             if pendingLightsOutSetup {
                 pendingLightsOutSetup = false

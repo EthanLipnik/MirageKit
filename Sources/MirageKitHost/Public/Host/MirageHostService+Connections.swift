@@ -91,6 +91,43 @@ extension MirageHostService {
         }
 
         do {
+            let connectionAccepted = await withCheckedContinuation { continuation in
+                if let delegate {
+                    delegate.hostService(
+                        self,
+                        shouldAcceptConnectionFrom: peerIdentity.deviceInfo,
+                        origin: origin,
+                        completion: { accepted in
+                            continuation.resume(returning: accepted)
+                        }
+                    )
+                } else {
+                    continuation.resume(returning: true)
+                }
+            }
+
+            guard connectionAccepted else {
+                MirageLogger.host("Connection from \(peerIdentity.name) rejected by delegate (origin=\(origin))")
+                let controlChannel = try? await MirageControlChannel.accept(from: session)
+                if let controlChannel {
+                    let rejection = MirageSessionBootstrapResponse(
+                        accepted: false,
+                        hostID: hostID,
+                        hostName: Host.current().localizedName ?? "Mac",
+                        selectedFeatures: [],
+                        dataPort: currentDataPort(),
+                        mediaEncryptionEnabled: false,
+                        udpRegistrationToken: Data(),
+                        rejectionReason: .unauthorized
+                    )
+                    try? await controlChannel.send(.sessionBootstrapResponse, content: rejection)
+                    await controlChannel.cancel()
+                } else {
+                    await session.cancel()
+                }
+                return
+            }
+
             let controlChannel = try await MirageControlChannel.accept(from: session)
             MirageLogger.host("Accepted Mirage control channel from \(peerIdentity.name) origin=\(origin)")
             let bootstrap = try await receiveBootstrapRequest(from: controlChannel)

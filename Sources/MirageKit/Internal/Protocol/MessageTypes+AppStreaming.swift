@@ -204,6 +204,12 @@ package struct SelectAppMessage: Codable {
     package let streamScale: CGFloat?
     /// Client audio streaming configuration
     package let audioConfiguration: MirageAudioConfiguration?
+    /// Maximum bitrate the in-stream adaptation governor may ramp toward.
+    package var bitrateAdaptationCeiling: Int?
+    /// Maximum encoded width in pixels for host-computed stream scaling.
+    package var encoderMaxWidth: Int?
+    /// Maximum encoded height in pixels for host-computed stream scaling.
+    package var encoderMaxHeight: Int?
     /// Maximum concurrent visible app windows requested by the client tier policy.
     package let maxConcurrentVisibleWindows: Int
     /// Client-requested shared bitrate allocation policy for multi-window app streaming.
@@ -228,6 +234,9 @@ package struct SelectAppMessage: Codable {
         case disableResolutionCap
         case streamScale
         case audioConfiguration
+        case bitrateAdaptationCeiling
+        case encoderMaxWidth
+        case encoderMaxHeight
         case maxConcurrentVisibleWindows
         case bitrateAllocationPolicy
     }

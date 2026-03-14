@@ -46,18 +46,13 @@ func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopRes
 struct DesktopBackingScaleResolution: Equatable {
     let scaleFactor: CGFloat
     let pixelResolution: CGSize
-    let predictedEncodedResolution: CGSize
-    let forcedOneX: Bool
 }
 
 func resolvedDesktopBackingScaleResolution(
     logicalResolution: CGSize,
-    defaultScaleFactor: CGFloat,
-    streamScale: CGFloat,
-    disableResolutionCap: Bool
+    defaultScaleFactor: CGFloat
 ) -> DesktopBackingScaleResolution {
     let resolvedDefaultScaleFactor = max(1.0, defaultScaleFactor)
-    let clampedStreamScale = StreamContext.clampStreamScale(streamScale)
 
     func alignedPixelResolution(
         width: CGFloat,
@@ -72,34 +67,18 @@ func resolvedDesktopBackingScaleResolution(
     guard logicalResolution.width > 0, logicalResolution.height > 0 else {
         return DesktopBackingScaleResolution(
             scaleFactor: resolvedDefaultScaleFactor,
-            pixelResolution: logicalResolution,
-            predictedEncodedResolution: logicalResolution,
-            forcedOneX: false
+            pixelResolution: logicalResolution
         )
     }
 
-    let defaultPixelResolution = alignedPixelResolution(
+    let pixelResolution = alignedPixelResolution(
         width: logicalResolution.width * resolvedDefaultScaleFactor,
         height: logicalResolution.height * resolvedDefaultScaleFactor
     )
-    let predictedEncodedResolution = alignedPixelResolution(
-        width: defaultPixelResolution.width * clampedStreamScale,
-        height: defaultPixelResolution.height * clampedStreamScale
-    )
-    let forcedOneX = !disableResolutionCap &&
-        predictedEncodedResolution.width <= 1920 &&
-        predictedEncodedResolution.height <= 1080
-    let effectiveScaleFactor: CGFloat = forcedOneX ? 1.0 : resolvedDefaultScaleFactor
-    let pixelResolution = alignedPixelResolution(
-        width: logicalResolution.width * effectiveScaleFactor,
-        height: logicalResolution.height * effectiveScaleFactor
-    )
 
     return DesktopBackingScaleResolution(
-        scaleFactor: effectiveScaleFactor,
-        pixelResolution: pixelResolution,
-        predictedEncodedResolution: predictedEncodedResolution,
-        forcedOneX: forcedOneX
+        scaleFactor: resolvedDefaultScaleFactor,
+        pixelResolution: pixelResolution
     )
 }
 

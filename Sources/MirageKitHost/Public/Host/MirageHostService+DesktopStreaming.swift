@@ -35,7 +35,10 @@ extension MirageHostService {
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
         dataPort _: UInt16?,
-        targetFrameRate: Int? = nil
+        targetFrameRate: Int? = nil,
+        bitrateAdaptationCeiling: Int? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil
     )
     async throws {
         // Check session state - must be ready
@@ -79,8 +82,6 @@ extension MirageHostService {
         let virtualDisplayStartupAttempts = desktopVirtualDisplayStartupAttempts(
             logicalResolution: displayResolution,
             requestedScaleFactor: defaultDesktopBackingScale,
-            streamScale: clampedStreamScale,
-            disableResolutionCap: disableResolutionCap,
             requestedRefreshRate: virtualDisplayRefreshRate,
             requestedColorSpace: encoderConfig.withOverrides(
                 keyFrameInterval: keyFrameInterval,
@@ -92,21 +93,12 @@ extension MirageHostService {
         let desktopBackingScale = virtualDisplayStartupAttempts.first?.backingScale ??
             resolvedDesktopBackingScaleResolution(
                 logicalResolution: displayResolution,
-                defaultScaleFactor: defaultDesktopBackingScale,
-                streamScale: clampedStreamScale,
-                disableResolutionCap: disableResolutionCap
+                defaultScaleFactor: defaultDesktopBackingScale
             )
         let virtualDisplayResolution = desktopBackingScale.pixelResolution
         if let resolvedClientScaleFactor {
             let scaleText = Double(resolvedClientScaleFactor).formatted(.number.precision(.fractionLength(3)))
             MirageLogger.host("Desktop stream client scale factor: \(scaleText)x")
-        }
-        if desktopBackingScale.forcedOneX {
-            MirageLogger.host(
-                "Desktop backing scale forced to 1x because the predicted encoded target " +
-                    "\(Int(desktopBackingScale.predictedEncodedResolution.width))x\(Int(desktopBackingScale.predictedEncodedResolution.height)) " +
-                    "is at or below 1920x1080"
-            )
         }
         MirageLogger
             .host(
@@ -315,6 +307,16 @@ extension MirageHostService {
             )
         }
 
+        let computedStreamScale: CGFloat
+        if let maxW = encoderMaxWidth, let maxH = encoderMaxHeight, maxW > 0, maxH > 0,
+           virtualDisplayResolution.width > 0, virtualDisplayResolution.height > 0 {
+            let wScale = CGFloat(maxW) / virtualDisplayResolution.width
+            let hScale = CGFloat(maxH) / virtualDisplayResolution.height
+            computedStreamScale = max(0.1, min(1.0, min(wScale, hScale)))
+        } else {
+            computedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
+        }
+
         let streamID = nextStreamID
         nextStreamID += 1
         streamStartupBaseTimes[streamID] = desktopStartTime
@@ -324,7 +326,7 @@ extension MirageHostService {
             windowID: 0,
             streamKind: .desktop,
             encoderConfig: config,
-            streamScale: clampedStreamScale,
+            streamScale: computedStreamScale,
             requestedAudioChannelCount: audioConfiguration.channelLayout.channelCount,
             maxPacketSize: networkConfig.maxPacketSize,
             mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: clientContext.client.id),
@@ -336,7 +338,10 @@ extension MirageHostService {
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
-            performanceMode: performanceMode
+            performanceMode: performanceMode,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         if let captureDisplayP3CoverageStatus {

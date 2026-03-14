@@ -20,17 +20,13 @@ struct DesktopVirtualDisplayStartupAttempt: Equatable {
 func desktopVirtualDisplayStartupAttempts(
     logicalResolution: CGSize,
     requestedScaleFactor: CGFloat,
-    streamScale: CGFloat,
-    disableResolutionCap: Bool,
     requestedRefreshRate: Int,
     requestedColorSpace: MirageColorSpace
 ) -> [DesktopVirtualDisplayStartupAttempt] {
     let primary = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
             logicalResolution: logicalResolution,
-            defaultScaleFactor: requestedScaleFactor,
-            streamScale: streamScale,
-            disableResolutionCap: disableResolutionCap
+            defaultScaleFactor: requestedScaleFactor
         ),
         refreshRate: requestedRefreshRate,
         colorSpace: requestedColorSpace,
@@ -41,9 +37,7 @@ func desktopVirtualDisplayStartupAttempts(
     let conservative = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
             logicalResolution: logicalResolution,
-            defaultScaleFactor: 1.0,
-            streamScale: streamScale,
-            disableResolutionCap: false
+            defaultScaleFactor: 1.0
         ),
         refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: 60),
         colorSpace: .sRGB,

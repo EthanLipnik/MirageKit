@@ -1022,7 +1022,7 @@ extension StreamContext {
     private func shouldUseStandardTemporaryDegradationGovernor() -> Bool {
         performanceMode == .standard &&
             streamKind == .desktop &&
-            temporaryDegradationMode != .off &&
+            (temporaryDegradationMode != .off || bitrateAdaptationCeiling != nil) &&
             (requestedTargetBitrate ?? 0) > 0
     }
 
@@ -1075,7 +1075,7 @@ extension StreamContext {
             guard temporaryDegradationStableWindows >= temporaryDegradationStableWindowsThreshold else { return }
             if await attemptTemporaryDegradationRestore(
                 currentBitrate: currentBitrate,
-                requestedBitrate: requestedTargetBitrate,
+                requestedBitrate: bitrateAdaptationCeiling ?? requestedTargetBitrate,
                 at: now
             ) {
                 temporaryDegradationStableWindows = 0

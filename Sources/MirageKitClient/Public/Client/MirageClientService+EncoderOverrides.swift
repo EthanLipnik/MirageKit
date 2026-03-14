@@ -61,6 +61,18 @@ extension MirageClientService {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
         }
+        if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
+            request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
+            let mbps = Double(bitrateAdaptationCeiling) / 1_000_000.0
+            MirageLogger
+                .client("Requesting bitrate adaptation ceiling: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
+            request.encoderMaxWidth = encoderMaxWidth
+        }
+        if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
+            request.encoderMaxHeight = encoderMaxHeight
+        }
     }
 
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout SelectAppMessage) {
@@ -112,6 +124,18 @@ extension MirageClientService {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
         }
+        if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
+            request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
+            let mbps = Double(bitrateAdaptationCeiling) / 1_000_000.0
+            MirageLogger
+                .client("Requesting bitrate adaptation ceiling: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
+            request.encoderMaxWidth = encoderMaxWidth
+        }
+        if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
+            request.encoderMaxHeight = encoderMaxHeight
+        }
     }
 
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartDesktopStreamMessage) {
@@ -162,6 +186,18 @@ extension MirageClientService {
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
+        }
+        if let bitrateAdaptationCeiling = overrides.bitrateAdaptationCeiling, bitrateAdaptationCeiling > 0 {
+            request.bitrateAdaptationCeiling = bitrateAdaptationCeiling
+            let mbps = Double(bitrateAdaptationCeiling) / 1_000_000.0
+            MirageLogger
+                .client("Requesting bitrate adaptation ceiling: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps")
+        }
+        if let encoderMaxWidth = overrides.encoderMaxWidth, encoderMaxWidth > 0 {
+            request.encoderMaxWidth = encoderMaxWidth
+        }
+        if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
+            request.encoderMaxHeight = encoderMaxHeight
         }
     }
 }

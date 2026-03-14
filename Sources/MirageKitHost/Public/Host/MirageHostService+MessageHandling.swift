@@ -205,7 +205,10 @@ extension MirageHostService {
                 lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
                 temporaryDegradationMode: temporaryDegradationMode,
                 disableResolutionCap: disableResolutionCap,
-                audioConfiguration: audioConfiguration
+                audioConfiguration: audioConfiguration,
+                bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
+                encoderMaxWidth: request.encoderMaxWidth,
+                encoderMaxHeight: request.encoderMaxHeight
             )
             pendingLightsOutSetup = false
             await endPendingAppStreamLightsOutSetup()

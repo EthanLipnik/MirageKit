@@ -76,6 +76,12 @@ package struct StartStreamMessage: Codable {
     package var audioConfiguration: MirageAudioConfiguration?
     /// Client refresh rate override in Hz (60/120 based on client capability).
     package var maxRefreshRate: Int = 60
+    /// Maximum bitrate the in-stream adaptation governor may ramp toward.
+    package var bitrateAdaptationCeiling: Int?
+    /// Maximum encoded width in pixels for host-computed stream scaling.
+    package var encoderMaxWidth: Int?
+    /// Maximum encoded height in pixels for host-computed stream scaling.
+    package var encoderMaxHeight: Int?
 
     enum CodingKeys: String, CodingKey {
         case windowID
@@ -98,6 +104,9 @@ package struct StartStreamMessage: Codable {
         case streamScale
         case audioConfiguration
         case maxRefreshRate
+        case bitrateAdaptationCeiling
+        case encoderMaxWidth
+        case encoderMaxHeight
     }
 
     package init(

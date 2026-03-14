@@ -193,6 +193,49 @@ extension MirageClientService {
         )
     }
 
+    /// Run a single in-stream bitrate probe to test if a higher bitrate is sustainable.
+    /// Sends test traffic alongside the active stream for a short burst and measures loss.
+    /// Returns the stage result with throughput and loss metrics.
+    public func runInStreamProbe(
+        targetBitrateBps: Int,
+        durationMs: Int = 600
+    ) async throws -> MirageQualityTestSummary.StageResult {
+        guard case .connected = connectionState else {
+            throw MirageError.protocolError("Not connected")
+        }
+
+        let testID = UUID()
+        let payloadBytes = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
+
+        if udpConnection == nil {
+            try await startVideoConnection()
+        }
+
+        let targetMbps = (Double(targetBitrateBps) / 1_000_000.0)
+            .formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.client(
+            "In-stream probe starting: target \(targetMbps) Mbps, duration \(durationMs)ms"
+        )
+
+        let result = try await runQualityTestStage(
+            testID: testID,
+            stageID: 0,
+            targetBitrateBps: targetBitrateBps,
+            durationMs: durationMs,
+            payloadBytes: payloadBytes
+        )
+
+        let throughputMbps = (Double(result.throughputBps) / 1_000_000.0)
+            .formatted(.number.precision(.fractionLength(1)))
+        let lossText = result.lossPercent
+            .formatted(.number.precision(.fractionLength(1)))
+        MirageLogger.client(
+            "In-stream probe result: throughput \(throughputMbps) Mbps, loss \(lossText)%"
+        )
+
+        return result
+    }
+
     func handlePong(_: ControlMessage) {
         completePingRequest(
             expectedRequestID: pingRequestID,

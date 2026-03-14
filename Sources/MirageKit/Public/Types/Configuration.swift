@@ -323,6 +323,16 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var lowLatencyHighResolutionCompressionBoost: Bool?
     public var temporaryDegradationMode: MirageTemporaryDegradationMode?
     public var disableResolutionCap: Bool
+    /// Maximum bitrate the in-stream adaptation governor may ramp toward.
+    /// When set, the governor can increase bitrate beyond the initial `bitrate`
+    /// value up to this ceiling based on in-stream probe results.
+    public var bitrateAdaptationCeiling: Int?
+    /// Maximum encoded width in pixels. When set, the host computes the stream
+    /// scale from these dimensions and the actual capture resolution instead of
+    /// using the client-provided stream scale for virtual display sizing.
+    public var encoderMaxWidth: Int?
+    /// Maximum encoded height in pixels.
+    public var encoderMaxHeight: Int?
 
     public init(
         keyFrameInterval: Int? = nil,
@@ -334,7 +344,10 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
         temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
-        disableResolutionCap: Bool = false
+        disableResolutionCap: Bool = false,
+        bitrateAdaptationCeiling: Int? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil
     ) {
         self.keyFrameInterval = keyFrameInterval
         self.colorDepth = colorDepth
@@ -346,6 +359,9 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
         self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
+        self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
+        self.encoderMaxWidth = encoderMaxWidth
+        self.encoderMaxHeight = encoderMaxHeight
     }
 
     package init(

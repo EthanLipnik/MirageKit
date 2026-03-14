@@ -20,19 +20,19 @@ struct StandardTemporaryDegradationPolicyTests {
         #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Prioritize framerate starts at seventy percent of target bitrate")
+    @Test("Prioritize framerate starts at eighty five percent of target bitrate")
     func prioritizeFramerateStartsLower() async {
         let context = makeContext(mode: .prioritizeFramerate)
         let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 84_000_000)
+        #expect(settings.bitrate == 102_000_000)
         #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Prioritize visuals starts at eighty five percent of target bitrate")
+    @Test("Prioritize visuals starts at ninety two percent of target bitrate")
     func prioritizeVisualsStartsLower() async {
         let context = makeContext(mode: .prioritizeVisuals)
         let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 102_000_000)
+        #expect(settings.bitrate == 110_400_000)
         #expect(settings.bitDepth == .tenBit)
     }
 
@@ -48,7 +48,7 @@ struct StandardTemporaryDegradationPolicyTests {
         )
 
         let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(84_000_000) * 0.85).rounded(.down))
+        let expectedBitrate = Int((Double(102_000_000) * 0.85).rounded(.down))
         #expect(settings.bitDepth == .tenBit)
         #expect(settings.bitrate == expectedBitrate)
     }
@@ -65,7 +65,7 @@ struct StandardTemporaryDegradationPolicyTests {
         )
 
         let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(84_000_000) * 0.85).rounded(.down))
+        let expectedBitrate = Int((Double(102_000_000) * 0.85).rounded(.down))
         #expect(settings.bitDepth == .eightBit)
         #expect(settings.bitrate == expectedBitrate)
     }
@@ -83,7 +83,7 @@ struct StandardTemporaryDegradationPolicyTests {
 
         let settings = await context.getEncoderSettings()
         #expect(settings.bitDepth == .tenBit)
-        #expect(settings.bitrate == 91_800_000)
+        #expect(settings.bitrate == 99_360_000)
     }
 
     @Test("Prioritize visuals keeps bit depth fixed after repeated severe overload")
@@ -113,7 +113,7 @@ struct StandardTemporaryDegradationPolicyTests {
         )
 
         let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(102_000_000) * 0.90 * 0.90 * 0.90).rounded(.down))
+        let expectedBitrate = Int((Double(110_400_000) * 0.90 * 0.90 * 0.90).rounded(.down))
         #expect(settings.bitDepth == .tenBit)
         #expect(settings.bitrate == expectedBitrate)
     }
@@ -142,7 +142,7 @@ struct StandardTemporaryDegradationPolicyTests {
         )
 
         let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 46_200_001)
+        #expect(settings.bitrate == 60_000_000)
         #expect(settings.bitDepth == .eightBit)
     }
 

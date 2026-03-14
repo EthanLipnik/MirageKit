@@ -49,6 +49,12 @@ package struct StartDesktopStreamMessage: Codable {
     package let audioConfiguration: MirageAudioConfiguration?
     /// UDP port the client is listening on for video data
     package let dataPort: UInt16?
+    /// Maximum bitrate the in-stream adaptation governor may ramp toward.
+    package var bitrateAdaptationCeiling: Int?
+    /// Maximum encoded width in pixels for host-computed stream scaling.
+    package var encoderMaxWidth: Int?
+    /// Maximum encoded height in pixels for host-computed stream scaling.
+    package var encoderMaxHeight: Int?
     /// Client refresh rate override in Hz (60/120 based on client capability)
     /// Used with P2P detection to enable 120fps streaming on capable displays
     package let maxRefreshRate: Int
@@ -71,6 +77,9 @@ package struct StartDesktopStreamMessage: Codable {
         case streamScale
         case audioConfiguration
         case dataPort
+        case bitrateAdaptationCeiling
+        case encoderMaxWidth
+        case encoderMaxHeight
         case maxRefreshRate
     }
 

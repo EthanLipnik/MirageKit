@@ -17,8 +17,6 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         let attempts = desktopVirtualDisplayStartupAttempts(
             logicalResolution: CGSize(width: 3008, height: 1692),
             requestedScaleFactor: 2.0,
-            streamScale: 1.0,
-            disableResolutionCap: true,
             requestedRefreshRate: 120,
             requestedColorSpace: .displayP3
         )
@@ -42,8 +40,6 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         let attempts = desktopVirtualDisplayStartupAttempts(
             logicalResolution: CGSize(width: 1920, height: 1080),
             requestedScaleFactor: 1.0,
-            streamScale: 1.0,
-            disableResolutionCap: false,
             requestedRefreshRate: 60,
             requestedColorSpace: .sRGB
         )
