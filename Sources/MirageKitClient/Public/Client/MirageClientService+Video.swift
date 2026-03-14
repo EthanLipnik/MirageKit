@@ -788,14 +788,14 @@ extension MirageClientService {
         Task { [weak self] in
             guard let self else { return }
             do {
-                if let controller = controllersByStream[streamID] {
-                    await controller.setPreferredDecoderBitDepth(.eightBit)
-                }
                 try await sendStreamEncoderSettingsChange(
                     streamID: streamID,
                     colorDepth: .standard
                 )
                 adaptiveFallbackColorDepthByStream[streamID] = .standard
+                if let controller = controllersByStream[streamID] {
+                    await controller.setPreferredDecoderColorDepth(.standard)
+                }
                 MirageLogger.client(
                     "Decoder compatibility fallback forced color depth Pro/Ultra -> Standard for stream \(streamID)"
                 )
@@ -999,6 +999,9 @@ extension MirageClientService {
                         colorDepth: nextColorDepth
                     )
                     adaptiveFallbackColorDepthByStream[streamID] = nextColorDepth
+                    if let controller = controllersByStream[streamID] {
+                        await controller.setPreferredDecoderColorDepth(nextColorDepth)
+                    }
                     adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
                     adaptiveFallbackLastRestoreTimeByStream[streamID] = CFAbsoluteTimeGetCurrent()
                     adaptiveFallbackStableSinceByStream[streamID] = CFAbsoluteTimeGetCurrent()
@@ -1088,6 +1091,9 @@ extension MirageClientService {
                         colorDepth: nextColorDepth
                     )
                     adaptiveFallbackColorDepthByStream[streamID] = nextColorDepth
+                    if let controller = controllersByStream[streamID] {
+                        await controller.setPreferredDecoderColorDepth(nextColorDepth)
+                    }
                     adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
                     let currentName = currentColorDepth.displayName
                     let nextName = nextColorDepth.displayName

@@ -31,10 +31,10 @@ extension HEVCDecoder {
         }
     }
 
-    func setPreferredOutputBitDepth(_ bitDepth: MirageVideoBitDepth) {
-        let desiredPixelFormat = preferredOutputPixelFormat(for: bitDepth)
+    func setPreferredOutputColorDepth(_ colorDepth: MirageStreamColorDepth) {
+        let desiredPixelFormat = preferredOutputPixelFormat(for: colorDepth)
         let formatChanged = outputPixelFormat != desiredPixelFormat
-        preferredOutputBitDepth = bitDepth
+        preferredOutputColorDepth = colorDepth
         outputPixelFormat = desiredPixelFormat
 
         guard formatChanged else { return }
@@ -43,11 +43,12 @@ extension HEVCDecoder {
             VTDecompressionSessionInvalidate(session)
             decompressionSession = nil
             pendingOutputTelemetryGeneration = 0
+            lastDecodedOutputPixelFormat = nil
             MirageLogger.decoder(
-                "Decoder preferred output bit depth set to \(bitDepth.displayName); invalidated active session"
+                "Decoder preferred output color depth set to \(colorDepth.displayName); invalidated active session"
             )
         } else {
-            MirageLogger.decoder("Decoder preferred output bit depth set to \(bitDepth.displayName)")
+            MirageLogger.decoder("Decoder preferred output color depth set to \(colorDepth.displayName)")
         }
     }
 
@@ -69,6 +70,11 @@ extension HEVCDecoder {
 
     func getTotalDecodeErrors() -> UInt64 {
         errorTracker?.totalErrorsSnapshot() ?? 0
+    }
+
+    func decodedOutputPixelFormatName() -> String? {
+        let pixelFormat = lastDecodedOutputPixelFormat ?? outputPixelFormat
+        return HEVCDecoder.pixelFormatName(pixelFormat)
     }
 
     func prepareForDimensionChange(expectedWidth: Int? = nil, expectedHeight: Int? = nil) {

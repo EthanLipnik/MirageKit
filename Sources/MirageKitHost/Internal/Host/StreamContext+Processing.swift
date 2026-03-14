@@ -591,6 +591,8 @@ extension StreamContext {
                 nil
             }
             let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+            let encodedWidth = Int(currentEncodedSize.width)
+            let encodedHeight = Int(currentEncodedSize.height)
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -609,9 +611,12 @@ extension StreamContext {
                 averageEncodeMs: resolvedAverageEncodeMs,
                 usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
                 encoderGPURegistryID: encoderValidation?.encoderGPURegistryID,
+                encodedWidth: encodedWidth > 0 ? encodedWidth : nil,
+                encodedHeight: encodedHeight > 0 ? encodedHeight : nil,
                 capturePixelFormat: captureValidation?.pixelFormat,
                 captureColorPrimaries: captureValidation?.colorPrimaries,
                 encoderPixelFormat: encoderValidation?.pixelFormat.displayName,
+                encoderChromaSampling: encoderValidation?.encodedChromaSampling?.rawValue,
                 encoderProfile: encoderValidation?.profileName,
                 encoderColorPrimaries: encoderValidation?.colorPrimaries,
                 encoderTransferFunction: encoderValidation?.transferFunction,
@@ -621,7 +626,8 @@ extension StreamContext {
                     capture: captureValidation,
                     encoder: encoderValidation,
                     coverageStatus: displayP3CoverageStatus
-                )
+                ),
+                ultra444Validated: encoderValidation?.ultra444Validated
             )
             metricsUpdateHandler(message)
         }

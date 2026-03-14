@@ -27,25 +27,38 @@ struct ClientMetricsStoreTests {
             averageEncodeMs: 14.6,
             usingHardwareEncoder: true,
             encoderGPURegistryID: 123_456,
+            encodedWidth: 2_732,
+            encodedHeight: 2_048,
             capturePixelFormat: "xf20",
             captureColorPrimaries: "P3_D65",
             encoderPixelFormat: "10-bit (P010)",
+            encoderChromaSampling: "4:2:0",
             encoderProfile: "HEVC Main10",
             encoderColorPrimaries: "P3_D65",
             encoderTransferFunction: "sRGB",
             encoderYCbCrMatrix: "ITU_R_709_2",
             displayP3CoverageStatus: .strictCanonical,
-            tenBitDisplayP3Validated: true
+            tenBitDisplayP3Validated: true,
+            ultra444Validated: false
+        )
+        store.updateClientDecoderTelemetry(
+            streamID: 7,
+            outputPixelFormat: "x420 (10-bit FullRange)"
         )
 
         let snapshot = store.snapshot(for: 7)
         #expect(snapshot?.hostAverageEncodeMs == 14.6)
         #expect(snapshot?.hostUsingHardwareEncoder == true)
         #expect(snapshot?.hostEncoderGPURegistryID == 123_456)
+        #expect(snapshot?.hostEncodedWidth == 2_732)
+        #expect(snapshot?.hostEncodedHeight == 2_048)
         #expect(snapshot?.hostCapturePixelFormat == "xf20")
+        #expect(snapshot?.hostEncoderChromaSampling == "4:2:0")
         #expect(snapshot?.hostEncoderProfile == "HEVC Main10")
         #expect(snapshot?.hostDisplayP3CoverageStatus == .strictCanonical)
         #expect(snapshot?.hostTenBitDisplayP3Validated == true)
+        #expect(snapshot?.hostUltra444Validated == false)
+        #expect(snapshot?.clientDecoderOutputPixelFormat == "x420 (10-bit FullRange)")
         #expect(snapshot?.hasHostMetrics == true)
     }
 }

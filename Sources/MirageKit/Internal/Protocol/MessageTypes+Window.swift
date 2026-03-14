@@ -234,15 +234,19 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let averageEncodeMs: Double?
     package let usingHardwareEncoder: Bool?
     package let encoderGPURegistryID: UInt64?
+    package let encodedWidth: Int?
+    package let encodedHeight: Int?
     package let capturePixelFormat: String?
     package let captureColorPrimaries: String?
     package let encoderPixelFormat: String?
+    package let encoderChromaSampling: String?
     package let encoderProfile: String?
     package let encoderColorPrimaries: String?
     package let encoderTransferFunction: String?
     package let encoderYCbCrMatrix: String?
     package let displayP3CoverageStatus: MirageDisplayP3CoverageStatus?
     package let tenBitDisplayP3Validated: Bool?
+    package let ultra444Validated: Bool?
 
     package init(
         streamID: StreamID,
@@ -262,15 +266,19 @@ package struct StreamMetricsMessage: Codable, Sendable {
         averageEncodeMs: Double? = nil,
         usingHardwareEncoder: Bool? = nil,
         encoderGPURegistryID: UInt64? = nil,
+        encodedWidth: Int? = nil,
+        encodedHeight: Int? = nil,
         capturePixelFormat: String? = nil,
         captureColorPrimaries: String? = nil,
         encoderPixelFormat: String? = nil,
+        encoderChromaSampling: String? = nil,
         encoderProfile: String? = nil,
         encoderColorPrimaries: String? = nil,
         encoderTransferFunction: String? = nil,
         encoderYCbCrMatrix: String? = nil,
         displayP3CoverageStatus: MirageDisplayP3CoverageStatus? = nil,
-        tenBitDisplayP3Validated: Bool? = nil
+        tenBitDisplayP3Validated: Bool? = nil,
+        ultra444Validated: Bool? = nil
     ) {
         self.streamID = streamID
         self.encodedFPS = encodedFPS
@@ -289,14 +297,18 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.averageEncodeMs = averageEncodeMs
         self.usingHardwareEncoder = usingHardwareEncoder
         self.encoderGPURegistryID = encoderGPURegistryID
+        self.encodedWidth = encodedWidth
+        self.encodedHeight = encodedHeight
         self.capturePixelFormat = capturePixelFormat
         self.captureColorPrimaries = captureColorPrimaries
         self.encoderPixelFormat = encoderPixelFormat
+        self.encoderChromaSampling = encoderChromaSampling
         self.encoderProfile = encoderProfile
         self.encoderColorPrimaries = encoderColorPrimaries
         self.encoderTransferFunction = encoderTransferFunction
         self.encoderYCbCrMatrix = encoderYCbCrMatrix
         self.displayP3CoverageStatus = displayP3CoverageStatus
         self.tenBitDisplayP3Validated = tenBitDisplayP3Validated
+        self.ultra444Validated = ultra444Validated
     }
 }

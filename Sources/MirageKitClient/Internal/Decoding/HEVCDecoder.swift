@@ -17,7 +17,8 @@ actor HEVCDecoder {
     var decompressionSession: VTDecompressionSession?
     var formatDescription: CMFormatDescription?
     var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-    var preferredOutputBitDepth: MirageVideoBitDepth = .eightBit
+    var preferredOutputColorDepth: MirageStreamColorDepth = .standard
+    var lastDecodedOutputPixelFormat: OSType?
     var maximizePowerEfficiencyEnabled = false
     var decompressionSessionGeneration: UInt64 = 0
     var pendingOutputTelemetryGeneration: UInt64 = 0
@@ -114,12 +115,18 @@ actor HEVCDecoder {
 }
 
 extension HEVCDecoder {
-    func preferredOutputPixelFormat(for bitDepth: MirageVideoBitDepth) -> OSType {
-        switch bitDepth {
-        case .eightBit:
+    var preferredOutputBitDepth: MirageVideoBitDepth {
+        preferredOutputColorDepth.bitDepth
+    }
+
+    func preferredOutputPixelFormat(for colorDepth: MirageStreamColorDepth) -> OSType {
+        switch colorDepth {
+        case .standard:
             return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-        case .tenBit:
+        case .pro:
             return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+        case .ultra:
+            return kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         }
     }
 
@@ -127,6 +134,7 @@ extension HEVCDecoder {
         switch pixelFormat {
         case kCVPixelFormatType_420YpCbCr10BiPlanarFullRange,
              kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+             kCVPixelFormatType_444YpCbCr10BiPlanarFullRange,
              kCVPixelFormatType_ARGB2101010LEPacked:
             true
         default:
@@ -134,12 +142,34 @@ extension HEVCDecoder {
         }
     }
 
-    nonisolated static func shouldWarnTenBitFallback(
-        preferredBitDepth: MirageVideoBitDepth,
+    nonisolated static func isTenBit444PixelFormat(_ pixelFormat: OSType) -> Bool {
+        pixelFormat == kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
+    }
+
+    nonisolated static func shouldWarnOutputFormatFallback(
+        preferredColorDepth: MirageStreamColorDepth,
         actualOutputPixelFormat: OSType
     )
     -> Bool {
-        preferredBitDepth == .tenBit && !isTenBitPixelFormat(actualOutputPixelFormat)
+        switch preferredColorDepth {
+        case .standard:
+            false
+        case .pro:
+            !isTenBitPixelFormat(actualOutputPixelFormat)
+        case .ultra:
+            !isTenBit444PixelFormat(actualOutputPixelFormat)
+        }
+    }
+
+    nonisolated static func outputFormatRequirementName(for colorDepth: MirageStreamColorDepth) -> String? {
+        switch colorDepth {
+        case .standard:
+            nil
+        case .pro:
+            "10-bit"
+        case .ultra:
+            "10-bit 4:4:4"
+        }
     }
 
     nonisolated static func pixelFormatName(_ pixelFormat: OSType) -> String {
@@ -152,6 +182,8 @@ extension HEVCDecoder {
             return "x420 (10-bit FullRange)"
         case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange:
             return "xf20 (10-bit VideoRange)"
+        case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
+            return "xf44 (10-bit 4:4:4)"
         case kCVPixelFormatType_ARGB2101010LEPacked:
             return "l10r (ARGB2101010)"
         case kCVPixelFormatType_32BGRA:

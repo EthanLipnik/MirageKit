@@ -125,11 +125,11 @@ public extension MirageClientService {
         beginPostResizeTransition: Bool = false
     )
     async {
-        let preferredDecoderBitDepth = resolvedDecoderBitDepth(for: streamID)
+        let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
 
         if let existingController = controllersByStream[streamID] {
             await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
-            await existingController.setPreferredDecoderBitDepth(preferredDecoderBitDepth)
+            await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
             await existingController.resetForNewSession()
             if beginPostResizeTransition {
                 await existingController.beginPostResizeTransition()
@@ -139,7 +139,7 @@ public extension MirageClientService {
             adaptiveFallbackLastAppliedTime[streamID] = 0
             MirageLogger
                 .client(
-                    "Reset existing controller for stream \(streamID) (decoder bit depth \(preferredDecoderBitDepth.displayName))"
+                    "Reset existing controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
                 )
             return
         }
@@ -160,7 +160,7 @@ public extension MirageClientService {
         adaptiveFallbackLastAppliedTime[streamID] = 0
 
         await controller.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
-        await controller.setPreferredDecoderBitDepth(preferredDecoderBitDepth)
+        await controller.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
 
         let capturedStreamID = streamID
         await controller.setCallbacks(
@@ -182,6 +182,10 @@ public extension MirageClientService {
                     uniquePresentedFPS: metrics.uniquePresentedFPS,
                     renderBufferDepth: metrics.renderBufferDepth,
                     decodeHealthy: metrics.decodeHealthy
+                )
+                metricsStore.updateClientDecoderTelemetry(
+                    streamID: capturedStreamID,
+                    outputPixelFormat: metrics.decoderOutputPixelFormat
                 )
                 self.activeJitterHoldMs = metrics.activeJitterHoldMs
                 self.logAwdlExperimentTelemetryIfNeeded()
@@ -216,14 +220,18 @@ public extension MirageClientService {
 
         MirageLogger
             .client(
-                "Created new controller for stream \(streamID) (decoder bit depth \(preferredDecoderBitDepth.displayName))"
+                "Created new controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
             )
     }
 
+    package func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageStreamColorDepth {
+        adaptiveFallbackColorDepthByStream[streamID] ??
+            adaptiveFallbackBaselineColorDepthByStream[streamID] ??
+            .standard
+    }
+
     package func resolvedDecoderBitDepth(for streamID: StreamID) -> MirageVideoBitDepth {
-        adaptiveFallbackColorDepthByStream[streamID]?.bitDepth ??
-            adaptiveFallbackBaselineColorDepthByStream[streamID]?.bitDepth ??
-            .eightBit
+        resolvedDecoderColorDepth(for: streamID).bitDepth
     }
 
     /// Handle resize event from StreamController.

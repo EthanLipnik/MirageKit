@@ -155,7 +155,7 @@ Color depth is now negotiated as a capability-driven tier instead of exposing ra
 - `ultra`
   strict 10-bit 4:4:4 target (`xf44` preferred) that is only advertised when the host can validate the full path end to end
 
-The host advertises supported color-depth tiers in peer metadata, clamps incoming requests to the highest supported tier, and logs downgrades when a requested tier is unavailable. `Ultra` support is probed by creating a temporary `xf44` HEVC session and validating the encoded SPS `chroma_format_idc`; active streams repeat that validation at runtime and automatically downgrade to `pro` if the encoder falls below 4:4:4.
+The host advertises supported color-depth tiers in peer metadata, clamps incoming requests to the highest supported tier, and logs downgrades when a requested tier is unavailable. `Ultra` support is probed by creating a temporary `xf44` HEVC session and validating the encoded SPS `chroma_format_idc`; active streams repeat that validation at runtime, export host-encoder and client-decoder fidelity telemetry over stream metrics, and automatically downgrade to `pro` if the encoder falls below 4:4:4.
 
 Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active.
 

@@ -131,4 +131,13 @@ struct ClientHelloHandshakeStateTests {
             Issue.record("Unexpected timeout error: \(error.localizedDescription)")
         }
     }
+
+    @MainActor
+    @Test("Bootstrap response timeout leaves room for manual host approval")
+    func bootstrapResponseTimeoutAllowsManualHostApproval() {
+        let service = MirageClientService(deviceName: "Test Device")
+
+        #expect(service.bootstrapResponseTimeout >= .seconds(30))
+        #expect(service.bootstrapResponseTimeout > service.controlSessionConnectTimeout)
+    }
 }

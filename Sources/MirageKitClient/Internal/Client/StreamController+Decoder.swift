@@ -17,9 +17,9 @@ extension StreamController {
         await decoder.setMaximizePowerEfficiencyEnabled(enabled)
     }
 
-    func setPreferredDecoderBitDepth(_ bitDepth: MirageVideoBitDepth) async {
-        preferredDecoderBitDepth = bitDepth
-        await decoder.setPreferredOutputBitDepth(bitDepth)
+    func setPreferredDecoderColorDepth(_ colorDepth: MirageStreamColorDepth) async {
+        preferredDecoderColorDepth = colorDepth
+        await decoder.setPreferredOutputColorDepth(colorDepth)
     }
 
     /// Reset decoder for new session (e.g., after resize or reconnection)

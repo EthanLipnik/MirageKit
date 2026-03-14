@@ -158,6 +158,7 @@ actor StreamController {
         let renderBufferDepth: Int
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
+        let decoderOutputPixelFormat: String?
     }
 
     // MARK: - Properties
@@ -167,7 +168,10 @@ actor StreamController {
 
     /// HEVC decoder for this stream
     let decoder: HEVCDecoder
-    var preferredDecoderBitDepth: MirageVideoBitDepth = .eightBit
+    var preferredDecoderColorDepth: MirageStreamColorDepth = .standard
+    var preferredDecoderBitDepth: MirageVideoBitDepth {
+        preferredDecoderColorDepth.bitDepth
+    }
 
     /// Frame reassembler for this stream
     let reassembler: FrameReassembler
@@ -949,7 +953,8 @@ actor StreamController {
             uniquePresentedFPS: renderTelemetry.uniquePresentedFPS,
             renderBufferDepth: renderTelemetry.queueDepth,
             decodeHealthy: renderTelemetry.decodeHealthy,
-            activeJitterHoldMs: adaptiveJitterHoldMs
+            activeJitterHoldMs: adaptiveJitterHoldMs,
+            decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName()
         )
         let callback = onFrameDecoded
         await MainActor.run {

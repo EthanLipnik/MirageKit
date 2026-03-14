@@ -31,6 +31,7 @@ extension HEVCDecoder {
         decompressionSession = nil
         formatDescription = nil
         pendingOutputTelemetryGeneration = 0
+        lastDecodedOutputPixelFormat = nil
         usingHardwareDecoder = nil
         decoderHardwareStatusRefreshAttempts = 0
 
@@ -49,8 +50,9 @@ extension HEVCDecoder {
         if let session = decompressionSession { VTDecompressionSessionInvalidate(session) }
         decompressionSession = nil
         formatDescription = nil
-        outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputBitDepth)
+        outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputColorDepth)
         pendingOutputTelemetryGeneration = 0
+        lastDecodedOutputPixelFormat = nil
         usingHardwareDecoder = nil
         decoderHardwareStatusRefreshAttempts = 0
 

@@ -329,7 +329,7 @@ extension HEVCDecoder {
                         }
                     }
 
-                    self.outputPixelFormat = self.preferredOutputPixelFormat(for: desc)
+                    self.outputPixelFormat = self.preferredOutputPixelFormat(for: self.preferredOutputColorDepth)
                     self.formatDescription = desc
                     self.cachedVPS = vpsData
                     self.cachedSPS = spsData
@@ -349,10 +349,7 @@ extension HEVCDecoder {
 
     private func preferredOutputPixelFormat(for formatDescription: CMFormatDescription) -> OSType {
         _ = formatDescription
-        if preferredOutputBitDepth == .tenBit {
-            return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
-        }
-        return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+        return preferredOutputPixelFormat(for: preferredOutputColorDepth)
     }
 
     private func stripSEINALUnits(from data: Data) -> Data {

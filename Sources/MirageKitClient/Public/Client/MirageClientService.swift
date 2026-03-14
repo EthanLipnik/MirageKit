@@ -479,7 +479,8 @@ public final class MirageClientService {
     let registrationRefreshIntervalMs: UInt64 = 750
     let registrationRefreshJitterMs: UInt64 = 80
     let controlSessionConnectTimeout: Duration = .seconds(6)
-    let bootstrapResponseTimeout: Duration = .seconds(6)
+    /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
+    let bootstrapResponseTimeout: Duration = .seconds(30)
 
     // Video receiving
     var udpConnection: NWConnection?
