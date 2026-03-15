@@ -362,10 +362,9 @@ extension MirageClientService {
                 attemptID: attemptID
             )
         } catch {
-            // When P2P is enabled, LoomNode.connect() already raced P2P against a
-            // resolved non-P2P fallback, so retrying with the resolved endpoint is redundant.
-            guard !networkConfig.enablePeerToPeer,
-                  shouldRetryWithResolvedBonjourEndpoint(for: host, after: error) else {
+            // LoomNode.connect() already races service endpoints against a resolved
+            // fallback, so retrying only helps for non-Bonjour transport failures.
+            guard shouldRetryWithResolvedBonjourEndpoint(for: host, after: error) else {
                 throw error
             }
 
@@ -391,8 +390,7 @@ extension MirageClientService {
                 hostName: host.name,
                 transportKind: transportKind,
                 hello: hello,
-                attemptID: attemptID,
-                enablePeerToPeer: false
+                attemptID: attemptID
             )
         }
     }
