@@ -478,7 +478,9 @@ public final class MirageClientService {
     var registrationRefreshTask: Task<Void, Never>?
     let registrationRefreshIntervalMs: UInt64 = 750
     let registrationRefreshJitterMs: UInt64 = 80
-    let controlSessionConnectTimeout: Duration = .seconds(6)
+    /// User-selected preferred network type for connection racing.
+    public var preferredNetworkType: MiragePreferredNetworkType = .automatic
+    let controlSessionConnectTimeout: Duration = .seconds(4)
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
     let bootstrapResponseTimeout: Duration = .seconds(30)
 

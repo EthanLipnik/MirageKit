@@ -352,6 +352,8 @@ extension MirageClientService {
         let initialAttempt = controlEndpointAttempts(for: host, transportKind: transportKind).first
             ?? MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)
 
+        let interfaceType = preferredNetworkType.requiredInterfaceType
+
         do {
             return try await establishControlSession(
                 to: initialAttempt.endpoint,
@@ -359,7 +361,8 @@ extension MirageClientService {
                 hostName: host.name,
                 transportKind: transportKind,
                 hello: hello,
-                attemptID: attemptID
+                attemptID: attemptID,
+                requiredInterfaceType: interfaceType
             )
         } catch {
             // LoomNode.connect() already races service endpoints against a resolved
@@ -390,7 +393,8 @@ extension MirageClientService {
                 hostName: host.name,
                 transportKind: transportKind,
                 hello: hello,
-                attemptID: attemptID
+                attemptID: attemptID,
+                requiredInterfaceType: interfaceType
             )
         }
     }
@@ -424,7 +428,8 @@ extension MirageClientService {
         transportKind: LoomTransportKind,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
-        enablePeerToPeer: Bool? = nil
+        enablePeerToPeer: Bool? = nil,
+        requiredInterfaceType: NWInterface.InterfaceType? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
@@ -436,7 +441,8 @@ extension MirageClientService {
                 to: endpoint,
                 using: transportKind,
                 hello: hello,
-                enablePeerToPeer: enablePeerToPeer
+                enablePeerToPeer: enablePeerToPeer,
+                requiredInterfaceType: requiredInterfaceType
             )
             let shouldCancelSession = await MainActor.run {
                 guard let self else { return true }
