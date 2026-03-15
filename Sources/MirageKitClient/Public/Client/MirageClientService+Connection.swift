@@ -362,7 +362,10 @@ extension MirageClientService {
                 attemptID: attemptID
             )
         } catch {
-            guard shouldRetryWithResolvedBonjourEndpoint(for: host, after: error) else {
+            // When P2P is enabled, LoomNode.connect() already raced P2P against a
+            // resolved non-P2P fallback, so retrying with the resolved endpoint is redundant.
+            guard !networkConfig.enablePeerToPeer,
+                  shouldRetryWithResolvedBonjourEndpoint(for: host, after: error) else {
                 throw error
             }
 
@@ -380,7 +383,7 @@ extension MirageClientService {
             }
 
             MirageLogger.client(
-                "Retrying \(transportKind) control session to \(host.name) via \(fallbackAttempt.source.rawValue) endpoint=\(fallbackAttempt.endpoint) (P2P disabled to avoid NECP TLV bug)"
+                "Retrying \(transportKind) control session to \(host.name) via \(fallbackAttempt.source.rawValue) endpoint=\(fallbackAttempt.endpoint)"
             )
             return try await establishControlSession(
                 to: fallbackAttempt.endpoint,
