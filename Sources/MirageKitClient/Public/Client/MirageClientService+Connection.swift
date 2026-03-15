@@ -371,6 +371,13 @@ extension MirageClientService {
                 throw error
             }
 
+            // Briefly toggle P2P to flush NECP policy state. The macOS NECP TLV
+            // encoding bug corrupts path parameters for all NWConnections created
+            // under the same policy session. Flipping includePeerToPeer forces NECP
+            // to rebuild its path cache, which clears the corruption.
+            try throwIfConnectAttemptIsStale(attemptID)
+            await flushNECPPolicyState()
+
             let resolvedEndpoint = try await resolvedBonjourFallbackEndpoint(
                 for: host,
                 transportKind: transportKind
@@ -491,6 +498,18 @@ extension MirageClientService {
             }
         }
         return true
+    }
+
+    /// Toggles `includePeerToPeer` on the Loom node configuration to force NECP
+    /// to discard its cached (possibly corrupted) path parameters and rebuild them.
+    private func flushNECPPolicyState() async {
+        let original = networkConfig.enablePeerToPeer
+        networkConfig.enablePeerToPeer = !original
+        loomNode.configuration = networkConfig
+        try? await Task.sleep(for: .milliseconds(50))
+        networkConfig.enablePeerToPeer = original
+        loomNode.configuration = networkConfig
+        MirageLogger.client("Flushed NECP policy state (toggled P2P \(original) → \(!original) → \(original))")
     }
 
     private func resolvedBonjourFallbackEndpoint(
