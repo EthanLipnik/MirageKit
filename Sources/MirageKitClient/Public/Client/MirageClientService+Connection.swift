@@ -538,7 +538,11 @@ extension MirageClientService {
             let timeout = controlSessionConnectTimeout
             return try await withThrowingTaskGroup(of: LoomAuthenticatedSession.self) { group in
                 group.addTask {
-                    try await connectTask.value
+                    try await withTaskCancellationHandler {
+                        try await connectTask.value
+                    } onCancel: {
+                        connectTask.cancel()
+                    }
                 }
                 group.addTask {
                     try await Task.sleep(for: timeout)
