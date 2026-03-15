@@ -380,7 +380,7 @@ extension MirageClientService {
             }
 
             MirageLogger.client(
-                "Retrying \(transportKind) control session to \(host.name) via \(fallbackAttempt.source.rawValue) endpoint=\(fallbackAttempt.endpoint)"
+                "Retrying \(transportKind) control session to \(host.name) via \(fallbackAttempt.source.rawValue) endpoint=\(fallbackAttempt.endpoint) (P2P disabled to avoid NECP TLV bug)"
             )
             return try await establishControlSession(
                 to: fallbackAttempt.endpoint,
@@ -388,7 +388,8 @@ extension MirageClientService {
                 hostName: host.name,
                 transportKind: transportKind,
                 hello: hello,
-                attemptID: attemptID
+                attemptID: attemptID,
+                enablePeerToPeer: false
             )
         }
     }
@@ -421,18 +422,20 @@ extension MirageClientService {
         hostName: String,
         transportKind: LoomTransportKind,
         hello: LoomSessionHelloRequest,
-        attemptID: UUID
+        attemptID: UUID,
+        enablePeerToPeer: Bool? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
             "Starting \(transportKind) control session to \(hostName) via \(source.rawValue) endpoint=\(endpoint)"
         )
-        let node = makeConnectNode(enablePeerToPeer: networkConfig.enablePeerToPeer)
+        let node = loomNode
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
             let session = try await node.connect(
                 to: endpoint,
                 using: transportKind,
-                hello: hello
+                hello: hello,
+                enablePeerToPeer: enablePeerToPeer
             )
             let shouldCancelSession = await MainActor.run {
                 guard let self else { return true }
@@ -530,16 +533,6 @@ extension MirageClientService {
             }
             throw error
         }
-    }
-
-    private func makeConnectNode(enablePeerToPeer: Bool) -> LoomNode {
-        var configuration = networkConfig
-        configuration.enablePeerToPeer = enablePeerToPeer
-        return LoomNode(
-            configuration: configuration,
-            identityManager: loomNode.identityManager,
-            trustProvider: loomNode.trustProvider
-        )
     }
 
     private func beginConnectAttempt() -> UUID {

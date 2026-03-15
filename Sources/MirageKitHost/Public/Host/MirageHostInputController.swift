@@ -85,6 +85,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     var lastWindowActivationTime: CFAbsoluteTime?
     var lastActivatedWindowID: WindowID?
     var inputWindowFrameCacheByWindowID: [WindowID: CachedInputWindowFrame] = [:]
+    var activeRelativeResizeTaskByWindowID: [WindowID: Task<Void, any Error>] = [:]
 
     let pointerOutputIntervalNanoseconds: Int = MirageInteractionCadence.frameInterval120Nanoseconds
     let pointerLerpTimeConstant: TimeInterval = 0.025
@@ -214,9 +215,13 @@ public final class MirageHostInputController: @unchecked Sendable {
     var lastScrollInputTime: TimeInterval = 0
     var lastScrollOutputTime: TimeInterval = 0
 
-    /// Fractional remainders to preserve precision.
+    /// Fractional remainders to preserve precision (batch scroll path).
     var scrollRemainderX: CGFloat = 0
     var scrollRemainderY: CGFloat = 0
+
+    /// Fractional remainders for the direct injectScrollEvent path.
+    var directScrollRemainderX: CGFloat = 0
+    var directScrollRemainderY: CGFloat = 0
 
     /// Context for scroll injection.
     var scrollContext: (

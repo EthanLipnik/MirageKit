@@ -72,6 +72,13 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// Callback for mouse events - used for forwarding clicks to host
     var onMouseEvent: ((MirageInputEvent) -> Void)?
 
+    /// Client-reserved shortcuts that should NOT be forwarded to the host.
+    /// All other key equivalents are intercepted and forwarded.
+    var clientShortcuts: [MirageClientShortcut] = []
+
+    /// Callback for client-reserved shortcut actions (e.g. exit stream).
+    var onClientShortcut: ((MirageClientShortcut) -> Void)?
+
     /// Track current modifier state
     private var currentModifiers: MirageModifierFlags = []
     private var modifierPollTimer: Timer?
@@ -79,9 +86,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Last known mouse location (normalized) for scroll events
     private var lastMouseLocation: CGPoint?
-    private var lastForwardedMouseMoveLocation: CGPoint?
-    private var lastForwardedMouseMoveTime: CFTimeInterval = 0
-    private let mouseMoveForwardInterval: CFTimeInterval = MirageInteractionCadence.frameInterval120Seconds
 
     /// Locked cursor view for secondary display mode
     private let lockedCursorView = NSView(frame: .zero)
@@ -179,6 +183,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         handleInputActivityStateChange()
+        if let window, isInputProcessingActive {
+            window.makeFirstResponder(self)
+        }
     }
 
     private func setupLockedCursorView() {
@@ -233,8 +240,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
             syncModifierState([], force: true)
         }
 
-        lastForwardedMouseMoveLocation = nil
-        lastForwardedMouseMoveTime = 0
         updateTrackingAreas()
     }
 
@@ -493,31 +498,19 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     @objc
     private func boundsDidChange(_: Notification) {
-        // Skip sending events during recenter operation
+        // Only track position for recenter logic — scroll events are sent from scrollWheel(with:)
         guard !isRecentering else { return }
-
-        let currentPos = scrollView.documentVisibleRect.origin
-        // Calculate deltas (content moving = scroll in opposite direction)
-        let deltaX = lastScrollPosition.x - currentPos.x
-        let deltaY = currentPos.y - lastScrollPosition.y // NSScrollView Y is flipped
-        lastScrollPosition = currentPos
-
-        if deltaX != 0 || deltaY != 0 {
-            // Phase determination based on scroll state
-            let phase: MirageScrollPhase = .changed
-            let momentumPhase: MirageScrollPhase = .none
-            // Use last known mouse location for scroll position
-            onScroll?(deltaX, deltaY, lastMouseLocation, phase, momentumPhase, true)
-        }
+        lastScrollPosition = scrollView.documentVisibleRect.origin
     }
 
-    /// Override scrollWheel to capture phases and handle momentum
+    /// Override scrollWheel to capture phases and forward raw deltas to the host.
     override func scrollWheel(with event: NSEvent) {
         guard isInputProcessingActive else { return }
 
         // Extract phases from NSEvent
         let phase = MirageScrollPhase(from: event.phase)
         let momentumPhase = MirageScrollPhase(from: event.momentumPhase)
+        let isPrecise = event.hasPreciseScrollingDeltas
 
         // Get mouse location and normalize to 0-1 within view bounds
         if cursorLockEnabled {
@@ -532,24 +525,24 @@ final class ScrollPhysicsCapturingNSView: NSView {
             }
         }
 
-        // Forward to scroll view for physics processing
+        // Forward raw scroll deltas directly — these are precise trackpad deltas
+        // with correct phase and momentum phase information.
+        let deltaX = event.scrollingDeltaX
+        let deltaY = event.scrollingDeltaY
+        if deltaX != 0 || deltaY != 0 || phase != .none || momentumPhase != .none {
+            onScroll?(deltaX, deltaY, lastMouseLocation, phase, momentumPhase, isPrecise)
+        }
+
+        // Forward to scroll view for elastic bounce visual feedback
         scrollView.scrollWheel(with: event)
 
-        // Check if this is the end of scrolling
+        // Recenter after scrolling ends to keep the large document view centered
         if event.phase == .ended || event.momentumPhase == .ended {
             needsRecenter = true
-            // Delay recenter slightly to allow final deceleration
             Task { @MainActor [weak self] in
                 try? await Task.sleep(for: .milliseconds(100))
                 self?.recenterIfNeeded()
             }
-        }
-
-        // Send phase events so the host can end scroll smoothing promptly.
-        if phase == .began || phase == .ended || phase == .cancelled ||
-            momentumPhase == .began || momentumPhase == .ended || momentumPhase == .cancelled {
-            let isPrecise = event.hasPreciseScrollingDeltas
-            onScroll?(0, 0, lastMouseLocation, phase, momentumPhase, isPrecise)
         }
     }
 
@@ -644,17 +637,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
             lastMouseLocation = location
         }
 
-        let movedByLocation = if let previousLocation = lastForwardedMouseMoveLocation {
-            hypot(location.x - previousLocation.x, location.y - previousLocation.y) > 0.0001
-        } else {
-            true
-        }
-        guard movedByDelta || movedByLocation else { return }
-
-        let now = CACurrentMediaTime()
-        guard now - lastForwardedMouseMoveTime >= mouseMoveForwardInterval else { return }
-        lastForwardedMouseMoveTime = now
-        lastForwardedMouseMoveLocation = location
+        guard movedByDelta else { return }
 
         let mouseEvent = MirageMouseEvent(
             button: .left,
@@ -800,6 +783,32 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     // MARK: - Keyboard Event Handling
+
+    /// Intercept key equivalents before AppKit's menu bar dispatching.
+    /// Client-reserved shortcuts (exit stream, dictation toggle) are handled locally.
+    /// All other key equivalents (including Cmd+Q, Cmd+W) are forwarded to the host.
+    override func performKeyEquivalent(with event: NSEvent) -> Bool {
+        guard isInputProcessingActive else { return super.performKeyEquivalent(with: event) }
+
+        let keyEvent = MirageKeyEvent(
+            keyCode: event.keyCode,
+            characters: event.characters,
+            charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+            modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags),
+            isRepeat: event.isARepeat
+        )
+
+        // Check if this matches a client-reserved shortcut
+        for shortcut in clientShortcuts where shortcut.matches(keyEvent) {
+            onClientShortcut?(shortcut)
+            return true
+        }
+
+        // Forward all other key equivalents to the host
+        hideCursorForTypingUntilPointerMovement()
+        onMouseEvent?(.keyDown(keyEvent))
+        return true
+    }
 
     override var acceptsFirstResponder: Bool { true }
 

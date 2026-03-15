@@ -202,7 +202,15 @@ public struct MirageStreamContentView: View {
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 inputEnabled: macOSInputEnabled,
                 presentationTier: streamPresentationTier,
-                maxDrawableSize: maxDrawableSize
+                maxDrawableSize: maxDrawableSize,
+                clientShortcuts: [desktopExitShortcut, dictationShortcut].compactMap { $0 },
+                onClientShortcut: { shortcut in
+                    if shortcut == desktopExitShortcut {
+                        onExitDesktopStream?()
+                    } else if shortcut == dictationShortcut {
+                        onToggleDictationShortcut?()
+                    }
+                }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .blur(radius: resizeBlurRadius)

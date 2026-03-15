@@ -28,75 +28,50 @@ extension MirageHostInputController {
 
             switch event {
             case let .mouseDown(e):
-                flushPointerLerp()
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 injectDesktopMouseEvent(.leftMouseDown, e, at: point)
             case let .mouseUp(e):
-                flushPointerLerp()
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.leftMouseUp, e, at: point)
             case let .rightMouseDown(e):
-                flushPointerLerp()
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 injectDesktopMouseEvent(.rightMouseDown, e, at: point)
             case let .rightMouseUp(e):
-                flushPointerLerp()
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.rightMouseUp, e, at: point)
             case let .otherMouseDown(e):
-                flushPointerLerp()
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
                 CGWarpMouseCursorPosition(point)
                 injectDesktopMouseEvent(.otherMouseDown, e, at: point)
             case let .otherMouseUp(e):
-                flushPointerLerp()
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.otherMouseUp, e, at: point)
             case let .mouseMoved(e):
-                if appliesTabletSubtype(e) {
-                    flushPointerLerp()
-                    let point = screenPoint(e.location, in: bounds)
-                    injectDesktopMouseEvent(.mouseMoved, e, at: point)
-                } else {
-                    queuePointerLerp(.mouseMoved, e, bounds, windowID: 0, app: nil, isDesktop: true)
-                }
+                let point = screenPoint(e.location, in: bounds)
+                CGWarpMouseCursorPosition(point)
+                injectDesktopMouseEvent(.mouseMoved, e, at: point)
             case let .mouseDragged(e):
-                if appliesTabletSubtype(e) {
-                    flushPointerLerp()
-                    let point = screenPoint(e.location, in: bounds)
-                    injectDesktopMouseEvent(.leftMouseDragged, e, at: point)
-                } else {
-                    queuePointerLerp(.leftMouseDragged, e, bounds, windowID: 0, app: nil, isDesktop: true)
-                }
+                let point = screenPoint(e.location, in: bounds)
+                CGWarpMouseCursorPosition(point)
+                injectDesktopMouseEvent(.leftMouseDragged, e, at: point)
             case let .rightMouseDragged(e):
-                if appliesTabletSubtype(e) {
-                    flushPointerLerp()
-                    let point = screenPoint(e.location, in: bounds)
-                    injectDesktopMouseEvent(.rightMouseDragged, e, at: point)
-                } else {
-                    queuePointerLerp(.rightMouseDragged, e, bounds, windowID: 0, app: nil, isDesktop: true)
-                }
+                let point = screenPoint(e.location, in: bounds)
+                CGWarpMouseCursorPosition(point)
+                injectDesktopMouseEvent(.rightMouseDragged, e, at: point)
             case let .otherMouseDragged(e):
-                if appliesTabletSubtype(e) {
-                    flushPointerLerp()
-                    let point = screenPoint(e.location, in: bounds)
-                    injectDesktopMouseEvent(.otherMouseDragged, e, at: point)
-                } else {
-                    queuePointerLerp(.otherMouseDragged, e, bounds, windowID: 0, app: nil, isDesktop: true)
-                }
+                let point = screenPoint(e.location, in: bounds)
+                CGWarpMouseCursorPosition(point)
+                injectDesktopMouseEvent(.otherMouseDragged, e, at: point)
             case let .scrollWheel(e):
                 injectDesktopScrollEvent(e, bounds: bounds)
             case let .keyDown(e):
-                flushPointerLerp()
-                // Use HID tap for system-level UIs (screensaver, screenshot overlay)
                 injectKeyEvent(isKeyDown: true, e, domain: .hid, app: nil)
             case let .keyUp(e):
-                flushPointerLerp()
                 injectKeyEvent(isKeyDown: false, e, domain: .hid, app: nil)
             case let .flagsChanged(modifiers):
                 injectFlagsChanged(modifiers, domain: .hid, app: nil)

@@ -102,19 +102,32 @@ extension MirageHostInputController {
             )
         }
 
-        Task {
+        let windowID = window.id
+        activeRelativeResizeTaskByWindowID[windowID]?.cancel()
+
+        let task = Task {
             var currentTargetSize = initialTargetSize
             var finalSize: CGSize?
 
-            for _ in 0 ..< 15 {
+            for _ in 0 ..< 5 {
+                try Task.checkCancellation()
+
                 var mutableSize = currentTargetSize
                 guard let sizeValue = AXValueCreate(.cgSize, &mutableSize) else { break }
                 AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
 
-                try? await Task.sleep(for: .milliseconds(30))
+                try await Task.sleep(for: .milliseconds(10))
 
                 let actualSize = (windowController.axWindowFrame(axWindow) ?? windowController
-                    .currentWindowFrame(for: window.id))?.size ?? currentTargetSize
+                    .currentWindowFrame(for: windowID))?.size ?? currentTargetSize
+
+                // Early-exit when within 4pt of target (don't require aspect ratio convergence)
+                let widthDiff = abs(actualSize.width - currentTargetSize.width)
+                let heightDiff = abs(actualSize.height - currentTargetSize.height)
+                if widthDiff <= 4, heightDiff <= 4 {
+                    finalSize = actualSize
+                    break
+                }
 
                 let actualAspectRatio = actualSize.width / actualSize.height
                 let aspectDiff = abs(actualAspectRatio - clientAspectRatio)
@@ -144,15 +157,17 @@ extension MirageHostInputController {
                 currentTargetSize = newTarget
             }
 
+            try Task.checkCancellation()
             guard let size = finalSize else { return }
 
             let captureWidth = Int(size.width * hostScale)
             let captureHeight = Int(size.height * hostScale)
 
-            if captureWidth > 0, captureHeight > 0 { windowController.scheduleResizeUpdate(windowID: window.id, width: captureWidth, height: captureHeight) }
+            if captureWidth > 0, captureHeight > 0 { windowController.scheduleResizeUpdate(windowID: windowID, width: captureWidth, height: captureHeight) }
 
-            windowController.centerWindowOnScreen(axWindow, newSize: size, windowID: window.id)
+            windowController.centerWindowOnScreen(axWindow, newSize: size, windowID: windowID)
         }
+        activeRelativeResizeTaskByWindowID[windowID] = task
     }
 
     @MainActor

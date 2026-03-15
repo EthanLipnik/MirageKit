@@ -36,6 +36,12 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
+    /// Client-reserved shortcuts that should not be forwarded to the host.
+    public var clientShortcuts: [MirageClientShortcut]
+
+    /// Callback when a client-reserved shortcut is triggered.
+    public var onClientShortcut: ((MirageClientShortcut) -> Void)?
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -45,7 +51,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorLockEnabled: Bool = false,
         inputEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
-        maxDrawableSize: CGSize? = nil
+        maxDrawableSize: CGSize? = nil,
+        clientShortcuts: [MirageClientShortcut] = [],
+        onClientShortcut: ((MirageClientShortcut) -> Void)? = nil
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -56,6 +64,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.inputEnabled = inputEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
+        self.clientShortcuts = clientShortcuts
+        self.onClientShortcut = onClientShortcut
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -113,6 +123,10 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             coordinator?.handleInputEvent(event)
         }
 
+        // Configure client shortcut passthrough
+        wrapper.clientShortcuts = clientShortcuts
+        wrapper.onClientShortcut = onClientShortcut
+
         return wrapper
     }
 
@@ -130,6 +144,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.cursorLockEnabled = cursorLockEnabled
             wrapper.inputEnabled = inputEnabled
             wrapper.streamID = streamID
+            wrapper.clientShortcuts = clientShortcuts
+            wrapper.onClientShortcut = onClientShortcut
         }
     }
 }

@@ -30,6 +30,8 @@ extension MirageHostInputController {
                 scrollTargetRateY = 0
                 scrollRemainderX = 0
                 scrollRemainderY = 0
+                directScrollRemainderX = 0
+                directScrollRemainderY = 0
                 lastScrollOutputTime = 0
             }
             injectScrollEvent(event, windowFrame, app: app)
