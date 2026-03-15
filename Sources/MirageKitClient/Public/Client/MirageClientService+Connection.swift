@@ -364,45 +364,46 @@ extension MirageClientService {
                 attemptID: attemptID,
                 requiredInterfaceType: interfaceType
             )
-        } catch {
-            // LoomNode.connect() already races service endpoints against a resolved
-            // fallback, so retrying only helps for non-Bonjour transport failures.
-            guard shouldRetryWithResolvedBonjourEndpoint(for: host, after: error) else {
-                throw error
+        } catch let firstError {
+            guard shouldRetryWithResolvedBonjourEndpoint(for: host, after: firstError) else {
+                throw firstError
             }
 
-            // Briefly toggle P2P to flush NECP policy state. The macOS NECP TLV
-            // encoding bug corrupts path parameters for all NWConnections created
-            // under the same policy session. Flipping includePeerToPeer forces NECP
-            // to rebuild its path cache, which clears the corruption.
-            try throwIfConnectAttemptIsStale(attemptID)
-            await flushNECPPolicyState()
+            // Retry up to 2 more times with NECP flushes between attempts.
+            // The macOS NECP TLV encoding bug corrupts path parameters system-wide.
+            // Toggling P2P forces NECP to rebuild its cache. We retry the same
+            // service endpoint instead of resolving via Bonjour (which also hangs
+            // when NECP is corrupted since the resolver uses NWConnection internally).
+            for retryIndex in 1...2 {
+                try throwIfConnectAttemptIsStale(attemptID)
+                await flushNECPPolicyState()
 
-            let resolvedEndpoint = try await resolvedBonjourFallbackEndpoint(
-                for: host,
-                transportKind: transportKind
-            )
-            let attempts = controlEndpointAttempts(
-                for: host,
-                transportKind: transportKind,
-                resolvedBonjourEndpoint: resolvedEndpoint
-            )
-            guard let fallbackAttempt = attempts.dropFirst().first else {
-                throw error
+                MirageLogger.client(
+                    "NECP retry \(retryIndex)/2 for \(host.name) via \(initialAttempt.source.rawValue)"
+                )
+
+                do {
+                    return try await establishControlSession(
+                        to: initialAttempt.endpoint,
+                        source: initialAttempt.source,
+                        hostName: host.name,
+                        transportKind: transportKind,
+                        hello: hello,
+                        attemptID: attemptID,
+                        requiredInterfaceType: interfaceType
+                    )
+                } catch {
+                    if error is CancellationError {
+                        throw error
+                    }
+                    MirageLogger.client(
+                        "NECP retry \(retryIndex)/2 failed for \(host.name): \(error.localizedDescription)"
+                    )
+                    continue
+                }
             }
 
-            MirageLogger.client(
-                "Retrying \(transportKind) control session to \(host.name) via \(fallbackAttempt.source.rawValue) endpoint=\(fallbackAttempt.endpoint)"
-            )
-            return try await establishControlSession(
-                to: fallbackAttempt.endpoint,
-                source: fallbackAttempt.source,
-                hostName: host.name,
-                transportKind: transportKind,
-                hello: hello,
-                attemptID: attemptID,
-                requiredInterfaceType: interfaceType
-            )
+            throw firstError
         }
     }
 
