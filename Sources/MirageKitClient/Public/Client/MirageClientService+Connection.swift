@@ -528,34 +528,39 @@ extension MirageClientService {
         return endpoint
     }
 
+    /// Races `connectTask` against `controlSessionConnectTimeout` using a
+    /// continuation so the timeout can fire immediately without waiting for
+    /// `NWConnection` to acknowledge cancellation (which may never happen when
+    /// the macOS NECP policy engine is in a corrupted state).
     private func awaitConnectSession(
         _ connectTask: Task<LoomAuthenticatedSession, Error>,
         endpoint: NWEndpoint,
         transportKind: LoomTransportKind,
         attemptID: UUID
     ) async throws -> LoomAuthenticatedSession {
+        let timeout = controlSessionConnectTimeout
+        let timeoutError = MirageError.protocolError(
+            "Timed out establishing \(transportKind) control session to \(endpoint)"
+        )
+
         do {
-            let timeout = controlSessionConnectTimeout
-            return try await withThrowingTaskGroup(of: LoomAuthenticatedSession.self) { group in
-                group.addTask {
-                    try await withTaskCancellationHandler {
-                        try await connectTask.value
-                    } onCancel: {
-                        connectTask.cancel()
+            return try await withCheckedThrowingContinuation { continuation in
+                let box = ConnectSessionContinuationBox(continuation)
+
+                Task {
+                    do {
+                        let session = try await connectTask.value
+                        await box.resume(returning: session)
+                    } catch {
+                        await box.resume(throwing: error)
                     }
                 }
-                group.addTask {
-                    try await Task.sleep(for: timeout)
-                    throw MirageError.protocolError(
-                        "Timed out establishing \(transportKind) control session to \(endpoint)"
-                    )
-                }
 
-                let session = try await group.next() ?? {
-                    throw MirageError.protocolError("Control session establishment ended unexpectedly")
-                }()
-                group.cancelAll()
-                return session
+                Task { [timeout, timeoutError] in
+                    try? await Task.sleep(for: timeout)
+                    connectTask.cancel()
+                    await box.resume(throwing: timeoutError)
+                }
             }
         } catch {
             if isCurrentConnectAttempt(attemptID) {
@@ -767,5 +772,28 @@ extension MirageClientService {
         case .connecting, .handshaking, .connected, .reconnecting:
             return true
         }
+    }
+}
+
+/// Ensures a `CheckedContinuation` is resumed exactly once when racing
+/// a connect task against a timeout. The first caller to `resume` wins;
+/// subsequent calls are silently ignored.
+private actor ConnectSessionContinuationBox {
+    private var continuation: CheckedContinuation<LoomAuthenticatedSession, Error>?
+
+    init(_ continuation: CheckedContinuation<LoomAuthenticatedSession, Error>) {
+        self.continuation = continuation
+    }
+
+    func resume(returning session: LoomAuthenticatedSession) {
+        guard let c = continuation else { return }
+        continuation = nil
+        c.resume(returning: session)
+    }
+
+    func resume(throwing error: Error) {
+        guard let c = continuation else { return }
+        continuation = nil
+        c.resume(throwing: error)
     }
 }
