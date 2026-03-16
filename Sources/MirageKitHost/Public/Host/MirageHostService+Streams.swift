@@ -192,7 +192,7 @@ public extension MirageHostService {
         temporaryDegradationMode: MirageTemporaryDegradationMode = .off,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
-        allowDirectCaptureFallback: Bool = true,
+        allowDirectCaptureFallback: Bool = false,
         audioConfiguration: MirageAudioConfiguration? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
