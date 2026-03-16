@@ -180,17 +180,20 @@ extension WindowCaptureEngine {
             poolMinimumBufferCount: bufferPoolMinimumCount,
             capturePressureProfile: capturePressureProfile
         )
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
+        guard let output = streamOutput else {
+            throw MirageError.captureSetupFailed("streamOutput was not initialized")
+        }
+        output.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
         try stream.addStreamOutput(
-            streamOutput!,
+            output,
             type: .screen,
             sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.output", qos: .userInteractive)
         )
         if onAudio != nil {
             try stream.addStreamOutput(
-                streamOutput!,
+                output,
                 type: .audio,
                 sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.audio", qos: .utility)
             )
@@ -399,6 +402,14 @@ extension WindowCaptureEngine {
                 )
         } catch {
             MirageLogger.error(.capture, error: error, message: "Capture restart failed: ")
+            captureSessionConfig = nil
+            captureMode = nil
+            capturedFrameHandler = nil
+            capturedAudioHandler = nil
+            dimensionChangeHandler = nil
+            pendingKeyframeRequest = nil
+            restartStreak = 0
+            lastRestartAttemptTime = 0
         }
     }
 
@@ -581,17 +592,20 @@ extension WindowCaptureEngine {
             poolMinimumBufferCount: bufferPoolMinimumCount,
             capturePressureProfile: capturePressureProfile
         )
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
+        guard let output = streamOutput else {
+            throw MirageError.captureSetupFailed("streamOutput was not initialized")
+        }
+        output.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
         try stream.addStreamOutput(
-            streamOutput!,
+            output,
             type: .screen,
             sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.output", qos: .userInteractive)
         )
         if onAudio != nil {
             try stream.addStreamOutput(
-                streamOutput!,
+                output,
                 type: .audio,
                 sampleHandlerQueue: DispatchQueue(label: "com.mirage.capture.audio", qos: .utility)
             )

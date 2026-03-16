@@ -21,6 +21,7 @@ public enum MirageError: Error, LocalizedError {
     case permissionDenied
     case timeout
     case protocolError(String)
+    case captureSetupFailed(String)
 
     public var errorDescription: String? {
         switch self {
@@ -46,6 +47,8 @@ public enum MirageError: Error, LocalizedError {
             "Operation timed out"
         case let .protocolError(message):
             "Protocol error: \(message)"
+        case let .captureSetupFailed(message):
+            "Capture setup failed: \(message)"
         }
     }
 }

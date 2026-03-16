@@ -54,7 +54,8 @@ enum AppStreamStartupFailureClassifier {
                  .encodingError,
                  .decodingError,
                  .permissionDenied,
-                 .protocolError:
+                 .protocolError,
+                 .captureSetupFailed:
                 return false
             }
         }

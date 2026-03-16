@@ -136,13 +136,19 @@ enum CGSWindowSpaceBridge {
 
     static func getCurrentSpaceForDisplay(_ displayID: CGDirectDisplayID) -> CGSSpaceID {
         let connection = getConnectionID()
-        let uuid = getDisplayUUID(displayID)
+        guard let uuid = getDisplayUUID(displayID) else {
+            MirageLogger.host("Cannot get current space: no valid UUID for display \(displayID)")
+            return 0
+        }
         return CGSManagedDisplayGetCurrentSpace(connection, uuid as CFString)
     }
 
     static func setCurrentSpaceForDisplay(_ displayID: CGDirectDisplayID, spaceID: CGSSpaceID) -> Bool {
         let connection = getConnectionID()
-        let uuid = getDisplayUUID(displayID)
+        guard let uuid = getDisplayUUID(displayID) else {
+            MirageLogger.host("Cannot set current space: no valid UUID for display \(displayID)")
+            return false
+        }
         let result = CGSManagedDisplaySetCurrentSpace(connection, uuid as CFString, spaceID)
         return result == .success
     }
@@ -181,9 +187,11 @@ enum CGSWindowSpaceBridge {
         return result == .success
     }
 
-    private static func getDisplayUUID(_ displayID: CGDirectDisplayID) -> String {
-        if let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue() { return CFUUIDCreateString(nil, uuid) as String }
-        return String(displayID)
+    private static func getDisplayUUID(_ displayID: CGDirectDisplayID) -> String? {
+        guard let uuid = CGDisplayCreateUUIDFromDisplayID(displayID)?.takeRetainedValue() else {
+            return nil
+        }
+        return CFUUIDCreateString(nil, uuid) as String
     }
 }
 #endif

@@ -33,6 +33,38 @@ public extension MirageHostService {
         MirageLogger.host("Starting...")
 
         do {
+            try await startListeners()
+        } catch let error as NWError where Self.isAddressInUseError(error) {
+            MirageLogger.host("Port already in use, cleaning up stale listeners and retrying...")
+            state = .starting
+            await loomNode.stopAdvertising()
+            udpListener?.cancel()
+            udpListener = nil
+            try await startListeners()
+        }
+
+        // Initial window refresh (non-blocking - may fail if no screen recording permission)
+        do {
+            try await refreshWindows()
+            MirageLogger.host("Window refresh complete, found \(availableWindows.count) windows")
+        } catch {
+            MirageLogger.host("Initial window refresh failed (screen recording permission may be needed): \(error)")
+        }
+
+        // Start cursor monitoring for active streams
+        startCursorMonitoring()
+
+        // Start session state monitoring (for headless Mac unlock support)
+        await startSessionStateMonitoring()
+    }
+
+    private nonisolated static func isAddressInUseError(_ error: NWError) -> Bool {
+        if case let .posix(code) = error, code == .EADDRINUSE { return true }
+        return false
+    }
+
+    private func startListeners() async throws {
+        do {
             MirageLogger.host("Starting Loom authenticated listeners...")
             let ports = try await loomNode.startAuthenticatedAdvertising(
                 serviceName: serviceName,
@@ -80,20 +112,6 @@ public extension MirageHostService {
             state = .error(error.localizedDescription)
             throw error
         }
-
-        // Initial window refresh (non-blocking - may fail if no screen recording permission)
-        do {
-            try await refreshWindows()
-            MirageLogger.host("Window refresh complete, found \(availableWindows.count) windows")
-        } catch {
-            MirageLogger.host("Initial window refresh failed (screen recording permission may be needed): \(error)")
-        }
-
-        // Start cursor monitoring for active streams
-        startCursorMonitoring()
-
-        // Start session state monitoring (for headless Mac unlock support)
-        await startSessionStateMonitoring()
     }
 
     func stop() async {

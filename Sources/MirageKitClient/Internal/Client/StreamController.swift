@@ -702,6 +702,8 @@ actor StreamController {
                 )
             case let .protocolError(message):
                 components.append("\(label).protocol{\(sanitizedDiagnosticDescription(message))}")
+            case let .captureSetupFailed(message):
+                components.append("\(label).captureSetup{\(sanitizedDiagnosticDescription(message))}")
             case .alreadyAdvertising,
                  .notAdvertising,
                  .authenticationFailed,

@@ -271,11 +271,7 @@ extension StreamController {
             "First-frame watchdog triggered (\(reason)) for stream \(streamID) (+\(elapsedMs)ms, " +
             "latest=\(latestSequence), lastPacketAge=\(packetAgeText), awaitingKeyframe=\(awaitingKeyframe)); " +
             "requesting recovery"
-        if firstPresentedFrameAwaitMode == .recovery {
-            MirageLogger.error(.client, logMessage)
-        } else {
-            MirageLogger.client(logMessage)
-        }
+        MirageLogger.client(logMessage)
         await handleFrameLossSignal()
     }
 
