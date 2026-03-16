@@ -87,7 +87,22 @@ struct LightsOutStatePolicyTests {
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: true,
                 lightsOutEnabled: true,
-                lightsOutDisabled: true
+                lightsOutDisabledByEnvironment: true
+            )
+        )
+    }
+
+    @Test
+    func secondaryDisplaySuppressesLightsOutForDesktopStream() {
+        // Secondary display mode overrides lightsOutEnabled to false,
+        // so desktop streams in secondary mode never trigger Lights Out.
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: false,
+                hasDesktopStream: true,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false,
+                lightsOutEnabled: false
             )
         )
     }

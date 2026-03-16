@@ -23,9 +23,9 @@ extension MirageHostService {
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool,
         lightsOutEnabled: Bool,
-        lightsOutDisabled: Bool = false
+        lightsOutDisabledByEnvironment: Bool = false
     ) -> Bool {
-        guard !lightsOutDisabled else { return false }
+        guard !lightsOutDisabledByEnvironment else { return false }
         return hasAppStreams || hasPendingAppStreamStart ||
             (lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart))
     }
@@ -101,13 +101,14 @@ extension MirageHostService {
         let hasDesktopStream = desktopStreamContext != nil
         let hasPendingAppStreamStart = pendingAppStreamStartCount > 0
         let hasPendingDesktopStreamStart = pendingDesktopStreamStartCount > 0
+        let effectiveLightsOutEnabled = lightsOutEnabled && desktopStreamMode != .secondary
         let shouldEnableLightsOut = Self.shouldEnableLightsOut(
             hasAppStreams: hasAppStreams,
             hasDesktopStream: hasDesktopStream,
             hasPendingAppStreamStart: hasPendingAppStreamStart,
             hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
-            lightsOutEnabled: lightsOutEnabled,
-            lightsOutDisabled: lightsOutDisabledByEnvironment
+            lightsOutEnabled: effectiveLightsOutEnabled,
+            lightsOutDisabledByEnvironment: lightsOutDisabledByEnvironment
         )
         guard shouldEnableLightsOut else {
             lightsOutController.deactivate()

@@ -109,6 +109,7 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
             let audioConfiguration = request.audioConfiguration ?? .default
 
+            desktopStreamMode = request.mode ?? .mirrored
             pendingLightsOutSetup = true
             await beginPendingDesktopStreamLightsOutSetup()
             try await startDesktopStream(
