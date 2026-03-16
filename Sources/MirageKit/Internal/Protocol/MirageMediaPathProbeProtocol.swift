@@ -19,8 +19,13 @@ package let mirageMediaPathProbeMagic: UInt32 = 0x4D49_5250
 package struct MirageMediaPathProbePacket: Sendable {
     package static let packetSize = 16
 
-    let sequenceNumber: UInt32
-    let timestampNs: UInt64
+    package let sequenceNumber: UInt32
+    package let timestampNs: UInt64
+
+    package init(sequenceNumber: UInt32, timestampNs: UInt64) {
+        self.sequenceNumber = sequenceNumber
+        self.timestampNs = timestampNs
+    }
 
     package func serialize() -> Data {
         var data = Data(capacity: Self.packetSize)
