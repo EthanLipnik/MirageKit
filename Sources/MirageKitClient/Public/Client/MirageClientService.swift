@@ -537,6 +537,9 @@ public final class MirageClientService {
     var pingRequestID: UInt64 = 0
     var pingTimeoutTask: Task<Void, Never>?
 
+    // MARK: - Heartbeat State
+    @ObservationIgnored var heartbeatTask: Task<Void, Never>?
+
     /// Thread-safe property to check if a stream is active from nonisolated contexts
     nonisolated var activeStreamIDsForFiltering: Set<StreamID> {
         fastPathState.activeStreamIDsSnapshot()

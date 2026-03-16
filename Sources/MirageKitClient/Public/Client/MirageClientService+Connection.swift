@@ -147,6 +147,7 @@ extension MirageClientService {
             try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
             finishConnectAttempt(attemptID)
+            startHeartbeat()
 
             if let acceptedHost = connectedHost {
                 MirageLogger.client("Mirage bootstrap accepted for \(acceptedHost.name)")
@@ -234,6 +235,7 @@ extension MirageClientService {
         setMediaSecurityContext(nil)
         receiveBuffer = Data()
         stopRegistrationRefreshLoop()
+        stopHeartbeat()
         connectedHost = nil
         availableWindows = []
         hasReceivedWindowList = false
