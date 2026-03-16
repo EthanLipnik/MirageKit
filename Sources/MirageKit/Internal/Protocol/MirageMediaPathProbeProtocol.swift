@@ -8,7 +8,7 @@
 import Foundation
 
 /// Magic bytes "MIRP" (0x4D495250) identifying media path probe packets.
-let mirageMediaPathProbeMagic: UInt32 = 0x4D495250
+package let mirageMediaPathProbeMagic: UInt32 = 0x4D49_5250
 
 /// Lightweight probe packet echoed by the host to measure per-interface RTT.
 ///
@@ -16,13 +16,13 @@ let mirageMediaPathProbeMagic: UInt32 = 0x4D495250
 /// - [0..3]   magic      (UInt32) — 0x4D495250 "MIRP"
 /// - [4..7]   sequence   (UInt32) — Probe sequence number
 /// - [8..15]  timestampNs(UInt64) — Client monotonic timestamp in nanoseconds
-struct MirageMediaPathProbePacket: Sendable {
-    static let packetSize = 16
+package struct MirageMediaPathProbePacket: Sendable {
+    package static let packetSize = 16
 
     let sequenceNumber: UInt32
     let timestampNs: UInt64
 
-    func serialize() -> Data {
+    package func serialize() -> Data {
         var data = Data(capacity: Self.packetSize)
         var magic = mirageMediaPathProbeMagic.littleEndian
         var seq = sequenceNumber.littleEndian
@@ -33,7 +33,7 @@ struct MirageMediaPathProbePacket: Sendable {
         return data
     }
 
-    static func deserialize(from data: Data) throws -> MirageMediaPathProbePacket {
+    package static func deserialize(from data: Data) throws -> MirageMediaPathProbePacket {
         guard data.count >= packetSize else {
             throw MirageError.protocolError("Probe packet too short (\(data.count) < \(packetSize))")
         }

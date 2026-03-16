@@ -80,6 +80,17 @@ extension MirageHostService {
                 continue
             }
 
+            // Echo media path probe packets immediately (no auth required).
+            if data.count >= MirageMediaPathProbePacket.packetSize {
+                let probeMagic: UInt32 = data.withUnsafeBytes {
+                    UInt32(littleEndian: $0.loadUnaligned(fromByteOffset: 0, as: UInt32.self))
+                }
+                if probeMagic == mirageMediaPathProbeMagic {
+                    connection.send(content: data, completion: .contentProcessed { _ in })
+                    continue
+                }
+            }
+
             let magic = data.prefix(4)
             if magic.elementsEqual([0x4D, 0x49, 0x52, 0x51]) {
                 let minimumLength = 20 + MirageMediaSecurity.registrationTokenLength
