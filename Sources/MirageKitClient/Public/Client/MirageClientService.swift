@@ -465,7 +465,8 @@ public final class MirageClientService {
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
-    let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
+    let awdlExperimentEnabled: Bool = true
+    var mediaPathProber: MirageMediaPathProber?
     var controlPathSnapshot: MirageNetworkPathSnapshot?
     var videoPathSnapshot: MirageNetworkPathSnapshot?
     var audioPathSnapshot: MirageNetworkPathSnapshot?

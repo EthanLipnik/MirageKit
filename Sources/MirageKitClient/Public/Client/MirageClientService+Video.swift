@@ -84,6 +84,7 @@ extension MirageClientService {
                 }
                 startReceivingVideo()
                 updateRegistrationRefreshLoopState()
+                await probeAndOptimizeMediaPath()
                 return
             } catch {
                 lastError = error
@@ -266,6 +267,83 @@ extension MirageClientService {
         mediaTransportIncludePeerToPeer = nil
     }
 
+    // MARK: - Adaptive Media Path Selection
+
+    /// Probe all available interfaces and optimize the media transport path.
+    /// Called after the initial video connection is established.
+    func probeAndOptimizeMediaPath() async {
+        guard hostDataPort > 0 else { return }
+        guard let proberHost = mediaTransportHost else { return }
+
+        let prober = MirageMediaPathProber(
+            host: proberHost,
+            port: hostDataPort,
+            enablePeerToPeer: networkConfig.enablePeerToPeer
+        )
+        mediaPathProber = prober
+
+        let results = await prober.probeAllInterfaces()
+        guard let best = MediaPathProbeResult.bestCandidate(from: results) else {
+            MirageLogger.client("Path probe: no reachable interfaces, keeping current path")
+            prober.startMonitoring()
+            return
+        }
+
+        MirageLogger.client(
+            "Path probe initial: best=\(best.interfaceLabel) (\(String(format: "%.1f", best.rttMs))ms), " +
+            "all=[\(results.map { "\($0.interfaceLabel):\(String(format: "%.1f", $0.rttMs))ms" }.joined(separator: ", "))]"
+        )
+
+        // Migrate if the best interface differs from current
+        let currentIsP2P = mediaTransportIncludePeerToPeer == true
+        let bestMatchesCurrent = (best.includePeerToPeer == currentIsP2P)
+            && (best.interfaceType == nil || mediaTransportIncludePeerToPeer != nil)
+
+        if !bestMatchesCurrent, results.count > 1 {
+            await migrateMediaTransport(to: best)
+        }
+
+        prober.currentResult = best
+        prober.onMigrationRecommended = { [weak self] recommendation in
+            guard let self else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                await self.migrateMediaTransport(to: recommendation)
+            }
+        }
+        prober.startMonitoring()
+    }
+
+    /// Migrate the media transport to a different network interface.
+    func migrateMediaTransport(to target: MediaPathProbeResult) async {
+        MirageLogger.client(
+            "Migrating media transport to \(target.interfaceLabel) (RTT: \(String(format: "%.1f", target.rttMs))ms, p2p: \(target.includePeerToPeer))"
+        )
+
+        stopVideoConnection()
+        mediaTransportIncludePeerToPeer = target.includePeerToPeer
+
+        do {
+            try await startVideoConnection()
+            for streamID in registeredStreamIDs {
+                do {
+                    try await sendStreamRegistration(streamID: streamID, markKeyframeCooldown: false)
+                    sendKeyframeRequest(for: streamID)
+                } catch {
+                    MirageLogger.error(.client, error: error, message: "Re-registration after migration failed for stream \(streamID): ")
+                }
+            }
+            MirageLogger.client("Media transport migration to \(target.interfaceLabel) complete")
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Media transport migration to \(target.interfaceLabel) failed: ")
+            do {
+                try await startVideoConnection()
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Media transport recovery failed: ")
+            }
+        }
+    }
+
     func resolveMediaTransportCandidates(
         preferredHost: NWEndpoint.Host? = nil,
         preferredIncludePeerToPeer: Bool? = nil
@@ -418,6 +496,14 @@ extension MirageClientService {
             MirageLogger.client("UDP path updated: \(pathDescription(path))")
             Task { @MainActor in
                 onPathSnapshot(snapshot)
+            }
+        }
+        udpConn.betterPathUpdateHandler = { [weak self] available in
+            guard available else { return }
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                MirageLogger.client("OS reported better media path available, triggering probe")
+                self.mediaPathProber?.triggerImmediateProbe()
             }
         }
 

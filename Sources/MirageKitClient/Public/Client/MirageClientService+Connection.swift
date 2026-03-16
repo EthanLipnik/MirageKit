@@ -257,6 +257,8 @@ extension MirageClientService {
         cursorPositionStore.clearAll()
         sessionStore.clearLoginDisplayState()
 
+        mediaPathProber?.stopMonitoring()
+        mediaPathProber = nil
         stopVideoConnection()
         stopAudioConnection()
 
