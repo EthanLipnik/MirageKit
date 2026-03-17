@@ -26,38 +26,38 @@ public enum MirageRemoteRelayPublicationSource: Sendable, Equatable {
 @_spi(HostApp)
 public enum MirageRemoteRelayPublicationDecision: Sendable, Equatable {
     case `defer`(reason: MirageRemoteRelayPublicationReason)
-    case publish(candidate: LoomRelayCandidate, source: MirageRemoteRelayPublicationSource)
+    case publish(candidates: [LoomRelayCandidate], source: MirageRemoteRelayPublicationSource)
 }
 
 struct MirageRemoteRelayPublicationState: Sendable {
-    private(set) var lastPublishedCandidate: LoomRelayCandidate?
+    private(set) var lastPublishedCandidates: [LoomRelayCandidate]?
 
-    var hasPublishedCandidate: Bool {
-        lastPublishedCandidate != nil
+    var hasPublishedCandidates: Bool {
+        lastPublishedCandidates != nil
     }
 
     func decision(
         listenerReady: Bool,
-        freshCandidate: LoomRelayCandidate?
+        freshCandidates: [LoomRelayCandidate]
     ) -> MirageRemoteRelayPublicationDecision {
-        if let freshCandidate {
-            return .publish(candidate: freshCandidate, source: .fresh)
+        if !freshCandidates.isEmpty {
+            return .publish(candidates: freshCandidates, source: .fresh)
         }
 
         let reason: MirageRemoteRelayPublicationReason = listenerReady ? .stunProbeFailed : .listenerNotReady
-        if let stickyCandidate = lastPublishedCandidate {
-            return .publish(candidate: stickyCandidate, source: .sticky(reason: reason))
+        if let stickyCandidates = lastPublishedCandidates {
+            return .publish(candidates: stickyCandidates, source: .sticky(reason: reason))
         }
 
         return .`defer`(reason: reason)
     }
 
-    mutating func recordPublishedCandidate(_ candidate: LoomRelayCandidate) {
-        lastPublishedCandidate = candidate
+    mutating func recordPublishedCandidates(_ candidates: [LoomRelayCandidate]) {
+        lastPublishedCandidates = candidates
     }
 
     mutating func reset() {
-        lastPublishedCandidate = nil
+        lastPublishedCandidates = nil
     }
 }
 #endif

@@ -33,75 +33,39 @@ extension MirageHostService {
         remoteControlListenerReady = remoteControlPort != nil
     }
 
-    public func resolveRemoteControlCandidate(
-        stunHost: String = "stun.cloudflare.com",
-        stunPort: UInt16 = 3478,
-        timeout: Duration = .seconds(2)
-    ) async -> LoomRelayCandidate? {
-        await resolveFreshRemoteControlCandidate(
-            stunHost: stunHost,
-            stunPort: stunPort,
-            timeout: timeout
-        )
-    }
-
     @_spi(HostApp)
-    public func resolveRemoteRelayPublicationDecision(
-        stunHost: String = "stun.cloudflare.com",
-        stunPort: UInt16 = 3478,
-        timeout: Duration = .seconds(2)
-    ) async -> MirageRemoteRelayPublicationDecision {
-        let freshCandidate = await resolveFreshRemoteControlCandidate(
-            stunHost: stunHost,
-            stunPort: stunPort,
-            timeout: timeout
-        )
+    public func resolveRemoteRelayPublicationDecision() async -> MirageRemoteRelayPublicationDecision {
+        let freshCandidates = await collectFreshRemoteCandidates()
         return remoteRelayPublicationState.decision(
             listenerReady: remoteControlListenerReady,
-            freshCandidate: freshCandidate
+            freshCandidates: freshCandidates
         )
     }
 
     @_spi(HostApp)
-    public func recordRemoteRelayAdvertiseSuccess(candidate: LoomRelayCandidate) {
-        remoteRelayPublicationState.recordPublishedCandidate(candidate)
+    public func recordRemoteRelayAdvertiseSuccess(candidates: [LoomRelayCandidate]) {
+        remoteRelayPublicationState.recordPublishedCandidates(candidates)
     }
 
-    private func resolveFreshRemoteControlCandidate(
-        stunHost: String,
-        stunPort: UInt16,
-        timeout: Duration
-    ) async -> LoomRelayCandidate? {
+    private func collectFreshRemoteCandidates() async -> [LoomRelayCandidate] {
         guard remoteTransportEnabled,
               remoteControlListenerReady,
               let localPort = remoteControlPort else {
-            MirageLogger.host("Remote candidate skipped (transport disabled or listener port unavailable)")
-            return nil
+            MirageLogger.host("Remote candidate collection skipped (transport disabled or listener port unavailable)")
+            return []
         }
 
-        let result = await LoomSTUNProbe.run(
-            host: stunHost,
-            port: stunPort,
-            localPort: localPort,
-            timeout: timeout
+        let candidates = await LoomDirectCandidateCollector.collect(
+            configuration: loomNode.configuration,
+            listeningPorts: [.quic: localPort]
         )
-        MirageLogger.host(
-            "Remote STUN probe result reachable=\(result.reachable) mapped=\(result.mappedAddress ?? "none"):\(result.mappedPort ?? 0)"
-        )
-        guard result.reachable,
-              let mappedAddress = result.mappedAddress,
-              let mappedPort = result.mappedPort else {
-            if let failureReason = result.failureReason {
-                MirageLogger.host("Remote STUN probe failed: \(failureReason)")
-            }
-            return nil
+        MirageLogger.host("Remote candidate collection completed: \(candidates.count) candidate(s)")
+        for candidate in candidates {
+            MirageLogger.host(
+                "  candidate transport=\(candidate.transport) address=\(candidate.address) port=\(candidate.port)"
+            )
         }
-
-        return LoomRelayCandidate(
-            transport: .quic,
-            address: mappedAddress,
-            port: mappedPort
-        )
+        return candidates
     }
 }
 #endif

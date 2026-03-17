@@ -66,7 +66,7 @@ extension MirageClientService {
         #endif
     }
 
-    func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {
+    public func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {
         let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
         let identity = try resolvedIdentityManager.currentIdentity()
         let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
@@ -91,6 +91,80 @@ extension MirageClientService {
             requestedFeatures: mirageSupportedFeatures,
             requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
         )
+    }
+
+    public func connect(
+        withEstablishedSession session: LoomAuthenticatedSession,
+        host: LoomPeer
+    ) async throws {
+        guard connectionState.canConnect else {
+            throw MirageError.protocolError("Already connected or connecting")
+        }
+
+        let attemptID = beginConnectAttempt()
+        MirageInstrumentation.record(.clientConnectionRequested)
+        MirageLogger.client("Connecting to \(host.name) using established session...")
+        connectionState = .connecting
+        expectedHostIdentityKeyID = host.advertisement.identityKeyID
+        connectedHostIdentityKeyID = nil
+        connectedHostAllowsRemoteAccess = nil
+        mediaPayloadEncryptionEnabled = true
+        setMediaSecurityContext(nil)
+        isAwaitingManualApproval = false
+        hasCompletedBootstrap = false
+        approvalWaitTask?.cancel()
+        connectedHost = host
+
+        var pendingChannel: MirageControlChannel?
+
+        do {
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
+            let controlChannel = try await MirageControlChannel.open(on: session)
+            pendingChannel = controlChannel
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
+
+            loomSession = session
+            self.controlChannel = controlChannel
+            inputEventSender.updateSendHandler { [weak controlChannel] data, _ in
+                guard let controlChannel else {
+                    throw MirageError.protocolError("Control channel unavailable")
+                }
+                try await controlChannel.sendSerialized(data)
+            }
+            installControlSessionObservers(session)
+            try await performBootstrap(over: controlChannel, provisionalHost: host)
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
+            startReceiving()
+            finishConnectAttempt(attemptID)
+            startHeartbeat()
+
+            if let acceptedHost = connectedHost {
+                MirageLogger.client("Mirage bootstrap accepted for \(acceptedHost.name)")
+            }
+        } catch {
+            if let pendingChannel {
+                await pendingChannel.cancel()
+            }
+            cancelPendingConnectTask(attemptID: attemptID)
+            finishConnectAttempt(attemptID)
+            if hasCompletedBootstrap {
+                MirageLogger.error(.client, error: error, message: "Connection failed: ")
+            } else {
+                MirageLogger.client("Connection failed before bootstrap completed: \(error.localizedDescription)")
+            }
+            MirageInstrumentation.record(.clientConnectionFailed)
+            if requiresDisconnectCleanupAfterFailedConnect() {
+                await handleDisconnect(
+                    reason: error.localizedDescription,
+                    state: .disconnected,
+                    notifyDelegate: false
+                )
+            }
+            throw error
+        }
     }
 
     public func connect(
