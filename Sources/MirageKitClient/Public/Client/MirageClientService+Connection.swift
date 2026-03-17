@@ -432,6 +432,12 @@ extension MirageClientService {
 
         let interfaceType = preferredNetworkType.requiredInterfaceType
 
+        // Proactive NECP flush on macOS prevents the first TCP attempt from
+        // hitting the NECP TLV encoding bug that corrupts path parameters.
+        #if os(macOS)
+        await flushNECPPolicyState()
+        #endif
+
         do {
             return try await establishControlSession(
                 to: initialAttempt.endpoint,
@@ -447,7 +453,7 @@ extension MirageClientService {
                 throw firstError
             }
 
-            // Retry up to 2 more times with NECP flushes between attempts.
+            // Fallback retry — proactive flush above is the primary defense.
             // The macOS NECP TLV encoding bug corrupts path parameters system-wide.
             // Toggling P2P forces NECP to rebuild its cache. We retry the same
             // service endpoint instead of resolving via Bonjour (which also hangs
@@ -581,7 +587,7 @@ extension MirageClientService {
 
     /// Toggles `includePeerToPeer` on the Loom node configuration to force NECP
     /// to discard its cached (possibly corrupted) path parameters and rebuild them.
-    private func flushNECPPolicyState() async {
+    func flushNECPPolicyState() async {
         let original = networkConfig.enablePeerToPeer
         networkConfig.enablePeerToPeer = !original
         loomNode.configuration = networkConfig
