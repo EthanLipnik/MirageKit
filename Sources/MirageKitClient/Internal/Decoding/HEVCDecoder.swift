@@ -420,6 +420,10 @@ final class FrameReassembler: @unchecked Sendable {
     /// Callback for loss events (frame timeouts).
     var onFrameLoss: (@Sendable (StreamID) -> Void)?
 
+    /// Prevents repeated frame-loss signals for the same forward gap.
+    /// Set when a gap timeout fires; reset when `lastCompletedFrame` advances or on `reset()`.
+    var hasSignaledGapFrameLoss: Bool = false
+
     final class PendingFrame {
         let buffer: FrameBufferPool.Buffer
         var receivedMap: [Bool]

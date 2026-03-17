@@ -52,6 +52,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     private let state = Locked(State())
 
     private let onInputMessage: @Sendable (ControlMessage) -> Void
+    private let onPingMessage: @Sendable (ControlMessage) -> Void
     private let dispatchControlMessage: @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void
     private let onTerminal: @Sendable (TerminalReason) -> Void
     private let isFatalError: @Sendable (NWError) -> Bool
@@ -63,6 +64,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         maxReceiveBufferBytes: Int = LoomMessageLimits.maxReceiveBufferBytes,
         errorTimeoutSeconds: CFAbsoluteTime = 2.0,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
         isFatalError: @escaping @Sendable (NWError) -> Bool
@@ -72,6 +74,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.maxReceiveBufferBytes = max(8 * 1024, maxReceiveBufferBytes)
         self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
         self.onInputMessage = onInputMessage
+        self.onPingMessage = onPingMessage
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
         self.isFatalError = isFatalError
@@ -89,6 +92,7 @@ final class HostReceiveLoop: @unchecked Sendable {
             @escaping @Sendable (Data?, NWConnection.ContentContext?, Bool, NWError?) -> Void
         ) -> Void,
         onInputMessage: @escaping @Sendable (ControlMessage) -> Void,
+        onPingMessage: @escaping @Sendable (ControlMessage) -> Void,
         dispatchControlMessage: @escaping @Sendable (ControlMessage, @escaping @Sendable () -> Void) -> Void,
         onTerminal: @escaping @Sendable (TerminalReason) -> Void,
         isFatalError: @escaping @Sendable (NWError) -> Bool
@@ -99,6 +103,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         self.errorTimeoutSeconds = max(0.1, errorTimeoutSeconds)
         self.receiveChunk = receiveChunk
         self.onInputMessage = onInputMessage
+        self.onPingMessage = onPingMessage
         self.dispatchControlMessage = dispatchControlMessage
         self.onTerminal = onTerminal
         self.isFatalError = isFatalError
@@ -191,6 +196,7 @@ final class HostReceiveLoop: @unchecked Sendable {
 
     private func parseBufferedMessages() {
         var inputMessages: [ControlMessage] = []
+        var pingMessages: [ControlMessage] = []
         var controlMessages: [ControlMessage] = []
         var violationReason: String?
 
@@ -202,6 +208,8 @@ final class HostReceiveLoop: @unchecked Sendable {
                     parseOffset += consumed
                     if message.type == .inputEvent {
                         inputMessages.append(message)
+                    } else if message.type == .ping {
+                        pingMessages.append(message)
                     } else {
                         controlMessages.append(message)
                     }
@@ -226,6 +234,10 @@ final class HostReceiveLoop: @unchecked Sendable {
 
         for message in inputMessages {
             onInputMessage(message)
+        }
+
+        for message in pingMessages {
+            onPingMessage(message)
         }
 
         if !controlMessages.isEmpty {

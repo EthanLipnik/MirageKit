@@ -87,15 +87,11 @@ extension MirageHostService {
                     self.handleInputEventFast(message, from: clientContext.client)
                 }
             },
+            onPingMessage: { _ in
+                clientContext.sendBestEffort(ControlMessage(type: .pong))
+            },
             dispatchControlMessage: { [weak self] message, completion in
                 guard let self else {
-                    completion()
-                    return
-                }
-                // Fast-path: respond to pings immediately so heartbeats survive
-                // long-running control work (e.g. virtual display creation).
-                if message.type == .ping {
-                    clientContext.sendBestEffort(ControlMessage(type: .pong))
                     completion()
                     return
                 }

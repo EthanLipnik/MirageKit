@@ -59,6 +59,7 @@ struct HostReceiveLoopTests {
             onInputMessage: { _ in
                 inputCount.withLock { $0 += 1 }
             },
+            onPingMessage: { _ in },
             dispatchControlMessage: { _, completion in
                 controlCount.withLock { $0 += 1 }
                 DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.25) {
@@ -136,6 +137,7 @@ struct HostReceiveLoopTests {
                 completion(nil, nil, true, nil)
             },
             onInputMessage: { _ in },
+            onPingMessage: { _ in },
             dispatchControlMessage: { message, completion in
                 dispatched.withLock { $0.append(message) }
                 completion()
@@ -206,6 +208,7 @@ struct HostReceiveLoopTests {
                 completion(next.data, nil, next.isComplete, next.error)
             },
             onInputMessage: { _ in },
+            onPingMessage: { _ in },
             dispatchControlMessage: { _, completion in
                 completion()
             },
@@ -257,6 +260,7 @@ struct HostReceiveLoopTests {
                 completion(next.data, nil, next.isComplete, next.error)
             },
             onInputMessage: { _ in },
+            onPingMessage: { _ in },
             dispatchControlMessage: { _, completion in
                 completion()
             },

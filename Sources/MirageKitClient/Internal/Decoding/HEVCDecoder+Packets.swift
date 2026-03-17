@@ -262,8 +262,12 @@ extension FrameReassembler {
                 "Entering keyframe wait after timeout: pFrame=\(timeoutResult.timedOutPFrames), keyframe=\(timeoutResult.timedOutKeyframes), anchor=\(hasDeliveredKeyframeAnchor)"
             )
         }
-        if timeoutResult.shouldSignalFrameLoss {
+        if timeoutResult.timedOutPFrames + timeoutResult.timedOutKeyframes > 0 {
             shouldSignalFrameLoss = true
+        }
+        if timeoutResult.missingExpectedPFrameGapTimedOut, !hasSignaledGapFrameLoss {
+            shouldSignalFrameLoss = true
+            hasSignaledGapFrameLoss = true
         }
         lock.unlock()
 
@@ -367,6 +371,7 @@ extension FrameReassembler {
             purgeStaleKeyframesLocked()
 
             lastCompletedFrame = frameNumber
+            hasSignaledGapFrameLoss = false
             pendingFrames.removeValue(forKey: frameNumber)
 
             framesDelivered += 1
@@ -477,6 +482,7 @@ extension FrameReassembler {
         lastCompletedFrame = 0
         lastDeliveredKeyframe = 0
         hasDeliveredKeyframeAnchor = false
+        hasSignaledGapFrameLoss = false
         clearAwaitingKeyframe()
         beginAwaitingKeyframe()
         packetsDiscardedAwaitingKeyframe = 0
@@ -683,6 +689,7 @@ extension FrameReassembler {
         lastCompletedFrame = 0
         lastDeliveredKeyframe = 0
         hasDeliveredKeyframeAnchor = false
+        hasSignaledGapFrameLoss = false
         clearAwaitingKeyframe()
         droppedFrameCount = 0
         lastPacketReceivedTime = 0
