@@ -80,7 +80,20 @@ extension MirageHostService {
 
         await preemptExistingClientIfSuperseded(by: peerIdentity)
 
+        // Release stale slot reservation left by an incomplete cleanup.
+        // Safe because preemptExistingClientIfSuperseded already handled any
+        // same-device reconnect, so a non-nil singleClientSessionID with no
+        // tracked clients is genuinely orphaned.
+        if singleClientSessionID != nil, clientsBySessionID.isEmpty, connectedClients.isEmpty {
+            MirageLogger.host("Releasing stale client slot reservation \(singleClientSessionID!)")
+            singleClientSessionID = nil
+        }
+
         guard reserveSingleClientSlot(for: sessionID) else {
+            MirageLogger.host(
+                "Connection rejected: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
+                + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
+            )
             let controlChannel = try? await MirageControlChannel.accept(from: session)
             if let controlChannel {
                 let response = MirageSessionBootstrapResponse(

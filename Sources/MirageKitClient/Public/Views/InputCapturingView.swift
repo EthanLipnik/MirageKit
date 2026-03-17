@@ -1130,7 +1130,7 @@ public class InputCapturingView: UIView {
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
         let displayLayerFailed = metalView.hasDisplayLayerFailure
-        let shouldRequestRecovery = resignedActive || backgrounded || displayLayerFailed
+        let shouldRequestRecovery = backgrounded || displayLayerFailed
 
         if window != nil {
             metalView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)

@@ -92,6 +92,13 @@ extension MirageHostService {
                     completion()
                     return
                 }
+                // Fast-path: respond to pings immediately so heartbeats survive
+                // long-running control work (e.g. virtual display creation).
+                if message.type == .ping {
+                    clientContext.sendBestEffort(ControlMessage(type: .pong))
+                    completion()
+                    return
+                }
                 self.dispatchControlWork(clientID: clientContext.client.id, completion: completion) { [weak self] in
                     guard let self else { return }
                     guard let liveClientContext = self.clientsByID[clientContext.client.id] else { return }
@@ -141,9 +148,7 @@ extension MirageHostService {
                         )
                     }
 
-                    if self.clientsByID[clientContext.client.id] != nil {
-                        await self.disconnectClient(clientContext.client)
-                    }
+                    await self.disconnectClient(clientContext.client)
                 }
             },
             isFatalError: { [weak self] error in

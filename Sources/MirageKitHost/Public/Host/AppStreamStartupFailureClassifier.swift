@@ -70,7 +70,7 @@ enum AppStreamStartupFailureClassifier {
     static func isExpectedWindowStartupRaceError(_ error: Error) -> Bool {
         if let mirageError = error as? MirageError {
             switch mirageError {
-            case .streamNotFound, .windowNotFound:
+            case .streamNotFound, .windowNotFound, .protocolError:
                 return true
             default:
                 break

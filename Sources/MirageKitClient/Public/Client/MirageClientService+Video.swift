@@ -687,10 +687,16 @@ extension MirageClientService {
                 registrationRefreshCount &+= 1
                 if triggerKeyframe { sendKeyframeRequest(for: streamID) }
             } catch {
-                MirageLogger.error(
-                    .client,
-                    "Transport refresh (\(reason)) stream registration failed for stream \(streamID): \(error)"
-                )
+                if Self.isExpectedTransportTermination(error) {
+                    MirageLogger.client(
+                        "Transport refresh (\(reason)) stream \(streamID) cancelled (expected during path change)"
+                    )
+                } else {
+                    MirageLogger.error(
+                        .client,
+                        "Transport refresh (\(reason)) stream registration failed for stream \(streamID): \(error)"
+                    )
+                }
             }
         }
 

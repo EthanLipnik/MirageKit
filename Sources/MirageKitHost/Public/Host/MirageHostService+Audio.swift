@@ -39,11 +39,9 @@ extension MirageHostService {
 
         audioSourceStreamByClientID[clientID] = sourceStreamID
         guard mediaSecurityByClientID[clientID] != nil else {
-            MirageLogger.error(
-                .host,
-                "Cannot activate audio pipeline without registration security context for client \(clientID)"
+            MirageLogger.host(
+                "Deferring audio pipeline activation for client \(clientID) — security context not yet available"
             )
-            await stopAudioPipeline(for: clientID, reason: .disabled)
             return
         }
         let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
