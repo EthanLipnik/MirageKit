@@ -122,6 +122,9 @@ public final class MirageHostService {
     /// Whether the remote QUIC control listener is currently ready to accept connections.
     public internal(set) var remoteControlListenerReady = false
 
+    /// STUN keepalive that refreshes the NAT mapping for the QUIC listener port.
+    var stunKeepalive: LoomSTUNKeepalive?
+
     /// Called when host should resize a window before streaming begins.
     /// The callback receives the window and the target size in points.
     /// This allows the app to resize and center the window via Accessibility API.

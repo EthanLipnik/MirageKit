@@ -299,6 +299,13 @@ extension MirageHostService {
         let captureDisplayP3CoverageStatus = acquiredCaptureContext.p3CoverageStatus
         let captureDisplayColorSpace = acquiredCaptureContext.colorSpace
 
+        guard !disconnectingClientIDs.contains(clientContext.client.id),
+              clientsByID[clientContext.client.id] != nil else {
+            MirageLogger.host("Desktop stream client disconnected during virtual display acquisition; aborting startup")
+            await cleanupFailedDesktopStreamStartup(mode: mode)
+            throw MirageError.protocolError("Desktop stream client disconnected during startup")
+        }
+
         if let captureDisplayColorSpace, captureDisplayColorSpace != config.colorSpace {
             let requestedColorSpace = config.colorSpace
             config = config.withInternalOverrides(colorSpace: captureDisplayColorSpace)
@@ -366,6 +373,13 @@ extension MirageHostService {
                     MirageLogger.error(.host, error: error, message: "Failed to send desktop stream metrics: ")
                 }
             }
+        }
+
+        guard !disconnectingClientIDs.contains(clientContext.client.id),
+              clientsByID[clientContext.client.id] != nil else {
+            MirageLogger.host("Desktop stream client disconnected before stream activation; aborting startup")
+            await cleanupFailedDesktopStreamStartup(mode: mode)
+            throw MirageError.protocolError("Desktop stream client disconnected during startup")
         }
 
         desktopStreamContext = streamContext
@@ -481,6 +495,24 @@ extension MirageHostService {
             requestedPixelResolution: captureResolution
         )
         MirageInstrumentation.record(.hostStreamDesktopStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
+    }
+
+    /// Clean up virtual display and mirroring state after a failed desktop stream startup.
+    private func cleanupFailedDesktopStreamStartup(mode: MirageDesktopStreamMode) async {
+        if let vdID = desktopVirtualDisplayID {
+            if mode == .mirrored {
+                await disableDisplayMirroring(displayID: vdID)
+            }
+            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        }
+        desktopVirtualDisplayID = nil
+        desktopDisplayBounds = nil
+        desktopPrimaryPhysicalDisplayID = nil
+        desktopPrimaryPhysicalBounds = nil
+        sharedVirtualDisplayGeneration = 0
+        sharedVirtualDisplayScaleFactor = 1.0
+        mirroredDesktopDisplayIDs.removeAll()
+        desktopMirroringSnapshot.removeAll()
     }
 
     /// Stop the desktop stream

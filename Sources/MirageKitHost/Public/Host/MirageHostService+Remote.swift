@@ -27,10 +27,27 @@ extension MirageHostService {
             remoteControlListenerReady = false
             setRemoteControlPort(nil)
             remoteRelayPublicationState.reset()
+            stunKeepalive?.stop()
+            stunKeepalive = nil
             return
         }
 
         remoteControlListenerReady = remoteControlPort != nil
+
+        if remoteControlListenerReady, let localPort = remoteControlPort, stunKeepalive == nil {
+            let keepalive = LoomSTUNKeepalive(localPort: localPort)
+            stunKeepalive = keepalive
+            let initial = await keepalive.start()
+            if initial.reachable {
+                MirageLogger.host(
+                    "STUN keepalive started on port \(localPort), mapped=\(initial.mappedAddress ?? "?"):\(initial.mappedPort ?? 0)"
+                )
+            } else {
+                MirageLogger.host(
+                    "STUN keepalive started on port \(localPort) but initial probe failed: \(initial.failureReason ?? "unknown")"
+                )
+            }
+        }
     }
 
     @_spi(HostApp)
@@ -55,6 +72,20 @@ extension MirageHostService {
             return []
         }
 
+        // Prefer the keepalive's latest mapping when available — avoids running
+        // a fresh STUN probe on every heartbeat cycle, and the keepalive ensures
+        // the NAT mapping has been recently refreshed.
+        if let keepaliveResult = stunKeepalive?.latestResult,
+           keepaliveResult.reachable,
+           let address = keepaliveResult.mappedAddress,
+           let port = keepaliveResult.mappedPort,
+           loomNode.configuration.enabledDirectTransports.contains(.quic) {
+            let candidate = LoomRelayCandidate(transport: .quic, address: address, port: port)
+            MirageLogger.host("Remote candidate from keepalive: \(address):\(port)")
+            return [candidate]
+        }
+
+        // Fallback: run a one-shot STUN probe via the collector.
         let candidates = await LoomDirectCandidateCollector.collect(
             configuration: loomNode.configuration,
             listeningPorts: [.quic: localPort]
