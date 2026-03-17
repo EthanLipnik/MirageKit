@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 3/10/26.
 //
 
+#if os(macOS)
 import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
@@ -13,8 +14,6 @@ import Foundation
 import MirageKit
 import Loom
 import Security
-
-#if os(macOS)
 import IOKit.pwr_mgt
 
 package struct UnlockEnvironment: Sendable {
