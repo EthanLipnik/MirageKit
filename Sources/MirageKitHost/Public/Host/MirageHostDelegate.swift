@@ -66,7 +66,7 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
         -> Bool
 
     /// Called after an authenticated hello is accepted so the host can advertise whether
-    /// this client should remember remote relay access for future sessions.
+    /// this client should remember remote signaling access for future sessions.
     @MainActor
     func hostService(_ service: MirageHostService, remoteAccessAllowedFor deviceInfo: LoomPeerDeviceInfo)
         -> Bool

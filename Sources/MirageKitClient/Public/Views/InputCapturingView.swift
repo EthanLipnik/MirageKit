@@ -287,6 +287,9 @@ public class InputCapturingView: UIView {
         .rightGUI,
         .capsLock,
     ]
+    /// Key codes currently claimed by GCKeyboard (modifier+key combos).
+    /// Used to deduplicate against pressesBegan/pressesEnded which may fire for the same event.
+    var gcClaimedKeyCodes: Set<GCKeyCode> = []
     #endif
 
     /// Get current modifier state from held keyboard keys
@@ -402,6 +405,9 @@ public class InputCapturingView: UIView {
         heldModifierKeys.removeAll()
         softwareHeldModifiers = []
         capsLockEnabled = false
+        #if canImport(GameController)
+        gcClaimedKeyCodes.removeAll()
+        #endif
         updateSoftwareModifierButtons()
         sendModifierStateIfNeeded(force: true)
     }
@@ -1606,10 +1612,14 @@ private final class HardwareKeyboardCoordinator {
         let inputID = ObjectIdentifier(keyboardInput)
         guard installedKeyboardInputID != inputID else { return }
 
-        keyboardInput.keyChangedHandler = { [weak self] _, _, keyCode, _ in
-            guard InputCapturingView.hardwareModifierKeyCodes.contains(keyCode) else { return }
+        keyboardInput.keyChangedHandler = { [weak self] _, _, keyCode, isPressed in
+            let isModifier = InputCapturingView.hardwareModifierKeyCodes.contains(keyCode)
             Task { @MainActor [weak self] in
-                self?.handleModifierKeyChange()
+                if isModifier {
+                    self?.handleModifierKeyChange()
+                } else {
+                    self?.handleNonModifierKeyChange(keyCode: keyCode, isPressed: isPressed)
+                }
             }
         }
 
@@ -1624,6 +1634,13 @@ private final class HardwareKeyboardCoordinator {
             if view.heldModifierKeys.isEmpty { view.stopModifierRefresh() } else {
                 view.startModifierRefreshIfNeeded()
             }
+        }
+    }
+
+    private func handleNonModifierKeyChange(keyCode: GCKeyCode, isPressed: Bool) {
+        for view in views.allObjects {
+            guard view.window?.isKeyWindow == true, view.isFirstResponder else { continue }
+            view.handleGCKeyEvent(keyCode: keyCode, isPressed: isPressed)
         }
     }
 }

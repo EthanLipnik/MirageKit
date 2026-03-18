@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 3/12/26.
 //
-//  Sticky remote relay candidate publication policy tests.
+//  Sticky remote signaling candidate publication policy tests.
 //
 
 @_spi(HostApp) @testable import MirageKitHost

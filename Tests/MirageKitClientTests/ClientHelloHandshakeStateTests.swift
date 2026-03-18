@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 3/11/26.
 //
 
+@testable import Loom
 @testable import MirageKit
 @testable import MirageKitClient
 import Network
@@ -101,12 +102,17 @@ struct ClientHelloHandshakeStateTests {
     }
 
     @MainActor
-    @Test("Control transport parameters do not classify control as interactive video")
-    func controlTransportParametersDoNotUseInteractiveVideoQoS() {
-        let service = MirageClientService(deviceName: "Test Device")
-
-        let tcpParameters = service.controlParameters(for: .tcp)
-        let quicParameters = service.controlParameters(for: .quic)
+    @Test("Loom transport parameters use best-effort service class for control connections")
+    func loomTransportParametersUseBestEffortServiceClass() throws {
+        let tcpParameters = try LoomTransportParametersFactory.makeParameters(
+            for: .tcp,
+            enablePeerToPeer: false
+        )
+        let quicParameters = try LoomTransportParametersFactory.makeParameters(
+            for: .quic,
+            enablePeerToPeer: false,
+            quicALPN: ["mirage-v2"]
+        )
 
         #expect(tcpParameters.serviceClass == .bestEffort)
         #expect(quicParameters.serviceClass == .bestEffort)

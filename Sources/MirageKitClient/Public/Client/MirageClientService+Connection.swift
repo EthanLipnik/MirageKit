@@ -23,7 +23,6 @@ import AppKit
 enum MirageControlEndpointAttemptSource: String, Sendable {
     case direct = "direct"
     case bonjourService = "bonjour_service"
-    case resolvedBonjourService = "resolved_bonjour_service"
 }
 
 struct MirageControlEndpointAttempt: Sendable {
@@ -33,27 +32,6 @@ struct MirageControlEndpointAttempt: Sendable {
 
 @MainActor
 extension MirageClientService {
-    func controlParameters(for transport: ControlTransport) -> NWParameters {
-        switch transport {
-        case .tcp:
-            let parameters = NWParameters.tcp
-            parameters.includePeerToPeer = networkConfig.enablePeerToPeer
-            if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-                tcpOptions.noDelay = true
-                tcpOptions.enableKeepalive = true
-                tcpOptions.keepaliveInterval = 5
-            }
-            return parameters
-
-        case .quic:
-            let options = NWProtocolQUIC.Options(alpn: ["mirage-v2"])
-            let parameters = NWParameters(quic: options)
-            parameters.includePeerToPeer = networkConfig.enablePeerToPeer
-            parameters.allowLocalEndpointReuse = true
-            return parameters
-        }
-    }
-
     private var currentDeviceType: DeviceType {
         #if os(macOS)
         return .mac
@@ -430,87 +408,26 @@ extension MirageClientService {
         let initialAttempt = controlEndpointAttempts(for: host, transportKind: transportKind).first
             ?? MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)
 
-        let interfaceType = preferredNetworkType.requiredInterfaceType
-
-        // Proactive NECP flush on macOS prevents the first TCP attempt from
-        // hitting the NECP TLV encoding bug that corrupts path parameters.
-        #if os(macOS)
-        await flushNECPPolicyState()
-        #endif
-
-        do {
-            return try await establishControlSession(
-                to: initialAttempt.endpoint,
-                source: initialAttempt.source,
-                hostName: host.name,
-                transportKind: transportKind,
-                hello: hello,
-                attemptID: attemptID,
-                requiredInterfaceType: interfaceType
-            )
-        } catch let firstError {
-            guard shouldRetryWithResolvedBonjourEndpoint(for: host, after: firstError) else {
-                throw firstError
-            }
-
-            // Fallback retry — proactive flush above is the primary defense.
-            // The macOS NECP TLV encoding bug corrupts path parameters system-wide.
-            // Toggling P2P forces NECP to rebuild its cache. We retry the same
-            // service endpoint instead of resolving via Bonjour (which also hangs
-            // when NECP is corrupted since the resolver uses NWConnection internally).
-            for retryIndex in 1...2 {
-                try throwIfConnectAttemptIsStale(attemptID)
-                await flushNECPPolicyState()
-
-                MirageLogger.client(
-                    "NECP retry \(retryIndex)/2 for \(host.name) via \(initialAttempt.source.rawValue)"
-                )
-
-                do {
-                    return try await establishControlSession(
-                        to: initialAttempt.endpoint,
-                        source: initialAttempt.source,
-                        hostName: host.name,
-                        transportKind: transportKind,
-                        hello: hello,
-                        attemptID: attemptID,
-                        requiredInterfaceType: interfaceType
-                    )
-                } catch {
-                    if error is CancellationError {
-                        throw error
-                    }
-                    MirageLogger.client(
-                        "NECP retry \(retryIndex)/2 failed for \(host.name): \(error.localizedDescription)"
-                    )
-                    continue
-                }
-            }
-
-            throw firstError
-        }
+        return try await establishControlSession(
+            to: initialAttempt.endpoint,
+            source: initialAttempt.source,
+            hostName: host.name,
+            transportKind: transportKind,
+            hello: hello,
+            attemptID: attemptID,
+            requiredInterfaceType: preferredNetworkType.requiredInterfaceType
+        )
     }
 
     func controlEndpointAttempts(
         for host: LoomPeer,
-        transportKind _: LoomTransportKind,
-        resolvedBonjourEndpoint: NWEndpoint? = nil
+        transportKind _: LoomTransportKind
     ) -> [MirageControlEndpointAttempt] {
         guard case .service = host.endpoint else {
             return [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)]
         }
 
-        var attempts = [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .bonjourService)]
-        if let resolvedBonjourEndpoint,
-           resolvedBonjourEndpoint.debugDescription != host.endpoint.debugDescription {
-            attempts.append(
-                MirageControlEndpointAttempt(
-                    endpoint: resolvedBonjourEndpoint,
-                    source: .resolvedBonjourService
-                )
-            )
-        }
-        return attempts
+        return [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .bonjourService)]
     }
 
     private func establishControlSession(
@@ -520,7 +437,6 @@ extension MirageClientService {
         transportKind: LoomTransportKind,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
-        enablePeerToPeer: Bool? = nil,
         requiredInterfaceType: NWInterface.InterfaceType? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
@@ -533,7 +449,6 @@ extension MirageClientService {
                 to: endpoint,
                 using: transportKind,
                 hello: hello,
-                enablePeerToPeer: enablePeerToPeer,
                 requiredInterfaceType: requiredInterfaceType
             )
             let shouldCancelSession = await MainActor.run {
@@ -562,55 +477,6 @@ extension MirageClientService {
             clearPendingConnectTaskIfNeeded(for: attemptID)
             throw error
         }
-    }
-
-    private func shouldRetryWithResolvedBonjourEndpoint(
-        for host: LoomPeer,
-        after error: Error
-    ) -> Bool {
-        guard case .service = host.endpoint else {
-            return false
-        }
-        if error is CancellationError {
-            return false
-        }
-        if let error = error as? LoomError {
-            switch error {
-            case .authenticationFailed, .protocolError:
-                return false
-            default:
-                break
-            }
-        }
-        return true
-    }
-
-    /// Toggles `includePeerToPeer` on the Loom node configuration to force NECP
-    /// to discard its cached (possibly corrupted) path parameters and rebuild them.
-    func flushNECPPolicyState() async {
-        let original = networkConfig.enablePeerToPeer
-        networkConfig.enablePeerToPeer = !original
-        loomNode.configuration = networkConfig
-        try? await Task.sleep(for: .milliseconds(50))
-        networkConfig.enablePeerToPeer = original
-        loomNode.configuration = networkConfig
-        MirageLogger.client("Flushed NECP policy state (toggled P2P \(original) → \(!original) → \(original))")
-    }
-
-    private func resolvedBonjourFallbackEndpoint(
-        for host: LoomPeer,
-        transportKind: LoomTransportKind
-    ) async throws -> NWEndpoint {
-        let endpoint = try await MirageBonjourServiceEndpointResolver.resolve(
-            endpoint: host.endpoint,
-            advertisement: host.advertisement,
-            transportKind: transportKind,
-            enablePeerToPeer: networkConfig.enablePeerToPeer
-        )
-        MirageLogger.client(
-            "Resolved Bonjour fallback endpoint for \(host.name) transport=\(transportKind) endpoint=\(endpoint)"
-        )
-        return endpoint
     }
 
     /// Races `connectTask` against `controlSessionConnectTimeout` using a

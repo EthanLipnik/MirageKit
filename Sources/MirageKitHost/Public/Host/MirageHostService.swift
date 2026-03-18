@@ -480,6 +480,7 @@ public final class MirageHostService {
         if resolvedConfiguration.serviceType == Loom.serviceType {
             resolvedConfiguration.serviceType = MirageKit.serviceType
         }
+        resolvedConfiguration.quicALPN = ["mirage-v2"]
 
         let name = hostName ?? Host.current().localizedName ?? "Mac"
         let identityKeyID = Self.identityKeyID(for: MirageKit.identityManager)

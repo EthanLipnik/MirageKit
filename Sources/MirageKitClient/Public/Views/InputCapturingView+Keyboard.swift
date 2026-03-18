@@ -13,6 +13,48 @@ import GameController
 #endif
 
 extension InputCapturingView {
+    // MARK: - GCKeyboard Key Event Handling
+
+    #if canImport(GameController)
+    /// Handle a non-modifier key event from GCKeyboard.
+    /// Only claims the event when modifiers are held — without modifiers, pressesBegan
+    /// provides richer character data and is the better source.
+    func handleGCKeyEvent(keyCode: GCKeyCode, isPressed: Bool) {
+        // Only claim modifier+key combos; unmodified keys flow through pressesBegan
+        guard !heldModifierKeys.isEmpty else { return }
+
+        let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue))
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+
+        // Best-effort character lookup from the reverse map
+        let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
+
+        if isPressed {
+            gcClaimedKeyCodes.insert(keyCode)
+
+            let keyEvent = MirageKeyEvent(
+                keyCode: macKeyCode,
+                characters: character,
+                charactersIgnoringModifiers: character,
+                modifiers: keyboardModifiers
+            )
+            hideCursorForTypingUntilPointerMovement()
+            onInputEvent?(.keyDown(keyEvent))
+        } else {
+            // Only send key-up if we previously claimed this key
+            guard gcClaimedKeyCodes.remove(keyCode) != nil else { return }
+
+            let keyEvent = MirageKeyEvent(
+                keyCode: macKeyCode,
+                characters: character,
+                charactersIgnoringModifiers: character,
+                modifiers: keyboardModifiers
+            )
+            onInputEvent?(.keyUp(keyEvent))
+        }
+    }
+    #endif
+
     // MARK: - Keyboard Input (External Keyboard)
 
     private func modifierSnapshot(
@@ -105,6 +147,10 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
+                #if canImport(GameController)
+                // Skip if GCKeyboard already claimed this key (modifier+key combo)
+                if gcClaimedKeyCodes.contains(GCKeyCode(rawValue: key.keyCode.rawValue)) { continue }
+                #endif
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if !keyboardModifiers.contains(.command) { startKeyRepeat(for: press) }
                 hideCursorForTypingUntilPointerMovement()
@@ -141,6 +187,11 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
+                #if canImport(GameController)
+                // Skip if GCKeyboard already claimed this key (modifier+key combo)
+                let gcKey = GCKeyCode(rawValue: key.keyCode.rawValue)
+                if gcClaimedKeyCodes.contains(gcKey) { continue }
+                #endif
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyUp(keyEvent)) }
@@ -175,6 +226,11 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
+                #if canImport(GameController)
+                // Skip if GCKeyboard already claimed this key (modifier+key combo)
+                let gcKey = GCKeyCode(rawValue: key.keyCode.rawValue)
+                if gcClaimedKeyCodes.contains(gcKey) { continue }
+                #endif
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyUp(keyEvent)) }
@@ -410,31 +466,21 @@ extension InputCapturingView {
 
     // MARK: - System Shortcut Interception
 
-    /// Override keyCommands to intercept system shortcuts (CMD+W, CMD+Q, etc.)
-    /// and forward them to the host instead of letting iOS handle them
+    /// Override keyCommands to suppress iOS system-level actions (Stage Manager close,
+    /// quit, hide, minimize, settings) that would otherwise steal focus or dismiss the app.
+    /// When GCKeyboard is available, it handles the actual key forwarding — these commands
+    /// only need to exist to block iOS from acting on them. Without GCKeyboard, the
+    /// handler falls back to sending key events directly.
     override public var keyCommands: [UIKeyCommand]? {
         let passthroughShortcuts: [(String, UIKeyModifierFlags)] = [
-            ("w", .command), // Close window
+            ("w", .command), // Stage Manager window close
             ("q", .command), // Quit
-            (".", .command), // Cancel
             ("h", .command), // Hide
             ("m", .command), // Minimize
             (",", .command), // Settings
-            ("n", .command), // New
-            ("o", .command), // Open
-            ("s", .command), // Save
-            ("p", .command), // Print
-            ("z", .command), // Undo
-            ("z", [.command, .shift]), // Redo
-            ("a", .command), // Select all
-            ("c", .command), // Copy
-            ("x", .command), // Cut
-            ("v", .command), // Paste
-            ("f", .command), // Find
-            ("g", .command), // Find next
-            ("g", [.command, .shift]), // Find previous
-            ("t", .command), // New tab
             ("w", [.command, .shift]), // Close all
+            ("z", .command), // Undo (needed for key repeat)
+            ("z", [.command, .shift]), // Redo (needed for key repeat)
         ]
 
         return passthroughShortcuts.map { key, modifiers in
@@ -450,15 +496,30 @@ extension InputCapturingView {
 
     @objc
     func handlePassthroughShortcut(_ command: UIKeyCommand) {
-        // UIKeyCommand intercepts key events BEFORE pressesBegan is called
-        // So we must manually send the character key events here
         guard let input = command.input else { return }
 
         refreshModifiersForInput()
-        let macKeyCode = Self.characterToMacKeyCode(input)
 
-        // Build modifiers from the command's modifier flags merged with our tracked keyboard state.
-        // Keep shortcuts stateless so key commands don't pin modifier state.
+        #if canImport(GameController)
+        // When GCKeyboard is available, it already forwarded the key event.
+        // We only need to handle undo/redo repeat and keep modifiers synced.
+        if GCKeyboard.coalesced != nil {
+            let macKeyCode = Self.characterToMacKeyCode(input)
+            let commandModifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
+            let eventModifiers = keyboardModifiers.union(commandModifiers)
+            _ = startPassthroughShortcutRepeatIfNeeded(
+                input: input,
+                keyCode: macKeyCode,
+                modifiers: eventModifiers
+            )
+            refreshModifiersForInput()
+            updateModifierRefreshTimer()
+            return
+        }
+        #endif
+
+        // Fallback: no GCKeyboard — send key events directly
+        let macKeyCode = Self.characterToMacKeyCode(input)
         let commandModifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
         let eventModifiers = keyboardModifiers.union(commandModifiers)
 
@@ -480,8 +541,6 @@ extension InputCapturingView {
             )
         }
 
-        // Refresh hardware state to sync modifiers after shortcut handling.
-        // iOS doesn't call pressesEnded for modifiers during UIKeyCommand interception.
         refreshModifiersForInput()
         updateModifierRefreshTimer()
     }

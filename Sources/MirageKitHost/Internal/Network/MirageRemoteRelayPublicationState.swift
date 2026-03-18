@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 3/12/26.
 //
-//  Remote relay candidate publication policy for sticky QUIC host candidates.
+//  Remote signaling candidate publication policy for sticky QUIC host candidates.
 //
 
 #if os(macOS)

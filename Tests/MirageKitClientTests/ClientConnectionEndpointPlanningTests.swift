@@ -13,10 +13,9 @@ import Testing
 @Suite("Client Connection Endpoint Planning")
 struct ClientConnectionEndpointPlanningTests {
     @MainActor
-    @Test("Bonjour service endpoints prefer the raw service before one resolved fallback")
-    func bonjourServiceEndpointsPreferRawServiceBeforeResolvedFallback() throws {
+    @Test("Bonjour service endpoints return the raw service endpoint")
+    func bonjourServiceEndpointsReturnRawService() throws {
         let service = MirageClientService(deviceName: "Test Device")
-        let resolvedPort = try #require(NWEndpoint.Port(rawValue: 54_094))
         let host = LoomPeer(
             id: UUID(),
             name: "Ethan's Mac Studio",
@@ -37,27 +36,17 @@ struct ClientConnectionEndpointPlanningTests {
 
         let attempts = service.controlEndpointAttempts(
             for: host,
-            transportKind: .tcp,
-            resolvedBonjourEndpoint: .hostPort(host: NWEndpoint.Host("192.168.1.25"), port: resolvedPort)
+            transportKind: .tcp
         )
 
-        #expect(attempts.count == 2)
+        #expect(attempts.count == 1)
         #expect(attempts[0].source == .bonjourService)
-        #expect(attempts[1].source == .resolvedBonjourService)
 
         switch attempts[0].endpoint {
         case .service:
             break
         default:
-            Issue.record("Expected the first control endpoint attempt to keep the raw Bonjour service.")
-        }
-
-        switch attempts[1].endpoint {
-        case let .hostPort(host, port):
-            #expect(host.debugDescription == "192.168.1.25")
-            #expect(port == resolvedPort)
-        default:
-            Issue.record("Expected the resolved Bonjour fallback to use a numeric host/port endpoint.")
+            Issue.record("Expected the control endpoint attempt to keep the raw Bonjour service.")
         }
     }
 }

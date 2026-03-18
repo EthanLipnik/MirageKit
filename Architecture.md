@@ -140,11 +140,11 @@ Connection approval is also host-owned policy. `MirageHostService` distinguishes
 - local
   direct LAN or peer-to-peer sessions discovered through Bonjour or other local reachability
 - remote
-  direct QUIC sessions established from relay-published presence
+  direct QUIC sessions established from signaling-published presence
 
 That origin is passed into `MirageHostDelegate` so the app target can apply different approval policy without leaking app-specific trust rules into the package. Local sessions keep the existing trust-provider and manual-approval flow. Remote sessions are explicit opt-in: the app must decide whether a specific trusted client is allowed to reconnect over the internet.
 
-Remote relay authorization is intentionally not a package-level trust primitive. MirageKit only carries the handshake origin and the signed authorization result. The Mirage app targets own the persistence and UI for per-client remote grants.
+Remote signaling authorization is intentionally not a package-level trust primitive. MirageKit only carries the handshake origin and the signed authorization result. The Mirage app targets own the persistence and UI for per-client remote grants.
 
 Color depth is now negotiated as a capability-driven tier instead of exposing raw bit depth on the wire:
 
@@ -159,7 +159,11 @@ The host advertises supported color-depth tiers in peer metadata, clamps incomin
 
 Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active.
 
-Remote relay signaling remains a direct-QUIC reachability system. Mirage does not relay control traffic through signaling; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
+QUIC connections require ALPN negotiation. Both host and client set `quicALPN` on `LoomNetworkConfiguration` to `["mirage-v2"]` so that the Loom transport layer passes the ALPN token through to `NWProtocolQUIC.Options`. Without ALPN, the TLS 1.3 handshake embedded in QUIC will fail.
+
+Peer-to-peer (AWDL) transport is iOS/visionOS only. macOS always disables P2P at the app level because `includePeerToPeer = true` on TCP `NWParameters` triggers intermittent NECP TLV corruption in the macOS kernel, and real-world Mac-to-Mac traffic uses `en0` (WiFi/Ethernet), not `awdl0`.
+
+Remote signaling remains a direct-QUIC reachability system. Mirage does not forward control traffic through the signaling service; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
 
 When the host accepts a Loom-authenticated control session, the bootstrap response includes whether that client is currently allowed to reconnect remotely. Clients cache that remote capability only after Loom has authenticated the peer identity and Mirage has accepted the bootstrap request.
 
@@ -193,7 +197,9 @@ Recovery policy is package-owned inside `MirageKitClient`:
 - the first active-stream freeze uses bounded recovery, while repeated freezes escalate to the existing hard reset path
 - adaptive color-depth fallback for custom quality mode steps `ultra -> pro -> standard` and restores in the reverse order
 
-The client also tracks whether the connected host explicitly granted remote relay access in the accepted hello response. MirageKit does not decide how that grant is surfaced in app UI, but it exposes the signed result so the app can remember remote-capable hosts independently from CloudKit sharing.
+Client connection establishment is a single attempt with no retry logic. The client resolves endpoints through Bonjour service discovery and connects using the Loom node's `connect()` method, which handles transport parameter construction including ALPN for QUIC. Connection timeout is a fixed 3-second budget.
+
+The client also tracks whether the connected host explicitly granted remote signaling access in the accepted hello response. MirageKit does not decide how that grant is surfaced in app UI, but it exposes the signed result so the app can remember remote-capable hosts independently from CloudKit sharing.
 
 ## 6. Bootstrap Runtime (`Sources/MirageHostBootstrapRuntime`)
 

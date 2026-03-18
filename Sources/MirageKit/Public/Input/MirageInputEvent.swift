@@ -382,7 +382,7 @@ public extension MirageKeyEvent {
         .keypadEqualSign: 0x51,
     ]
 
-    private static func hidToMacKeyCode(_ hidCode: UIKeyboardHIDUsage) -> UInt16 {
+    public static func hidToMacKeyCode(_ hidCode: UIKeyboardHIDUsage) -> UInt16 {
         // For unmapped keys, return raw value (may not work correctly)
         hidToMacKeyCodeMap[hidCode] ?? UInt16(hidCode.rawValue)
     }

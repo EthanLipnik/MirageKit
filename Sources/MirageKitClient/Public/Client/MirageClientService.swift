@@ -432,7 +432,7 @@ public final class MirageClientService {
     /// Last host identity key ID validated by Loom session bootstrap.
     public internal(set) var connectedHostIdentityKeyID: String?
 
-    /// Whether the connected host explicitly allows this client to use remote relay.
+    /// Whether the connected host explicitly allows this client to use remote signaling.
     public internal(set) var connectedHostAllowsRemoteAccess: Bool?
 
     /// Session store for UI state and stream coordination.
@@ -481,9 +481,7 @@ public final class MirageClientService {
     let registrationRefreshJitterMs: UInt64 = 80
     /// User-selected preferred network type for connection racing.
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
-    var controlSessionConnectTimeout: Duration {
-        networkConfig.enablePeerToPeer ? .seconds(4) : .seconds(2)
-    }
+    let controlSessionConnectTimeout: Duration = .seconds(3)
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
     let bootstrapResponseTimeout: Duration = .seconds(30)
 
@@ -711,6 +709,7 @@ public final class MirageClientService {
         if resolvedConfiguration.serviceType == Loom.serviceType {
             resolvedConfiguration.serviceType = MirageKit.serviceType
         }
+        resolvedConfiguration.quicALPN = ["mirage-v2"]
 
         networkConfig = resolvedConfiguration
         loomNode = LoomNode(

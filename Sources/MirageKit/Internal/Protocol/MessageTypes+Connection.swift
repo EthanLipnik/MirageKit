@@ -47,7 +47,7 @@ package struct MirageSessionBootstrapResponse: Codable, Sendable {
     package let udpRegistrationToken: Data
     /// True when the host trust provider indicates a one-time auto-trust notice is appropriate.
     package let autoTrustGranted: Bool?
-    /// True when the host explicitly allows this client to reconnect over remote relay.
+    /// True when the host explicitly allows this client to reconnect over remote signaling.
     package let remoteAccessAllowed: Bool?
     /// Explicit rejection reason when `accepted` is false.
     package let rejectionReason: MirageSessionBootstrapRejectionReason?
