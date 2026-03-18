@@ -21,9 +21,10 @@ extension InputCapturingView {
     /// provides richer character data and is the better source.
     func handleGCKeyEvent(keyCode: GCKeyCode, isPressed: Bool) {
         // Only claim modifier+key combos; unmodified keys flow through pressesBegan
-        guard !heldModifierKeys.isEmpty else { return }
-
-        let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue))
+        guard !heldModifierKeys.isEmpty,
+              let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue))
+        else { return }
+        
         let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
 
         // Best-effort character lookup from the reverse map
