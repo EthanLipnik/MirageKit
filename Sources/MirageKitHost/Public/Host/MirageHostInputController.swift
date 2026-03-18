@@ -22,9 +22,7 @@ enum HostKeyboardInjectionDomain: CaseIterable, Sendable {
     case hid
 }
 
-/// Manages input event processing, batching, scroll smoothing, and injection for remote input.
-///
-/// Handles mouse batching, scroll smoothing (120Hz), and CGEvent injection on macOS hosts.
+/// Manages input event processing and CGEvent injection for remote input.
 public final class MirageHostInputController: @unchecked Sendable {
     // MARK: - Dependencies
 
@@ -41,15 +39,6 @@ public final class MirageHostInputController: @unchecked Sendable {
 
     /// Serial queue for blocking Accessibility API operations.
     let accessibilityQueue = DispatchQueue(label: "com.mirage.accessibility", qos: .userInteractive)
-
-    struct PointerLerpContext {
-        var type: CGEventType
-        var event: MirageMouseEvent
-        var frame: CGRect
-        var windowID: WindowID
-        var app: MirageApplication?
-        var isDesktop: Bool
-    }
 
     struct CachedInputWindowFrame {
         var streamFrame: CGRect
@@ -73,24 +62,11 @@ public final class MirageHostInputController: @unchecked Sendable {
         }
     }
 
-    // MARK: - Pointer Lerp State (accessed from accessibilityQueue only)
-
-    var pointerContext: PointerLerpContext?
-    var pointerCurrentLocation: CGPoint?
-    var pointerTargetLocation: CGPoint?
-    var pointerLastInputTime: TimeInterval = 0
-    var pointerLastSendTime: TimeInterval = 0
-
-    var pointerLerpTimer: DispatchSourceTimer?
     var lastWindowActivationTime: CFAbsoluteTime?
     var lastActivatedWindowID: WindowID?
     var inputWindowFrameCacheByWindowID: [WindowID: CachedInputWindowFrame] = [:]
     var activeRelativeResizeTaskByWindowID: [WindowID: Task<Void, any Error>] = [:]
 
-    let pointerOutputIntervalNanoseconds: Int = MirageInteractionCadence.frameInterval120Nanoseconds
-    let pointerLerpTimeConstant: TimeInterval = 0.025
-    let pointerStopDelay: TimeInterval = 0.05
-    let pointerSnapThreshold: CGFloat = 0.0005
     let inputWindowFrameRefreshInterval: CFAbsoluteTime = 0.05
     let inputWindowFrameCacheTTL: CFAbsoluteTime = 2.0
     let inputWindowFrameSourceTolerance: CGFloat = 6
@@ -203,44 +179,9 @@ public final class MirageHostInputController: @unchecked Sendable {
         return ModifierTransitionPlan(pressed: newlyPressed, released: newlyReleased)
     }
 
-    // MARK: - Scroll Rate Smoothing State (accessed from accessibilityQueue only)
-
-    /// Smoothed scroll rate in pixels per second.
-    var scrollRateX: CGFloat = 0
-    var scrollRateY: CGFloat = 0
-    var scrollTargetRateX: CGFloat = 0
-    var scrollTargetRateY: CGFloat = 0
-
-    /// Timestamp of last scroll input.
-    var lastScrollInputTime: TimeInterval = 0
-    var lastScrollOutputTime: TimeInterval = 0
-
-    /// Fractional remainders to preserve precision (batch scroll path).
-    var scrollRemainderX: CGFloat = 0
-    var scrollRemainderY: CGFloat = 0
-
     /// Fractional remainders for the direct injectScrollEvent path.
     var directScrollRemainderX: CGFloat = 0
     var directScrollRemainderY: CGFloat = 0
-
-    /// Context for scroll injection.
-    var scrollContext: (
-        frame: CGRect,
-        app: MirageApplication?,
-        location: CGPoint?,
-        modifiers: MirageModifierFlags,
-        isPrecise: Bool
-    )?
-
-    /// Timer for smooth scroll output (120Hz).
-    var scrollOutputTimer: DispatchSourceTimer?
-
-    /// Scroll smoothing constants.
-    let scrollLerpTimeConstant: TimeInterval = 0.025
-    let scrollRateDecay: CGFloat = 0.85
-    let scrollDecayDelay: TimeInterval = 0.03
-    let scrollRateThreshold: CGFloat = 10.0
-    let scrollOutputIntervalNanoseconds: Int = MirageInteractionCadence.frameInterval120Nanoseconds
 
     // MARK: - Gesture Translation State (accessed from accessibilityQueue only)
 

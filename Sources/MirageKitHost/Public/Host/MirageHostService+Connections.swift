@@ -208,6 +208,7 @@ extension MirageHostService {
 
             await activateDeferredAudioIfNeeded(clientID: client.id)
             startReceivingFromClient(clientContext: clientContext)
+            delegate?.hostService(self, didConnectClient: client)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
             await session.cancel()

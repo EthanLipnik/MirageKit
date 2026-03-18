@@ -1612,8 +1612,23 @@ private final class HardwareKeyboardCoordinator {
         let inputID = ObjectIdentifier(keyboardInput)
         guard installedKeyboardInputID != inputID else { return }
 
-        keyboardInput.keyChangedHandler = { [weak self] _, _, keyCode, isPressed in
+        keyboardInput.keyChangedHandler = { [weak self] keyboardInput, _, keyCode, isPressed in
             let isModifier = InputCapturingView.hardwareModifierKeyCodes.contains(keyCode)
+            if !isModifier, isPressed {
+                // Fast path: skip non-modifier key-down when no modifiers are held.
+                // handleGCKeyEvent would return early anyway, and creating Tasks for
+                // every key press interferes with UIKit's pressesBegan delivery.
+                let anyModifierHeld =
+                    keyboardInput.button(forKeyCode: .leftGUI)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .rightGUI)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .leftShift)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .rightShift)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .leftControl)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .rightControl)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .leftAlt)?.isPressed == true ||
+                    keyboardInput.button(forKeyCode: .rightAlt)?.isPressed == true
+                guard anyModifierHeld else { return }
+            }
             Task { @MainActor [weak self] in
                 if isModifier {
                     self?.handleModifierKeyChange()

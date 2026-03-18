@@ -20,31 +20,13 @@ extension InputCapturingView {
     /// Only claims the event when modifiers are held — without modifiers, pressesBegan
     /// provides richer character data and is the better source.
     func handleGCKeyEvent(keyCode: GCKeyCode, isPressed: Bool) {
-        // Only claim modifier+key combos; unmodified keys flow through pressesBegan
-        guard !heldModifierKeys.isEmpty,
-              let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue))
-        else { return }
-        
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
-
-        // Best-effort character lookup from the reverse map
-        let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
-
-        if isPressed {
-            gcClaimedKeyCodes.insert(keyCode)
-
-            let keyEvent = MirageKeyEvent(
-                keyCode: macKeyCode,
-                characters: character,
-                charactersIgnoringModifiers: character,
-                modifiers: keyboardModifiers
-            )
-            hideCursorForTypingUntilPointerMovement()
-            onInputEvent?(.keyDown(keyEvent))
-        } else {
-            // Only send key-up if we previously claimed this key
+        // Handle key-up first so gcClaimedKeyCodes is cleaned up even when
+        // modifiers have already been released by the time the key-up arrives.
+        if !isPressed {
             guard gcClaimedKeyCodes.remove(keyCode) != nil else { return }
-
+            guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return }
+            let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+            let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
             let keyEvent = MirageKeyEvent(
                 keyCode: macKeyCode,
                 characters: character,
@@ -52,7 +34,27 @@ extension InputCapturingView {
                 modifiers: keyboardModifiers
             )
             onInputEvent?(.keyUp(keyEvent))
+            return
         }
+
+        // Only claim modifier+key combos; unmodified keys flow through pressesBegan
+        guard !heldModifierKeys.isEmpty,
+              let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue))
+        else { return }
+
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
+
+        gcClaimedKeyCodes.insert(keyCode)
+
+        let keyEvent = MirageKeyEvent(
+            keyCode: macKeyCode,
+            characters: character,
+            charactersIgnoringModifiers: character,
+            modifiers: keyboardModifiers
+        )
+        hideCursorForTypingUntilPointerMovement()
+        onInputEvent?(.keyDown(keyEvent))
     }
     #endif
 
@@ -189,9 +191,10 @@ extension InputCapturingView {
                 }
             } else {
                 #if canImport(GameController)
-                // Skip if GCKeyboard already claimed this key (modifier+key combo)
+                // Skip if GCKeyboard already claimed this key (modifier+key combo).
+                // Use remove so cleanup happens from both paths.
                 let gcKey = GCKeyCode(rawValue: key.keyCode.rawValue)
-                if gcClaimedKeyCodes.contains(gcKey) { continue }
+                if gcClaimedKeyCodes.remove(gcKey) != nil { continue }
                 #endif
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
@@ -228,9 +231,10 @@ extension InputCapturingView {
                 }
             } else {
                 #if canImport(GameController)
-                // Skip if GCKeyboard already claimed this key (modifier+key combo)
+                // Skip if GCKeyboard already claimed this key (modifier+key combo).
+                // Use remove so cleanup happens from both paths.
                 let gcKey = GCKeyCode(rawValue: key.keyCode.rawValue)
-                if gcClaimedKeyCodes.contains(gcKey) { continue }
+                if gcClaimedKeyCodes.remove(gcKey) != nil { continue }
                 #endif
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }

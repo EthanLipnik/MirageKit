@@ -30,16 +30,6 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     @MainActor
     func hostService(_ service: MirageHostService, didDisconnectClient client: MirageConnectedClient)
 
-    /// Called when a client requests to stream a window
-    /// Return true to allow, false to deny
-    @MainActor
-    func hostService(
-        _ service: MirageHostService,
-        shouldAllowClient client: MirageConnectedClient,
-        toStreamWindow window: MirageWindow
-    )
-        -> Bool
-
     /// Called when an input event is received from a client
     @MainActor
     func hostService(
@@ -48,10 +38,6 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
         forWindow window: MirageWindow,
         fromClient client: MirageConnectedClient
     )
-
-    /// Called when an error occurs
-    @MainActor
-    func hostService(_ service: MirageHostService, didEncounterError error: Error)
 
     /// Called when the session state changes (locked, unlocked, sleeping, etc.)
     /// Use this to update UI or take action when the Mac becomes locked/unlocked
@@ -89,21 +75,10 @@ public extension MirageHostDelegate {
 
     func hostService(
         _: MirageHostService,
-        shouldAllowClient _: MirageConnectedClient,
-        toStreamWindow _: MirageWindow
-    )
-    -> Bool {
-        true
-    }
-
-    func hostService(
-        _: MirageHostService,
         didReceiveInputEvent _: MirageInputEvent,
         forWindow _: MirageWindow,
         fromClient _: MirageConnectedClient
     ) {}
-
-    func hostService(_: MirageHostService, didEncounterError _: Error) {}
 
     func hostService(_: MirageHostService, sessionStateChanged _: LoomSessionAvailability) {}
 
