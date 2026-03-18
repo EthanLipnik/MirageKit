@@ -7,12 +7,12 @@
 //  Blackout overlays and input blocking for Lights Out mode.
 //
 
+#if os(macOS)
 import AppKit
 import CoreGraphics
 import Foundation
 import MirageKit
 
-#if os(macOS)
 @MainActor
 final class HostLightsOutController {
     enum Target: Equatable {
