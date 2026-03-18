@@ -213,8 +213,10 @@ public extension MirageHostService {
             onScreenWindowsOnly: false // Include minimized/off-screen windows
         )
 
-        // Fetch extended metadata for alpha and visibility filtering
-        let metadata = fetchWindowMetadata()
+        // Fetch extended metadata for alpha and visibility filtering.
+        // Run off the main actor — CGWindowListCopyWindowInfo enumerates every
+        // window on the system and can block for seconds on busy machines.
+        let metadata = await Task.detached { fetchWindowMetadata() }.value
 
         var windows: [MirageWindow] = []
 

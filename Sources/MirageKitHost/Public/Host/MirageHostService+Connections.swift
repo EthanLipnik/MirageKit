@@ -206,6 +206,7 @@ extension MirageHostService {
             mediaEncryptionEnabledByClientID[client.id] = responseResult.response.mediaEncryptionEnabled
             singleClientSessionID = sessionID
 
+            await activateDeferredAudioIfNeeded(clientID: client.id)
             startReceivingFromClient(clientContext: clientContext)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")

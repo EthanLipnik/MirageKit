@@ -73,9 +73,12 @@ final class MirageHostSharedClipboardBridge {
     }
 
     private func pollPasteboard() {
+        let changeCount = pasteboard.changeCount
+        guard changeCount != clipboardState.lastObservedChangeCount else { return }
+
         switch clipboardState.observeLocalText(
             pasteboard.string(forType: .string),
-            changeCount: pasteboard.changeCount
+            changeCount: changeCount
         ) {
         case .ignore:
             break

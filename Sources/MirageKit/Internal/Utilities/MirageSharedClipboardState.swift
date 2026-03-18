@@ -46,6 +46,18 @@ package struct MirageSharedClipboardState: Sendable {
         lastObservedChangeCount = changeCount
     }
 
+    package mutating func observeInitialText(
+        _ text: String?,
+        changeCount: Int
+    ) -> MirageSharedClipboardObservationAction {
+        guard isActive else { return .ignore }
+        lastObservedChangeCount = changeCount
+        guard let validatedText = MirageSharedClipboard.validatedText(text) else {
+            return .ignore
+        }
+        return .send(validatedText)
+    }
+
     package mutating func observeLocalText(
         _ text: String?,
         changeCount: Int

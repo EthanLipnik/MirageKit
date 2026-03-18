@@ -24,6 +24,7 @@ final class MirageClientSharedClipboardBridge {
     private var clipboardState = MirageSharedClipboardState()
     private var pollTask: Task<Void, Never>?
     private var pasteboardObserver: NSObjectProtocol?
+    private var foregroundObserver: NSObjectProtocol?
     private var isActive = false
 
     init(
@@ -67,7 +68,20 @@ final class MirageClientSharedClipboardBridge {
 
     private func activate() {
         clipboardState.activate(changeCount: currentChangeCount())
+        sendInitialClipboardIfNeeded()
         startObservation()
+    }
+
+    private func sendInitialClipboardIfNeeded() {
+        switch clipboardState.observeInitialText(
+            currentClipboardText(),
+            changeCount: currentChangeCount()
+        ) {
+        case .ignore:
+            break
+        case let .send(text):
+            onLocalTextChanged(text, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
+        }
     }
 
     private func deactivate() {
@@ -76,6 +90,10 @@ final class MirageClientSharedClipboardBridge {
         if let pasteboardObserver {
             NotificationCenter.default.removeObserver(pasteboardObserver)
             self.pasteboardObserver = nil
+        }
+        if let foregroundObserver {
+            NotificationCenter.default.removeObserver(foregroundObserver)
+            self.foregroundObserver = nil
         }
         clipboardState.deactivate()
     }
@@ -100,13 +118,37 @@ final class MirageClientSharedClipboardBridge {
                 self?.observeLocalClipboardIfNeeded()
             }
         }
+
+        foregroundObserver = NotificationCenter.default.addObserver(
+            forName: UIApplication.didBecomeActiveNotification,
+            object: nil,
+            queue: nil
+        ) { [weak self] _ in
+            Task { @MainActor [weak self] in
+                self?.observeLocalClipboardIfNeeded()
+            }
+        }
+
+        // Polling fallback — slower than macOS since notifications are the primary path.
+        // UIPasteboard.changeCount is lightweight and does not trigger the paste banner.
+        pollTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                await observeLocalClipboardIfNeeded()
+            }
+        }
         #endif
     }
 
     private func observeLocalClipboardIfNeeded() {
+        let changeCount = currentChangeCount()
+        guard changeCount != clipboardState.lastObservedChangeCount else { return }
+
         switch clipboardState.observeLocalText(
             currentClipboardText(),
-            changeCount: currentChangeCount()
+            changeCount: changeCount
         ) {
         case .ignore:
             break

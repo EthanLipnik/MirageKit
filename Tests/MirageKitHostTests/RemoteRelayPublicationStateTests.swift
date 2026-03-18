@@ -43,7 +43,7 @@ struct RemoteRelayPublicationStateTests {
     func freshPublishBecomesSticky() {
         var state = MirageRemoteRelayPublicationState()
         let candidates = [
-            LoomRelayCandidate(
+            LoomRemoteCandidate(
                 transport: .quic,
                 address: "203.0.113.10",
                 port: 4433
@@ -69,7 +69,7 @@ struct RemoteRelayPublicationStateTests {
     func stickyCandidatesSurviveListenerUnavailable() {
         var state = MirageRemoteRelayPublicationState()
         let candidates = [
-            LoomRelayCandidate(
+            LoomRemoteCandidate(
                 transport: .quic,
                 address: "198.51.100.20",
                 port: 7443
@@ -89,7 +89,7 @@ struct RemoteRelayPublicationStateTests {
     func resetClearsStickyPublicationState() {
         var state = MirageRemoteRelayPublicationState()
         let candidates = [
-            LoomRelayCandidate(
+            LoomRemoteCandidate(
                 transport: .quic,
                 address: "192.0.2.44",
                 port: 9443
@@ -111,8 +111,8 @@ struct RemoteRelayPublicationStateTests {
     func multipleCandidatesPublishedTogether() {
         var state = MirageRemoteRelayPublicationState()
         let candidates = [
-            LoomRelayCandidate(transport: .quic, address: "203.0.113.10", port: 4433),
-            LoomRelayCandidate(transport: .tcp, address: "203.0.113.10", port: 8443),
+            LoomRemoteCandidate(transport: .quic, address: "203.0.113.10", port: 4433),
+            LoomRemoteCandidate(transport: .tcp, address: "203.0.113.10", port: 8443),
         ]
 
         let decision = state.decision(

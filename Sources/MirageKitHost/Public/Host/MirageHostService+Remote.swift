@@ -60,11 +60,11 @@ extension MirageHostService {
     }
 
     @_spi(HostApp)
-    public func recordRemoteRelayAdvertiseSuccess(candidates: [LoomRelayCandidate]) {
+    public func recordRemoteRelayAdvertiseSuccess(candidates: [LoomRemoteCandidate]) {
         remoteRelayPublicationState.recordPublishedCandidates(candidates)
     }
 
-    private func collectFreshRemoteCandidates() async -> [LoomRelayCandidate] {
+    private func collectFreshRemoteCandidates() async -> [LoomRemoteCandidate] {
         guard remoteTransportEnabled,
               remoteControlListenerReady,
               let localPort = remoteControlPort else {
@@ -80,7 +80,7 @@ extension MirageHostService {
            let address = keepaliveResult.mappedAddress,
            let port = keepaliveResult.mappedPort,
            loomNode.configuration.enabledDirectTransports.contains(.quic) {
-            let candidate = LoomRelayCandidate(transport: .quic, address: address, port: port)
+            let candidate = LoomRemoteCandidate(transport: .quic, address: address, port: port)
             MirageLogger.host("Remote candidate from keepalive: \(address):\(port)")
             return [candidate]
         }

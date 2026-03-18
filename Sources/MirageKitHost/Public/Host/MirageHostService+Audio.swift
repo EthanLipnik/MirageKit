@@ -84,6 +84,21 @@ extension MirageHostService {
         }
     }
 
+    func activateDeferredAudioIfNeeded(clientID: UUID) async {
+        guard let configuration = audioConfigurationByClientID[clientID],
+              let sourceStreamID = audioSourceStreamByClientID[clientID],
+              configuration.enabled,
+              audioPipelinesByClientID[clientID] == nil else {
+            return
+        }
+        MirageLogger.host("Retrying deferred audio activation for client \(clientID)")
+        await activateAudioForClient(
+            clientID: clientID,
+            sourceStreamID: sourceStreamID,
+            configuration: configuration
+        )
+    }
+
     func enqueueCapturedAudio(
         _ captured: CapturedAudioBuffer,
         from streamID: StreamID,

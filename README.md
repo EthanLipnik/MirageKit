@@ -198,7 +198,25 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 
 ## Permissions
 
-The macOS host uses ScreenCaptureKit and may require Screen Recording permission. To forward input or activate windows, the host app may also need Accessibility permission. Clients should have Local Network permission for Bonjour discovery.
+The macOS host uses ScreenCaptureKit and may require Screen Recording permission. To forward input or activate windows, the host app may also need Accessibility permission.
+
+### Local Network (Bonjour)
+
+Both the host and client need local network access for Bonjour discovery and advertising. Add the following to your app target's Info.plist:
+
+```xml
+<key>NSBonjourServices</key>
+<array>
+    <string>_mirage._tcp</string>
+</array>
+
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app uses the local network to discover and connect to nearby devices running Mirage.</string>
+```
+
+Without these keys, `NWBrowser` fails with error `-65555 (NoAuth)` and discovery will not work. In debug builds, MirageKit (via Loom) asserts on missing keys so you see a clear message instead of the opaque system error.
+
+For App Store distribution, you also need the `com.apple.developer.networking.multicast` entitlement. Request it through your Apple Developer account.
 
 ## Contributing
 

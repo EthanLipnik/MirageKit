@@ -29,6 +29,12 @@ extension MirageClientService {
                 }
                 guard case .connected = self.connectionState else { return }
 
+                // Active streams provide their own liveness signal via UDP packet flow.
+                guard self.controllersByStream.isEmpty else {
+                    consecutiveFailures = 0
+                    continue
+                }
+
                 // A quality-test ping already in flight proves the connection is alive.
                 guard self.pingContinuation == nil else {
                     consecutiveFailures = 0

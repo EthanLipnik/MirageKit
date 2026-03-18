@@ -26,11 +26,11 @@ public enum MirageRemoteRelayPublicationSource: Sendable, Equatable {
 @_spi(HostApp)
 public enum MirageRemoteRelayPublicationDecision: Sendable, Equatable {
     case `defer`(reason: MirageRemoteRelayPublicationReason)
-    case publish(candidates: [LoomRelayCandidate], source: MirageRemoteRelayPublicationSource)
+    case publish(candidates: [LoomRemoteCandidate], source: MirageRemoteRelayPublicationSource)
 }
 
 struct MirageRemoteRelayPublicationState: Sendable {
-    private(set) var lastPublishedCandidates: [LoomRelayCandidate]?
+    private(set) var lastPublishedCandidates: [LoomRemoteCandidate]?
 
     var hasPublishedCandidates: Bool {
         lastPublishedCandidates != nil
@@ -38,7 +38,7 @@ struct MirageRemoteRelayPublicationState: Sendable {
 
     func decision(
         listenerReady: Bool,
-        freshCandidates: [LoomRelayCandidate]
+        freshCandidates: [LoomRemoteCandidate]
     ) -> MirageRemoteRelayPublicationDecision {
         if !freshCandidates.isEmpty {
             return .publish(candidates: freshCandidates, source: .fresh)
@@ -52,7 +52,7 @@ struct MirageRemoteRelayPublicationState: Sendable {
         return .`defer`(reason: reason)
     }
 
-    mutating func recordPublishedCandidates(_ candidates: [LoomRelayCandidate]) {
+    mutating func recordPublishedCandidates(_ candidates: [LoomRemoteCandidate]) {
         lastPublishedCandidates = candidates
     }
 

@@ -78,6 +78,50 @@ struct SharedClipboardTests {
         #expect(MirageSharedClipboard.validatedText("clipboard") == "clipboard")
     }
 
+    @Test("Initial observation sends current text")
+    func initialObservationSendsText() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+        #expect(state.observeInitialText("hello", changeCount: 5) == .send("hello"))
+    }
+
+    @Test("Initial observation ignores nil and empty text")
+    func initialObservationIgnoresNilEmpty() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+        #expect(state.observeInitialText(nil, changeCount: 5) == .ignore)
+
+        state.activate(changeCount: 6)
+        #expect(state.observeInitialText("", changeCount: 6) == .ignore)
+    }
+
+    @Test("Initial observation ignores when inactive")
+    func initialObservationIgnoresInactive() {
+        var state = MirageSharedClipboardState()
+        #expect(state.observeInitialText("hello", changeCount: 5) == .ignore)
+    }
+
+    @Test("After initial observation, same changeCount is ignored by regular observeLocalText")
+    func initialObservationUpdatesChangeCount() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+        #expect(state.observeInitialText("hello", changeCount: 5) == .send("hello"))
+        #expect(state.observeLocalText("hello", changeCount: 5) == .ignore)
+        #expect(state.observeLocalText("updated", changeCount: 6) == .send("updated"))
+    }
+
+    @Test("Initial observation followed by remote write and echo suppression")
+    func initialObservationThenRemoteEcho() {
+        var state = MirageSharedClipboardState()
+        state.activate(changeCount: 5)
+        #expect(state.observeInitialText("local", changeCount: 5) == .send("local"))
+
+        state.recordRemoteWrite(text: "remote", changeCount: 6)
+        #expect(state.observeLocalText("remote", changeCount: 6) == .ignore)
+        #expect(state.pendingRemoteText == nil)
+        #expect(state.observeLocalText("new-local", changeCount: 7) == .send("new-local"))
+    }
+
     @Test("Shared clipboard uses changes-only activation baseline and suppresses remote echo once")
     func sharedClipboardStateMachine() {
         var state = MirageSharedClipboardState()
