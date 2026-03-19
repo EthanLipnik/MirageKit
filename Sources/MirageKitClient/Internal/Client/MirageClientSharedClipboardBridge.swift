@@ -26,6 +26,7 @@ final class MirageClientSharedClipboardBridge {
     private var pasteboardObserver: NSObjectProtocol?
     private var foregroundObserver: NSObjectProtocol?
     private var isActive = false
+    private var autoSync = true
 
     init(
         pollInterval: Duration = .milliseconds(250),
@@ -35,10 +36,19 @@ final class MirageClientSharedClipboardBridge {
         self.onLocalTextChanged = onLocalTextChanged
     }
 
-    func setActive(_ isActive: Bool) {
-        guard self.isActive != isActive else { return }
+    func setActive(_ isActive: Bool, autoSync: Bool = true) {
+        let wasActive = self.isActive
+        let wasAutoSync = self.autoSync
+        self.autoSync = autoSync
+
+        if isActive == wasActive, autoSync == wasAutoSync { return }
+
         self.isActive = isActive
         if isActive {
+            if wasActive {
+                // Mode changed while active — restart observation.
+                deactivate()
+            }
             activate()
         } else {
             deactivate()
@@ -66,9 +76,17 @@ final class MirageClientSharedClipboardBridge {
         #endif
     }
 
+    func injectLocalClipboardText(_ text: String) {
+        guard let validatedText = MirageSharedClipboard.validatedText(text) else { return }
+        clipboardState.updateChangeCount(currentChangeCount())
+        onLocalTextChanged(validatedText, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
+    }
+
     private func activate() {
         clipboardState.activate(changeCount: currentChangeCount())
-        sendInitialClipboardIfNeeded()
+        if autoSync {
+            sendInitialClipboardIfNeeded()
+        }
         startObservation()
     }
 
@@ -115,7 +133,7 @@ final class MirageClientSharedClipboardBridge {
             queue: nil
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.observeLocalClipboardIfNeeded()
+                self?.observeOrTrackClipboard()
             }
         }
 
@@ -125,7 +143,7 @@ final class MirageClientSharedClipboardBridge {
             queue: nil
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.observeLocalClipboardIfNeeded()
+                self?.observeOrTrackClipboard()
             }
         }
 
@@ -136,10 +154,22 @@ final class MirageClientSharedClipboardBridge {
             while !Task.isCancelled {
                 try? await Task.sleep(for: .seconds(1))
                 if Task.isCancelled { return }
-                await observeLocalClipboardIfNeeded()
+                observeOrTrackClipboard()
             }
         }
         #endif
+    }
+
+    private func observeOrTrackClipboard() {
+        if autoSync {
+            observeLocalClipboardIfNeeded()
+        } else {
+            trackChangeCountOnly()
+        }
+    }
+
+    private func trackChangeCountOnly() {
+        clipboardState.updateChangeCount(currentChangeCount())
     }
 
     private func observeLocalClipboardIfNeeded() {

@@ -27,6 +27,7 @@ struct SharedClipboardPolicyTests {
             !MirageClientService.shouldEnableSharedClipboard(
                 connectionState: .disconnected,
                 hostSharedClipboardEnabled: true,
+                clientClipboardSharingEnabled: true,
                 hasAppStreams: true,
                 hasDesktopStream: false
             )
@@ -35,6 +36,7 @@ struct SharedClipboardPolicyTests {
             !MirageClientService.shouldEnableSharedClipboard(
                 connectionState: .connected(host: "Host"),
                 hostSharedClipboardEnabled: false,
+                clientClipboardSharingEnabled: true,
                 hasAppStreams: true,
                 hasDesktopStream: false
             )
@@ -43,6 +45,7 @@ struct SharedClipboardPolicyTests {
             !MirageClientService.shouldEnableSharedClipboard(
                 connectionState: .connected(host: "Host"),
                 hostSharedClipboardEnabled: true,
+                clientClipboardSharingEnabled: true,
                 hasAppStreams: false,
                 hasDesktopStream: false
             )
@@ -51,6 +54,7 @@ struct SharedClipboardPolicyTests {
             MirageClientService.shouldEnableSharedClipboard(
                 connectionState: .connected(host: "Host"),
                 hostSharedClipboardEnabled: true,
+                clientClipboardSharingEnabled: true,
                 hasAppStreams: true,
                 hasDesktopStream: false
             )
@@ -59,6 +63,7 @@ struct SharedClipboardPolicyTests {
             MirageClientService.shouldEnableSharedClipboard(
                 connectionState: .connected(host: "Host"),
                 hostSharedClipboardEnabled: true,
+                clientClipboardSharingEnabled: true,
                 hasAppStreams: false,
                 hasDesktopStream: true
             )

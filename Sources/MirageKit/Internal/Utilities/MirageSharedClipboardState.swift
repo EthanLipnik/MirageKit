@@ -41,6 +41,10 @@ package struct MirageSharedClipboardState: Sendable {
         pendingRemoteText = nil
     }
 
+    package mutating func updateChangeCount(_ changeCount: Int) {
+        lastObservedChangeCount = changeCount
+    }
+
     package mutating func recordRemoteWrite(text: String, changeCount: Int) {
         pendingRemoteText = text
         lastObservedChangeCount = changeCount

@@ -239,6 +239,10 @@ public final class MirageClientService {
     public internal(set) var hostSessionState: LoomSessionAvailability?
     /// Whether the host currently allows shared clipboard for this connection.
     public internal(set) var sharedClipboardEnabled: Bool = false
+    /// Whether the client-side clipboard sharing setting is enabled (Off = false).
+    public var clientClipboardSharingEnabled: Bool = true
+    /// Whether the client should automatically sync clipboard changes (Continuous = true, On Paste = false).
+    public var clientClipboardAutoSync: Bool = true
     /// Selected protocol features from handshake negotiation.
     var negotiatedFeatures: MirageFeatureSet = []
     /// Whether media payload encryption is active for the current host session.

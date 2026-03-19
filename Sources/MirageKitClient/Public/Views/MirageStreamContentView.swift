@@ -352,6 +352,13 @@ public struct MirageStreamContentView: View {
                 onToggleDictationShortcut?()
                 return
             }
+
+            // Intercept Cmd+V on iOS to sync clipboard to host before the paste keypress arrives.
+            #if canImport(UIKit)
+            if keyEvent.keyCode == 0x09, keyEvent.modifiers.contains(.command) {
+                clientService.syncLocalClipboardToHost()
+            }
+            #endif
         }
 
         guard canSendInputToHost else { return }

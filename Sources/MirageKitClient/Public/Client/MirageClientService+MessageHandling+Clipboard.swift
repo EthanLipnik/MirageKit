@@ -33,6 +33,7 @@ extension MirageClientService {
         guard Self.shouldEnableSharedClipboard(
             connectionState: connectionState,
             hostSharedClipboardEnabled: sharedClipboardEnabled,
+            clientClipboardSharingEnabled: clientClipboardSharingEnabled,
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamID != nil
         ) else {

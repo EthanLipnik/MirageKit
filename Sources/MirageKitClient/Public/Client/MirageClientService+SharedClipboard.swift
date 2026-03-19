@@ -8,16 +8,22 @@
 import Foundation
 import MirageKit
 
+#if canImport(UIKit)
+import UIKit
+#endif
+
 @MainActor
 extension MirageClientService {
     nonisolated static func shouldEnableSharedClipboard(
         connectionState: ConnectionState,
         hostSharedClipboardEnabled: Bool,
+        clientClipboardSharingEnabled: Bool,
         hasAppStreams: Bool,
         hasDesktopStream: Bool
     ) -> Bool {
         guard case .connected = connectionState else { return false }
         guard hostSharedClipboardEnabled else { return false }
+        guard clientClipboardSharingEnabled else { return false }
         return hasAppStreams || hasDesktopStream
     }
 
@@ -25,15 +31,34 @@ extension MirageClientService {
         let shouldEnable = Self.shouldEnableSharedClipboard(
             connectionState: connectionState,
             hostSharedClipboardEnabled: sharedClipboardEnabled,
+            clientClipboardSharingEnabled: clientClipboardSharingEnabled,
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamID != nil
         )
 
         if shouldEnable {
-            ensureSharedClipboardBridge().setActive(true)
+            ensureSharedClipboardBridge().setActive(true, autoSync: clientClipboardAutoSync)
         } else {
             sharedClipboardBridge?.setActive(false)
         }
+    }
+
+    /// Updates the client-side clipboard sharing preferences and refreshes bridge state.
+    public func updateClipboardPreferences(enabled: Bool, autoSync: Bool) {
+        clientClipboardSharingEnabled = enabled
+        clientClipboardAutoSync = autoSync
+        refreshSharedClipboardBridgeState()
+    }
+
+    /// Reads the local clipboard and sends it to the host. Called on Cmd+V in on-paste mode.
+    public func syncLocalClipboardToHost() {
+        guard case .connected = connectionState,
+              sharedClipboardEnabled,
+              clientClipboardSharingEnabled else { return }
+        #if canImport(UIKit)
+        guard let text = UIPasteboard.general.string else { return }
+        ensureSharedClipboardBridge().injectLocalClipboardText(text)
+        #endif
     }
 
     func sendSharedClipboardUpdate(
