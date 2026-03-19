@@ -486,6 +486,9 @@ extension InputCapturingView {
             ("w", [.command, .shift]), // Close all
             ("z", .command), // Undo (needed for key repeat)
             ("z", [.command, .shift]), // Redo (needed for key repeat)
+            ("b", .command), // Bold (system text formatting)
+            ("i", .command), // Italic (system text formatting)
+            ("u", .command), // Underline (system text formatting)
         ]
 
         return passthroughShortcuts.map { key, modifiers in

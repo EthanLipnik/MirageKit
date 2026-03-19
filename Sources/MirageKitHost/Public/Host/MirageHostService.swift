@@ -125,6 +125,9 @@ public final class MirageHostService {
     /// STUN keepalive that refreshes the NAT mapping for the QUIC listener port.
     var stunKeepalive: LoomSTUNKeepalive?
 
+    /// NAT-PMP / PCP port mapping that provides a stable external port.
+    var natPortMapping: LoomNATPortMapping?
+
     /// Called when host should resize a window before streaming begins.
     /// The callback receives the window and the target size in points.
     /// This allows the app to resize and center the window via Accessibility API.

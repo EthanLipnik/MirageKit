@@ -28,6 +28,8 @@ extension MirageHostService {
             remoteRelayPublicationState.reset()
             stunKeepalive?.stop()
             stunKeepalive = nil
+            natPortMapping?.stop()
+            natPortMapping = nil
             return
         }
 
@@ -45,6 +47,22 @@ extension MirageHostService {
                 MirageLogger.host(
                     "STUN keepalive started on port \(localPort) but initial probe failed: \(initial.failureReason ?? "unknown")"
                 )
+            }
+
+            // Request a NAT-PMP / PCP port mapping for a stable external port.
+            // This is preferred over STUN for aggressive or symmetric NATs.
+            if natPortMapping == nil {
+                let mapping = LoomNATPortMapping()
+                natPortMapping = mapping
+                if let result = await mapping.start(localPort: localPort) {
+                    MirageLogger.host(
+                        "NAT-PMP mapping active: external=\(result.externalAddress):\(result.externalPort) → local=\(localPort) ttl=\(result.ttlSeconds)s"
+                    )
+                } else {
+                    MirageLogger.host(
+                        "NAT-PMP not supported by router — using STUN candidates only"
+                    )
+                }
             }
         }
     }
@@ -71,31 +89,56 @@ extension MirageHostService {
             return []
         }
 
-        // Prefer the keepalive's latest mapping when available — avoids running
-        // a fresh STUN probe on every heartbeat cycle, and the keepalive ensures
-        // the NAT mapping has been recently refreshed.
+        guard loomNode.configuration.enabledDirectTransports.contains(.quic) else {
+            return []
+        }
+
+        var candidates: [LoomRemoteCandidate] = []
+
+        // Prefer NAT-PMP / PCP mapping — provides a stable external port that
+        // doesn't change between keepalive probes, reliable through symmetric NATs.
+        if let mapping = natPortMapping?.latestMapping {
+            let candidate = LoomRemoteCandidate(
+                transport: .quic,
+                address: mapping.externalAddress,
+                port: mapping.externalPort
+            )
+            candidates.append(candidate)
+            MirageLogger.host("Remote candidate from NAT-PMP: \(mapping.externalAddress):\(mapping.externalPort)")
+        }
+
+        // Also include the STUN keepalive candidate for redundancy — some
+        // routers don't support NAT-PMP but the STUN mapping may still work.
         if let keepaliveResult = stunKeepalive?.latestResult,
            keepaliveResult.reachable,
            let address = keepaliveResult.mappedAddress,
-           let port = keepaliveResult.mappedPort,
-           loomNode.configuration.enabledDirectTransports.contains(.quic) {
-            let candidate = LoomRemoteCandidate(transport: .quic, address: address, port: port)
-            MirageLogger.host("Remote candidate from keepalive: \(address):\(port)")
-            return [candidate]
+           let port = keepaliveResult.mappedPort {
+            let stunCandidate = LoomRemoteCandidate(transport: .quic, address: address, port: port)
+            // Only add if it differs from the NAT-PMP candidate.
+            if !candidates.contains(stunCandidate) {
+                candidates.append(stunCandidate)
+                MirageLogger.host("Remote candidate from STUN keepalive: \(address):\(port)")
+            } else {
+                MirageLogger.host("Remote candidate from keepalive: \(address):\(port) (same as NAT-PMP)")
+            }
+        }
+
+        if !candidates.isEmpty {
+            return candidates
         }
 
         // Fallback: run a one-shot STUN probe via the collector.
-        let candidates = await LoomDirectCandidateCollector.collect(
+        let collectedCandidates = await LoomDirectCandidateCollector.collect(
             configuration: loomNode.configuration,
             listeningPorts: [.quic: localPort]
         )
-        MirageLogger.host("Remote candidate collection completed: \(candidates.count) candidate(s)")
-        for candidate in candidates {
+        MirageLogger.host("Remote candidate collection completed: \(collectedCandidates.count) candidate(s)")
+        for candidate in collectedCandidates {
             MirageLogger.host(
                 "  candidate transport=\(candidate.transport) address=\(candidate.address) port=\(candidate.port)"
             )
         }
-        return candidates
+        return collectedCandidates
     }
 }
 #endif

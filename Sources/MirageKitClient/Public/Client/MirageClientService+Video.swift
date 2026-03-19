@@ -802,7 +802,6 @@ extension MirageClientService {
                 try await sendStreamRegistration(streamID: streamID)
             } catch {
                 MirageLogger.error(.client, error: error, message: "Stream recovery registration failed: ")
-                stopVideoConnection()
             }
         }
     }
