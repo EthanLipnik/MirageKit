@@ -419,6 +419,10 @@ public final class MirageClientService {
     /// Set this before calling connect(to:) to enable iCloud-based auto-trust.
     public var iCloudUserID: String?
 
+    /// Extra metadata to include in the client's peer advertisement.
+    /// Set key-value pairs before calling connect(to:) so the host receives them during handshake.
+    public var additionalAdvertisementMetadata: [String: String] = [:]
+
     /// Identity manager used for Loom authenticated sessions.
     public var identityManager: LoomIdentityManager? {
         didSet {

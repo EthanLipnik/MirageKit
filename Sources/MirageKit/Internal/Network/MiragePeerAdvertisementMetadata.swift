@@ -47,13 +47,15 @@ package enum MiragePeerAdvertisementMetadata {
     package static func makeClientAdvertisement(
         deviceID: UUID,
         deviceType: DeviceType,
-        identityKeyID: String
+        identityKeyID: String,
+        additionalMetadata: [String: String] = [:]
     ) -> LoomPeerAdvertisement {
         LoomPeerAdvertisement(
             protocolVersion: Int(Loom.protocolVersion),
             deviceID: deviceID,
             identityKeyID: identityKeyID,
-            deviceType: deviceType
+            deviceType: deviceType,
+            metadata: additionalMetadata
         )
     }
 

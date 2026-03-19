@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Loom
 import MirageKit
 
 #if os(macOS)
@@ -28,6 +29,7 @@ public struct MirageConnectedClient: Identifiable, Sendable {
     public let identityKeyID: String?
     public let autoTrustGranted: Bool
     public let connectionOrigin: MirageHostConnectionOrigin
+    public let peerAdvertisement: LoomPeerAdvertisement
 
     public init(
         id: UUID,
@@ -36,7 +38,8 @@ public struct MirageConnectedClient: Identifiable, Sendable {
         connectedAt: Date,
         identityKeyID: String? = nil,
         autoTrustGranted: Bool = false,
-        connectionOrigin: MirageHostConnectionOrigin = .local
+        connectionOrigin: MirageHostConnectionOrigin = .local,
+        peerAdvertisement: LoomPeerAdvertisement = LoomPeerAdvertisement()
     ) {
         self.id = id
         self.name = name
@@ -45,6 +48,7 @@ public struct MirageConnectedClient: Identifiable, Sendable {
         self.identityKeyID = identityKeyID
         self.autoTrustGranted = autoTrustGranted
         self.connectionOrigin = connectionOrigin
+        self.peerAdvertisement = peerAdvertisement
     }
 }
 

@@ -50,7 +50,8 @@ extension MirageClientService {
         let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
             deviceID: deviceID,
             deviceType: currentDeviceType,
-            identityKeyID: identity.keyID
+            identityKeyID: identity.keyID,
+            additionalMetadata: additionalAdvertisementMetadata
         )
         return LoomSessionHelloRequest(
             deviceID: deviceID,

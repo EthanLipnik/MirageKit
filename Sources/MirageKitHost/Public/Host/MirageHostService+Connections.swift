@@ -186,7 +186,8 @@ extension MirageHostService {
                 connectedAt: .now,
                 identityKeyID: peerIdentity.identityKeyID,
                 autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice,
-                connectionOrigin: origin
+                connectionOrigin: origin,
+                peerAdvertisement: context.peerAdvertisement
             )
 
             let clientContext = ClientContext(
