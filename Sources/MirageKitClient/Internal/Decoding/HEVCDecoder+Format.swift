@@ -13,6 +13,37 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
+enum AVCCValidationResult: Equatable, Sendable {
+    case valid
+    case empty
+    case annexBDetected
+    case zeroLengthNAL(offset: Int)
+    case truncatedNAL(offset: Int, declared: Int, available: Int)
+    case trailingBytes(validEnd: Int, totalCount: Int)
+
+    var isValid: Bool {
+        if case .valid = self { return true }
+        return false
+    }
+
+    var logSummary: String {
+        switch self {
+        case .valid:
+            "valid"
+        case .empty:
+            "empty payload"
+        case .annexBDetected:
+            "Annex-B start codes detected (not AVCC)"
+        case let .zeroLengthNAL(offset):
+            "zero-length NAL at offset \(offset)"
+        case let .truncatedNAL(offset, declared, available):
+            "truncated NAL at offset \(offset): declared \(declared) bytes, only \(available) available"
+        case let .trailingBytes(validEnd, totalCount):
+            "trailing bytes: valid data ends at \(validEnd), total \(totalCount) (\(totalCount - validEnd) extra bytes)"
+        }
+    }
+}
+
 extension HEVCDecoder {
     func extractFormatDescriptionAndStripParameterSets(from data: Data) throws -> Data {
         // Check for framed keyframe format (4-byte length prefix + Annex B parameter sets + AVCC frame data)
@@ -210,9 +241,13 @@ extension HEVCDecoder {
     }
 
     func isValidLengthPrefixedHEVCBitstream(_ data: Data) -> Bool {
-        guard !data.isEmpty else { return false }
+        validateLengthPrefixedHEVCBitstream(data).isValid
+    }
+
+    func validateLengthPrefixedHEVCBitstream(_ data: Data) -> AVCCValidationResult {
+        guard !data.isEmpty else { return .empty }
         if data.starts(with: [0x00, 0x00, 0x00, 0x01]) || data.starts(with: [0x00, 0x00, 0x01]) {
-            return false
+            return .annexBDetected
         }
 
         var cursor = 0
@@ -222,14 +257,47 @@ extension HEVCDecoder {
                 Int(data[cursor + 1]) << 16 |
                 Int(data[cursor + 2]) << 8 |
                 Int(data[cursor + 3])
-            guard nalLength > 0 else { return false }
+            guard nalLength > 0 else { return .zeroLengthNAL(offset: cursor) }
 
-            cursor += 4
-            guard cursor + nalLength <= count else { return false }
-            cursor += nalLength
+            let nalEnd = cursor + 4 + nalLength
+            guard nalEnd <= count else {
+                return .truncatedNAL(offset: cursor, declared: nalLength, available: count - cursor - 4)
+            }
+            cursor = nalEnd
         }
 
-        return cursor == count
+        guard cursor == count else { return .trailingBytes(validEnd: cursor, totalCount: count) }
+        return .valid
+    }
+
+    /// Walk AVCC 4-byte length prefixes, accumulating valid NAL units.
+    /// Returns `data.prefix(lastValidCursor)` if at least one NAL was valid, or `nil` if unusable.
+    func trimToValidAVCCBoundary(_ data: Data) -> Data? {
+        guard !data.isEmpty else { return nil }
+        if data.starts(with: [0x00, 0x00, 0x00, 0x01]) || data.starts(with: [0x00, 0x00, 0x01]) {
+            return nil
+        }
+
+        var cursor = 0
+        var lastValidCursor = 0
+        let count = data.count
+
+        while cursor + 4 <= count {
+            let nalLength = Int(data[cursor]) << 24 |
+                Int(data[cursor + 1]) << 16 |
+                Int(data[cursor + 2]) << 8 |
+                Int(data[cursor + 3])
+            guard nalLength > 0 else { break }
+
+            let nalEnd = cursor + 4 + nalLength
+            guard nalEnd <= count else { break }
+
+            cursor = nalEnd
+            lastValidCursor = cursor
+        }
+
+        guard lastValidCursor > 0 else { return nil }
+        return data.prefix(lastValidCursor)
     }
 
     private func updateFormatDescription(vpsData: Data, spsData: Data, ppsData: Data) throws {

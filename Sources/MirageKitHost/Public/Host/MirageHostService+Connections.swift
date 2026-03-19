@@ -69,6 +69,8 @@ extension MirageHostService {
             return
         }
 
+        delegate?.hostService(self, didDiscoverPeerWithAdvertisement: context.peerAdvertisement)
+
         let peerIdentity = context.peerIdentity
         let sessionID = session.id
         let remoteEndpoint = await session.remoteEndpoint

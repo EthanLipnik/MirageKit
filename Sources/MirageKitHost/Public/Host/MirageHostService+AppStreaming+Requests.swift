@@ -758,7 +758,8 @@ extension MirageHostService {
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
                 encoderMaxWidth: selectRequest.encoderMaxWidth,
-                encoderMaxHeight: selectRequest.encoderMaxHeight
+                encoderMaxHeight: selectRequest.encoderMaxHeight,
+                upscalingMode: selectRequest.upscalingMode
             )
             let resolvedWindowEvent = Self.resolvedWindowAddedEvent(from: streamSession)
             let resolvedWindowID = resolvedWindowEvent.windowID
@@ -1285,7 +1286,8 @@ extension MirageHostService {
             audioConfiguration: selectRequest.audioConfiguration ?? .default,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
-            encoderMaxHeight: selectRequest.encoderMaxHeight
+            encoderMaxHeight: selectRequest.encoderMaxHeight,
+            upscalingMode: selectRequest.upscalingMode
         )
 
         let resolvedWindow = streamSession.window

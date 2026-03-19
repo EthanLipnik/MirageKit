@@ -51,6 +51,11 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     func hostService(_ service: MirageHostService, shouldAllowUnlockFrom client: MirageConnectedClient)
         -> Bool
 
+    /// Called early in the incoming session when the Loom handshake completes and the peer
+    /// advertisement is available, before full Mirage bootstrap negotiation.
+    @MainActor
+    func hostService(_ service: MirageHostService, didDiscoverPeerWithAdvertisement advertisement: LoomPeerAdvertisement)
+
     /// Called after an authenticated hello is accepted so the host can advertise whether
     /// this client should remember remote signaling access for future sessions.
     @MainActor
@@ -86,6 +91,8 @@ public extension MirageHostDelegate {
         // Default: allow all connected clients to attempt unlock
         true
     }
+
+    func hostService(_: MirageHostService, didDiscoverPeerWithAdvertisement _: LoomPeerAdvertisement) {}
 
     func hostService(_: MirageHostService, remoteAccessAllowedFor _: LoomPeerDeviceInfo) -> Bool {
         false

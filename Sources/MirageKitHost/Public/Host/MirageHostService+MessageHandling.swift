@@ -208,7 +208,8 @@ extension MirageHostService {
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
-                encoderMaxHeight: request.encoderMaxHeight
+                encoderMaxHeight: request.encoderMaxHeight,
+                upscalingMode: request.upscalingMode
             )
             pendingLightsOutSetup = false
             await endPendingAppStreamLightsOutSetup()

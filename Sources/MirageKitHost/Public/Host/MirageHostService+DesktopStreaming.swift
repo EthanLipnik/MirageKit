@@ -38,7 +38,8 @@ extension MirageHostService {
         targetFrameRate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        upscalingMode: MirageUpscalingMode? = nil
     )
     async throws {
         // Check session state - must be ready
@@ -135,6 +136,12 @@ extension MirageHostService {
             bitrate: config.bitrate
         ) {
             config.bitrate = normalized
+        }
+
+        // Switch to BGRA pixel format when client requests MetalFX upscaling.
+        if let upscalingMode, upscalingMode != .off {
+            config.applyUpscalingPixelFormat()
+            MirageLogger.host("Applying BGRA pixel format for MetalFX \(upscalingMode.displayName) upscaling (desktop stream)")
         }
 
         if let targetFrameRate { config = config.withTargetFrameRate(targetFrameRate) }

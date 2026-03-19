@@ -196,7 +196,8 @@ public extension MirageHostService {
         audioConfiguration: MirageAudioConfiguration? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        upscalingMode: MirageUpscalingMode? = nil
     )
     async throws -> MirageStreamSession {
         // Clear any stuck modifier state from previous streams
@@ -265,7 +266,8 @@ public extension MirageHostService {
             targetFrameRate: targetFrameRate,
             colorDepth: colorDepth,
             captureQueueDepth: captureQueueDepth,
-            bitrate: bitrate
+            bitrate: bitrate,
+            upscalingMode: upscalingMode
         )
         guard mediaSecurityByClientID[client.id] != nil else {
             throw MirageError.protocolError("Missing media security context for client")
@@ -699,7 +701,8 @@ public extension MirageHostService {
         targetFrameRate: Int?,
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
-        bitrate: Int?
+        bitrate: Int?,
+        upscalingMode: MirageUpscalingMode? = nil
     ) -> MirageEncoderConfiguration {
         var effectiveEncoderConfig = encoderConfig
         let requestedColorDepth = colorDepth
@@ -722,6 +725,12 @@ public extension MirageHostService {
             }
             if let captureQueueDepth { MirageLogger.host("Using client-requested capture queue depth: \(captureQueueDepth)") }
             if let bitrate { MirageLogger.host("Using client-requested bitrate: \(bitrate)") }
+        }
+
+        // Switch to BGRA pixel format when client requests MetalFX upscaling.
+        if let upscalingMode, upscalingMode != .off {
+            effectiveEncoderConfig.applyUpscalingPixelFormat()
+            MirageLogger.host("Applying BGRA pixel format for MetalFX \(upscalingMode.displayName) upscaling")
         }
 
         if let normalized = MirageBitrateQualityMapper.normalizedTargetBitrate(

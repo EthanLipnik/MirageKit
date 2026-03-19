@@ -409,15 +409,38 @@ extension MirageClientService {
         let initialAttempt = controlEndpointAttempts(for: host, transportKind: transportKind).first
             ?? MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)
 
-        return try await establishControlSession(
-            to: initialAttempt.endpoint,
-            source: initialAttempt.source,
-            hostName: host.name,
-            transportKind: transportKind,
-            hello: hello,
-            attemptID: attemptID,
-            requiredInterfaceType: preferredNetworkType.requiredInterfaceType
-        )
+        // Bonjour TCP connections get one retry because the first NWConnection
+        // to a service endpoint can exceed the timeout while DNS-SD resolves
+        // and the NECP policy engine warms up.
+        let maxAttempts = (initialAttempt.source == .bonjourService && transportKind == .tcp) ? 2 : 1
+
+        var lastError: (any Error)?
+        for attempt in 1...maxAttempts {
+            do {
+                try throwIfConnectAttemptIsStale(attemptID)
+                return try await establishControlSession(
+                    to: initialAttempt.endpoint,
+                    source: initialAttempt.source,
+                    hostName: host.name,
+                    transportKind: transportKind,
+                    hello: hello,
+                    attemptID: attemptID,
+                    requiredInterfaceType: preferredNetworkType.requiredInterfaceType
+                )
+            } catch {
+                lastError = error
+                if error is CancellationError || !isCurrentConnectAttempt(attemptID) {
+                    throw error
+                }
+                if attempt < maxAttempts {
+                    MirageLogger.client(
+                        "Bonjour TCP attempt \(attempt) timed out for \(host.name), retrying..."
+                    )
+                }
+            }
+        }
+
+        throw lastError!
     }
 
     func controlEndpointAttempts(

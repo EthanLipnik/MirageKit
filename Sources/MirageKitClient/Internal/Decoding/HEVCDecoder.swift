@@ -424,6 +424,9 @@ final class FrameReassembler: @unchecked Sendable {
     /// Set when a gap timeout fires; reset when `lastCompletedFrame` advances or on `reset()`.
     var hasSignaledGapFrameLoss: Bool = false
 
+    /// Throttle counter for CRC diagnostic logging on reassembled P-frames.
+    var diagnosticCRCLogCounter: UInt64 = 0
+
     final class PendingFrame {
         let buffer: FrameBufferPool.Buffer
         var receivedMap: [Bool]

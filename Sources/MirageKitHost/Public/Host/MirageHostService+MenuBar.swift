@@ -133,7 +133,8 @@ extension MirageHostService {
                 targetFrameRate: targetFrameRate,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
-                encoderMaxHeight: request.encoderMaxHeight
+                encoderMaxHeight: request.encoderMaxHeight,
+                upscalingMode: request.upscalingMode
             )
             if pendingLightsOutSetup {
                 pendingLightsOutSetup = false

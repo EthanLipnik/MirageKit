@@ -110,18 +110,29 @@ extension HEVCDecoder {
             MirageLogger.decoder("IDR slice header (after strip): \(strippedHeader)")
         }
 
-        if !isValidLengthPrefixedHEVCBitstream(frameData) {
+        let validation = validateLengthPrefixedHEVCBitstream(frameData)
+        if !validation.isValid {
             let now = CFAbsoluteTimeGetCurrent()
-            let shouldSignalRecovery = now - lastInvalidPayloadRecoveryTime >= invalidPayloadRecoveryCooldown
-            if shouldSignalRecovery { lastInvalidPayloadRecoveryTime = now }
+            let shouldLog = now - lastInvalidPayloadRecoveryTime >= invalidPayloadRecoveryCooldown
+            if shouldLog { lastInvalidPayloadRecoveryTime = now }
 
-            if shouldSignalRecovery {
-                MirageLogger.decoder("Invalid AVCC payload - requesting keyframe recovery")
-                errorTracker?.recordError()
-            } else {
-                MirageLogger.decoder("Invalid AVCC payload - frame dropped")
+            if shouldLog {
+                let header = frameData.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+                MirageLogger.decoder("Invalid AVCC payload (\(validation.logSummary), \(frameData.count) bytes, header: \(header))")
             }
-            return
+
+            // Self-heal trailing-byte corruption (most common from buffer reuse)
+            if case .trailingBytes = validation, let trimmed = trimToValidAVCCBoundary(frameData) {
+                if shouldLog {
+                    MirageLogger.decoder("Trimmed \(frameData.count - trimmed.count) trailing bytes from P-frame")
+                }
+                frameData = trimmed
+            } else {
+                if shouldLog {
+                    errorTracker?.recordError()
+                }
+                return
+            }
         }
 
         guard let formatDesc = formatDescription else {

@@ -26,6 +26,7 @@ final class FrameBufferPool: @unchecked Sendable {
         func prepareForReuse() {
             isReleased = false
             if data.count != capacity { data.count = capacity }
+            data.resetBytes(in: 0..<capacity)
         }
 
         func write(_ payload: Data, at offset: Int) {

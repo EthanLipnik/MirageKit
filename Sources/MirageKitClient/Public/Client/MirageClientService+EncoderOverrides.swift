@@ -73,6 +73,10 @@ extension MirageClientService {
         if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
             request.encoderMaxHeight = encoderMaxHeight
         }
+        if let upscalingMode = overrides.upscalingMode, upscalingMode != .off {
+            request.upscalingMode = upscalingMode
+            MirageLogger.client("Requesting MetalFX upscaling mode: \(upscalingMode.displayName)")
+        }
     }
 
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout SelectAppMessage) {
@@ -136,6 +140,10 @@ extension MirageClientService {
         if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
             request.encoderMaxHeight = encoderMaxHeight
         }
+        if let upscalingMode = overrides.upscalingMode, upscalingMode != .off {
+            request.upscalingMode = upscalingMode
+            MirageLogger.client("Requesting MetalFX upscaling mode: \(upscalingMode.displayName)")
+        }
     }
 
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartDesktopStreamMessage) {
@@ -198,6 +206,10 @@ extension MirageClientService {
         }
         if let encoderMaxHeight = overrides.encoderMaxHeight, encoderMaxHeight > 0 {
             request.encoderMaxHeight = encoderMaxHeight
+        }
+        if let upscalingMode = overrides.upscalingMode, upscalingMode != .off {
+            request.upscalingMode = upscalingMode
+            MirageLogger.client("Requesting MetalFX upscaling mode: \(upscalingMode.displayName)")
         }
     }
 }

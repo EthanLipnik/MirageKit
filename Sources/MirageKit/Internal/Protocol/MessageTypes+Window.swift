@@ -82,6 +82,8 @@ package struct StartStreamMessage: Codable {
     package var encoderMaxWidth: Int?
     /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+    /// Client-requested MetalFX upscaling mode.
+    package var upscalingMode: MirageUpscalingMode?
 
     enum CodingKeys: String, CodingKey {
         case windowID
@@ -107,6 +109,7 @@ package struct StartStreamMessage: Codable {
         case bitrateAdaptationCeiling
         case encoderMaxWidth
         case encoderMaxHeight
+        case upscalingMode
     }
 
     package init(

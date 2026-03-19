@@ -346,6 +346,11 @@ actor StreamController {
     var adaptiveJitterStressStreak: Int = 0
     var adaptiveJitterStableStreak: Int = 0
 
+    #if canImport(MetalFX)
+    nonisolated(unsafe) var upscaler: MirageMetalFXUpscaler?
+    var upscalerOutputSize: CGSize = .zero
+    #endif
+
     var lastDecodedFrameTime: CFAbsoluteTime = 0
     var lastPresentedSequenceObserved: UInt64 = 0
     var lastPresentedProgressTime: CFAbsoluteTime = 0
@@ -467,14 +472,53 @@ actor StreamController {
             }
         }
 
+        // Set up MetalFX upscaler if upscaling is enabled
+        #if canImport(MetalFX)
+        let upscalingMode = MirageUpscalingPreferences.upscalingMode()
+        if upscalingMode != .off {
+            let factor = MirageUpscalingPreferences.upscaleFactor()
+            if upscaler == nil {
+                upscaler = MirageMetalFXUpscaler()
+            }
+            upscaler?.upscaleFactor = factor
+            MirageLogger.renderer("MetalFX \(upscalingMode.displayName) upscaling enabled with factor \(factor)")
+        } else {
+            upscaler?.invalidate()
+            upscaler = nil
+        }
+        #endif
+
         // Set up frame handler
         let metricsTracker = metricsTracker
         await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, presentationTime: CMTime, contentRect: CGRect) in
             // Also store in global cache for iOS gesture tracking compatibility
             let decodeTime = CFAbsoluteTimeGetCurrent()
+
+            // MetalFX upscaling: upscale the frame before caching
+            var finalBuffer = pixelBuffer
+            var finalContentRect = contentRect
+            #if canImport(MetalFX)
+            if let upscaler = self?.upscaler,
+               let upscaled = upscaler.upscale(pixelBuffer) {
+                let inputWidth = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+                let inputHeight = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+                let outputWidth = CGFloat(CVPixelBufferGetWidth(upscaled))
+                let outputHeight = CGFloat(CVPixelBufferGetHeight(upscaled))
+                if inputWidth > 0, inputHeight > 0 {
+                    finalContentRect = CGRect(
+                        x: contentRect.origin.x * (outputWidth / inputWidth),
+                        y: contentRect.origin.y * (outputHeight / inputHeight),
+                        width: contentRect.size.width * (outputWidth / inputWidth),
+                        height: contentRect.size.height * (outputHeight / inputHeight)
+                    )
+                }
+                finalBuffer = upscaled
+            }
+            #endif
+
             MirageFrameCache.shared.store(
-                pixelBuffer,
-                contentRect: contentRect,
+                finalBuffer,
+                contentRect: finalContentRect,
                 decodeTime: decodeTime,
                 presentationTime: presentationTime,
                 metalTexture: nil,
@@ -915,12 +959,59 @@ actor StreamController {
         lastDecodeErrorLogTime = 0
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
+        #if canImport(MetalFX)
+        upscaler?.invalidate()
+        upscaler = nil
+        #endif
         MirageFrameCache.shared.clear(for: streamID)
         await decoder.setErrorThresholdHandler {}
         await decoder.setDimensionChangeHandler {}
         await decoder.stopDecoding()
         await GlobalDecodeBudgetController.shared.unregister(streamID: streamID)
     }
+
+    // MARK: - MetalFX Upscaling
+
+    #if canImport(MetalFX)
+    func configureUpscaler(inputSize: CGSize, outputSize: CGSize, pixelFormat: OSType) {
+        guard inputSize.width > 0, inputSize.height > 0,
+              outputSize.width > 0, outputSize.height > 0,
+              outputSize != inputSize else {
+            upscaler?.invalidate()
+            upscaler = nil
+            upscalerOutputSize = .zero
+            return
+        }
+
+        let config = MirageMetalFXUpscaler.Configuration(
+            inputWidth: Int(inputSize.width),
+            inputHeight: Int(inputSize.height),
+            outputWidth: Int(outputSize.width),
+            outputHeight: Int(outputSize.height),
+            pixelFormat: pixelFormat
+        )
+
+        if upscaler == nil {
+            upscaler = MirageMetalFXUpscaler()
+        }
+
+        guard let upscaler else { return }
+        if upscaler.configure(config) {
+            upscalerOutputSize = outputSize
+        } else {
+            MirageLogger.error(.renderer, "Failed to configure MetalFX upscaler; disabling")
+            self.upscaler?.invalidate()
+            self.upscaler = nil
+            upscalerOutputSize = .zero
+        }
+    }
+
+    func tearDownUpscaler() {
+        upscaler?.invalidate()
+        upscaler = nil
+        upscalerOutputSize = .zero
+    }
+    #endif
 
     private func startMetricsReporting() {
         metricsTask?.cancel()

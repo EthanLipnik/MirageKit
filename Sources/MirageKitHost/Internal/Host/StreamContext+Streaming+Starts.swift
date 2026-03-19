@@ -83,10 +83,21 @@ extension StreamContext {
         let streamID = streamID
         var localFrameNumber: UInt32 = 0
         var localSequenceNumber: UInt32 = 0
+        var pFrameDiagnosticCounter: UInt32 = 0
 
         await encoder.startEncoding(
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
+
+                // Diagnostic: log CRC32 of encoded P-frames (throttled to every 60th)
+                if !isKeyframe {
+                    pFrameDiagnosticCounter += 1
+                    if pFrameDiagnosticCounter % 60 == 1 {
+                        let crc = CRC32.calculate(encodedData)
+                        let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                        MirageLogger.stream("Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)")
+                    }
+                }
 
                 let contentRect = currentContentRect
                 let frameNum = localFrameNumber
@@ -249,10 +260,21 @@ extension StreamContext {
         let streamID = streamID
         var localFrameNumber: UInt32 = 0
         var localSequenceNumber: UInt32 = 0
+        var pFrameDiagnosticCounter: UInt32 = 0
 
         await encoder.startEncoding(
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
+
+                // Diagnostic: log CRC32 of encoded P-frames (throttled to every 60th)
+                if !isKeyframe {
+                    pFrameDiagnosticCounter += 1
+                    if pFrameDiagnosticCounter % 60 == 1 {
+                        let crc = CRC32.calculate(encodedData)
+                        let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                        MirageLogger.stream("Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)")
+                    }
+                }
 
                 let contentRect = currentContentRect
                 let frameNum = localFrameNumber
@@ -414,6 +436,7 @@ extension StreamContext {
         let streamID = streamID
         var localFrameNumber: UInt32 = 0
         var localSequenceNumber: UInt32 = 0
+        var pFrameDiagnosticCounter: UInt32 = 0
         let pinDesktopContentRectToFullFrame = CGVirtualDisplayBridge.isMirageDisplay(display.displayID)
         let fullDesktopContentRect = CGRect(
             x: 0,
@@ -425,6 +448,16 @@ extension StreamContext {
         await encoder.startEncoding(
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
+
+                // Diagnostic: log CRC32 of encoded P-frames (throttled to every 60th)
+                if !isKeyframe {
+                    pFrameDiagnosticCounter += 1
+                    if pFrameDiagnosticCounter % 60 == 1 {
+                        let crc = CRC32.calculate(encodedData)
+                        let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                        MirageLogger.stream("Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)")
+                    }
+                }
 
                 // Virtual-display desktop capture can report transient/stale content rects
                 // during mirror transitions. Pin to full-frame so client presentation and

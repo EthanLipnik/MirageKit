@@ -213,6 +213,18 @@ public struct MirageEncoderConfiguration: Sendable {
         pixelFormat = descriptor.primaryPixelFormat
     }
 
+    /// Apply BGRA pixel format override for MetalFX upscaling while preserving
+    /// the current color depth and color space. The BGRA variant is always the
+    /// second entry in the descriptor's capture format list.
+    package mutating func applyUpscalingPixelFormat() {
+        let descriptor = Self.descriptor(for: colorDepth)
+        if let bgraFormat = descriptor.capturePixelFormats.first(where: {
+            $0 == .bgra8 || $0 == .bgr10a2
+        }) {
+            pixelFormat = bgraFormat
+        }
+    }
+
     package static func descriptor(for colorDepth: MirageStreamColorDepth) -> MirageColorDepthDescriptor {
         switch colorDepth {
         case .standard:
@@ -333,6 +345,8 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var encoderMaxWidth: Int?
     /// Maximum encoded height in pixels.
     public var encoderMaxHeight: Int?
+    /// Client-requested MetalFX upscaling mode.
+    public var upscalingMode: MirageUpscalingMode?
 
     public init(
         keyFrameInterval: Int? = nil,
@@ -347,7 +361,8 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         disableResolutionCap: Bool = false,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        upscalingMode: MirageUpscalingMode? = nil
     ) {
         self.keyFrameInterval = keyFrameInterval
         self.colorDepth = colorDepth
@@ -362,6 +377,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
+        self.upscalingMode = upscalingMode
     }
 
     package init(
@@ -571,6 +587,21 @@ public enum MirageAudioQuality: String, Sendable, CaseIterable, Codable {
         case .low: "Low"
         case .high: "High"
         case .lossless: "Lossless"
+        }
+    }
+}
+
+/// MetalFX upscaling mode.
+public enum MirageUpscalingMode: String, Sendable, CaseIterable, Codable {
+    case off
+    case spatial
+    case temporal
+
+    public var displayName: String {
+        switch self {
+        case .off: "Off"
+        case .spatial: "Spatial"
+        case .temporal: "Temporal"
         }
     }
 }

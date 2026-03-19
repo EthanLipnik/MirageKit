@@ -383,6 +383,20 @@ extension FrameReassembler {
                 clearAwaitingKeyframe()
             }
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
+
+            // Diagnostic: log CRC32 of reassembled P-frames (throttled to every 60th)
+            if !frame.isKeyframe {
+                diagnosticCRCLogCounter += 1
+                if diagnosticCRCLogCounter % 60 == 1 {
+                    let crc = CRC32.calculate(output)
+                    let header = output.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                    MirageLogger.log(
+                        .frameAssembly,
+                        "Reassembled P-frame CRC=\(String(format: "%08X", crc)), size=\(output.count), expected=\(frame.expectedTotalBytes), header: \(header)"
+                    )
+                }
+            }
+
             let buffer = frame.buffer
             let releaseBuffer: @Sendable () -> Void = { buffer.release() }
             return FrameCompletionResult(

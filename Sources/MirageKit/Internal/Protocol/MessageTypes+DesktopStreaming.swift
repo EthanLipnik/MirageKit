@@ -55,6 +55,8 @@ package struct StartDesktopStreamMessage: Codable {
     package var encoderMaxWidth: Int?
     /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+    /// Client-requested MetalFX upscaling mode.
+    package var upscalingMode: MirageUpscalingMode?
     /// Client refresh rate override in Hz (60/120 based on client capability)
     /// Used with P2P detection to enable 120fps streaming on capable displays
     package let maxRefreshRate: Int
@@ -80,6 +82,7 @@ package struct StartDesktopStreamMessage: Codable {
         case bitrateAdaptationCeiling
         case encoderMaxWidth
         case encoderMaxHeight
+        case upscalingMode
         case maxRefreshRate
     }
 
