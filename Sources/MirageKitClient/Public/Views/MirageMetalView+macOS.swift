@@ -34,6 +34,7 @@ public class MirageMetalView: NSView {
     }
 
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
+    public var onRefreshRateOverrideChange: ((Int) -> Void)?
 
     public var maxDrawableSize: CGSize? {
         didSet {
@@ -50,6 +51,7 @@ public class MirageMetalView: NSView {
     private var maxRenderFPS: Int = 60
     private var appliedRefreshRateLock: Int = 0
     private var lastReportedDrawableSize: CGSize = .zero
+    private var screenChangeObserver: NSObjectProtocol?
 
     private static let maxDrawableWidth: CGFloat = 5120
     private static let maxDrawableHeight: CGFloat = 2880
@@ -90,10 +92,12 @@ public class MirageMetalView: NSView {
         if window != nil {
             startDisplayLinkIfNeeded()
             resumeRendering()
-            requestDraw()
+            applyRenderPreferences()
+            observeScreenChanges()
         } else {
             stopDisplayLink()
             suspendRendering()
+            stopObservingScreenChanges()
         }
     }
 
@@ -256,10 +260,13 @@ public class MirageMetalView: NSView {
     // MARK: - Preferences
 
     private func applyRenderPreferences() {
-        let target = MirageRenderPreferences.proMotionEnabled() ? 120 : 60
+        let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
+        let screenMax = window?.screen?.maximumFramesPerSecond ?? 60
+        let target = proMotionEnabled ? (screenMax >= 120 ? 120 : 60) : 60
         maxRenderFPS = target
         presenter.setTargetFPS(target)
         applyDisplayRefreshRateLock(target)
+        onRefreshRateOverrideChange?(target)
         requestDraw()
     }
 
@@ -293,6 +300,24 @@ public class MirageMetalView: NSView {
     private func startObservingPreferences() {
         preferencesObserver.start { [weak self] in
             self?.applyRenderPreferences()
+        }
+    }
+
+    private func observeScreenChanges() {
+        stopObservingScreenChanges()
+        screenChangeObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeScreenNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applyRenderPreferences()
+        }
+    }
+
+    private func stopObservingScreenChanges() {
+        if let observer = screenChangeObserver {
+            NotificationCenter.default.removeObserver(observer)
+            screenChangeObserver = nil
         }
     }
 }

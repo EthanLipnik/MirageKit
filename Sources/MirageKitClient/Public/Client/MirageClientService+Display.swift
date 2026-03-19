@@ -183,7 +183,7 @@ extension MirageClientService {
         #else
         let screenMax: Int
         #if os(macOS)
-        screenMax = NSScreen.main?.maximumFramesPerSecond ?? 120
+        screenMax = MirageRenderPreferences.proMotionEnabled() ? 120 : 60
         #elseif os(visionOS)
         screenMax = 120
         #else

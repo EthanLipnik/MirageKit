@@ -195,6 +195,20 @@ public struct MirageStreamContentView: View {
                 onDrawableMetricsChanged: { metrics in
                     handleDrawableMetricsChanged(metrics)
                 },
+                onRefreshRateOverrideChange: { override in
+                    Task { @MainActor [clientService] in
+                        await Task.yield()
+                        do {
+                            try await Task.sleep(for: .milliseconds(1))
+                        } catch {
+                            return
+                        }
+                        clientService.updateStreamRefreshRateOverride(
+                            streamID: session.streamID,
+                            maxRefreshRate: override
+                        )
+                    }
+                },
                 cursorStore: clientService.cursorStore,
                 cursorPositionStore: clientService.cursorPositionStore,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,

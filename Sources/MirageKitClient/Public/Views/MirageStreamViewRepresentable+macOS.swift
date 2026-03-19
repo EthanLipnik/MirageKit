@@ -18,6 +18,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Callback when drawable metrics change - reports pixel size and scale factor
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
 
+    /// Callback when the view's effective refresh rate changes (screen move or preference toggle).
+    public var onRefreshRateOverrideChange: ((Int) -> Void)?
+
     /// Cursor store for pointer updates.
     public var cursorStore: MirageClientCursorStore?
 
@@ -46,6 +49,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
+        onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
@@ -58,6 +62,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
+        self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
@@ -71,7 +76,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public func makeCoordinator() -> MirageStreamViewCoordinator {
         MirageStreamViewCoordinator(
             onInputEvent: onInputEvent,
-            onDrawableMetricsChanged: onDrawableMetricsChanged
+            onDrawableMetricsChanged: onDrawableMetricsChanged,
+            onRefreshRateOverrideChange: onRefreshRateOverrideChange
         )
     }
 
@@ -93,6 +99,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         // Store Metal view reference in coordinator
         context.coordinator.metalView = metalView
         metalView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
+        metalView.onRefreshRateOverrideChange = context.coordinator.handleRefreshRateOverrideChange
         metalView.maxDrawableSize = maxDrawableSize
         metalView.streamPresentationTier = presentationTier
         metalView.streamID = streamID
@@ -133,6 +140,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.onDrawableMetricsChanged = onDrawableMetricsChanged
         context.coordinator.onInputEvent = onInputEvent
+        context.coordinator.onRefreshRateOverrideChange = onRefreshRateOverrideChange
 
         if let metalView = context.coordinator.metalView { metalView.streamID = streamID }
         if let metalView = context.coordinator.metalView { metalView.maxDrawableSize = maxDrawableSize }
