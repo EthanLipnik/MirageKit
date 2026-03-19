@@ -31,6 +31,34 @@ extension HEVCDecoder {
         }
     }
 
+    func setMetalFXOutputOverride(_ enabled: Bool) {
+        guard metalFXOutputOverrideEnabled != enabled else { return }
+        metalFXOutputOverrideEnabled = enabled
+
+        let desiredPixelFormat = preferredOutputPixelFormat(for: preferredOutputColorDepth)
+        let formatChanged = outputPixelFormat != desiredPixelFormat
+        outputPixelFormat = desiredPixelFormat
+
+        guard formatChanged else {
+            MirageLogger.decoder("MetalFX output override set to \(enabled) (no format change)")
+            return
+        }
+
+        if let session = decompressionSession {
+            VTDecompressionSessionInvalidate(session)
+            decompressionSession = nil
+            pendingOutputTelemetryGeneration = 0
+            lastDecodedOutputPixelFormat = nil
+            MirageLogger.decoder(
+                "MetalFX output override set to \(enabled); invalidated active session for format change to \(Self.pixelFormatName(desiredPixelFormat))"
+            )
+        } else {
+            MirageLogger.decoder(
+                "MetalFX output override set to \(enabled); format will be \(Self.pixelFormatName(desiredPixelFormat))"
+            )
+        }
+    }
+
     func setPreferredOutputColorDepth(_ colorDepth: MirageStreamColorDepth) {
         let desiredPixelFormat = preferredOutputPixelFormat(for: colorDepth)
         let formatChanged = outputPixelFormat != desiredPixelFormat

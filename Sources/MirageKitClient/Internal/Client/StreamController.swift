@@ -481,8 +481,10 @@ actor StreamController {
                 upscaler = MirageMetalFXUpscaler()
             }
             upscaler?.upscaleFactor = factor
+            await decoder.setMetalFXOutputOverride(true)
             MirageLogger.renderer("MetalFX \(upscalingMode.displayName) upscaling enabled with factor \(factor)")
         } else {
+            await decoder.setMetalFXOutputOverride(false)
             upscaler?.invalidate()
             upscaler = nil
         }

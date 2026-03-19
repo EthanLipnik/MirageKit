@@ -176,7 +176,7 @@ extension MirageHostService {
         archiveURL: URL,
         expectedClient: MirageConnectedClient
     ) async throws -> MirageHostSupportLogTransferListener {
-        let transportKind: LoomTransportKind = .tcp
+        let transportKind: LoomTransportKind = .udp
         let parameters = makeHostSupportLogTransferParameters()
         let listener = try NWListener(using: parameters, on: .any)
         let transferListener = MirageHostSupportLogTransferListener(
@@ -259,13 +259,9 @@ extension MirageHostService {
     }
 
     private func makeHostSupportLogTransferParameters() -> NWParameters {
-        let parameters = NWParameters.tcp
+        let parameters = NWParameters.udp
         parameters.includePeerToPeer = networkConfig.enablePeerToPeer
-        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-            tcpOptions.noDelay = true
-            tcpOptions.enableKeepalive = true
-            tcpOptions.keepaliveInterval = 5
-        }
+        parameters.serviceClass = .signaling
         return parameters
     }
 }

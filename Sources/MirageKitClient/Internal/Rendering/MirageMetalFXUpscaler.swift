@@ -15,6 +15,7 @@ import Foundation
 import Metal
 import MetalFX
 import MirageKit
+import VideoToolbox
 
 final class MirageMetalFXUpscaler: @unchecked Sendable {
 
@@ -40,6 +41,13 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
     private var outputPool: CVPixelBufferPool?
     private var currentConfig: Configuration?
     private var loggedUnsupportedFormat: OSType = 0
+
+    // MARK: - Fallback YUV→BGRA Conversion
+
+    private var transferSession: VTPixelTransferSession?
+    private var conversionPool: CVPixelBufferPool?
+    private var conversionPoolDimensions: (width: Int, height: Int) = (0, 0)
+    private var loggedFallbackConversion = false
 
     // MARK: - Init
 
@@ -138,7 +146,21 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
     func upscale(_ inputBuffer: CVPixelBuffer) -> CVPixelBuffer? {
         let inputWidth = CVPixelBufferGetWidth(inputBuffer)
         let inputHeight = CVPixelBufferGetHeight(inputBuffer)
-        let pixelFormat = CVPixelBufferGetPixelFormatType(inputBuffer)
+        let rawPixelFormat = CVPixelBufferGetPixelFormatType(inputBuffer)
+
+        // If the input is not a MetalFX-compatible format, convert YUV→BGRA
+        let metalFXBuffer: CVPixelBuffer
+        let pixelFormat: OSType
+        if Self.metalPixelFormat(for: rawPixelFormat) == .invalid {
+            guard let converted = convertToBGRA(inputBuffer, width: inputWidth, height: inputHeight) else {
+                return nil
+            }
+            metalFXBuffer = converted
+            pixelFormat = kCVPixelFormatType_32BGRA
+        } else {
+            metalFXBuffer = inputBuffer
+            pixelFormat = rawPixelFormat
+        }
 
         // Compute output size: use explicit target or derive from scale factor
         let outputW: Int
@@ -176,7 +198,7 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
 
         // Wrap input as MTLTexture (zero-copy via IOSurface)
         guard let inputTexture = makeTexture(
-            from: inputBuffer,
+            from: metalFXBuffer,
             cache: textureCache
         ) else {
             return nil
@@ -228,9 +250,79 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
         if let textureCache {
             CVMetalTextureCacheFlush(textureCache, 0)
         }
+        if let transferSession {
+            VTPixelTransferSessionInvalidate(transferSession)
+        }
+        transferSession = nil
+        conversionPool = nil
+        conversionPoolDimensions = (0, 0)
+        loggedFallbackConversion = false
     }
 
     // MARK: - Private Helpers
+
+    private func convertToBGRA(_ sourceBuffer: CVPixelBuffer, width: Int, height: Int) -> CVPixelBuffer? {
+        // Lazily create the transfer session
+        if transferSession == nil {
+            var session: VTPixelTransferSession?
+            let status = VTPixelTransferSessionCreate(allocator: kCFAllocatorDefault, pixelTransferSessionOut: &session)
+            guard status == noErr, let session else {
+                MirageLogger.error(.renderer, "MetalFX upscaler: failed to create pixel transfer session (\(status))")
+                return nil
+            }
+            transferSession = session
+        }
+
+        // Lazily create or resize the BGRA conversion pool
+        if conversionPool == nil || conversionPoolDimensions != (width, height) {
+            let poolAttributes: [CFString: Any] = [
+                kCVPixelBufferPoolMinimumBufferCountKey: 2,
+            ]
+            let pixelAttributes: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+                kCVPixelBufferWidthKey: width,
+                kCVPixelBufferHeightKey: height,
+                kCVPixelBufferMetalCompatibilityKey: true,
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+            ]
+            var pool: CVPixelBufferPool?
+            let status = CVPixelBufferPoolCreate(nil, poolAttributes as CFDictionary, pixelAttributes as CFDictionary, &pool)
+            guard status == kCVReturnSuccess, let pool else {
+                MirageLogger.error(.renderer, "MetalFX upscaler: failed to create conversion pool (\(status))")
+                return nil
+            }
+            conversionPool = pool
+            conversionPoolDimensions = (width, height)
+        }
+
+        guard let pool = conversionPool, let session = transferSession else { return nil }
+
+        var destinationBuffer: CVPixelBuffer?
+        let poolStatus = CVPixelBufferPoolCreatePixelBuffer(nil, pool, &destinationBuffer)
+        guard poolStatus == kCVReturnSuccess, let destinationBuffer else {
+            MirageLogger.error(.renderer, "MetalFX upscaler: conversion pool exhausted")
+            return nil
+        }
+
+        let transferStatus = VTPixelTransferSessionTransferImage(session, from: sourceBuffer, to: destinationBuffer)
+        guard transferStatus == noErr else {
+            MirageLogger.error(.renderer, "MetalFX upscaler: pixel transfer failed (\(transferStatus))")
+            return nil
+        }
+
+        if !loggedFallbackConversion {
+            loggedFallbackConversion = true
+            let sourceName = HEVCDecoder.pixelFormatName(CVPixelBufferGetPixelFormatType(sourceBuffer))
+            MirageLogger.renderer(
+                "MetalFX upscaler: using fallback YUV→BGRA conversion (decoder output is \(sourceName))"
+            )
+        }
+
+        // Carry over color space attachments
+        copyBufferAttachments(from: sourceBuffer, to: destinationBuffer)
+
+        return destinationBuffer
+    }
 
     private func createOutputPool(config: Configuration) -> CVPixelBufferPool? {
         let poolAttributes: [CFString: Any] = [

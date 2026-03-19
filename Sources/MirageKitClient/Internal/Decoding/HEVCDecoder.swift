@@ -20,6 +20,7 @@ actor HEVCDecoder {
     var preferredOutputColorDepth: MirageStreamColorDepth = .standard
     var lastDecodedOutputPixelFormat: OSType?
     var maximizePowerEfficiencyEnabled = false
+    var metalFXOutputOverrideEnabled = false
     var decompressionSessionGeneration: UInt64 = 0
     var pendingOutputTelemetryGeneration: UInt64 = 0
     var usingHardwareDecoder: Bool?
@@ -120,6 +121,10 @@ extension HEVCDecoder {
     }
 
     func preferredOutputPixelFormat(for colorDepth: MirageStreamColorDepth) -> OSType {
+        if metalFXOutputOverrideEnabled {
+            return kCVPixelFormatType_32BGRA
+        }
+
         switch colorDepth {
         case .standard:
             return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange

@@ -24,7 +24,7 @@ final class MirageInputEventSender: @unchecked Sendable {
     private let pointerCoalescingLock = NSLock()
     private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
 
-    /// Whether a send is currently awaiting TCP confirmation.
+    /// Whether a continuous-event drain is already scheduled.
     /// Accessed only on `sendQueue`.
     private var sendInFlight = false
 
@@ -32,11 +32,6 @@ final class MirageInputEventSender: @unchecked Sendable {
     /// Replaced on each arrival — only the newest matters.
     /// Accessed only on `sendQueue`.
     private var pendingContinuousData: Data?
-
-    /// Ordered queue of discrete events (keyboard, mouse buttons, flags, etc.).
-    /// All are delivered in order — none are dropped.
-    /// Accessed only on `sendQueue`.
-    private var pendingDiscreteQueue: [Data] = []
 
     func updateSendHandler(_ handler: (@Sendable (Data, Bool) async throws -> Void)?) {
         connectionLock.lock()
@@ -47,7 +42,6 @@ final class MirageInputEventSender: @unchecked Sendable {
             sendQueue.async { [weak self] in
                 self?.sendInFlight = false
                 self?.pendingContinuousData = nil
-                self?.pendingDiscreteQueue.removeAll()
             }
         }
     }
@@ -101,50 +95,39 @@ final class MirageInputEventSender: @unchecked Sendable {
         sendQueue.async { [weak self] in
             guard let self else { return }
 
-            if self.sendInFlight {
-                if continuous {
-                    self.pendingContinuousData = data
-                } else {
-                    self.pendingDiscreteQueue.append(data)
-                }
-                return
+            if continuous {
+                // Coalesce: replace any pending continuous event with the latest.
+                self.pendingContinuousData = data
+                self.scheduleDrain()
+            } else {
+                // Discrete events send immediately — reliability is handled by the transport.
+                self.fireAndForgetSend(data)
             }
-
-            self.beginSend(data)
         }
     }
 
-    // MARK: - Serialized Send
+    // MARK: - Non-Blocking Send
 
-    /// Sends data and marks a send as in-flight. Must be called on `sendQueue`.
-    private func beginSend(_ data: Data) {
-        sendInFlight = true
-        guard let handler = currentSendHandler() else {
-            sendInFlight = false
-            drainNext()
-            return
-        }
-        Task { [weak self] in
+    /// Sends data immediately without awaiting completion.
+    private func fireAndForgetSend(_ data: Data) {
+        guard let handler = currentSendHandler() else { return }
+        Task {
             try? await handler(data, false)
-            self?.sendQueue.async { [weak self] in
-                self?.sendInFlight = false
-                self?.drainNext()
-            }
         }
     }
 
-    /// Sends the next pending event if any. Must be called on `sendQueue`.
-    /// Priority: discrete first (preserve ordering), then latest continuous.
-    private func drainNext() {
-        if let discrete = pendingDiscreteQueue.first {
-            pendingDiscreteQueue.removeFirst()
-            beginSend(discrete)
-            return
-        }
-        if let continuous = pendingContinuousData {
-            pendingContinuousData = nil
-            beginSend(continuous)
-            return
+    /// Schedules a drain of the pending continuous event on the next run loop tick.
+    /// This naturally coalesces rapid mouse moves into one send per tick.
+    private func scheduleDrain() {
+        guard !sendInFlight else { return }
+        sendInFlight = true
+        sendQueue.async { [weak self] in
+            guard let self else { return }
+            self.sendInFlight = false
+            if let continuous = self.pendingContinuousData {
+                self.pendingContinuousData = nil
+                self.fireAndForgetSend(continuous)
+            }
         }
     }
 

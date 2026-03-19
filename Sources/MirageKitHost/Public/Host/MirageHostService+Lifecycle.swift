@@ -32,15 +32,25 @@ public extension MirageHostService {
         state = .starting
         MirageLogger.host("Starting...")
 
-        do {
-            try await startListeners()
-        } catch let error as NWError where Self.isAddressInUseError(error) {
-            MirageLogger.host("Port already in use, cleaning up stale listeners and retrying...")
-            state = .starting
-            await loomNode.stopAdvertising()
-            udpListener?.cancel()
-            udpListener = nil
-            try await startListeners()
+        let maxRetries = 3
+        for attempt in 0..<maxRetries {
+            do {
+                try await startListeners()
+                break
+            } catch let error as NWError where Self.isAddressInUseError(error) {
+                MirageLogger.host("Port already in use (attempt \(attempt + 1)/\(maxRetries)), cleaning up stale listeners...")
+                await loomNode.stopAdvertising()
+                udpListener?.cancel()
+                udpListener = nil
+
+                if attempt < maxRetries - 1 {
+                    state = .starting
+                    try await Task.sleep(for: .seconds(1))
+                } else {
+                    state = .error(error.localizedDescription)
+                    throw error
+                }
+            }
         }
 
         // Initial window refresh (non-blocking - may fail if no screen recording permission)
@@ -81,7 +91,7 @@ public extension MirageHostService {
                     await self?.handleIncomingSession(session)
                 }
             }
-            let controlPort = ports[.tcp] ?? 0
+            let controlPort = ports[.udp] ?? 0
             let directQUICPort = ports[.quic]
             setRemoteControlPort(directQUICPort)
             remoteControlListenerReady = directQUICPort != nil

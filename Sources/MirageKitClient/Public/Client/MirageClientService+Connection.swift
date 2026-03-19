@@ -20,16 +20,6 @@ import UIKit.UIDevice
 import AppKit
 #endif
 
-enum MirageControlEndpointAttemptSource: String, Sendable {
-    case direct = "direct"
-    case bonjourService = "bonjour_service"
-}
-
-struct MirageControlEndpointAttempt: Sendable {
-    let endpoint: NWEndpoint
-    let source: MirageControlEndpointAttemptSource
-}
-
 @MainActor
 extension MirageClientService {
     private var currentDeviceType: DeviceType {
@@ -146,17 +136,14 @@ extension MirageClientService {
         }
     }
 
-    public func connect(
-        to host: LoomPeer,
-        controlTransport: ControlTransport = .tcp
-    ) async throws {
+    public func connect(to host: LoomPeer) async throws {
         guard connectionState.canConnect else {
             throw MirageError.protocolError("Already connected or connecting")
         }
 
         let attemptID = beginConnectAttempt()
         MirageInstrumentation.record(.clientConnectionRequested)
-        MirageLogger.client("Connecting to \(host.name) using \(controlTransport)...")
+        MirageLogger.client("Connecting to \(host.name)...")
         connectionState = .connecting
         expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
@@ -172,10 +159,8 @@ extension MirageClientService {
         let helloRequest = try makeSessionHelloRequest()
 
         do {
-            let transportKind: LoomTransportKind = controlTransport == .quic ? .quic : .tcp
             let session = try await connectSession(
                 to: host,
-                transportKind: transportKind,
                 hello: helloRequest,
                 attemptID: attemptID
             )
@@ -402,76 +387,48 @@ extension MirageClientService {
 
     private func connectSession(
         to host: LoomPeer,
-        transportKind: LoomTransportKind,
         hello: LoomSessionHelloRequest,
         attemptID: UUID
     ) async throws -> LoomAuthenticatedSession {
-        let initialAttempt = controlEndpointAttempts(for: host, transportKind: transportKind).first
-            ?? MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)
+        try throwIfConnectAttemptIsStale(attemptID)
 
-        // Bonjour TCP connections get one retry because the first NWConnection
-        // to a service endpoint can exceed the timeout while DNS-SD resolves
-        // and the NECP policy engine warms up.
-        let maxAttempts = (initialAttempt.source == .bonjourService && transportKind == .tcp) ? 2 : 1
-
-        var lastError: (any Error)?
-        for attempt in 1...maxAttempts {
-            do {
-                try throwIfConnectAttemptIsStale(attemptID)
-                return try await establishControlSession(
-                    to: initialAttempt.endpoint,
-                    source: initialAttempt.source,
-                    hostName: host.name,
-                    transportKind: transportKind,
-                    hello: hello,
-                    attemptID: attemptID,
-                    requiredInterfaceType: preferredNetworkType.requiredInterfaceType
-                )
-            } catch {
-                lastError = error
-                if error is CancellationError || !isCurrentConnectAttempt(attemptID) {
-                    throw error
-                }
-                if attempt < maxAttempts {
-                    MirageLogger.client(
-                        "Bonjour TCP attempt \(attempt) timed out for \(host.name), retrying..."
-                    )
-                }
-            }
+        // NWConnection can't resolve Bonjour .service endpoints with UDP parameters.
+        // Construct a .hostPort endpoint from the peer name + advertised UDP port instead,
+        // the same way the media path connects for video/audio.
+        let endpoint: NWEndpoint
+        if let udpTransport = host.advertisement.directTransports.first(where: { $0.transportKind == .udp }),
+           let port = NWEndpoint.Port(rawValue: udpTransport.port),
+           case let .service(name, _, _, _) = host.endpoint {
+            endpoint = .hostPort(host: NWEndpoint.Host("\(name).local"), port: port)
+        } else {
+            endpoint = host.endpoint
         }
 
-        throw lastError!
-    }
-
-    func controlEndpointAttempts(
-        for host: LoomPeer,
-        transportKind _: LoomTransportKind
-    ) -> [MirageControlEndpointAttempt] {
-        guard case .service = host.endpoint else {
-            return [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .direct)]
-        }
-
-        return [MirageControlEndpointAttempt(endpoint: host.endpoint, source: .bonjourService)]
+        return try await establishControlSession(
+            to: endpoint,
+            hostName: host.name,
+            hello: hello,
+            attemptID: attemptID,
+            requiredInterfaceType: preferredNetworkType.requiredInterfaceType
+        )
     }
 
     private func establishControlSession(
         to endpoint: NWEndpoint,
-        source: MirageControlEndpointAttemptSource,
         hostName: String,
-        transportKind: LoomTransportKind,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
         requiredInterfaceType: NWInterface.InterfaceType? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
-            "Starting \(transportKind) control session to \(hostName) via \(source.rawValue) endpoint=\(endpoint)"
+            "Starting udp control session to \(hostName) endpoint=\(endpoint)"
         )
         let node = loomNode
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
             let session = try await node.connect(
                 to: endpoint,
-                using: transportKind,
+                using: .udp,
                 hello: hello,
                 requiredInterfaceType: requiredInterfaceType
             )
@@ -492,7 +449,7 @@ extension MirageClientService {
             let session = try await awaitConnectSession(
                 connectTask,
                 endpoint: endpoint,
-                transportKind: transportKind,
+                transportKind: .udp,
                 attemptID: attemptID
             )
             clearPendingConnectTaskIfNeeded(for: attemptID)

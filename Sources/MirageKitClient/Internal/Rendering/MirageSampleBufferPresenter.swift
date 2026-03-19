@@ -25,6 +25,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     static let cmTimeScale: CMTimeScale = 1_000_000_000
     static let presentationRebaseThresholdSeconds: CFTimeInterval = 1.0
+    static let stallRecoveryThresholdSeconds: CFTimeInterval = 0.5
     static let framePacingRefreshThresholdFactor: Double = 0.9
     static let framePacingBufferedDepth = 2
     static let maxCatchUpFramesPerTick = 4
@@ -43,6 +44,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var localPresentationOrigin: CFTimeInterval?
     private var lastMappedPresentationTime: CMTime = .invalid
     private var loggedLayerFailure = false
+    private var lastFrameSubmissionTime: CFTimeInterval = 0
 
     var onFrameAvailable: (() -> Void)?
 
@@ -147,6 +149,16 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             : .latest)
         let maxFrames = maxFramesOverride ?? (useFramePacing ? 1 : Self.maxCatchUpFramesPerTick)
 
+        // Detect presentation stalls (backpressure, display sleep, window occlusion)
+        // and rebase time mapping to prevent fast-forward playback on recovery
+        let now = CACurrentMediaTime()
+        if lastFrameSubmissionTime > 0, (now - lastFrameSubmissionTime) > Self.stallRecoveryThresholdSeconds {
+            MirageLogger.renderer(
+                "Presentation stall detected (\(String(format: "%.2f", now - lastFrameSubmissionTime))s gap); rebasing time origin"
+            )
+            resetSequenceTrackingState()
+        }
+
         var framesSubmitted = 0
         while framesSubmitted < maxFrames {
             guard displayLayer.isReadyForMoreMediaData else { return }
@@ -181,6 +193,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
             displayLayer.enqueue(sampleBuffer)
             lastEnqueuedSequence = frame.sequence
+            lastFrameSubmissionTime = CACurrentMediaTime()
             MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
             framesSubmitted += 1
         }
@@ -191,6 +204,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         remotePresentationOrigin = nil
         localPresentationOrigin = nil
         lastMappedPresentationTime = .invalid
+        lastFrameSubmissionTime = 0
     }
 
     private func updateLayerContentRect(_ contentRect: CGRect, pixelBuffer: CVPixelBuffer) {

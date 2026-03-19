@@ -24,11 +24,6 @@ import AppKit
 @Observable
 @MainActor
 public final class MirageClientService {
-    public enum ControlTransport: Sendable {
-        case tcp
-        case quic
-    }
-
     public enum ControlUpdatePolicy: Sendable {
         case normal
         case interactiveStreaming

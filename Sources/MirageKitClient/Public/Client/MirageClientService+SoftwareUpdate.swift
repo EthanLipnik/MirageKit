@@ -53,7 +53,7 @@ public extension MirageClientService {
     func requestHostUpdateViaMismatchHandshake(to host: LoomPeer) async throws -> ProtocolMismatchInfo {
         let session = try await loomNode.connect(
             to: host.endpoint,
-            using: .tcp,
+            using: .udp,
             hello: try makeSessionHelloRequest()
         )
         defer {
