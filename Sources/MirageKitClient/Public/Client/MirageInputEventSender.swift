@@ -24,10 +24,32 @@ final class MirageInputEventSender: @unchecked Sendable {
     private let pointerCoalescingLock = NSLock()
     private var temporaryPointerCoalescingByStreamID: [StreamID: TemporaryPointerCoalescingState] = [:]
 
+    /// Whether a send is currently awaiting TCP confirmation.
+    /// Accessed only on `sendQueue`.
+    private var sendInFlight = false
+
+    /// Latest continuous event waiting to send (pointer move/drag, scroll changed).
+    /// Replaced on each arrival — only the newest matters.
+    /// Accessed only on `sendQueue`.
+    private var pendingContinuousData: Data?
+
+    /// Ordered queue of discrete events (keyboard, mouse buttons, flags, etc.).
+    /// All are delivered in order — none are dropped.
+    /// Accessed only on `sendQueue`.
+    private var pendingDiscreteQueue: [Data] = []
+
     func updateSendHandler(_ handler: (@Sendable (Data, Bool) async throws -> Void)?) {
         connectionLock.lock()
         sendHandler = handler
         connectionLock.unlock()
+
+        if handler == nil {
+            sendQueue.async { [weak self] in
+                self?.sendInFlight = false
+                self?.pendingContinuousData = nil
+                self?.pendingDiscreteQueue.removeAll()
+            }
+        }
     }
 
     func activateTemporaryPointerCoalescing(
@@ -74,13 +96,55 @@ final class MirageInputEventSender: @unchecked Sendable {
             return
         }
 
+        let continuous = isContinuousEvent(event)
+
         sendQueue.async { [weak self] in
             guard let self else { return }
-            if let sendHandler = self.currentSendHandler() {
-                Task {
-                    try? await sendHandler(data, false)
+
+            if self.sendInFlight {
+                if continuous {
+                    self.pendingContinuousData = data
+                } else {
+                    self.pendingDiscreteQueue.append(data)
                 }
+                return
             }
+
+            self.beginSend(data)
+        }
+    }
+
+    // MARK: - Serialized Send
+
+    /// Sends data and marks a send as in-flight. Must be called on `sendQueue`.
+    private func beginSend(_ data: Data) {
+        sendInFlight = true
+        guard let handler = currentSendHandler() else {
+            sendInFlight = false
+            drainNext()
+            return
+        }
+        Task { [weak self] in
+            try? await handler(data, false)
+            self?.sendQueue.async { [weak self] in
+                self?.sendInFlight = false
+                self?.drainNext()
+            }
+        }
+    }
+
+    /// Sends the next pending event if any. Must be called on `sendQueue`.
+    /// Priority: discrete first (preserve ordering), then latest continuous.
+    private func drainNext() {
+        if let discrete = pendingDiscreteQueue.first {
+            pendingDiscreteQueue.removeFirst()
+            beginSend(discrete)
+            return
+        }
+        if let continuous = pendingContinuousData {
+            pendingContinuousData = nil
+            beginSend(continuous)
+            return
         }
     }
 
@@ -139,12 +203,22 @@ final class MirageInputEventSender: @unchecked Sendable {
         return false
     }
 
+    private func isContinuousEvent(_ event: MirageInputEvent) -> Bool {
+        switch event {
+        case .mouseMoved, .mouseDragged, .rightMouseDragged, .otherMouseDragged:
+            return true
+        case let .scrollWheel(e):
+            let isBoundary = e.phase == .began || e.phase == .ended || e.phase == .cancelled
+                || e.momentumPhase == .began || e.momentumPhase == .ended || e.momentumPhase == .cancelled
+            return !isBoundary
+        default:
+            return false
+        }
+    }
+
     private func isPointerMoveOrDragEvent(_ event: MirageInputEvent) -> Bool {
         switch event {
-        case .mouseMoved,
-             .mouseDragged,
-             .rightMouseDragged,
-             .otherMouseDragged:
+        case .mouseMoved, .mouseDragged, .rightMouseDragged, .otherMouseDragged:
             true
         default:
             false

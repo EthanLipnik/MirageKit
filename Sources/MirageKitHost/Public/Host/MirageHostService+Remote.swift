@@ -25,7 +25,6 @@ extension MirageHostService {
 
         guard remoteTransportEnabled, isHosting else {
             remoteControlListenerReady = false
-            setRemoteControlPort(nil)
             remoteRelayPublicationState.reset()
             stunKeepalive?.stop()
             stunKeepalive = nil
