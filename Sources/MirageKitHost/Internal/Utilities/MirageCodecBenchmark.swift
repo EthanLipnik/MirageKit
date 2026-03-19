@@ -264,7 +264,7 @@ enum MirageCodecBenchmark {
 
     private static func probePixelFormat(for format: MiragePixelFormat) -> MiragePixelFormat {
         switch format {
-        case .p010, .nv12, .xf44:
+        case .p010, .nv12, .xf44, .ayuv16:
             return format
         case .bgr10a2:
             return .p010
@@ -318,7 +318,7 @@ enum MirageCodecBenchmark {
 
     private static func isTenBit(_ format: MiragePixelFormat) -> Bool {
         switch format {
-        case .xf44, .p010, .bgr10a2:
+        case .xf44, .ayuv16, .p010, .bgr10a2:
             true
         case .bgra8, .nv12:
             false

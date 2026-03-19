@@ -76,7 +76,7 @@ package enum MirageCodecBenchmarkRunner {
 
     package static func benchmarkPixelFormat(for format: MiragePixelFormat) -> OSType {
         switch format {
-        case .xf44:
+        case .xf44, .ayuv16:
             kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         case .p010, .bgr10a2:
             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange

@@ -11,7 +11,7 @@ import Foundation
 import Loom
 import Network
 
-package enum MirageNetworkPathKind: String, Sendable, Equatable {
+public enum MirageNetworkPathKind: String, Sendable, Equatable {
     case awdl
     case wifi
     case wired

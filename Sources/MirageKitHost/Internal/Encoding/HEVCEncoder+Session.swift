@@ -227,7 +227,7 @@ extension HEVCEncoder {
 
         while status != noErr {
             let fallbackPixelFormat: MiragePixelFormat? = switch activePixelFormat {
-            case .xf44:
+            case .xf44, .ayuv16:
                 .p010
             case .p010,
                  .bgr10a2:
@@ -283,6 +283,8 @@ extension HEVCEncoder {
         let formatLabel = switch activePixelFormat {
         case .xf44:
             "xf44"
+        case .ayuv16:
+            "AYUV16"
         case .p010:
             "P010"
         case .bgr10a2:

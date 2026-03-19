@@ -475,6 +475,10 @@ public final class MirageClientService {
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     let awdlExperimentEnabled: Bool = true
     var mediaPathProber: MirageMediaPathProber?
+    public var currentControlPathKind: MirageNetworkPathKind? {
+        controlPathSnapshot?.kind
+    }
+
     var controlPathSnapshot: MirageNetworkPathSnapshot?
     var videoPathSnapshot: MirageNetworkPathSnapshot?
     var audioPathSnapshot: MirageNetworkPathSnapshot?

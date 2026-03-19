@@ -39,6 +39,7 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
     private var spatialScaler: MTLFXSpatialScaler?
     private var outputPool: CVPixelBufferPool?
     private var currentConfig: Configuration?
+    private var loggedUnsupportedFormat: OSType = 0
 
     // MARK: - Init
 
@@ -88,7 +89,14 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
 
         let metalFormat = Self.metalPixelFormat(for: config.pixelFormat)
         guard metalFormat != .invalid else {
-            MirageLogger.error(.renderer, "MetalFX upscaler: unsupported pixel format \(config.pixelFormat)")
+            if loggedUnsupportedFormat != config.pixelFormat {
+                loggedUnsupportedFormat = config.pixelFormat
+                MirageLogger.error(
+                    .renderer,
+                    "MetalFX upscaler: unsupported pixel format \(config.pixelFormat) " +
+                    "(MetalFX requires BGRA; ensure the host is updated to switch pixel format when upscaling is enabled)"
+                )
+            }
             return false
         }
 

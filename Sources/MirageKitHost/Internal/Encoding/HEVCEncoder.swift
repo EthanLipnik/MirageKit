@@ -103,7 +103,7 @@ actor HEVCEncoder {
 
     var pixelFormatType: OSType {
         switch activePixelFormat {
-        case .xf44:
+        case .xf44, .ayuv16:
             kCVPixelFormatType_444YpCbCr10BiPlanarFullRange
         case .p010:
             kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
@@ -122,7 +122,7 @@ actor HEVCEncoder {
 
     static func requestedProfileLevels(for pixelFormat: MiragePixelFormat) -> [CFString] {
         switch pixelFormat {
-        case .xf44:
+        case .xf44, .ayuv16:
             []
         case .bgr10a2:
             [

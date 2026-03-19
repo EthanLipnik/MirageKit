@@ -262,7 +262,8 @@ public struct MirageEncoderConfiguration: Sendable {
 
     package static func descriptor(for pixelFormat: MiragePixelFormat) -> MirageColorDepthDescriptor {
         switch pixelFormat {
-        case .xf44:
+        case .xf44,
+             .ayuv16:
             descriptor(for: .ultra)
         case .p010,
              .bgr10a2:
@@ -298,7 +299,7 @@ public struct MirageEncoderConfiguration: Sendable {
 
     package static func bitDepth(for pixelFormat: MiragePixelFormat) -> MirageVideoBitDepth {
         switch pixelFormat {
-        case .p010, .bgr10a2, .xf44:
+        case .p010, .bgr10a2, .xf44, .ayuv16:
             .tenBit
         case .bgra8, .nv12:
             .eightBit
@@ -325,6 +326,7 @@ public struct MirageEncoderConfiguration: Sendable {
 
 /// Optional overrides for encoder settings supplied by the client.
 public struct MirageEncoderOverrides: Sendable, Codable {
+    public var codec: MirageVideoCodec?
     public var keyFrameInterval: Int?
     public var colorDepth: MirageStreamColorDepth?
     public var captureQueueDepth: Int?
@@ -349,6 +351,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var upscalingMode: MirageUpscalingMode?
 
     public init(
+        codec: MirageVideoCodec? = nil,
         keyFrameInterval: Int? = nil,
         colorDepth: MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
@@ -364,6 +367,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         encoderMaxHeight: Int? = nil,
         upscalingMode: MirageUpscalingMode? = nil
     ) {
+        self.codec = codec
         self.keyFrameInterval = keyFrameInterval
         self.colorDepth = colorDepth
         self.captureQueueDepth = captureQueueDepth
@@ -471,11 +475,13 @@ public enum MirageStreamColorDepth: String, Sendable, CaseIterable, Codable {
 public enum MirageVideoCodec: String, Sendable, CaseIterable, Codable {
     case hevc = "hvc1"
     case h264 = "avc1"
+    case proRes4444 = "ap4h"
 
     public var displayName: String {
         switch self {
         case .hevc: "HEVC (H.265)"
         case .h264: "H.264"
+        case .proRes4444: "ProRes 4444"
         }
     }
 }
@@ -539,6 +545,7 @@ package enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
     case bgra8
     case nv12
     case xf44
+    case ayuv16
 
     public var displayName: String {
         switch self {
@@ -547,6 +554,7 @@ package enum MiragePixelFormat: String, Sendable, CaseIterable, Codable {
         case .bgra8: "8-bit (BGRA)"
         case .nv12: "8-bit (NV12)"
         case .xf44: "10-bit (xf44)"
+        case .ayuv16: "16-bit (4444 YpCbCrA)"
         }
     }
 }
