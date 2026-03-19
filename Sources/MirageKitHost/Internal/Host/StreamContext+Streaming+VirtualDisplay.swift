@@ -136,7 +136,7 @@ extension StreamContext {
             .stream(
                 "Virtual display init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
             )
-        let encoder = HEVCEncoder(
+        let encoder = VideoEncoder(
             configuration: encoderConfig,
             latencyMode: latencyMode,
             performanceMode: performanceMode,

@@ -209,7 +209,8 @@ extension MirageHostService {
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
-                upscalingMode: request.upscalingMode
+                upscalingMode: request.upscalingMode,
+                codec: request.codec
             )
             pendingLightsOutSetup = false
             await endPendingAppStreamLightsOutSetup()

@@ -14,22 +14,22 @@ import Testing
 struct HEVCBitstreamChromaSamplingTests {
     @Test("SPS parser detects 4:2:0 chroma")
     func parses420ChromaSampling() {
-        #expect(HEVCEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 1)) == .yuv420)
+        #expect(VideoEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 1)) == .yuv420)
     }
 
     @Test("SPS parser detects 4:2:2 chroma")
     func parses422ChromaSampling() {
-        #expect(HEVCEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 2)) == .yuv422)
+        #expect(VideoEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 2)) == .yuv422)
     }
 
     @Test("SPS parser detects 4:4:4 chroma")
     func parses444ChromaSampling() {
-        #expect(HEVCEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 3)) == .yuv444)
+        #expect(VideoEncoder.hevcChromaSampling(fromSPS: makeSyntheticSPS(chromaFormatIDC: 3)) == .yuv444)
     }
 
     @Test("Ultra encode path does not force a legacy HEVC profile")
     func ultraProfileSelectionUsesAutomaticMode() {
-        #expect(HEVCEncoder.requestedProfileLevels(for: .xf44).isEmpty)
+        #expect(VideoEncoder.requestedProfileLevels(for: .xf44).isEmpty)
     }
 
     private func makeSyntheticSPS(chromaFormatIDC: Int) -> Data {

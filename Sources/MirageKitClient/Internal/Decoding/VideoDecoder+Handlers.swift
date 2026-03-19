@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+Handlers.swift
+//  VideoDecoder+Handlers.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -13,7 +13,13 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
-extension HEVCDecoder {
+extension VideoDecoder {
+    func setCodec(_ newCodec: MirageVideoCodec, streamDimensions: (width: Int, height: Int)? = nil) {
+        codec = newCodec
+        proResStreamDimensions = streamDimensions
+        MirageLogger.decoder("Decoder codec set to \(newCodec.rawValue)")
+    }
+
     func setMaximizePowerEfficiencyEnabled(_ enabled: Bool) {
         guard maximizePowerEfficiencyEnabled != enabled else { return }
         maximizePowerEfficiencyEnabled = enabled
@@ -102,7 +108,7 @@ extension HEVCDecoder {
 
     func decodedOutputPixelFormatName() -> String? {
         let pixelFormat = lastDecodedOutputPixelFormat ?? outputPixelFormat
-        return HEVCDecoder.pixelFormatName(pixelFormat)
+        return VideoDecoder.pixelFormatName(pixelFormat)
     }
 
     func prepareForDimensionChange(expectedWidth: Int? = nil, expectedHeight: Int? = nil) {

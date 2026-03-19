@@ -141,6 +141,9 @@ extension StreamContext {
     }
 
     func applyDerivedQuality(for outputSize: CGSize, logLabel: String?) async {
+        // ProRes manages its own quality — no bitrate-driven quality mapping
+        guard encoderConfig.codec != .proRes4444 else { return }
+
         guard let targetBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(
             bitrate: encoderConfig.bitrate
         ) else {

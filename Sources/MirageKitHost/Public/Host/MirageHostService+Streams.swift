@@ -197,7 +197,8 @@ public extension MirageHostService {
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
-        upscalingMode: MirageUpscalingMode? = nil
+        upscalingMode: MirageUpscalingMode? = nil,
+        codec: MirageVideoCodec? = nil
     )
     async throws -> MirageStreamSession {
         // Clear any stuck modifier state from previous streams
@@ -267,7 +268,8 @@ public extension MirageHostService {
             colorDepth: colorDepth,
             captureQueueDepth: captureQueueDepth,
             bitrate: bitrate,
-            upscalingMode: upscalingMode
+            upscalingMode: upscalingMode,
+            codec: codec
         )
         guard mediaSecurityByClientID[client.id] != nil else {
             throw MirageError.protocolError("Missing media security context for client")
@@ -702,7 +704,8 @@ public extension MirageHostService {
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?,
-        upscalingMode: MirageUpscalingMode? = nil
+        upscalingMode: MirageUpscalingMode? = nil,
+        codec: MirageVideoCodec? = nil
     ) -> MirageEncoderConfiguration {
         var effectiveEncoderConfig = encoderConfig
         let requestedColorDepth = colorDepth
@@ -727,8 +730,13 @@ public extension MirageHostService {
             if let bitrate { MirageLogger.host("Using client-requested bitrate: \(bitrate)") }
         }
 
+        if let codec {
+            effectiveEncoderConfig.codec = codec
+        }
+
         // Switch to BGRA pixel format when client requests MetalFX upscaling.
-        if let upscalingMode, upscalingMode != .off {
+        // MetalFX is incompatible with ProRes pixel formats.
+        if let upscalingMode, upscalingMode != .off, codec != .proRes4444 {
             effectiveEncoderConfig.applyUpscalingPixelFormat()
             MirageLogger.host("Applying BGRA pixel format for MetalFX \(upscalingMode.displayName) upscaling")
         }

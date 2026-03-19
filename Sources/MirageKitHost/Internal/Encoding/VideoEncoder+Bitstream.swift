@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder+Bitstream.swift
+//  VideoEncoder+Bitstream.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -97,7 +97,7 @@ private struct HEVCBitReader {
     }
 }
 
-extension HEVCEncoder {
+extension VideoEncoder {
     static func isKeyframe(_ sampleBuffer: CMSampleBuffer) -> Bool {
         guard let attachments = CMSampleBufferGetSampleAttachmentsArray(
             sampleBuffer,

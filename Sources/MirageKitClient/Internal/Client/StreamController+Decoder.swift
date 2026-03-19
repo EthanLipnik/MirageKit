@@ -13,6 +13,10 @@ import MirageKit
 extension StreamController {
     // MARK: - Decoder Control
 
+    func setDecoderCodec(_ codec: MirageVideoCodec, streamDimensions: (width: Int, height: Int)? = nil) async {
+        await decoder.setCodec(codec, streamDimensions: streamDimensions)
+    }
+
     func setDecoderLowPowerEnabled(_ enabled: Bool) async {
         await decoder.setMaximizePowerEfficiencyEnabled(enabled)
     }
@@ -100,7 +104,7 @@ extension StreamController {
 
     func updateDecodeSubmissionLimit(targetFrameRate: Int) async {
         let resolvedTargetFPS = max(1, min(120, targetFrameRate))
-        let resolvedBaseline = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
+        let resolvedBaseline = VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
         let targetUnchanged = resolvedTargetFPS == decodeSchedulerTargetFPS
         let baselineUnchanged = resolvedBaseline == decodeSubmissionBaselineLimit
         if targetUnchanged, baselineUnchanged {
@@ -140,7 +144,7 @@ extension StreamController {
         if tier == .passiveSnapshot {
             decodeSubmissionBaselineLimit = 1
         } else {
-            decodeSubmissionBaselineLimit = HEVCDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
+            decodeSubmissionBaselineLimit = VideoDecoder.baselineDecodeSubmissionLimit(targetFrameRate: resolvedTargetFPS)
         }
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0

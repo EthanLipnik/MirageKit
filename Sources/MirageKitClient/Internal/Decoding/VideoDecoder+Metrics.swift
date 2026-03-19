@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+Metrics.swift
+//  VideoDecoder+Metrics.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.

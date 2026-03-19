@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+Session.swift
+//  VideoDecoder+Session.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -13,7 +13,7 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
-extension HEVCDecoder {
+extension VideoDecoder {
     func createSession(formatDescription: CMFormatDescription) throws {
         let requestedOutputPixelFormat = outputPixelFormat
         var activeOutputPixelFormat = requestedOutputPixelFormat

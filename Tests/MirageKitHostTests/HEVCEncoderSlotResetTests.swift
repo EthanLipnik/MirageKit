@@ -1,5 +1,5 @@
 //
-//  HEVCEncoderSlotResetTests.swift
+//  VideoEncoderSlotResetTests.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 2/13/26.
@@ -13,10 +13,10 @@ import Testing
 
 #if os(macOS)
 @Suite("HEVC Encoder Slot Reset")
-struct HEVCEncoderSlotResetTests {
+struct VideoEncoderSlotResetTests {
     @Test("Resetting slots clears saturation and restores admission")
     func resetSlotsClearsSaturation() {
-        let encoder = HEVCEncoder(
+        let encoder = VideoEncoder(
             configuration: MirageEncoderConfiguration(
                 targetFrameRate: 60,
                 bitDepth: .eightBit

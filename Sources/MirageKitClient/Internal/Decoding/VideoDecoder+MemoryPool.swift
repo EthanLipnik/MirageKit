@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+MemoryPool.swift
+//  VideoDecoder+MemoryPool.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -13,7 +13,7 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
-extension HEVCDecoder {
+extension VideoDecoder {
     private func configureMemoryPoolIfNeeded() {
         guard memoryPool == nil else { return }
         let options: [CFString: Any] = [

@@ -77,6 +77,10 @@ extension MirageClientService {
             request.upscalingMode = upscalingMode
             MirageLogger.client("Requesting MetalFX upscaling mode: \(upscalingMode.displayName)")
         }
+        if let codec = overrides.codec {
+            request.codec = codec
+            MirageLogger.client("Requesting codec: \(codec.rawValue)")
+        }
     }
 
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout SelectAppMessage) {
@@ -144,6 +148,10 @@ extension MirageClientService {
             request.upscalingMode = upscalingMode
             MirageLogger.client("Requesting MetalFX upscaling mode: \(upscalingMode.displayName)")
         }
+        if let codec = overrides.codec {
+            request.codec = codec
+            MirageLogger.client("Requesting codec: \(codec.rawValue)")
+        }
     }
 
     func applyEncoderOverrides(_ overrides: MirageEncoderOverrides, to request: inout StartDesktopStreamMessage) {
@@ -210,6 +218,10 @@ extension MirageClientService {
         if let upscalingMode = overrides.upscalingMode, upscalingMode != .off {
             request.upscalingMode = upscalingMode
             MirageLogger.client("Requesting MetalFX upscaling mode: \(upscalingMode.displayName)")
+        }
+        if let codec = overrides.codec {
+            request.codec = codec
+            MirageLogger.client("Requesting codec: \(codec.rawValue)")
         }
     }
 }

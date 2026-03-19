@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder+Adjustments.swift
+//  VideoEncoder+Adjustments.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -15,7 +15,7 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-extension HEVCEncoder {
+extension VideoEncoder {
     func updateAutoTypingBurstLowLatency(_ isActive: Bool) {
         guard latencyMode == .auto else { return }
         guard autoTypingBurstLowLatencyActive != isActive else { return }
@@ -26,6 +26,7 @@ extension HEVCEncoder {
     }
 
     func updateQuality(_ quality: Float) {
+        guard !isProRes else { return }
         guard let session = compressionSession else { return }
         baseQuality = min(quality, compressionQualityCeiling)
         guard !qualityOverrideActive else { return }
@@ -50,6 +51,7 @@ extension HEVCEncoder {
     }
 
     func prepareForKeyframe(quality: Float) {
+        guard !isProRes else { return }
         guard let session = compressionSession else { return }
         let clamped = max(0.02, min(compressionQualityCeiling, quality))
         guard clamped < baseQuality else { return }
@@ -58,6 +60,7 @@ extension HEVCEncoder {
     }
 
     func restoreBaseQualityIfNeeded() {
+        guard !isProRes else { return }
         guard qualityOverrideActive, let session = compressionSession else { return }
         qualityOverrideActive = false
         applyQualitySettings(session, quality: baseQuality, log: false)

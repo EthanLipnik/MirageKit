@@ -1,5 +1,5 @@
 //
-//  HEVCEncoderRateLimitTests.swift
+//  VideoEncoderRateLimitTests.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 2/19/26.
@@ -14,10 +14,10 @@ import VideoToolbox
 
 #if os(macOS)
 @Suite("HEVC Encoder Rate Limits")
-struct HEVCEncoderRateLimitTests {
+struct VideoEncoderRateLimitTests {
     @Test("120 Hz data-rate limit uses window budget bytes")
     func highRefreshBudget() {
-        let limit = HEVCEncoder.dataRateLimit(
+        let limit = VideoEncoder.dataRateLimit(
             targetBitrateBps: 80_000_000,
             targetFrameRate: 120
         )
@@ -28,7 +28,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("60 Hz data-rate limit uses window budget bytes")
     func standardRefreshBudget() {
-        let limit = HEVCEncoder.dataRateLimit(
+        let limit = VideoEncoder.dataRateLimit(
             targetBitrateBps: 80_000_000,
             targetFrameRate: 60
         )
@@ -39,7 +39,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Game mode uses single-frame data-rate window at 120 Hz")
     func gameModeHighRefreshBudget() {
-        let limit = HEVCEncoder.dataRateLimit(
+        let limit = VideoEncoder.dataRateLimit(
             targetBitrateBps: 80_000_000,
             targetFrameRate: 120,
             performanceMode: .game
@@ -51,7 +51,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Game mode uses single-frame data-rate window at 60 Hz")
     func gameModeStandardRefreshBudget() {
-        let limit = HEVCEncoder.dataRateLimit(
+        let limit = VideoEncoder.dataRateLimit(
             targetBitrateBps: 80_000_000,
             targetFrameRate: 60,
             performanceMode: .game
@@ -63,7 +63,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Frame-rate update path refreshes bitrate window selection inputs")
     func frameRateUpdateRefreshesRateLimitInputs() async {
-        let encoder = HEVCEncoder(
+        let encoder = VideoEncoder(
             configuration: MirageEncoderConfiguration(
                 targetFrameRate: 60,
                 bitrate: 80_000_000
@@ -75,7 +75,7 @@ struct HEVCEncoderRateLimitTests {
         #expect(await encoder.configuration.targetFrameRate == 120)
 
         let targetBitrate = await encoder.configuration.bitrate ?? 0
-        let refreshedLimit = HEVCEncoder.dataRateLimit(
+        let refreshedLimit = VideoEncoder.dataRateLimit(
             targetBitrateBps: targetBitrate,
             targetFrameRate: await encoder.configuration.targetFrameRate
         )
@@ -85,7 +85,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Standard encoder specification keeps baseline hardware requirements for auto latency")
     func standardEncoderSpecificationAutoLatency() {
-        let spec = HEVCEncoder.encoderSpecification(
+        let spec = VideoEncoder.encoderSpecification(
             for: .standard,
             latencyMode: .auto
         )
@@ -97,7 +97,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Standard lowest-latency desktop specification suppresses low-latency rate control for low-res desktop")
     func standardLowestLatencyEncoderSpecification() {
-        let spec = HEVCEncoder.encoderSpecification(
+        let spec = VideoEncoder.encoderSpecification(
             for: .standard,
             latencyMode: .lowestLatency,
             width: 2_560,
@@ -112,7 +112,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Standard lowest-latency desktop specification suppresses low-latency rate control at high resolution")
     func standardLowestLatencyHighResDesktopSuppressesRateControl() {
-        let spec = HEVCEncoder.encoderSpecification(
+        let spec = VideoEncoder.encoderSpecification(
             for: .standard,
             latencyMode: .lowestLatency,
             width: 6_016,
@@ -127,7 +127,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Standard lowest-latency window specification keeps low-latency rate control at high resolution")
     func standardLowestLatencyHighResWindowKeepsRateControl() {
-        let spec = HEVCEncoder.encoderSpecification(
+        let spec = VideoEncoder.encoderSpecification(
             for: .standard,
             latencyMode: .lowestLatency,
             width: 6_016,
@@ -142,7 +142,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("Game-mode encoder specification enables low-latency rate control")
     func gameModeEncoderSpecification() {
-        let spec = HEVCEncoder.encoderSpecification(
+        let spec = VideoEncoder.encoderSpecification(
             for: .game,
             latencyMode: .auto
         )
@@ -154,7 +154,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("QP clamp policy applies in baseline game mode")
     func gameModeBaselineQPClampPolicy() {
-        let shouldApply = HEVCEncoder.shouldApplyQPClamps(
+        let shouldApply = VideoEncoder.shouldApplyQPClamps(
             for: .game,
             gameModeEmergencyQualityClampsEnabled: false
         )
@@ -163,7 +163,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("QP clamp policy applies in emergency game mode")
     func gameModeEmergencyQPClampPolicy() {
-        let shouldApply = HEVCEncoder.shouldApplyQPClamps(
+        let shouldApply = VideoEncoder.shouldApplyQPClamps(
             for: .game,
             gameModeEmergencyQualityClampsEnabled: true
         )
@@ -172,7 +172,7 @@ struct HEVCEncoderRateLimitTests {
 
     @Test("QP clamp policy always applies in standard mode")
     func standardModeQPClampPolicy() {
-        let shouldApply = HEVCEncoder.shouldApplyQPClamps(
+        let shouldApply = VideoEncoder.shouldApplyQPClamps(
             for: .standard,
             gameModeEmergencyQualityClampsEnabled: false
         )

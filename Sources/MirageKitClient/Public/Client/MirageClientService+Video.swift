@@ -881,6 +881,12 @@ extension MirageClientService {
     }
 
     private func applyDecoderCompatibilityFallback(for streamID: StreamID, at now: CFAbsoluteTime) {
+        // ProRes uses fixed quality — do not apply decoder compatibility fallback
+        if activeStreamCodecs[streamID] == .proRes4444 {
+            MirageLogger.client("Skipping decoder compatibility fallback for ProRes stream \(streamID)")
+            return
+        }
+
         adaptiveFallbackLastAppliedTime[streamID] = now
         Task { [weak self] in
             guard let self else { return }

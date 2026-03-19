@@ -258,6 +258,9 @@ public final class MirageClientService {
     /// Desktop stream resolution
     public internal(set) var desktopStreamResolution: CGSize?
 
+    /// Active codec per stream (for guarding ProRes against adaptive fallback)
+    var activeStreamCodecs: [StreamID: MirageVideoCodec] = [:]
+
     /// Desktop stream mode (mirrored vs secondary display)
     public internal(set) var desktopStreamMode: MirageDesktopStreamMode?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.

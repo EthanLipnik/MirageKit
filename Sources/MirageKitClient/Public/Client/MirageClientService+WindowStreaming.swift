@@ -122,12 +122,15 @@ public extension MirageClientService {
     /// StreamController owns the decoder, reassembler, and resize state machine.
     internal func setupControllerForStream(
         _ streamID: StreamID,
-        beginPostResizeTransition: Bool = false
+        beginPostResizeTransition: Bool = false,
+        codec: MirageVideoCodec = .hevc,
+        streamDimensions: (width: Int, height: Int)? = nil
     )
     async {
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
 
         if let existingController = controllersByStream[streamID] {
+            await existingController.setDecoderCodec(codec, streamDimensions: streamDimensions)
             await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
             await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
             await existingController.resetForNewSession()
@@ -159,6 +162,7 @@ public extension MirageClientService {
         }
         adaptiveFallbackLastAppliedTime[streamID] = 0
 
+        await controller.setDecoderCodec(codec, streamDimensions: streamDimensions)
         await controller.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
         await controller.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
 
@@ -214,6 +218,9 @@ public extension MirageClientService {
         if beginPostResizeTransition {
             await controller.beginPostResizeTransition()
         }
+        #if canImport(MetalFX)
+        await controller.setMetalFXTargetOutputSize(getVirtualDisplayPixelResolution())
+        #endif
         await controller.start()
         await controller.updatePresentationTier(sessionStore.presentationTier(for: streamID))
         await updateReassemblerSnapshot()

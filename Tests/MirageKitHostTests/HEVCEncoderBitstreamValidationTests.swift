@@ -1,5 +1,5 @@
 //
-//  HEVCEncoderBitstreamValidationTests.swift
+//  VideoEncoderBitstreamValidationTests.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 3/3/26.
@@ -14,7 +14,7 @@ import Testing
 
 #if os(macOS)
 @Suite("HEVC Encoder Bitstream Validation")
-struct HEVCEncoderBitstreamValidationTests {
+struct VideoEncoderBitstreamValidationTests {
     @Test("Valid multi-NAL AVCC payload passes validation")
     func validMultiNALPayloadPassesValidation() {
         let payload = makeLengthPrefixedPayload(nalUnits: [
@@ -23,14 +23,14 @@ struct HEVCEncoderBitstreamValidationTests {
             [0x10],
         ])
 
-        let result = HEVCEncoder.validateLengthPrefixedHEVCBitstream(payload)
+        let result = VideoEncoder.validateLengthPrefixedHEVCBitstream(payload)
         #expect(result == .valid)
     }
 
     @Test("Malformed AVCC length overrun fails validation")
     func malformedLengthOverrunFailsValidation() {
         let payload = Data([0x00, 0x00, 0x00, 0x20, 0x11, 0x22, 0x33])
-        let result = HEVCEncoder.validateLengthPrefixedHEVCBitstream(payload)
+        let result = VideoEncoder.validateLengthPrefixedHEVCBitstream(payload)
 
         switch result {
         case let .truncatedNAL(offset, declaredLength, availableBytes):
@@ -50,7 +50,7 @@ struct HEVCEncoderBitstreamValidationTests {
         ])
         payload.removeLast()
 
-        let result = HEVCEncoder.validateLengthPrefixedHEVCBitstream(payload)
+        let result = VideoEncoder.validateLengthPrefixedHEVCBitstream(payload)
         switch result {
         case .truncatedNAL:
             break
@@ -67,7 +67,7 @@ struct HEVCEncoderBitstreamValidationTests {
         ])
         let blockBuffer = try makeBlockBuffer(from: payload)
 
-        let extracted = try HEVCEncoder.extractEncodedFrameData(from: blockBuffer)
+        let extracted = try VideoEncoder.extractEncodedFrameData(from: blockBuffer)
         #expect(extracted == payload)
     }
 
@@ -78,7 +78,7 @@ struct HEVCEncoderBitstreamValidationTests {
         let expected = partA + partB
 
         let blockBuffer = try makeNonContiguousBlockBuffer(parts: [partA, partB])
-        let extracted = try HEVCEncoder.extractEncodedFrameData(from: blockBuffer)
+        let extracted = try VideoEncoder.extractEncodedFrameData(from: blockBuffer)
         #expect(extracted == expected)
     }
 
@@ -98,7 +98,7 @@ struct HEVCEncoderBitstreamValidationTests {
         }
 
         do {
-            _ = try HEVCEncoder.extractEncodedFrameData(from: emptyBuffer)
+            _ = try VideoEncoder.extractEncodedFrameData(from: emptyBuffer)
             Issue.record("Expected empty-data extraction error")
         } catch let error as EncodedFrameExtractionError {
             #expect(error == .emptyData)

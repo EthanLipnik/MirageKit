@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+SubmissionLimiter.swift
+//  VideoDecoder+SubmissionLimiter.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 2/11/26.
@@ -10,7 +10,7 @@
 import Foundation
 import MirageKit
 
-extension HEVCDecoder {
+extension VideoDecoder {
     func setDecodeSubmissionLimit(targetFrameRate: Int) {
         let desiredLimit = Self.baselineDecodeSubmissionLimit(targetFrameRate: targetFrameRate)
         setDecodeSubmissionLimit(limit: desiredLimit, reason: "target \(targetFrameRate)fps")

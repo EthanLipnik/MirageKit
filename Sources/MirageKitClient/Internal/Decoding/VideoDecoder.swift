@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder.swift
+//  VideoDecoder.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/2/26.
@@ -12,10 +12,13 @@ import Foundation
 import VideoToolbox
 import MirageKit
 
-/// Hardware-accelerated HEVC decoder using VideoToolbox
-actor HEVCDecoder {
+/// Hardware-accelerated video decoder using VideoToolbox (HEVC or ProRes)
+actor VideoDecoder {
     var decompressionSession: VTDecompressionSession?
     var formatDescription: CMFormatDescription?
+    var codec: MirageVideoCodec = .hevc
+    /// Stream dimensions for ProRes format description creation (set from stream started message)
+    var proResStreamDimensions: (width: Int, height: Int)?
     var outputPixelFormat: OSType = kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
     var preferredOutputColorDepth: MirageStreamColorDepth = .standard
     var lastDecodedOutputPixelFormat: OSType?
@@ -115,7 +118,7 @@ actor HEVCDecoder {
     // Flush pending frames
 }
 
-extension HEVCDecoder {
+extension VideoDecoder {
     var preferredOutputBitDepth: MirageVideoBitDepth {
         preferredOutputColorDepth.bitDepth
     }

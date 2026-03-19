@@ -212,6 +212,8 @@ package struct SelectAppMessage: Codable {
     package var encoderMaxHeight: Int?
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
+    /// Client-requested video codec.
+    package var codec: MirageVideoCodec?
     /// Maximum concurrent visible app windows requested by the client tier policy.
     package let maxConcurrentVisibleWindows: Int
     /// Client-requested shared bitrate allocation policy for multi-window app streaming.
@@ -240,6 +242,7 @@ package struct SelectAppMessage: Codable {
         case encoderMaxWidth
         case encoderMaxHeight
         case upscalingMode
+        case codec
         case maxConcurrentVisibleWindows
         case bitrateAllocationPolicy
     }

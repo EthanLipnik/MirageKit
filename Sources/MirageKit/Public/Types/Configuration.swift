@@ -603,13 +603,11 @@ public enum MirageAudioQuality: String, Sendable, CaseIterable, Codable {
 public enum MirageUpscalingMode: String, Sendable, CaseIterable, Codable {
     case off
     case spatial
-    case temporal
 
     public var displayName: String {
         switch self {
         case .off: "Off"
         case .spatial: "Spatial"
-        case .temporal: "Temporal"
         }
     }
 }

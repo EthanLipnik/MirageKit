@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+Decoding.swift
+//  VideoDecoder+Decoding.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -17,7 +17,7 @@ private struct SendableOpaquePointer: @unchecked Sendable {
     let value: UnsafeMutableRawPointer
 }
 
-extension HEVCDecoder {
+extension VideoDecoder {
     func startDecoding(onDecodedFrame: @escaping @Sendable (CVPixelBuffer, CMTime, CGRect) -> Void) {
         decodedFrameHandler = onDecodedFrame
         isDecoding = true
@@ -110,28 +110,31 @@ extension HEVCDecoder {
             MirageLogger.decoder("IDR slice header (after strip): \(strippedHeader)")
         }
 
-        let validation = validateLengthPrefixedHEVCBitstream(frameData)
-        if !validation.isValid {
-            let now = CFAbsoluteTimeGetCurrent()
-            let shouldLog = now - lastInvalidPayloadRecoveryTime >= invalidPayloadRecoveryCooldown
-            if shouldLog { lastInvalidPayloadRecoveryTime = now }
+        // HEVC AVCC validation — skip for ProRes (not NAL-based)
+        if codec != .proRes4444 {
+            let validation = validateLengthPrefixedHEVCBitstream(frameData)
+            if !validation.isValid {
+                let now = CFAbsoluteTimeGetCurrent()
+                let shouldLog = now - lastInvalidPayloadRecoveryTime >= invalidPayloadRecoveryCooldown
+                if shouldLog { lastInvalidPayloadRecoveryTime = now }
 
-            if shouldLog {
-                let header = frameData.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
-                MirageLogger.decoder("Invalid AVCC payload (\(validation.logSummary), \(frameData.count) bytes, header: \(header))")
-            }
+                if shouldLog {
+                    let header = frameData.prefix(32).map { String(format: "%02X", $0) }.joined(separator: " ")
+                    MirageLogger.decoder("Invalid AVCC payload (\(validation.logSummary), \(frameData.count) bytes, header: \(header))")
+                }
 
-            // Self-heal trailing-byte corruption (most common from buffer reuse)
-            if case .trailingBytes = validation, let trimmed = trimToValidAVCCBoundary(frameData) {
-                if shouldLog {
-                    MirageLogger.decoder("Trimmed \(frameData.count - trimmed.count) trailing bytes from P-frame")
+                // Self-heal trailing-byte corruption (most common from buffer reuse)
+                if case .trailingBytes = validation, let trimmed = trimToValidAVCCBoundary(frameData) {
+                    if shouldLog {
+                        MirageLogger.decoder("Trimmed \(frameData.count - trimmed.count) trailing bytes from P-frame")
+                    }
+                    frameData = trimmed
+                } else {
+                    if shouldLog {
+                        errorTracker?.recordError()
+                    }
+                    return
                 }
-                frameData = trimmed
-            } else {
-                if shouldLog {
-                    errorTracker?.recordError()
-                }
-                return
             }
         }
 

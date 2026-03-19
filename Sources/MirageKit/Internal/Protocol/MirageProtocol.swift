@@ -528,6 +528,8 @@ package struct FrameFlags: OptionSet, Sendable {
     package static let fecParity = FrameFlags(rawValue: 1 << 10)
     /// Payload is encrypted with session media key.
     package static let encryptedPayload = FrameFlags(rawValue: 1 << 11)
+    /// Payload is ProRes codec (not HEVC NAL-based)
+    package static let proResCodec = FrameFlags(rawValue: 1 << 12)
 }
 
 /// CRC32 calculation for packet validation

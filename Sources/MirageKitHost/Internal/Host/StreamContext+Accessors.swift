@@ -190,7 +190,7 @@ extension StreamContext {
         gameModeStreamStartTime
     }
 
-    func getEncoderRuntimeValidationSnapshot() async -> HEVCEncoder.RuntimeValidationSnapshot? {
+    func getEncoderRuntimeValidationSnapshot() async -> VideoEncoder.RuntimeValidationSnapshot? {
         await encoder?.runtimeValidationSnapshot()
     }
 }

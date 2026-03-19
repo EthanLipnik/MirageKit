@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+Packets.swift
+//  VideoDecoder+Packets.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.

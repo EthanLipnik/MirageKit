@@ -650,7 +650,7 @@ extension StreamContext {
     private func captureValidationSnapshot() -> CaptureValidationSnapshot? {
         guard let pixelBuffer = lastCapturedFrame?.pixelBuffer else { return nil }
         let pixelFormatType = CVPixelBufferGetPixelFormatType(pixelBuffer)
-        let pixelFormat = HEVCEncoder.fourCCString(pixelFormatType)
+        let pixelFormat = VideoEncoder.fourCCString(pixelFormatType)
         let isTenBitP010 = pixelFormatType == kCVPixelFormatType_420YpCbCr10BiPlanarFullRange ||
             pixelFormatType == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
         let colorPrimaries = bufferAttachmentString(pixelBuffer, key: kCVImageBufferColorPrimariesKey)
@@ -675,7 +675,7 @@ extension StreamContext {
     }
 
     private func applyUltraValidationDowngradeIfNeeded(
-        _ encoderValidation: HEVCEncoder.RuntimeValidationSnapshot?
+        _ encoderValidation: VideoEncoder.RuntimeValidationSnapshot?
     )
     async {
         guard encoderConfig.colorDepth == .ultra else {
@@ -727,7 +727,7 @@ extension StreamContext {
 
     private func tenBitDisplayP3Validation(
         capture: CaptureValidationSnapshot?,
-        encoder: HEVCEncoder.RuntimeValidationSnapshot?,
+        encoder: VideoEncoder.RuntimeValidationSnapshot?,
         coverageStatus: MirageDisplayP3CoverageStatus?
     ) -> Bool? {
         Self.measuredTenBitDisplayP3Validation(
@@ -755,7 +755,7 @@ extension StreamContext {
 
     private func resolvedDisplayP3CoverageStatus(
         capture: CaptureValidationSnapshot?,
-        encoder: HEVCEncoder.RuntimeValidationSnapshot?
+        encoder: VideoEncoder.RuntimeValidationSnapshot?
     ) -> MirageDisplayP3CoverageStatus? {
         if let override = displayP3CoverageStatusOverride {
             return override

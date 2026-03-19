@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder.swift
+//  VideoEncoder.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/2/26.
@@ -13,8 +13,8 @@ import MirageKit
 
 #if os(macOS)
 
-/// Hardware-accelerated HEVC encoder using VideoToolbox
-actor HEVCEncoder {
+/// Hardware-accelerated video encoder using VideoToolbox (HEVC or ProRes)
+actor VideoEncoder {
     enum StreamKind: String, Sendable {
         case window
         case desktop
@@ -36,9 +36,12 @@ actor HEVCEncoder {
 
     var compressionSession: VTCompressionSession?
     var configuration: MirageEncoderConfiguration
+    let codec: MirageVideoCodec
     let latencyMode: MirageStreamLatencyMode
     let performanceMode: MirageStreamPerformanceMode
     let streamKind: StreamKind
+
+    var isProRes: Bool { codec == .proRes4444 }
     var autoTypingBurstLowLatencyActive = false
     var activePixelFormat: MiragePixelFormat
     var activeProfileLevel: CFString?
@@ -91,6 +94,7 @@ actor HEVCEncoder {
         maximizePowerEfficiencyEnabled: Bool = false
     ) {
         self.configuration = configuration
+        self.codec = configuration.codec
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode
         self.streamKind = streamKind
@@ -98,7 +102,9 @@ actor HEVCEncoder {
         activePixelFormat = configuration.pixelFormat
         let defaultLimit = configuration.targetFrameRate >= 120 ? 2 : 1
         encoderInFlightLimit = max(1, inFlightLimit ?? defaultLimit)
-        baseQuality = min(configuration.frameQuality, compressionQualityCeiling)
+        baseQuality = configuration.codec == .proRes4444
+            ? 1.0
+            : min(configuration.frameQuality, compressionQualityCeiling)
     }
 
     var pixelFormatType: OSType {
@@ -204,6 +210,7 @@ final class EncodeInfo: @unchecked Sendable {
     let sessionVersion: UInt64
     let performanceTracker: EncodePerformanceTracker?
     let completion: (() -> Void)?
+    let isProRes: Bool
     /// Closure to check current session version (captures encoder reference)
     let getCurrentVersion: () -> UInt64
 
@@ -214,6 +221,7 @@ final class EncodeInfo: @unchecked Sendable {
         sessionVersion: UInt64 = 0,
         performanceTracker: EncodePerformanceTracker?,
         completion: (() -> Void)?,
+        isProRes: Bool = false,
         getCurrentVersion: @escaping () -> UInt64
     ) {
         self.frameNumber = frameNumber
@@ -222,6 +230,7 @@ final class EncodeInfo: @unchecked Sendable {
         self.sessionVersion = sessionVersion
         self.performanceTracker = performanceTracker
         self.completion = completion
+        self.isProRes = isProRes
         self.getCurrentVersion = getCurrentVersion
     }
 

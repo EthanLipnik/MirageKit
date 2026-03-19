@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder+Encoding.swift
+//  VideoEncoder+Encoding.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -41,7 +41,7 @@ enum EncodeAdmission {
     case skipped(EncodeSkipReason)
 }
 
-extension HEVCEncoder {
+extension VideoEncoder {
     func preheat() async throws {
         guard let session = compressionSession else {
             MirageLogger.error(.encoder, "Cannot preheat: no compression session")
@@ -217,6 +217,7 @@ extension HEVCEncoder {
             sessionVersion: currentSessionVersion,
             performanceTracker: performanceTracker,
             completion: frameCompletionHandler,
+            isProRes: isProRes,
             getCurrentVersion: { [weak self] in self?.sessionVersion ?? 0 }
         )
         frameNumber += 1
@@ -302,46 +303,53 @@ extension HEVCEncoder {
                 return
             }
 
-            let validation = Self.validateLengthPrefixedHEVCBitstream(rawFrameData)
-            guard validation.isValid else {
-                let now = CFAbsoluteTimeGetCurrent()
-                if self.shouldLogBitstreamFailure(at: now) {
-                    MirageLogger
-                        .error(
-                            .encoder,
-                            "Dropping frame \(info.frameNumber): invalid AVCC payload (\(validation.logSummary))"
-                        )
-                }
-                Task { [weak self] in
-                    await self?.scheduleRecoveryKeyframe(reason: "invalid-avcc")
-                }
-                return
-            }
+            var data: Data
 
-            var data = rawFrameData
+            if info.isProRes {
+                // ProRes frames are self-contained — no NAL units or parameter sets
+                data = rawFrameData
+            } else {
+                let validation = Self.validateLengthPrefixedHEVCBitstream(rawFrameData)
+                guard validation.isValid else {
+                    let now = CFAbsoluteTimeGetCurrent()
+                    if self.shouldLogBitstreamFailure(at: now) {
+                        MirageLogger
+                            .error(
+                                .encoder,
+                                "Dropping frame \(info.frameNumber): invalid AVCC payload (\(validation.logSummary))"
+                            )
+                    }
+                    Task { [weak self] in
+                        await self?.scheduleRecoveryKeyframe(reason: "invalid-avcc")
+                    }
+                    return
+                }
 
-            // For keyframes, prepend VPS/SPS/PPS with Annex B start codes
-            if isKeyframe {
-                // Extract parameter sets for keyframes
-                if let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
-                    if let chromaSampling = Self.chromaSampling(from: formatDesc) {
-                        Task(priority: .utility) {
-                            await self.recordEncodedChromaSampling(chromaSampling)
+                data = rawFrameData
+
+                // For keyframes, prepend VPS/SPS/PPS with Annex B start codes
+                if isKeyframe {
+                    // Extract parameter sets for keyframes
+                    if let formatDesc = CMSampleBufferGetFormatDescription(sampleBuffer) {
+                        if let chromaSampling = Self.chromaSampling(from: formatDesc) {
+                            Task(priority: .utility) {
+                                await self.recordEncodedChromaSampling(chromaSampling)
+                            }
                         }
-                    }
-                    if let parameterSets = Self.extractParameterSets(from: formatDesc) {
-                        var framed = Data(capacity: 4 + parameterSets.count + data.count)
-                        var parameterSetLength = UInt32(parameterSets.count).bigEndian
-                        withUnsafeBytes(of: &parameterSetLength) { framed.append(contentsOf: $0) }
-                        framed.append(parameterSets)
-                        framed.append(data)
-                        data = framed
-                        MirageLogger.encoder("Prepended \(parameterSets.count) bytes of parameter sets")
+                        if let parameterSets = Self.extractParameterSets(from: formatDesc) {
+                            var framed = Data(capacity: 4 + parameterSets.count + data.count)
+                            var parameterSetLength = UInt32(parameterSets.count).bigEndian
+                            withUnsafeBytes(of: &parameterSetLength) { framed.append(contentsOf: $0) }
+                            framed.append(parameterSets)
+                            framed.append(data)
+                            data = framed
+                            MirageLogger.encoder("Prepended \(parameterSets.count) bytes of parameter sets")
+                        } else {
+                            MirageLogger.error(.encoder, "Failed to extract parameter sets from format description")
+                        }
                     } else {
-                        MirageLogger.error(.encoder, "Failed to extract parameter sets from format description")
+                        MirageLogger.error(.encoder, "No format description available for keyframe")
                     }
-                } else {
-                    MirageLogger.error(.encoder, "No format description available for keyframe")
                 }
             }
 

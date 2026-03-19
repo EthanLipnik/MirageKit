@@ -173,7 +173,7 @@ actor StreamController {
     let streamID: StreamID
 
     /// HEVC decoder for this stream
-    let decoder: HEVCDecoder
+    let decoder: VideoDecoder
     var preferredDecoderColorDepth: MirageStreamColorDepth = .standard
     var preferredDecoderBitDepth: MirageVideoBitDepth {
         preferredDecoderColorDepth.bitDepth
@@ -349,6 +349,7 @@ actor StreamController {
     #if canImport(MetalFX)
     nonisolated(unsafe) var upscaler: MirageMetalFXUpscaler?
     var upscalerOutputSize: CGSize = .zero
+    var metalFXTargetOutputSize: CGSize = .zero
     #endif
 
     var lastDecodedFrameTime: CFAbsoluteTime = 0
@@ -416,7 +417,7 @@ actor StreamController {
         nowProvider: @escaping @Sendable () -> CFAbsoluteTime = CFAbsoluteTimeGetCurrent
     ) {
         self.streamID = streamID
-        decoder = HEVCDecoder()
+        decoder = VideoDecoder()
         reassembler = FrameReassembler(streamID: streamID, maxPayloadSize: maxPayloadSize)
         self.nowProvider = nowProvider
     }
@@ -474,15 +475,18 @@ actor StreamController {
 
         // Set up MetalFX upscaler if upscaling is enabled
         #if canImport(MetalFX)
-        let upscalingMode = MirageUpscalingPreferences.upscalingMode()
-        if upscalingMode != .off {
+        if MirageUpscalingPreferences.isEnabled() {
             let factor = MirageUpscalingPreferences.upscaleFactor()
             if upscaler == nil {
                 upscaler = MirageMetalFXUpscaler()
             }
             upscaler?.upscaleFactor = factor
+            if metalFXTargetOutputSize.width > 0, metalFXTargetOutputSize.height > 0 {
+                upscaler?.targetOutputWidth = Int(metalFXTargetOutputSize.width)
+                upscaler?.targetOutputHeight = Int(metalFXTargetOutputSize.height)
+            }
             await decoder.setMetalFXOutputOverride(true)
-            MirageLogger.renderer("MetalFX \(upscalingMode.displayName) upscaling enabled with factor \(factor)")
+            MirageLogger.renderer("MetalFX upscaling enabled with factor \(factor)")
         } else {
             await decoder.setMetalFXOutputOverride(false)
             upscaler?.invalidate()
@@ -493,40 +497,36 @@ actor StreamController {
         // Set up frame handler
         let metricsTracker = metricsTracker
         await decoder.startDecoding { [weak self] (pixelBuffer: CVPixelBuffer, presentationTime: CMTime, contentRect: CGRect) in
-            // Also store in global cache for iOS gesture tracking compatibility
             let decodeTime = CFAbsoluteTimeGetCurrent()
 
-            // MetalFX upscaling: upscale the frame before caching
-            var finalBuffer = pixelBuffer
-            var finalContentRect = contentRect
+            // MetalFX upscaling: submit frame asynchronously so the decode
+            // callback returns immediately and the VT decoder thread is never
+            // blocked by GPU work. The upscaler uses a "latest frame wins"
+            // policy — if it falls behind, intermediate frames are skipped.
+            var handledByUpscaler = false
             #if canImport(MetalFX)
-            if let upscaler = self?.upscaler,
-               let upscaled = upscaler.upscale(pixelBuffer) {
-                let inputWidth = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
-                let inputHeight = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-                let outputWidth = CGFloat(CVPixelBufferGetWidth(upscaled))
-                let outputHeight = CGFloat(CVPixelBufferGetHeight(upscaled))
-                if inputWidth > 0, inputHeight > 0 {
-                    finalContentRect = CGRect(
-                        x: contentRect.origin.x * (outputWidth / inputWidth),
-                        y: contentRect.origin.y * (outputHeight / inputHeight),
-                        width: contentRect.size.width * (outputWidth / inputWidth),
-                        height: contentRect.size.height * (outputHeight / inputHeight)
-                    )
-                }
-                finalBuffer = upscaled
+            if let upscaler = self?.upscaler {
+                upscaler.submitFrame(
+                    pixelBuffer,
+                    contentRect: contentRect,
+                    decodeTime: decodeTime,
+                    presentationTime: presentationTime,
+                    streamID: capturedStreamID
+                )
+                handledByUpscaler = true
             }
             #endif
-
-            MirageFrameCache.shared.store(
-                finalBuffer,
-                contentRect: finalContentRect,
-                decodeTime: decodeTime,
-                presentationTime: presentationTime,
-                metalTexture: nil,
-                texture: nil,
-                for: capturedStreamID
-            )
+            if !handledByUpscaler {
+                MirageFrameCache.shared.store(
+                    pixelBuffer,
+                    contentRect: contentRect,
+                    decodeTime: decodeTime,
+                    presentationTime: presentationTime,
+                    metalTexture: nil,
+                    texture: nil,
+                    for: capturedStreamID
+                )
+            }
 
             let firstDecodedFrame = metricsTracker.recordDecodedFrame()
             Task { [weak self] in
@@ -1006,6 +1006,10 @@ actor StreamController {
             self.upscaler = nil
             upscalerOutputSize = .zero
         }
+    }
+
+    func setMetalFXTargetOutputSize(_ size: CGSize) {
+        metalFXTargetOutputSize = size
     }
 
     func tearDownUpscaler() {

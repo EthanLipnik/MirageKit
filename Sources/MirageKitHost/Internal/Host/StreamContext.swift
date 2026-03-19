@@ -18,7 +18,7 @@ import ScreenCaptureKit
 actor StreamContext {
     let streamID: StreamID
     var windowID: WindowID
-    let streamKind: HEVCEncoder.StreamKind
+    let streamKind: VideoEncoder.StreamKind
     var encoderConfig: MirageEncoderConfiguration
     var streamScale: CGFloat
     var baseCaptureSize: CGSize = .zero
@@ -71,7 +71,7 @@ actor StreamContext {
     var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true
 
-    var encoder: HEVCEncoder?
+    var encoder: VideoEncoder?
     var isRunning = false
     var frameNumber: UInt32 = 0
     var sequenceNumber: UInt32 = 0
@@ -394,7 +394,7 @@ actor StreamContext {
     init(
         streamID: StreamID,
         windowID: WindowID,
-        streamKind: HEVCEncoder.StreamKind = .window,
+        streamKind: VideoEncoder.StreamKind = .window,
         encoderConfig: MirageEncoderConfiguration,
         streamScale: CGFloat = 1.0,
         requestedAudioChannelCount: Int = MirageAudioChannelLayout.stereo.channelCount,
@@ -453,7 +453,9 @@ actor StreamContext {
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
-        baseFrameFlags = additionalFrameFlags
+        baseFrameFlags = resolvedEncoderConfig.codec == .proRes4444
+            ? additionalFrameFlags.union(.proResCodec)
+            : additionalFrameFlags
         maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
         self.mediaSecurityContext = mediaSecurityContext
         currentFrameRate = resolvedEncoderConfig.targetFrameRate
@@ -689,7 +691,7 @@ actor StreamContext {
         }
     }
 
-    nonisolated func scheduleEncoderTypingBurstUpdate(_ encoder: HEVCEncoder, enabled: Bool) {
+    nonisolated func scheduleEncoderTypingBurstUpdate(_ encoder: VideoEncoder, enabled: Bool) {
         Task(priority: .userInitiated) {
             await encoder.updateAutoTypingBurstLowLatency(enabled)
         }

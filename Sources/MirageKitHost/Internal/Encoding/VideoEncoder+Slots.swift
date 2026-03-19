@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder+Slots.swift
+//  VideoEncoder+Slots.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -15,7 +15,7 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-extension HEVCEncoder {
+extension VideoEncoder {
     nonisolated func reserveEncoderSlot() -> Bool {
         encoderInFlightLock.lock()
         defer { encoderInFlightLock.unlock() }

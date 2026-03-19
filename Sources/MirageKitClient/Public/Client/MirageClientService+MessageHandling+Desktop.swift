@@ -49,6 +49,7 @@ extension MirageClientService {
             }
             desktopStreamID = streamID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
+            activeStreamCodecs[streamID] = started.codec
             if let dimensionToken {
                 desktopDimensionTokenByStream[streamID] = dimensionToken
             }
@@ -79,7 +80,9 @@ extension MirageClientService {
                 if shouldResetController {
                     await self.setupControllerForStream(
                         streamID,
-                        beginPostResizeTransition: isResizeTokenAdvance
+                        beginPostResizeTransition: isResizeTokenAdvance,
+                        codec: started.codec,
+                        streamDimensions: (width: started.width, height: started.height)
                     )
                 }
                 self.addActiveStreamID(streamID)

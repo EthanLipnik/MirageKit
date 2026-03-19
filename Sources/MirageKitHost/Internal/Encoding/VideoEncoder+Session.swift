@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder+Session.swift
+//  VideoEncoder+Session.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -15,7 +15,7 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-extension HEVCEncoder {
+extension VideoEncoder {
     nonisolated static func encoderSpecification(
         for performanceMode: MirageStreamPerformanceMode,
         latencyMode: MirageStreamLatencyMode
@@ -34,8 +34,16 @@ extension HEVCEncoder {
         latencyMode: MirageStreamLatencyMode,
         width: Int,
         height: Int,
-        streamKind: StreamKind
+        streamKind: StreamKind,
+        codec: MirageVideoCodec = .hevc
     ) -> [CFString: Any] {
+        // ProRes does not use hardware-accelerated HEVC encoder or low-latency rate control
+        if codec == .proRes4444 {
+            return [
+                kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
+            ]
+        }
+
         var spec: [CFString: Any] = [
             kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder: true,
             kVTVideoEncoderSpecification_RequireHardwareAcceleratedVideoEncoder: true,
@@ -204,19 +212,26 @@ extension HEVCEncoder {
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
         ] as CFDictionary
 
+        let codecType: CMVideoCodecType = switch codec {
+        case .hevc: kCMVideoCodecType_HEVC
+        case .h264: kCMVideoCodecType_H264
+        case .proRes4444: kCMVideoCodecType_AppleProRes4444
+        }
+
         let baseSpec = Self.encoderSpecification(
             for: performanceMode,
             latencyMode: resolvedSessionLatencyMode(),
             width: width,
             height: height,
-            streamKind: streamKind
+            streamKind: streamKind,
+            codec: codec
         )
 
         var status = VTCompressionSessionCreate(
             allocator: kCFAllocatorDefault,
             width: Int32(width),
             height: Int32(height),
-            codecType: kCMVideoCodecType_HEVC,
+            codecType: codecType,
             encoderSpecification: baseSpec as CFDictionary,
             imageBufferAttributes: imageBufferAttributes,
             compressedDataAllocator: nil,
@@ -252,7 +267,7 @@ extension HEVCEncoder {
                 allocator: kCFAllocatorDefault,
                 width: Int32(width),
                 height: Int32(height),
-                codecType: kCMVideoCodecType_HEVC,
+                codecType: codecType,
                 encoderSpecification: baseSpec as CFDictionary,
                 imageBufferAttributes: fallbackAttributes,
                 compressedDataAllocator: nil,
@@ -739,6 +754,11 @@ extension HEVCEncoder {
         width: Int,
         height: Int
     ) throws {
+        if isProRes {
+            try configureProResSession(session, width: width, height: height)
+            return
+        }
+
         let resolvedLatencyMode = resolvedSessionLatencyMode()
         let standardLowLatencyTuningEnabled = Self.standardLowLatencyVTTuningEnabled(
             performanceMode: performanceMode,
@@ -921,6 +941,67 @@ extension HEVCEncoder {
             // sRGB uses standard Rec. 709 primaries
             break
         }
+
+        // Prepare for encoding
+        VTCompressionSessionPrepareToEncodeFrames(session)
+    }
+
+    private func configureProResSession(
+        _ session: VTCompressionSession,
+        width: Int,
+        height: Int
+    ) throws {
+        // Real-time encoding
+        setProperty(session, key: kVTCompressionPropertyKey_RealTime, value: kCFBooleanTrue)
+
+        // No B-frames
+        setProperty(session, key: kVTCompressionPropertyKey_AllowFrameReordering, value: kCFBooleanFalse)
+
+        // Frame rate
+        setProperty(
+            session,
+            key: kVTCompressionPropertyKey_ExpectedFrameRate,
+            value: configuration.targetFrameRate as CFNumber
+        )
+
+        // Keyframe interval (ProRes is all-intra, but set for consistency)
+        setProperty(
+            session,
+            key: kVTCompressionPropertyKey_MaxKeyFrameInterval,
+            value: configuration.keyFrameInterval as CFNumber
+        )
+
+        // Quality 1.0 for near-lossless ProRes
+        baseQuality = 1.0
+        setProperty(
+            session,
+            key: kVTCompressionPropertyKey_Quality,
+            value: NSNumber(value: 1.0)
+        )
+
+        // Color space configuration
+        switch configuration.colorSpace {
+        case .displayP3:
+            setProperty(
+                session,
+                key: kVTCompressionPropertyKey_ColorPrimaries,
+                value: kCMFormatDescriptionColorPrimaries_P3_D65
+            )
+            setProperty(
+                session,
+                key: kVTCompressionPropertyKey_TransferFunction,
+                value: kCMFormatDescriptionTransferFunction_sRGB
+            )
+            setProperty(
+                session,
+                key: kVTCompressionPropertyKey_YCbCrMatrix,
+                value: kCMFormatDescriptionYCbCrMatrix_ITU_R_709_2
+            )
+        case .sRGB:
+            break
+        }
+
+        MirageLogger.encoder("ProRes 4444 session configured at \(width)x\(height)")
 
         // Prepare for encoding
         VTCompressionSessionPrepareToEncodeFrames(session)

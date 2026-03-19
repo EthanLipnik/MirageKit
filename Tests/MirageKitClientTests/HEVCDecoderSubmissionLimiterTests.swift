@@ -1,5 +1,5 @@
 //
-//  HEVCDecoderSubmissionLimiterTests.swift
+//  VideoDecoderSubmissionLimiterTests.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 2/12/26.
@@ -13,10 +13,10 @@ import Testing
 
 #if os(macOS)
 @Suite("HEVC Decoder Submission Limiter")
-struct HEVCDecoderSubmissionLimiterTests {
+struct VideoDecoderSubmissionLimiterTests {
     @Test("Target refresh updates choose baseline decode submission limits")
     func submissionLimitUsesThroughputBaseline() async {
-        let decoder = HEVCDecoder()
+        let decoder = VideoDecoder()
         #expect(await decoder.currentDecodeSubmissionLimit() == 1)
 
         await decoder.setDecodeSubmissionLimit(targetFrameRate: 120)
@@ -28,7 +28,7 @@ struct HEVCDecoderSubmissionLimiterTests {
 
     @Test("Submission limiter enforces cap and releases waiters")
     func submissionLimiterEnforcesCapAndRelease() async throws {
-        let decoder = HEVCDecoder()
+        let decoder = VideoDecoder()
         await decoder.setDecodeSubmissionLimit(limit: 3, reason: "test setup")
 
         await decoder.acquireDecodeSubmissionSlot()

@@ -60,7 +60,7 @@ enum MirageCodecBenchmark {
         #endif
     }
 
-    // MARK: - macOS HEVCEncoder Benchmarks
+    // MARK: - macOS VideoEncoder Benchmarks
 
     #if os(macOS)
     private static func runEncoderThroughputBenchmark() async throws -> Double {
@@ -73,7 +73,7 @@ enum MirageCodecBenchmark {
             pixelFormat: .p010,
             bitrate: targetBitrate
         )
-        let encoder = HEVCEncoder(
+        let encoder = VideoEncoder(
             configuration: config,
             latencyMode: .lowestLatency,
             inFlightLimit: 1
@@ -168,7 +168,7 @@ enum MirageCodecBenchmark {
             pixelFormat: effectivePixelFormat,
             bitrate: targetBitrate
         )
-        let encoder = HEVCEncoder(
+        let encoder = VideoEncoder(
             configuration: config,
             latencyMode: .lowestLatency,
             inFlightLimit: 1

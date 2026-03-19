@@ -1,5 +1,5 @@
 //
-//  HEVCDecoder+Format.swift
+//  VideoDecoder+Format.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/24/26.
@@ -44,8 +44,13 @@ enum AVCCValidationResult: Equatable, Sendable {
     }
 }
 
-extension HEVCDecoder {
+extension VideoDecoder {
     func extractFormatDescriptionAndStripParameterSets(from data: Data) throws -> Data {
+        // ProRes frames are self-contained — no NAL units or parameter sets
+        if codec == .proRes4444 {
+            return try extractProResFormatDescription(from: data)
+        }
+
         // Check for framed keyframe format (4-byte length prefix + Annex B parameter sets + AVCC frame data)
         if let framed = splitFramedKeyframeData(from: data) {
             // Extract VPS, SPS, PPS from the parameter sets portion
@@ -592,5 +597,59 @@ extension HEVCDecoder {
         }
 
         return nalUnits
+    }
+
+    // MARK: - ProRes Format Description
+
+    private func extractProResFormatDescription(from data: Data) throws -> Data {
+        // Create format description from codec type and dimensions if we don't have one yet.
+        // The ProRes frame header is the authoritative source for dimensions — the stream
+        // started message reports virtual display size which may differ from encoder output
+        // (e.g. after stream scaling or resolution capping).
+        let dims: (width: Int, height: Int)? =
+            proResFrameDimensions(from: data) ?? expectedDimensions ?? proResStreamDimensions
+        let needsNewDescription: Bool
+        if let dims {
+            if let existing = formatDescription {
+                let existingDims = CMVideoFormatDescriptionGetDimensions(existing)
+                needsNewDescription = Int32(dims.width) != existingDims.width || Int32(dims.height) != existingDims.height
+            } else {
+                needsNewDescription = true
+            }
+        } else {
+            needsNewDescription = false
+        }
+        if needsNewDescription, let dims {
+            var formatDesc: CMFormatDescription?
+            let status = CMVideoFormatDescriptionCreate(
+                allocator: kCFAllocatorDefault,
+                codecType: kCMVideoCodecType_AppleProRes4444,
+                width: Int32(dims.width),
+                height: Int32(dims.height),
+                extensions: nil,
+                formatDescriptionOut: &formatDesc
+            )
+            if status == noErr, let desc = formatDesc {
+                formatDescription = desc
+                cachedFormatDescription = desc
+                outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputColorDepth)
+                MirageLogger.decoder("ProRes 4444 format description created (\(dims.width)x\(dims.height))")
+            } else {
+                MirageLogger.error(.decoder, "Failed to create ProRes format description: \(status)")
+            }
+        }
+        // ProRes data is passed through unchanged — no stripping needed
+        return data
+    }
+
+    /// Extract width/height from ProRes picture header.
+    /// ProRes frame layout: 4B frame_size, 4B "icpf", 2B header_size, 2B version, 4B creator_id, 2B width, 2B height
+    private func proResFrameDimensions(from data: Data) -> (width: Int, height: Int)? {
+        // Width at offset 16, height at offset 18 in the ProRes frame header
+        guard data.count >= 20 else { return nil }
+        let width = Int(data[16]) << 8 | Int(data[17])
+        let height = Int(data[18]) << 8 | Int(data[19])
+        guard width > 0, height > 0, width < 16384, height < 16384 else { return nil }
+        return (width: width, height: height)
     }
 }

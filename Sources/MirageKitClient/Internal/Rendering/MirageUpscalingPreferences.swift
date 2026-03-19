@@ -14,11 +14,15 @@ enum MirageUpscalingPreferences {
     private static let upscalingModeKey = "metalFXUpscalingMode"
     private static let upscaleFactorKey = "metalFXUpscaleFactor"
 
-    static func upscalingMode() -> MirageUpscalingMode {
+    static func isEnabled() -> Bool {
         guard let raw = UserDefaults.standard.string(forKey: upscalingModeKey) else {
-            return .off
+            return false
         }
-        return MirageUpscalingMode(rawValue: raw) ?? .off
+        return MirageUpscalingMode(rawValue: raw) != nil && MirageUpscalingMode(rawValue: raw) != .off
+    }
+
+    static func upscalingMode() -> MirageUpscalingMode {
+        isEnabled() ? .spatial : .off
     }
 
     /// Returns the upscale factor (0.5–0.75). This is the fraction of the

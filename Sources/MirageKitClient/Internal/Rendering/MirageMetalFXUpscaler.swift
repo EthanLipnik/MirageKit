@@ -4,17 +4,19 @@
 //
 //  Created by Ethan Lipnik on 3/18/26.
 //
-//  MetalFX spatial (and future temporal) upscaler that operates on
+//  MetalFX spatial upscaler that operates on
 //  IOSurface-backed CVPixelBuffers and feeds the result back through
 //  the existing AVSampleBufferDisplayLayer path.
 //
 
 #if canImport(MetalFX)
+import CoreMedia
 import CoreVideo
 import Foundation
 import Metal
 import MetalFX
 import MirageKit
+import os
 import VideoToolbox
 
 final class MirageMetalFXUpscaler: @unchecked Sendable {
@@ -38,9 +40,25 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
     // MARK: - Scaler State
 
     private var spatialScaler: MTLFXSpatialScaler?
+    private var privateOutputTexture: MTLTexture?
     private var outputPool: CVPixelBufferPool?
     private var currentConfig: Configuration?
     private var loggedUnsupportedFormat: OSType = 0
+
+    // MARK: - Async Pipeline State
+
+    struct PendingFrame {
+        let buffer: CVPixelBuffer
+        let contentRect: CGRect
+        let decodeTime: CFAbsoluteTime
+        let presentationTime: CMTime
+        let streamID: StreamID
+    }
+
+    private let upscaleQueue = DispatchQueue(label: "com.mirage.metalfx-upscale", qos: .userInteractive)
+    private var pendingFrameLock = os_unfair_lock()
+    private var pendingFrame: PendingFrame?
+    private var isProcessing = false
 
     // MARK: - Fallback YUV→BGRA Conversion
 
@@ -129,7 +147,25 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
             return false
         }
 
+        // Create a private-storage texture for MetalFX output. IOSurface-backed
+        // textures from CVMetalTextureCache use .shared storage, but MetalFX
+        // requires .private. We blit from this texture to the shared one after upscaling.
+        let textureDescriptor = MTLTextureDescriptor.texture2DDescriptor(
+            pixelFormat: metalFormat,
+            width: config.outputWidth,
+            height: config.outputHeight,
+            mipmapped: false
+        )
+        textureDescriptor.storageMode = .private
+        textureDescriptor.usage = [.shaderWrite, .shaderRead, .renderTarget]
+
+        guard let privateTexture = device.makeTexture(descriptor: textureDescriptor) else {
+            MirageLogger.error(.renderer, "MetalFX upscaler: failed to create private output texture")
+            return false
+        }
+
         spatialScaler = scaler
+        privateOutputTexture = privateTexture
         outputPool = pool
         currentConfig = config
 
@@ -191,6 +227,7 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
         }
 
         guard let scaler = spatialScaler,
+              let privateOutput = privateOutputTexture,
               let pool = outputPool,
               let textureCache else {
             return nil
@@ -220,14 +257,27 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
             return nil
         }
 
-        // Run the spatial scaler
+        // Run the spatial scaler into the private texture, then blit to the
+        // IOSurface-backed shared texture for AVSampleBufferDisplayLayer.
         guard let commandBuffer = commandQueue.makeCommandBuffer() else {
             return nil
         }
 
         scaler.colorTexture = inputTexture
-        scaler.outputTexture = outputTexture
+        scaler.outputTexture = privateOutput
         scaler.encode(commandBuffer: commandBuffer)
+
+        guard let blitEncoder = commandBuffer.makeBlitCommandEncoder() else {
+            return nil
+        }
+        blitEncoder.copy(
+            from: privateOutput, sourceSlice: 0, sourceLevel: 0,
+            sourceOrigin: MTLOrigin(x: 0, y: 0, z: 0),
+            sourceSize: MTLSize(width: needed.outputWidth, height: needed.outputHeight, depth: 1),
+            to: outputTexture, destinationSlice: 0, destinationLevel: 0,
+            destinationOrigin: MTLOrigin(x: 0, y: 0, z: 0)
+        )
+        blitEncoder.endEncoding()
 
         commandBuffer.commit()
         commandBuffer.waitUntilCompleted()
@@ -243,8 +293,89 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
         return outputBuffer
     }
 
+    // MARK: - Async Submission
+
+    /// Submit a decoded frame for async upscaling. Never blocks the caller.
+    /// Uses a "latest frame wins" policy — if a new frame arrives while the
+    /// previous one is being upscaled, the older pending frame is discarded.
+    func submitFrame(
+        _ buffer: CVPixelBuffer,
+        contentRect: CGRect,
+        decodeTime: CFAbsoluteTime,
+        presentationTime: CMTime,
+        streamID: StreamID
+    ) {
+        os_unfair_lock_lock(&pendingFrameLock)
+        pendingFrame = PendingFrame(
+            buffer: buffer,
+            contentRect: contentRect,
+            decodeTime: decodeTime,
+            presentationTime: presentationTime,
+            streamID: streamID
+        )
+        let shouldStart = !isProcessing
+        if shouldStart { isProcessing = true }
+        os_unfair_lock_unlock(&pendingFrameLock)
+
+        if shouldStart {
+            upscaleQueue.async { [weak self] in self?.processLoop() }
+        }
+    }
+
+    /// Runs on the dedicated upscale queue. Loops until no pending frame remains,
+    /// always grabbing the latest frame at each iteration.
+    private func processLoop() {
+        while true {
+            os_unfair_lock_lock(&pendingFrameLock)
+            guard let frame = pendingFrame else {
+                isProcessing = false
+                os_unfair_lock_unlock(&pendingFrameLock)
+                return
+            }
+            pendingFrame = nil
+            os_unfair_lock_unlock(&pendingFrameLock)
+
+            var finalBuffer = frame.buffer
+            var finalContentRect = frame.contentRect
+            if let upscaled = upscale(frame.buffer) {
+                let inW = CGFloat(CVPixelBufferGetWidth(frame.buffer))
+                let inH = CGFloat(CVPixelBufferGetHeight(frame.buffer))
+                let outW = CGFloat(CVPixelBufferGetWidth(upscaled))
+                let outH = CGFloat(CVPixelBufferGetHeight(upscaled))
+                if inW > 0, inH > 0 {
+                    finalContentRect = CGRect(
+                        x: frame.contentRect.origin.x * (outW / inW),
+                        y: frame.contentRect.origin.y * (outH / inH),
+                        width: frame.contentRect.size.width * (outW / inW),
+                        height: frame.contentRect.size.height * (outH / inH)
+                    )
+                }
+                finalBuffer = upscaled
+            }
+
+            MirageFrameCache.shared.store(
+                finalBuffer,
+                contentRect: finalContentRect,
+                decodeTime: frame.decodeTime,
+                presentationTime: frame.presentationTime,
+                metalTexture: nil,
+                texture: nil,
+                for: frame.streamID
+            )
+        }
+    }
+
     func invalidate() {
+        os_unfair_lock_lock(&pendingFrameLock)
+        pendingFrame = nil
+        os_unfair_lock_unlock(&pendingFrameLock)
+
+        // Wait for any in-flight processLoop iteration to finish before
+        // releasing Metal resources.
+        upscaleQueue.sync(flags: .barrier) {}
+
         spatialScaler = nil
+        privateOutputTexture = nil
         outputPool = nil
         currentConfig = nil
         if let textureCache {
@@ -312,7 +443,7 @@ final class MirageMetalFXUpscaler: @unchecked Sendable {
 
         if !loggedFallbackConversion {
             loggedFallbackConversion = true
-            let sourceName = HEVCDecoder.pixelFormatName(CVPixelBufferGetPixelFormatType(sourceBuffer))
+            let sourceName = VideoDecoder.pixelFormatName(CVPixelBufferGetPixelFormatType(sourceBuffer))
             MirageLogger.renderer(
                 "MetalFX upscaler: using fallback YUV→BGRA conversion (decoder output is \(sourceName))"
             )

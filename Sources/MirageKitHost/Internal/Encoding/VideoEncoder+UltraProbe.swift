@@ -1,5 +1,5 @@
 //
-//  HEVCEncoder+UltraProbe.swift
+//  VideoEncoder+UltraProbe.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 3/12/26.
@@ -14,7 +14,7 @@ import MirageKit
 #if os(macOS)
 import ScreenCaptureKit
 
-package struct HEVCEncoderUltraProbeResult: Sendable {
+package struct VideoEncoderUltraProbeResult: Sendable {
     package let captureAcceptsXF44: Bool
     package let encoderSessionCreated: Bool
     package let encodedChromaSampling: MirageStreamChromaSampling?
@@ -28,11 +28,11 @@ package struct HEVCEncoderUltraProbeResult: Sendable {
     }
 }
 
-extension HEVCEncoder {
-    package static func probeStrictUltra444Support() -> HEVCEncoderUltraProbeResult {
+extension VideoEncoder {
+    package static func probeStrictUltra444Support() -> VideoEncoderUltraProbeResult {
         let captureAcceptsXF44 = captureAcceptsXF44()
         guard captureAcceptsXF44 else {
-            return HEVCEncoderUltraProbeResult(
+            return VideoEncoderUltraProbeResult(
                 captureAcceptsXF44: false,
                 encoderSessionCreated: false,
                 encodedChromaSampling: nil,
@@ -57,7 +57,7 @@ extension HEVCEncoder {
             width: Int32(width),
             height: Int32(height),
             codecType: kCMVideoCodecType_HEVC,
-            encoderSpecification: HEVCEncoder.encoderSpecification(
+            encoderSpecification: VideoEncoder.encoderSpecification(
                 for: .standard,
                 latencyMode: .auto,
                 width: width,
@@ -72,7 +72,7 @@ extension HEVCEncoder {
         )
 
         guard sessionStatus == noErr, let session else {
-            return HEVCEncoderUltraProbeResult(
+            return VideoEncoderUltraProbeResult(
                 captureAcceptsXF44: captureAcceptsXF44,
                 encoderSessionCreated: false,
                 encodedChromaSampling: nil,
@@ -108,7 +108,7 @@ extension HEVCEncoder {
             height: height,
             pixelFormat: pixelFormat
         ) else {
-            return HEVCEncoderUltraProbeResult(
+            return VideoEncoderUltraProbeResult(
                 captureAcceptsXF44: captureAcceptsXF44,
                 encoderSessionCreated: true,
                 encodedChromaSampling: nil,
@@ -137,7 +137,7 @@ extension HEVCEncoder {
                 return
             }
             callbackState.withLock { state in
-                state = HEVCEncoder.chromaSampling(from: formatDescription)
+                state = VideoEncoder.chromaSampling(from: formatDescription)
             }
         }
 
@@ -145,7 +145,7 @@ extension HEVCEncoder {
             _ = semaphore.wait(timeout: .now() + .milliseconds(750))
         }
 
-        return HEVCEncoderUltraProbeResult(
+        return VideoEncoderUltraProbeResult(
             captureAcceptsXF44: captureAcceptsXF44,
             encoderSessionCreated: true,
             encodedChromaSampling: callbackState.withLock { $0 },

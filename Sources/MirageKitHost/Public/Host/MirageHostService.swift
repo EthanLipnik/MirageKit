@@ -673,12 +673,12 @@ public final class MirageHostService {
         strictUltraColorDepthProbeResult().supportsUltra444
     }
 
-    private static func strictUltraColorDepthProbeResult() -> HEVCEncoderUltraProbeResult {
+    private static func strictUltraColorDepthProbeResult() -> VideoEncoderUltraProbeResult {
         UltraColorDepthProbeCache.result
     }
 
     private enum UltraColorDepthProbeCache {
-        static let result = HEVCEncoder.probeStrictUltra444Support()
+        static let result = VideoEncoder.probeStrictUltra444Support()
     }
 
     func effectiveColorDepth(
