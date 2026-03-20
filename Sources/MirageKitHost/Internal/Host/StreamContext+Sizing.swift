@@ -57,10 +57,25 @@ extension StreamContext {
             bitrateBased = 0
         }
         let computed = max(pixelBased, bitrateBased)
-        let queueCap = isGameMode ? Self.gameModeQueueCapBytes : maxQueuedBytesCap
+        let isProRes = encoderConfig.codec == .proRes4444
+        let queueCap: Int
+        if isProRes {
+            queueCap = 40_000_000
+        } else if isGameMode {
+            queueCap = Self.gameModeQueueCapBytes
+        } else {
+            queueCap = maxQueuedBytesCap
+        }
         let clamped = max(minQueuedBytes, min(queueCap, computed))
         maxQueuedBytes = clamped
-        let pressureRatio = isGameMode ? Self.gameModeQueuePressureRatio : 0.60
+        let pressureRatio: Double
+        if isProRes {
+            pressureRatio = 0.80
+        } else if isGameMode {
+            pressureRatio = Self.gameModeQueuePressureRatio
+        } else {
+            pressureRatio = 0.60
+        }
         queuePressureBytes = max(minQueuedBytes, Int(Double(clamped) * pressureRatio))
     }
 }
