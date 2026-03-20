@@ -315,7 +315,9 @@ extension MirageClientService {
 
     private func clampRefreshRate(_ rate: Int) -> Int {
         guard rate > 0 else { return 60 }
-        return rate >= 120 ? 120 : 60
+        if rate >= 120 { return 120 }
+        if rate <= 30 { return 30 }
+        return 60
     }
 
     #if os(iOS) || os(visionOS)
