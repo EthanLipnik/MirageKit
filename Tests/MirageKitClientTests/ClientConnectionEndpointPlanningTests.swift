@@ -6,47 +6,40 @@
 //
 
 @testable import MirageKit
-@testable import MirageKitClient
-import Network
 import Testing
 
 @Suite("Client Connection Endpoint Planning")
 struct ClientConnectionEndpointPlanningTests {
-    @MainActor
-    @Test("Bonjour service endpoints return the raw service endpoint")
-    func bonjourServiceEndpointsReturnRawService() throws {
-        let service = MirageClientService(deviceName: "Test Device")
-        let host = LoomPeer(
-            id: UUID(),
-            name: "Ethan's Mac Studio",
+    @Test("Peer advertisement round-trips hostName through TXT record")
+    func hostNameRoundTrips() throws {
+        let original = LoomPeerAdvertisement(
+            protocolVersion: Int(Loom.protocolVersion),
+            deviceID: UUID(),
+            identityKeyID: "host-key",
             deviceType: .mac,
-            endpoint: .service(
-                name: "Ethan's Mac Studio",
-                type: MirageKit.serviceType,
-                domain: "local.",
-                interface: nil
-            ),
-            advertisement: LoomPeerAdvertisement(
-                protocolVersion: Int(Loom.protocolVersion),
-                deviceID: UUID(),
-                identityKeyID: "host-key",
-                deviceType: .mac
-            )
+            hostName: "Ethans-Mac-Studio.local",
+            directTransports: [
+                LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
+            ]
         )
 
-        let attempts = service.controlEndpointAttempts(
-            for: host,
-            transportKind: .tcp
+        let txt = original.toTXTRecord()
+        let decoded = LoomPeerAdvertisement.from(txtRecord: txt)
+
+        #expect(decoded.hostName == "Ethans-Mac-Studio.local")
+        #expect(decoded.directTransports.first(where: { $0.transportKind == .udp })?.port == 61001)
+    }
+
+    @Test("Peer advertisement without hostName decodes as nil")
+    func missingHostNameDecodesAsNil() throws {
+        let advertisement = LoomPeerAdvertisement(
+            protocolVersion: Int(Loom.protocolVersion),
+            deviceID: UUID()
         )
 
-        #expect(attempts.count == 1)
-        #expect(attempts[0].source == .bonjourService)
+        let txt = advertisement.toTXTRecord()
+        let decoded = LoomPeerAdvertisement.from(txtRecord: txt)
 
-        switch attempts[0].endpoint {
-        case .service:
-            break
-        default:
-            Issue.record("Expected the control endpoint attempt to keep the raw Bonjour service.")
-        }
+        #expect(decoded.hostName == nil)
     }
 }

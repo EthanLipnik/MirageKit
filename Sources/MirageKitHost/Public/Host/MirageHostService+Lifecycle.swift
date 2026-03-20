@@ -95,7 +95,7 @@ public extension MirageHostService {
             let directQUICPort = ports[.quic]
             setRemoteControlPort(directQUICPort)
             remoteControlListenerReady = directQUICPort != nil
-            MirageLogger.host("Loom authenticated listeners ready tcp=\(controlPort) quic=\(directQUICPort ?? 0)")
+            MirageLogger.host("Loom authenticated listeners ready udp=\(controlPort) quic=\(directQUICPort ?? 0)")
 
             // Start UDP listener for data
             MirageLogger.host("Starting UDP listener...")

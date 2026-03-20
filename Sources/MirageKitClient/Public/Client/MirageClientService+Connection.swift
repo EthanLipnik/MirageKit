@@ -393,13 +393,12 @@ extension MirageClientService {
         try throwIfConnectAttemptIsStale(attemptID)
 
         // NWConnection can't resolve Bonjour .service endpoints with UDP parameters.
-        // Construct a .hostPort endpoint from the peer name + advertised UDP port instead,
-        // the same way the media path connects for video/audio.
+        // Use the real mDNS hostname from the peer's advertisement instead.
         let endpoint: NWEndpoint
         if let udpTransport = host.advertisement.directTransports.first(where: { $0.transportKind == .udp }),
            let port = NWEndpoint.Port(rawValue: udpTransport.port),
-           case let .service(name, _, _, _) = host.endpoint {
-            endpoint = .hostPort(host: NWEndpoint.Host("\(name).local"), port: port)
+           let hostName = host.advertisement.hostName {
+            endpoint = .hostPort(host: NWEndpoint.Host(hostName), port: port)
         } else {
             endpoint = host.endpoint
         }
