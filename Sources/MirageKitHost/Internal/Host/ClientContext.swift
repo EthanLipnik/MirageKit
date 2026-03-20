@@ -20,7 +20,6 @@ struct ClientContext {
     let controlChannel: MirageControlChannel
     let remoteEndpoint: NWEndpoint?
     let pathSnapshot: LoomSessionNetworkPathSnapshot?
-    var udpConnection: NWConnection?
 
     /// Check if connection is peer-to-peer (local network, low latency)
     /// Returns true when connected over local WiFi or Ethernet to a local network address
@@ -97,10 +96,6 @@ struct ClientContext {
         controlChannel.sendBestEffort(message)
     }
 
-    /// Send video data over UDP
-    func sendVideoPacket(_ data: Data) {
-        udpConnection?.send(content: data, completion: .idempotent)
-    }
 }
 
 #endif

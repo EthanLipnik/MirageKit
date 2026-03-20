@@ -8,7 +8,6 @@
 import CoreGraphics
 import Foundation
 import Loom
-import Network
 import Observation
 import MirageKit
 
@@ -472,14 +471,11 @@ public final class MirageClientService {
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     let awdlExperimentEnabled: Bool = true
-    var mediaPathProber: MirageMediaPathProber?
     public var currentControlPathKind: MirageNetworkPathKind? {
         controlPathSnapshot?.kind
     }
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
-    var videoPathSnapshot: MirageNetworkPathSnapshot?
-    var audioPathSnapshot: MirageNetworkPathSnapshot?
     var awdlPathSwitches: UInt64 = 0
     var registrationRefreshCount: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
@@ -495,15 +491,13 @@ public final class MirageClientService {
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
     let bootstrapResponseTimeout: Duration = .seconds(30)
 
-    // Video receiving
-    var udpConnection: NWConnection?
-    var hostDataPort: UInt16 = 0
-    var mediaTransportHost: NWEndpoint.Host?
-    var mediaTransportIncludePeerToPeer: Bool?
-    let mediaTransportConnectTimeout: Duration = .seconds(1)
+    // Media stream listener (receives video/audio via Loom multiplexed streams)
+    @ObservationIgnored var mediaStreamListenerTask: Task<Void, Never>?
+    var activeMediaStreams: [String: LoomMultiplexedStream] = [:]
+    var videoStreamReceiveTasks: [StreamID: Task<Void, Never>] = [:]
+    var audioStreamReceiveTask: Task<Void, Never>?
 
-    // Audio receiving (dedicated low-priority UDP connection)
-    var audioConnection: NWConnection?
+    // Audio receiving state
     var audioRegisteredStreamID: StreamID?
     var activeAudioStreamMessage: AudioStreamStartedMessage?
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
@@ -603,15 +597,9 @@ public final class MirageClientService {
                 if !self.isStartupPacketPending(streamID) { return }
                 attempt += 1
                 MirageLogger.client(
-                    "Startup packet pending for stream \(streamID); resending registration (\(attempt)/\(self.startupRegistrationRetryLimit))"
+                    "Startup packet pending for stream \(streamID); requesting keyframe (\(attempt)/\(self.startupRegistrationRetryLimit))"
                 )
-                do {
-                    if self.udpConnection == nil { try await self.startVideoConnection() }
-                    try await self.sendStreamRegistration(streamID: streamID)
-                    self.sendKeyframeRequest(for: streamID)
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Startup registration retry failed: ")
-                }
+                self.sendKeyframeRequest(for: streamID)
             }
         }
     }

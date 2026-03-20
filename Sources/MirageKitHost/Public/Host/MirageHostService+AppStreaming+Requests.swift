@@ -733,7 +733,6 @@ extension MirageHostService {
             let streamSession = try await startStream(
                 for: selectedWindow,
                 to: clientContext.client,
-                dataPort: selectRequest.dataPort,
                 clientDisplayResolution: requestedDisplayResolution,
                 clientScaleFactor: preferredClientScaleFactor,
                 keyFrameInterval: encoderSettings?.keyFrameInterval ?? selectRequest.keyFrameInterval,
@@ -1268,7 +1267,6 @@ extension MirageHostService {
         let streamSession = try await startStream(
             for: preferredWindow,
             to: client,
-            dataPort: selectRequest.dataPort,
             clientDisplayResolution: requestedDisplayResolution,
             clientScaleFactor: selectRequest.scaleFactor,
             keyFrameInterval: selectRequest.keyFrameInterval,

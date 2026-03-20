@@ -58,7 +58,6 @@ struct ClientLoomControlPlaneTests {
             hostID: UUID(),
             hostName: "Loopback Host",
             selectedFeatures: mirageSupportedFeatures,
-            dataPort: 9_848,
             mediaEncryptionEnabled: true,
             udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
         )

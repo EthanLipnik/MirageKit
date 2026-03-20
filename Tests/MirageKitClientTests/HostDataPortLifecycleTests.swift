@@ -8,25 +8,24 @@
 @testable import MirageKitClient
 import Testing
 
-@Suite("Host Data Port Lifecycle")
+@Suite("Media Stream Lifecycle")
 struct HostDataPortLifecycleTests {
     @MainActor
-    @Test("Stopping the UDP socket preserves the negotiated host data port")
-    func stopVideoConnectionPreservesNegotiatedDataPort() {
+    @Test("Stopping the media stream listener clears active media streams")
+    func stopMediaStreamListenerClearsState() {
         let service = MirageClientService(deviceName: "Test Device")
-        service.hostDataPort = 57_442
 
-        service.stopVideoConnection()
+        service.stopMediaStreamListener()
 
-        #expect(service.hostDataPort == 57_442)
+        #expect(service.activeMediaStreams.isEmpty)
+        #expect(service.videoStreamReceiveTasks.isEmpty)
     }
 
     @MainActor
-    @Test("Disconnect cleanup clears the negotiated host data port")
-    func disconnectCleanupClearsNegotiatedDataPort() async {
+    @Test("Disconnect cleanup stops the media stream listener")
+    func disconnectCleanupStopsMediaStreams() async {
         let service = MirageClientService(deviceName: "Test Device")
         service.connectionState = .connected(host: "Altair")
-        service.hostDataPort = 57_442
 
         await service.handleDisconnect(
             reason: "test",
@@ -34,11 +33,11 @@ struct HostDataPortLifecycleTests {
             notifyDelegate: false
         )
 
-        #expect(service.hostDataPort == 0)
+        #expect(service.activeMediaStreams.isEmpty)
     }
 
     @MainActor
-    @Test("Application-activation recovery skips stale streams without touching UDP transport")
+    @Test("Application-activation recovery skips stale streams without touching transport")
     func applicationActivationRecoverySkipsStaleStreams() async throws {
         let service = MirageClientService(deviceName: "Test Device")
         service.connectionState = .connected(host: "Altair")
@@ -47,6 +46,5 @@ struct HostDataPortLifecycleTests {
         try await Task.sleep(for: .milliseconds(50))
 
         #expect(service.controllersByStream.isEmpty)
-        #expect(service.udpConnection == nil)
     }
 }

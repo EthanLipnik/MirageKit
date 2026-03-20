@@ -44,7 +44,6 @@ extension MirageHostService {
         mediaSecurityByClientID.removeValue(forKey: client.id)
         mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
         sharedClipboardStatusByClientID.removeValue(forKey: client.id)
-        qualityTestConnectionsByClientID.removeValue(forKey: client.id)
         qualityTestBenchmarkIDsByClientID.removeValue(forKey: client.id)
         if let task = qualityTestTasksByClientID.removeValue(forKey: client.id) {
             task.cancel()
@@ -73,9 +72,9 @@ extension MirageHostService {
 
         await stopAudioForDisconnectedClient(client.id)
 
-        let removedTransportConnections = transportRegistry.unregisterAllConnections(clientID: client.id)
-        for connection in removedTransportConnections {
-            connection.cancel()
+        transportRegistry.unregisterAllStreams(clientID: client.id)
+        if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: client.id) {
+            Task { try? await audioStream.close() }
         }
 
         let hasConnectedClients = !connectedClients.isEmpty

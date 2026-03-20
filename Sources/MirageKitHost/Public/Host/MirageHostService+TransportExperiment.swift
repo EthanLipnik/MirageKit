@@ -14,7 +14,7 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    func handleVideoSendError(streamID: StreamID, error: NWError) async {
+    func handleVideoSendError(streamID: StreamID, error: Error) async {
         let transportWasAlreadyGone = !transportRegistry.hasVideoConnection(streamID: streamID)
         let fatalConnectionError = isFatalConnectionError(error)
         let userDependentError = LoomDiagnosticsActionability.isLikelyUserDependent(error: error)

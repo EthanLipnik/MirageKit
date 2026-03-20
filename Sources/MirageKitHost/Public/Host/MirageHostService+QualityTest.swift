@@ -8,7 +8,7 @@
 //
 
 import Foundation
-import Network
+import Loom
 import MirageKit
 
 #if os(macOS)
@@ -32,8 +32,14 @@ extension MirageHostService {
             }
         }
 
-        guard let udpConnection = qualityTestConnectionsByClientID[client.id] else {
-            MirageLogger.host("Quality test skipped - no UDP registration for client \(client.name)")
+        // Open a Loom quality-test stream for this test.
+        let qualityStream: LoomMultiplexedStream
+        do {
+            qualityStream = try await clientContext.controlChannel.session.openStream(
+                label: "quality-test/\(request.testID)"
+            )
+        } catch {
+            MirageLogger.host("Quality test skipped - failed to open Loom stream for client \(client.name): \(error)")
             return
         }
 
@@ -41,13 +47,14 @@ extension MirageHostService {
             task.cancel()
         }
 
-        let task = Task.detached(priority: .userInitiated) { [request, udpConnection] in
+        let task = Task.detached(priority: .userInitiated) { [request, qualityStream] in
             await Self.sendQualityTestPackets(
-                to: udpConnection,
+                via: qualityStream,
                 testID: request.testID,
                 plan: request.plan,
                 payloadBytes: request.payloadBytes
             )
+            try? await qualityStream.close()
         }
         qualityTestTasksByClientID[client.id] = task
     }
@@ -81,7 +88,7 @@ extension MirageHostService {
     }
 
     private static func sendQualityTestPackets(
-        to connection: NWConnection,
+        via stream: LoomMultiplexedStream,
         testID: UUID,
         plan: MirageQualityTestPlan,
         payloadBytes: Int
@@ -125,9 +132,8 @@ extension MirageHostService {
                 let delta = max(0, now - lastTickTime)
                 lastTickTime = now
                 packetBudget += packetsPerSecond * delta
-                var desiredCount = Int(packetBudget)
-                if desiredCount > 0 {
-                    let sendCount = min(desiredCount, maxBurstPackets)
+                let sendCount = min(Int(packetBudget), maxBurstPackets)
+                if sendCount > 0 {
                     packetBudget -= Double(sendCount)
                     for _ in 0 ..< sendCount {
                         let timestampNs = UInt64(CFAbsoluteTimeGetCurrent() * 1_000_000_000)
@@ -140,7 +146,7 @@ extension MirageHostService {
                         )
                         var packet = header.serialize()
                         packet.append(payload)
-                        connection.send(content: packet, completion: .idempotent)
+                        try? await stream.sendUnreliable(packet)
                         sequence &+= 1
                         stagePacketCount += 1
                         stagePayloadBytes += payloadBytes

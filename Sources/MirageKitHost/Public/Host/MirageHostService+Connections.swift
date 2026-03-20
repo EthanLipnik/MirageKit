@@ -103,7 +103,6 @@ extension MirageHostService {
                     hostID: hostID,
                     hostName: serviceName,
                     selectedFeatures: [],
-                    dataPort: currentDataPort(),
                     mediaEncryptionEnabled: false,
                     udpRegistrationToken: Data(),
                     rejectionReason: .hostBusy
@@ -147,7 +146,6 @@ extension MirageHostService {
                         hostID: hostID,
                         hostName: Host.current().localizedName ?? "Mac",
                         selectedFeatures: [],
-                        dataPort: currentDataPort(),
                         mediaEncryptionEnabled: false,
                         udpRegistrationToken: Data(),
                         rejectionReason: .unauthorized
@@ -198,8 +196,7 @@ extension MirageHostService {
                 negotiatedFeatures: responseResult.response.selectedFeatures,
                 controlChannel: controlChannel,
                 remoteEndpoint: remoteEndpoint,
-                pathSnapshot: pathSnapshot,
-                udpConnection: nil
+                pathSnapshot: pathSnapshot
             )
             connectedClients.append(client)
             clientsBySessionID[sessionID] = clientContext
@@ -273,7 +270,6 @@ extension MirageHostService {
                     hostID: hostID,
                     hostName: hostName,
                     selectedFeatures: [],
-                    dataPort: currentDataPort(),
                     mediaEncryptionEnabled: false,
                     udpRegistrationToken: Data(),
                     rejectionReason: .protocolVersionMismatch,
@@ -295,7 +291,6 @@ extension MirageHostService {
                     hostID: hostID,
                     hostName: hostName,
                     selectedFeatures: [],
-                    dataPort: currentDataPort(),
                     mediaEncryptionEnabled: false,
                     udpRegistrationToken: Data(),
                     rejectionReason: .protocolFeaturesMismatch
@@ -333,18 +328,12 @@ extension MirageHostService {
             hostID: hostID,
             hostName: hostName,
             selectedFeatures: selectedFeatures,
-            dataPort: currentDataPort(),
             mediaEncryptionEnabled: mediaEncryptionEnabled,
             udpRegistrationToken: udpRegistrationToken,
             autoTrustGranted: autoTrustGranted,
             remoteAccessAllowed: delegate?.hostService(self, remoteAccessAllowedFor: peerIdentity.deviceInfo) ?? false
         )
         return (response, mediaSecurity)
-    }
-
-    private func currentDataPort() -> UInt16 {
-        if case let .advertising(_, port) = state { return port }
-        return 0
     }
 
     func mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: Bool) -> Bool {

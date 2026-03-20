@@ -116,7 +116,7 @@ extension MirageHostService {
     nonisolated func sendVideoPacketForStream(
         _ streamID: StreamID,
         data: Data,
-        onComplete: (@Sendable (NWError?) -> Void)? = nil
+        onComplete: (@Sendable (Error?) -> Void)? = nil
     ) {
         transportRegistry.sendVideo(streamID: streamID, data: data, onComplete: onComplete)
     }

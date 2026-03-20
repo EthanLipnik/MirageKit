@@ -34,7 +34,7 @@ extension StreamContext {
         }
     }
 
-    func handleTransportSendError(_ error: NWError) async -> Bool {
+    func handleTransportSendError(_ error: Error) async -> Bool {
         var tracker = TransportSendErrorTracker(
             timestamps: transportSendErrorTimestamps,
             lastRecoveryTime: lastTransportSendErrorRecoveryTime,

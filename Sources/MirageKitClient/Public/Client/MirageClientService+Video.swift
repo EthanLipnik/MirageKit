@@ -4,10 +4,11 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  UDP video transport and keyframe recovery.
+//  Loom stream video transport and keyframe recovery.
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
@@ -51,201 +52,138 @@ private enum MirageClientStreamRecoveryTrigger: Sendable {
 
 @MainActor
 extension MirageClientService {
-    /// Start UDP connection to host's data port for receiving video.
-    func startVideoConnection() async throws {
-        guard hostDataPort > 0 else { throw MirageError.protocolError("Host data port not set") }
-        let candidates = try await resolveMediaTransportCandidates()
-        let candidateSummary = candidates.map { "\($0.label)=\($0.host):p2p=\($0.includePeerToPeer)" }.joined(separator: ", ")
-        MirageLogger.client("Video UDP candidates: \(candidateSummary)")
-        var lastError: Error?
-        for (index, candidate) in candidates.enumerated() {
-            do {
-                MirageLogger.client(
-                    "Connecting to host data port via \(candidate.label): \(candidate.host):\(hostDataPort) (p2p=\(candidate.includePeerToPeer))"
-                )
-                let udpConn = try await establishMediaUDPConnection(
-                    host: candidate.host,
-                    port: hostDataPort,
-                    includePeerToPeer: candidate.includePeerToPeer,
-                    serviceClass: .interactiveVideo,
-                    qos: .userInteractive,
-                    pathDescription: describeNetworkPath
-                ) { [weak self] snapshot in
-                    self?.handleVideoPathUpdate(snapshot)
+    // MARK: - Loom Media Stream Listener
+
+    /// Start listening for incoming media streams on the authenticated Loom session.
+    func startMediaStreamListener() {
+        guard let session = loomSession else { return }
+        stopMediaStreamListener()
+
+        mediaStreamListenerTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let observer = session.makeIncomingStreamObserver()
+            for await stream in observer {
+                guard self.loomSession?.id == session.id else { break }
+                guard let label = stream.label else {
+                    MirageLogger.client("Ignoring incoming Loom stream with no label (id=\(stream.id))")
+                    continue
                 }
-                udpConnection?.cancel()
-                udpConnection = udpConn
-                mediaTransportHost = candidate.host
-                mediaTransportIncludePeerToPeer = candidate.includePeerToPeer
-                MirageLogger.client("UDP connection established to host data port")
-                if let path = udpConn.currentPath {
-                    MirageLogger.client("UDP connection path: \(describeNetworkPath(path))")
-                    handleVideoPathUpdate(MirageNetworkPathClassifier.classify(path))
+
+                if label.hasPrefix("video/") {
+                    let streamIDString = String(label.dropFirst("video/".count))
+                    guard let streamID = StreamID(streamIDString) else {
+                        MirageLogger.client("Ignoring video stream with invalid ID: \(label)")
+                        continue
+                    }
+                    MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
+                    self.activeMediaStreams[label] = stream
+                    self.startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
+                } else if label.hasPrefix("audio/") {
+                    let streamIDString = String(label.dropFirst("audio/".count))
+                    guard let streamID = StreamID(streamIDString) else {
+                        MirageLogger.client("Ignoring audio stream with invalid ID: \(label)")
+                        continue
+                    }
+                    MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
+                    self.activeMediaStreams[label] = stream
+                    self.startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
+                } else {
+                    MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")
                 }
-                startReceivingVideo()
-                updateRegistrationRefreshLoopState()
-                await probeAndOptimizeMediaPath()
-                return
-            } catch {
-                lastError = error
-                MirageLogger.client(
-                    "UDP attempt \(index + 1)/\(candidates.count) failed via \(candidate.label): \(error.localizedDescription)"
-                )
+            }
+        }
+    }
+
+    /// Stop the media stream listener and all active media stream receive loops.
+    func stopMediaStreamListener() {
+        mediaStreamListenerTask?.cancel()
+        mediaStreamListenerTask = nil
+        for task in videoStreamReceiveTasks.values {
+            task.cancel()
+        }
+        videoStreamReceiveTasks.removeAll()
+        audioStreamReceiveTask?.cancel()
+        audioStreamReceiveTask = nil
+        activeMediaStreams.removeAll()
+    }
+
+    // MARK: - Video Stream Receive
+
+    /// Start receiving video packets from a Loom multiplexed stream.
+    private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
+        videoStreamReceiveTasks[streamID]?.cancel()
+        let service = self
+        videoStreamReceiveTasks[streamID] = Task { [weak service] in
+            guard let service else { return }
+            for await data in stream.incomingBytes {
+                guard !Task.isCancelled else { break }
+                service.handleIncomingVideoData(data, expectedStreamID: streamID)
+            }
+            await MainActor.run {
+                service.videoStreamReceiveTasks.removeValue(forKey: streamID)
+                service.activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+                MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
+            }
+        }
+    }
+
+    /// Process a single video packet received from a Loom stream.
+    private nonisolated func handleIncomingVideoData(_ data: Data, expectedStreamID: StreamID) {
+        guard data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) else {
+            return
+        }
+
+        let streamID = header.streamID
+        guard streamID == expectedStreamID else { return }
+
+        guard let packetContext = fastPathState.videoPacketContext(for: streamID) else {
+            return
+        }
+
+        if packetContext.consumedStartupPending {
+            Task { @MainActor in
+                self.logStartupFirstPacketIfNeeded(streamID: streamID)
+                self.cancelStartupRegistrationRetry(streamID: streamID)
             }
         }
 
-        throw lastError ?? MirageError.protocolError("Unable to establish UDP connection to host data port")
-    }
-
-    /// Start receiving video data from UDP connection.
-    private func startReceivingVideo() {
-        guard let udpConn = udpConnection else { return }
-        startUDPReceiveLoop(udpConnection: udpConn, service: self)
-    }
-
-    /// Start the UDP receive loop in a nonisolated context.
-    private nonisolated func startUDPReceiveLoop(
-        udpConnection: NWConnection,
-        service: MirageClientService
-    ) {
-        @Sendable
-        func receiveNext() {
-            udpConnection
-                .receive(minimumIncompleteLength: 4, maximumLength: 65536) { data, _, _, error in
-                    if let data {
-                        if let testHeader = QualityTestPacketHeader.deserialize(from: data) {
-                            service.handleQualityTestPacket(testHeader, data: data)
-                            receiveNext()
-                            return
-                        }
-
-                        if data.count >= mirageHeaderSize, let header = FrameHeader.deserialize(from: data) {
-                            let streamID = header.streamID
-
-                            guard let packetContext = service.fastPathState.videoPacketContext(for: streamID) else {
-                                receiveNext()
-                                return
-                            }
-
-                            if packetContext.consumedStartupPending {
-                                Task { @MainActor in
-                                    service.logStartupFirstPacketIfNeeded(streamID: streamID)
-                                    service.cancelStartupRegistrationRetry(streamID: streamID)
-                                }
-                            }
-
-                            guard let reassembler = packetContext.reassembler else {
-                                receiveNext()
-                                return
-                            }
-
-                            let wirePayload = data.dropFirst(mirageHeaderSize)
-                            let expectedWireLength = header.flags.contains(.encryptedPayload)
-                                ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
-                                : Int(header.payloadLength)
-                            if wirePayload.count != expectedWireLength {
-                                MirageLogger
-                                    .client(
-                                        "UDP payload length mismatch for stream \(streamID): expected=\(expectedWireLength), plain=\(header.payloadLength), actual=\(wirePayload.count), encrypted=\(header.flags.contains(.encryptedPayload))"
-                                    )
-                                receiveNext()
-                                return
-                            }
-                            let payload: Data
-                            if header.flags.contains(.encryptedPayload) {
-                                guard let mediaPacketKey = packetContext.mediaPacketKey else {
-                                    MirageLogger.error(
-                                        .client,
-                                        "Dropping encrypted video packet without media security context (stream \(streamID))"
-                                    )
-                                    receiveNext()
-                                    return
-                                }
-                                do {
-                                    payload = try MirageMediaSecurity.decryptVideoPayload(
-                                        wirePayload,
-                                        header: header,
-                                        key: mediaPacketKey,
-                                        direction: .hostToClient
-                                    )
-                                } catch {
-                                    MirageLogger.error(
-                                        .client,
-                                        "Failed to decrypt video packet stream \(streamID) frame \(header.frameNumber) seq \(header.sequenceNumber): \(error)"
-                                    )
-                                    receiveNext()
-                                    return
-                                }
-                                if payload.count != Int(header.payloadLength) {
-                                    MirageLogger.error(
-                                        .client,
-                                        "Decrypted video payload length mismatch for stream \(streamID): expected \(header.payloadLength), actual \(payload.count)"
-                                    )
-                                    receiveNext()
-                                    return
-                                }
-                            } else {
-                                payload = Data(wirePayload)
-                            }
-
-                            reassembler.processPacket(payload, header: header)
-                        }
-                    }
-
-                    if let error {
-                        if MirageClientService.isExpectedTransportTermination(error) {
-                            MirageLogger.client("UDP receive loop ended by peer/network: \(error.localizedDescription)")
-                        } else {
-                            MirageLogger.error(.client, error: error, message: "UDP receive error: ")
-                        }
-                        return
-                    }
-
-                    receiveNext()
-                }
+        guard let reassembler = packetContext.reassembler else {
+            return
         }
 
-        receiveNext()
-    }
-
-    /// Send stream registration to host via UDP.
-    func sendStreamRegistration(
-        streamID: StreamID,
-        markKeyframeCooldown: Bool = true
-    ) async throws {
-        guard let udpConn = udpConnection else { throw MirageError.protocolError("No UDP connection") }
-        guard let mediaSecurityContext else {
-            throw MirageError.protocolError("Missing media security context")
+        let wirePayload = data.dropFirst(mirageHeaderSize)
+        // Loom session handles encryption, so packets arrive unencrypted.
+        // Accept both encrypted and unencrypted payloads for backward compatibility.
+        let expectedWireLength = header.flags.contains(.encryptedPayload)
+            ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
+            : Int(header.payloadLength)
+        guard wirePayload.count == expectedWireLength else {
+            return
         }
 
-        var data = Data()
-        data.append(contentsOf: [0x4D, 0x49, 0x52, 0x47])
-        withUnsafeBytes(of: streamID.littleEndian) { data.append(contentsOf: $0) }
-        withUnsafeBytes(of: deviceID.uuid) { data.append(contentsOf: $0) }
-        data.append(mediaSecurityContext.udpRegistrationToken)
-
-        MirageLogger.client(
-            "Sending stream registration for stream \(streamID) (tokenBytes=\(mediaSecurityContext.udpRegistrationToken.count))"
-        )
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            udpConn.send(content: data, completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
+        let payload: Data
+        if header.flags.contains(.encryptedPayload) {
+            guard let mediaPacketKey = packetContext.mediaPacketKey else {
+                return
+            }
+            do {
+                payload = try MirageMediaSecurity.decryptVideoPayload(
+                    wirePayload,
+                    header: header,
+                    key: mediaPacketKey,
+                    direction: .hostToClient
+                )
+            } catch {
+                return
+            }
+            guard payload.count == Int(header.payloadLength) else {
+                return
+            }
+        } else {
+            payload = Data(wirePayload)
         }
 
-        MirageLogger.client("Stream registration sent")
-        if let baseTime = streamStartupBaseTimes[streamID],
-           !streamStartupFirstRegistrationSent.contains(streamID) {
-            streamStartupFirstRegistrationSent.insert(streamID)
-            let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
-            MirageLogger.client("Desktop start: stream registration sent for stream \(streamID) (+\(deltaMs)ms)")
-        }
-        if markKeyframeCooldown {
-            lastKeyframeRequestTime[streamID] = CFAbsoluteTimeGetCurrent()
-        }
+        reassembler.processPacket(payload, header: header)
     }
 
     func logStartupFirstPacketIfNeeded(streamID: StreamID) {
@@ -255,354 +193,17 @@ extension MirageClientService {
         }
         streamStartupFirstPacketReceived.insert(streamID)
         let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
-        MirageLogger.client("Desktop start: first UDP packet received for stream \(streamID) (+\(deltaMs)ms)")
+        MirageLogger.client("Desktop start: first video packet received for stream \(streamID) (+\(deltaMs)ms)")
     }
 
-    /// Stop the video connection.
-    func stopVideoConnection() {
-        udpConnection?.cancel()
-        udpConnection = nil
-        videoPathSnapshot = nil
-        mediaTransportHost = nil
-        mediaTransportIncludePeerToPeer = nil
+    /// Stop the video stream receive task for a specific stream.
+    func stopVideoStreamReceive(for streamID: StreamID) {
+        videoStreamReceiveTasks[streamID]?.cancel()
+        videoStreamReceiveTasks.removeValue(forKey: streamID)
+        activeMediaStreams.removeValue(forKey: "video/\(streamID)")
     }
 
-    // MARK: - Adaptive Media Path Selection
-
-    /// Probe all available interfaces and optimize the media transport path.
-    /// Called after the initial video connection is established.
-    func probeAndOptimizeMediaPath() async {
-        guard hostDataPort > 0 else { return }
-        guard let proberHost = mediaTransportHost else { return }
-
-        let prober = MirageMediaPathProber(
-            host: proberHost,
-            port: hostDataPort,
-            enablePeerToPeer: networkConfig.enablePeerToPeer
-        )
-        mediaPathProber = prober
-
-        let results = await prober.probeAllInterfaces()
-        guard let best = MediaPathProbeResult.bestCandidate(from: results) else {
-            MirageLogger.client("Path probe: no reachable interfaces, keeping current path")
-            prober.startMonitoring()
-            return
-        }
-
-        MirageLogger.client(
-            "Path probe initial: best=\(best.interfaceLabel) (\(String(format: "%.1f", best.rttMs))ms), " +
-            "all=[\(results.map { "\($0.interfaceLabel):\(String(format: "%.1f", $0.rttMs))ms" }.joined(separator: ", "))]"
-        )
-
-        // Migrate if the best interface differs from current
-        let currentIsP2P = mediaTransportIncludePeerToPeer == true
-        let bestMatchesCurrent = (best.includePeerToPeer == currentIsP2P)
-            && (best.interfaceType == nil || mediaTransportIncludePeerToPeer != nil)
-
-        if !bestMatchesCurrent, results.count > 1 {
-            await migrateMediaTransport(to: best)
-        }
-
-        prober.currentResult = best
-        prober.onMigrationRecommended = { [weak self] recommendation in
-            guard let self else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                await self.migrateMediaTransport(to: recommendation)
-            }
-        }
-        prober.startMonitoring()
-    }
-
-    /// Migrate the media transport to a different network interface.
-    func migrateMediaTransport(to target: MediaPathProbeResult) async {
-        MirageLogger.client(
-            "Migrating media transport to \(target.interfaceLabel) (RTT: \(String(format: "%.1f", target.rttMs))ms, p2p: \(target.includePeerToPeer))"
-        )
-
-        stopVideoConnection()
-        mediaTransportIncludePeerToPeer = target.includePeerToPeer
-
-        do {
-            try await startVideoConnection()
-            for streamID in registeredStreamIDs {
-                do {
-                    try await sendStreamRegistration(streamID: streamID, markKeyframeCooldown: false)
-                    sendKeyframeRequest(for: streamID)
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Re-registration after migration failed for stream \(streamID): ")
-                }
-            }
-            MirageLogger.client("Media transport migration to \(target.interfaceLabel) complete")
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Media transport migration to \(target.interfaceLabel) failed: ")
-            do {
-                try await startVideoConnection()
-            } catch {
-                MirageLogger.error(.client, error: error, message: "Media transport recovery failed: ")
-            }
-        }
-    }
-
-    func resolveMediaTransportCandidates(
-        preferredHost: NWEndpoint.Host? = nil,
-        preferredIncludePeerToPeer: Bool? = nil
-    ) async throws -> [UDPTransportCandidate] {
-        let configuredPeerToPeer = networkConfig.enablePeerToPeer
-
-        let connectedHostEndpoint = connectedHost?.endpoint
-        let controlRemoteEndpoint = await currentControlRemoteEndpoint()
-        let controlPathSnapshot = await currentControlPathSnapshot()
-        let controlPathKind = controlPathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
-        let serviceHostName = Self.serviceName(from: connectedHostEndpoint)
-            ?? connectedHost?.name
-            ?? Self.serviceName(from: controlRemoteEndpoint)
-        let serviceHost = serviceHostName.map { NWEndpoint.Host($0) }
-        let connectedHostEndpointHost = Self.host(from: connectedHostEndpoint)
-        let remoteHost = Self.host(from: controlPathSnapshot?.remoteEndpoint)
-        let endpointHost = connectedHostEndpointHost ?? Self.host(from: controlRemoteEndpoint)
-
-        let candidates = Self.orderedMediaTransportCandidates(
-            preferredHost: preferredHost,
-            preferredIncludePeerToPeer: preferredIncludePeerToPeer,
-            serviceHost: serviceHost,
-            remoteHost: remoteHost,
-            endpointHost: endpointHost,
-            configuredPeerToPeer: configuredPeerToPeer,
-            controlPathKind: controlPathKind
-        )
-
-        guard !candidates.isEmpty else {
-            throw MirageError.protocolError("Cannot determine host address")
-        }
-        return candidates
-    }
-
-    nonisolated static func orderedMediaTransportCandidates(
-        preferredHost: NWEndpoint.Host?,
-        preferredIncludePeerToPeer: Bool?,
-        serviceHost: NWEndpoint.Host?,
-        remoteHost: NWEndpoint.Host?,
-        endpointHost: NWEndpoint.Host?,
-        configuredPeerToPeer: Bool,
-        controlPathKind: MirageNetworkPathKind?
-    ) -> [UDPTransportCandidate] {
-        var candidates: [UDPTransportCandidate] = []
-        var seen: Set<String> = []
-
-        func appendCandidate(host: NWEndpoint.Host, includePeerToPeer: Bool, label: String) {
-            let key = "\(String(describing: host).lowercased())|p2p=\(includePeerToPeer)"
-            guard seen.insert(key).inserted else { return }
-            candidates.append(
-                UDPTransportCandidate(
-                    host: host,
-                    includePeerToPeer: includePeerToPeer,
-                    label: label
-                )
-            )
-        }
-
-        if let preferredHost {
-            appendCandidate(
-                host: preferredHost,
-                includePeerToPeer: preferredIncludePeerToPeer ?? configuredPeerToPeer,
-                label: "preferred-route"
-            )
-        }
-
-        let shouldPreferControlRemoteEndpoint = if let remoteHost {
-            controlPathKind == .wired && isLikelyPeerToPeerLinkLocalHost(remoteHost)
-        } else {
-            false
-        }
-
-        if shouldPreferControlRemoteEndpoint, let remoteHost {
-            appendCandidate(
-                host: remoteHost,
-                includePeerToPeer: configuredPeerToPeer,
-                label: "control-remote-endpoint"
-            )
-        }
-
-        if let remoteHost,
-           isLikelyPeerToPeerLinkLocalHost(remoteHost),
-           let serviceHost {
-            for candidateHost in expandedBonjourHosts(for: serviceHost) {
-                appendCandidate(
-                    host: candidateHost,
-                    includePeerToPeer: false,
-                    label: "bonjour-hostname-no-p2p"
-                )
-            }
-        }
-
-        if !shouldPreferControlRemoteEndpoint, let remoteHost {
-            appendCandidate(
-                host: remoteHost,
-                includePeerToPeer: configuredPeerToPeer,
-                label: "control-remote-endpoint"
-            )
-        }
-
-        if let endpointHost {
-            appendCandidate(
-                host: endpointHost,
-                includePeerToPeer: configuredPeerToPeer,
-                label: "control-endpoint"
-            )
-        }
-
-        if let serviceHost {
-            for candidateHost in expandedBonjourHosts(for: serviceHost) {
-                appendCandidate(
-                    host: candidateHost,
-                    includePeerToPeer: configuredPeerToPeer,
-                    label: "bonjour-hostname"
-                )
-                if configuredPeerToPeer {
-                    appendCandidate(
-                        host: candidateHost,
-                        includePeerToPeer: false,
-                        label: "bonjour-hostname-no-p2p"
-                    )
-                }
-            }
-        }
-
-        return candidates
-    }
-
-    func establishMediaUDPConnection(
-        host: NWEndpoint.Host,
-        port: UInt16,
-        includePeerToPeer: Bool,
-        serviceClass: NWParameters.ServiceClass,
-        qos: DispatchQoS.QoSClass,
-        pathDescription: @Sendable @escaping (NWPath) -> String,
-        onPathSnapshot: @Sendable @escaping @MainActor (MirageNetworkPathSnapshot) -> Void
-    ) async throws -> NWConnection {
-        guard let endpointPort = NWEndpoint.Port(rawValue: port) else {
-            throw MirageError.protocolError("Invalid host data port")
-        }
-
-        let endpoint = NWEndpoint.hostPort(host: host, port: endpointPort)
-        let params = NWParameters.udp
-        params.serviceClass = serviceClass
-        params.includePeerToPeer = includePeerToPeer
-
-        let udpConn = NWConnection(to: endpoint, using: params)
-        udpConn.pathUpdateHandler = { path in
-            let snapshot = MirageNetworkPathClassifier.classify(path)
-            MirageLogger.client("UDP path updated: \(pathDescription(path))")
-            Task { @MainActor in
-                onPathSnapshot(snapshot)
-            }
-        }
-        udpConn.betterPathUpdateHandler = { [weak self] available in
-            guard available else { return }
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                MirageLogger.client("OS reported better media path available, triggering probe")
-                self.mediaPathProber?.triggerImmediateProbe()
-            }
-        }
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let box = ContinuationBox<Void>(continuation)
-            let timeoutTask = Task {
-                try? await Task.sleep(for: mediaTransportConnectTimeout)
-                guard !Task.isCancelled else { return }
-                box.resume(
-                    throwing: MirageError.protocolError(
-                        "UDP connection timed out after \(mediaTransportConnectTimeout)"
-                    )
-                )
-                udpConn.cancel()
-            }
-
-            udpConn.stateUpdateHandler = { [box, timeoutTask] state in
-                switch state {
-                case .ready:
-                    timeoutTask.cancel()
-                    box.resume()
-                case let .failed(error):
-                    timeoutTask.cancel()
-                    box.resume(throwing: error)
-                case .cancelled:
-                    timeoutTask.cancel()
-                    box.resume(throwing: MirageError.protocolError("UDP connection cancelled"))
-                case let .waiting(error):
-                    if Self.shouldFailFastForWaitingMediaError(error) {
-                        timeoutTask.cancel()
-                        box.resume(throwing: error)
-                        udpConn.cancel()
-                    } else {
-                        MirageLogger.client("UDP waiting for route to \(host):\(port): \(error)")
-                    }
-                default:
-                    break
-                }
-            }
-
-            udpConn.start(queue: .global(qos: qos))
-        }
-
-        return udpConn
-    }
-
-    nonisolated static func shouldFailFastForWaitingMediaError(_ error: NWError) -> Bool {
-        guard case let .posix(code) = error else {
-            return false
-        }
-
-        switch code {
-        case .ENETDOWN, .ENETUNREACH, .ENETRESET, .EHOSTUNREACH, .EADDRNOTAVAIL, .EAFNOSUPPORT:
-            return true
-        default:
-            return false
-        }
-    }
-
-    nonisolated static func host(from endpoint: NWEndpoint?) -> NWEndpoint.Host? {
-        guard let endpoint else { return nil }
-        if case let .hostPort(host, _) = endpoint {
-            return host
-        }
-        return nil
-    }
-
-    nonisolated static func serviceName(from endpoint: NWEndpoint?) -> String? {
-        guard let endpoint else { return nil }
-        if case let .service(name, _, _, _) = endpoint {
-            return name
-        }
-        return nil
-    }
-
-    nonisolated static func expandedBonjourHosts(for host: NWEndpoint.Host) -> [NWEndpoint.Host] {
-        if let localQualified = localQualifiedBonjourHost(for: host) {
-            return [localQualified]
-        }
-        return [host]
-    }
-
-    nonisolated static func localQualifiedBonjourHost(for host: NWEndpoint.Host) -> NWEndpoint.Host? {
-        let rawValue = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
-        guard shouldQualifyBonjourHostWithLocalDomain(rawValue) else { return nil }
-        return NWEndpoint.Host("\(rawValue).local")
-    }
-
-    nonisolated static func shouldQualifyBonjourHostWithLocalDomain(_ value: String) -> Bool {
-        guard !value.isEmpty else { return false }
-        guard !value.contains("."), !value.contains(":"), !value.contains("%") else { return false }
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
-        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
-    }
-
-    nonisolated static func isLikelyPeerToPeerLinkLocalHost(_ host: NWEndpoint.Host) -> Bool {
-        let value = String(describing: host).lowercased()
-        return value.hasPrefix("fe80:") || value.contains("%awdl")
-    }
+    // MARK: - Control Path Handling
 
     func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
         let previous = controlPathSnapshot
@@ -617,96 +218,6 @@ extension MirageClientService {
         }
     }
 
-    func handleVideoPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
-        let previous = videoPathSnapshot
-        videoPathSnapshot = snapshot
-        Task { [weak self] in
-            guard let self else { return }
-            let controllers = Array(controllersByStream.values)
-            for controller in controllers {
-                await controller.setTransportPathKind(snapshot.kind)
-            }
-        }
-        guard awdlExperimentEnabled else { return }
-        guard Self.shouldTriggerPathRefresh(previous: previous, current: snapshot) else { return }
-        if let previous, previous.kind != snapshot.kind {
-            awdlPathSwitches &+= 1
-            MirageLogger.client(
-                "Video path switch \(previous.kind.rawValue) -> \(snapshot.kind.rawValue) (count \(awdlPathSwitches))"
-            )
-        }
-        Task { [weak self] in
-            await self?.refreshTransportRegistrations(reason: "video-path-change", triggerKeyframe: true)
-        }
-    }
-
-    nonisolated static func shouldTriggerPathRefresh(
-        previous: MirageNetworkPathSnapshot?,
-        current: MirageNetworkPathSnapshot
-    ) -> Bool {
-        guard current.isReady else { return false }
-        guard let previous else { return false }
-        return previous.signature != current.signature
-    }
-
-    func refreshTransportRegistrations(
-        reason: String,
-        triggerKeyframe: Bool,
-        streamFilter: Set<StreamID>? = nil
-    ) async {
-        guard awdlExperimentEnabled else { return }
-        guard case .connected = connectionState else { return }
-
-        let activeIDs = activeStreamIDsForFiltering
-        guard !activeIDs.isEmpty else {
-            updateRegistrationRefreshLoopState()
-            return
-        }
-
-        let targetIDs: [StreamID] = {
-            if let streamFilter {
-                return activeIDs.filter { streamFilter.contains($0) }.sorted()
-            }
-            return activeIDs.sorted()
-        }()
-        guard !targetIDs.isEmpty else { return }
-
-        do {
-            if udpConnection == nil { try await startVideoConnection() }
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Transport refresh (\(reason)) failed to start video connection: ")
-            return
-        }
-
-        for streamID in targetIDs {
-            do {
-                try await sendStreamRegistration(
-                    streamID: streamID,
-                    markKeyframeCooldown: false
-                )
-                registrationRefreshCount &+= 1
-                if triggerKeyframe { sendKeyframeRequest(for: streamID) }
-            } catch {
-                if Self.isExpectedTransportTermination(error) {
-                    MirageLogger.client(
-                        "Transport refresh (\(reason)) stream \(streamID) cancelled (expected during path change)"
-                    )
-                } else {
-                    MirageLogger.error(
-                        .client,
-                        "Transport refresh (\(reason)) stream registration failed for stream \(streamID): \(error)"
-                    )
-                }
-            }
-        }
-
-        await refreshAudioRegistration(
-            reason: reason,
-            streamFilter: Set(targetIDs)
-        )
-        logAwdlExperimentTelemetryIfNeeded()
-    }
-
     func logAwdlExperimentTelemetryIfNeeded() {
         guard awdlExperimentEnabled else { return }
         let now = CFAbsoluteTimeGetCurrent()
@@ -716,6 +227,8 @@ extension MirageClientService {
             "AWDL telemetry: stalls=\(stallEvents), pathSwitches=\(awdlPathSwitches), registrationRefresh=\(registrationRefreshCount), hostRefreshReq=\(transportRefreshRequests), activeJitterHoldMs=\(activeJitterHoldMs)"
         )
     }
+
+    // MARK: - Keyframe Requests
 
     /// Request a keyframe from the host when decoder encounters errors.
     func sendKeyframeRequest(for streamID: StreamID) {
@@ -761,6 +274,8 @@ extension MirageClientService {
         return now - lastRequestTime >= cooldown
     }
 
+    // MARK: - Stream Recovery
+
     /// Request stream recovery by forcing a keyframe.
     public func requestStreamRecovery(for streamID: StreamID) {
         requestStreamRecovery(for: streamID, trigger: .manual)
@@ -796,15 +311,11 @@ extension MirageClientService {
                 awaitFirstPresentedFrame: trigger.awaitFirstPresentedFrame,
                 firstPresentedFrameWaitReason: trigger.firstPresentedFrameWaitReason
             )
-
-            do {
-                if udpConnection == nil { try await startVideoConnection() }
-                try await sendStreamRegistration(streamID: streamID)
-            } catch {
-                MirageLogger.error(.client, error: error, message: "Stream recovery registration failed: ")
-            }
+            self.sendKeyframeRequest(for: streamID)
         }
     }
+
+    // MARK: - Encoder Settings
 
     public func sendStreamEncoderSettingsChange(
         streamID: StreamID,
@@ -825,6 +336,8 @@ extension MirageClientService {
         )
         try await sendControlMessage(.streamEncoderSettingsChange, content: request)
     }
+
+    // MARK: - Adaptive Fallback
 
     func handleAdaptiveFallbackTrigger(for streamID: StreamID) {
         let resolvedBitDepth = resolvedDecoderBitDepth(for: streamID)
@@ -1082,7 +595,7 @@ extension MirageClientService {
                         .formatted(.number.precision(.fractionLength(1)))
                     let toMbps = (Double(nextBitrate) / 1_000_000.0)
                         .formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.client("Adaptive restore bitrate step \(fromMbps) → \(toMbps) Mbps for stream \(streamID)")
+                    MirageLogger.client("Adaptive restore bitrate step \(fromMbps) -> \(toMbps) Mbps for stream \(streamID)")
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Failed to restore bitrate for stream \(streamID): ")
                 }
@@ -1110,7 +623,7 @@ extension MirageClientService {
                     adaptiveFallbackStableSinceByStream[streamID] = CFAbsoluteTimeGetCurrent()
                     MirageLogger
                         .client(
-                            "Adaptive restore color depth step \(currentColorDepth.displayName) → \(nextColorDepth.displayName) for stream \(streamID)"
+                            "Adaptive restore color depth step \(currentColorDepth.displayName) -> \(nextColorDepth.displayName) for stream \(streamID)"
                         )
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Failed to restore color depth for stream \(streamID): ")
@@ -1153,7 +666,7 @@ extension MirageClientService {
                     .formatted(.number.precision(.fractionLength(1)))
                 let toMbps = (Double(nextBitrate) / 1_000_000.0)
                     .formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) → \(toMbps) Mbps for stream \(streamID)")
+                MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) -> \(toMbps) Mbps for stream \(streamID)")
             } catch {
                 MirageLogger.error(.client, error: error, message: "Failed to apply adaptive fallback for stream \(streamID): ")
             }
@@ -1200,7 +713,7 @@ extension MirageClientService {
                     adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
                     let currentName = currentColorDepth.displayName
                     let nextName = nextColorDepth.displayName
-                    MirageLogger.client("Adaptive fallback color depth step \(currentName) → \(nextName) for stream \(streamID)")
+                    MirageLogger.client("Adaptive fallback color depth step \(currentName) -> \(nextName) for stream \(streamID)")
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Failed to apply fallback color depth for stream \(streamID): ")
                 }
@@ -1233,7 +746,7 @@ extension MirageClientService {
                     .formatted(.number.precision(.fractionLength(1)))
                 let toMbps = (Double(nextBitrate) / 1_000_000.0)
                     .formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) → \(toMbps) Mbps for stream \(streamID)")
+                MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) -> \(toMbps) Mbps for stream \(streamID)")
             } catch {
                 MirageLogger.error(.client, error: error, message: "Failed to apply adaptive fallback for stream \(streamID): ")
             }
@@ -1284,25 +797,42 @@ extension MirageClientService {
     func handleVideoPacket(_ data: Data, header: FrameHeader) async {
         delegate?.clientService(self, didReceiveVideoPacket: data, forStream: header.streamID)
     }
-}
 
-struct UDPTransportCandidate {
-    let host: NWEndpoint.Host
-    let includePeerToPeer: Bool
-    let label: String
-}
+    // MARK: - Network Endpoint Utilities
 
-private func describeNetworkPath(_ path: NWPath) -> String {
-    var interfaces: [String] = []
-    if path.usesInterfaceType(.wifi) { interfaces.append("wifi") }
-    if path.usesInterfaceType(.wiredEthernet) { interfaces.append("wired") }
-    if path.usesInterfaceType(.cellular) { interfaces.append("cellular") }
-    if path.usesInterfaceType(.loopback) { interfaces.append("loopback") }
-    if path.usesInterfaceType(.other) { interfaces.append("other") }
-    let interfaceText = interfaces.isEmpty ? "unknown" : interfaces.joined(separator: ",")
-    let available = path.availableInterfaces
-        .map { "\($0.name)(\(String(describing: $0.type)))" }
-        .joined(separator: ",")
-    let availableText = available.isEmpty ? "none" : available
-    return "status=\(path.status), interfaces=\(interfaceText), available=\(availableText), expensive=\(path.isExpensive), constrained=\(path.isConstrained), ipv4=\(path.supportsIPv4), ipv6=\(path.supportsIPv6)"
+    nonisolated static func host(from endpoint: NWEndpoint?) -> NWEndpoint.Host? {
+        guard let endpoint else { return nil }
+        if case let .hostPort(host, _) = endpoint {
+            return host
+        }
+        return nil
+    }
+
+    nonisolated static func serviceName(from endpoint: NWEndpoint?) -> String? {
+        guard let endpoint else { return nil }
+        if case let .service(name, _, _, _) = endpoint {
+            return name
+        }
+        return nil
+    }
+
+    nonisolated static func expandedBonjourHosts(for host: NWEndpoint.Host) -> [NWEndpoint.Host] {
+        if let localQualified = localQualifiedBonjourHost(for: host) {
+            return [localQualified]
+        }
+        return [host]
+    }
+
+    nonisolated static func localQualifiedBonjourHost(for host: NWEndpoint.Host) -> NWEndpoint.Host? {
+        let rawValue = String(describing: host).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard shouldQualifyBonjourHostWithLocalDomain(rawValue) else { return nil }
+        return NWEndpoint.Host("\(rawValue).local")
+    }
+
+    nonisolated static func shouldQualifyBonjourHostWithLocalDomain(_ value: String) -> Bool {
+        guard !value.isEmpty else { return false }
+        guard !value.contains("."), !value.contains(":"), !value.contains("%") else { return false }
+        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-")
+        return value.unicodeScalars.allSatisfy { allowed.contains($0) }
+    }
 }

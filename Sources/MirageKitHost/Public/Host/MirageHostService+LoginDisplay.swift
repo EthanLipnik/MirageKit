@@ -147,7 +147,7 @@ extension MirageHostService {
             encoderConfig: encoderConfig,
             requestedAudioChannelCount: requestedLoginAudioChannelCount,
             maxPacketSize: networkConfig.maxPacketSize,
-            mediaSecurityContext: loginClientID.flatMap { mediaSecurityContextForMediaPayload(clientID: $0) },
+            mediaSecurityContext: nil,
             additionalFrameFlags: [.loginDisplay],
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             latencyMode: .auto
@@ -191,8 +191,10 @@ extension MirageHostService {
             streamsByID.removeValue(forKey: streamID)
             unregisterTypingBurstRoute(streamID: streamID)
             unregisterStallWindowPointerRoute(streamID: streamID)
-            udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
-            transportRegistry.unregisterVideoConnection(streamID: streamID)
+            if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+                Task { try? await videoStream.close() }
+            }
+            transportRegistry.unregisterVideoStream(streamID: streamID)
             await deactivateAudioSourceIfNeeded(streamID: streamID)
             loginDisplayContext = nil
             loginDisplayStreamID = nil
@@ -242,6 +244,24 @@ extension MirageHostService {
             // Clear any stuck modifiers before starting capture
             inputController.clearAllModifiers()
 
+            // Open Loom video stream for login display
+            if let firstClientContext = clientsBySessionID.values.first {
+                do {
+                    let videoStream = try await firstClientContext.controlChannel.session.openStream(
+                        label: "video/\(streamID)"
+                    )
+                    loomVideoStreamsByStreamID[streamID] = videoStream
+                    transportRegistry.registerVideoStream(videoStream, streamID: streamID)
+                    MirageLogger.host("Opened Loom video stream for login display stream \(streamID)")
+                } catch {
+                    MirageLogger.error(
+                        .host,
+                        error: error,
+                        message: "Failed to open Loom video stream for login display stream \(streamID): "
+                    )
+                }
+            }
+
             try await context.startLoginDisplay(
                 displayWrapper: displayInfo.displayWrapper,
                 resolution: displayInfo.resolution,
@@ -265,10 +285,6 @@ extension MirageHostService {
                 await cleanupOwnedStream(disablePowerAssertion: true)
                 return
             }
-
-            // Login display is the only visual stream while active; keep transport in
-            // active mode so packet scheduler does not collapse fragment queues.
-            transportRegistry.setVideoStreamActive(streamID: streamID, isActive: true)
 
             loginDisplayRetryAttempts = 0
 
@@ -326,8 +342,10 @@ extension MirageHostService {
             streamsByID.removeValue(forKey: streamID)
             unregisterTypingBurstRoute(streamID: streamID)
             unregisterStallWindowPointerRoute(streamID: streamID)
-            udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
-            transportRegistry.unregisterVideoConnection(streamID: streamID)
+            if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+                Task { try? await videoStream.close() }
+            }
+            transportRegistry.unregisterVideoStream(streamID: streamID)
             await deactivateAudioSourceIfNeeded(streamID: streamID)
         }
 

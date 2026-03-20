@@ -40,8 +40,6 @@ public extension MirageHostService {
             } catch let error as NWError where Self.isAddressInUseError(error) {
                 MirageLogger.host("Port already in use (attempt \(attempt + 1)/\(maxRetries)), cleaning up stale listeners...")
                 await loomNode.stopAdvertising()
-                udpListener?.cancel()
-                udpListener = nil
 
                 if attempt < maxRetries - 1 {
                     state = .starting
@@ -97,13 +95,8 @@ public extension MirageHostService {
             remoteControlListenerReady = directQUICPort != nil
             MirageLogger.host("Loom authenticated listeners ready udp=\(controlPort) quic=\(directQUICPort ?? 0)")
 
-            // Start UDP listener for data
-            MirageLogger.host("Starting UDP listener...")
-            let dataPort = try await startDataListener()
-            MirageLogger.host("UDP listener started on port \(dataPort)")
-
-            state = .advertising(controlPort: controlPort, dataPort: dataPort)
-            MirageLogger.host("Now advertising on control:\(controlPort) data:\(dataPort)")
+            state = .advertising(controlPort: controlPort)
+            MirageLogger.host("Now advertising on control:\(controlPort)")
             await loomNode.updateAdvertisement(advertisedPeerAdvertisement)
 
             // Set up app streaming callbacks
@@ -163,8 +156,6 @@ public extension MirageHostService {
         await PowerAssertionManager.shared.forceDisable()
 
         await loomNode.stopAdvertising()
-        udpListener?.cancel()
-        udpListener = nil
 
         state = .idle
         remoteControlListenerReady = false

@@ -156,7 +156,6 @@ extension MirageHostService {
             await appStreamRuntimeOrchestrator.unregisterStream(streamID: streamID)
             await appStreamDisplayAllocator.unbind(streamID: streamID)
             await streamPolicyApplier.clear(streamID: streamID)
-            transportRegistry.setVideoStreamActive(streamID: streamID, isActive: false)
         }
     }
 
@@ -221,8 +220,6 @@ extension MirageHostService {
                 streamID: policy.streamID,
                 isActive: isActive
             )
-            transportRegistry.setVideoStreamActive(streamID: policy.streamID, isActive: isActive)
-
             if let bitrate = policy.targetBitrateBps {
                 appliedTargets[policy.streamID] = bitrate
             }

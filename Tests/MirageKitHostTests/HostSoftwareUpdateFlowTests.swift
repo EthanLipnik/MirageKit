@@ -22,7 +22,6 @@ struct HostSoftwareUpdateFlowTests {
             hostID: UUID(),
             hostName: "Host",
             selectedFeatures: [],
-            dataPort: 9848,
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,

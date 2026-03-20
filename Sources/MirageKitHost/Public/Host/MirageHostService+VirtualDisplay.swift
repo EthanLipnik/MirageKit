@@ -301,7 +301,6 @@ extension MirageHostService {
             _ = try await startStream(
                 for: window,
                 to: client,
-                dataPort: nil,
                 clientDisplayResolution: displayResolution,
                 clientScaleFactor: inheritedClientScaleFactor,
                 keyFrameInterval: encoderSettings.keyFrameInterval,

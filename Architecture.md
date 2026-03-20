@@ -161,7 +161,7 @@ Shared clipboard is also coordinated at the host-service layer. It is negotiated
 
 QUIC connections require ALPN negotiation. Both host and client set `quicALPN` on `LoomNetworkConfiguration` to `["mirage-v2"]` so that the Loom transport layer passes the ALPN token through to `NWProtocolQUIC.Options`. Without ALPN, the TLS 1.3 handshake embedded in QUIC will fail.
 
-Peer-to-peer (AWDL) transport is iOS/visionOS only. macOS always disables P2P at the app level because `includePeerToPeer = true` on TCP `NWParameters` triggers intermittent NECP TLV corruption in the macOS kernel, and real-world Mac-to-Mac traffic uses `en0` (WiFi/Ethernet), not `awdl0`.
+Peer-to-peer (AWDL) transport is available on all client platforms (macOS, iOS, visionOS) and gated by the Mirage Pro subscription. When enabled, `includePeerToPeer = true` is set on `NWParameters` so the system can use AWDL/Wi-Fi Direct when a conventional infrastructure path is unavailable.
 
 Remote signaling remains a direct-QUIC reachability system. Mirage does not forward control traffic through the signaling service; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
 

@@ -107,6 +107,7 @@ extension MirageClientService {
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
+            startMediaStreamListener()
             finishConnectAttempt(attemptID)
             startHeartbeat()
 
@@ -184,6 +185,7 @@ extension MirageClientService {
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
+            startMediaStreamListener()
             finishConnectAttempt(attemptID)
             startHeartbeat()
 
@@ -283,8 +285,6 @@ extension MirageClientService {
         appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
         pendingForceIconResetForNextAppListRequest = false
         streamingAppBundleID = nil
-        hostDataPort = 0
-
         for session in sessions {
             await stopViewing(session)
         }
@@ -297,9 +297,7 @@ extension MirageClientService {
         cursorPositionStore.clearAll()
         sessionStore.clearLoginDisplayState()
 
-        mediaPathProber?.stopMonitoring()
-        mediaPathProber = nil
-        stopVideoConnection()
+        stopMediaStreamListener()
         stopAudioConnection()
 
         let controllers = controllersByStream.values
@@ -313,10 +311,6 @@ extension MirageClientService {
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
         controlPathSnapshot = nil
-        videoPathSnapshot = nil
-        audioPathSnapshot = nil
-        mediaTransportHost = nil
-        mediaTransportIncludePeerToPeer = nil
         activeJitterHoldMs = 0
         adaptiveFallbackBitrateByStream.removeAll()
         adaptiveFallbackBaselineBitrateByStream.removeAll()

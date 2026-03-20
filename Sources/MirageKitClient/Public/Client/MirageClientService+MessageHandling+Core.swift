@@ -195,7 +195,6 @@ extension MirageClientService {
             setMediaSecurityContext(mediaContext)
             mediaPayloadEncryptionEnabled = response.mediaEncryptionEnabled
             negotiatedFeatures = response.selectedFeatures
-            hostDataPort = response.dataPort
             connectedHostAllowsRemoteAccess = response.remoteAccessAllowed
             let acceptedHost = await finalizeAcceptedBootstrap(
                 response,
@@ -216,7 +215,6 @@ extension MirageClientService {
                 }
             }
 
-            MirageLogger.client("Received bootstrap response, dataPort: \(hostDataPort)")
             MirageLogger.client("Mirage bootstrap accepted by \(acceptedHost.name)")
             MirageInstrumentation.record(.clientHelloAccepted)
             if connectedHost == nil {
@@ -342,43 +340,31 @@ extension MirageClientService {
             }
 
             Task {
-                do {
-                    if shouldSetupController {
-                        await self.setupControllerForStream(streamID)
-                    }
-                    self.addActiveStreamID(streamID)
-                    if isAppCentricStream, shouldSetupController {
-                        MirageLogger.client("Controller set up for app-centric stream \(streamID)")
-                    }
+                if shouldSetupController {
+                    await self.setupControllerForStream(streamID)
+                }
+                self.addActiveStreamID(streamID)
+                if isAppCentricStream, shouldSetupController {
+                    MirageLogger.client("Controller set up for app-centric stream \(streamID)")
+                }
 
-                    if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
-                        let reassembler = await controller.getReassembler()
-                        reassembler.updateExpectedDimensionToken(token)
-                    }
+                if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
+                    let reassembler = await controller.getReassembler()
+                    reassembler.updateExpectedDimensionToken(token)
+                }
 
-                    if shouldRegisterVideo {
-                        if self.udpConnection == nil { try await self.startVideoConnection() }
-                        self.registeredStreamIDs.insert(streamID)
-                        try await self.sendStreamRegistration(streamID: streamID)
-                        await self.ensureAudioTransportRegistered(for: streamID)
-                        let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                        try? await self.sendStreamRefreshRateChange(
-                            streamID: streamID,
-                            maxRefreshRate: refreshRate
-                        )
-                        MirageLogger.client(
-                            "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                        )
-                        if shouldMarkStartupPending {
-                            self.startStartupRegistrationRetry(streamID: streamID)
-                        }
-                    }
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to establish video connection: ")
-                    if shouldRegisterVideo {
-                        self.registeredStreamIDs.remove(streamID)
-                        self.clearStartupPacketPending(streamID)
-                        self.cancelStartupRegistrationRetry(streamID: streamID)
+                if shouldRegisterVideo {
+                    self.registeredStreamIDs.insert(streamID)
+                    let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                    try? await self.sendStreamRefreshRateChange(
+                        streamID: streamID,
+                        maxRefreshRate: refreshRate
+                    )
+                    MirageLogger.client(
+                        "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
+                    )
+                    if shouldMarkStartupPending {
+                        self.startStartupRegistrationRetry(streamID: streamID)
                     }
                 }
             }
@@ -530,16 +516,17 @@ extension MirageClientService {
         do {
             let request = try message.decode(TransportRefreshRequestMessage.self)
             transportRefreshRequests &+= 1
-            let streamFilter = request.streamID.map { Set([$0]) }
             MirageLogger.client(
                 "Host transport refresh request received: reason=\(request.reason), stream=\(request.streamID.map(String.init) ?? "all"), count=\(transportRefreshRequests)"
             )
-            Task { [weak self] in
-                await self?.refreshTransportRegistrations(
-                    reason: "host-request:\(request.reason)",
-                    triggerKeyframe: true,
-                    streamFilter: streamFilter
-                )
+            let activeIDs = activeStreamIDsForFiltering
+            let targetIDs: [StreamID] = if let filterID = request.streamID {
+                activeIDs.contains(filterID) ? [filterID] : []
+            } else {
+                activeIDs.sorted()
+            }
+            for streamID in targetIDs {
+                sendKeyframeRequest(for: streamID)
             }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode transport refresh request: ")
@@ -695,15 +682,7 @@ extension MirageClientService {
 
                 if !self.registeredStreamIDs.contains(streamID) {
                     self.registeredStreamIDs.insert(streamID)
-                    do {
-                        if self.udpConnection == nil { try await self.startVideoConnection() }
-                        try await self.sendStreamRegistration(streamID: streamID)
-                        await self.ensureAudioTransportRegistered(for: streamID)
-                        MirageLogger.client("Registered for login display video stream \(streamID)")
-                    } catch {
-                        MirageLogger.error(.client, error: error, message: "Failed to establish video connection for login display: ")
-                        self.registeredStreamIDs.remove(streamID)
-                    }
+                    MirageLogger.client("Registered for login display video stream \(streamID)")
                 }
             }
 

@@ -34,7 +34,6 @@ extension MirageHostService {
         disableResolutionCap: Bool,
         streamScale: CGFloat?,
         audioConfiguration: MirageAudioConfiguration,
-        dataPort _: UInt16?,
         targetFrameRate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -349,7 +348,7 @@ extension MirageHostService {
             streamScale: computedStreamScale,
             requestedAudioChannelCount: audioConfiguration.channelLayout.channelCount,
             maxPacketSize: networkConfig.maxPacketSize,
-            mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: clientContext.client.id),
+            mediaSecurityContext: nil,
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
@@ -434,6 +433,22 @@ extension MirageHostService {
         // Enable power assertion
         await PowerAssertionManager.shared.enable()
 
+        // Open Loom video stream for desktop streaming
+        do {
+            let videoStream = try await clientContext.controlChannel.session.openStream(
+                label: "video/\(streamID)"
+            )
+            loomVideoStreamsByStreamID[streamID] = videoStream
+            transportRegistry.registerVideoStream(videoStream, streamID: streamID)
+            MirageLogger.host("Opened Loom video stream for desktop stream \(streamID)")
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to open Loom video stream for desktop stream \(streamID): "
+            )
+        }
+
         // Start streaming the display
         let firstSuccessfulVideoPacketSent = Locked(false)
         try await streamContext.startDesktopDisplay(
@@ -471,10 +486,10 @@ extension MirageHostService {
         )
         logDesktopStartStep("capture and encoder started")
 
-        // Desktop streams are always foreground/interactive and must bypass
-        // passive queue shedding to preserve keyframe fragment continuity.
-        // Set this once startup succeeds so failed starts do not leave stale policy state.
-        transportRegistry.setVideoStreamActive(streamID: streamID, isActive: true)
+        // Enable encoding immediately since the Loom video stream is already open.
+        if loomVideoStreamsByStreamID[streamID] != nil {
+            await streamContext.allowEncodingAfterRegistration()
+        }
 
         // Get dimension token from stream context
         let dimensionToken = await streamContext.getDimensionToken()
@@ -571,8 +586,10 @@ extension MirageHostService {
         unregisterStallWindowPointerRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
-        udpConnectionsByStream.removeValue(forKey: streamID)?.cancel()
-        transportRegistry.unregisterVideoConnection(streamID: streamID)
+        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+            Task { try? await videoStream.close() }
+        }
+        transportRegistry.unregisterVideoStream(streamID: streamID)
         inputStreamCacheActor.remove(streamID)
         await deactivateAudioSourceIfNeeded(streamID: streamID)
 

@@ -94,27 +94,17 @@ extension MirageClientService {
 
                 if !self.registeredStreamIDs.contains(streamID) {
                     self.registeredStreamIDs.insert(streamID)
-                    do {
-                        if self.udpConnection == nil { try await self.startVideoConnection() }
-                        try await self.sendStreamRegistration(streamID: streamID)
-                        await self.ensureAudioTransportRegistered(for: streamID)
-                        let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                        try? await self.sendStreamRefreshRateChange(
-                            streamID: streamID,
-                            maxRefreshRate: refreshRate
+                    let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                    try? await self.sendStreamRefreshRateChange(
+                        streamID: streamID,
+                        maxRefreshRate: refreshRate
+                    )
+                    MirageLogger
+                        .client(
+                            "Desktop start: refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
                         )
-                        MirageLogger
-                            .client(
-                                "Desktop start: refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                            )
-                        MirageLogger.client("Registered for desktop stream video \(streamID)")
-                        self.startStartupRegistrationRetry(streamID: streamID)
-                    } catch {
-                        MirageLogger.error(.client, error: error, message: "Failed to establish video connection for desktop stream: ")
-                        self.registeredStreamIDs.remove(streamID)
-                        self.clearStartupPacketPending(streamID)
-                        self.cancelStartupRegistrationRetry(streamID: streamID)
-                    }
+                    MirageLogger.client("Registered for desktop stream video \(streamID)")
+                    self.startStartupRegistrationRetry(streamID: streamID)
                 }
             }
 

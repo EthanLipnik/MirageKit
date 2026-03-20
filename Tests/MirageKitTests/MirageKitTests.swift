@@ -163,7 +163,6 @@ struct MirageKitTests {
             hostID: UUID(),
             hostName: "Host",
             selectedFeatures: [],
-            dataPort: 9848,
             mediaEncryptionEnabled: false,
             udpRegistrationToken: Data(),
             rejectionReason: .protocolVersionMismatch,
@@ -190,7 +189,6 @@ struct MirageKitTests {
             hostID: UUID(),
             hostName: "Host",
             selectedFeatures: mirageSupportedFeatures,
-            dataPort: 9848,
             mediaEncryptionEnabled: true,
             udpRegistrationToken: Data(
                 repeating: 0xAB,

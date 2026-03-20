@@ -40,44 +40,8 @@ extension MirageClientService {
     }
 
     func updateRegistrationRefreshLoopState() {
-        let hasActiveStreams = !activeStreamIDsForFiltering.isEmpty
-        let isConnected: Bool
-        if case .connected = connectionState {
-            isConnected = true
-        } else {
-            isConnected = false
-        }
-        guard Self.shouldRunRegistrationRefreshLoop(
-            experimentEnabled: awdlExperimentEnabled,
-            hasActiveStreams: hasActiveStreams,
-            isConnected: isConnected
-        ) else {
-            stopRegistrationRefreshLoop()
-            return
-        }
-        startRegistrationRefreshLoopIfNeeded()
-    }
-
-    nonisolated static func shouldRunRegistrationRefreshLoop(
-        experimentEnabled: Bool,
-        hasActiveStreams: Bool,
-        isConnected: Bool
-    ) -> Bool {
-        experimentEnabled && hasActiveStreams && isConnected
-    }
-
-    private func startRegistrationRefreshLoopIfNeeded() {
-        guard registrationRefreshTask == nil else { return }
-        registrationRefreshTask = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                let jitter = UInt64.random(in: 0 ... registrationRefreshJitterMs)
-                let sleepMs = registrationRefreshIntervalMs + jitter
-                try? await Task.sleep(for: .milliseconds(Int64(sleepMs)))
-                if Task.isCancelled { return }
-                await refreshTransportRegistrations(reason: "periodic-refresh", triggerKeyframe: false)
-            }
-        }
+        // Registration refresh is no longer needed; media flows through Loom session streams.
+        stopRegistrationRefreshLoop()
     }
 
     func stopRegistrationRefreshLoop() {

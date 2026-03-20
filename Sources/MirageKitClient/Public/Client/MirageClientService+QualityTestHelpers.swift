@@ -97,28 +97,8 @@ extension MirageClientService {
     }
 
     func sendQualityTestRegistration() async throws {
-        guard let udpConnection else {
-            throw MirageError.protocolError("No UDP connection")
-        }
-        guard let mediaSecurityContext else {
-            throw MirageError.protocolError("Missing media security context")
-        }
-
-        var data = Data()
-        data.append(contentsOf: [0x4D, 0x49, 0x52, 0x51])
-        withUnsafeBytes(of: deviceID.uuid) { data.append(contentsOf: $0) }
-        data.append(mediaSecurityContext.udpRegistrationToken)
-
-        try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            udpConnection.send(content: data, completion: .contentProcessed { error in
-                if let error { continuation.resume(throwing: error) } else {
-                    continuation.resume()
-                }
-            })
-        }
-        MirageLogger.client(
-            "Quality-test UDP registration sent (tokenBytes=\(mediaSecurityContext.udpRegistrationToken.count))"
-        )
+        // Quality test registration is no longer needed; media flows through Loom session streams.
+        MirageLogger.client("Quality-test registration skipped (media via Loom session)")
     }
 
     func runDecodeBenchmark() async throws -> MirageCodecBenchmarkStore.Record {

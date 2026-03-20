@@ -117,10 +117,6 @@ extension MirageHostService {
         await handler(message, clientContext)
     }
 
-    func sendVideoData(_ data: Data, header _: FrameHeader, to client: MirageConnectedClient) async {
-        if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) { clientContext.sendVideoPacket(data) }
-    }
-
     private func handleStartStreamMessage(
         _ message: ControlMessage,
         from clientContext: ClientContext
@@ -190,7 +186,6 @@ extension MirageHostService {
             _ = try await startStream(
                 for: window,
                 to: clientContext.client,
-                dataPort: request.dataPort,
                 clientDisplayResolution: clientDisplayResolution,
                 clientScaleFactor: request.scaleFactor,
                 keyFrameInterval: keyFrameInterval,

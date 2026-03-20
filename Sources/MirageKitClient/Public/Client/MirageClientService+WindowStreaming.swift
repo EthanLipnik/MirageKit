@@ -212,7 +212,7 @@ public extension MirageClientService {
         )
 
         await controller.updateDecodeSubmissionLimit(targetFrameRate: getScreenMaxRefreshRate())
-        if let kind = videoPathSnapshot?.kind {
+        if let kind = controlPathSnapshot?.kind {
             await controller.setTransportPathKind(kind)
         }
         if beginPostResizeTransition {

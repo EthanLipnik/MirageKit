@@ -40,7 +40,6 @@ package struct MirageSessionBootstrapResponse: Codable, Sendable {
     package let hostID: UUID
     package let hostName: String
     package let selectedFeatures: MirageFeatureSet
-    package let dataPort: UInt16
     /// Whether media payload encryption is required for this session.
     package let mediaEncryptionEnabled: Bool
     /// Auth token required for UDP registration packets.
@@ -63,7 +62,6 @@ package struct MirageSessionBootstrapResponse: Codable, Sendable {
         hostID: UUID,
         hostName: String,
         selectedFeatures: MirageFeatureSet,
-        dataPort: UInt16,
         mediaEncryptionEnabled: Bool,
         udpRegistrationToken: Data,
         autoTrustGranted: Bool? = nil,
@@ -78,7 +76,6 @@ package struct MirageSessionBootstrapResponse: Codable, Sendable {
         self.hostID = hostID
         self.hostName = hostName
         self.selectedFeatures = selectedFeatures
-        self.dataPort = dataPort
         self.mediaEncryptionEnabled = mediaEncryptionEnabled
         self.udpRegistrationToken = udpRegistrationToken
         self.autoTrustGranted = autoTrustGranted

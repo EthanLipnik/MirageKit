@@ -34,13 +34,7 @@ extension MirageClientService {
         let benchmarkTask = Task { try await runDecodeBenchmark() }
 
         if includeThroughput {
-            if udpConnection == nil {
-                try await startVideoConnection()
-            }
-            if let udpConnection, let path = udpConnection.currentPath {
-                MirageLogger.client("Quality test UDP path: \(describeQualityTestNetworkPath(path))")
-            }
-            try await sendQualityTestRegistration()
+            MirageLogger.client("Quality test: media streams handled via Loom session")
         }
 
         let hostBenchmarkTask = Task { [weak self] in
@@ -206,10 +200,6 @@ extension MirageClientService {
 
         let testID = UUID()
         let payloadBytes = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
-
-        if udpConnection == nil {
-            try await startVideoConnection()
-        }
 
         let targetMbps = (Double(targetBitrateBps) / 1_000_000.0)
             .formatted(.number.precision(.fractionLength(1)))

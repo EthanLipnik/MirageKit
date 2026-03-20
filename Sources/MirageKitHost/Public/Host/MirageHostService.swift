@@ -7,6 +7,7 @@
 
 import CoreMedia
 import Foundation
+import Loom
 import MirageBootstrapShared
 import Network
 import Observation
@@ -135,7 +136,6 @@ public final class MirageHostService {
 
     public let loomNode: LoomNode
     var advertisedPeerAdvertisement: LoomPeerAdvertisement
-    var udpListener: NWListener?
     var remoteControlListener: NWListener?
     var remoteRelayPublicationState = MirageRemoteRelayPublicationState()
     let encoderConfig: MirageEncoderConfiguration
@@ -177,14 +177,14 @@ public final class MirageHostService {
         qos: .userInteractive
     )
 
-    // UDP connections by stream ID (received from client registrations)
-    var udpConnectionsByStream: [StreamID: NWConnection] = [:]
+    // Loom multiplexed video streams by stream ID.
+    var loomVideoStreamsByStreamID: [StreamID: LoomMultiplexedStream] = [:]
     // Per-client media registration authentication context.
     var mediaSecurityByClientID: [UUID: MirageMediaSecurityContext] = [:]
     // Per-client media payload encryption policy.
     var mediaEncryptionEnabledByClientID: [UUID: Bool] = [:]
-    // Audio UDP connections by client ID (single mixed audio stream per client).
-    var audioConnectionsByClientID: [UUID: NWConnection] = [:]
+    // Loom multiplexed audio streams by client ID.
+    var loomAudioStreamsByClientID: [UUID: LoomMultiplexedStream] = [:]
     // Active host audio pipelines by client ID.
     var audioPipelinesByClientID: [UUID: HostAudioPipeline] = [:]
     // Selected source stream for client audio capture.
@@ -203,8 +203,7 @@ public final class MirageHostService {
     var sendErrorBursts: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
 
-    // Quality test connections and tasks
-    var qualityTestConnectionsByClientID: [UUID: NWConnection] = [:]
+    // Quality test tasks
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
     var qualityTestBenchmarkIDsByClientID: [UUID: UUID] = [:]
 
@@ -461,7 +460,7 @@ public final class MirageHostService {
     public enum HostState: Equatable {
         case idle
         case starting
-        case advertising(controlPort: UInt16, dataPort: UInt16)
+        case advertising(controlPort: UInt16)
         case error(String)
     }
 
@@ -1407,7 +1406,6 @@ public final class MirageHostService {
     /// - Parameters:
     ///   - window: The window to stream
     ///   - client: The client to stream to
-    ///   - dataPort: Optional UDP port for video data
     ///   - clientDisplayResolution: Client's display resolution for virtual display sizing
     ///   - keyFrameInterval: Optional client-requested keyframe interval (in frames)
     ///   - bitDepth: Optional client-requested stream bit depth

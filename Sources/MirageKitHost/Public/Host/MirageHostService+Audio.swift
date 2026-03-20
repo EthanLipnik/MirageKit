@@ -44,6 +44,26 @@ extension MirageHostService {
             )
             return
         }
+
+        // Open Loom audio stream if not already present.
+        if loomAudioStreamsByClientID[clientID] == nil,
+           let clientContext = clientsBySessionID.values.first(where: { $0.client.id == clientID }) {
+            do {
+                let audioStream = try await clientContext.controlChannel.session.openStream(
+                    label: "audio/\(sourceStreamID)"
+                )
+                loomAudioStreamsByClientID[clientID] = audioStream
+                transportRegistry.registerAudioStream(audioStream, clientID: clientID)
+                MirageLogger.host("Opened Loom audio stream for client \(clientID)")
+            } catch {
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Failed to open Loom audio stream for client \(clientID): "
+                )
+            }
+        }
+
         let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
         if let pipeline = audioPipelinesByClientID[clientID] {
             await pipeline.updateConfiguration(configuration)
@@ -53,7 +73,7 @@ extension MirageHostService {
                 sourceStreamID: sourceStreamID,
                 audioConfiguration: configuration,
                 maxPayloadSize: payloadSize,
-                mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: clientID)
+                mediaSecurityContext: nil
             ) { [weak self] packets, encoded, currentStreamID in
                 guard let self else { return }
                 dispatchControlWork(clientID: clientID) { [weak self] in
@@ -73,15 +93,6 @@ extension MirageHostService {
 
         await setAudioSourceCaptureHandler(clientID: clientID, streamID: sourceStreamID)
         updateHostAudioMuteState()
-    }
-
-    func handleAudioConnectionRegistered(clientID: UUID, streamID: StreamID) async {
-        if audioSourceStreamByClientID[clientID] == nil {
-            audioSourceStreamByClientID[clientID] = streamID
-        }
-        if let message = audioStartedMessageByClientID[clientID] {
-            await sendAudioStreamStarted(message, toClientID: clientID)
-        }
     }
 
     func activateDeferredAudioIfNeeded(clientID: UUID) async {
@@ -150,8 +161,10 @@ extension MirageHostService {
 
     func stopAudioForDisconnectedClient(_ clientID: UUID) async {
         await stopAudioPipeline(for: clientID, reason: .clientRequested)
-        if let connection = audioConnectionsByClientID.removeValue(forKey: clientID) { connection.cancel() }
-        if let connection = transportRegistry.unregisterAudioConnection(clientID: clientID) { connection.cancel() }
+        if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: clientID) {
+            Task { try? await audioStream.close() }
+        }
+        transportRegistry.unregisterAudioStream(clientID: clientID)
         audioConfigurationByClientID.removeValue(forKey: clientID)
         audioSourceStreamByClientID.removeValue(forKey: clientID)
     }

@@ -129,7 +129,6 @@ extension MirageHostService {
                 disableResolutionCap: request.disableResolutionCap ?? false,
                 streamScale: request.streamScale,
                 audioConfiguration: audioConfiguration,
-                dataPort: request.dataPort,
                 targetFrameRate: targetFrameRate,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,

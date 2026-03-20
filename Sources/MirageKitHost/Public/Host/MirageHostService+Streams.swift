@@ -176,7 +176,6 @@ public extension MirageHostService {
     func startStream(
         for window: MirageWindow,
         to client: MirageConnectedClient,
-        dataPort _: UInt16? = nil,
         clientDisplayResolution: CGSize? = nil,
         clientScaleFactor: CGFloat? = nil,
         keyFrameInterval: Int? = nil,
@@ -295,7 +294,7 @@ public extension MirageHostService {
             streamScale: streamScale ?? 1.0,
             requestedAudioChannelCount: resolvedAudioConfiguration.channelLayout.channelCount,
             maxPacketSize: networkConfig.maxPacketSize,
-            mediaSecurityContext: mediaSecurityContextForMediaPayload(clientID: client.id),
+            mediaSecurityContext: nil,
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
             temporaryDegradationMode: temporaryDegradationMode,
@@ -353,8 +352,23 @@ public extension MirageHostService {
         // Update input cache for fast input routing (thread-safe)
         inputStreamCacheActor.set(streamID, window: updatedWindow, client: client)
 
-        // UDP connection will be set when client sends registration via UDP
-        // The client connects to our data port and registers with the stream ID
+        // Open Loom video stream for this stream
+        if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) {
+            do {
+                let videoStream = try await clientContext.controlChannel.session.openStream(
+                    label: "video/\(streamID)"
+                )
+                loomVideoStreamsByStreamID[streamID] = videoStream
+                transportRegistry.registerVideoStream(videoStream, streamID: streamID)
+                MirageLogger.host("Opened Loom video stream for stream \(streamID)")
+            } catch {
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Failed to open Loom video stream for stream \(streamID): "
+                )
+            }
+        }
 
         // Wrap ScreenCaptureKit types for safe sending across actor boundary
         let windowWrapper = SCWindowWrapper(window: scWindow)
@@ -680,6 +694,12 @@ public extension MirageHostService {
             )
             try await clientContext.send(.streamStarted, content: message)
         }
+
+        // Enable encoding immediately since the Loom video stream is already open.
+        if loomVideoStreamsByStreamID[streamID] != nil {
+            await context.allowEncodingAfterRegistration()
+        }
+
         await markAppStreamInteraction(streamID: streamID, reason: "stream started")
 
         // Start menu bar monitoring for this stream
@@ -1171,9 +1191,11 @@ public extension MirageHostService {
         // Remove from input cache (thread-safe)
         inputStreamCacheActor.remove(session.id)
 
-        // Clean up UDP connection for this stream
-        if let udpConnection = udpConnectionsByStream.removeValue(forKey: session.id) { udpConnection.cancel() }
-        transportRegistry.unregisterVideoConnection(streamID: session.id)
+        // Clean up Loom video stream for this stream
+        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: session.id) {
+            Task { try? await videoStream.close() }
+        }
+        transportRegistry.unregisterVideoStream(streamID: session.id)
 
         // Minimize the window if requested (after stopping capture so window is restored from virtual display)
         if minimizeWindow { WindowManager.minimizeWindow(windowID) }
