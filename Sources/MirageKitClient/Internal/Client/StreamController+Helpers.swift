@@ -228,51 +228,10 @@ extension StreamController {
         now: CFAbsoluteTime,
         latestSequence: UInt64
     ) async {
-        guard awaitingFirstPresentedFrame else { return }
-        guard firstPresentedFrameWaitStartTime > 0 else { return }
-
-        switch firstPresentedFrameAwaitMode {
-        case .startup:
-            guard !hasPresentedFirstFrame else { return }
-            guard !hasDecodedFirstFrame else { return }
-        case .recovery:
-            break
-        }
-
-        let elapsed = now - firstPresentedFrameWaitStartTime
-        guard elapsed >= Self.firstPresentedFrameBootstrapRecoveryGrace else { return }
-
-        if firstPresentedFrameLastRecoveryRequestTime > 0,
-           now - firstPresentedFrameLastRecoveryRequestTime < Self.firstPresentedFrameRecoveryCooldown {
-            return
-        }
-
-        let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
-        guard pendingDepth == 0 else { return }
-
-        let awaitingKeyframe = reassembler.isAwaitingKeyframe()
-        let lastPacketTime = reassembler.latestPacketReceivedTime()
-        let noVideoPacketsYet = lastPacketTime == 0
-        let packetStarved = !noVideoPacketsYet &&
-            now - lastPacketTime >= Self.firstPresentedFramePacketStallThreshold
-
-        guard awaitingKeyframe || noVideoPacketsYet || packetStarved else { return }
-
-        firstPresentedFrameLastRecoveryRequestTime = now
-        let elapsedMs = Int(elapsed * 1000)
-        let reason = firstPresentedFrameWaitReason ?? "unknown"
-        let packetAgeText: String
-        if noVideoPacketsYet {
-            packetAgeText = "none"
-        } else {
-            packetAgeText = "\(Int((now - lastPacketTime) * 1000))ms"
-        }
-        let logMessage =
-            "First-frame watchdog triggered (\(reason)) for stream \(streamID) (+\(elapsedMs)ms, " +
-            "latest=\(latestSequence), lastPacketAge=\(packetAgeText), awaitingKeyframe=\(awaitingKeyframe)); " +
-            "requesting recovery"
-        MirageLogger.client(logMessage)
-        await handleFrameLossSignal()
+        // Keyframe recovery is driven exclusively by decode errors.
+        // The timer-based first-frame watchdog was firing prematurely during normal
+        // startup (the reassembler always starts in awaitingKeyframe state), causing
+        // a keyframe request storm before any frames had been received or decoded.
     }
 
     func recordDecodedFrame() {
@@ -328,29 +287,16 @@ extension StreamController {
             return
         }
 
-        // Bootstrap exception: if no frame has ever been presented, request keyframes so startup
-        // does not deadlock on a lost initial keyframe.
-        guard hasPresentedFirstFrame else {
-            MirageLogger.client(
-                "Frame loss detected before first presented frame for stream \(streamID); " +
-                    "requesting bootstrap keyframe recovery"
-            )
-            reassembler.enterKeyframeOnlyMode()
-            startKeyframeRecoveryLoopIfNeeded()
-            await requestKeyframeRecovery(reason: .frameLoss)
-            return
-        }
-
         let isAwaitingKeyframe = reassembler.isAwaitingKeyframe()
         if isAwaitingKeyframe {
             MirageLogger.client(
-                "Frame loss detected for stream \(streamID) while awaiting keyframe; deferring recovery until sustained freeze"
+                "Frame loss detected for stream \(streamID) while awaiting keyframe; deferring recovery until decode error threshold"
             )
             return
         }
 
         MirageLogger.client(
-            "Frame loss detected for stream \(streamID); strict monotonic recovery active, waiting for explicit keyframe-await state"
+            "Frame loss detected for stream \(streamID); waiting for decode error threshold"
         )
     }
 
@@ -540,53 +486,9 @@ extension StreamController {
     }
 
     private func runKeyframeRecoveryLoop() async {
-        defer {
-            keyframeRecoveryTask = nil
-            keyframeRecoveryAttempt = 0
-            lastRecoveryRequestTime = 0
-        }
-
-        while !Task.isCancelled {
-            guard presentationTier == .activeLive else { return }
-
-            let retryDelay: Duration = switch keyframeRecoveryAttempt {
-            case 0:
-                Self.keyframeRecoveryInitialInterval
-            case 1:
-                Self.keyframeRecoverySecondaryInterval
-            default:
-                Self.keyframeRecoverySteadyInterval
-            }
-            do {
-                try await Task.sleep(for: retryDelay)
-            } catch {
-                break
-            }
-
-            let now = currentTime()
-            guard presentationTier == .activeLive else { return }
-            guard let awaitingDuration = reassembler.awaitingKeyframeDuration(now: now) else { break }
-            let timeout = reassembler.keyframeTimeoutSeconds()
-            let initialRetryDelay = min(timeout, 0.25)
-            guard awaitingDuration >= initialRetryDelay else { continue }
-
-            if lastRecoveryRequestTime > 0,
-               now - lastRecoveryRequestTime < Self.keyframeRecoveryRetryInterval {
-                continue
-            }
-
-            if keyframeRecoveryAttempt >= Self.activeRecoveryMaxKeyframeAttempts {
-                MirageLogger.client(
-                    "Keyframe recovery retries exhausted for active stream \(streamID); escalating to hard recovery"
-                )
-                await requestRecovery(reason: .keyframeRecoveryLoop, restartRecoveryLoop: false)
-                return
-            }
-
-            lastRecoveryRequestTime = now
-            keyframeRecoveryAttempt &+= 1
-            await requestKeyframeRecovery(reason: .keyframeRecoveryLoop)
-        }
+        // Keyframe recovery is driven exclusively by decode errors.
+        // The escalating retry loop (250ms → 500ms → 1s) was requesting keyframes
+        // independently of actual decode failures.
     }
 
     private func startFreezeMonitorIfNeeded() {
@@ -615,48 +517,9 @@ extension StreamController {
     }
 
     private func evaluateFreezeState() async {
-        guard presentationTier == .activeLive else {
-            lastPresentedProgressTime = currentTime()
-            consecutiveFreezeRecoveries = 0
-            return
-        }
-        guard lastDecodedFrameTime > 0 else { return }
-        let now = currentTime()
-        guard await isApplicationActiveForFreezeMonitoring() else {
-            lastPresentedProgressTime = now
-            consecutiveFreezeRecoveries = 0
-            return
-        }
-        let presentationSnapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
-        if presentationSnapshot.sequence > lastPresentedSequenceObserved {
-            lastPresentedSequenceObserved = presentationSnapshot.sequence
-            lastPresentedProgressTime = now
-            consecutiveFreezeRecoveries = 0
-            return
-        }
-
-        if lastPresentedProgressTime == 0 {
-            lastPresentedProgressTime = presentationSnapshot.presentedTime > 0 ? presentationSnapshot.presentedTime : now
-            return
-        }
-
-        let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
-        let lastPacketTime = reassembler.latestPacketReceivedTime()
-        let hasRecentVideoPacket = lastPacketTime > 0 && now - lastPacketTime <= Self.freezeTimeout
-        let packetStarved = lastPacketTime == 0 || !hasRecentVideoPacket
-        let stalledPresentation = now - lastPresentedProgressTime > Self.freezeTimeout
-        let isFrozen = stalledPresentation && (pendingDepth > 0 || hasRecentVideoPacket || packetStarved)
-        let keyframeStarved = reassembler.isAwaitingKeyframe()
-        if isFrozen {
-            await maybeTriggerFreezeRecovery(
-                now: now,
-                keyframeStarved: keyframeStarved,
-                packetStarved: packetStarved
-            )
-        }
-        else {
-            consecutiveFreezeRecoveries = 0
-        }
+        // Keyframe recovery is driven exclusively by decode errors.
+        // The freeze monitor was requesting keyframes on presentation stalls
+        // independent of whether any decode errors had occurred.
     }
 
     private func isApplicationActiveForFreezeMonitoring() async -> Bool {

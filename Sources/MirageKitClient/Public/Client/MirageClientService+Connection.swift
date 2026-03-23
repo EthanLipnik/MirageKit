@@ -81,7 +81,6 @@ extension MirageClientService {
         setMediaSecurityContext(nil)
         isAwaitingManualApproval = false
         hasCompletedBootstrap = false
-        approvalWaitTask?.cancel()
         connectedHost = host
 
         var pendingChannel: MirageControlChannel?
@@ -153,7 +152,6 @@ extension MirageClientService {
         setMediaSecurityContext(nil)
         isAwaitingManualApproval = false
         hasCompletedBootstrap = false
-        approvalWaitTask?.cancel()
         connectedHost = host
 
         var pendingChannel: MirageControlChannel?
@@ -342,7 +340,6 @@ extension MirageClientService {
         hostSessionState = nil
         currentSessionToken = nil
         isAwaitingManualApproval = false
-        approvalWaitTask?.cancel()
         pingTimeoutTask?.cancel()
         pingTimeoutTask = nil
         if let pingContinuation {
@@ -423,7 +420,10 @@ extension MirageClientService {
                 to: endpoint,
                 using: transportKind,
                 hello: hello,
-                requiredInterfaceType: requiredInterfaceType
+                requiredInterfaceType: requiredInterfaceType,
+                onTrustPending: { @MainActor [weak self] in
+                    self?.isAwaitingManualApproval = true
+                }
             )
             let shouldCancelSession = await MainActor.run {
                 guard let self else { return true }
@@ -549,7 +549,6 @@ extension MirageClientService {
                 requestHostUpdateOnProtocolMismatch: requestHostUpdateOnProtocolMismatch
             )
         )
-        startManualApprovalWaitTimer()
 
         MirageLogger.client("Waiting for Mirage bootstrap response from \(provisionalHost.name)")
         let responseMessage = try await receiveSingleControlMessage(
@@ -659,35 +658,6 @@ extension MirageClientService {
                 self.handleControlPathUpdate(snapshot)
             }
         }
-    }
-
-    private func startManualApprovalWaitTimer() {
-        approvalWaitTask?.cancel()
-        approvalWaitTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(2.5))
-            guard let self else { return }
-            guard Self.shouldActivateManualApprovalWaitIndicator(
-                hasCompletedBootstrap: hasCompletedBootstrap,
-                connectionState: connectionState
-            ) else {
-                return
-            }
-
-            if case .handshaking = connectionState {
-                isAwaitingManualApproval = true
-            }
-        }
-    }
-
-    static func shouldActivateManualApprovalWaitIndicator(
-        hasCompletedBootstrap: Bool,
-        connectionState: ConnectionState
-    ) -> Bool {
-        guard !hasCompletedBootstrap else { return false }
-        if case .handshaking = connectionState {
-            return true
-        }
-        return false
     }
 
     private func requiresDisconnectCleanupAfterFailedConnect() -> Bool {

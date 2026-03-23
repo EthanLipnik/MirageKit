@@ -39,8 +39,6 @@ extension MirageClientService {
                 return
             }
 
-            hostSupportLogArchiveTimeoutTask?.cancel()
-            hostSupportLogArchiveTimeoutTask = nil
             hostSupportLogArchiveTransferTask?.cancel()
             hostSupportLogArchiveTransferTask = Task { @MainActor [weak self] in
                 guard let self else { return }

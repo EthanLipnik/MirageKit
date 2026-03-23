@@ -34,6 +34,17 @@ actor PowerAssertionManager {
 
     private init() {}
 
+    // MARK: - Display Wake
+
+    /// Wake the display if it is sleeping by simulating user activity.
+    /// Safe to call from any isolation context — spawns a short-lived caffeinate process.
+    nonisolated static func wakeDisplay() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/caffeinate")
+        process.arguments = ["-u", "-t", "3"]
+        try? process.run()
+    }
+
     // MARK: - Public API
 
     /// Enable power assertion to prevent display sleep.

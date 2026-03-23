@@ -231,7 +231,7 @@ actor StreamController {
     /// Interval for progress logs while waiting on first-frame presentation.
     static let firstPresentedFrameWaitLogInterval: CFAbsoluteTime = 0.5
     /// Grace period before issuing bootstrap recovery while startup has no presentation progress.
-    static let firstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 0.75
+    static let firstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 5.0
     /// Treat startup as packet-starved when no recent packets arrive inside this window.
     static let firstPresentedFramePacketStallThreshold: CFAbsoluteTime = 0.35
     /// Cooldown between bootstrap recovery probes while awaiting the first presented frame.

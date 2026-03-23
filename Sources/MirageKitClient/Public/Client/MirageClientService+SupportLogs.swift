@@ -76,6 +76,11 @@ extension MirageClientService {
         transportKind: LoomTransportKind,
         port: UInt16
     ) async throws -> URL {
+        let rid = requestID.uuidString.lowercased()
+        MirageLogger.client(
+            "Downloading host support log archive requestID=\(rid) port=\(port) transport=\(transportKind)"
+        )
+
         guard let connectedHost else {
             throw MirageError.protocolError("No connected host")
         }
@@ -84,6 +89,8 @@ extension MirageClientService {
             from: connectedHost.endpoint,
             advertisedPort: port
         )
+        MirageLogger.client("Resolved host support log transfer endpoint: \(endpoint)")
+
         let hello = try makeSupportLogTransferHelloRequest()
         let session = try await loomNode.connect(
             to: endpoint,
@@ -95,14 +102,20 @@ extension MirageClientService {
                 await session.cancel()
             }
         }
+        MirageLogger.client("Established Loom session for host support log transfer")
 
         try await validateSupportLogTransferSession(session, connectedHost: connectedHost)
+        MirageLogger.client("Validated host support log transfer session")
 
         let transferEngine = LoomTransferEngine(session: session)
         let incomingTransfer = try await requireMatchingHostSupportLogTransfer(
             from: transferEngine,
             requestID: requestID
         )
+        MirageLogger.client(
+            "Accepted host support log transfer offer requestID=\(rid) bytes=\(incomingTransfer.offer.byteLength)"
+        )
+
         let destinationURL = uniqueSupportLogDestinationURL(fileName: fileName)
         let sink = try LoomFileTransferSink(url: destinationURL)
         try await incomingTransfer.accept(using: sink)
@@ -110,11 +123,21 @@ extension MirageClientService {
         let terminalProgress = await terminalProgress(from: incomingTransfer.progressEvents)
         switch terminalProgress?.state {
         case .completed:
-            break
+            MirageLogger.client(
+                "Completed host support log download requestID=\(rid) file=\(destinationURL.lastPathComponent)"
+            )
         case .cancelled, .declined:
+            MirageLogger.client(
+                "Host support log transfer ended early requestID=\(rid) " +
+                    "state=\(terminalProgress?.state.rawValue ?? "unknown")"
+            )
             try? FileManager.default.removeItem(at: destinationURL)
             throw CancellationError()
         default:
+            MirageLogger.client(
+                "Host support log transfer ended early requestID=\(rid) " +
+                    "state=\(terminalProgress?.state.rawValue ?? "unknown")"
+            )
             try? FileManager.default.removeItem(at: destinationURL)
             throw MirageError.protocolError("Host support log transfer did not complete")
         }

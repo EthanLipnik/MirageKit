@@ -21,7 +21,6 @@ extension MirageClientService {
         connectedHostIdentityKeyID = hostIdentityKeyID
         hasCompletedBootstrap = true
         isAwaitingManualApproval = false
-        approvalWaitTask?.cancel()
 
         let acceptedHost = await canonicalConnectedHost(
             hostID: response.hostID,

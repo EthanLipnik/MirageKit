@@ -458,7 +458,6 @@ public final class MirageClientService {
     let deviceName: String
     var receiveBuffer = Data()
     var isProcessingReceivedData = false
-    var approvalWaitTask: Task<Void, Never>?
     var hasCompletedBootstrap = false
     var mediaSecurityContext: MirageMediaSecurityContext?
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void

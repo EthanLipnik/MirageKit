@@ -166,6 +166,10 @@ extension MirageHostService {
             "Desktop capture pressure profile: \(capturePressureProfile.rawValue)"
         )
 
+        // Wake the display if sleeping — the display subsystem must be active
+        // for virtual display creation and CGDisplayConfiguration to succeed.
+        PowerAssertionManager.wakeDisplay()
+
         // Acquire virtual display at the resolved streaming resolution.
         // The 5K cap is applied at the encoding layer, not the virtual display.
         // Pass the target frame rate to enable 120Hz when appropriate.

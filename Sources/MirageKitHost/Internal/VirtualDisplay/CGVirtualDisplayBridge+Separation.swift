@@ -60,7 +60,6 @@ extension CGVirtualDisplayBridge {
     /// These displays behave like physical displays but are virtual
     private static let knownVirtualDisplayVendors: Set<UInt32> = [
         0x1E6D, // BetterDisplay / BetterDummy
-        0x0610, // Apple Silicon display (virtual mode)
         0xAC10, // Duet Display
     ]
 
@@ -154,24 +153,17 @@ extension CGVirtualDisplayBridge {
         MirageLogger
             .host("Environment: headless=\(isHeadless), originalMain=\(originalMainDisplayID), displays=\(displays)")
 
-        // Retry configuration up to 3 times to handle race conditions
-        for attempt in 1 ... 3 {
-            let success = performDisplayConfiguration(
-                virtualDisplayID: virtualDisplayID,
-                originalMainDisplayID: originalMainDisplayID,
-                displays: displays,
-                isHeadless: isHeadless
-            )
+        let success = performDisplayConfiguration(
+            virtualDisplayID: virtualDisplayID,
+            originalMainDisplayID: originalMainDisplayID,
+            displays: displays,
+            isHeadless: isHeadless
+        )
 
-            if success {
-                MirageLogger.host("Display configuration succeeded on attempt \(attempt)")
-                break
-            } else if attempt < 3 {
-                MirageLogger.host("Display configuration attempt \(attempt) failed, retrying...")
-                Thread.sleep(forTimeInterval: 0.1) // Brief delay before retry
-            } else {
-                MirageLogger.host("Display configuration failed after \(attempt) attempts")
-            }
+        if success {
+            MirageLogger.host("Display configuration succeeded")
+        } else {
+            MirageLogger.host("Display configuration failed")
         }
 
         let virtualBounds = CGDisplayBounds(virtualDisplayID)
@@ -218,7 +210,7 @@ extension CGVirtualDisplayBridge {
         if isHeadless {
             // On headless Mac: position Mirage display far to the right to stay out of the way
             // This ensures it doesn't interfere with Jump Desktop or other remote tools
-            let otherDisplays = displays.filter { $0 != virtualDisplayID }
+            let otherDisplays = displays.filter { $0 != virtualDisplayID && !isMirageDisplay($0) }
             if let rightmostDisplay = otherDisplays.max(by: { CGDisplayBounds($0).maxX < CGDisplayBounds($1).maxX }) {
                 let bounds = CGDisplayBounds(rightmostDisplay)
                 let virtualX = Int32(bounds.maxX)
