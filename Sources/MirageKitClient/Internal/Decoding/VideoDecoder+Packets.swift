@@ -380,6 +380,9 @@ extension FrameReassembler {
                     .frameAssembly,
                     "Delivering keyframe \(frameNumber) (\(frame.expectedTotalBytes) bytes)"
                 )
+                MirageLogger.client(
+                    "Keyframe assembled: frame=\(frameNumber), size=\(frame.expectedTotalBytes), stream=\(streamID)"
+                )
                 clearAwaitingKeyframe()
             }
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
@@ -546,6 +549,9 @@ extension FrameReassembler {
                 )
                 if isKeyframe {
                     timedOutKeyframeCount += 1
+                    MirageLogger.client(
+                        "Keyframe timed out: frame=\(frameNumber), \(receivedCount)/\(totalCount) fragments, stream=\(streamID)"
+                    )
                 } else {
                     timedOutPFrameCount += 1
                     let expectedFrame = lastCompletedFrame &+ 1
@@ -624,6 +630,13 @@ extension FrameReassembler {
         let incompleteCount = pendingFrames.count
         lock.unlock()
         return incompleteCount > 5
+    }
+
+    func hasReceivedPackets() -> Bool {
+        lock.lock()
+        let received = totalPacketsReceived > 0
+        lock.unlock()
+        return received
     }
 
     func getDroppedFrameCount() -> UInt64 {

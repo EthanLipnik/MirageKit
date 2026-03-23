@@ -500,12 +500,23 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         cachedHint: CachedValidationHint?
     )
     -> [DescriptorAttempt] {
-        let defaults: [DescriptorProfile] = hiDPI
-            ? [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
-            : [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
+        // Skip persistent-serial profiles when the serial maps to an orphaned online display.
+        // This avoids ~2s-per-attempt mode validation failures against stale 800x600 displays.
+        let serialIsStale = isMirageSerialOnline(persistentSerial)
+        let defaults: [DescriptorProfile]
+        if serialIsStale {
+            MirageLogger.host(
+                "Persistent serial \(persistentSerial) maps to online orphaned display; skipping persistent-serial profiles"
+            )
+            defaults = [.serial0GlobalQueue]
+        } else {
+            defaults = hiDPI
+                ? [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
+                : [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
+        }
         var orderedProfiles: [DescriptorProfile] = []
 
-        if let cachedHint {
+        if let cachedHint, !(serialIsStale && cachedHint.serial == persistentSerial) {
             orderedProfiles.append(cachedHint.profile)
         }
 
@@ -526,7 +537,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         var attempts: [DescriptorAttempt] = []
         var seen = Set<String>()
 
-        if let cachedHint {
+        if let cachedHint, !(serialIsStale && cachedHint.serial == persistentSerial) {
             let key = "\(cachedHint.profile.rawValue)-\(cachedHint.serial)"
             if seen.insert(key).inserted {
                 attempts.append(

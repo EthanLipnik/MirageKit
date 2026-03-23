@@ -236,6 +236,7 @@ extension VideoDecoder {
             decodeStartTime: CFAbsoluteTimeGetCurrent(),
             performanceTracker: performanceTracker,
             sessionGeneration: sessionGeneration,
+            colorDepth: preferredOutputColorDepth,
             onCompletion: { [weak self] in
                 guard let self else { return }
                 Task { await self.releaseDecodeSubmissionSlot() }
@@ -296,6 +297,7 @@ extension VideoDecoder {
                     sessionGeneration: info.sessionGeneration
                 )
             }
+            MirageColorAttachments.enforceOnPixelBuffer(pixelBuffer, colorSpace: info.colorDepth.colorSpace)
             if info.handler != nil { info.handler?(pixelBuffer, presentationTime, info.contentRect) } else {
                 MirageLogger.error(.decoder, "Warning: no frame handler set")
             }

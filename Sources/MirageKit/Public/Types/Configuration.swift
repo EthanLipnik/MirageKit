@@ -459,6 +459,16 @@ public enum MirageStreamColorDepth: String, Sendable, CaseIterable, Codable {
         }
     }
 
+    package var colorSpace: MirageColorSpace {
+        switch self {
+        case .standard:
+            .sRGB
+        case .pro,
+             .ultra:
+            .displayP3
+        }
+    }
+
     package var sortRank: Int {
         switch self {
         case .standard:

@@ -35,6 +35,12 @@ extension MirageClientService {
                     continue
                 }
 
+                // Stream recently stopped — give the control channel time to stabilize.
+                if let deadline = self.heartbeatGraceDeadline, ContinuousClock.now < deadline {
+                    consecutiveFailures = 0
+                    continue
+                }
+
                 // A quality-test ping already in flight proves the connection is alive.
                 guard self.pingContinuation == nil else {
                     consecutiveFailures = 0

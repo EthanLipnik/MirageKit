@@ -228,10 +228,23 @@ extension StreamController {
         now: CFAbsoluteTime,
         latestSequence: UInt64
     ) async {
-        // Keyframe recovery is driven exclusively by decode errors.
-        // The timer-based first-frame watchdog was firing prematurely during normal
-        // startup (the reassembler always starts in awaitingKeyframe state), causing
-        // a keyframe request storm before any frames had been received or decoded.
+        // Only fire when we are genuinely stuck: waiting for the first presented frame,
+        // video packets are flowing (the stream is active), but the reassembler is stuck
+        // awaiting a keyframe that never arrived. A 3-second cooldown prevents storms.
+        guard awaitingFirstPresentedFrame,
+              firstPresentedFrameWaitStartTime > 0 else { return }
+        let elapsed = now - firstPresentedFrameWaitStartTime
+        guard elapsed >= 3.0 else { return }
+        guard reassembler.hasReceivedPackets() else { return }
+        guard reassembler.isAwaitingKeyframe() else { return }
+        guard firstPresentedFrameLastRecoveryRequestTime == 0
+           || now - firstPresentedFrameLastRecoveryRequestTime >= 3.0 else { return }
+        firstPresentedFrameLastRecoveryRequestTime = now
+        MirageLogger.client(
+            "Bootstrap first frame recovery: requesting keyframe for stream \(streamID) "
+            + "(waited \(Int(elapsed * 1000))ms, reassembler awaiting keyframe)"
+        )
+        await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
     }
 
     func recordDecodedFrame() {

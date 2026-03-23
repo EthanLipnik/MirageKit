@@ -322,6 +322,10 @@ extension VideoDecoder {
                     ]
                     let parameterSetSizes: [Int] = [vpsData.count, spsData.count, ppsData.count]
 
+                    let colorExtensions = MirageColorAttachments.formatDescriptionExtensions(
+                        for: self.preferredOutputColorDepth.colorSpace
+                    )
+
                     var formatDesc: CMFormatDescription?
                     let status = CMVideoFormatDescriptionCreateFromHEVCParameterSets(
                         allocator: kCFAllocatorDefault,
@@ -329,7 +333,7 @@ extension VideoDecoder {
                         parameterSetPointers: parameterSetPointers,
                         parameterSetSizes: parameterSetSizes,
                         nalUnitHeaderLength: 4,
-                        extensions: nil,
+                        extensions: colorExtensions,
                         formatDescriptionOut: &formatDesc
                     )
 
@@ -626,13 +630,17 @@ extension VideoDecoder {
             needsNewDescription = false
         }
         if needsNewDescription, let dims {
+            let colorExtensions = MirageColorAttachments.formatDescriptionExtensions(
+                for: preferredOutputColorDepth.colorSpace
+            )
+
             var formatDesc: CMFormatDescription?
             let status = CMVideoFormatDescriptionCreate(
                 allocator: kCFAllocatorDefault,
                 codecType: kCMVideoCodecType_AppleProRes4444,
                 width: Int32(dims.width),
                 height: Int32(dims.height),
-                extensions: nil,
+                extensions: colorExtensions,
                 formatDescriptionOut: &formatDesc
             )
             if status == noErr, let desc = formatDesc {

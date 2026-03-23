@@ -483,16 +483,11 @@ extension MirageHostService {
         )
         logDesktopStartStep("capture and encoder started")
 
-        // Enable encoding immediately since the Loom video stream is already open.
-        if loomVideoStreamsByStreamID[streamID] != nil {
-            await streamContext.allowEncodingAfterRegistration()
-        }
-
-        // Get dimension token from stream context
+        // Send stream-started to client BEFORE enabling encoding so the client's
+        // controller/reassembler is ready when video packets arrive.
+        // (Window streams already follow this order — see MirageHostService+Streams.swift.)
         let dimensionToken = await streamContext.getDimensionToken()
         let startedDisplayResolution = await currentDesktopStartedResolution(fallback: captureResolution)
-
-        // Send confirmation to client
         let targetFrameRate = await streamContext.getTargetFrameRate()
         let codec = await streamContext.getCodec()
         let message = DesktopStreamStartedMessage(
@@ -504,11 +499,18 @@ extension MirageHostService {
             displayCount: 1,
             dimensionToken: dimensionToken
         )
-        if clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
-            logDesktopStartStep("desktopStreamStarted queued")
-        } else {
-            MirageLogger.error(.host, "Failed to encode desktopStreamStarted message")
-            logDesktopStartStep("desktopStreamStarted encoding failed")
+        do {
+            try await clientContext.send(.desktopStreamStarted, content: message)
+            logDesktopStartStep("desktopStreamStarted sent")
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to send desktopStreamStarted: ")
+            logDesktopStartStep("desktopStreamStarted send failed")
+        }
+
+        // NOW enable encoding — client has the stream-started message and can set up its
+        // controller/reassembler before the first video packets (including the keyframe) arrive.
+        if loomVideoStreamsByStreamID[streamID] != nil {
+            await streamContext.allowEncodingAfterRegistration()
         }
 
         MirageLogger

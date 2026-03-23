@@ -397,6 +397,7 @@ extension MirageClientService {
                 if let controller = controllersByStream[streamID] {
                     await controller.stop()
                     controllersByStream.removeValue(forKey: streamID)
+                    heartbeatGraceDeadline = ContinuousClock.now + .seconds(6)
                 }
                 await updateReassemblerSnapshot()
             }

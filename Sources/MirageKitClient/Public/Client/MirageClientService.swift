@@ -536,6 +536,7 @@ public final class MirageClientService {
 
     // MARK: - Heartbeat State
     @ObservationIgnored var heartbeatTask: Task<Void, Never>?
+    @ObservationIgnored var heartbeatGraceDeadline: ContinuousClock.Instant?
 
     /// Thread-safe property to check if a stream is active from nonisolated contexts
     nonisolated var activeStreamIDsForFiltering: Set<StreamID> {

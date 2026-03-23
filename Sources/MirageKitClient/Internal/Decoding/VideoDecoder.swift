@@ -269,6 +269,7 @@ final class DecodeInfo: @unchecked Sendable {
     let decodeStartTime: CFAbsoluteTime
     let performanceTracker: DecodePerformanceTracker?
     let sessionGeneration: UInt64
+    let colorDepth: MirageStreamColorDepth
     let onCompletion: (@Sendable () -> Void)?
     let releaseBuffer: (@Sendable () -> Void)?
     let data: Data
@@ -281,6 +282,7 @@ final class DecodeInfo: @unchecked Sendable {
         decodeStartTime: CFAbsoluteTime,
         performanceTracker: DecodePerformanceTracker?,
         sessionGeneration: UInt64,
+        colorDepth: MirageStreamColorDepth,
         onCompletion: (@Sendable () -> Void)?,
         releaseBuffer: (@Sendable () -> Void)?,
         data: Data
@@ -292,6 +294,7 @@ final class DecodeInfo: @unchecked Sendable {
         self.decodeStartTime = decodeStartTime
         self.performanceTracker = performanceTracker
         self.sessionGeneration = sessionGeneration
+        self.colorDepth = colorDepth
         self.onCompletion = onCompletion
         self.releaseBuffer = releaseBuffer
         self.data = data

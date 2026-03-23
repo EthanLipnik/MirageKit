@@ -89,8 +89,12 @@ extension StreamContext {
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
 
-                // Diagnostic: log CRC32 of encoded P-frames (throttled to every 60th)
-                if !isKeyframe {
+                // Diagnostic: log keyframes at info level, P-frames throttled to every 60th
+                if isKeyframe {
+                    MirageLogger.stream(
+                        "Keyframe encoded: size=\(encodedData.count), frame=\(localFrameNumber), stream=\(streamID)"
+                    )
+                } else {
                     pFrameDiagnosticCounter += 1
                     if pFrameDiagnosticCounter % 60 == 1 {
                         let crc = CRC32.calculate(encodedData)
@@ -273,8 +277,12 @@ extension StreamContext {
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
 
-                // Diagnostic: log CRC32 of encoded P-frames (throttled to every 60th)
-                if !isKeyframe {
+                // Diagnostic: log keyframes at info level, P-frames throttled to every 60th
+                if isKeyframe {
+                    MirageLogger.stream(
+                        "Keyframe encoded: size=\(encodedData.count), frame=\(localFrameNumber), stream=\(streamID)"
+                    )
+                } else {
                     pFrameDiagnosticCounter += 1
                     if pFrameDiagnosticCounter % 60 == 1 {
                         let crc = CRC32.calculate(encodedData)

@@ -43,6 +43,7 @@ actor StreamController {
         case freezeTimeout
         case keyframeRecoveryLoop
         case manualRecovery
+        case startupKeyframeTimeout
 
         var logLabel: String {
             switch self {
@@ -56,6 +57,8 @@ actor StreamController {
                 "keyframe-recovery-loop"
             case .manualRecovery:
                 "manual-recovery"
+            case .startupKeyframeTimeout:
+                "startup-keyframe-timeout"
             }
         }
     }

@@ -474,6 +474,21 @@ extension CGVirtualDisplayBridge {
             CGDisplayModelNumber(displayID) == mirageProductID
     }
 
+    /// Returns true if an online Mirage display already uses the given serial number.
+    /// Used to skip stale persistent serials that map to orphaned virtual displays.
+    static func isMirageSerialOnline(_ serial: UInt32) -> Bool {
+        guard serial != 0 else { return false }
+        var displayIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        var count: UInt32 = 0
+        CGGetOnlineDisplayList(UInt32(displayIDs.count), &displayIDs, &count)
+        for i in 0 ..< Int(count) {
+            let id = displayIDs[i]
+            guard isMirageDisplay(id) else { continue }
+            if CGDisplaySerialNumber(id) == serial { return true }
+        }
+        return false
+    }
+
     /// Get the space ID for a display
     static func getSpaceForDisplay(_ displayID: CGDirectDisplayID) -> CGSSpaceID {
         CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
