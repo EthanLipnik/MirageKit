@@ -183,19 +183,6 @@ public final class MirageHostInputController: @unchecked Sendable {
     var directScrollRemainderX: CGFloat = 0
     var directScrollRemainderY: CGFloat = 0
 
-    // MARK: - Gesture Translation State (accessed from accessibilityQueue only)
-
-    /// Accumulated magnification for command+scroll translation.
-    var magnifyAccumulator: CGFloat = 0
-
-    /// Threshold before triggering a zoom scroll event.
-    let magnifyScrollThreshold: CGFloat = 0.02
-
-    /// Accumulated rotation for option+scroll translation.
-    var rotationAccumulator: CGFloat = 0
-
-    /// Threshold before triggering a rotation scroll event.
-    let rotationScrollThreshold: CGFloat = 2.0
 
     /// Creates an input controller for host-side injection.
     /// - Parameters:

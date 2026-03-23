@@ -245,12 +245,6 @@ public final class MirageClientService {
     /// Current session token from the host (for unlock requests)
     var currentSessionToken: String?
 
-    /// Login display stream ID (when host is locked and streaming login screen)
-    public internal(set) var loginDisplayStreamID: StreamID?
-
-    /// Login display resolution
-    public internal(set) var loginDisplayResolution: CGSize?
-
     /// Desktop stream ID (when streaming full virtual display)
     public internal(set) var desktopStreamID: StreamID?
 
@@ -771,7 +765,6 @@ public final class MirageClientService {
             "client.hasReceivedWindowList": .bool(hasReceivedWindowList),
             "client.hasReceivedAppList": .bool(hasReceivedAppList),
             "client.desktopStreamActive": .bool(desktopStreamID != nil),
-            "client.loginDisplayStreamActive": .bool(loginDisplayStreamID != nil),
             "client.adaptiveFallbackMode": .string(diagnosticsAdaptiveFallbackModeName(adaptiveFallbackMode)),
             "client.maxRefreshRateOverride": maxRefreshRateOverride.map(LoomDiagnosticsValue.int) ?? .null,
             "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null

@@ -104,22 +104,6 @@ extension MirageHostInputController {
         }
     }
 
-    func injectLoginDisplayKeyEvent(isKeyDown: Bool, event: MirageKeyEvent) {
-        accessibilityQueue.async { [weak self] in
-            self?.injectKeyEvent(
-                isKeyDown: isKeyDown,
-                event,
-                domain: .hid,
-                app: nil
-            )
-        }
-    }
-
-    func injectLoginDisplayModifiers(_ modifiers: MirageModifierFlags) {
-        accessibilityQueue.async { [weak self] in
-            self?.injectFlagsChanged(modifiers, domain: .hid, app: nil)
-        }
-    }
 }
 
 #endif

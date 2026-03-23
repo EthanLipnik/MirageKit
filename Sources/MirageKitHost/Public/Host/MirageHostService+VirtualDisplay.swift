@@ -552,19 +552,6 @@ extension MirageHostService {
                 }
             }
 
-            if loginDisplayIsBorrowedStream, loginDisplayStreamID == streamID {
-                let displayResolution = await currentDesktopStartedResolution(
-                    fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
-                )
-                loginDisplayResolution = displayResolution
-                await broadcastLoginDisplayReady()
-            }
-            return
-        }
-
-        if streamID == loginDisplayStreamID {
-            loginDisplayResolution = CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
-            await broadcastLoginDisplayReady()
             return
         }
 

@@ -1217,8 +1217,7 @@ public extension MirageHostService {
         lockHostIfStreamingStopped()
 
         if activeStreams.isEmpty {
-            // Disable power assertion when no more streams are active (including login display)
-            if loginDisplayStreamID == nil { await PowerAssertionManager.shared.disable() }
+            await PowerAssertionManager.shared.disable()
         }
         await stopAppStreamGovernorsIfIdle()
     }

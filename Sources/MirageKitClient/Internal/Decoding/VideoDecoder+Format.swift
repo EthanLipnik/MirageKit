@@ -251,10 +251,10 @@ extension VideoDecoder {
 
     func validateLengthPrefixedHEVCBitstream(_ data: Data) -> AVCCValidationResult {
         guard !data.isEmpty else { return .empty }
-        if data.starts(with: [0x00, 0x00, 0x00, 0x01]) || data.starts(with: [0x00, 0x00, 0x01]) {
-            return .annexBDetected
-        }
 
+        // Try the AVCC structural walk first. A valid walk proves the data IS
+        // length-prefixed AVCC even when the first bytes happen to look like an
+        // Annex-B start code (e.g. a NAL length of 0x0001XX → `00 00 01 XX`).
         var cursor = 0
         let count = data.count
         while cursor + 4 <= count {
@@ -262,10 +262,19 @@ extension VideoDecoder {
                 Int(data[cursor + 1]) << 16 |
                 Int(data[cursor + 2]) << 8 |
                 Int(data[cursor + 3])
-            guard nalLength > 0 else { return .zeroLengthNAL(offset: cursor) }
+            guard nalLength > 0 else {
+                if cursor == 0 && data.starts(with: [0x00, 0x00, 0x00, 0x01]) {
+                    return .annexBDetected
+                }
+                return .zeroLengthNAL(offset: cursor)
+            }
 
             let nalEnd = cursor + 4 + nalLength
             guard nalEnd <= count else {
+                if cursor == 0 &&
+                    (data.starts(with: [0x00, 0x00, 0x00, 0x01]) || data.starts(with: [0x00, 0x00, 0x01])) {
+                    return .annexBDetected
+                }
                 return .truncatedNAL(offset: cursor, declared: nalLength, available: count - cursor - 4)
             }
             cursor = nalEnd
@@ -279,9 +288,6 @@ extension VideoDecoder {
     /// Returns `data.prefix(lastValidCursor)` if at least one NAL was valid, or `nil` if unusable.
     func trimToValidAVCCBoundary(_ data: Data) -> Data? {
         guard !data.isEmpty else { return nil }
-        if data.starts(with: [0x00, 0x00, 0x00, 0x01]) || data.starts(with: [0x00, 0x00, 0x01]) {
-            return nil
-        }
 
         var cursor = 0
         var lastValidCursor = 0

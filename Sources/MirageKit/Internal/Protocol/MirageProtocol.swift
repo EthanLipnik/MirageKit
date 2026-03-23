@@ -513,10 +513,6 @@ package struct FrameFlags: OptionSet, Sendable {
     /// High priority packet (for QoS)
     package static let priority = FrameFlags(rawValue: 1 << 4)
 
-    /// This is a login/lock screen display stream (not a window stream)
-    /// Used when host is locked and streaming the virtual display for remote unlock
-    package static let loginDisplay = FrameFlags(rawValue: 1 << 7)
-
     /// This is a full desktop stream (virtual display mirroring mode)
     /// Used when client requests streaming of the entire desktop
     package static let desktopStream = FrameFlags(rawValue: 1 << 8)

@@ -62,13 +62,11 @@ extension MirageHostService {
     nonisolated static func shouldDeferAppListRequestsForInteractiveWorkload(
         hasActiveAppStreams: Bool,
         hasDesktopStream: Bool,
-        hasLoginDisplayStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool
     ) -> Bool {
         hasActiveAppStreams ||
             hasDesktopStream ||
-            hasLoginDisplayStream ||
             hasPendingAppStreamStart ||
             hasPendingDesktopStreamStart
     }
@@ -1366,7 +1364,6 @@ extension MirageHostService {
         Self.shouldDeferAppListRequestsForInteractiveWorkload(
             hasActiveAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamContext != nil,
-            hasLoginDisplayStream: loginDisplayContext != nil,
             hasPendingAppStreamStart: pendingAppStreamStartCount > 0,
             hasPendingDesktopStreamStart: pendingDesktopStreamStartCount > 0
         )

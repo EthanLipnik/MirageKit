@@ -56,18 +56,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
-    /// The invisible scroll view for capturing trackpad physics
-    private let scrollView: NSScrollView
-
-    /// The document view that scrollView scrolls (large canvas)
-    private let documentView: FlippedView
-
     /// The actual content we display (stays pinned to bounds)
     let contentView: NSView
 
-    /// Callback for scroll events: (deltaX, deltaY, location, phase, momentumPhase, isPrecise)
+    /// Callback for scroll events: (deltaX, deltaY, location, phase, momentumPhase, modifiers, isPrecise)
     /// Location is in normalized coordinates (0-1 within view bounds)
-    var onScroll: ((CGFloat, CGFloat, CGPoint?, MirageScrollPhase, MirageScrollPhase, Bool) -> Void)?
+    var onScroll: ((CGFloat, CGFloat, CGPoint?, MirageScrollPhase, MirageScrollPhase, MirageModifierFlags, Bool) -> Void)?
 
     /// Callback for mouse events - used for forwarding clicks to host
     var onMouseEvent: ((MirageInputEvent) -> Void)?
@@ -107,61 +101,23 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var cursorHiddenForTyping: Bool = false
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
 
-    /// Size of scrollable area - large enough for extended scrolling before recenter
-    private let scrollableSize: CGFloat = 100_000
-
-    /// Last scroll position for delta calculation
-    private var lastScrollPosition: CGPoint = .zero
-
-    /// Whether we need to recenter after momentum ends
-    private var needsRecenter = false
-
-    /// Flag to suppress scroll events during recenter operation
-    private var isRecentering = false
-
     override init(frame: CGRect) {
-        scrollView = NSScrollView(frame: frame)
-        documentView = FlippedView(frame: NSRect(x: 0, y: 0, width: scrollableSize, height: scrollableSize))
         contentView = NSView(frame: frame)
         super.init(frame: frame)
         setup()
     }
 
     required init?(coder: NSCoder) {
-        scrollView = NSScrollView()
-        documentView = FlippedView(frame: NSRect(x: 0, y: 0, width: scrollableSize, height: scrollableSize))
         contentView = NSView()
         super.init(coder: coder)
         setup()
     }
 
     private func setup() {
-        // Configure scroll view - hide scrollers, no background
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.drawsBackground = false
-        scrollView.documentView = documentView
-        scrollView.translatesAutoresizingMaskIntoConstraints = false
-
-        // Enable elastic scrolling for bounce effect
-        scrollView.verticalScrollElasticity = .allowed
-        scrollView.horizontalScrollElasticity = .allowed
-
-        // Content view holds the Metal view (stays pinned)
         contentView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentView)
 
-        // Add scroll view as overlay (for capturing scroll events)
-        addSubview(scrollView)
-
         NSLayoutConstraint.activate([
-            // Scroll view fills our bounds
-            scrollView.topAnchor.constraint(equalTo: topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
-
-            // Content view also fills bounds (stays stationary)
             contentView.topAnchor.constraint(equalTo: topAnchor),
             contentView.leadingAnchor.constraint(equalTo: leadingAnchor),
             contentView.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -169,15 +125,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
         ])
 
         setupLockedCursorView()
-
-        // Listen for scroll changes via bounds notification
-        scrollView.contentView.postsBoundsChangedNotifications = true
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(boundsDidChange),
-            name: NSView.boundsDidChangeNotification,
-            object: scrollView.contentView
-        )
     }
 
     override func viewDidMoveToWindow() {
@@ -205,11 +152,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     override func layout() {
         super.layout()
-
-        // Ensure documentView maintains its large size (NSScrollView may resize it)
-        if documentView.frame.size.width != scrollableSize || documentView.frame.size.height != scrollableSize { documentView.frame = NSRect(x: 0, y: 0, width: scrollableSize, height: scrollableSize) }
-
-        recenterIfNeeded(force: lastScrollPosition == .zero)
         if cursorLockEnabled, isInputProcessingActive {
             updateCursorLockAnchor()
             warpCursorToAnchor()
@@ -277,25 +219,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
         // Keep the host's held-modifier timestamps fresh for long holds.
         if !modifiers.isEmpty { onMouseEvent?(.flagsChanged(modifiers)) }
-    }
-
-    /// Center the scroll view's content offset
-    private func recenterIfNeeded(force: Bool = false) {
-        guard bounds.width > 0 && bounds.height > 0 else { return }
-
-        let centerPoint = NSPoint(
-            x: (scrollableSize - bounds.width) / 2,
-            y: (scrollableSize - bounds.height) / 2
-        )
-
-        if force || needsRecenter {
-            // Suppress scroll events during recenter operation
-            isRecentering = true
-            documentView.scroll(centerPoint)
-            lastScrollPosition = centerPoint
-            needsRecenter = false
-            isRecentering = false
-        }
     }
 
     // MARK: - Cursor Lock
@@ -496,23 +419,13 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
-    @objc
-    private func boundsDidChange(_: Notification) {
-        // Only track position for recenter logic — scroll events are sent from scrollWheel(with:)
-        guard !isRecentering else { return }
-        lastScrollPosition = scrollView.documentVisibleRect.origin
-    }
-
-    /// Override scrollWheel to capture phases and forward raw deltas to the host.
     override func scrollWheel(with event: NSEvent) {
         guard isInputProcessingActive else { return }
 
-        // Extract phases from NSEvent
         let phase = MirageScrollPhase(from: event.phase)
         let momentumPhase = MirageScrollPhase(from: event.momentumPhase)
         let isPrecise = event.hasPreciseScrollingDeltas
 
-        // Get mouse location and normalize to 0-1 within view bounds
         if cursorLockEnabled {
             lastMouseLocation = clampedLockedCursorPosition()
         } else {
@@ -520,29 +433,16 @@ final class ScrollPhysicsCapturingNSView: NSView {
             if bounds.width > 0, bounds.height > 0 {
                 lastMouseLocation = CGPoint(
                     x: locationInView.x / bounds.width,
-                    y: 1.0 - (locationInView.y / bounds.height) // Flip Y for normalized coords
+                    y: 1.0 - (locationInView.y / bounds.height)
                 )
             }
         }
 
-        // Forward raw scroll deltas directly — these are precise trackpad deltas
-        // with correct phase and momentum phase information.
         let deltaX = event.scrollingDeltaX
         let deltaY = event.scrollingDeltaY
         if deltaX != 0 || deltaY != 0 || phase != .none || momentumPhase != .none {
-            onScroll?(deltaX, deltaY, lastMouseLocation, phase, momentumPhase, isPrecise)
-        }
-
-        // Forward to scroll view for elastic bounce visual feedback
-        scrollView.scrollWheel(with: event)
-
-        // Recenter after scrolling ends to keep the large document view centered
-        if event.phase == .ended || event.momentumPhase == .ended {
-            needsRecenter = true
-            Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .milliseconds(100))
-                self?.recenterIfNeeded()
-            }
+            let modifiers = MirageModifierFlags(nsEventFlags: event.modifierFlags)
+            onScroll?(deltaX, deltaY, lastMouseLocation, phase, momentumPhase, modifiers, isPrecise)
         }
     }
 
@@ -897,7 +797,6 @@ final class ScrollPhysicsCapturingNSView: NSView {
         MainActor.assumeIsolated {
             restoreCursorLockIfNeeded()
         }
-        NotificationCenter.default.removeObserver(self)
     }
 }
 

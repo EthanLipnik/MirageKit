@@ -319,7 +319,6 @@ public struct MirageStreamContentView: View {
 
     private var isCurrentStreamActive: Bool {
         if clientService.desktopStreamID == session.streamID { return true }
-        if clientService.loginDisplayStreamID == session.streamID { return true }
         if clientService.activeStreams.contains(where: { $0.id == session.streamID }) { return true }
         return clientService.activeStreamIDsForFiltering.contains(session.streamID)
     }

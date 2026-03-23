@@ -75,11 +75,9 @@ extension MirageHostInputController {
                 injectKeyEvent(isKeyDown: false, e, domain: .hid, app: nil)
             case let .flagsChanged(modifiers):
                 injectFlagsChanged(modifiers, domain: .hid, app: nil)
-            case let .magnify(e):
-                handleMagnifyGesture(e, windowFrame: bounds)
-            case let .rotate(e):
-                handleRotateGesture(e, windowFrame: bounds)
-            case .pixelResize,
+            case .magnify,
+                 .rotate,
+                 .pixelResize,
                  .relativeResize,
                  .windowResize:
                 break
@@ -123,18 +121,31 @@ extension MirageHostInputController {
             CGPoint(x: bounds.midX, y: bounds.midY)
         }
 
+        let rawX = event.deltaX + directScrollRemainderX
+        let rawY = event.deltaY + directScrollRemainderY
+        let truncX = rawX.rounded(.towardZero)
+        let truncY = rawY.rounded(.towardZero)
+        directScrollRemainderX = rawX - truncX
+        directScrollRemainderY = rawY - truncY
+
+        let intX = Int32(truncX)
+        let intY = Int32(truncY)
+
+        guard intX != 0 || intY != 0 else { return }
+
         guard let cgEvent = CGEvent(
             scrollWheelEvent2Source: nil,
             units: event.isPrecise ? .pixel : .line,
             wheelCount: 2,
-            wheel1: Int32(event.deltaY),
-            wheel2: Int32(event.deltaX),
+            wheel1: intY,
+            wheel2: intX,
             wheel3: 0
         ) else {
             return
         }
 
         cgEvent.location = scrollPoint
+        cgEvent.flags = event.modifiers.cgEventFlags
         postEvent(cgEvent)
     }
 }

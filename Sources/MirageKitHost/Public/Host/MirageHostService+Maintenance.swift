@@ -13,7 +13,7 @@ import MirageKit
 #if os(macOS)
 extension MirageHostService {
     public func resetVirtualDisplayIdentity() async throws {
-        if !activeStreams.isEmpty || desktopStreamContext != nil || loginDisplayContext != nil {
+        if !activeStreams.isEmpty || desktopStreamContext != nil {
             throw MirageError.protocolError("Stop streaming before resetting the virtual display identity.")
         }
 

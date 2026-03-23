@@ -122,9 +122,6 @@ public extension MirageHostService {
         sessionRefreshTask = nil
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
         clearAllPendingAppWindowCloseAlertTokens()
-        stopLoginDisplayWatchdog()
-        loginDisplayRetryTimer?.cancel()
-        loginDisplayRetryTimer = nil
         await SharedVirtualDisplayManager.shared.setGenerationChangeHandler(nil)
 
         // Stop cursor monitoring

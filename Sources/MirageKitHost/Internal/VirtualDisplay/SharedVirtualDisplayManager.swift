@@ -84,7 +84,6 @@ actor SharedVirtualDisplayManager {
 
     /// Consumer types that can acquire the shared display
     enum DisplayConsumer: Hashable, Sendable {
-        case loginDisplay
         case unlockKeyboard
         case desktopStream
         case qualityTest

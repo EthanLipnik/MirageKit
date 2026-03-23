@@ -31,13 +31,6 @@ public final class MirageClientSessionStore {
     /// Callback when stream presentation tier changes.
     public var onStreamPresentationTierChanged: ((StreamID, StreamPresentationTier) -> Void)?
 
-    // MARK: - Login Display State
-
-    /// Login display stream state (for locked host).
-    public var loginDisplayStreamID: StreamID?
-    public var loginDisplayResolution: CGSize?
-    public var loginDisplayHasFrame: Bool = false
-
     /// Streams that decoded a frame before the session entry existed.
     private var pendingFirstDecodedFrameStreamIDs: Set<StreamID> = []
     /// Streams that presented a frame before the session entry existed.
@@ -186,38 +179,6 @@ public final class MirageClientSessionStore {
         applyResolvedTiers(newTiers)
     }
 
-    // MARK: - Login Display
-
-    /// Start login display stream.
-    /// - Parameters:
-    ///   - streamID: Stream ID for the login display.
-    ///   - resolution: Pixel resolution of the login display stream.
-    public func startLoginDisplay(streamID: StreamID, resolution: CGSize) {
-        loginDisplayStreamID = streamID
-        loginDisplayResolution = resolution
-        loginDisplayHasFrame = false
-    }
-
-    /// Stop login display stream and clear cached frames.
-    public func stopLoginDisplay() {
-        if let loginDisplayStreamID {
-            postResizeAwaitingFirstFrameStreamIDs.remove(loginDisplayStreamID)
-        }
-        loginDisplayStreamID = nil
-        loginDisplayResolution = nil
-        loginDisplayHasFrame = false
-    }
-
-    /// Reset all login display state on disconnect.
-    public func clearLoginDisplayState() {
-        if let loginDisplayStreamID {
-            postResizeAwaitingFirstFrameStreamIDs.remove(loginDisplayStreamID)
-        }
-        loginDisplayStreamID = nil
-        loginDisplayResolution = nil
-        loginDisplayHasFrame = false
-    }
-
     /// Mark the first decoded frame for a stream.
     public func markFirstFrameDecoded(for streamID: StreamID) {
         if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
@@ -233,11 +194,6 @@ public final class MirageClientSessionStore {
     /// Used to drive UI state without per-frame SwiftUI updates.
     public func markFirstFramePresented(for streamID: StreamID) {
         postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
-
-        if streamID == loginDisplayStreamID {
-            if !loginDisplayHasFrame { loginDisplayHasFrame = true }
-            return
-        }
 
         if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
             if !session.hasDecodedFrame {

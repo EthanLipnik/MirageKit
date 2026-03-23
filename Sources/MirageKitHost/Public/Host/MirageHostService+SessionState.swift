@@ -25,13 +25,6 @@ extension MirageHostService {
     func startSessionStateMonitoring() async {
         if sessionStateMonitor == nil { sessionStateMonitor = SessionStateMonitor() }
 
-        if unlockManager == nil, let sessionStateMonitor {
-            unlockManager = UnlockManager(
-                sessionMonitor: sessionStateMonitor,
-                environment: .hostService
-            )
-        }
-
         guard let sessionStateMonitor else { return }
 
         await sessionStateMonitor.start(onStateChange: handleSessionStateMonitorUpdate)
@@ -59,14 +52,10 @@ extension MirageHostService {
         }
 
         if newState == .ready {
-            await stopLoginDisplayStream(newState: newState)
-            await unlockManager?.releaseDisplayAssertion()
             for clientContext in clientsBySessionID.values {
                 await sendWindowList(to: clientContext)
             }
             await syncAppListRequestDeferralForInteractiveWorkload()
-        } else if !clientsBySessionID.isEmpty {
-            await startLoginDisplayStreamIfNeeded()
         }
 
         syncSharedClipboardState(reason: "session_state_changed")

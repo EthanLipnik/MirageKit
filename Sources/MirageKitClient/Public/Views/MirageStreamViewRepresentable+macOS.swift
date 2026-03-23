@@ -112,14 +112,14 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         // Configure scroll callback for native trackpad physics
         wrapper
-            .onScroll = { [weak coordinator = context.coordinator] deltaX, deltaY, location, phase, momentumPhase, isPrecise in
+            .onScroll = { [weak coordinator = context.coordinator] deltaX, deltaY, location, phase, momentumPhase, modifiers, isPrecise in
                 let event = MirageScrollEvent(
                     deltaX: deltaX,
                     deltaY: deltaY,
                     location: location,
                     phase: phase,
                     momentumPhase: momentumPhase,
-                    modifiers: [], // Modifiers tracked separately via flagsChanged
+                    modifiers: modifiers,
                     isPrecise: isPrecise
                 )
                 coordinator?.handleInputEvent(.scrollWheel(event))

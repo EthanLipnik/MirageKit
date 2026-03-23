@@ -18,7 +18,6 @@ actor VideoEncoder {
     enum StreamKind: String, Sendable {
         case window
         case desktop
-        case loginDisplay
     }
 
     struct RuntimeValidationSnapshot: Sendable {

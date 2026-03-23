@@ -44,13 +44,6 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     @MainActor
     func hostService(_ service: MirageHostService, sessionStateChanged state: LoomSessionAvailability)
 
-    /// Called when a client requests to unlock the Mac
-    /// Return true to allow the unlock attempt, false to deny
-    /// Use this to implement additional authorization (e.g., only trusted devices can unlock)
-    @MainActor
-    func hostService(_ service: MirageHostService, shouldAllowUnlockFrom client: MirageConnectedClient)
-        -> Bool
-
     /// Called early in the incoming session when the Loom handshake completes and the peer
     /// advertisement is available, before full Mirage bootstrap negotiation.
     @MainActor
@@ -86,11 +79,6 @@ public extension MirageHostDelegate {
     ) {}
 
     func hostService(_: MirageHostService, sessionStateChanged _: LoomSessionAvailability) {}
-
-    func hostService(_: MirageHostService, shouldAllowUnlockFrom _: MirageConnectedClient) -> Bool {
-        // Default: allow all connected clients to attempt unlock
-        true
-    }
 
     func hostService(_: MirageHostService, didDiscoverPeerWithAdvertisement _: LoomPeerAdvertisement) {}
 

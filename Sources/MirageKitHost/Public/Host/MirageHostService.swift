@@ -39,9 +39,6 @@ public final class MirageHostService {
     /// Current session state (locked, unlocked, sleeping, etc.)
     public internal(set) var sessionState: LoomSessionAvailability = .ready
 
-    /// Whether remote unlock is enabled (allows clients to unlock the Mac)
-    public var remoteUnlockEnabled: Bool = true
-
     /// Whether shared clipboard sync is enabled for eligible active sessions.
     public var sharedClipboardEnabled: Bool = false {
         didSet {
@@ -257,29 +254,6 @@ public final class MirageHostService {
     // Shared-display scale factor for desktop/login shared-consumer flows.
     var sharedVirtualDisplayScaleFactor: CGFloat = 2.0
 
-    // Login display stream (lock/login screen) - internal for extension access
-    var loginDisplayContext: StreamContext?
-    var loginDisplayStreamID: StreamID?
-    var loginDisplayResolution: CGSize?
-    nonisolated let loginDisplayInputState = LoginDisplayInputState()
-    var loginDisplayStartInProgress = false
-    var loginDisplayStartGeneration: UInt64 = 0
-    var loginDisplayIsBorrowedStream = false
-    var loginDisplayPowerAssertionEnabled = false
-    var loginDisplaySharedDisplayConsumerActive = false
-    var loginDisplayRetryAttempts: Int = 0
-    let loginDisplayRetryLimit: Int = 5
-    let loginDisplayRetryDelaySeconds: TimeInterval = 2.0
-    var loginDisplayRetryTimer: DispatchSourceTimer?
-    var loginDisplayWatchdogTimer: DispatchSourceTimer?
-    var loginDisplayWatchdogGeneration: UInt64 = 0
-    var loginDisplayWatchdogStartTime: CFAbsoluteTime = 0
-    var lastLoginDisplayRestartTime: CFAbsoluteTime = 0
-    let loginDisplayWatchdogIntervalSeconds: TimeInterval = 2.0
-    let loginDisplayWatchdogStartGraceSeconds: CFAbsoluteTime = 4.0
-    let loginDisplayWatchdogStaleThresholdSeconds: CFAbsoluteTime = 6.0
-    let loginDisplayRestartCooldownSeconds: CFAbsoluteTime = 8.0
-
     // Desktop stream (full virtual display mirroring) - internal for extension access
     var desktopStreamContext: StreamContext?
     var desktopStreamID: StreamID?
@@ -309,9 +283,8 @@ public final class MirageHostService {
     var lastCursorControlSampleTime: CFAbsoluteTime = 0
     let cursorControlSampleInterval: CFAbsoluteTime = 1.0
 
-    // Session state monitoring (for headless Mac unlock support) - internal for extension access
+    // Session state monitoring - internal for extension access
     var sessionStateMonitor: SessionStateMonitor?
-    var unlockManager: UnlockManager?
     var currentSessionToken: String = ""
     var sessionRefreshTask: Task<Void, Never>?
     var sessionRefreshGeneration: UInt64 = 0
@@ -497,8 +470,9 @@ public final class MirageHostService {
             iconName: hardwareIconName
         )
         let supportedColorDepths = Self.detectSupportedColorDepths()
+        let resolvedDeviceID = deviceID ?? UUID()
         let peerAdvertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
-            deviceID: deviceID,
+            deviceID: resolvedDeviceID,
             identityKeyID: identityKeyID,
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName,
@@ -509,7 +483,7 @@ public final class MirageHostService {
             "Hardware metadata model=\(hardwareModelIdentifier ?? "nil") icon=\(hardwareIconName ?? "nil") family=\(hardwareMachineFamily ?? "nil") color=\(hardwareColorCode?.description ?? "nil")"
         )
         advertisedPeerAdvertisement = peerAdvertisement
-        hostID = peerAdvertisement.deviceID ?? UUID()
+        hostID = resolvedDeviceID
         serviceName = name
         loomNode = LoomNode(
             configuration: resolvedConfiguration,
@@ -572,7 +546,7 @@ public final class MirageHostService {
         [
             "host.state": .string(Self.diagnosticsHostStateName(state)),
             "host.sessionState": .string(String(describing: sessionState)),
-            "host.remoteUnlockEnabled": .bool(remoteUnlockEnabled),
+
             "host.remoteTransportEnabled": .bool(remoteTransportEnabled),
             "host.lightsOutEnabled": .bool(lightsOutEnabled),
             "host.lightsOutDisabledByEnvironment": .bool(lightsOutDisabledByEnvironment),
@@ -581,7 +555,7 @@ public final class MirageHostService {
             "host.activeStreamsCount": .int(activeStreams.count),
             "host.availableWindowsCount": .int(availableWindows.count),
             "host.desktopStreamActive": .bool(desktopStreamID != nil),
-            "host.loginDisplayStreamActive": .bool(loginDisplayStreamID != nil),
+
             "host.desktopResizeInFlight": .bool(desktopResizeInFlight),
             "host.windowVirtualDisplayCount": .int(windowVirtualDisplayStateByWindowID.count)
         ]

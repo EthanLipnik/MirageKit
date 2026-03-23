@@ -86,11 +86,9 @@ extension MirageHostInputController {
                 )
             case let .flagsChanged(modifiers):
                 injectFlagsChanged(modifiers, domain: .session, app: window.application)
-            case let .magnify(e):
-                handleMagnifyGesture(e, windowFrame: windowFrame)
-            case let .rotate(e):
-                handleRotateGesture(e, windowFrame: windowFrame)
-            case .pixelResize,
+            case .magnify,
+                 .rotate,
+                 .pixelResize,
                  .relativeResize,
                  .windowResize:
                 break

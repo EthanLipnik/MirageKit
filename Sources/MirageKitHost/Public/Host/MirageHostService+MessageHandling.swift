@@ -59,9 +59,6 @@ extension MirageHostService {
             .disconnect: { [weak self] message, clientContext in
                 await self?.handleDisconnectMessage(message, from: clientContext.client)
             },
-            .unlockRequest: { [weak self] message, clientContext in
-                await self?.handleUnlockRequest(message, from: clientContext)
-            },
             .appListRequest: { [weak self] message, clientContext in
                 await self?.handleAppListRequest(message, from: clientContext)
             },

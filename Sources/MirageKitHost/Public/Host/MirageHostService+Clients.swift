@@ -83,7 +83,6 @@ extension MirageHostService {
             // Force local output unmute when the host no longer has any active clients.
             hostAudioMuteController.setMuted(false)
             singleClientSessionID = nil
-            await stopLoginDisplayStream(newState: sessionState)
             await cleanupSharedVirtualDisplayIfIdle()
             await forceDisableLightsOut(reason: "last client disconnected")
         }
@@ -93,7 +92,7 @@ extension MirageHostService {
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {
-        guard activeStreams.isEmpty, loginDisplayContext == nil, desktopStreamContext == nil else { return }
+        guard activeStreams.isEmpty, desktopStreamContext == nil else { return }
 
         let stats = await SharedVirtualDisplayManager.shared.getStatistics()
         guard stats.hasDisplay || stats.dedicatedDisplayCount > 0 else { return }

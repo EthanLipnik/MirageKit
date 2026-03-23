@@ -19,7 +19,6 @@ struct HostAppListRequestDeferralPolicyTests {
             MirageHostService.shouldDeferAppListRequestsForInteractiveWorkload(
                 hasActiveAppStreams: true,
                 hasDesktopStream: false,
-                hasLoginDisplayStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false
             )
@@ -28,7 +27,6 @@ struct HostAppListRequestDeferralPolicyTests {
             MirageHostService.shouldDeferAppListRequestsForInteractiveWorkload(
                 hasActiveAppStreams: false,
                 hasDesktopStream: true,
-                hasLoginDisplayStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false
             )
@@ -37,16 +35,6 @@ struct HostAppListRequestDeferralPolicyTests {
             MirageHostService.shouldDeferAppListRequestsForInteractiveWorkload(
                 hasActiveAppStreams: false,
                 hasDesktopStream: false,
-                hasLoginDisplayStream: true,
-                hasPendingAppStreamStart: false,
-                hasPendingDesktopStreamStart: false
-            )
-        )
-        #expect(
-            MirageHostService.shouldDeferAppListRequestsForInteractiveWorkload(
-                hasActiveAppStreams: false,
-                hasDesktopStream: false,
-                hasLoginDisplayStream: false,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: false
             )
@@ -55,7 +43,6 @@ struct HostAppListRequestDeferralPolicyTests {
             MirageHostService.shouldDeferAppListRequestsForInteractiveWorkload(
                 hasActiveAppStreams: false,
                 hasDesktopStream: false,
-                hasLoginDisplayStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: true
             )
@@ -68,7 +55,6 @@ struct HostAppListRequestDeferralPolicyTests {
             !MirageHostService.shouldDeferAppListRequestsForInteractiveWorkload(
                 hasActiveAppStreams: false,
                 hasDesktopStream: false,
-                hasLoginDisplayStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false
             )

@@ -50,12 +50,8 @@ package enum ControlMessageType: UInt8, Codable {
     case streamRefreshRateChange = 0x63
     case streamEncoderSettingsChange = 0x64
 
-    // Session state and unlock (for headless Mac support)
+    // Session state (for headless Mac support)
     case sessionStateUpdate = 0x70
-    case unlockRequest = 0x71
-    case unlockResponse = 0x72
-    case loginDisplayReady = 0x73 // Host -> Client: Login display stream is starting
-    case loginDisplayStopped = 0x74 // Host -> Client: Login complete, display stream stopped
 
     // App-centric streaming (new)
     case appListRequest = 0x80

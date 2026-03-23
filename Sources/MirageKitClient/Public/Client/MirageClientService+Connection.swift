@@ -289,13 +289,9 @@ extension MirageClientService {
             await stopViewing(session)
         }
 
-        if let loginDisplayStreamID {
-            MirageFrameCache.shared.clear(for: loginDisplayStreamID)
-        }
         metricsStore.clearAll()
         cursorStore.clearAll()
         cursorPositionStore.clearAll()
-        sessionStore.clearLoginDisplayState()
 
         stopMediaStreamListener()
         stopAudioConnection()
@@ -345,8 +341,6 @@ extension MirageClientService {
 
         hostSessionState = nil
         currentSessionToken = nil
-        loginDisplayStreamID = nil
-        loginDisplayResolution = nil
         isAwaitingManualApproval = false
         approvalWaitTask?.cancel()
         pingTimeoutTask?.cancel()
@@ -388,13 +382,17 @@ extension MirageClientService {
 
         // NWConnection can't resolve Bonjour .service endpoints with UDP parameters.
         // Use the real mDNS hostname from the peer's advertisement instead.
+        // When the host has no UDP listener, fall back to TCP via the Bonjour endpoint.
         let endpoint: NWEndpoint
+        let transportKind: LoomTransportKind
         if let udpTransport = host.advertisement.directTransports.first(where: { $0.transportKind == .udp }),
            let port = NWEndpoint.Port(rawValue: udpTransport.port),
            let hostName = host.advertisement.hostName {
             endpoint = .hostPort(host: NWEndpoint.Host(hostName), port: port)
+            transportKind = .udp
         } else {
             endpoint = host.endpoint
+            transportKind = .tcp
         }
 
         return try await establishControlSession(
@@ -402,6 +400,7 @@ extension MirageClientService {
             hostName: host.name,
             hello: hello,
             attemptID: attemptID,
+            transportKind: transportKind,
             requiredInterfaceType: preferredNetworkType.requiredInterfaceType
         )
     }
@@ -411,17 +410,18 @@ extension MirageClientService {
         hostName: String,
         hello: LoomSessionHelloRequest,
         attemptID: UUID,
+        transportKind: LoomTransportKind = .udp,
         requiredInterfaceType: NWInterface.InterfaceType? = nil
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
-            "Starting udp control session to \(hostName) endpoint=\(endpoint)"
+            "Starting \(transportKind) control session to \(hostName) endpoint=\(endpoint)"
         )
         let node = loomNode
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
             let session = try await node.connect(
                 to: endpoint,
-                using: .udp,
+                using: transportKind,
                 hello: hello,
                 requiredInterfaceType: requiredInterfaceType
             )
@@ -442,7 +442,7 @@ extension MirageClientService {
             let session = try await awaitConnectSession(
                 connectTask,
                 endpoint: endpoint,
-                transportKind: .udp,
+                transportKind: transportKind,
                 attemptID: attemptID
             )
             clearPendingConnectTaskIfNeeded(for: attemptID)

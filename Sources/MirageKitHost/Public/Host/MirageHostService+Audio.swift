@@ -195,15 +195,6 @@ extension MirageHostService {
             }
         }
 
-        if let loginDisplayStreamID, loginDisplayStreamID == streamID, let context = streamsByID[loginDisplayStreamID] {
-            await context.setCapturedAudioHandler { [weak self] captured in
-                guard let self else { return }
-                dispatchControlWork(clientID: clientID) { [weak self] in
-                    guard let self else { return }
-                    await enqueueCapturedAudio(captured, from: streamID, clientID: clientID)
-                }
-            }
-        }
     }
 
     private func maybeSendAudioStarted(
@@ -230,12 +221,6 @@ extension MirageHostService {
            desktopStreamID != streamID,
            desktopStreamClientContext?.client.id == clientID {
             return desktopStreamID
-        }
-
-        if let loginDisplayStreamID,
-           loginDisplayStreamID != streamID,
-           clientsByID[clientID] != nil {
-            return loginDisplayStreamID
         }
 
         return activeStreams.first(where: { $0.client.id == clientID && $0.id != streamID })?.id
