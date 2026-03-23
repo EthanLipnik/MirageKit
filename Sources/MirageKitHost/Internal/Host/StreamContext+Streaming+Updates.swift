@@ -723,19 +723,18 @@ extension StreamContext {
     func resumeEncodingAfterDesktopResize() async {
         guard encodingSuspendedForResize else { return }
         encodingSuspendedForResize = false
-        shouldEncodeFrames = true
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
         if let encoder {
             await encoder.resetFrameNumber()
             await encoder.forceKeyframe()
         }
+        shouldEncodeFrames = true
         MirageLogger.stream("Desktop resize completion: encoding resumed")
     }
 
     func allowEncodingAfterRegistration() async {
         guard !shouldEncodeFrames else { return }
-        shouldEncodeFrames = true
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
         if !startupRegistrationLogged {
@@ -744,11 +743,16 @@ extension StreamContext {
         }
         noteLossEvent(reason: "UDP registration warmup", enablePFrameFEC: true)
 
+        // Configure the encoder for a keyframe BEFORE allowing frames through.
+        // The await calls below suspend this actor, which would let queued
+        // processPendingFrames() tasks interleave and encode a P-frame before
+        // the encoder has frameNumber == 0 / forceNextKeyframe set.
         if let encoder {
             await encoder.resetFrameNumber()
             await encoder.forceKeyframe()
         }
 
+        shouldEncodeFrames = true
         MirageLogger.stream("UDP registration confirmed, encoding resumed")
     }
 

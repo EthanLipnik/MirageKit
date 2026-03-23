@@ -392,13 +392,33 @@ extension MirageClientService {
             transportKind = .tcp
         }
 
-        return try await establishControlSession(
-            to: endpoint,
-            hostName: host.name,
-            hello: hello,
-            attemptID: attemptID,
-            transportKind: transportKind,
-            requiredInterfaceType: preferredNetworkType.requiredInterfaceType
+        // Retry transient Loom/NWConnection failures. After a client disconnect
+        // the host listener may need a moment before accepting a new session;
+        // NWConnection surfaces this as a CancellationError well before the 30s
+        // timeout fires.
+        let maxAttempts = 3
+        for attempt in 1...maxAttempts {
+            try throwIfConnectAttemptIsStale(attemptID)
+            do {
+                return try await establishControlSession(
+                    to: endpoint,
+                    hostName: host.name,
+                    hello: hello,
+                    attemptID: attemptID,
+                    transportKind: transportKind,
+                    requiredInterfaceType: preferredNetworkType.requiredInterfaceType
+                )
+            } catch is CancellationError where attempt < maxAttempts {
+                // Real cancellation (user action / new connect) — propagate immediately.
+                guard isCurrentConnectAttempt(attemptID) else { throw CancellationError() }
+                MirageLogger.client(
+                    "Control session attempt \(attempt)/\(maxAttempts) failed, retrying..."
+                )
+                try await Task.sleep(for: .milliseconds(500))
+            }
+        }
+        throw MirageError.protocolError(
+            "Failed to establish \(transportKind) session to \(endpoint) after \(maxAttempts) attempts"
         )
     }
 
