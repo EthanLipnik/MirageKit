@@ -286,7 +286,7 @@ public extension MirageClientService {
             origin: origin?.controlMessageOrigin
         )
         if let message = try? ControlMessage(type: .stopStream, content: request) {
-            _ = sendControlMessageBestEffort(message)
+            sendControlMessageBestEffort(message)
         }
 
         activeStreams.removeAll { $0.id == streamID }
@@ -299,7 +299,7 @@ public extension MirageClientService {
         if let controller = controllersByStream[streamID] {
             await controller.stop()
             controllersByStream.removeValue(forKey: streamID)
-            heartbeatGraceDeadline = ContinuousClock.now + .seconds(6)
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         }
         clearAdaptiveFallbackState(for: streamID)
 

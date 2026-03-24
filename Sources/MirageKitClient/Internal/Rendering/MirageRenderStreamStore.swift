@@ -173,7 +173,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         switch policy {
         case .latest:
             if snapshot.depth > 1 {
-                _ = state.queue.trimNewest(keepDepth: 1)
+                state.queue.trimNewest(keepDepth: 1)
             }
         case let .buffered(maxDepth):
             let clampedDepth = min(
@@ -181,7 +181,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
                 MirageRenderModePolicy.maxStressBufferDepth
             )
             if snapshot.depth > clampedDepth {
-                _ = state.queue.trimNewest(keepDepth: clampedDepth)
+                state.queue.trimNewest(keepDepth: clampedDepth)
             }
         }
 

@@ -132,112 +132,24 @@ extension StreamContext {
         lastWindowFrame = placement.visibleBounds
         updateQueueLimits()
         await applyDerivedQuality(for: outputSize, logLabel: "Virtual display init")
-        MirageLogger
-            .stream(
-                "Virtual display init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
-            )
-        let encoder = VideoEncoder(
-            configuration: encoderConfig,
-            latencyMode: latencyMode,
-            performanceMode: performanceMode,
-            streamKind: .window,
-            inFlightLimit: maxInFlightFrames,
-            maximizePowerEfficiencyEnabled: encoderLowPowerEnabled
+        MirageLogger.stream(
+            "Virtual display init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
         )
-        self.encoder = encoder
-        try await encoder.createSession(
+
+        try await createAndPreheatEncoder(
+            streamKind: .window,
             width: Int(outputSize.width),
             height: Int(outputSize.height)
         )
-        MirageLogger
-            .encoder(
-                "Encoder created at scaled dimensions \(Int(outputSize.width))x\(Int(outputSize.height)) (visible target \(Int(baseCaptureSize.width))x\(Int(baseCaptureSize.height)))"
-            )
-
-        try await encoder.preheat()
-        shouldEncodeFrames = false
-        MirageLogger.stream("Waiting for UDP registration before encoding")
-
-        let streamID = streamID
-        var localFrameNumber: UInt32 = 0
-        var localSequenceNumber: UInt32 = 0
-
-        await encoder.startEncoding(
-            onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
-                guard let self else { return }
-
-                // Dedicated app-stream virtual displays already capture an explicit sourceRect
-                // that matches the intended viewport. Using per-frame SCK content rect metadata
-                // here can reintroduce stale/incorrect crop regions and cause client-side
-                // underfill on external-display paths. Pin packet contentRect to full frame.
-                let contentRect = CGRect(
-                    x: 0,
-                    y: 0,
-                    width: outputSize.width,
-                    height: outputSize.height
-                )
-                let frameNum = localFrameNumber
-                let seqStart = localSequenceNumber
-
-                let now = CFAbsoluteTimeGetCurrent()
-                let fecBlockSize = resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
-                let frameByteCount = encodedData.count
-                let dataFragments = (frameByteCount + maxPayloadSize - 1) / maxPayloadSize
-                let parityFragments = fecBlockSize > 1 ? (dataFragments + fecBlockSize - 1) / fecBlockSize : 0
-                let totalFragments = dataFragments + parityFragments
-                let wireBytes = frameByteCount + parityFragments * maxPayloadSize
-                localSequenceNumber += UInt32(totalFragments)
-                localFrameNumber += 1
-
-                let flags = baseFrameFlags.union(dynamicFrameFlags)
-                let dimToken = dimensionToken
-                let epoch = epoch
-
-                let generation = packetSender.currentGenerationSnapshot()
-                if isKeyframe {
-                    Task(priority: .userInitiated) {
-                        await self.markKeyframeInFlight()
-                        await self.markKeyframeSent()
-                    }
-                }
-                let workItem = StreamPacketSender.WorkItem(
-                    encodedData: encodedData,
-                    frameByteCount: frameByteCount,
-                    isKeyframe: isKeyframe,
-                    presentationTime: presentationTime,
-                    contentRect: contentRect,
-                    streamID: streamID,
-                    frameNumber: frameNum,
-                    sequenceNumberStart: seqStart,
-                    additionalFlags: flags,
-                    dimensionToken: dimToken,
-                    epoch: epoch,
-                    fecBlockSize: fecBlockSize,
-                    wireBytes: wireBytes,
-                    logPrefix: "VD Frame",
-                    generation: generation,
-                    onSendStart: nil,
-                    onSendComplete: nil
-                )
-                packetSender.enqueue(workItem)
-            }, onFrameComplete: { [weak self] in
-                Task(priority: .userInitiated) { await self?.finishEncoding() }
-            }
+        MirageLogger.encoder(
+            "Encoder created at scaled dimensions \(Int(outputSize.width))x\(Int(outputSize.height)) (visible target \(Int(baseCaptureSize.width))x\(Int(baseCaptureSize.height)))"
         )
 
-        let resolvedPixelFormat = await encoder.getActivePixelFormat()
-        activePixelFormat = resolvedPixelFormat
-        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
-        let windowCaptureEngine = WindowCaptureEngine(
-            configuration: captureConfig,
-            capturePressureProfile: capturePressureProfile,
-            latencyMode: latencyMode,
-            captureFrameRate: captureFrameRate,
-            usesDisplayRefreshCadence: true
-        )
-        captureEngine = windowCaptureEngine
+        let fullFrameRect = CGRect(x: 0, y: 0, width: outputSize.width, height: outputSize.height)
+        await startEncoderWithSharedCallback(pinnedContentRect: fullFrameRect, logPrefix: "VD Frame")
 
-        try await windowCaptureEngine.startDisplayCapture(
+        let captureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: true)
+        try await captureEngine.startDisplayCapture(
             display: resolvedDisplayWrapper.display,
             resolution: outputSize,
             sourceRect: placement.captureSourceRect,
@@ -527,17 +439,29 @@ extension StreamContext {
             scaleFactor: scaleHint,
             colorSpace: colorSpace
         )
-        let initialDisplayPixels: CGSize = if isUpdate {
-            sanitizePixelResolution(
+        let initialDisplayPixels: CGSize
+        if isUpdate {
+            initialDisplayPixels = sanitizePixelResolution(
                 CGSize(
                     width: requestedPixels.width + cachedInsets.width,
                     height: requestedPixels.height + cachedInsets.height
                 )
             )
+        } else if let probeCache = SharedVirtualDisplayManager.loadRetinaProbeCacheIfValid(),
+                  let probedGood = SharedVirtualDisplayManager.closestProbedRetinaResolution(
+                      neededPixelWidth: Int(requestedPixels.width + cachedInsets.width),
+                      neededPixelHeight: Int(requestedPixels.height + cachedInsets.height),
+                      cache: probeCache
+                  ) {
+            // Use a probed-good HiDPI resolution that covers the requested visible area + insets.
+            // This avoids post-creation resize which can fail HiDPI activation and orphan displays.
+            initialDisplayPixels = sanitizePixelResolution(probedGood)
+            MirageLogger.stream(
+                "Virtual display using probed HiDPI resolution \(Int(probedGood.width))x\(Int(probedGood.height)) for requested \(Int(requestedPixels.width))x\(Int(requestedPixels.height)) (insets \(Int(cachedInsets.width))x\(Int(cachedInsets.height)))"
+            )
         } else {
-            // Fresh app-window starts should prefer the client-requested display size.
-            // Inset expansion can over-constrain some app windows and cause startup misses.
-            requestedPixels
+            // No probe cache available — use the client-requested display size directly.
+            initialDisplayPixels = requestedPixels
         }
 
         func aspectRelativeDelta(_ resolution: CGSize) -> CGFloat {

@@ -61,14 +61,14 @@ struct AppStreamWindowRetryPolicyTests {
         let windowID = WindowID(99)
         let start = Date(timeIntervalSince1970: 5_000)
 
-        _ = await manager.noteWindowStartupFailed(
+        await manager.noteWindowStartupFailed(
             bundleID: bundleID,
             windowID: windowID,
             retryable: true,
             reason: "attempt 1",
             now: start
         )
-        _ = await manager.noteWindowStartupFailed(
+        await manager.noteWindowStartupFailed(
             bundleID: bundleID,
             windowID: windowID,
             retryable: true,
@@ -107,7 +107,7 @@ struct AppStreamWindowRetryPolicyTests {
         let windowID = WindowID(123)
         let now = Date(timeIntervalSince1970: 9_000)
 
-        _ = await manager.noteWindowStartupFailed(
+        await manager.noteWindowStartupFailed(
             bundleID: bundleID,
             windowID: windowID,
             retryable: true,

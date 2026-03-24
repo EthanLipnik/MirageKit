@@ -357,6 +357,7 @@ extension InputCapturingView {
         onInputEvent?(.keyUp(keyUpEvent))
     }
 
+    @discardableResult
     private func startPassthroughShortcutRepeatIfNeeded(
         input: String,
         keyCode: UInt16,
@@ -515,7 +516,7 @@ extension InputCapturingView {
             let macKeyCode = Self.characterToMacKeyCode(input)
             let commandModifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
             let eventModifiers = keyboardModifiers.union(commandModifiers)
-            _ = startPassthroughShortcutRepeatIfNeeded(
+            startPassthroughShortcutRepeatIfNeeded(
                 input: input,
                 keyCode: macKeyCode,
                 modifiers: eventModifiers

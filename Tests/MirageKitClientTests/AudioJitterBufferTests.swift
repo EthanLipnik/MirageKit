@@ -57,7 +57,7 @@ struct AudioJitterBufferTests {
             fragmentIndex: 0,
             fragmentCount: 2
         )
-        let _ = await buffer.ingest(header: fragmentedHeader, payload: Data(repeating: 0xAA, count: 16))
+        await buffer.ingest(header: fragmentedHeader, payload: Data(repeating: 0xAA, count: 16))
 
         var discontinuityHeader = makeHeader(
             frameNumber: 31,

@@ -76,6 +76,15 @@ actor VideoEncoder {
     nonisolated(unsafe) let encoderInFlightLock = NSLock()
     nonisolated(unsafe) var lastBitstreamFailureLogTime: CFAbsoluteTime = 0
     nonisolated(unsafe) let bitstreamFailureLogLock = NSLock()
+    nonisolated(unsafe) var callbackFailureCount: UInt64 = 0
+    nonisolated(unsafe) var lastCallbackFailureLogTime: CFAbsoluteTime = 0
+
+    /// Current encoder spec tier (0 = default, higher = more permissive).
+    /// Tier 0: RequireHW + LowLatencyRC
+    /// Tier 1: RequireHW only (no low-latency rate control)
+    /// Tier 2: EnableHW only (no require, no low-latency)
+    var activeEncoderSpecTier: Int = 0
+    static let maxEncoderSpecTier = 2
 
     /// Session version counter - incremented on each dimension change
     /// Used to discard frames from old sessions during transitions

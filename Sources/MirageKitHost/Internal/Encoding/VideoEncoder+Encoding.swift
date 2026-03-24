@@ -42,10 +42,12 @@ enum EncodeAdmission {
 }
 
 extension VideoEncoder {
-    func preheat() async throws {
+    /// Returns `true` if the encoder produced at least one valid output frame.
+    @discardableResult
+    func preheat() async throws -> Bool {
         guard let session = compressionSession else {
             MirageLogger.error(.encoder, "Cannot preheat: no compression session")
-            return
+            return false
         }
 
         let preheatStartTime = CFAbsoluteTimeGetCurrent()
@@ -68,7 +70,7 @@ extension VideoEncoder {
 
         guard status == noErr, let buffer = pixelBuffer else {
             MirageLogger.error(.encoder, "Failed to create preheat buffer: \(status)")
-            return
+            return false
         }
 
         // Fill with gray (neutral content for rate control)
@@ -92,7 +94,11 @@ extension VideoEncoder {
 
         let timescale = CMTimeScale(max(1, configuration.targetFrameRate))
 
-        // Encode dummy frames and discard output
+        // Track how many preheat frames produce valid encoded output
+        let validOutputCount = Locked<Int>(0)
+        let callbackErrorCount = Locked<Int>(0)
+        var submittedCount = 0
+
         for i in 0 ..< preheatFrameCount {
             let pts = CMTime(value: CMTimeValue(i), timescale: timescale)
             let duration = CMTime(value: 1, timescale: timescale)
@@ -103,7 +109,6 @@ extension VideoEncoder {
                 properties[kVTEncodeFrameOptionKey_ForceKeyFrame] = true
             }
 
-            // Encode with callback that discards output
             let encodeStatus = VTCompressionSessionEncodeFrame(
                 session,
                 imageBuffer: buffer,
@@ -111,17 +116,26 @@ extension VideoEncoder {
                 duration: duration,
                 frameProperties: properties.isEmpty ? nil : properties as CFDictionary,
                 infoFlagsOut: nil
-            ) { _, _, _ in
-                // Discard output - we only care about warming up the encoder
+            ) { cbStatus, infoFlags, sampleBuffer in
+                guard cbStatus == noErr,
+                      !infoFlags.contains(.frameDropped),
+                      let sampleBuffer,
+                      CMSampleBufferGetDataBuffer(sampleBuffer) != nil else {
+                    callbackErrorCount.withLock { $0 += 1 }
+                    return
+                }
+                validOutputCount.withLock { $0 += 1 }
             }
 
             if encodeStatus != noErr {
                 MirageLogger.error(.encoder, "Preheat encode failed at frame \(i): \(encodeStatus)")
                 break
             }
+            submittedCount += 1
         }
 
-        // Ensure all preheat frames are flushed
+        // VTCompressionSessionCompleteFrames is synchronous — all callbacks
+        // will have fired by the time it returns.
         VTCompressionSessionCompleteFrames(session, untilPresentationTimeStamp: .invalid)
 
         // Reset frame counter so first real frame is frame 0
@@ -129,7 +143,21 @@ extension VideoEncoder {
         forceNextKeyframe = true // First real frame should be keyframe
 
         let preheatDuration = (CFAbsoluteTimeGetCurrent() - preheatStartTime) * 1000
-        MirageLogger.timing("Encoder pre-heat complete: \(String(format: "%.1f", preheatDuration))ms")
+        let valid = validOutputCount.withLock { $0 }
+        let errors = callbackErrorCount.withLock { $0 }
+
+        if valid == 0 && submittedCount > 0 {
+            MirageLogger.error(
+                .encoder,
+                "Encoder pre-heat FAILED: 0/\(submittedCount) frames produced valid output (\(errors) callback errors), format=\(activePixelFormat.displayName), \(currentWidth)x\(currentHeight)"
+            )
+            return false
+        }
+
+        MirageLogger.timing(
+            "Encoder pre-heat complete: \(String(format: "%.1f", preheatDuration))ms, valid=\(valid)/\(submittedCount)"
+        )
+        return true
     }
 
     func startEncoding(
@@ -238,7 +266,12 @@ extension VideoEncoder {
                 info.completion?()
             }
 
-            guard status == noErr, let sampleBuffer else { return }
+            guard status == noErr, let sampleBuffer else {
+                if status != noErr {
+                    self.recordCallbackFailure(frameNumber: info.frameNumber, status: status)
+                }
+                return
+            }
 
             if infoFlags.contains(.frameDropped) {
                 MirageLogger.debug(.encoder, "VT dropped frame \(info.frameNumber)")
@@ -376,6 +409,7 @@ extension VideoEncoder {
         return .accepted
     }
 
+    @discardableResult
     nonisolated static func extractEncodedFrameData(from dataBuffer: CMBlockBuffer) throws -> Data {
         let totalLength = CMBlockBufferGetDataLength(dataBuffer)
         guard totalLength > 0 else { throw EncodedFrameExtractionError.emptyData }
@@ -419,6 +453,32 @@ extension VideoEncoder {
         }
 
         return copiedData
+    }
+
+    nonisolated func recordCallbackFailure(frameNumber: UInt64, status: OSStatus) {
+        bitstreamFailureLogLock.lock()
+        callbackFailureCount += 1
+        let count = callbackFailureCount
+        let now = CFAbsoluteTimeGetCurrent()
+        let shouldLog = lastCallbackFailureLogTime == 0 ||
+            now - lastCallbackFailureLogTime >= Self.bitstreamFailureLogCooldown
+        if shouldLog { lastCallbackFailureLogTime = now }
+        bitstreamFailureLogLock.unlock()
+
+        if shouldLog {
+            MirageLogger.error(
+                .encoder,
+                "Encoder callback failure: frame=\(frameNumber), status=\(status), totalFailures=\(count)"
+            )
+        }
+    }
+
+    nonisolated func getAndResetCallbackFailureCount() -> UInt64 {
+        bitstreamFailureLogLock.lock()
+        let count = callbackFailureCount
+        callbackFailureCount = 0
+        bitstreamFailureLogLock.unlock()
+        return count
     }
 
     nonisolated func shouldLogBitstreamFailure(at now: CFAbsoluteTime) -> Bool {

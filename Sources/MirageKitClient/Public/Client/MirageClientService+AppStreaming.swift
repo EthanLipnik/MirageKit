@@ -117,6 +117,12 @@ public extension MirageClientService {
 
         try await sendControlMessage(.selectApp, content: request)
 
+        // Allow time for the host to process the selectApp and start the
+        // stream before heartbeat pings fire.  Without this, the heavy
+        // icon-update traffic on the control channel can delay pong
+        // responses past the 1-second timeout, causing a false disconnect.
+        heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
+
         streamingAppBundleID = bundleIdentifier
         MirageLogger.client("Requested to stream app: \(bundleIdentifier)")
     }

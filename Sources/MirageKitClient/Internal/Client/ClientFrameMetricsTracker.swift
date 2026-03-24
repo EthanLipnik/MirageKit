@@ -19,7 +19,7 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
 
     func recordDecodedFrame(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Bool {
         lock.lock()
-        _ = decodedSampler.record(now: now)
+        decodedSampler.record(now: now)
         let isFirstFrame = !sentFirstFrame
         if isFirstFrame { sentFirstFrame = true }
         lock.unlock()
@@ -28,7 +28,7 @@ final class ClientFrameMetricsTracker: @unchecked Sendable {
 
     func recordReceivedFrame(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
         lock.lock()
-        _ = receivedSampler.record(now: now)
+        receivedSampler.record(now: now)
         lock.unlock()
     }
 
@@ -63,6 +63,7 @@ private struct FrameRateSampler {
     private var startIndex: Int = 0
     private let windowSeconds: CFAbsoluteTime = 1.0
 
+    @discardableResult
     mutating func record(now: CFAbsoluteTime) -> Double {
         samples.append(now)
         trim(now: now)

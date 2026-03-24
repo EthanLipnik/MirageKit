@@ -97,6 +97,12 @@ extension MirageHostService {
             },
             .sharedClipboardUpdate: { [weak self] message, clientContext in
                 await self?.handleSharedClipboardUpdate(message, from: clientContext)
+            },
+            .streamPauseAll: { [weak self] _, _ in
+                await self?.handleStreamPauseAll()
+            },
+            .streamResumeAll: { [weak self] _, _ in
+                await self?.handleStreamResumeAll()
             }
         ]
     }
@@ -180,7 +186,7 @@ extension MirageHostService {
 
             pendingLightsOutSetup = true
             await beginPendingAppStreamLightsOutSetup()
-            _ = try await startStream(
+            try await startStream(
                 for: window,
                 to: clientContext.client,
                 clientDisplayResolution: clientDisplayResolution,
@@ -352,6 +358,26 @@ extension MirageHostService {
         }
         await disconnectClient(client)
         delegate?.hostService(self, didDisconnectClient: client)
+    }
+
+    // MARK: - Stream Pause/Resume (Client Backgrounding)
+
+    private func handleStreamPauseAll() async {
+        let contextCount = streamsByID.count
+        guard contextCount > 0 else { return }
+        MirageLogger.host("Pausing all streams (\(contextCount)) for client background")
+        for (_, context) in streamsByID {
+            await context.pauseForClientBackground()
+        }
+    }
+
+    private func handleStreamResumeAll() async {
+        let contextCount = streamsByID.count
+        guard contextCount > 0 else { return }
+        MirageLogger.host("Resuming all streams (\(contextCount)) after client foreground")
+        for (_, context) in streamsByID {
+            await context.resumeAfterClientForeground()
+        }
     }
 
     private func handleAppWindowCloseAlertActionRequest(

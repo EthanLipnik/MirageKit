@@ -710,6 +710,26 @@ extension StreamContext {
         }
     }
 
+    func pauseForClientBackground() async {
+        guard shouldEncodeFrames else { return }
+        shouldEncodeFrames = false
+        frameInbox.clear()
+        await packetSender?.resetQueue(reason: "client background pause")
+        MirageLogger.stream("Stream \(streamID) paused for client background")
+    }
+
+    func resumeAfterClientForeground() async {
+        guard !shouldEncodeFrames else { return }
+        lastKeyframeTime = 0
+        smoothedDirtyPercentage = 0
+        if let encoder {
+            await encoder.resetFrameNumber()
+            await encoder.forceKeyframe()
+        }
+        shouldEncodeFrames = true
+        MirageLogger.stream("Stream \(streamID) resumed after client foreground")
+    }
+
     func suspendEncodingForDesktopResize() async {
         guard !encodingSuspendedForResize else { return }
         encodingSuspendedForResize = true

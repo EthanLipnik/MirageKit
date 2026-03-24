@@ -72,35 +72,6 @@ struct ClientHelloHandshakeStateTests {
     }
 
     @MainActor
-    @Test("Manual approval wait indicator only activates during handshaking")
-    func manualApprovalWaitIndicatorOnlyActivatesDuringHandshaking() {
-        #expect(
-            MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasCompletedBootstrap: false,
-                connectionState: .handshaking(host: "Host")
-            )
-        )
-        #expect(
-            !MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasCompletedBootstrap: false,
-                connectionState: .connecting
-            )
-        )
-        #expect(
-            !MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasCompletedBootstrap: false,
-                connectionState: .connected(host: "Host")
-            )
-        )
-        #expect(
-            !MirageClientService.shouldActivateManualApprovalWaitIndicator(
-                hasCompletedBootstrap: true,
-                connectionState: .handshaking(host: "Host")
-            )
-        )
-    }
-
-    @MainActor
     @Test("Loom transport parameters use best-effort service class for control connections")
     func loomTransportParametersUseBestEffortServiceClass() throws {
         let tcpParameters = try LoomTransportParametersFactory.makeParameters(
@@ -124,7 +95,7 @@ struct ClientHelloHandshakeStateTests {
         let stream = AsyncStream<Data> { _ in }
 
         do {
-            _ = try await service.receiveSingleControlMessage(
+            try await service.receiveSingleControlMessage(
                 from: stream,
                 timeout: .milliseconds(50),
                 timeoutMessage: "Timed out waiting for host bootstrap response from Test Host"

@@ -169,6 +169,7 @@ enum CGSWindowSpaceBridge {
         MirageLogger.host("Moved window \(windowID) to space \(spaceID)")
     }
 
+    @discardableResult
     static func moveWindow(_ windowID: CGWindowID, to point: CGPoint) -> Bool {
         let connection = getConnectionID()
         var mutablePoint = point
@@ -180,6 +181,7 @@ enum CGSWindowSpaceBridge {
     /// This works even on virtual displays where AXUIElement fails
     /// - Parameter windowID: The CGWindowID to bring to front
     /// - Returns: true if successful
+    @discardableResult
     static func bringWindowToFront(_ windowID: CGWindowID) -> Bool {
         let connection = getConnectionID()
         // place = 1 means "above", relativeToWindow = 0 means "above all"

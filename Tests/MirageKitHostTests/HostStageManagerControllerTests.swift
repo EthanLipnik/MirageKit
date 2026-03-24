@@ -126,7 +126,7 @@ struct HostStageManagerControllerTests {
         host.stageManagerController = HostStageManagerController(commandRunner: runner.run)
         host.appStreamingStageManagerNeedsRestore = true
 
-        _ = await host.appStreamManager.startAppSession(
+        await host.appStreamManager.startAppSession(
             bundleIdentifier: "com.example.App",
             appName: "Example",
             appPath: "/Applications/Example.app",

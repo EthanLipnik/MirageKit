@@ -622,7 +622,7 @@ extension MirageHostService {
 
         let processID = targetWindow.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(windowID: targetWindowID, processID: processID)
-        _ = await appStreamManager.replaceVisibleWindowForStream(
+        await appStreamManager.replaceVisibleWindowForStream(
             bundleIdentifier: bundleIdentifier,
             streamID: targetSlotStreamID,
             newWindowID: targetWindowID,
@@ -811,7 +811,7 @@ extension MirageHostService {
         } catch {
             let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             let reason = detail.isEmpty ? String(describing: error) : detail
-            _ = await appStreamManager.noteWindowStartupFailed(
+            await appStreamManager.noteWindowStartupFailed(
                 bundleID: app.bundleIdentifier,
                 windowID: selectedWindow.id,
                 retryable: false,

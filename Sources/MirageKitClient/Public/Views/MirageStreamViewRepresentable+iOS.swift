@@ -254,6 +254,9 @@ public final class MirageStreamViewController: UIViewController {
         presentationTier: StreamPresentationTier,
         maxDrawableSize: CGSize?
     ) {
+        // Set stream ID first so cursor router registration is ready
+        // before cursorStore/cursorPositionStore didSet triggers refreshCursorIfNeeded.
+        captureView.streamID = streamID
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
         captureView.pencilInputMode = pencilInputMode
@@ -264,8 +267,6 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorLockEnabled = cursorLockEnabled
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
-        // Set stream ID for direct frame cache access (bypasses all actor machinery)
-        captureView.streamID = streamID
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()

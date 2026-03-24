@@ -28,6 +28,7 @@ public extension AppStreamManager {
     ///   - bitrateBudgetBps: Shared bitrate budget for visible slots.
     ///   - bitrateAllocationPolicy: Shared bitrate allocation policy across visible slots.
     /// - Returns: The created session, or nil if app is not available.
+    @discardableResult
     func startAppSession(
         bundleIdentifier: String,
         appName: String,
@@ -146,6 +147,7 @@ public extension AppStreamManager {
 
     /// Replace the window metadata bound to an existing visible stream ID.
     /// Returns the prior window ID and slot index when successful.
+    @discardableResult
     func replaceVisibleWindowForStream(
         bundleIdentifier: String,
         streamID: StreamID,

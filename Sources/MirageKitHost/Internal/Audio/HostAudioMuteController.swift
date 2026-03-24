@@ -95,7 +95,7 @@ final class HostAudioMuteController {
 
     private func restoreOriginalMuteState() {
         for (deviceID, originalMuteState) in originalMuteStateByDeviceID {
-            _ = writeMuteState(originalMuteState, for: deviceID)
+            writeMuteState(originalMuteState, for: deviceID)
         }
         originalMuteStateByDeviceID.removeAll()
     }
@@ -146,6 +146,7 @@ final class HostAudioMuteController {
         return muteValue != 0
     }
 
+    @discardableResult
     private func writeMuteState(_ muted: Bool, for deviceID: AudioDeviceID) -> Bool {
         var address = outputMuteAddress
         guard AudioObjectHasProperty(deviceID, &address) else { return false }

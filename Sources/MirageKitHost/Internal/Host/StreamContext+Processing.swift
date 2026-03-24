@@ -54,7 +54,7 @@ extension StreamContext {
         clearBackpressureState(log: false)
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
-        _ = queueKeyframe(
+        queueKeyframe(
             reason: "Transport send error recovery keyframe",
             checkInFlight: false,
             urgent: true
@@ -106,7 +106,7 @@ extension StreamContext {
             isKeyframeEncoding = false
             keyframeSendDeadline = 0
             lastKeyframeRequestTime = 0
-            _ = queueKeyframe(
+            queueKeyframe(
                 reason: "Encoder stall recovery (game mode)",
                 checkInFlight: false,
                 urgent: true
@@ -197,7 +197,7 @@ extension StreamContext {
         clearBackpressureState(log: false)
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
-        _ = queueKeyframe(
+        queueKeyframe(
             reason: "Backpressure recovery keyframe",
             checkInFlight: false,
             urgent: true
@@ -263,7 +263,7 @@ extension StreamContext {
                     lastEncodeActivityTime = 0
                     keyframeSendDeadline = 0
                     lastKeyframeRequestTime = 0
-                    _ = queueKeyframe(
+                    queueKeyframe(
                         reason: "Encoder stuck recovery (game mode)",
                         checkInFlight: false,
                         urgent: true
@@ -813,11 +813,13 @@ extension StreamContext {
             let captureGapText = captureGapMs.formatted(.number.precision(.fractionLength(1)))
             let syntheticText = syntheticFPS.formatted(.number.precision(.fractionLength(1)))
 
+            let callbackFailures = encoder?.getAndResetCallbackFailureCount() ?? 0
+
             MirageLogger.metrics(
                 "Pipeline: ingress=\(ingressText)fps capture=\(captureText)fps drop=\(captureDroppedIntervalCount) " +
                     "bp=\(backpressureDropIntervalCount) encode=\(encodeText)fps attempt=\(attemptText)fps reject=\(encodeRejectedIntervalCount) " +
                     "skip(qFull=\(encodeSkipQueueFullIntervalCount) dim=\(encodeSkipDimensionIntervalCount) inactive=\(encodeSkipInactiveIntervalCount) " +
-                    "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) " +
+                    "session=\(encodeSkipNoSessionIntervalCount)) error=\(encodeErrorIntervalCount) cbFail=\(callbackFailures) " +
                     "synthetic=\(syntheticText)fps gap=\(captureGapText)ms inFlight=\(inFlightCount) buffer=\(pendingCount)/\(frameBufferDepth) " +
                     "queue=\(queueKB)KB encodeAvg=\(encodeAvgText)ms"
             )

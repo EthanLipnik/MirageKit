@@ -298,7 +298,7 @@ extension MirageHostService {
 
         // Auto-start a new stream for this window
         do {
-            _ = try await startStream(
+            try await startStream(
                 for: window,
                 to: client,
                 clientDisplayResolution: displayResolution,

@@ -70,7 +70,7 @@ struct SessionMinimumSizeGenerationTests {
     func postResizeTransitionClearsOnFirstFrame() {
         let store = MirageClientSessionStore()
         let streamID: StreamID = 11
-        _ = store.createSession(
+        store.createSession(
             streamID: streamID,
             window: testWindow(id: 1101),
             hostName: "Host",
@@ -90,7 +90,7 @@ struct SessionMinimumSizeGenerationTests {
     func decodedAndPresentedReadinessAreTrackedIndependently() {
         let store = MirageClientSessionStore()
         let streamID: StreamID = 21
-        _ = store.createSession(
+        store.createSession(
             streamID: streamID,
             window: testWindow(id: 2101),
             hostName: "Host",
@@ -116,7 +116,7 @@ struct SessionMinimumSizeGenerationTests {
             hostName: "Host",
             minSize: nil
         )
-        _ = store.createSession(
+        store.createSession(
             streamID: 32,
             window: testWindow(id: 3201),
             hostName: "Host",

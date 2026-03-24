@@ -22,7 +22,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
         for decodeTime in [1.0, 2.0, 3.0] {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: decodeTime,
@@ -45,7 +45,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
         for index in 0 ..< 5 {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: 1 + Double(index),
@@ -67,7 +67,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
         for index in 0 ..< 7 {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: 1 + Double(index),
@@ -122,7 +122,7 @@ struct RenderFrameQueueSPSCTests {
             MirageFrameCache.shared.clear(for: streamB)
         }
 
-        _ = MirageFrameCache.shared.enqueue(
+        MirageFrameCache.shared.enqueue(
             makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 1,
@@ -130,7 +130,7 @@ struct RenderFrameQueueSPSCTests {
             texture: nil,
             for: streamA
         )
-        _ = MirageFrameCache.shared.enqueue(
+        MirageFrameCache.shared.enqueue(
             makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 2,
@@ -138,7 +138,7 @@ struct RenderFrameQueueSPSCTests {
             texture: nil,
             for: streamA
         )
-        _ = MirageFrameCache.shared.enqueue(
+        MirageFrameCache.shared.enqueue(
             makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 1,
@@ -159,7 +159,7 @@ struct RenderFrameQueueSPSCTests {
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
         for decodeTime in [1.0, 2.0, 3.0] {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: decodeTime,
@@ -184,7 +184,7 @@ struct RenderFrameQueueSPSCTests {
 
         MirageFrameCache.shared.setTargetFPS(60, for: streamID)
         for decodeTime in [1.0, 1.01, 1.02] {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: decodeTime,

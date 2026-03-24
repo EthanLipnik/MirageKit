@@ -30,6 +30,9 @@ public extension MirageClientService {
         let requestID = UUID()
         let request = HostSupportLogArchiveRequestMessage(requestID: requestID)
 
+        // Suppress heartbeat pings while the host is compressing logs.
+        heartbeatGraceDeadline = ContinuousClock.now + hostSupportLogArchiveTimeout
+
         return try await withCheckedThrowingContinuation { continuation in
             hostSupportLogArchiveRequestID = requestID
             hostSupportLogArchiveContinuation = continuation
@@ -63,6 +66,7 @@ extension MirageClientService {
         hostSupportLogArchiveRequestID = nil
         hostSupportLogArchiveTransferTask?.cancel()
         hostSupportLogArchiveTransferTask = nil
+        heartbeatGraceDeadline = nil
         guard let continuation = hostSupportLogArchiveContinuation else { return }
         hostSupportLogArchiveContinuation = nil
         hostSupportLogArchiveTimeoutTask?.cancel()

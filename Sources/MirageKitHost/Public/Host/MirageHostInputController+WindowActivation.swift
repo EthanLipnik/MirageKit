@@ -38,7 +38,7 @@ extension MirageHostInputController {
         } else {
             Task {
                 await MainActor.run {
-                    _ = MirageHostService.bringWindowToFront(windowID)
+                    MirageHostService.bringWindowToFront(windowID)
                 }
             }
         }

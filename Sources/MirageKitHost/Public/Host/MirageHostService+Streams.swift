@@ -173,6 +173,7 @@ func windowStreamStartShouldFallbackToDirectCapture(for error: Error) -> Bool {
 
 @MainActor
 public extension MirageHostService {
+    @discardableResult
     func startStream(
         for window: MirageWindow,
         to client: MirageConnectedClient,

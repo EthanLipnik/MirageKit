@@ -12,7 +12,7 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    private static let heartbeatInterval: Duration = .seconds(2)
+    private static let heartbeatInterval: Duration = .seconds(30)
     private static let heartbeatMaxConsecutiveFailures = 2
 
     func startHeartbeat() {

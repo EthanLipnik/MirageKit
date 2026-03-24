@@ -302,9 +302,13 @@ extension StreamController {
 
         let isAwaitingKeyframe = reassembler.isAwaitingKeyframe()
         if isAwaitingKeyframe {
+            // Previous keyframe was lost while already waiting for one.
+            // Request another immediately — deferring to decode-error threshold
+            // deadlocks because no frames decode while awaiting keyframe.
             MirageLogger.client(
-                "Frame loss detected for stream \(streamID) while awaiting keyframe; deferring recovery until decode error threshold"
+                "Frame loss detected for stream \(streamID) while awaiting keyframe; requesting recovery"
             )
+            await requestKeyframeRecovery(reason: .frameLoss)
             return
         }
 
@@ -530,9 +534,20 @@ extension StreamController {
     }
 
     private func evaluateFreezeState() async {
-        // Keyframe recovery is driven exclusively by decode errors.
-        // The freeze monitor was requesting keyframes on presentation stalls
-        // independent of whether any decode errors had occurred.
+        // Only recover when genuinely stuck: presentation stalled AND
+        // reassembler is stuck awaiting a keyframe that will never arrive
+        // (because no P-frames are decoded → no decode errors generated).
+        guard hasPresentedFirstFrame,
+              presentationTier == .activeLive else { return }
+        let now = currentTime()
+        guard lastPresentedProgressTime > 0,
+              now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
+        guard reassembler.isAwaitingKeyframe() else { return }
+        MirageLogger.client(
+            "Freeze detected for stream \(streamID): presentation stalled " +
+            "\(Int((now - lastPresentedProgressTime) * 1000))ms, reassembler awaiting keyframe"
+        )
+        await requestKeyframeRecovery(reason: .freezeTimeout)
     }
 
     private func isApplicationActiveForFreezeMonitoring() async -> Bool {

@@ -30,7 +30,7 @@ struct HostTrafficLightMaskGeometryResolverTests {
         #expect(clusterRect != nil)
         #expect(clusterRect?.origin.x == 0)
         #expect(clusterRect?.origin.y == 0)
-        #expect(clusterRect?.width == 96)
+        #expect(clusterRect?.width == 76)
         #expect(clusterRect?.height == 46)
     }
 

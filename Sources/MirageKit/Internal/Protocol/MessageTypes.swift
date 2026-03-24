@@ -101,6 +101,10 @@ package enum ControlMessageType: UInt8, Codable {
     case sharedClipboardStatus = 0xB7 // Host -> Client: Shared clipboard runtime state
     case sharedClipboardUpdate = 0xB8 // Host <-> Client: Shared clipboard text update
 
+    // Stream lifecycle (background/foreground)
+    case streamPauseAll = 0xC0 // Client → Host: Pause all stream encoding (client backgrounding)
+    case streamResumeAll = 0xC1 // Client → Host: Resume all stream encoding (client foregrounding)
+
     /// Errors
     case error = 0xFF
 }

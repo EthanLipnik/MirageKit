@@ -42,6 +42,7 @@ final class StreamFrameInbox: @unchecked Sendable {
     }
 
     /// Enqueue a frame, returning true if a drain task should be scheduled.
+    @discardableResult
     func enqueue(_ frame: CapturedFrame) -> Bool {
         lock.lock()
         enqueuedCount += 1

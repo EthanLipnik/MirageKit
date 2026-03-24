@@ -87,6 +87,9 @@ final class AudioPlaybackController {
 
     func preferredChannelCount(for incomingChannelCount: Int) -> Int {
         let incoming = max(1, incomingChannelCount)
+#if os(iOS) || os(visionOS)
+        _ = ensureAudioSessionConfiguredForPlayback()
+#endif
         let outputChannels = Int(engine.outputNode.outputFormat(forBus: 0).channelCount)
         if incoming >= 6, outputChannels < 6 { return 2 }
         return incoming
@@ -280,6 +283,7 @@ final class AudioPlaybackController {
                 || session.mode != .default
             if needsReconfiguration {
                 try session.setCategory(configuration.avCategory, mode: .default, options: [.mixWithOthers])
+                try session.setActive(true)
             }
             audioSessionConfigured = true
             return true
@@ -294,7 +298,9 @@ final class AudioPlaybackController {
     }
 
     private func deactivateAudioSessionIfNeeded() {
+        guard audioSessionConfigured else { return }
         audioSessionConfigured = false
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 
     private var isApplicationActive: Bool {

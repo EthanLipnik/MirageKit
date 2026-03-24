@@ -11,7 +11,7 @@ import CoreGraphics
 
 #if os(macOS)
 enum HostTrafficLightProtectionPolicy {
-    static let fallbackClusterSize = CGSize(width: 96, height: 44)
+    static let fallbackClusterSize = CGSize(width: 76, height: 38)
 
     private static let protectedPointerEventTypes: Set<CGEventType> = [
         .mouseMoved,
@@ -45,14 +45,16 @@ enum HostTrafficLightProtectionPolicy {
     static func effectiveClusterSize(dynamicClusterSize: CGSize?) -> CGSize {
         guard let dynamicClusterSize,
               dynamicClusterSize.width.isFinite,
-              dynamicClusterSize.height.isFinite else {
+              dynamicClusterSize.height.isFinite,
+              dynamicClusterSize.width > 0,
+              dynamicClusterSize.height > 0 else {
             return fallbackClusterSize
         }
 
-        return CGSize(
-            width: max(fallbackClusterSize.width, dynamicClusterSize.width),
-            height: max(fallbackClusterSize.height, dynamicClusterSize.height)
-        )
+        // Trust the dynamically measured cluster size when available rather
+        // than inflating it with max(fallback, dynamic).  The fallback is only
+        // used when AX geometry is unavailable.
+        return dynamicClusterSize
     }
 }
 #endif

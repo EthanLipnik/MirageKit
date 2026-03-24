@@ -52,6 +52,7 @@ actor AudioJitterBuffer {
         hasStartedPlayback = false
     }
 
+    @discardableResult
     func ingest(header: AudioPacketHeader, payload: Data) -> [AudioEncodedFrame] {
         if header.flags.contains(.discontinuity) { reset() }
 

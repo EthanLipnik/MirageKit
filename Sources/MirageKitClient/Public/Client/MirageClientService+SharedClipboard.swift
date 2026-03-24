@@ -83,7 +83,7 @@ extension MirageClientService {
                 sentAtMs: sentAtMs,
                 encryptedText: encryptedText
             )
-            _ = sendControlMessageBestEffort(.sharedClipboardUpdate, content: update)
+            sendControlMessageBestEffort(.sharedClipboardUpdate, content: update)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to send shared clipboard update: ")
         }

@@ -517,7 +517,7 @@ actor WindowSpaceManager {
 
         // Restore original position
         if let axWindow = resolveAXWindow(for: windowID) {
-            _ = await resizeWindowViaAccessibility(
+            await resizeWindowViaAccessibility(
                 windowID,
                 to: savedState.originalFrame.size,
                 axElement: axWindow
@@ -770,7 +770,7 @@ actor WindowSpaceManager {
             let fitFrame = fitFrameForInset(inset)
             let targetSize = CGSize(width: fitFrame.width, height: fitFrame.height)
             if isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
-                _ = await resizeWindowViaAccessibility(windowID, to: targetSize, axElement: axWindow)
+                await resizeWindowViaAccessibility(windowID, to: targetSize, axElement: axWindow)
             }
 
             let fittedSize = targetSize
@@ -814,13 +814,13 @@ actor WindowSpaceManager {
 
         if let bestOrigin {
             if let bestSize, isAXAttributeSettable(axWindow, attribute: kAXSizeAttribute as CFString) {
-                _ = await resizeWindowViaAccessibility(windowID, to: bestSize, axElement: axWindow)
+                await resizeWindowViaAccessibility(windowID, to: bestSize, axElement: axWindow)
             }
             var mutablePoint = bestOrigin
             if let positionValue = AXValueCreate(.cgPoint, &mutablePoint) {
                 _ = AXUIElementSetAttributeValue(axWindow, kAXPositionAttribute as CFString, positionValue)
             }
-            _ = CGSWindowSpaceBridge.moveWindow(windowID, to: bestOrigin)
+            CGSWindowSpaceBridge.moveWindow(windowID, to: bestOrigin)
             MirageLogger.debug(
                 .host,
                 "Window \(windowID) best-fit content coverage within visible frame: \(Int(bestCoverageWidth))x\(Int(bestCoverageHeight)) (inset=\(Int(bestInset)))"
@@ -1200,6 +1200,7 @@ actor WindowSpaceManager {
 extension WindowSpaceManager {
     /// Resize a window using Accessibility API
     /// This is more reliable than CGS APIs for some apps
+    @discardableResult
     func resizeWindowViaAccessibility(
         _ windowID: WindowID,
         to size: CGSize,

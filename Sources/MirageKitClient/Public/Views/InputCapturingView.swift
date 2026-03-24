@@ -1037,7 +1037,7 @@ public class InputCapturingView: UIView {
         guard cursorLockEnabled else { return }
         guard deltaX != 0 || deltaY != 0 else { return }
         revealCursorAfterPointerMovement()
-        _ = refreshModifiersForInput()
+        refreshModifiersForInput()
         let translation = CGPoint(x: CGFloat(deltaX), y: CGFloat(-deltaY))
         applyLockedCursorDelta(translation)
         let mouseEvent = MirageMouseEvent(
@@ -1457,7 +1457,7 @@ public class InputCapturingView: UIView {
     }
 
     func currentPencilModifiers() -> MirageModifierFlags {
-        _ = refreshModifiersForInput()
+        refreshModifiersForInput()
         let snapshot = keyboardModifiers
         sendModifierSnapshotIfNeeded(snapshot)
         return snapshot

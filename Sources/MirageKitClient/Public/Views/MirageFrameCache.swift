@@ -60,7 +60,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         texture: MTLTexture?,
         for streamID: StreamID
     ) {
-        _ = enqueue(
+        enqueue(
             pixelBuffer,
             contentRect: contentRect,
             decodeTime: CFAbsoluteTimeGetCurrent(),
@@ -108,7 +108,7 @@ public final class MirageFrameCache: @unchecked Sendable {
         texture: MTLTexture?,
         for streamID: StreamID
     ) {
-        _ = enqueue(
+        enqueue(
             pixelBuffer,
             contentRect: contentRect,
             decodeTime: decodeTime,
@@ -120,7 +120,7 @@ public final class MirageFrameCache: @unchecked Sendable {
     }
 
     public func store(_ pixelBuffer: CVPixelBuffer, contentRect: CGRect, for streamID: StreamID) {
-        _ = enqueue(
+        enqueue(
             pixelBuffer,
             contentRect: contentRect,
             decodeTime: CFAbsoluteTimeGetCurrent(),

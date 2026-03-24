@@ -69,6 +69,7 @@ public extension MirageHostService {
     }
 
     /// Bring a window to the front using SkyLight APIs.
+    @discardableResult
     static func bringWindowToFront(_ windowID: WindowID) -> Bool {
         #if os(macOS)
         return CGSWindowSpaceBridge.bringWindowToFront(windowID)

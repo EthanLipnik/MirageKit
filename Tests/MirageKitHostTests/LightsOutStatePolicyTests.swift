@@ -15,6 +15,19 @@ import Testing
 struct LightsOutStatePolicyTests {
     @Test
     func enablesForActiveAppStreamsEvenWhenToggleIsOff() {
+        // In DEBUG builds, app streaming does not force lights out so the
+        // developer can still see and interact with the host display.
+        #if DEBUG
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: true,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false,
+                lightsOutEnabled: false
+            )
+        )
+        #else
         #expect(
             MirageHostService.shouldEnableLightsOut(
                 hasAppStreams: true,
@@ -24,10 +37,22 @@ struct LightsOutStatePolicyTests {
                 lightsOutEnabled: false
             )
         )
+        #endif
     }
 
     @Test
     func enablesForPendingAppStreamSetup() {
+        #if DEBUG
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: true,
+                hasPendingDesktopStreamStart: false,
+                lightsOutEnabled: false
+            )
+        )
+        #else
         #expect(
             MirageHostService.shouldEnableLightsOut(
                 hasAppStreams: false,
@@ -37,6 +62,7 @@ struct LightsOutStatePolicyTests {
                 lightsOutEnabled: false
             )
         )
+        #endif
     }
 
     @Test

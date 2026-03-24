@@ -206,7 +206,7 @@ extension SharedVirtualDisplayManager {
         }
 
         fallbackOutcomeByCondition[condition] = outcome
-        _ = pruneFallbackOutcomeCache()
+        pruneFallbackOutcomeCache()
         Self.persistFallbackOutcomeCache(fallbackOutcomeByCondition)
         MirageLogger.host(
             "Virtual display fallback cache stored: requested=\(condition.requestedWidth)x\(condition.requestedHeight)@\(condition.refreshRate)Hz \(condition.requestedColorSpace.displayName) → resolved=\(outcome.resolvedWidth)x\(outcome.resolvedHeight) \(outcome.resolvedHiDPI ? "retina" : "1x") \(outcome.resolvedColorSpace.displayName)"

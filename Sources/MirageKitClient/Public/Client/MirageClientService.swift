@@ -482,7 +482,7 @@ public final class MirageClientService {
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
     let controlSessionConnectTimeout: Duration = .seconds(30)
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
-    let bootstrapResponseTimeout: Duration = .seconds(30)
+    let bootstrapResponseTimeout: Duration = .seconds(45)
 
     // Media stream listener (receives video/audio via Loom multiplexed streams)
     @ObservationIgnored var mediaStreamListenerTask: Task<Void, Never>?

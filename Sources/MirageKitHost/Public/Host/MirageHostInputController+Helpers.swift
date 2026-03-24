@@ -67,8 +67,11 @@ extension MirageHostInputController {
         }
 
         let sampledFrame = currentWindowFrame(for: windowID)
-        let shouldUseSampledFrame = sampledFrame.map { framesAreClose($0, streamFrame) } ?? false
-        let resolvedFrame = shouldUseSampledFrame ? (sampledFrame ?? streamFrame) : streamFrame
+        // Trust CGWindowList when available — it reflects the OS-reported window
+        // position and is authoritative even when the input cache is stale (e.g.
+        // after orphaned virtual display displacement).  Fall back to the cached
+        // stream frame only when the CGWindowList query fails.
+        let resolvedFrame = sampledFrame ?? streamFrame
         inputWindowFrameCacheByWindowID[windowID] = CachedInputWindowFrame(
             streamFrame: streamFrame,
             resolvedFrame: resolvedFrame,

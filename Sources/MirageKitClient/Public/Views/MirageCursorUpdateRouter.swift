@@ -16,8 +16,8 @@ protocol MirageCursorUpdateHandling: AnyObject {
     func refreshCursorUpdates(force: Bool)
 }
 
-final class MirageCursorUpdateRouter: @unchecked Sendable {
-    static let shared = MirageCursorUpdateRouter()
+public final class MirageCursorUpdateRouter: @unchecked Sendable {
+    public static let shared = MirageCursorUpdateRouter()
 
     private final class WeakCursorView {
         weak var value: (any MirageCursorUpdateHandling)?
@@ -58,7 +58,7 @@ final class MirageCursorUpdateRouter: @unchecked Sendable {
         lock.unlock()
     }
 
-    func notify(streamID: StreamID) {
+    public func notify(streamID: StreamID) {
         lock.lock()
         if viewsByStream[streamID]?.value == nil {
             viewsByStream.removeValue(forKey: streamID)

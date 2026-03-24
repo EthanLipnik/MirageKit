@@ -77,6 +77,7 @@ final class MirageSPSCFrameQueue: @unchecked Sendable {
         return frame
     }
 
+    @discardableResult
     func trimNewest(keepDepth: Int) -> Int {
         let clampedKeepDepth = max(1, keepDepth)
         guard count > clampedKeepDepth else {

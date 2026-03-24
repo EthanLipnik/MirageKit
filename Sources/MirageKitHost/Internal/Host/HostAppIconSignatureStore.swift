@@ -71,7 +71,7 @@ actor HostAppIconSignatureStore {
     }
 
     func signatures(for clientID: UUID) -> [String: String] {
-        _ = pruneExpiredEntries(now: Date())
+        pruneExpiredEntries(now: Date())
         let key = clientID.uuidString.lowercased()
         let now = Date()
         var entry = state.clientsByID[key] ?? ClientEntry(updatedAt: now, signaturesByBundleIdentifier: [:])
@@ -82,7 +82,7 @@ actor HostAppIconSignatureStore {
     }
 
     func mergeSignatures(_ signaturesByBundleIdentifier: [String: String], for clientID: UUID) {
-        _ = pruneExpiredEntries(now: Date())
+        pruneExpiredEntries(now: Date())
         let key = clientID.uuidString.lowercased()
         let now = Date()
         var entry = state.clientsByID[key] ?? ClientEntry(updatedAt: now, signaturesByBundleIdentifier: [:])
@@ -101,7 +101,7 @@ actor HostAppIconSignatureStore {
     }
 
     func touch(clientID: UUID) {
-        _ = pruneExpiredEntries(now: Date())
+        pruneExpiredEntries(now: Date())
         let key = clientID.uuidString.lowercased()
         let now = Date()
         var entry = state.clientsByID[key] ?? ClientEntry(updatedAt: now, signaturesByBundleIdentifier: [:])

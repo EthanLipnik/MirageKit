@@ -260,7 +260,7 @@ extension MirageClientService {
             return
         }
 
-        _ = sendControlMessageBestEffort(message)
+        sendControlMessageBestEffort(message)
         let cooldownMs = Int((keyframeRequestCooldown * 1000).rounded())
         MirageLogger.client("Sent keyframe request for stream \(streamID) (cooldown \(cooldownMs)ms)")
     }

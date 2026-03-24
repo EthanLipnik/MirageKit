@@ -258,5 +258,35 @@ public extension MirageHostService {
 
         availableWindows = filteredWindows.sorted { ($0.application?.name ?? "") < ($1.application?.name ?? "") }
     }
+
+    // MARK: - Retina Resolution Probe
+
+    /// Probe which virtual display resolutions support 2x HiDPI on this machine.
+    /// Call during onboarding or first launch. Results are cached persistently
+    /// and invalidated when the macOS build version changes.
+    /// Returns the number of resolutions that support 2x.
+    @discardableResult
+    func probeRetinaResolutions() -> Int {
+        if let existing = SharedVirtualDisplayManager.loadRetinaProbeCacheIfValid() {
+            let goodCount = existing.entries.filter(\.worksAt2x).count
+            MirageLogger.host(
+                "HiDPI probe cache valid: \(goodCount)/\(existing.entries.count) resolutions work at 2x"
+            )
+            return goodCount
+        }
+
+        let startTime = CFAbsoluteTimeGetCurrent()
+        let candidates = SharedVirtualDisplayManager.generateProbeCandidates()
+        let results = SharedVirtualDisplayManager.probeRetinaResolutions(candidates: candidates)
+        SharedVirtualDisplayManager.persistRetinaProbeCache(results)
+
+        let goodCount = results.filter(\.worksAt2x).count
+        let durationMs = (CFAbsoluteTimeGetCurrent() - startTime) * 1000
+
+        MirageLogger.host(
+            "HiDPI probe complete: \(goodCount)/\(results.count) resolutions work at 2x (took \(String(format: "%.0f", durationMs))ms)"
+        )
+        return goodCount
+    }
 }
 #endif

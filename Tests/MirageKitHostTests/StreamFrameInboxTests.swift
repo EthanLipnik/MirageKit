@@ -17,9 +17,9 @@ struct StreamFrameInboxTests {
     @Test("Newest-first drain returns freshest frame and reports stale backlog drops")
     func newestDrainReturnsFreshestFrame() throws {
         let inbox = StreamFrameInbox(capacity: 4)
-        _ = inbox.enqueue(try makeFrame(captureTime: 1))
-        _ = inbox.enqueue(try makeFrame(captureTime: 2))
-        _ = inbox.enqueue(try makeFrame(captureTime: 3))
+        inbox.enqueue(try makeFrame(captureTime: 1))
+        inbox.enqueue(try makeFrame(captureTime: 2))
+        inbox.enqueue(try makeFrame(captureTime: 3))
 
         let drainResult = inbox.takeNext(policy: .newest)
 
@@ -31,8 +31,8 @@ struct StreamFrameInboxTests {
     @Test("FIFO drain preserves enqueue order")
     func fifoDrainPreservesOrder() throws {
         let inbox = StreamFrameInbox(capacity: 4)
-        _ = inbox.enqueue(try makeFrame(captureTime: 1))
-        _ = inbox.enqueue(try makeFrame(captureTime: 2))
+        inbox.enqueue(try makeFrame(captureTime: 1))
+        inbox.enqueue(try makeFrame(captureTime: 2))
 
         let first = inbox.takeNext(policy: .fifo)
         let second = inbox.takeNext(policy: .fifo)

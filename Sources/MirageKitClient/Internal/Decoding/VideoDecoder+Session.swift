@@ -89,7 +89,7 @@ extension VideoDecoder {
         decoderHardwareStatusRefreshAttempts = 0
         usingHardwareDecoder = nil
         VTSessionSetProperty(session, key: kVTDecompressionPropertyKey_RealTime, value: kCFBooleanTrue)
-        _ = applyMaximizePowerEfficiency(session)
+        applyMaximizePowerEfficiency(session)
         logHardwareDecoderStatus(session, reason: "session_create")
         decompressionSession = session
     }

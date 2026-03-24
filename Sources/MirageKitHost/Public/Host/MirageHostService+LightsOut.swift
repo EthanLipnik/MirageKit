@@ -26,8 +26,14 @@ extension MirageHostService {
         lightsOutDisabledByEnvironment: Bool = false
     ) -> Bool {
         guard !lightsOutDisabledByEnvironment else { return false }
+        #if DEBUG
+        // In debug builds, app streaming does not force lights out so the
+        // developer can still see and interact with the host display.
+        return lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart)
+        #else
         return hasAppStreams || hasPendingAppStreamStart ||
             (lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart))
+        #endif
     }
 
     /// Emergency recovery path for stuck Lights Out states.

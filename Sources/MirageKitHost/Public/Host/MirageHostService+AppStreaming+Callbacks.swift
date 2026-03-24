@@ -128,7 +128,7 @@ extension MirageHostService {
         let hiddenWindowInfo = session.hiddenWindows[windowID]
 
         if hiddenWindowInfo != nil, windowInfo == nil {
-            _ = await appStreamManager.removeWindowFromSession(
+            await appStreamManager.removeWindowFromSession(
                 bundleIdentifier: bundleID,
                 windowID: windowID
             )
@@ -287,7 +287,7 @@ extension MirageHostService {
         }
 
         clearPendingAppWindowReplacement(streamID: pendingReplacement.streamID)
-        _ = await appStreamManager.removeWindowFromSession(
+        await appStreamManager.removeWindowFromSession(
             bundleIdentifier: bundleID,
             windowID: pendingReplacement.closedWindowID
         )
@@ -310,7 +310,7 @@ extension MirageHostService {
         clearPendingAppWindowReplacement(streamID: streamID)
 
         guard let streamSession = activeSessionByStreamID[streamID] else {
-            _ = await appStreamManager.removeWindowFromSession(
+            await appStreamManager.removeWindowFromSession(
                 bundleIdentifier: pending.bundleIdentifier,
                 windowID: pending.closedWindowID
             )

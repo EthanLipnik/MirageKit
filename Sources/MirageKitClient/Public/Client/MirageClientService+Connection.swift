@@ -108,6 +108,11 @@ extension MirageClientService {
             startReceiving()
             startMediaStreamListener()
             finishConnectAttempt(attemptID)
+
+            // The host immediately streams a large hardware icon (~1 MB) plus
+            // app-icon updates after bootstrap.  Give the initial data exchange
+            // time to complete before the heartbeat starts probing.
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
             startHeartbeat()
 
             if let acceptedHost = connectedHost {
@@ -185,6 +190,11 @@ extension MirageClientService {
             startReceiving()
             startMediaStreamListener()
             finishConnectAttempt(attemptID)
+
+            // The host immediately streams a large hardware icon (~1 MB) plus
+            // app-icon updates after bootstrap.  Give the initial data exchange
+            // time to complete before the heartbeat starts probing.
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
             startHeartbeat()
 
             if let acceptedHost = connectedHost {
@@ -211,6 +221,21 @@ extension MirageClientService {
             }
             throw error
         }
+    }
+
+    /// Pause all streams without disconnecting.  The host stops encoding
+    /// but keeps virtual displays and stream infrastructure alive so that
+    /// `resumeStreaming()` can restart frames immediately with a keyframe.
+    public func pauseStreaming() {
+        sendControlMessageBestEffort(ControlMessage(type: .streamPauseAll))
+        MirageLogger.client("Sent streamPauseAll to host")
+    }
+
+    /// Resume all streams after a pause.  The host forces a keyframe so
+    /// the decoder can immediately begin presenting frames again.
+    public func resumeStreaming() {
+        sendControlMessageBestEffort(ControlMessage(type: .streamResumeAll))
+        MirageLogger.client("Sent streamResumeAll to host")
     }
 
     public func disconnect() async {
@@ -588,6 +613,7 @@ extension MirageClientService {
         )
     }
 
+    @discardableResult
     func receiveSingleControlMessage(
         from stream: AsyncStream<Data>,
         timeout: Duration? = nil,

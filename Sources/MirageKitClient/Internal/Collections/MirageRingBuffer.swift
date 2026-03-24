@@ -72,7 +72,7 @@ struct MirageRingBuffer<Element> {
 
     mutating func removeAll(keepingCapacity: Bool) {
         if keepingCapacity {
-            _ = removeFirst(count)
+            removeFirst(count)
             return
         }
         storage = ContiguousArray(repeating: nil, count: 1)

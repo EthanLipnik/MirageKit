@@ -772,7 +772,7 @@ struct StreamControllerRecoveryTests {
         )
 
         let pixelBuffer = makePixelBuffer()
-        _ = MirageFrameCache.shared.enqueue(
+        MirageFrameCache.shared.enqueue(
             pixelBuffer,
             contentRect: .zero,
             decodeTime: CFAbsoluteTimeGetCurrent() - 10,

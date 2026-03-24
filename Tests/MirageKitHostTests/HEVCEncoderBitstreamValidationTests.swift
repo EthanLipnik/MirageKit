@@ -98,7 +98,7 @@ struct VideoEncoderBitstreamValidationTests {
         }
 
         do {
-            _ = try VideoEncoder.extractEncodedFrameData(from: emptyBuffer)
+            try VideoEncoder.extractEncodedFrameData(from: emptyBuffer)
             Issue.record("Expected empty-data extraction error")
         } catch let error as EncodedFrameExtractionError {
             #expect(error == .emptyData)

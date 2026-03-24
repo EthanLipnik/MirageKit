@@ -22,7 +22,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
         for decodeTime in [1.0, 2.0, 3.0, 4.0, 5.0] {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: decodeTime,
@@ -44,7 +44,7 @@ struct RenderCadenceSmoothingTests {
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
         for decodeTime in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
-            _ = MirageFrameCache.shared.enqueue(
+            MirageFrameCache.shared.enqueue(
                 makePixelBuffer(),
                 contentRect: .zero,
                 decodeTime: decodeTime,
@@ -70,7 +70,7 @@ struct RenderCadenceSmoothingTests {
         MirageFrameCache.shared.clear(for: streamID)
         defer { MirageFrameCache.shared.clear(for: streamID) }
 
-        _ = MirageFrameCache.shared.enqueue(
+        MirageFrameCache.shared.enqueue(
             makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 1,
