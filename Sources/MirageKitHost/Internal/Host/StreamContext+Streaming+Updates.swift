@@ -782,6 +782,8 @@ extension StreamContext {
         typingBurstExpiryTask?.cancel()
         typingBurstExpiryTask = nil
 
+        await stopAllAuxiliaryCaptures()
+
         await captureEngine?.stopCapture()
         captureEngine = nil
         frameInbox.clear()
@@ -804,7 +806,7 @@ extension StreamContext {
                 windowID,
                 expectedOwner: expectedOwner
             )
-            await SharedVirtualDisplayManager.shared.releaseDedicatedDisplay(for: streamID)
+            await SharedVirtualDisplayManager.shared.releaseAppStreamDisplay()
             virtualDisplayContext = nil
             virtualDisplayVisibleBounds = .zero
             virtualDisplayCaptureSourceRect = .zero

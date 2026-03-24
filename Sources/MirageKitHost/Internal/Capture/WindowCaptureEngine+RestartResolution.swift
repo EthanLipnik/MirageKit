@@ -68,7 +68,6 @@ extension WindowCaptureEngine {
                     window: windowToUse,
                     application: applicationToUse,
                     display: displayToUse,
-                    knownScaleFactor: config.knownScaleFactor,
                     outputScale: config.outputScale,
                     resolution: config.resolution,
                     sourceRect: config.sourceRect,

@@ -1198,6 +1198,20 @@ actor WindowSpaceManager {
 // MARK: - Accessibility Integration
 
 extension WindowSpaceManager {
+    /// Convenience: resize a window by resolving its AX element internally.
+    @discardableResult
+    func resizeWindow(
+        _ windowID: WindowID,
+        to size: CGSize
+    )
+    async -> Bool {
+        guard let axWindow = resolveAXWindow(for: windowID) else {
+            MirageLogger.debug(.host, "Cannot resize window \(windowID): no AXUIElement")
+            return false
+        }
+        return await resizeWindowViaAccessibility(windowID, to: size, axElement: axWindow)
+    }
+
     /// Resize a window using Accessibility API
     /// This is more reliable than CGS APIs for some apps
     @discardableResult

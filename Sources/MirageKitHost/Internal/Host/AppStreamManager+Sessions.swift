@@ -406,6 +406,7 @@ public extension AppStreamManager {
         let key = bundleIdentifier.lowercased()
         if let session = sessions.removeValue(forKey: key) { logger.info("Ended app session: \(session.appName)") }
         startupFailureStateByBundleID.removeValue(forKey: key)
+        knownAuxiliaryWindowIDs.removeValue(forKey: key)
 
         if sessions.isEmpty { stopMonitoring() }
     }

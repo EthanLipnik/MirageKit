@@ -81,8 +81,9 @@ actor WindowCaptureEngine {
     var currentHeight: Int = 0
     var currentScaleFactor: CGFloat = 1.0
     var outputScale: CGFloat = 1.0
-    var useBestCaptureResolution: Bool = true
-    var useExplicitCaptureDimensions: Bool = true
+    /// Display capture with an explicit resolution override (HiDPI virtual displays)
+    /// skips `.best` and sets width/height directly.
+    var displayUsesExplicitResolution: Bool = false
     var contentFilter: SCContentFilter?
     var excludedWindows: [SCWindow] = []
     var lastRestartAttemptTime: CFAbsoluteTime = 0
@@ -158,7 +159,6 @@ actor WindowCaptureEngine {
         let window: SCWindow?
         let application: SCRunningApplication?
         let display: SCDisplay
-        let knownScaleFactor: CGFloat?
         let outputScale: CGFloat
         let resolution: CGSize?
         let sourceRect: CGRect?

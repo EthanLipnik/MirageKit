@@ -198,7 +198,8 @@ public extension MirageHostService {
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
         upscalingMode: MirageUpscalingMode? = nil,
-        codec: MirageVideoCodec? = nil
+        codec: MirageVideoCodec? = nil,
+        sizePreset: MirageDisplaySizePreset = .standard
     )
     async throws -> MirageStreamSession {
         // Clear any stuck modifier state from previous streams
@@ -415,103 +416,31 @@ public extension MirageHostService {
                             "(\(Int(virtualDisplayResolution.width))x\(Int(virtualDisplayResolution.height)) px)"
                     )
 
-                do {
-                    try await context.startWithVirtualDisplay(
-                        windowWrapper: windowWrapper,
-                        applicationWrapper: applicationWrapper,
-                        clientDisplayResolution: virtualDisplayResolution,
-                        onEncodedFrame: onEncodedFrame,
-                        onContentBoundsChanged: { [weak self] bounds in
+                try await context.startWithWindowCapture(
+                    windowWrapper: windowWrapper,
+                    applicationWrapper: applicationWrapper,
+                    clientLogicalSize: clientDisplayResolution,
+                    sizePreset: sizePreset,
+                    onEncodedFrame: onEncodedFrame,
+                    onContentBoundsChanged: { [weak self] bounds in
+                        guard let self else { return }
+                        dispatchControlWork(clientID: client.id) { [weak self] in
                             guard let self else { return }
-                            dispatchControlWork(clientID: client.id) { [weak self] in
-                                guard let self else { return }
-                                await sendContentBoundsUpdate(streamID: streamID, bounds: bounds, to: client)
-                            }
-                        },
-                        onNewWindowDetected: { [weak self] newWindow in
-                            guard let self else { return }
-                            dispatchControlWork(clientID: client.id) { [weak self] in
-                                guard let self else { return }
-                                await handleNewIndependentWindow(
-                                    newWindow,
-                                    originalStreamID: streamID,
-                                    client: client
-                                )
-                            }
-                        },
-                        onVirtualDisplayReady: { [weak self] snapshot, bounds in
-                            guard let self else { return }
-                            let resolvedClientScale = resolvedClientScaleFactor ?? max(1.0, snapshot.scaleFactor)
-                            let effectiveBounds = aspectFittedWindowBounds(
-                                bounds,
-                                targetAspectRatio: requestedAspectRatioForWindowFit(
-                                    requestedPixelResolution: virtualDisplayResolution,
-                                    visiblePixelResolution: CGSize(
-                                        width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
-                                        height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
-                                    ),
-                                    displayPixelResolution: snapshot.resolution
-                                )
-                            )
-                            let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
-                                for: snapshot.resolution,
-                                scaleFactor: max(1.0, snapshot.scaleFactor)
-                            )
-                            let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
-                                snapshot.displayID,
-                                knownResolution: logicalResolution
-                            )
-                            let captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
-                                snapshot.displayID,
-                                knownBounds: displayBounds
-                            )
-                            let visiblePixelResolution = CGSize(
-                                width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
-                                height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
-                            )
-                            let targetContentAspectRatio = requestedAspectRatioForWindowFit(
-                                requestedPixelResolution: virtualDisplayResolution,
-                                visiblePixelResolution: visiblePixelResolution,
-                                displayPixelResolution: snapshot.resolution
-                            )
-                            let state = WindowVirtualDisplayState(
-                                streamID: streamID,
-                                displayID: snapshot.displayID,
-                                generation: snapshot.generation,
-                                bounds: effectiveBounds,
-                                targetContentAspectRatio: targetContentAspectRatio,
-                                captureSourceRect: captureSourceRect,
-                                visiblePixelResolution: visiblePixelResolution,
-                                scaleFactor: max(1.0, snapshot.scaleFactor),
-                                pixelResolution: snapshot.resolution,
-                                clientScaleFactor: resolvedClientScale
-                            )
-                            await MainActor.run {
-                                self.setVirtualDisplayState(windowID: updatedWindow.id, state: state)
-                                MirageLogger.host(
-                                    "Cached dedicated virtual display for window \(updatedWindow.id): display=\(snapshot.displayID), bounds=\(bounds)"
-                                )
-                            }
+                            await sendContentBoundsUpdate(streamID: streamID, bounds: bounds, to: client)
                         }
-                    )
-                } catch {
-                    guard allowDirectCaptureFallback,
-                          shouldFallbackToDirectWindowCapture(error) else { throw error }
-                    MirageLogger.host(
-                        "Dedicated virtual display startup failed for stream \(streamID) window \(updatedWindow.id); falling back to direct window capture: \(error.localizedDescription)"
-                    )
-                    await context.stop()
-                    clearVirtualDisplayState(windowID: updatedWindow.id)
-                    try await context.start(
-                        windowWrapper: windowWrapper,
-                        applicationWrapper: applicationWrapper,
-                        displayWrapper: displayWrapper,
-                        onEncodedFrame: onEncodedFrame
-                    )
-                    MirageLogger.host(
-                        "Started stream \(streamID) with direct window-capture fallback for window \(updatedWindow.id)"
-                    )
-                }
+                    },
+                    onNewWindowDetected: { [weak self] newWindow in
+                        guard let self else { return }
+                        dispatchControlWork(clientID: client.id) { [weak self] in
+                            guard let self else { return }
+                            await handleNewIndependentWindow(
+                                newWindow,
+                                originalStreamID: streamID,
+                                client: client
+                            )
+                        }
+                    }
+                )
 
                 if let bounds = getVirtualDisplayBounds(windowID: updatedWindow.id) {
                     inputStreamCacheActor.updateWindowFrame(streamID, newFrame: bounds)
@@ -879,7 +808,31 @@ public extension MirageHostService {
         windowID: WindowID,
         force: Bool = false
     ) async {
+        // For window capture, only ensure the window is on the correct space.
+        // Do NOT resize or reposition — the window is aspect-fit to the client's
+        // resolution and the full moveWindow flow fights that sizing.
+        for (_, context) in streamsByID {
+            let wID = await context.windowID
+            guard wID == windowID else { continue }
+            let mode = await context.captureMode
+            if mode == .window {
+                guard let vdContext = await context.virtualDisplayContext else { return }
+                let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(vdContext.displayID)
+                guard spaceID != 0 else { return }
+                let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+                if !currentSpaces.contains(spaceID) {
+                    CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: spaceID)
+                    MirageLogger.host("Window capture: reasserted window \(windowID) to space \(spaceID)")
+                }
+                return
+            }
+            break
+        }
+
         guard let state = getVirtualDisplayState(windowID: windowID) else { return }
+
+        let placementBounds = state.bounds
+        let placementAspectRatio = state.targetContentAspectRatio
 
         let resolvedSpaceID = CGVirtualDisplayBridge.getSpaceForDisplay(state.displayID)
         guard resolvedSpaceID != 0 else {
@@ -916,8 +869,8 @@ public extension MirageHostService {
                 windowID,
                 toSpaceID: resolvedSpaceID,
                 displayID: state.displayID,
-                displayBounds: state.bounds,
-                targetContentAspectRatio: state.targetContentAspectRatio,
+                displayBounds: placementBounds,
+                targetContentAspectRatio: placementAspectRatio,
                 owner: WindowSpaceManager.WindowBindingOwner(
                     streamID: state.streamID,
                     windowID: windowID,
@@ -925,7 +878,7 @@ public extension MirageHostService {
                     generation: state.generation
                 )
             )
-            inputStreamCacheActor.updateWindowFrame(state.streamID, newFrame: state.bounds)
+            inputStreamCacheActor.updateWindowFrame(state.streamID, newFrame: placementBounds)
             let reasonText = driftReason ?? "placement drift"
             MirageLogger.host(
                 "Reasserted virtual-display placement for window \(windowID) on display \(state.displayID) (\(reasonText))"

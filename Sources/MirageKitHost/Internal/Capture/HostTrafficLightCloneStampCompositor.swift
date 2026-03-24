@@ -52,7 +52,6 @@ enum HostTrafficLightCloneStampPlanner {
         case unsupportedPixelFormat
         case invalidContentRect
         case invalidWindowFrame
-        case hiddenTrafficLights
         case emptyDestination
         case emptySource
     }
@@ -82,10 +81,6 @@ enum HostTrafficLightCloneStampPlanner {
         guard geometry.windowFramePoints.width > 0, geometry.windowFramePoints.height > 0 else {
             return .skip(.invalidWindowFrame)
         }
-        guard !geometry.buttonsHiddenState.isEffectivelyHidden else {
-            return .skip(.hiddenTrafficLights)
-        }
-
         let scaleX = contentRect.width / geometry.windowFramePoints.width
         let scaleY = contentRect.height / geometry.windowFramePoints.height
 
@@ -239,7 +234,6 @@ enum HostTrafficLightCloneStampPlanner {
 final class HostTrafficLightCloneStampCompositor {
     enum SkipReason: String, Sendable {
         case unsupportedPixelFormat
-        case hiddenTrafficLights
         case invalidContentRect
         case invalidWindowFrame
         case emptyDestination
@@ -440,8 +434,6 @@ final class HostTrafficLightCloneStampCompositor {
         switch reason {
         case .unsupportedPixelFormat:
             return .unsupportedPixelFormat
-        case .hiddenTrafficLights:
-            return .hiddenTrafficLights
         case .invalidContentRect:
             return .invalidContentRect
         case .invalidWindowFrame:
@@ -668,44 +660,21 @@ final class HostTrafficLightCloneStampCompositor {
             float2 destinationPoint = float2(destination) + 0.5;
             float2 maskOrigin = float2(uniforms.maskOrigin);
             float2 maskSize = float2(max(uniforms.maskSize, uint2(1, 1)));
-            float maskDiameterHeight = max(2.0, maskSize.y - 2.0);
-            float maskDiameterWidth = max(2.0, maskSize.x / 3.2);
-            float radius = max(2.0, min(maskDiameterHeight * 0.5, maskDiameterWidth * 0.5));
-            float centerY = maskOrigin.y + maskSize.y * 0.5;
-
-            float minCenterX = maskOrigin.x + radius;
-            float maxCenterX = maskOrigin.x + maskSize.x - radius;
-            float span = max(0.0, maxCenterX - minCenterX);
-            float spacing = span * 0.5;
-
-            float center0X = minCenterX;
-            float center1X = minCenterX + spacing;
-            float center2X = minCenterX + spacing * 2.0;
-
-            float2 center0 = float2(center0X, centerY);
-            float2 center1 = float2(center1X, centerY);
-            float2 center2 = float2(center2X, centerY);
-
             float feather = max(uniforms.featherPixels, 1.0);
-            float outerRadius = radius + feather;
 
-            float circle0 = 1.0 - smoothstep(radius, outerRadius, distance(destinationPoint, center0));
-            float circle1 = 1.0 - smoothstep(radius, outerRadius, distance(destinationPoint, center1));
-            float circle2 = 1.0 - smoothstep(radius, outerRadius, distance(destinationPoint, center2));
-            float alpha = max(circle0, max(circle1, circle2));
+            // Capsule SDF covering the sharing indicator pill shape.
+            float capsuleRadius = max(2.0, maskSize.y * 0.6);
+            float centerY = maskOrigin.y + maskSize.y * 0.5;
+            float2 capA = float2(maskOrigin.x + capsuleRadius, centerY);
+            float2 capB = float2(maskOrigin.x + maskSize.x - capsuleRadius, centerY);
+            float2 pa = destinationPoint - capA;
+            float2 ba = capB - capA;
+            float segLen = max(dot(ba, ba), 0.0001);
+            float h = clamp(dot(pa, ba) / segLen, 0.0, 1.0);
+            float d = length(pa - ba * h) - capsuleRadius;
+            float alpha = 1.0 - smoothstep(-feather * 0.5, feather, d);
 
-            // Softly bridge between circles so all traffic-light pixels are covered.
-            float2 segment = center2 - center0;
-            float segmentLengthSquared = max(dot(segment, segment), 0.0001);
-            float projection = clamp(dot(destinationPoint - center0, segment) / segmentLengthSquared, 0.0, 1.0);
-            float2 closestOnSegment = center0 + segment * projection;
-            float capsuleDistance = distance(destinationPoint, closestOnSegment);
-            float capsuleInner = radius * 0.88;
-            float capsuleOuter = capsuleInner + feather * 0.35;
-            float capsuleAlpha = (1.0 - smoothstep(capsuleInner, capsuleOuter, capsuleDistance)) * 0.30;
-            alpha = max(alpha, capsuleAlpha);
-
-            // Keep blending tightly confined to the traffic-light bounding region.
+            // Keep blending tightly confined to the mask bounding region.
             float rectLeft = destinationPoint.x - maskOrigin.x;
             float rectRight = (maskOrigin.x + maskSize.x) - destinationPoint.x;
             float rectTop = destinationPoint.y - maskOrigin.y;

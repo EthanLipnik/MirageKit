@@ -22,12 +22,6 @@ extension SharedVirtualDisplayManager {
         let label: String
     }
 
-    struct DisplayFallbackCandidate: Sendable, Equatable {
-        let resolution: CGSize
-        let hiDPI: Bool
-        let rung: String
-    }
-
     func prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
         var ordered = [requestedColorSpace]
         for candidate in MirageColorSpace.allCases where candidate != requestedColorSpace {
@@ -73,161 +67,6 @@ extension SharedVirtualDisplayManager {
         return abs(requestedAspect - candidateAspect) / requestedAspect
     }
 
-    static func closestAspectResolutionCandidates(
-        for baseResolution: CGSize,
-        maxCandidates: Int = 6,
-        maxRelativeAspectDelta: CGFloat = 0.01
-    )
-    -> [CGSize] {
-        let normalizedBase = normalizedPixelResolution(baseResolution)
-        guard normalizedBase.width > 0, normalizedBase.height > 0 else { return [] }
-        let scaleSteps: [CGFloat] = [0.96, 0.92, 0.88, 0.84, 0.80, 0.76, 0.72]
-        var seen = Set<String>()
-        var candidates: [CGSize] = []
-
-        for scale in scaleSteps {
-            let scaled = normalizedPixelResolution(
-                CGSize(
-                    width: normalizedBase.width * scale,
-                    height: normalizedBase.height * scale
-                )
-            )
-            let key = "\(Int(scaled.width))x\(Int(scaled.height))"
-            guard seen.insert(key).inserted else { continue }
-            guard aspectRelativeDelta(requested: normalizedBase, candidate: scaled) <= maxRelativeAspectDelta else {
-                continue
-            }
-            candidates.append(scaled)
-            if candidates.count >= maxCandidates { break }
-        }
-
-        return candidates
-    }
-
-    static func fallbackAttemptPlan(for requestedResolution: CGSize) -> [DisplayFallbackCandidate] {
-        let normalizedRequested = normalizedPixelResolution(requestedResolution)
-        guard normalizedRequested.width > 0, normalizedRequested.height > 0 else { return [] }
-        let fallback1x = fallbackResolution(for: normalizedRequested)
-        let closestRetina = closestAspectResolutionCandidates(for: normalizedRequested)
-        let closestOneX = closestAspectResolutionCandidates(for: fallback1x)
-
-        var seen = Set<String>()
-        var plan: [DisplayFallbackCandidate] = []
-
-        func append(_ candidate: DisplayFallbackCandidate) {
-            let key = "\(Int(candidate.resolution.width))x\(Int(candidate.resolution.height))-\(candidate.hiDPI ? "retina" : "1x")"
-            guard seen.insert(key).inserted else { return }
-            plan.append(candidate)
-        }
-
-        append(
-            DisplayFallbackCandidate(
-                resolution: normalizedRequested,
-                hiDPI: true,
-                rung: "requested-retina"
-            )
-        )
-        append(
-            DisplayFallbackCandidate(
-                resolution: fallback1x,
-                hiDPI: false,
-                rung: "requested-1x"
-            )
-        )
-        for candidate in closestRetina {
-            append(
-                DisplayFallbackCandidate(
-                    resolution: candidate,
-                    hiDPI: true,
-                    rung: "closest-retina"
-                )
-            )
-        }
-        for candidate in closestOneX {
-            append(
-                DisplayFallbackCandidate(
-                    resolution: candidate,
-                    hiDPI: false,
-                    rung: "closest-1x"
-                )
-            )
-        }
-
-        return plan
-    }
-
-    private static func hasCompatibleAspectRatio(
-        requested: CGSize,
-        candidate: CGSize
-    ) -> Bool {
-        let requestedWidth = Int64(requested.width.rounded())
-        let requestedHeight = Int64(requested.height.rounded())
-        let candidateWidth = Int64(candidate.width.rounded())
-        let candidateHeight = Int64(candidate.height.rounded())
-        guard requestedWidth > 0,
-              requestedHeight > 0,
-              candidateWidth > 0,
-              candidateHeight > 0 else {
-            return false
-        }
-
-        return requestedWidth * candidateHeight == candidateWidth * requestedHeight
-    }
-
-    private static func hasMatchingPixelArea(
-        requested: CGSize,
-        candidate: CGSize
-    ) -> Bool {
-        let requestedWidth = Int64(requested.width.rounded())
-        let requestedHeight = Int64(requested.height.rounded())
-        let candidateWidth = Int64(candidate.width.rounded())
-        let candidateHeight = Int64(candidate.height.rounded())
-        guard requestedWidth > 0,
-              requestedHeight > 0,
-              candidateWidth > 0,
-              candidateHeight > 0 else {
-            return false
-        }
-
-        return requestedWidth * requestedHeight == candidateWidth * candidateHeight
-    }
-
-    private static func isCloseToRequested(
-        requested: CGSize,
-        candidate: CGSize,
-        relativeTolerance: CGFloat = 0.12
-    ) -> Bool {
-        guard requested.width > 0, requested.height > 0 else { return false }
-        let widthDelta = abs(candidate.width - requested.width) / requested.width
-        let heightDelta = abs(candidate.height - requested.height) / requested.height
-        return widthDelta <= relativeTolerance && heightDelta <= relativeTolerance
-    }
-
-    private func knownGoodRetinaCandidate(
-        requestedResolution: CGSize,
-        colorSpace: MirageColorSpace,
-        allowAspectMismatchRetinaCandidate _: Bool
-    ) -> CGSize? {
-        guard let cached = lastKnownGoodRetinaResolutionByColorSpace[colorSpace] else { return nil }
-        let requested = Self.normalizedPixelResolution(requestedResolution)
-        let candidate = Self.normalizedPixelResolution(cached)
-        if Self.hasCompatibleAspectRatio(requested: requested, candidate: candidate),
-           Self.isCloseToRequested(requested: requested, candidate: candidate) {
-            return candidate
-        }
-        return nil
-    }
-
-    private func cacheKnownGoodRetinaResolutionIfNeeded(
-        _ resolution: CGSize,
-        scaleFactor: CGFloat,
-        colorSpace: MirageColorSpace
-    ) {
-        guard scaleFactor >= 1.5 else { return }
-        let normalized = Self.normalizedPixelResolution(resolution)
-        lastKnownGoodRetinaResolutionByColorSpace[colorSpace] = normalized
-    }
-
     private func resolvedScaleFactor(displayID: CGDirectDisplayID, fallback: CGFloat) -> CGFloat {
         if let modeSizes = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID),
            modeSizes.logical.width > 0,
@@ -238,24 +77,6 @@ extension SharedVirtualDisplayManager {
             if scale > 0 { return scale }
         }
         return fallback
-    }
-
-    private func resetFallbackStreak(for colorSpace: MirageColorSpace) {
-        fallbackStreakByColorSpace[colorSpace] = 0
-    }
-
-    private func registerFallbackEvent(for colorSpace: MirageColorSpace) {
-        let streak = (fallbackStreakByColorSpace[colorSpace] ?? 0) + 1
-        fallbackStreakByColorSpace[colorSpace] = streak
-        CGVirtualDisplayBridge.clearPreferredDescriptorProfile(for: colorSpace)
-        MirageLogger.host("Virtual display non-Retina fallback streak for \(colorSpace.displayName): \(streak)")
-
-        let rotationThreshold = 3
-        if streak >= rotationThreshold {
-            CGVirtualDisplayBridge.invalidatePersistentSerial(for: colorSpace)
-            fallbackStreakByColorSpace[colorSpace] = 0
-            MirageLogger.host("Virtual display fallback streak reached threshold; serial slot rotated")
-        }
     }
 
     func notifyGenerationChangeIfNeeded(previousGeneration: UInt64) {
@@ -431,12 +252,6 @@ extension SharedVirtualDisplayManager {
             displayRef: display.displayRef
         )
 
-        cacheKnownGoodRetinaResolutionIfNeeded(
-            newResolution,
-            scaleFactor: updatedScaleFactor,
-            colorSpace: colorSpace
-        )
-
         await MainActor.run {
             VirtualDisplayKeepaliveController.shared.update(displayID: display.displayID)
         }
@@ -481,68 +296,34 @@ extension SharedVirtualDisplayManager {
 
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
         let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
-        let fallbackPlan = Self.fallbackAttemptPlan(for: normalizedRequested)
-        var attempts: [DisplayCreationAttempt] = []
-        if let cachedFallback = cachedFallbackAttempt(
-            requestedResolution: normalizedRequested,
-            refreshRate: refreshRate,
-            requestedColorSpace: colorSpace
-        ) {
-            attempts.append(cachedFallback)
-        }
-        let requestedRetina = fallbackPlan.first(where: { $0.rung == "requested-retina" })
-        let requestedOneX = fallbackPlan.first(where: { $0.rung == "requested-1x" })
-        let closestCandidates = fallbackPlan.filter { $0.rung.hasPrefix("closest-") }
+        let fallback1x = Self.fallbackResolution(for: normalizedRequested)
 
-        let rungCandidates: [DisplayFallbackCandidate] = {
-            var ordered: [DisplayFallbackCandidate] = []
-            if let requestedRetina {
-                ordered.append(requestedRetina)
-            }
-            for candidateColorSpace in colorFallbackOrder {
-                if let cachedRetina = knownGoodRetinaCandidate(
-                    requestedResolution: normalizedRequested,
-                    colorSpace: candidateColorSpace,
-                    allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
-                ),
-                    needsResize(currentResolution: cachedRetina, targetResolution: normalizedRequested) {
-                    ordered.append(
-                        DisplayFallbackCandidate(
-                            resolution: cachedRetina,
-                            hiDPI: true,
-                            rung: "cached-retina-\(candidateColorSpace.rawValue)"
-                        )
-                    )
-                }
-            }
-            if let requestedOneX {
-                ordered.append(requestedOneX)
-            }
-            ordered.append(contentsOf: closestCandidates)
-            return ordered
-        }()
-
-        // Build attempts rung-first so strict-P3 failures fall through to sRGB quickly at the same resolution.
-        for rung in rungCandidates {
-            for candidateColorSpace in colorFallbackOrder {
-                attempts.append(
-                    DisplayCreationAttempt(
-                        resolution: rung.resolution,
-                        hiDPI: rung.hiDPI,
-                        colorSpace: candidateColorSpace,
-                        label: "\(rung.rung)-\(candidateColorSpace.rawValue)"
-                    )
-                )
-            }
-        }
-
+        // Build attempt list: retina at requested size, then 1x fallback, across color spaces.
         var dedupedAttempts: [DisplayCreationAttempt] = []
         var seenAttemptKeys = Set<String>()
-        for attempt in attempts {
+
+        func appendAttempt(_ attempt: DisplayCreationAttempt) {
             let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")-\(attempt.colorSpace.rawValue)"
             if seenAttemptKeys.insert(key).inserted {
                 dedupedAttempts.append(attempt)
             }
+        }
+
+        for candidateColorSpace in colorFallbackOrder {
+            appendAttempt(DisplayCreationAttempt(
+                resolution: normalizedRequested,
+                hiDPI: true,
+                colorSpace: candidateColorSpace,
+                label: "requested-retina-\(candidateColorSpace.rawValue)"
+            ))
+        }
+        for candidateColorSpace in colorFallbackOrder {
+            appendAttempt(DisplayCreationAttempt(
+                resolution: fallback1x,
+                hiDPI: false,
+                colorSpace: candidateColorSpace,
+                label: "requested-1x-\(candidateColorSpace.rawValue)"
+            ))
         }
 
         for attempt in dedupedAttempts {
@@ -652,42 +433,9 @@ extension SharedVirtualDisplayManager {
                 createdAt: Date(),
                 displayRef: UncheckedSendableBox(displayContext.display)
             )
-            let resolvedIsRetina = displayScaleFactor > 1.5
-            let resolvedMatchesRequestedResolution = !needsResize(
-                currentResolution: validatedPixelResolution,
-                targetResolution: normalizedRequested
-            )
-            let resolvedMatchesRequestedColor = managedContext.colorSpace == colorSpace
-            let resolvedUsesFallback = !resolvedIsRetina || !resolvedMatchesRequestedResolution || !resolvedMatchesRequestedColor
-            if resolvedUsesFallback {
-                cacheFallbackOutcome(
-                    requestedResolution: normalizedRequested,
-                    refreshRate: refreshRate,
-                    requestedColorSpace: colorSpace,
-                    resolvedResolution: validatedPixelResolution,
-                    resolvedScaleFactor: displayScaleFactor,
-                    resolvedColorSpace: managedContext.colorSpace,
-                    rungLabel: attempt.label
-                )
-            } else {
-                clearCachedFallbackOutcome(
-                    requestedResolution: normalizedRequested,
-                    refreshRate: refreshRate,
-                    requestedColorSpace: colorSpace
-                )
-            }
-
             if !attempt.hiDPI {
                 MirageLogger.host(
                     "Created shared virtual display using non-Retina fallback at \(Int(validatedPixelResolution.width))x\(Int(validatedPixelResolution.height)) px, color=\(attempt.colorSpace.displayName)"
-                )
-                registerFallbackEvent(for: attempt.colorSpace)
-            } else {
-                resetFallbackStreak(for: attempt.colorSpace)
-                cacheKnownGoodRetinaResolutionIfNeeded(
-                    validatedPixelResolution,
-                    scaleFactor: displayScaleFactor,
-                    colorSpace: attempt.colorSpace
                 )
             }
 

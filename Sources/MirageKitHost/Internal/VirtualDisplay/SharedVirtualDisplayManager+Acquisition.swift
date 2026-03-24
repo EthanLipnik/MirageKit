@@ -13,6 +13,84 @@ import CoreGraphics
 import Foundation
 
 extension SharedVirtualDisplayManager {
+    // MARK: - App Stream Shared Display
+
+    /// Acquires the shared app-stream virtual display, creating it on first call.
+    /// Increments the consumer reference count. Resizes only if the preset changed.
+    func acquireAppStreamDisplay(
+        preset: MirageDisplaySizePreset = .standard,
+        refreshRate: Int = 60,
+        colorSpace: MirageColorSpace
+    )
+    async throws -> DisplaySnapshot {
+        let targetRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: refreshRate)
+
+        if let existing = appStreamDisplay {
+            appStreamConsumerCount += 1
+            if preset != appStreamPreset {
+                MirageLogger.host(
+                    "App stream display preset changed \(appStreamPreset.displayName) → \(preset.displayName); resizing"
+                )
+                let newResolution = preset.pixelResolution
+                if let updated = await updateDisplayInPlace(
+                    display: existing,
+                    newResolution: newResolution,
+                    refreshRate: targetRefreshRate,
+                    colorSpace: colorSpace
+                ) {
+                    appStreamDisplay = updated
+                    appStreamPreset = preset
+                    return snapshot(from: updated)
+                }
+                // In-place update failed; recreate
+                let recreated = try await recreateDisplay(
+                    from: existing,
+                    newResolution: newResolution,
+                    refreshRate: targetRefreshRate,
+                    colorSpace: colorSpace,
+                    displayNameOverride: "Mirage App Stream",
+                    allowAspectMismatchRetinaCandidate: false,
+                    preferFastRecreate: true
+                )
+                appStreamDisplay = recreated
+                appStreamPreset = preset
+                return snapshot(from: recreated)
+            }
+            MirageLogger.host("Reusing app stream display (consumers: \(appStreamConsumerCount))")
+            return snapshot(from: existing)
+        }
+
+        // First consumer — create the display
+        let resolution = preset.pixelResolution
+        MirageLogger.host(
+            "Creating app stream display at \(Int(resolution.width))x\(Int(resolution.height)) px (\(preset.displayName)), refresh=\(targetRefreshRate)Hz"
+        )
+        let created = try await createDisplay(
+            resolution: resolution,
+            refreshRate: targetRefreshRate,
+            colorSpace: colorSpace,
+            displayNameOverride: "Mirage App Stream",
+            allowAspectMismatchRetinaCandidate: false
+        )
+        appStreamDisplay = created
+        appStreamPreset = preset
+        appStreamConsumerCount = 1
+        return snapshot(from: created)
+    }
+
+    /// Decrements the app-stream consumer reference count, destroying when zero.
+    func releaseAppStreamDisplay() async {
+        appStreamConsumerCount = max(0, appStreamConsumerCount - 1)
+        if appStreamConsumerCount > 0 {
+            MirageLogger.host("App stream display released (remaining consumers: \(appStreamConsumerCount))")
+            return
+        }
+        guard let display = appStreamDisplay else { return }
+        MirageLogger.host("Destroying app stream display \(display.displayID) (no consumers)")
+        appStreamDisplay = nil
+        await destroyDisplay(display)
+    }
+
     // MARK: - Dedicated Stream Displays
 
     func acquireDedicatedDisplay(

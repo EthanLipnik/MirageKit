@@ -72,7 +72,8 @@ public extension MirageClientService {
         encoderOverrides: MirageEncoderOverrides? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
-        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow
+        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy = .prioritizeActiveWindow,
+        sizePreset: MirageDisplaySizePreset? = nil
     )
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
@@ -102,7 +103,8 @@ public extension MirageClientService {
             streamScale: clampedStreamScale(),
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
-            bitrateAllocationPolicy: bitrateAllocationPolicy
+            bitrateAllocationPolicy: bitrateAllocationPolicy,
+            sizePreset: sizePreset
         )
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()

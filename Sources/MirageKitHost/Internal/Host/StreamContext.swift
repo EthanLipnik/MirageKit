@@ -62,6 +62,9 @@ actor StreamContext {
     /// Window capture engine (used for window and virtual-display modes).
     var captureEngine: WindowCaptureEngine?
 
+    /// Active auxiliary window captures keyed by host window ID.
+    var auxiliaryCaptures: [WindowID: AuxiliaryCaptureContext] = [:]
+
     // Virtual display components (provides window isolation)
     // Uses SharedVirtualDisplayManager dedicated stream displays.
     var virtualDisplayContext: SharedVirtualDisplayManager.DisplaySnapshot?

@@ -20,9 +20,7 @@ actor SharedVirtualDisplayManager {
 
     static let shared = SharedVirtualDisplayManager()
 
-    private init() {
-        fallbackOutcomeByCondition = Self.loadFallbackOutcomeCache()
-    }
+    private init() {}
 
     // MARK: - Types
 
@@ -133,21 +131,22 @@ actor SharedVirtualDisplayManager {
     /// Monotonic display generation incremented when the shared display instance changes.
     var displayGeneration: UInt64 = 0
 
-    /// Consecutive non-Retina fallback streak by color space.
-    var fallbackStreakByColorSpace: [MirageColorSpace: Int] = [:]
-
     /// Cached observed inset pixels keyed by color-space + display scale.
     var dedicatedInsetsByKey: [DedicatedInsetCacheKey: CGSize] = [:]
 
-    /// Last successfully validated Retina pixel resolution by color space.
-    /// Used as an optional fallback candidate when nearby requests fail.
-    var lastKnownGoodRetinaResolutionByColorSpace: [MirageColorSpace: CGSize] = [:]
-
-    /// Persisted fallback outcomes keyed by requested display conditions.
-    var fallbackOutcomeByCondition: [DisplayFallbackCondition: DisplayFallbackOutcome] = [:]
-
     /// Display IDs that remained online after explicit invalidation + timeout.
     var orphanedDisplayIDs: Set<CGDirectDisplayID> = []
+
+    // MARK: - App Stream Shared Display
+
+    /// Single shared virtual display for all app-stream windows.
+    var appStreamDisplay: ManagedDisplayContext?
+
+    /// Size preset currently backing the app stream display.
+    var appStreamPreset: MirageDisplaySizePreset = .standard
+
+    /// Number of active app streams using the shared display (reference counting).
+    var appStreamConsumerCount: Int = 0
 
     /// Handler invoked when the shared display generation changes while streams are active.
     var generationChangeHandler: (@Sendable (DisplaySnapshot, UInt64) -> Void)?

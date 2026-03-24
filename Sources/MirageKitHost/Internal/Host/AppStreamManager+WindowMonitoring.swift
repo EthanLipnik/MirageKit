@@ -61,6 +61,8 @@ extension AppStreamManager {
                 let visibleWindowIDs = Set(session.windowStreams.keys)
                 var updatedKnownWindowIDs = knownWindowIDs
 
+                var currentAuxiliaryWindowIDs = Set<WindowID>()
+
                 for candidate in candidates {
                     let windowID = candidate.window.id
                     let wasKnown = updatedKnownWindowIDs.contains(windowID)
@@ -70,10 +72,13 @@ extension AppStreamManager {
 
                     switch candidate.classification {
                     case .auxiliary:
-                        if !wasKnown {
+                        currentAuxiliaryWindowIDs.insert(windowID)
+                        let previouslyKnown = knownAuxiliaryWindowIDs[bundleID]?.contains(windowID) ?? false
+                        if !previouslyKnown {
                             logger.info(
-                                "Detected auxiliary window (parent-coupled): \(candidate.window.displayName) for \(bundleID) (\(windowID), \(candidate.logMetadata))"
+                                "Detected auxiliary window: \(candidate.window.displayName) for \(bundleID) (\(windowID), \(candidate.logMetadata))"
                             )
+                            await onAuxiliaryWindowDetected?(bundleID, candidate)
                         }
                         continue
                     case .primary:
@@ -99,6 +104,15 @@ extension AppStreamManager {
                     )
                     await onNewWindowDetected?(bundleID, candidate)
                 }
+
+                // Detect auxiliary windows that disappeared since the last scan.
+                let previousAuxiliaryIDs = knownAuxiliaryWindowIDs[bundleID] ?? []
+                let closedAuxiliaryIDs = previousAuxiliaryIDs.subtracting(currentAuxiliaryWindowIDs)
+                for windowID in closedAuxiliaryIDs.sorted(by: <) {
+                    logger.info("Auxiliary window closed: \(windowID) for \(bundleID)")
+                    await onAuxiliaryWindowClosed?(bundleID, windowID)
+                }
+                knownAuxiliaryWindowIDs[bundleID] = currentAuxiliaryWindowIDs
 
                 sessions[bundleID]?.knownWindowIDs = updatedKnownWindowIDs
 

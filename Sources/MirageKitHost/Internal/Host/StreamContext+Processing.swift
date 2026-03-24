@@ -546,7 +546,6 @@ extension StreamContext {
         geometry: HostTrafficLightMaskGeometryResolver.ResolvedGeometry
     ) {
         guard case let .skipped(reason) = result else { return }
-        guard reason != .hiddenTrafficLights else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
         if now - lastTrafficLightMaskLogTime < trafficLightMaskLogInterval {

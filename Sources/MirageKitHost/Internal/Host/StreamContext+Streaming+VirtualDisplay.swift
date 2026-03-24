@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Virtual display streaming paths.
+//  Window capture on a shared virtual display.
 //
 
 import Foundation
@@ -14,42 +14,24 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
-    private struct VirtualDisplayPlacement: Sendable {
-        let snapshot: SharedVirtualDisplayManager.DisplaySnapshot
-        let visibleBounds: CGRect
-        let captureSourceRect: CGRect
-        let visiblePixelResolution: CGSize
-        let insetsPixels: CGSize
-    }
-
-    enum VirtualDisplayResizeError: LocalizedError {
-        case rollbackFailed(streamID: StreamID, reason: String)
-
-        var errorDescription: String? {
-            switch self {
-            case let .rollbackFailed(streamID, reason):
-                "Virtual display resize rollback failed for stream \(streamID): \(reason)"
-            }
-        }
-    }
-
-    func startWithVirtualDisplay(
-        windowWrapper _: SCWindowWrapper,
+    /// Starts window capture on the shared app-stream virtual display.
+    ///
+    /// The shared display provides a known-good Retina backing at a fixed resolution.
+    /// The window is moved to that display, resized to match the client's requested
+    /// logical size, and captured individually via `desktopIndependentWindow`.
+    func startWithWindowCapture(
+        windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
-        clientDisplayResolution: CGSize,
+        clientLogicalSize: CGSize,
+        sizePreset: MirageDisplaySizePreset,
         onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void,
         onContentBoundsChanged: @escaping @Sendable (CGRect) -> Void,
-        onNewWindowDetected: @escaping @Sendable (MirageWindow) -> Void,
-        onVirtualDisplayReady: @escaping @Sendable (SharedVirtualDisplayManager.DisplaySnapshot, CGRect) async -> Void = {
-            _, _ in
-        }
+        onNewWindowDetected: @escaping @Sendable (MirageWindow) -> Void
     )
-        async throws {
+    async throws {
         guard !isRunning else { return }
         isRunning = true
         useVirtualDisplay = true
-        // Keep the virtual display at the target refresh so capture stays aligned.
-        let virtualDisplayRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate)
         captureFrameRateOverride = currentFrameRate
         captureFrameRate = currentFrameRate
 
@@ -59,67 +41,95 @@ extension StreamContext {
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
-        onEncodedPacket = onEncodedFrame
         self.onContentBoundsChanged = onContentBoundsChanged
         self.onNewWindowDetected = onNewWindowDetected
-        let packetSender = StreamPacketSender(
-            maxPayloadSize: maxPayloadSize,
-            mediaSecurityContext: mediaSecurityContext,
-            onEncodedFrame: onEncodedFrame
+        await setupPacketSender(onEncodedFrame: onEncodedFrame)
+
+        // 1. Acquire the shared app-stream virtual display
+        let colorSpace = encoderConfig.colorSpace
+        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate)
+        let vdSnapshot = try await SharedVirtualDisplayManager.shared.acquireAppStreamDisplay(
+            preset: sizePreset,
+            refreshRate: refreshRate,
+            colorSpace: colorSpace
         )
-        self.packetSender = packetSender
-        await packetSender.start()
-        await packetSender.setTargetBitrateBps(encoderConfig.bitrate)
+        virtualDisplayContext = vdSnapshot
 
-        MirageLogger
-            .stream(
-                "Starting stream \(streamID) with dedicated virtual display at \(Int(clientDisplayResolution.width))x\(Int(clientDisplayResolution.height))"
-            )
-
-        let placement = try await configureDedicatedVirtualDisplay(
-            requestedVisibleResolution: clientDisplayResolution,
-            refreshRate: virtualDisplayRefreshRate,
-            isUpdate: false
+        MirageLogger.stream(
+            "Stream \(streamID) acquired shared app-stream display \(vdSnapshot.displayID) " +
+            "(\(sizePreset.displayName), \(Int(vdSnapshot.resolution.width))x\(Int(vdSnapshot.resolution.height)) @\(vdSnapshot.scaleFactor)x)"
         )
-        let vdContext = placement.snapshot
-        virtualDisplayContext = vdContext
 
-        await onVirtualDisplayReady(vdContext, placement.visibleBounds)
+        // 2. Compute window size and resolve visible bounds
+        let scaleFactor = max(1.0, vdSnapshot.scaleFactor)
+        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+            for: vdSnapshot.resolution,
+            scaleFactor: scaleFactor
+        )
+        let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+            vdSnapshot.displayID,
+            knownResolution: logicalResolution
+        )
+        let visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            vdSnapshot.displayID,
+            knownBounds: displayBounds
+        )
+        let effectiveVisibleBounds = visibleBounds.isEmpty ? displayBounds : visibleBounds.intersection(displayBounds)
+        let targetWindowSize = Self.aspectFitSize(
+            requested: clientLogicalSize,
+            maxBounds: effectiveVisibleBounds.size
+        )
+        MirageLogger.stream(
+            "Stream \(streamID) window target: \(Int(targetWindowSize.width))x\(Int(targetWindowSize.height)) " +
+            "(client requested \(Int(clientLogicalSize.width))x\(Int(clientLogicalSize.height)), " +
+            "display visible \(Int(effectiveVisibleBounds.width))x\(Int(effectiveVisibleBounds.height)))"
+        )
 
+        // 3. Move window to the shared display's space.
+        //    Pass the target window size as placement bounds.
+        let clientAspectRatio = clientLogicalSize.width > 0 && clientLogicalSize.height > 0
+            ? clientLogicalSize.width / clientLogicalSize.height
+            : nil
+        let windowPlacementBounds = CGRect(
+            origin: effectiveVisibleBounds.origin,
+            size: targetWindowSize
+        )
         try await WindowSpaceManager.shared.moveWindow(
             windowID,
-            toSpaceID: vdContext.spaceID,
-            displayID: vdContext.displayID,
-            displayBounds: placement.visibleBounds,
-            targetContentAspectRatio: requestedAspectRatioForWindowFit(
-                requestedPixelResolution: clientDisplayResolution,
-                visiblePixelResolution: placement.visiblePixelResolution,
-                displayPixelResolution: placement.snapshot.resolution
-            ),
+            toSpaceID: vdSnapshot.spaceID,
+            displayID: vdSnapshot.displayID,
+            displayBounds: windowPlacementBounds,
+            targetContentAspectRatio: clientAspectRatio,
             owner: WindowSpaceManager.WindowBindingOwner(
                 streamID: streamID,
                 windowID: windowID,
-                displayID: vdContext.displayID,
-                generation: vdContext.generation
+                displayID: vdSnapshot.displayID,
+                generation: vdSnapshot.generation
             )
         )
 
-        let resolvedDisplayWrapper = try await resolveVirtualDisplayDisplay(
-            displayID: vdContext.displayID,
-            label: "virtual display start"
+        // 4. Iteratively resize window to match target aspect ratio
+        await iterativelyResizeWindow(
+            windowID: windowID,
+            targetSize: targetWindowSize,
+            aspectRatio: clientAspectRatio,
+            maxBounds: effectiveVisibleBounds.size,
+            label: "startup"
         )
 
-        let resolvedDisplayID = resolvedDisplayWrapper.display.displayID
-        if !CGVirtualDisplayBridge.isMirageDisplay(resolvedDisplayID) {
-            MirageLogger.error(.stream, "Expected virtual display capture, got display \(resolvedDisplayID)")
-        }
-        MirageLogger
-            .stream(
-                "Resolved display capture target \(resolvedDisplayID) sourceRect=\(placement.captureSourceRect)"
-            )
+        // 4. Resolve SCWindow and SCDisplay for capture
+        let resolvedWindowWrapper = try await resolveSCWindowWrapper(
+            windowID: windowID,
+            label: "window capture start"
+        )
+        let resolvedDisplayWrapper = try await resolveSCDisplayWrapper(
+            displayID: vdSnapshot.displayID,
+            label: "window capture start"
+        )
 
-        applyVirtualDisplayPlacementState(placement)
-        baseCaptureSize = placement.visiblePixelResolution
+        // 5. Configure capture dimensions from actual window frame
+        let captureTarget = streamTargetDimensions(windowFrame: resolvedWindowWrapper.window.frame)
+        baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
             requestedScale: requestedStreamScale,
@@ -128,33 +138,29 @@ extension StreamContext {
         let outputSize = scaledOutputSize(for: baseCaptureSize)
         currentCaptureSize = outputSize
         currentEncodedSize = outputSize
-        captureMode = .display
-        lastWindowFrame = placement.visibleBounds
+        captureMode = .window
+        lastWindowFrame = resolvedWindowWrapper.window.frame
         updateQueueLimits()
-        await applyDerivedQuality(for: outputSize, logLabel: "Virtual display init")
+        await applyDerivedQuality(for: outputSize, logLabel: "Window capture init")
         MirageLogger.stream(
-            "Virtual display init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
+            "Window capture init: latency=\(latencyMode.displayName), scale=\(streamScale), " +
+            "encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
         )
 
+        // 6. Create encoder and start capture
         try await createAndPreheatEncoder(
             streamKind: .window,
             width: Int(outputSize.width),
             height: Int(outputSize.height)
         )
-        MirageLogger.encoder(
-            "Encoder created at scaled dimensions \(Int(outputSize.width))x\(Int(outputSize.height)) (visible target \(Int(baseCaptureSize.width))x\(Int(baseCaptureSize.height)))"
-        )
+        await startEncoderWithSharedCallback(pinnedContentRect: nil, logPrefix: "Frame")
 
-        let fullFrameRect = CGRect(x: 0, y: 0, width: outputSize.width, height: outputSize.height)
-        await startEncoderWithSharedCallback(pinnedContentRect: fullFrameRect, logPrefix: "VD Frame")
-
-        let captureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: true)
-        try await captureEngine.startDisplayCapture(
+        let captureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: false)
+        try await captureEngine.startCapture(
+            window: resolvedWindowWrapper.window,
+            application: applicationWrapper.application,
             display: resolvedDisplayWrapper.display,
-            resolution: outputSize,
-            sourceRect: placement.captureSourceRect,
-            contentWindowID: windowID,
-            showsCursor: false,
+            outputScale: streamScale,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },
@@ -163,228 +169,280 @@ extension StreamContext {
         )
         await refreshCaptureCadence()
 
-        MirageLogger
-            .stream("Started stream \(streamID) with virtual display \(vdContext.displayID) for window \(windowID)")
+        MirageLogger.stream(
+            "Started stream \(streamID) with window capture on shared display \(vdSnapshot.displayID) for window \(windowID)"
+        )
     }
 
-    func updateVirtualDisplayResolution(newResolution: CGSize) async throws {
+    /// Updates window size for a resolution change (no virtual display reconfiguration needed).
+    func updateWindowCaptureResolution(newLogicalSize: CGSize) async throws {
         guard isRunning, useVirtualDisplay else { return }
-        let requestedPixels = sanitizePixelResolution(newResolution)
-        let currentVisiblePixels = virtualDisplayVisiblePixelResolution == .zero
-            ? baseCaptureSize
-            : virtualDisplayVisiblePixelResolution
-        let currentDisplayPixels = virtualDisplayContext?.resolution ?? .zero
 
-        // Client drawable/layout updates can produce repeated display-size notifications with
-        // effectively unchanged visible resolution. Reconfiguring the dedicated virtual display
-        // in that case can introduce avoidable capture restarts and transient blank frames.
-        let visibleMatches = currentVisiblePixels != .zero &&
-            isResolutionMatch(currentVisiblePixels, requestedPixels, tolerance: 4.0)
-        let displayMatches = currentDisplayPixels != .zero &&
-            isResolutionMatch(currentDisplayPixels, requestedPixels, tolerance: 4.0)
-        if visibleMatches || displayMatches {
-            let matchedResolution = if displayMatches { currentDisplayPixels } else { currentVisiblePixels }
-            MirageLogger
-                .stream(
-                    "Skipping dedicated virtual display update for stream \(streamID): requested size unchanged (\(Int(matchedResolution.width))x\(Int(matchedResolution.height)))"
-                )
+        let currentSize = baseCaptureSize
+        let requestedPixels = CGSize(
+            width: max(1, ceil(newLogicalSize.width * 2)),
+            height: max(1, ceil(newLogicalSize.height * 2))
+        )
+        guard abs(currentSize.width - requestedPixels.width) > 4
+            || abs(currentSize.height - requestedPixels.height) > 4 else {
+            MirageLogger.stream(
+                "Skipping window resize for stream \(streamID): size unchanged"
+            )
             return
         }
-
-        let previousDisplaySnapshot = virtualDisplayContext
-        let previousVisibleBounds = virtualDisplayVisibleBounds
-        let previousCaptureSourceRect = virtualDisplayCaptureSourceRect
-        let previousVisiblePixelResolution = virtualDisplayVisiblePixelResolution
-        let previousBaseCaptureSize = baseCaptureSize
-        let previousCaptureSize = currentCaptureSize
-        let previousEncodedSize = currentEncodedSize
-        let previousLastWindowFrame = lastWindowFrame
-        let previousStreamScale = streamScale
 
         isResizing = true
         defer { isResizing = false }
 
         currentContentRect = .zero
-
         dimensionToken &+= 1
-        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
-        advanceEpoch(reason: "virtual display resize")
-        await packetSender?.bumpGeneration(reason: "virtual display resize")
-        await packetSender?.resetQueue(reason: "virtual display resize")
-        resetPipelineStateForReconfiguration(reason: "virtual display resize")
+        advanceEpoch(reason: "window resize")
+        await packetSender?.bumpGeneration(reason: "window resize")
+        await packetSender?.resetQueue(reason: "window resize")
+        resetPipelineStateForReconfiguration(reason: "window resize")
 
-        MirageLogger
-            .stream(
-                "Updating dedicated virtual display for client resolution \(Int(newResolution.width))x\(Int(newResolution.height)) (frames paused)"
+        // Aspect-fit the requested size into the virtual display's visible bounds
+        let effectiveSize: CGSize
+        let maxBounds: CGSize
+        if let vdContext = virtualDisplayContext {
+            let scale = max(1.0, vdContext.scaleFactor)
+            let logicalRes = SharedVirtualDisplayManager.logicalResolution(
+                for: vdContext.resolution, scaleFactor: scale
             )
+            let dBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                vdContext.displayID, knownResolution: logicalRes
+            )
+            let vBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+                vdContext.displayID, knownBounds: dBounds
+            )
+            let visible = vBounds.isEmpty ? dBounds : vBounds.intersection(dBounds)
+            maxBounds = visible.size
+            effectiveSize = Self.aspectFitSize(requested: newLogicalSize, maxBounds: maxBounds)
+        } else {
+            maxBounds = newLogicalSize
+            effectiveSize = newLogicalSize
+        }
 
+        let clientAspectRatio = newLogicalSize.width > 0 && newLogicalSize.height > 0
+            ? newLogicalSize.width / newLogicalSize.height
+            : nil
+
+        MirageLogger.stream(
+            "Resizing window for stream \(streamID) to \(Int(effectiveSize.width))x\(Int(effectiveSize.height)) logical " +
+            "(client requested \(Int(newLogicalSize.width))x\(Int(newLogicalSize.height)))"
+        )
+
+        // Stop capture before resizing
         await captureEngine?.stopCapture()
-        do {
-            let placement = try await configureDedicatedVirtualDisplay(
-                requestedVisibleResolution: requestedPixels,
-                refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate),
-                isUpdate: true
+
+        // Iteratively resize the window to match target aspect ratio
+        await iterativelyResizeWindow(
+            windowID: windowID,
+            targetSize: effectiveSize,
+            aspectRatio: clientAspectRatio,
+            maxBounds: maxBounds,
+            label: "resize"
+        )
+
+        // Brief pause for the window to settle
+        try? await Task.sleep(for: .milliseconds(80))
+
+        // Re-resolve the SCWindow and display for new capture
+        let resolvedWindowWrapper = try await resolveSCWindowWrapper(
+            windowID: windowID,
+            label: "window resize"
+        )
+        let windowFrame = resolvedWindowWrapper.window.frame
+
+        let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
+        baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
+        streamScale = resolvedStreamScale(
+            for: baseCaptureSize,
+            requestedScale: requestedStreamScale,
+            logLabel: "Resolution cap"
+        )
+        let outputSize = scaledOutputSize(for: baseCaptureSize)
+        currentCaptureSize = outputSize
+        currentEncodedSize = outputSize
+        lastWindowFrame = windowFrame
+        updateQueueLimits()
+
+        if let encoder {
+            try await encoder.updateDimensions(
+                width: Int(outputSize.width),
+                height: Int(outputSize.height)
             )
-            let newContext = placement.snapshot
-            virtualDisplayContext = newContext
-            applyVirtualDisplayPlacementState(placement)
-
-            try await WindowSpaceManager.shared.moveWindow(
-                windowID,
-                toSpaceID: newContext.spaceID,
-                displayID: newContext.displayID,
-                displayBounds: placement.visibleBounds,
-                targetContentAspectRatio: requestedAspectRatioForWindowFit(
-                    requestedPixelResolution: requestedPixels,
-                    visiblePixelResolution: placement.visiblePixelResolution,
-                    displayPixelResolution: placement.snapshot.resolution
-                ),
-                owner: WindowSpaceManager.WindowBindingOwner(
-                    streamID: streamID,
-                    windowID: windowID,
-                    displayID: newContext.displayID,
-                    generation: newContext.generation
-                )
+            try await encoder.reset()
+            activePixelFormat = await encoder.getActivePixelFormat()
+            MirageLogger.encoder(
+                "Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for window resize"
             )
+        }
 
-            let resolvedDisplayWrapper = try await resolveVirtualDisplayDisplay(
-                displayID: newContext.displayID,
-                label: "virtual display update"
+        await applyDerivedQuality(for: outputSize, logLabel: "Window resize")
+
+        // Restart capture with the new window dimensions
+        guard let vdContext = virtualDisplayContext else {
+            MirageLogger.error(.stream, "No virtual display context during window resize for stream \(streamID)")
+            return
+        }
+        let resolvedDisplayWrapper = try await resolveSCDisplayWrapper(
+            displayID: vdContext.displayID,
+            label: "window resize"
+        )
+        let newCaptureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: false)
+        try await newCaptureEngine.startCapture(
+            window: resolvedWindowWrapper.window,
+            application: resolvedWindowWrapper.window.owningApplication!,
+            display: resolvedDisplayWrapper.display,
+            outputScale: streamScale,
+            onFrame: { [weak self] frame in
+                self?.enqueueCapturedFrame(frame)
+            },
+            onAudio: onCapturedAudioBuffer,
+            audioChannelCount: requestedAudioChannelCount
+        )
+        await refreshCaptureCadence()
+        await encoder?.forceKeyframe()
+
+        MirageLogger.stream("Window resize complete for stream \(streamID)")
+    }
+
+    // MARK: - SCK Resolution Helpers
+
+    // MARK: - Aspect-Fit Sizing
+
+    /// Compute the largest size that fits `maxBounds` while preserving the aspect ratio of `requested`.
+    static func aspectFitSize(requested: CGSize, maxBounds: CGSize) -> CGSize {
+        let rW = requested.width
+        let rH = requested.height
+        guard rW > 0, rH > 0, maxBounds.width > 0, maxBounds.height > 0 else {
+            return CGSize(width: max(200, maxBounds.width), height: max(200, maxBounds.height))
+        }
+        let fs: CGFloat = (rW <= maxBounds.width && rH <= maxBounds.height)
+            ? 1.0
+            : min(maxBounds.width / rW, maxBounds.height / rH)
+        return CGSize(
+            width: max(200, (rW * fs).rounded(.down)),
+            height: max(200, (rH * fs).rounded(.down))
+        )
+    }
+
+    /// Iteratively resize the window to match the target aspect ratio.
+    /// Starts at `targetSize` and shrinks proportionally if the app rejects the size.
+    /// Gives up after a few attempts — the window will be whatever the app accepted.
+    private func iterativelyResizeWindow(
+        windowID: WindowID,
+        targetSize: CGSize,
+        aspectRatio: CGFloat?,
+        maxBounds: CGSize,
+        label: String
+    ) async {
+        let ar = aspectRatio ?? (targetSize.width / max(1, targetSize.height))
+        var candidateW = targetSize.width
+        var candidateH = targetSize.height
+        let maxAttempts = 4
+
+        for attempt in 1 ... maxAttempts {
+            let candidate = CGSize(
+                width: max(200, candidateW.rounded(.down)),
+                height: max(200, candidateH.rounded(.down))
             )
+            await WindowSpaceManager.shared.resizeWindow(windowID, to: candidate)
 
-            baseCaptureSize = placement.visiblePixelResolution
-            streamScale = resolvedStreamScale(
-                for: baseCaptureSize,
-                requestedScale: requestedStreamScale,
-                logLabel: "Resolution cap"
-            )
-            let outputSize = scaledOutputSize(for: baseCaptureSize)
-            currentCaptureSize = outputSize
-            currentEncodedSize = outputSize
-            captureMode = .display
-            lastWindowFrame = placement.visibleBounds
-            updateQueueLimits()
-            if let encoder {
-                try await encoder.updateDimensions(
-                    width: Int(outputSize.width),
-                    height: Int(outputSize.height)
-                )
-                try await encoder.reset()
-                let resolvedPixelFormat = await encoder.getActivePixelFormat()
-                activePixelFormat = resolvedPixelFormat
-                MirageLogger
-                    .encoder("Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for resolution change")
-            }
+            // Brief settle
+            try? await Task.sleep(for: .milliseconds(30))
 
-            await applyDerivedQuality(for: outputSize, logLabel: "Virtual display resize")
+            // Check actual compositor size via CGWindowList
+            let windowFrame = Self.queryWindowFrame(windowID)
+            if let windowFrame {
+                let actualW = windowFrame.width
+                let actualH = windowFrame.height
+                let actualAR = actualW / max(1, actualH)
+                let arDelta = abs(actualAR - ar) / max(0.001, ar)
 
-            let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
-            let windowCaptureEngine = WindowCaptureEngine(
-                configuration: captureConfig,
-                capturePressureProfile: capturePressureProfile,
-                latencyMode: latencyMode,
-                captureFrameRate: captureFrameRate,
-                usesDisplayRefreshCadence: true
-            )
-            captureEngine = windowCaptureEngine
-
-            try await windowCaptureEngine.startDisplayCapture(
-                display: resolvedDisplayWrapper.display,
-                resolution: outputSize,
-                sourceRect: placement.captureSourceRect,
-                contentWindowID: windowID,
-                showsCursor: false,
-                onFrame: { [weak self] frame in
-                    self?.enqueueCapturedFrame(frame)
-                },
-                onAudio: onCapturedAudioBuffer,
-                audioChannelCount: requestedAudioChannelCount
-            )
-            await refreshCaptureCadence()
-
-            await encoder?.forceKeyframe()
-
-            MirageLogger.stream("Virtual display resolution update complete (frames resumed)")
-        } catch {
-            let originalErrorDescription = error.localizedDescription
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            if let previousDisplaySnapshot {
-                virtualDisplayContext = previousDisplaySnapshot
-                virtualDisplayVisibleBounds = previousVisibleBounds
-                virtualDisplayCaptureSourceRect = previousCaptureSourceRect
-                virtualDisplayVisiblePixelResolution = previousVisiblePixelResolution
-            }
-            baseCaptureSize = previousBaseCaptureSize
-            streamScale = previousStreamScale
-            currentCaptureSize = previousCaptureSize
-            currentEncodedSize = previousEncodedSize
-            captureMode = .display
-            lastWindowFrame = previousLastWindowFrame
-            updateQueueLimits()
-
-            // Best-effort rollback: restore the pre-resize capture pipeline so a failed
-            // resize does not leave the stream black until full teardown.
-            var rollbackRestoredCapture = false
-            if let previousDisplaySnapshot,
-               previousCaptureSourceRect.width > 0,
-               previousCaptureSourceRect.height > 0 {
-                do {
-                    let previousDisplayWrapper = try await resolveVirtualDisplayDisplay(
-                        displayID: previousDisplaySnapshot.displayID,
-                        label: "virtual display update rollback",
-                        maxAttempts: 4,
-                        initialDelayMs: 40
-                    )
-                    let rollbackCaptureSize = if previousCaptureSize.width > 0, previousCaptureSize.height > 0 {
-                        previousCaptureSize
-                    } else {
-                        previousEncodedSize
-                    }
-                    let rollbackConfig = encoderConfig.withInternalOverrides(pixelFormat: activePixelFormat)
-                    let rollbackEngine = WindowCaptureEngine(
-                        configuration: rollbackConfig,
-                        capturePressureProfile: capturePressureProfile,
-                        latencyMode: latencyMode,
-                        captureFrameRate: captureFrameRate,
-                        usesDisplayRefreshCadence: true
-                    )
-                    captureEngine = rollbackEngine
-                    try await rollbackEngine.startDisplayCapture(
-                        display: previousDisplayWrapper.display,
-                        resolution: rollbackCaptureSize,
-                        sourceRect: previousCaptureSourceRect,
-                        contentWindowID: windowID,
-                        showsCursor: false,
-                        onFrame: { [weak self] frame in
-                            self?.enqueueCapturedFrame(frame)
-                        },
-                        onAudio: onCapturedAudioBuffer,
-                        audioChannelCount: requestedAudioChannelCount
-                    )
-                    await refreshCaptureCadence()
-                    await encoder?.forceKeyframe()
-                    rollbackRestoredCapture = true
+                if arDelta < 0.03 {
+                    // Close enough — aspect ratio matches within 3%
                     MirageLogger.stream(
-                        "Virtual display resize failed; restored previous capture pipeline for stream \(streamID)"
+                        "Window \(windowID) accepted \(Int(actualW))x\(Int(actualH)) at attempt \(attempt) " +
+                        "(target AR \(String(format: "%.3f", ar)), actual AR \(String(format: "%.3f", actualAR)), \(label))"
                     )
-                } catch let rollbackError {
-                    MirageLogger.error(
-                        .stream,
-                        error: rollbackError,
-                        message: "Failed to restore previous capture pipeline after resize failure: "
+                    return
+                }
+
+                // App rejected our size — it may have a minimum constraint.
+                // Shrink the limiting dimension while preserving aspect ratio.
+                if attempt < maxAttempts {
+                    // Use the app's actual height (which is the constrained axis) and compute width from AR
+                    if actualH < candidate.height {
+                        // Height was constrained — use it and compute width
+                        candidateH = actualH
+                        candidateW = min(maxBounds.width, actualH * ar)
+                    } else if actualW < candidate.width {
+                        // Width was constrained — use it and compute height
+                        candidateW = actualW
+                        candidateH = min(maxBounds.height, actualW / ar)
+                    } else {
+                        // Both accepted but AR doesn't match — scale down uniformly
+                        candidateW *= 0.92
+                        candidateH *= 0.92
+                    }
+                    MirageLogger.stream(
+                        "Window \(windowID) AR mismatch at \(Int(actualW))x\(Int(actualH)) " +
+                        "(target AR \(String(format: "%.3f", ar)), actual \(String(format: "%.3f", actualAR))), " +
+                        "retrying \(Int(candidateW))x\(Int(candidateH)) (\(label), attempt \(attempt + 1))"
                     )
                 }
+            } else {
+                return // Can't query window, bail
             }
-
-            if rollbackRestoredCapture {
-                throw error
-            }
-            let renderedReason = originalErrorDescription.isEmpty ? String(describing: error) : originalErrorDescription
-            throw VirtualDisplayResizeError.rollbackFailed(streamID: streamID, reason: renderedReason)
         }
     }
 
-    private func resolveVirtualDisplayDisplay(
+    /// Query a window's frame via CGWindowList.
+    private static func queryWindowFrame(_ windowID: WindowID) -> CGRect? {
+        guard let list = CGWindowListCopyWindowInfo([.optionIncludingWindow], CGWindowID(windowID)) as? [[String: Any]],
+              let info = list.first,
+              let boundsDict = info[kCGWindowBounds as String] as? [String: CGFloat] else {
+            return nil
+        }
+        return CGRect(
+            x: boundsDict["X"] ?? 0,
+            y: boundsDict["Y"] ?? 0,
+            width: boundsDict["Width"] ?? 0,
+            height: boundsDict["Height"] ?? 0
+        )
+    }
+
+    // MARK: - SCK Resolution Helpers
+
+    private func resolveSCWindowWrapper(
+        windowID: WindowID,
+        label: String,
+        maxAttempts: Int = 6,
+        initialDelayMs: Int = 60
+    )
+    async throws -> SCWindowWrapper {
+        let attempts = max(1, maxAttempts)
+        var delayMs = max(40, initialDelayMs)
+
+        for attempt in 1 ... attempts {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            if let window = content.windows.first(where: { $0.windowID == CGWindowID(windowID) }) {
+                if attempt > 1 {
+                    MirageLogger.stream("Resolved SCWindow \(windowID) on attempt \(attempt) (\(label))")
+                }
+                return SCWindowWrapper(window: window)
+            }
+            if attempt < attempts {
+                try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                delayMs = min(600, Int(Double(delayMs) * 1.5))
+            }
+        }
+        throw MirageError.protocolError("Unable to resolve SCWindow \(windowID) for stream \(streamID) (\(label))")
+    }
+
+    private func resolveSCDisplayWrapper(
         displayID: CGDirectDisplayID,
         label: String,
         maxAttempts: Int = 8,
@@ -395,418 +453,20 @@ extension StreamContext {
         var delayMs = max(40, initialDelayMs)
 
         for attempt in 1 ... attempts {
-            do {
-                let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-                if let display = content.displays.first(where: { $0.displayID == displayID }) {
-                    if attempt > 1 {
-                        MirageLogger.stream("Resolved virtual display \(displayID) on attempt \(attempt) (\(label))")
-                    }
-                    return SCDisplayWrapper(display: display)
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            if let display = content.displays.first(where: { $0.displayID == displayID }) {
+                if attempt > 1 {
+                    MirageLogger.stream("Resolved SCDisplay \(displayID) on attempt \(attempt) (\(label))")
                 }
-
-                if attempt < attempts {
-                    MirageLogger
-                        .stream(
-                            "Virtual display \(displayID) not yet in SCShareableContent on attempt \(attempt)/\(attempts) (\(label)); retrying in \(delayMs)ms"
-                        )
-                    try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
-                    delayMs = min(1000, Int(Double(delayMs) * 1.6))
-                }
-            } catch {
-                if attempt >= attempts { throw error }
-                MirageLogger.error(
-                    .stream,
-                    "Failed to query SCShareableContent for display \(displayID) (\(label)) attempt \(attempt)/\(attempts): \(error)"
-                )
+                return SCDisplayWrapper(display: display)
+            }
+            if attempt < attempts {
                 try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
                 delayMs = min(1000, Int(Double(delayMs) * 1.6))
             }
         }
-
-        throw MirageError.protocolError("Unable to resolve virtual display \(displayID) for stream \(streamID) (\(label))")
+        throw MirageError.protocolError("Unable to resolve SCDisplay \(displayID) for stream \(streamID) (\(label))")
     }
-
-    private func configureDedicatedVirtualDisplay(
-        requestedVisibleResolution: CGSize,
-        refreshRate: Int,
-        isUpdate: Bool
-    )
-    async throws -> VirtualDisplayPlacement {
-        let requestedPixels = sanitizePixelResolution(requestedVisibleResolution)
-        let colorSpace = encoderConfig.colorSpace
-        let scaleHint = max(1.0, virtualDisplayContext?.scaleFactor ?? 2.0)
-        let cachedInsets = await SharedVirtualDisplayManager.shared.cachedDedicatedInsetsPixels(
-            scaleFactor: scaleHint,
-            colorSpace: colorSpace
-        )
-        let initialDisplayPixels: CGSize
-        if isUpdate {
-            initialDisplayPixels = sanitizePixelResolution(
-                CGSize(
-                    width: requestedPixels.width + cachedInsets.width,
-                    height: requestedPixels.height + cachedInsets.height
-                )
-            )
-        } else if let probeCache = SharedVirtualDisplayManager.loadRetinaProbeCacheIfValid(),
-                  let probedGood = SharedVirtualDisplayManager.closestProbedRetinaResolution(
-                      neededPixelWidth: Int(requestedPixels.width + cachedInsets.width),
-                      neededPixelHeight: Int(requestedPixels.height + cachedInsets.height),
-                      cache: probeCache
-                  ) {
-            // Use a probed-good HiDPI resolution that covers the requested visible area + insets.
-            // This avoids post-creation resize which can fail HiDPI activation and orphan displays.
-            initialDisplayPixels = sanitizePixelResolution(probedGood)
-            MirageLogger.stream(
-                "Virtual display using probed HiDPI resolution \(Int(probedGood.width))x\(Int(probedGood.height)) for requested \(Int(requestedPixels.width))x\(Int(requestedPixels.height)) (insets \(Int(cachedInsets.width))x\(Int(cachedInsets.height)))"
-            )
-        } else {
-            // No probe cache available — use the client-requested display size directly.
-            initialDisplayPixels = requestedPixels
-        }
-
-        func aspectRelativeDelta(_ resolution: CGSize) -> CGFloat {
-            guard resolution.width > 0, resolution.height > 0, requestedPixels.width > 0, requestedPixels.height > 0 else {
-                return .greatestFiniteMagnitude
-            }
-            let requestedAspect = requestedPixels.width / requestedPixels.height
-            let observedAspect = resolution.width / resolution.height
-            guard requestedAspect > 0, observedAspect > 0 else { return .greatestFiniteMagnitude }
-            return abs(requestedAspect - observedAspect) / requestedAspect
-        }
-
-        func logDecision(_ rung: String, placement: VirtualDisplayPlacement) {
-            let requestedAspect = requestedPixels.width / requestedPixels.height
-            let visibleAspect = placement.visiblePixelResolution.width / placement.visiblePixelResolution.height
-            let aspectDelta = abs(requestedAspect - visibleAspect) / requestedAspect
-            let aspectDeltaPercent = Double(aspectDelta * 100.0)
-                .formatted(.number.precision(.fractionLength(3)))
-            MirageLogger.stream(
-                "Virtual display calibration decision stream \(streamID): rung=\(rung), requested=\(Int(requestedPixels.width))x\(Int(requestedPixels.height)), display=\(Int(placement.snapshot.resolution.width))x\(Int(placement.snapshot.resolution.height)), visible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), insets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height)), aspectDelta=\(aspectDeltaPercent)%"
-            )
-        }
-
-        func applyDisplayResolution(_ resolution: CGSize) async throws -> SharedVirtualDisplayManager.DisplaySnapshot {
-            if isUpdate {
-                return try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
-                    for: streamID,
-                    newResolution: resolution,
-                    refreshRate: refreshRate
-                )
-            }
-            return try await SharedVirtualDisplayManager.shared.acquireDedicatedDisplay(
-                for: streamID,
-                resolution: resolution,
-                refreshRate: refreshRate,
-                colorSpace: colorSpace
-            )
-        }
-
-        var snapshot: SharedVirtualDisplayManager.DisplaySnapshot
-        do {
-            snapshot = try await applyDisplayResolution(initialDisplayPixels)
-        } catch {
-            let usedInsetExpansion = !isResolutionMatch(initialDisplayPixels, requestedPixels, tolerance: 1.0)
-            guard usedInsetExpansion else { throw error }
-            MirageLogger.stream(
-                "Dedicated display allocation failed with inset-expanded resolution \(Int(initialDisplayPixels.width))x\(Int(initialDisplayPixels.height)); retrying requested resolution \(Int(requestedPixels.width))x\(Int(requestedPixels.height))"
-            )
-            snapshot = try await applyDisplayResolution(requestedPixels)
-        }
-
-        var placement = await resolveVirtualDisplayPlacement(from: snapshot)
-        await cacheObservedDedicatedInsets(for: placement, colorSpace: colorSpace)
-        MirageLogger.stream(
-            "Virtual display calibration (initial) stream \(streamID): requested=\(Int(requestedPixels.width))x\(Int(requestedPixels.height)), display=\(Int(placement.snapshot.resolution.width))x\(Int(placement.snapshot.resolution.height)), visible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), insets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height)), scale=\(placement.snapshot.scaleFactor)"
-        )
-        func hasDirectVisibleMatch(_ currentPlacement: VirtualDisplayPlacement) -> Bool {
-            isResolutionMatch(currentPlacement.visiblePixelResolution, requestedPixels, tolerance: 2.0)
-        }
-
-        func hasInsetAdjustedMatch(_ currentPlacement: VirtualDisplayPlacement) -> Bool {
-            let insetAdjustedVisible = CGSize(
-                width: currentPlacement.visiblePixelResolution.width + currentPlacement.insetsPixels.width,
-                height: currentPlacement.visiblePixelResolution.height + currentPlacement.insetsPixels.height
-            )
-            return isResolutionMatch(insetAdjustedVisible, requestedPixels, tolerance: 2.0)
-        }
-
-        if hasDirectVisibleMatch(placement) {
-            logDecision("retina-direct", placement: placement)
-            return placement
-        }
-        var canFallbackToInsetAdjustedPlacement = hasInsetAdjustedMatch(placement)
-        if canFallbackToInsetAdjustedPlacement {
-            MirageLogger.stream(
-                "Virtual display calibration found inset-adjusted match for stream \(streamID); continuing corrections for exact/closest visible aspect match"
-            )
-        }
-
-        let maxCorrectionAttempts = 3
-        var correctionAttempts = 0
-
-        correctionLoop: while correctionAttempts < maxCorrectionAttempts {
-            let correction = CGSize(
-                width: requestedPixels.width - placement.visiblePixelResolution.width,
-                height: requestedPixels.height - placement.visiblePixelResolution.height
-            )
-            let correctedResolution = sanitizePixelResolution(
-                CGSize(
-                    width: placement.snapshot.resolution.width + correction.width,
-                    height: placement.snapshot.resolution.height + correction.height
-                )
-            )
-            guard !isResolutionMatch(correctedResolution, placement.snapshot.resolution, tolerance: 1.0) else { break }
-
-            correctionAttempts += 1
-            do {
-                snapshot = try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
-                    for: streamID,
-                    newResolution: correctedResolution,
-                    refreshRate: refreshRate
-                )
-            } catch {
-                if canFallbackToInsetAdjustedPlacement {
-                    let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                    let renderedDetail = detail.isEmpty ? String(describing: error) : detail
-                    let refreshedPlacement = await resolveVirtualDisplayPlacement(from: snapshot)
-                    await cacheObservedDedicatedInsets(for: refreshedPlacement, colorSpace: colorSpace)
-                    if hasDirectVisibleMatch(refreshedPlacement) {
-                        MirageLogger.stream(
-                            "Virtual display correction attempt \(correctionAttempts) failed for stream \(streamID); using refreshed placement with direct visible match (error: \(renderedDetail))"
-                        )
-                        logDecision("retina-direct-refresh", placement: refreshedPlacement)
-                        return refreshedPlacement
-                    }
-                    MirageLogger.stream(
-                        "Virtual display correction attempt \(correctionAttempts) failed for stream \(streamID); no direct match yet (error: \(renderedDetail))"
-                    )
-                    placement = refreshedPlacement
-                    break correctionLoop
-                }
-                let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
-                let renderedDetail = detail.isEmpty ? String(describing: error) : detail
-                throw MirageError.protocolError(
-                    "Dedicated virtual display correction attempt \(correctionAttempts) failed for stream \(streamID): \(renderedDetail)"
-                )
-            }
-
-            placement = await resolveVirtualDisplayPlacement(from: snapshot)
-            await cacheObservedDedicatedInsets(for: placement, colorSpace: colorSpace)
-            MirageLogger.stream(
-                "Virtual display calibration correction #\(correctionAttempts) stream \(streamID): display=\(Int(placement.snapshot.resolution.width))x\(Int(placement.snapshot.resolution.height)), visible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), insets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height)), target=\(Int(requestedPixels.width))x\(Int(requestedPixels.height))"
-            )
-
-            if hasDirectVisibleMatch(placement) {
-                logDecision("retina-correction-\(correctionAttempts)", placement: placement)
-                return placement
-            }
-            if hasInsetAdjustedMatch(placement) {
-                canFallbackToInsetAdjustedPlacement = true
-            }
-        }
-
-        func closestAspectCandidates(from basePlacement: VirtualDisplayPlacement) -> [CGSize] {
-            let insets = [cachedInsets, basePlacement.insetsPixels]
-            let scaleSteps: [CGFloat] = [1.0, 0.96, 0.92, 0.88, 0.84, 0.80]
-            var seen = Set<String>()
-            var candidates: [CGSize] = []
-
-            for scale in scaleSteps {
-                let visibleTarget = sanitizePixelResolution(
-                    CGSize(
-                        width: requestedPixels.width * scale,
-                        height: requestedPixels.height * scale
-                    )
-                )
-                for inset in insets {
-                    let candidate = sanitizePixelResolution(
-                        CGSize(
-                            width: visibleTarget.width + inset.width,
-                            height: visibleTarget.height + inset.height
-                        )
-                    )
-                    let key = "\(Int(candidate.width))x\(Int(candidate.height))"
-                    if seen.insert(key).inserted {
-                        candidates.append(candidate)
-                    }
-                }
-            }
-            return candidates
-        }
-
-        func isCloserPlacement(_ lhs: VirtualDisplayPlacement, than rhs: VirtualDisplayPlacement) -> Bool {
-            let lhsDelta = aspectRelativeDelta(lhs.visiblePixelResolution)
-            let rhsDelta = aspectRelativeDelta(rhs.visiblePixelResolution)
-            if abs(lhsDelta - rhsDelta) > 0.0005 { return lhsDelta < rhsDelta }
-            let lhsArea = lhs.visiblePixelResolution.width * lhs.visiblePixelResolution.height
-            let rhsArea = rhs.visiblePixelResolution.width * rhs.visiblePixelResolution.height
-            return lhsArea > rhsArea
-        }
-
-        let fallbackDisplayCandidates = closestAspectCandidates(from: placement)
-        var bestClosestPlacement: VirtualDisplayPlacement?
-        for candidate in fallbackDisplayCandidates {
-            guard !isResolutionMatch(candidate, placement.snapshot.resolution, tolerance: 1.0) else { continue }
-            do {
-                let candidateSnapshot = try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
-                    for: streamID,
-                    newResolution: candidate,
-                    refreshRate: refreshRate
-                )
-                let candidatePlacement = await resolveVirtualDisplayPlacement(from: candidateSnapshot)
-                placement = candidatePlacement
-                await cacheObservedDedicatedInsets(for: candidatePlacement, colorSpace: colorSpace)
-                if hasDirectVisibleMatch(candidatePlacement) {
-                    logDecision("closest-aspect-direct", placement: candidatePlacement)
-                    return candidatePlacement
-                }
-                if let currentBestPlacement = bestClosestPlacement {
-                    if isCloserPlacement(candidatePlacement, than: currentBestPlacement) {
-                        bestClosestPlacement = candidatePlacement
-                    }
-                } else {
-                    bestClosestPlacement = candidatePlacement
-                }
-            } catch {
-                continue
-            }
-        }
-
-        if let bestClosestPlacement,
-           aspectRelativeDelta(bestClosestPlacement.visiblePixelResolution) <= 0.01 {
-            if !isResolutionMatch(bestClosestPlacement.snapshot.resolution, placement.snapshot.resolution, tolerance: 1.0) {
-                let reappliedSnapshot = try await SharedVirtualDisplayManager.shared.updateDedicatedDisplay(
-                    for: streamID,
-                    newResolution: bestClosestPlacement.snapshot.resolution,
-                    refreshRate: refreshRate
-                )
-                let reappliedPlacement = await resolveVirtualDisplayPlacement(from: reappliedSnapshot)
-                placement = reappliedPlacement
-                await cacheObservedDedicatedInsets(for: reappliedPlacement, colorSpace: colorSpace)
-                logDecision("closest-aspect-reapply", placement: reappliedPlacement)
-                return reappliedPlacement
-            }
-            logDecision("closest-aspect", placement: bestClosestPlacement)
-            return bestClosestPlacement
-        }
-
-        throw MirageError.protocolError(
-            "Virtual display calibration did not converge for stream \(streamID): requestedVisible=\(Int(requestedPixels.width))x\(Int(requestedPixels.height)), finalDisplay=\(Int(placement.snapshot.resolution.width))x\(Int(placement.snapshot.resolution.height)), finalVisible=\(Int(placement.visiblePixelResolution.width))x\(Int(placement.visiblePixelResolution.height)), finalInsets=\(Int(placement.insetsPixels.width))x\(Int(placement.insetsPixels.height)), attempts=\(correctionAttempts)"
-        )
-    }
-
-    private func cacheObservedDedicatedInsets(
-        for placement: VirtualDisplayPlacement,
-        colorSpace: MirageColorSpace
-    ) async {
-        await SharedVirtualDisplayManager.shared.cacheDedicatedInsetsPixels(
-            placement.insetsPixels,
-            scaleFactor: placement.snapshot.scaleFactor,
-            colorSpace: colorSpace
-        )
-    }
-
-    private func applyVirtualDisplayPlacementState(_ placement: VirtualDisplayPlacement) {
-        virtualDisplayVisibleBounds = placement.visibleBounds
-        virtualDisplayCaptureSourceRect = placement.captureSourceRect
-        virtualDisplayVisiblePixelResolution = placement.visiblePixelResolution
-    }
-
-    private func resolveVirtualDisplayPlacement(
-        from snapshot: SharedVirtualDisplayManager.DisplaySnapshot,
-        maxAttempts: Int = 8,
-        initialDelayMs: Int = 60
-    )
-    async -> VirtualDisplayPlacement {
-        let attempts = max(1, maxAttempts)
-        var delayMs = max(20, initialDelayMs)
-        var lastPlacement = computeVirtualDisplayPlacement(from: snapshot)
-
-        for attempt in 1 ... attempts {
-            lastPlacement = computeVirtualDisplayPlacement(from: snapshot)
-            if CGVirtualDisplayBridge.hasScreen(snapshot.displayID) || attempt == attempts {
-                return lastPlacement
-            }
-            try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
-            delayMs = min(400, Int(Double(delayMs) * 1.4))
-        }
-
-        return lastPlacement
-    }
-
-    private func computeVirtualDisplayPlacement(
-        from snapshot: SharedVirtualDisplayManager.DisplaySnapshot
-    )
-    -> VirtualDisplayPlacement {
-        let scaleFactor = max(1.0, snapshot.scaleFactor)
-        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
-            for: snapshot.resolution,
-            scaleFactor: scaleFactor
-        )
-        let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
-            snapshot.displayID,
-            knownResolution: logicalResolution
-        )
-        var visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
-            snapshot.displayID,
-            knownBounds: displayBounds
-        )
-        visibleBounds = visibleBounds.intersection(displayBounds)
-        if visibleBounds.isEmpty {
-            visibleBounds = displayBounds
-        }
-
-        var captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
-            snapshot.displayID,
-            knownBounds: displayBounds
-        )
-        if captureSourceRect.isEmpty {
-            let localX = visibleBounds.minX - displayBounds.minX
-            let localY = visibleBounds.minY - displayBounds.minY
-            captureSourceRect = CGRect(
-                x: max(0, localX),
-                y: max(0, localY),
-                width: visibleBounds.width,
-                height: visibleBounds.height
-            )
-        }
-
-        let insets = CGVirtualDisplayBridge.displayInsets(
-            displayBounds: displayBounds,
-            visibleBounds: visibleBounds
-        )
-        let insetsPixels = CGSize(
-            width: ceil(insets.horizontal * scaleFactor),
-            height: ceil(insets.vertical * scaleFactor)
-        )
-        let visiblePixelResolution = sanitizePixelResolution(
-            CGSize(
-                width: visibleBounds.width * scaleFactor,
-                height: visibleBounds.height * scaleFactor
-            )
-        )
-
-        return VirtualDisplayPlacement(
-            snapshot: snapshot,
-            visibleBounds: visibleBounds,
-            captureSourceRect: captureSourceRect,
-            visiblePixelResolution: visiblePixelResolution,
-            insetsPixels: insetsPixels
-        )
-    }
-
-    private func sanitizePixelResolution(_ resolution: CGSize) -> CGSize {
-        CGSize(
-            width: max(1, ceil(resolution.width)),
-            height: max(1, ceil(resolution.height))
-        )
-    }
-
-    private func isResolutionMatch(_ lhs: CGSize, _ rhs: CGSize, tolerance: CGFloat = 1.0) -> Bool {
-        abs(lhs.width - rhs.width) <= tolerance &&
-            abs(lhs.height - rhs.height) <= tolerance
-    }
-
 }
 
 #endif

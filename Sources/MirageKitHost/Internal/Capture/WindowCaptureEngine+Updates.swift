@@ -35,7 +35,6 @@ extension WindowCaptureEngine {
                 window: config.window,
                 application: config.application,
                 display: config.display,
-                knownScaleFactor: config.knownScaleFactor,
                 outputScale: scale,
                 resolution: config.resolution,
                 sourceRect: config.sourceRect,
@@ -61,12 +60,9 @@ extension WindowCaptureEngine {
 
         // Create new stream configuration with updated dimensions
         let streamConfig = SCStreamConfiguration()
-        if useBestCaptureResolution { streamConfig.captureResolution = .best }
-        useExplicitCaptureDimensions = true
-        if useExplicitCaptureDimensions {
-            streamConfig.width = newWidth
-            streamConfig.height = newHeight
-        }
+        streamConfig.captureResolution = .best
+        streamConfig.width = newWidth
+        streamConfig.height = newHeight
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
@@ -99,7 +95,6 @@ extension WindowCaptureEngine {
 
         currentWidth = width
         currentHeight = height
-        useBestCaptureResolution = false
         if let config = captureSessionConfig {
             captureSessionConfig = CaptureSessionConfiguration(
                 windowID: config.windowID,
@@ -108,7 +103,6 @@ extension WindowCaptureEngine {
                 window: config.window,
                 application: config.application,
                 display: config.display,
-                knownScaleFactor: config.knownScaleFactor,
                 outputScale: config.outputScale,
                 resolution: CGSize(width: width, height: height),
                 sourceRect: config.sourceRect,
@@ -120,7 +114,6 @@ extension WindowCaptureEngine {
 
         // Create new stream configuration with client's exact pixel dimensions
         let streamConfig = SCStreamConfiguration()
-        useExplicitCaptureDimensions = true
         streamConfig.width = width
         streamConfig.height = height
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
@@ -152,7 +145,7 @@ extension WindowCaptureEngine {
         // Update dimensions
         currentWidth = newWidth
         currentHeight = newHeight
-        useBestCaptureResolution = false
+        displayUsesExplicitResolution = true
         var excludedWindows: [SCWindow] = []
         var resolvedSourceRect: CGRect? = sourceRect
         if let config = captureSessionConfig {
@@ -164,7 +157,6 @@ extension WindowCaptureEngine {
                 window: config.window,
                 application: config.application,
                 display: newDisplay,
-                knownScaleFactor: config.knownScaleFactor,
                 outputScale: config.outputScale,
                 resolution: resolution,
                 sourceRect: resolvedSourceRect,
@@ -181,8 +173,6 @@ extension WindowCaptureEngine {
 
         // Create configuration for the new display
         let streamConfig = SCStreamConfiguration()
-        if useBestCaptureResolution { streamConfig.captureResolution = .best }
-        useExplicitCaptureDimensions = true
         streamConfig.width = newWidth
         streamConfig.height = newHeight
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
@@ -233,7 +223,6 @@ extension WindowCaptureEngine {
                 window: config.window,
                 application: config.application,
                 display: config.display,
-                knownScaleFactor: config.knownScaleFactor,
                 outputScale: config.outputScale,
                 resolution: config.resolution,
                 sourceRect: config.sourceRect,
@@ -258,11 +247,7 @@ extension WindowCaptureEngine {
 
         // Create new stream configuration with updated frame rate
         let streamConfig = SCStreamConfiguration()
-        if useBestCaptureResolution { streamConfig.captureResolution = .best }
-        if useExplicitCaptureDimensions {
-            streamConfig.width = currentWidth
-            streamConfig.height = currentHeight
-        }
+        applyResolutionSettings(to: streamConfig)
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
@@ -302,11 +287,7 @@ extension WindowCaptureEngine {
         guard isCapturing, let stream else { return }
 
         let streamConfig = SCStreamConfiguration()
-        if useBestCaptureResolution { streamConfig.captureResolution = .best }
-        if useExplicitCaptureDimensions {
-            streamConfig.width = currentWidth
-            streamConfig.height = currentHeight
-        }
+        applyResolutionSettings(to: streamConfig)
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
@@ -339,6 +320,29 @@ extension WindowCaptureEngine {
                 "Capture configuration updated: pixelFormat=\(configuration.pixelFormat.displayName), " +
                     "color=\(configuration.colorSpace.displayName), queue=\(captureQueueDepth)"
             )
+    }
+
+    /// Apply resolution settings to a stream configuration.
+    /// Window capture always uses `.best` with explicit dimensions.
+    /// Display capture uses explicit dimensions only when an override resolution was provided.
+    func applyResolutionSettings(to streamConfig: SCStreamConfiguration) {
+        switch captureMode {
+        case .window:
+            streamConfig.captureResolution = .best
+            streamConfig.width = currentWidth
+            streamConfig.height = currentHeight
+        case .display:
+            if displayUsesExplicitResolution {
+                streamConfig.width = currentWidth
+                streamConfig.height = currentHeight
+            } else {
+                streamConfig.captureResolution = .best
+            }
+        case nil:
+            streamConfig.captureResolution = .best
+            streamConfig.width = currentWidth
+            streamConfig.height = currentHeight
+        }
     }
 }
 

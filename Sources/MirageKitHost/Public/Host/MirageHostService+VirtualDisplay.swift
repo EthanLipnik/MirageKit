@@ -929,7 +929,7 @@ extension MirageHostService {
         }
 
         do {
-            try await context.updateVirtualDisplayResolution(newResolution: pixelResolution)
+            try await context.updateWindowCaptureResolution(newLogicalSize: logicalResolution)
             await refreshWindowVirtualDisplayState(
                 streamID: streamID,
                 context: context,
@@ -962,46 +962,19 @@ extension MirageHostService {
                 )
                 try? await clientContext.send(.error, content: errorMessage)
             }
-            let keepStreamAlive: Bool
-            if let resizeError = error as? StreamContext.VirtualDisplayResizeError {
-                switch resizeError {
-                case .rollbackFailed:
-                    keepStreamAlive = false
-                }
-            } else {
-                keepStreamAlive = true
-            }
-
-            if keepStreamAlive {
-                // Fail-open for recoverable app/window display resize errors: keep the stream
-                // alive with the last known-good capture pipeline and report a no-op completion.
-                await refreshWindowVirtualDisplayState(
-                    streamID: streamID,
-                    context: context,
-                    clientScaleFactorOverride: clientScaleOverride
-                )
-                await sendWindowResizeCompletion(
-                    streamID: streamID,
-                    requestNumber: requestNumber,
-                    context: context,
-                    noOp: true
-                )
-                ensureWindowVisibleFrameMonitor(streamID: streamID)
-            } else {
-                let resizeFailureReason = error.localizedDescription
-                    .trimmingCharacters(in: .whitespacesAndNewlines)
-                if let appSession = await appStreamManager.getSessionForStreamID(streamID),
-                   let clientContext = findClientContext(clientID: appSession.clientID) {
-                    await emitWindowStreamFailed(
-                        to: clientContext,
-                        bundleIdentifier: appSession.bundleIdentifier,
-                        windowID: session.window.id,
-                        title: session.window.title,
-                        reason: resizeFailureReason.isEmpty ? "Dedicated display resize failed" : resizeFailureReason
-                    )
-                }
-                await stopStream(session, minimizeWindow: false)
-            }
+            // Window resize is lightweight — keep the stream alive with last-known state.
+            await refreshWindowVirtualDisplayState(
+                streamID: streamID,
+                context: context,
+                clientScaleFactorOverride: clientScaleOverride
+            )
+            await sendWindowResizeCompletion(
+                streamID: streamID,
+                requestNumber: requestNumber,
+                context: context,
+                noOp: true
+            )
+            ensureWindowVisibleFrameMonitor(streamID: streamID)
         }
     }
 

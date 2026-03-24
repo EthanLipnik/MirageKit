@@ -29,6 +29,11 @@ public actor AppStreamManager {
     var onNewWindowDetected: (@Sendable (String, AppStreamWindowCandidate) async -> Void)?
     var onWindowClosed: (@Sendable (String, WindowID) async -> Void)?
     var onAppTerminated: (@Sendable (String) async -> Void)?
+    var onAuxiliaryWindowDetected: (@Sendable (String, AppStreamWindowCandidate) async -> Void)?
+    var onAuxiliaryWindowClosed: (@Sendable (String, WindowID) async -> Void)?
+
+    /// Known auxiliary window IDs per session, used to detect appearance/disappearance.
+    var knownAuxiliaryWindowIDs: [String: Set<WindowID>] = [:]
 
     /// Setters for callbacks (allows setting from outside the actor)
     func setOnNewWindowDetected(_ callback: @escaping @Sendable (String, AppStreamWindowCandidate) async -> Void) {
@@ -41,6 +46,14 @@ public actor AppStreamManager {
 
     public func setOnAppTerminated(_ callback: @escaping @Sendable (String) async -> Void) {
         onAppTerminated = callback
+    }
+
+    func setOnAuxiliaryWindowDetected(_ callback: @escaping @Sendable (String, AppStreamWindowCandidate) async -> Void) {
+        onAuxiliaryWindowDetected = callback
+    }
+
+    func setOnAuxiliaryWindowClosed(_ callback: @escaping @Sendable (String, WindowID) async -> Void) {
+        onAuxiliaryWindowClosed = callback
     }
 
     /// Application scanner for getting installed apps

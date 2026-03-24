@@ -50,8 +50,8 @@ struct HostTrafficLightMaskGeometryResolverTests {
         #expect(geometry.clusterRectPoints.height == HostTrafficLightProtectionPolicy.fallbackClusterSize.height)
     }
 
-    @Test("Hidden buttons state suppresses clone-stamp planning")
-    func hiddenButtonsStateSuppressesPlanning() {
+    @Test("Hidden buttons state still applies clone-stamp for sharing indicator")
+    func hiddenButtonsStateStillAppliesCloneStamp() {
         let geometry = HostTrafficLightMaskGeometryResolver.ResolvedGeometry(
             windowFramePoints: CGRect(x: 0, y: 0, width: 900, height: 600),
             clusterRectPoints: CGRect(x: 0, y: 0, width: 96, height: 44),
@@ -65,11 +65,10 @@ struct HostTrafficLightMaskGeometryResolverTests {
             geometry: geometry
         )
 
-        guard case let .skip(reason) = decision else {
-            Issue.record("Expected planning to skip when all traffic lights are hidden")
+        guard case .apply = decision else {
+            Issue.record("Expected clone-stamp plan even when buttons are hidden (sharing indicator is always present)")
             return
         }
-        #expect(reason == .hiddenTrafficLights)
     }
 
     @Test("Geometry cache helper invalidates on material frame drift")

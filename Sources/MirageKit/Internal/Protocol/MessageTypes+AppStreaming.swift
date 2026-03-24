@@ -218,6 +218,8 @@ package struct SelectAppMessage: Codable {
     package let maxConcurrentVisibleWindows: Int
     /// Client-requested shared bitrate allocation policy for multi-window app streaming.
     package let bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy?
+    /// Client-requested virtual display size preset for app streaming.
+    package var sizePreset: MirageDisplaySizePreset?
 
     enum CodingKeys: String, CodingKey {
         case bundleIdentifier
@@ -245,6 +247,7 @@ package struct SelectAppMessage: Codable {
         case codec
         case maxConcurrentVisibleWindows
         case bitrateAllocationPolicy
+        case sizePreset
     }
 
     package init(
@@ -267,7 +270,8 @@ package struct SelectAppMessage: Codable {
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
-        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil
+        bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil,
+        sizePreset: MirageDisplaySizePreset? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.dataPort = dataPort
@@ -289,6 +293,7 @@ package struct SelectAppMessage: Codable {
         self.audioConfiguration = audioConfiguration
         self.maxConcurrentVisibleWindows = max(1, maxConcurrentVisibleWindows)
         self.bitrateAllocationPolicy = bitrateAllocationPolicy
+        self.sizePreset = sizePreset
     }
 }
 
@@ -603,5 +608,62 @@ public struct AppTerminatedMessage: Codable {
         self.bundleIdentifier = bundleIdentifier
         self.closedWindowIDs = closedWindowIDs
         self.hasRemainingWindows = hasRemainingWindows
+    }
+}
+
+// MARK: - Auxiliary Window Compositing
+
+/// Auxiliary window position/visibility update (Host → Client)
+public struct AuxiliaryWindowUpdateMessage: Codable, Sendable {
+    public struct AuxiliaryWindowInfo: Codable, Sendable, Equatable {
+        /// Host window ID of the auxiliary window.
+        public let windowID: WindowID
+        /// Stream ID carrying this auxiliary window's video frames.
+        public let streamID: StreamID
+        /// Horizontal offset from the parent window origin, in logical points.
+        public let offsetX: Int
+        /// Vertical offset from the parent window origin, in logical points.
+        public let offsetY: Int
+        /// Logical width in points.
+        public let width: Int
+        /// Logical height in points.
+        public let height: Int
+        /// Whether this auxiliary window is currently visible.
+        public let isVisible: Bool
+
+        package init(
+            windowID: WindowID,
+            streamID: StreamID,
+            offsetX: Int,
+            offsetY: Int,
+            width: Int,
+            height: Int,
+            isVisible: Bool
+        ) {
+            self.windowID = windowID
+            self.streamID = streamID
+            self.offsetX = offsetX
+            self.offsetY = offsetY
+            self.width = width
+            self.height = height
+            self.isVisible = isVisible
+        }
+    }
+
+    /// Bundle identifier of the app owning these auxiliary windows.
+    public let bundleIdentifier: String
+    /// Stream ID of the parent (primary) window.
+    public let parentStreamID: StreamID
+    /// Current auxiliary windows and their positions relative to the parent.
+    public let auxiliaryWindows: [AuxiliaryWindowInfo]
+
+    package init(
+        bundleIdentifier: String,
+        parentStreamID: StreamID,
+        auxiliaryWindows: [AuxiliaryWindowInfo]
+    ) {
+        self.bundleIdentifier = bundleIdentifier
+        self.parentStreamID = parentStreamID
+        self.auxiliaryWindows = auxiliaryWindows
     }
 }

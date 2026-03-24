@@ -19,13 +19,10 @@ import ScreenCaptureKit
 
 extension WindowCaptureEngine {
     /// Start capturing all windows belonging to an application (includes alerts, sheets, dialogs)
-    /// - Parameters:
-    ///   - knownScaleFactor: Override scale factor for virtual displays (NSScreen detection fails on headless Macs)
     func startCapture(
         window: SCWindow,
         application: SCRunningApplication,
         display: SCDisplay,
-        knownScaleFactor: CGFloat? = nil,
         outputScale: CGFloat = 1.0,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
         onAudio: (@Sendable (CapturedAudioBuffer) -> Void)? = nil,
@@ -53,13 +50,7 @@ extension WindowCaptureEngine {
         let streamConfig = SCStreamConfiguration()
 
         // Calculate target dimensions based on window frame
-        // Use known scale factor if provided (for virtual displays on headless Macs),
-        // otherwise detect from NSScreen
-        let target: StreamTargetDimensions = if let knownScale = knownScaleFactor {
-            streamTargetDimensions(windowFrame: window.frame, scaleFactor: knownScale)
-        } else {
-            streamTargetDimensions(windowFrame: window.frame)
-        }
+        let target = streamTargetDimensions(windowFrame: window.frame)
 
         let clampedScale = max(0.1, min(1.0, outputScale))
         self.outputScale = clampedScale
@@ -67,7 +58,6 @@ extension WindowCaptureEngine {
         currentWidth = Self.alignedEvenPixel(CGFloat(target.width) * clampedScale)
         currentHeight = Self.alignedEvenPixel(CGFloat(target.height) * clampedScale)
         captureMode = .window
-        useExplicitCaptureDimensions = true
         captureSessionConfig = CaptureSessionConfiguration(
             windowID: WindowID(window.windowID),
             applicationPID: application.processID,
@@ -75,7 +65,6 @@ extension WindowCaptureEngine {
             window: window,
             application: application,
             display: display,
-            knownScaleFactor: knownScaleFactor,
             outputScale: clampedScale,
             resolution: nil,
             sourceRect: nil,
@@ -84,20 +73,13 @@ extension WindowCaptureEngine {
             excludedWindows: []
         )
 
-        // CRITICAL: For virtual displays on headless Macs, do NOT use .best or .nominal
-        // as they may capture at wrong resolution (1x instead of 2x).
-        // Setting explicit width/height WITHOUT captureResolution lets SCK use our dimensions.
-        // For real displays, .best correctly detects backing scale factor.
-        useBestCaptureResolution = (knownScaleFactor == nil)
-        if useBestCaptureResolution { streamConfig.captureResolution = .best }
-        // When knownScaleFactor is set, we intentionally don't set captureResolution
-        // to let our explicit width/height control the output resolution
+        streamConfig.captureResolution = .best
         streamConfig.width = currentWidth
         streamConfig.height = currentHeight
 
         MirageLogger
             .capture(
-                "Configuring capture: \(currentWidth)x\(currentHeight), scale=\(currentScaleFactor), outputScale=\(clampedScale), knownScale=\(String(describing: knownScaleFactor))"
+                "Configuring capture: \(currentWidth)x\(currentHeight), scale=\(currentScaleFactor), outputScale=\(clampedScale)"
             )
 
         // Frame rate
@@ -371,7 +353,6 @@ extension WindowCaptureEngine {
                     window: window,
                     application: application,
                     display: resolvedConfig.display,
-                    knownScaleFactor: resolvedConfig.knownScaleFactor,
                     outputScale: resolvedConfig.outputScale,
                     onFrame: onFrame,
                     onAudio: onAudio,
@@ -463,7 +444,6 @@ extension WindowCaptureEngine {
             window: nil,
             application: nil,
             display: display,
-            knownScaleFactor: nil,
             outputScale: 1.0,
             resolution: resolution,
             sourceRect: sourceRect,
@@ -484,19 +464,18 @@ extension WindowCaptureEngine {
             currentScaleFactor = 1.0
         }
 
-        // For explicit resolution overrides (virtual displays), rely on width/height and skip .best
-        useBestCaptureResolution = (resolution == nil)
-        useExplicitCaptureDimensions = (resolution != nil)
-        if useBestCaptureResolution {
-            streamConfig.captureResolution = .best
-            MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), forcing captureResolution=.best")
-        } else if currentScaleFactor > 1.0 {
-            MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), using explicit resolution")
-        }
-
-        if useExplicitCaptureDimensions {
+        // For explicit resolution overrides (HiDPI virtual displays), set width/height and skip .best.
+        // Otherwise let SCK use .best to detect the backing scale factor automatically.
+        displayUsesExplicitResolution = (resolution != nil)
+        if displayUsesExplicitResolution {
             streamConfig.width = currentWidth
             streamConfig.height = currentHeight
+            if currentScaleFactor > 1.0 {
+                MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), using explicit resolution")
+            }
+        } else {
+            streamConfig.captureResolution = .best
+            MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), forcing captureResolution=.best")
         }
         if let sourceRect, !sourceRect.isEmpty {
             streamConfig.sourceRect = sourceRect
@@ -539,7 +518,7 @@ extension WindowCaptureEngine {
         let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
         contentFilter = filter
 
-        if useExplicitCaptureDimensions {
+        if displayUsesExplicitResolution {
             MirageLogger
                 .capture(
                     "Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID), sourceRect=\(String(describing: sourceRect))"
