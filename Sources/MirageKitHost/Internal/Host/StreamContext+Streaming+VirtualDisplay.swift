@@ -85,8 +85,19 @@ extension StreamContext {
             "display visible \(Int(effectiveVisibleBounds.width))x\(Int(effectiveVisibleBounds.height)))"
         )
 
-        // 3. Move window to the shared display's space.
-        //    Pass the target window size as placement bounds.
+        // 3. Resolve SCWindow BEFORE moving it to the virtual display.
+        //    After the move, SCK may not immediately see the window in its new space,
+        //    causing resolution failures for Electron apps (Discord, Slack, etc.).
+        let resolvedWindowWrapper = try await resolveSCWindowWrapper(
+            windowID: windowID,
+            label: "pre-move window capture"
+        )
+        let resolvedDisplayWrapper = try await resolveSCDisplayWrapper(
+            displayID: vdSnapshot.displayID,
+            label: "pre-move display"
+        )
+
+        // 4. Move window to the shared display's space.
         let clientAspectRatio = clientLogicalSize.width > 0 && clientLogicalSize.height > 0
             ? clientLogicalSize.width / clientLogicalSize.height
             : nil
@@ -108,7 +119,7 @@ extension StreamContext {
             )
         )
 
-        // 4. Iteratively resize window to match target aspect ratio
+        // 5. Iteratively resize window to match target aspect ratio
         await iterativelyResizeWindow(
             windowID: windowID,
             targetSize: targetWindowSize,
@@ -117,17 +128,7 @@ extension StreamContext {
             label: "startup"
         )
 
-        // 4. Resolve SCWindow and SCDisplay for capture
-        let resolvedWindowWrapper = try await resolveSCWindowWrapper(
-            windowID: windowID,
-            label: "window capture start"
-        )
-        let resolvedDisplayWrapper = try await resolveSCDisplayWrapper(
-            displayID: vdSnapshot.displayID,
-            label: "window capture start"
-        )
-
-        // 5. Configure capture dimensions from actual window frame
+        // 6. Configure capture dimensions from actual window frame
         let captureTarget = streamTargetDimensions(windowFrame: resolvedWindowWrapper.window.frame)
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
@@ -419,8 +420,8 @@ extension StreamContext {
     private func resolveSCWindowWrapper(
         windowID: WindowID,
         label: String,
-        maxAttempts: Int = 6,
-        initialDelayMs: Int = 60
+        maxAttempts: Int = 10,
+        initialDelayMs: Int = 100
     )
     async throws -> SCWindowWrapper {
         let attempts = max(1, maxAttempts)
@@ -437,6 +438,14 @@ extension StreamContext {
             if attempt < attempts {
                 try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
                 delayMs = min(600, Int(Double(delayMs) * 1.5))
+            } else {
+                let windowDetails = content.windows.map { w in
+                    "(\(w.windowID), \(w.owningApplication?.bundleIdentifier ?? "unknown"))"
+                }
+                MirageLogger.stream(
+                    "Unable to resolve SCWindow \(windowID) after \(attempts) attempts (\(label)). " +
+                    "Available windows (\(content.windows.count)): \(windowDetails)"
+                )
             }
         }
         throw MirageError.protocolError("Unable to resolve SCWindow \(windowID) for stream \(streamID) (\(label))")
@@ -445,7 +454,7 @@ extension StreamContext {
     private func resolveSCDisplayWrapper(
         displayID: CGDirectDisplayID,
         label: String,
-        maxAttempts: Int = 8,
+        maxAttempts: Int = 12,
         initialDelayMs: Int = 80
     )
     async throws -> SCDisplayWrapper {
@@ -463,6 +472,13 @@ extension StreamContext {
             if attempt < attempts {
                 try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
                 delayMs = min(1000, Int(Double(delayMs) * 1.6))
+            } else {
+                let isOnline = CGDisplayIsOnline(displayID) != 0
+                let available = content.displays.map(\.displayID)
+                MirageLogger.stream(
+                    "Unable to resolve SCDisplay \(displayID) after \(attempts) attempts (\(label)). " +
+                    "CGDisplayIsOnline=\(isOnline), available SCK displays: \(available)"
+                )
             }
         }
         throw MirageError.protocolError("Unable to resolve SCDisplay \(displayID) for stream \(streamID) (\(label))")

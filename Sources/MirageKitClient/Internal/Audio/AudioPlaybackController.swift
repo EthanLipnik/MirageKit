@@ -49,6 +49,7 @@ final class AudioPlaybackController {
     private var hasLoggedInactiveSessionDeferral = false
     private var audioSessionActivationBackoffUntil: ContinuousClock.Instant?
     private var audioSessionActivationFailureCount: Int = 0
+    private var wasApplicationInactive = false
     private static let audioSessionMaxRetries = 3
 #endif
 
@@ -270,6 +271,7 @@ final class AudioPlaybackController {
 #if os(iOS) || os(visionOS)
     private func ensureAudioSessionConfiguredForPlayback() -> Bool {
         guard isApplicationActive else {
+            wasApplicationInactive = true
             if !hasLoggedInactiveSessionDeferral {
                 MirageLogger.client("Deferring audio session activation until app becomes active")
                 hasLoggedInactiveSessionDeferral = true
@@ -277,9 +279,12 @@ final class AudioPlaybackController {
             return false
         }
         hasLoggedInactiveSessionDeferral = false
-        // App became active — reset backoff so we retry.
-        audioSessionActivationFailureCount = 0
-        audioSessionActivationBackoffUntil = nil
+        // Only reset backoff on inactive→active transition, not every call.
+        if wasApplicationInactive {
+            wasApplicationInactive = false
+            audioSessionActivationFailureCount = 0
+            audioSessionActivationBackoffUntil = nil
+        }
 
         // Backoff: don't spam activation attempts after repeated failures.
         // Each failed attempt previously ran per audio packet (~60/s),
@@ -349,6 +354,7 @@ final class AudioPlaybackController {
             1836282486, // 'msrv': media services failed
             561210739, // '!ses': session unavailable while mediaserverd is recovering
             561017449, // '!ini': session not initialized
+            1936290409, // 'siri': Siri/system audio session conflict (visionOS)
             -50, // kAudio_ParamError: invalid parameter (session not active)
         ]
         return deferredCodes.contains(nsError.code)

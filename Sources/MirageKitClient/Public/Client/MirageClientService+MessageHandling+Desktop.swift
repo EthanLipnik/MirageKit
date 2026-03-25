@@ -65,6 +65,8 @@ extension MirageClientService {
                 bitrate: pendingDesktopAdaptiveFallbackBitrate,
                 colorDepth: pendingDesktopAdaptiveFallbackColorDepth
             )
+            desktopStreamStartTimeoutTask?.cancel()
+            desktopStreamStartTimeoutTask = nil
             if desktopStreamRequestStartTime > 0 {
                 let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStreamRequestStartTime) * 1000)
                 MirageLogger

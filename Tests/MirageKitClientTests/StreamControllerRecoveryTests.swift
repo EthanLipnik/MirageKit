@@ -136,8 +136,8 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Passive tier frame loss requests bounded keyframe recovery without loop")
-    func passiveTierFrameLossRequestsBoundedKeyframeRecoveryWithoutLoop() async throws {
+    @Test("Passive tier frame loss enters keyframe-only mode without requesting keyframe")
+    func passiveTierFrameLossEntersKeyframeOnlyMode() async throws {
         let keyframeCounter = LockedCounter()
         let streamID: StreamID = 96
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -154,7 +154,9 @@ struct StreamControllerRecoveryTests {
         await controller.handleFrameLossSignal()
         try await Task.sleep(for: .seconds(2))
 
-        #expect(keyframeCounter.value == 1)
+        // Passive streams enter keyframe-only mode and wait for the next
+        // natural keyframe rather than requesting one explicitly.
+        #expect(keyframeCounter.value == 0)
 
         await controller.stop()
     }

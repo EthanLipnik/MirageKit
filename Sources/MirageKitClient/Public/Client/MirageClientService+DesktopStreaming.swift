@@ -90,12 +90,34 @@ public extension MirageClientService {
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
         MirageLogger.client("Desktop start: request sent")
         try await sendControlMessage(.startDesktopStream, content: request)
+        scheduleDesktopStreamStartTimeout()
 
         MirageLogger
             .client(
                 "Requested desktop stream: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height)) pts " +
                     "(\(Int(effectiveDisplayPixelResolution.width))x\(Int(effectiveDisplayPixelResolution.height)) px)"
             )
+    }
+
+    private static let desktopStreamStartTimeoutSeconds: Double = 30
+
+    private func scheduleDesktopStreamStartTimeout() {
+        desktopStreamStartTimeoutTask?.cancel()
+        desktopStreamStartTimeoutTask = Task { [weak self] in
+            try await Task.sleep(for: .seconds(Self.desktopStreamStartTimeoutSeconds))
+            guard let self else { return }
+            guard desktopStreamMode != nil, desktopStreamID == nil,
+                  desktopStreamRequestStartTime > 0 else { return }
+            MirageLogger.error(
+                .client,
+                "Desktop stream start timed out after \(Int(Self.desktopStreamStartTimeoutSeconds))s"
+            )
+            clearPendingDesktopStreamStartState()
+            delegate?.clientService(
+                self,
+                didEncounterError: MirageError.protocolError("Desktop stream start timed out. The host may be busy or unreachable.")
+            )
+        }
     }
 
     /// Stop the current desktop stream.

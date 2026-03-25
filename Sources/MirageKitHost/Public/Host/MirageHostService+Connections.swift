@@ -19,6 +19,7 @@ extension MirageHostService {
         let fatalPosixCodes: Set<POSIXErrorCode> = [
             .ECANCELED, .ECONNRESET, .ENOTCONN, .EPIPE,
             .EADDRNOTAVAIL, // 49 — can't assign requested address (transport gone)
+            .ECONNREFUSED, // 61 — connection refused (peer closed/crashed)
         ]
         if let nwError = error as? NWError {
             switch nwError {
@@ -29,10 +30,18 @@ extension MirageHostService {
             }
         }
 
+        let nsError = error as NSError
+
+        // LoomError(0) = cancelled, LoomError(3) = authenticationFailed
+        // Both indicate the session is dead — treat as fatal.
+        if nsError.domain == "Loom.LoomError" {
+            let fatalLoomCodes: Set<Int> = [0, 3]
+            return fatalLoomCodes.contains(nsError.code)
+        }
+
         // NWError.connectionFailed wraps the underlying POSIX code in its
         // description but doesn't expose it as .posix().  Extract it from
         // the NSError bridge.
-        let nsError = error as NSError
         if nsError.domain == NSPOSIXErrorDomain,
            let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
             return fatalPosixCodes.contains(code)
@@ -54,6 +63,7 @@ extension MirageHostService {
         // Last resort: check the string representation for known POSIX codes
         let desc = String(describing: error)
         if desc.contains("POSIXErrorCode(rawValue: 89)") ||
+           desc.contains("POSIXErrorCode(rawValue: 61)") ||
            desc.contains("POSIXErrorCode(rawValue: 57)") ||
            desc.contains("POSIXErrorCode(rawValue: 54)") ||
            desc.contains("POSIXErrorCode(rawValue: 49)") ||
@@ -178,7 +188,7 @@ extension MirageHostService {
                     let rejection = MirageSessionBootstrapResponse(
                         accepted: false,
                         hostID: hostID,
-                        hostName: Host.current().localizedName ?? "Mac",
+                        hostName: serviceName,
                         selectedFeatures: [],
                         mediaEncryptionEnabled: false,
                         udpRegistrationToken: Data(),
@@ -244,7 +254,11 @@ extension MirageHostService {
             startReceivingFromClient(clientContext: clientContext)
             delegate?.hostService(self, didConnectClient: client)
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
+            if isFatalConnectionError(error) || LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageLogger.host("Mirage Loom control session closed during bootstrap: \(error.localizedDescription)")
+            } else {
+                MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
+            }
             await session.cancel()
         }
     }
@@ -291,7 +305,7 @@ extension MirageHostService {
         pathSnapshot: LoomSessionNetworkPathSnapshot?,
         autoTrustGranted: Bool
     ) async throws -> (response: MirageSessionBootstrapResponse, mediaSecurity: MirageMediaSecurityContext?) {
-        let hostName = Host.current().localizedName ?? "Mac"
+        let hostName = serviceName
 
         guard request.protocolVersion == Int(MirageKit.protocolVersion) else {
             let triggerResult = await handleProtocolMismatchUpdateRequestIfNeeded(

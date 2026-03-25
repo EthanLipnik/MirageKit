@@ -515,6 +515,7 @@ public final class MirageClientService {
     var lastDisplayResolutionRequestTimeByStream: [StreamID: CFAbsoluteTime] = [:]
     let duplicateDisplayResolutionSuppressionWindow: CFAbsoluteTime = 0.2
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
+    var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []
     var streamStartupFirstPacketReceived: Set<StreamID> = []

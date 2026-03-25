@@ -137,6 +137,11 @@ actor SharedVirtualDisplayManager {
     /// Display IDs that remained online after explicit invalidation + timeout.
     var orphanedDisplayIDs: Set<CGDirectDisplayID> = []
 
+    /// Number of in-flight `acquireDisplayForConsumer` calls.  Checked by
+    /// `releaseDisplayForConsumer` to avoid destroying a display that another
+    /// task is still creating/recreating across an await boundary.
+    var pendingAcquisitionCount: Int = 0
+
     // MARK: - App Stream Shared Display
 
     /// Single shared virtual display for all app-stream windows.
@@ -150,6 +155,12 @@ actor SharedVirtualDisplayManager {
 
     /// Handler invoked when the shared display generation changes while streams are active.
     var generationChangeHandler: (@Sendable (DisplaySnapshot, UInt64) -> Void)?
+
+    /// Register a display ID as orphaned so the next acquisition cleans it up.
+    func trackOrphanedDisplay(_ displayID: CGDirectDisplayID) {
+        orphanedDisplayIDs.insert(displayID)
+        MirageLogger.host("Tracked orphaned display \(displayID); total orphans: \(orphanedDisplayIDs.count)")
+    }
 
     static let preferredStreamRefreshRate: Int = 60
 

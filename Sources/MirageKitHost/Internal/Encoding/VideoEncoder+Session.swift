@@ -202,6 +202,10 @@ extension VideoEncoder {
     }
 
     func createSession(width: Int, height: Int) throws {
+        // Enforce 16-byte alignment for HEVC hardware encoder compatibility.
+        let width = max(16, width & ~15)
+        let height = max(16, height & ~15)
+
         var session: VTCompressionSession?
 
         let imageBufferAttributes: CFDictionary = [
@@ -568,8 +572,7 @@ extension VideoEncoder {
             return .unsupported
         }
         let status = VTSessionSetProperty(session, key: key, value: value)
-        if key == kVTCompressionPropertyKey_MaxFrameDelayCount,
-           Self.unsupportedEncoderPropertyStatuses.contains(status) {
+        if Self.unsupportedEncoderPropertyStatuses.contains(status) {
             if !loggedUnsupportedKeys.contains(key) {
                 loggedUnsupportedKeys.insert(key)
                 MirageLogger.encoder("Encoder property unsupported: \(key) (status \(status))")

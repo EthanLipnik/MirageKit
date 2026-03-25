@@ -133,8 +133,7 @@ extension MirageHostService {
                             )
                         }
                     case let .protocolViolation(reason):
-                        MirageLogger.error(
-                            .host,
+                        MirageLogger.host(
                             "Client \(clientContext.client.name) protocol violation - disconnecting: \(reason)"
                         )
                     case let .receiveBufferOverflow(limit):

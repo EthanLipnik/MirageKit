@@ -134,6 +134,11 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
             return .windowNotFound
         case .timeout:
             return .operationTimedOut
+        case let .protocolError(message):
+            if message.contains("Unable to resolve SCWindow") || message.contains("Unable to resolve SCDisplay") {
+                return .windowNotFound
+            }
+            return .unknown
         default:
             return .unknown
         }
@@ -337,7 +342,11 @@ public extension MirageHostService {
                 do {
                     try await clientContext.send(.streamMetricsUpdate, content: metrics)
                 } catch {
-                    MirageLogger.error(.host, error: error, message: "Failed to send stream metrics: ")
+                    await handleControlChannelSendFailure(
+                        client: clientContext.client,
+                        error: error,
+                        operation: "Stream metrics"
+                    )
                 }
             }
         }

@@ -1286,7 +1286,8 @@ extension MirageHostService {
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight,
             upscalingMode: selectRequest.upscalingMode,
-            codec: selectRequest.codec
+            codec: selectRequest.codec,
+            sizePreset: selectRequest.sizePreset ?? .standard
         )
 
         let resolvedWindow = streamSession.window

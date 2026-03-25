@@ -145,6 +145,11 @@ extension SharedVirtualDisplayManager {
             return snapshot(from: updatedDisplay)
         }
 
+        // Track in-flight acquisition so releaseDisplayForConsumer does not
+        // destroy the display while we are across an await boundary.
+        pendingAcquisitionCount += 1
+        defer { pendingAcquisitionCount -= 1 }
+
         // Register this consumer with the target resolution
         let previousConsumerInfo = activeConsumers[consumer]
         activeConsumers[consumer] = ClientDisplayInfo(
@@ -252,7 +257,13 @@ extension SharedVirtualDisplayManager {
 
         MirageLogger.host("\(consumer) released shared display. Remaining consumers: \(activeConsumers.count)")
 
-        if activeConsumers.isEmpty { await destroyDisplay() }
+        if activeConsumers.isEmpty, pendingAcquisitionCount == 0 {
+            await destroyDisplay()
+        } else if activeConsumers.isEmpty {
+            MirageLogger.host(
+                "Skipping display teardown: \(pendingAcquisitionCount) acquisition(s) still in flight"
+            )
+        }
     }
 
     /// Update the display resolution for a consumer (used for desktop streaming resize)

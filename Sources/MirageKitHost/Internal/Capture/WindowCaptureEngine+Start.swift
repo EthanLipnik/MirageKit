@@ -382,7 +382,13 @@ extension WindowCaptureEngine {
                     "event=restart_complete reason=\(reason) streak=\(activeRestartStreak) mode=\(mode == .display ? "display" : "window")"
                 )
         } catch {
-            MirageLogger.error(.capture, error: error, message: "Capture restart failed: ")
+            let nsError = error as NSError
+            let isStaleWindowOrDisplay = nsError.domain == "CoreGraphicsErrorDomain" && nsError.code == 1003
+            if isStaleWindowOrDisplay {
+                MirageLogger.capture("Capture restart aborted (stale window/display ID): \(error)")
+            } else {
+                MirageLogger.error(.capture, error: error, message: "Capture restart failed: ")
+            }
             captureSessionConfig = nil
             captureMode = nil
             capturedFrameHandler = nil

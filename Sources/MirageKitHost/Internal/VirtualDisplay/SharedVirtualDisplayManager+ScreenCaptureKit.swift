@@ -31,6 +31,21 @@ extension SharedVirtualDisplayManager {
         while attempt < maxAttempts {
             attempt += 1
 
+            // Early exit: if the shared display was destroyed or replaced, stop retrying.
+            if let currentDisplay = sharedDisplay {
+                if currentDisplay.displayID != displayID {
+                    MirageLogger.host(
+                        "Shared display changed from \(displayID) to \(currentDisplay.displayID) during SCDisplay resolution — aborting"
+                    )
+                    throw SharedDisplayError.noActiveDisplay
+                }
+            } else {
+                MirageLogger.host(
+                    "Shared display was destroyed during SCDisplay resolution for \(displayID) — aborting"
+                )
+                throw SharedDisplayError.noActiveDisplay
+            }
+
             do {
                 let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
 
@@ -42,19 +57,22 @@ extension SharedVirtualDisplayManager {
                     return SCDisplayWrapper(display: scDisplay)
                 }
 
+                let available = content.displays.map(\.displayID)
                 if attempt < maxAttempts {
                     MirageLogger
                         .host(
-                            "SCDisplay not yet available for displayID \(displayID) (attempt \(attempt)/\(maxAttempts)); retrying in \(delayMs)ms"
+                            "SCDisplay not yet available for displayID \(displayID) (attempt \(attempt)/\(maxAttempts)); " +
+                            "available: \(available); retrying in \(delayMs)ms"
                         )
                     try? await Task.sleep(for: .milliseconds(delayMs))
                     delayMs = min(1000, Int(Double(delayMs) * 1.6))
                 } else {
-                    let available = content.displays.map(\.displayID)
                     MirageLogger.host(
                         "SCDisplay not found for displayID \(displayID) after \(maxAttempts) attempts. Available: \(available)"
                     )
                 }
+            } catch is SharedDisplayError {
+                throw SharedDisplayError.noActiveDisplay
             } catch {
                 if attempt < maxAttempts {
                     MirageLogger.host(

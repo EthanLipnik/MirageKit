@@ -21,7 +21,7 @@ struct DesktopBackingScaleResolutionTests {
         )
 
         #expect(decision.scaleFactor == 2.0)
-        #expect(decision.pixelResolution == CGSize(width: 6016, height: 3384))
+        #expect(decision.pixelResolution == CGSize(width: 6016, height: 3376))
     }
 
     @Test("1x scale factor produces 1x pixel resolution")
@@ -33,7 +33,7 @@ struct DesktopBackingScaleResolutionTests {
         )
 
         #expect(decision.scaleFactor == 1.0)
-        #expect(decision.pixelResolution == logicalResolution)
+        #expect(decision.pixelResolution == CGSize(width: 3008, height: 1680))
     }
 }
 #endif

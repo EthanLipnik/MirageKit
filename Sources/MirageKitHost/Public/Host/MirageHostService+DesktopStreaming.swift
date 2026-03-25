@@ -380,7 +380,11 @@ extension MirageHostService {
                 do {
                     try await clientContext.send(.streamMetricsUpdate, content: metrics)
                 } catch {
-                    MirageLogger.error(.host, error: error, message: "Failed to send desktop stream metrics: ")
+                    await handleControlChannelSendFailure(
+                        client: clientContext.client,
+                        error: error,
+                        operation: "Desktop stream metrics"
+                    )
                 }
             }
         }
@@ -715,9 +719,13 @@ extension MirageHostService {
         maxAttempts: Int = 3
     )
     async -> Bool {
-        var retryDelayMs = 120
+        var retryDelayMs = 500
         for attempt in 1 ... maxAttempts {
             await setupDisplayMirroring(targetDisplayID: targetDisplayID)
+
+            // Allow CGDisplayMirror reconfiguration to settle before verifying.
+            try? await Task.sleep(for: .milliseconds(retryDelayMs))
+
             if isDisplayMirroringRestored(targetDisplayID: targetDisplayID) {
                 if attempt > 1 {
                     MirageLogger
@@ -730,15 +738,19 @@ extension MirageHostService {
 
             let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
             let mirroredCount = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }.count
-            MirageLogger
-                .error(
-                    .host,
-                    "Desktop mirroring restore verification failed (attempt \(attempt)/\(maxAttempts), mirrored=\(mirroredCount)/\(displaysToMirror.count), target=\(targetDisplayID))"
-                )
 
             if attempt < maxAttempts {
-                try? await Task.sleep(for: .milliseconds(retryDelayMs))
-                retryDelayMs = min(1000, Int(Double(retryDelayMs) * 1.6))
+                MirageLogger
+                    .host(
+                        "Desktop mirroring restore verification pending (attempt \(attempt)/\(maxAttempts), mirrored=\(mirroredCount)/\(displaysToMirror.count), target=\(targetDisplayID))"
+                    )
+                retryDelayMs = min(2000, Int(Double(retryDelayMs) * 1.8))
+            } else {
+                MirageLogger
+                    .error(
+                        .host,
+                        "Desktop mirroring restore verification failed (attempt \(attempt)/\(maxAttempts), mirrored=\(mirroredCount)/\(displaysToMirror.count), target=\(targetDisplayID))"
+                    )
             }
         }
 
@@ -931,13 +943,21 @@ extension MirageHostService {
 
         var successfullyRestored = 0
 
+        var onlineIDs = [CGDirectDisplayID](repeating: 0, count: 16)
+        var onlineCount: UInt32 = 0
+        CGGetOnlineDisplayList(16, &onlineIDs, &onlineCount)
+        let onlineDisplays = Set(onlineIDs.prefix(Int(onlineCount)))
         for (displayID, mirroredDisplayID) in desktopMirroringSnapshot {
+            guard onlineDisplays.contains(displayID) else {
+                MirageLogger.host("Skipping mirroring restore for offline display \(displayID)")
+                continue
+            }
             let targetMirrorID = mirroredDisplayID == 0 ? kCGNullDirectDisplay : mirroredDisplayID
             guard CGDisplayMirrorsDisplay(displayID) != targetMirrorID else { continue }
 
             let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, targetMirrorID)
             if result == .success { successfullyRestored += 1 } else {
-                MirageLogger.error(.host, "Failed to restore mirroring for display \(displayID): \(result)")
+                MirageLogger.host("Failed to restore mirroring for display \(displayID): \(result)")
             }
         }
 

@@ -39,7 +39,7 @@ struct VirtualDisplayScaleMathTests {
         )
 
         #expect(fallback.width == 3008)
-        #expect(fallback.height == 1692)
+        #expect(fallback.height == 1680)
     }
 }
 #endif

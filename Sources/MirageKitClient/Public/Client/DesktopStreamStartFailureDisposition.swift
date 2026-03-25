@@ -34,6 +34,8 @@ func desktopStreamStartFailureDisposition(
 extension MirageClientService {
     func clearPendingDesktopStreamStartState() {
         guard desktopStreamID == nil else { return }
+        desktopStreamStartTimeoutTask?.cancel()
+        desktopStreamStartTimeoutTask = nil
         desktopStreamRequestStartTime = 0
         desktopStreamMode = nil
         pendingDesktopAdaptiveFallbackBitrate = nil

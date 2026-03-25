@@ -60,11 +60,13 @@ extension MirageHostService {
         // while disconnect teardown is in progress.
         await appStreamManager.endSessionsForClient(client.id)
 
-        // Stop all window streams for this client and minimize their windows.
+        // Stop all window streams for this client. Skip minimization when Stage
+        // Manager will be re-enabled — it will rearrange windows on its own.
         // Use a drain loop instead of a snapshot so concurrently started streams
         // are also torn down before disconnect completes.
+        let minimizeOnDisconnect = !appStreamingStageManagerNeedsRestore
         while let stream = activeStreams.first(where: { $0.client.id == client.id }) {
-            await stopStream(stream, minimizeWindow: true, updateAppSession: false)
+            await stopStream(stream, minimizeWindow: minimizeOnDisconnect, updateAppSession: false)
         }
 
         // Stop desktop stream if owned by this client.
@@ -92,6 +94,11 @@ extension MirageHostService {
 
         await restoreStageManagerAfterAppStreamingIfNeeded()
         syncSharedClipboardState(reason: "client_disconnected")
+
+        // Final lock attempt after all cleanup (including Stage Manager restore
+        // and virtual display teardown) to avoid interference from Dock restart
+        // or display reconfiguration.
+        lockHostIfStreamingStopped()
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {

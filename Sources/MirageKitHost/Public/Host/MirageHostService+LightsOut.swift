@@ -273,7 +273,7 @@ extension MirageHostService {
     }
 
     private func lockHost() {
-        Task.detached(priority: .utility) {
+        Task.detached(priority: .userInitiated) {
             if Self.lockHostUsingCGSessionCommand() { return }
             if Self.lockHostUsingKeyboardShortcut() { return }
             MirageLogger.error(.host, "Failed to lock host session: no supported lock strategy succeeded")

@@ -320,24 +320,46 @@ actor WindowSpaceManager {
         let resolvedAXWindow = resolveAXWindow(for: windowID)
         let maxAttempts = 6
 
+        var currentSpaceID = spaceID
+
         for attempt in 1 ... maxAttempts {
-            let didActivateSpaceBeforeMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: spaceID)
-            if !didActivateSpaceBeforeMove {
-                MirageLogger.host("Failed to set current space \(spaceID) for display \(displayID) before move attempt \(attempt)")
+            // On retry, re-query the display's current space in case the virtual display
+            // was reassigned to a new space by the window server.
+            if attempt > 1 {
+                let refreshedSpaceID = CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
+                if refreshedSpaceID != 0, refreshedSpaceID != currentSpaceID {
+                    MirageLogger.host(
+                        "Display \(displayID) space changed from \(currentSpaceID) to \(refreshedSpaceID) on attempt \(attempt); adopting new space"
+                    )
+                    currentSpaceID = refreshedSpaceID
+                }
             }
 
-            CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: spaceID)
-            let didMoveWindow = CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin)
+            // Apply a small position offset on retries to work around system-level
+            // placement constraints that may silently reject the exact same coordinates.
+            let retryOffset = CGFloat(attempt - 1) * 2
+            let adjustedOrigin = CGPoint(
+                x: targetOrigin.x + retryOffset,
+                y: targetOrigin.y + retryOffset
+            )
+
+            let didActivateSpaceBeforeMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: currentSpaceID)
+            if !didActivateSpaceBeforeMove {
+                MirageLogger.host("Failed to set current space \(currentSpaceID) for display \(displayID) before move attempt \(attempt)")
+            }
+
+            CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: currentSpaceID)
+            let didMoveWindow = CGSWindowSpaceBridge.moveWindow(windowID, to: adjustedOrigin)
             if !didMoveWindow {
-                MirageLogger.debug(.host, "Failed to move window \(windowID) to position \(targetOrigin) on attempt \(attempt)")
+                MirageLogger.debug(.host, "Failed to move window \(windowID) to position \(adjustedOrigin) on attempt \(attempt)")
             }
             if !raiseWindow(windowID, axWindow: resolvedAXWindow) {
                 MirageLogger.debug(.host, "Failed to raise window \(windowID) on move attempt \(attempt)")
             }
 
-            let didActivateSpaceAfterMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: spaceID)
+            let didActivateSpaceAfterMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: currentSpaceID)
             if !didActivateSpaceAfterMove {
-                MirageLogger.host("Failed to set current space \(spaceID) for display \(displayID) after move attempt \(attempt)")
+                MirageLogger.host("Failed to set current space \(currentSpaceID) for display \(displayID) after move attempt \(attempt)")
             }
 
             await fitWindowToVisibleFrame(
@@ -347,16 +369,22 @@ actor WindowSpaceManager {
                 targetContentAspectRatio: targetContentAspectRatio
             )
 
+            // Snap back to the true target origin after fitting so verification uses
+            // the canonical position regardless of the retry offset.
+            if retryOffset > 0 {
+                CGSWindowSpaceBridge.moveWindow(windowID, to: targetOrigin)
+            }
+
             if verifyWindowPlacement(
                 windowID,
-                expectedSpaceID: spaceID,
+                expectedSpaceID: currentSpaceID,
                 displayBounds: resolvedDisplayBounds,
                 targetOrigin: targetOrigin,
                 axWindow: resolvedAXWindow,
                 targetContentAspectRatio: targetContentAspectRatio
             ) {
                 ensureTrafficLightsHidden(windowID: windowID)
-                MirageLogger.host("Moved window \(windowID) to space \(spaceID) at \(targetOrigin) (attempt \(attempt))")
+                MirageLogger.host("Moved window \(windowID) to space \(currentSpaceID) at \(targetOrigin) (attempt \(attempt))")
                 return
             }
 
@@ -364,13 +392,13 @@ actor WindowSpaceManager {
                 MirageLogger.host(
                     "Window \(windowID) placement not yet confirmed on attempt \(attempt)/\(maxAttempts); retrying"
                 )
-                try? await Task.sleep(for: .milliseconds(Int64(80 * attempt)))
+                try? await Task.sleep(for: .milliseconds(Int64(100 * attempt)))
             }
         }
 
         throw WindowSpaceError.moveFailed(
             windowID,
-            "Placement verification failed for space \(spaceID) on display \(displayID)"
+            "Placement verification failed for space \(currentSpaceID) on display \(displayID) (original space \(spaceID))"
         )
     }
 
@@ -440,6 +468,13 @@ actor WindowSpaceManager {
 
         let frame = resolvedWindowFrame(windowID, axWindow: axWindow)
         guard let frame else {
+            if !expectedSpaceObserved {
+                MirageLogger.debug(
+                    .host,
+                    "verify_placement window=\(windowID) failed=space_mismatch " +
+                        "expected_space=\(expectedSpaceID) current_spaces=\(spaces) frame=nil"
+                )
+            }
             return expectedSpaceObserved
         }
 
@@ -480,6 +515,25 @@ actor WindowSpaceManager {
                 return true
             }
         }
+
+        // Log detailed diagnostics about which checks failed to aid debugging.
+        var failedChecks: [String] = []
+        if !expectedSpaceObserved {
+            failedChecks.append("space(expected=\(expectedSpaceID),actual=\(spaces))")
+        }
+        if !originMatches {
+            failedChecks.append("origin(expected=\(targetOrigin),actual=\(frame.origin),dx=\(abs(frame.origin.x - targetOrigin.x)),dy=\(abs(frame.origin.y - targetOrigin.y)))")
+        }
+        if !intersectsBounds {
+            failedChecks.append("bounds_intersection(frame=\(frame),display=\(displayBounds))")
+        }
+        if !sizeMatchesExpectation {
+            failedChecks.append("size(actual=\(frame.width)x\(frame.height),expected=\(expectedFrame.width)x\(expectedFrame.height),range=\(minimumExpectedWidth)-\(maximumExpectedWidth)x\(minimumExpectedHeight)-\(maximumExpectedHeight))")
+        }
+        MirageLogger.debug(
+            .host,
+            "verify_placement window=\(windowID) failed_checks=[\(failedChecks.joined(separator: ", "))]"
+        )
 
         return false
     }

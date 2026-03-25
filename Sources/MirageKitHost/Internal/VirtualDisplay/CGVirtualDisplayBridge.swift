@@ -705,7 +705,13 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         }
 
         configuredDisplayOrigins.removeValue(forKey: displayID)
-        MirageLogger.error(.host, "Failed to tear down virtual display \(displayID) after profile \(profileLabel) failure")
+        MirageLogger.error(.host, "Failed to tear down virtual display \(displayID) after profile \(profileLabel) failure; marking as orphan")
+
+        // Register this display as orphaned so the next acquisition attempt
+        // force-invalidates it instead of blocking on a stale display.
+        Task {
+            await SharedVirtualDisplayManager.shared.trackOrphanedDisplay(displayID)
+        }
         return false
     }
 
