@@ -25,10 +25,14 @@ extension MirageHostService {
             return
         }
 
-        MirageLogger.error(
-            .host,
-            "Video transport send failed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled)): \(error)"
-        )
+        // Log the first send error for a stream as a Sentry event; suppress
+        // subsequent per-frame errors to avoid flooding diagnostics.
+        if transportSendErrorReported.insert(streamID).inserted {
+            MirageLogger.error(
+                .host,
+                "Video transport send failed for stream \(streamID) (awdlRecovery=\(awdlExperimentEnabled)): \(error)"
+            )
+        }
         guard awdlExperimentEnabled else { return }
         guard let context = streamsByID[streamID] else { return }
         let didTriggerRecovery = await context.handleTransportSendError(error)

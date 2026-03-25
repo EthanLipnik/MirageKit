@@ -30,14 +30,7 @@ extension MirageClientService {
     }
 
     func clampedStreamScale() -> CGFloat {
-        var scale = resolutionScale > 0 ? resolutionScale : 1.0
-
-        #if canImport(MetalFX)
-        if MirageUpscalingPreferences.isEnabled() {
-            scale *= MirageUpscalingPreferences.upscaleFactor()
-        }
-        #endif
-
+        let scale = resolutionScale > 0 ? resolutionScale : 1.0
         return clampStreamScale(scale)
     }
 

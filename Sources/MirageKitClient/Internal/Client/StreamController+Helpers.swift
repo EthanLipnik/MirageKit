@@ -294,26 +294,18 @@ extension StreamController {
         if presentationTier == .passiveSnapshot {
             reassembler.enterKeyframeOnlyMode()
             MirageLogger.client(
-                "Frame loss detected for passive stream \(streamID); requesting bounded keyframe recovery"
+                "Frame loss detected for passive stream \(streamID); entering keyframe-only mode"
             )
-            await requestKeyframeRecovery(reason: .frameLoss)
             return
         }
 
-        let isAwaitingKeyframe = reassembler.isAwaitingKeyframe()
-        if isAwaitingKeyframe {
-            // Previous keyframe was lost while already waiting for one.
-            // Request another immediately — deferring to decode-error threshold
-            // deadlocks because no frames decode while awaiting keyframe.
-            MirageLogger.client(
-                "Frame loss detected for stream \(streamID) while awaiting keyframe; requesting recovery"
-            )
-            await requestKeyframeRecovery(reason: .frameLoss)
-            return
-        }
-
+        // For active streams, frame loss from network congestion must NOT
+        // trigger keyframe requests.  Keyframes are 100-150x larger than
+        // P-frames and make congestion worse, creating a spiral.  Instead,
+        // freeze on the last decoded frame and let the periodic keyframe
+        // interval (or an actual decode error) provide natural recovery.
         MirageLogger.client(
-            "Frame loss detected for stream \(streamID); waiting for decode error threshold"
+            "Frame loss detected for stream \(streamID); waiting for natural keyframe or decode error"
         )
     }
 

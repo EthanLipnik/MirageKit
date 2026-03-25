@@ -218,9 +218,6 @@ public extension MirageClientService {
         if beginPostResizeTransition {
             await controller.beginPostResizeTransition()
         }
-        #if canImport(MetalFX)
-        await controller.setMetalFXTargetOutputSize(getVirtualDisplayPixelResolution())
-        #endif
         await controller.start()
         await controller.updatePresentationTier(sessionStore.presentationTier(for: streamID))
         await updateReassemblerSnapshot()

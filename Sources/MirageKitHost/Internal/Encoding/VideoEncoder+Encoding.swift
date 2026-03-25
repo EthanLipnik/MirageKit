@@ -97,6 +97,7 @@ extension VideoEncoder {
         // Track how many preheat frames produce valid encoded output
         let validOutputCount = Locked<Int>(0)
         let callbackErrorCount = Locked<Int>(0)
+        let lastCallbackStatus = Locked<OSStatus>(noErr)
         var submittedCount = 0
 
         for i in 0 ..< preheatFrameCount {
@@ -122,6 +123,9 @@ extension VideoEncoder {
                       let sampleBuffer,
                       CMSampleBufferGetDataBuffer(sampleBuffer) != nil else {
                     callbackErrorCount.withLock { $0 += 1 }
+                    if cbStatus != noErr {
+                        lastCallbackStatus.withLock { $0 = cbStatus }
+                    }
                     return
                 }
                 validOutputCount.withLock { $0 += 1 }
@@ -147,9 +151,10 @@ extension VideoEncoder {
         let errors = callbackErrorCount.withLock { $0 }
 
         if valid == 0 && submittedCount > 0 {
+            let lastStatus = lastCallbackStatus.withLock { $0 }
             MirageLogger.error(
                 .encoder,
-                "Encoder pre-heat FAILED: 0/\(submittedCount) frames produced valid output (\(errors) callback errors), format=\(activePixelFormat.displayName), \(currentWidth)x\(currentHeight)"
+                "Encoder pre-heat FAILED: 0/\(submittedCount) frames produced valid output (\(errors) callback errors, lastStatus=\(lastStatus)), format=\(activePixelFormat.displayName), \(currentWidth)x\(currentHeight)"
             )
             return false
         }

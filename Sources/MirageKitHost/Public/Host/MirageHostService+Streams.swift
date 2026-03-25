@@ -723,6 +723,7 @@ public extension MirageHostService {
         await context.stop()
         clearVirtualDisplayState(windowID: windowID)
         streamsByID.removeValue(forKey: streamID)
+        transportSendErrorReported.remove(streamID)
         removeActiveStreamSession(streamID: streamID)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: streamID)

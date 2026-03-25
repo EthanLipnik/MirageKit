@@ -48,6 +48,20 @@ extension SharedVirtualDisplayManager {
         allowActiveUpdate: Bool = false
     )
     async throws -> DisplaySnapshot {
+        // Force-destroy any orphaned displays from previous sessions before
+        // acquiring.  Orphans block virtual display creation until the OS
+        // reclaims them, which can take minutes after an unclean teardown.
+        if !orphanedDisplayIDs.isEmpty {
+            MirageLogger.host(
+                "Cleaning up \(orphanedDisplayIDs.count) orphaned display(s) before acquisition: \(orphanedDisplayIDs)"
+            )
+            for orphanID in orphanedDisplayIDs {
+                CGVirtualDisplayBridge.forceInvalidateOrphan(orphanID)
+            }
+            orphanedDisplayIDs.removeAll()
+            try? await Task.sleep(for: .milliseconds(200))
+        }
+
         let requestedRate = refreshRate
         let refreshRate = consumer == .desktopStream
             ? SharedVirtualDisplayManager.streamRefreshRate(for: requestedRate)
@@ -114,6 +128,18 @@ extension SharedVirtualDisplayManager {
             }
 
             notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
+
+            if sharedDisplay == nil {
+                MirageLogger.host(
+                    "Shared display lost during update for \(consumer); re-creating"
+                )
+                sharedDisplay = try await createDisplay(
+                    resolution: targetResolution,
+                    refreshRate: refreshRate,
+                    colorSpace: colorSpace
+                )
+            }
+
             guard let updatedDisplay = sharedDisplay else { throw SharedDisplayError.noActiveDisplay }
             syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
             return snapshot(from: updatedDisplay)
@@ -194,6 +220,20 @@ extension SharedVirtualDisplayManager {
         }
 
         notifyGenerationChangeIfNeeded(previousGeneration: previousGeneration)
+
+        // A concurrent release may have destroyed the display while we were
+        // creating or resizing across an await boundary.  Re-create once
+        // rather than surfacing a transient .noActiveDisplay error.
+        if sharedDisplay == nil, activeConsumers[consumer] != nil {
+            MirageLogger.host(
+                "Shared display lost during acquisition for \(consumer); re-creating"
+            )
+            sharedDisplay = try await createDisplay(
+                resolution: targetResolution,
+                refreshRate: refreshRate,
+                colorSpace: colorSpace
+            )
+        }
 
         guard let display = sharedDisplay else { throw SharedDisplayError.noActiveDisplay }
         syncActiveConsumerColorSpace(consumer, to: display.colorSpace)

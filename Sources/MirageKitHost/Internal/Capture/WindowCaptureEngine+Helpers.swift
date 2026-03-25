@@ -292,10 +292,14 @@ extension WindowCaptureEngine {
         }
     }
 
+    /// Align a pixel dimension to a 16-byte boundary.  Hardware video encoders
+    /// (HEVC on Apple Silicon) require both width and height to be multiples of
+    /// 16 for NV12/P010 pixel formats; unaligned dimensions cause silent encode
+    /// failures during preheat.
     static func alignedEvenPixel(_ value: CGFloat) -> Int {
         let rounded = Int(value.rounded())
-        let even = rounded - (rounded % 2)
-        return max(even, 2)
+        let aligned = rounded & ~15 // round down to nearest multiple of 16
+        return max(aligned, 16)
     }
 }
 

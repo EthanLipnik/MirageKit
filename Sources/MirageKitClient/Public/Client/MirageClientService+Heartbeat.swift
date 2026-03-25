@@ -13,7 +13,7 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     private static let heartbeatInterval: Duration = .seconds(30)
-    private static let heartbeatMaxConsecutiveFailures = 2
+    private static let heartbeatMaxConsecutiveFailures = 3
 
     func startHeartbeat() {
         stopHeartbeat()
@@ -28,6 +28,15 @@ extension MirageClientService {
                     return
                 }
                 guard case .connected = self.connectionState else { return }
+
+                // Only probe when the app layer signals idle state (e.g. app
+                // selection view with nothing loading).  During stream start,
+                // icon fetching, or any active control-channel operation the
+                // heartbeat skips — those operations have their own timeouts.
+                guard self.heartbeatProbingEnabled else {
+                    consecutiveFailures = 0
+                    continue
+                }
 
                 // Active streams provide their own liveness signal via UDP packet flow.
                 guard self.controllersByStream.isEmpty else {

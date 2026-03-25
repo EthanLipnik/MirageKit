@@ -523,7 +523,7 @@ extension SharedVirtualDisplayManager {
         )
     }
 
-    func destroyDisplay(_ display: ManagedDisplayContext, removalWaitMs: Int = 1500) async {
+    func destroyDisplay(_ display: ManagedDisplayContext, removalWaitMs: Int = 3000) async {
         let displayID = display.displayID
         MirageLogger.host("Destroying virtual display, displayID=\(displayID)")
 

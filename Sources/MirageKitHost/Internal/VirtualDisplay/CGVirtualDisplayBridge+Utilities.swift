@@ -350,6 +350,19 @@ extension CGVirtualDisplayBridge {
         )
     }
 
+    /// Attempt to reclaim an orphaned virtual display.  The display was
+    /// already invalidated in a previous session but the OS hadn't finished
+    /// removing it.  We clear our tracking and let the next creation proceed
+    /// with a fresh display ID.
+    static func forceInvalidateOrphan(_ displayID: CGDirectDisplayID) {
+        configuredDisplayOrigins.removeValue(forKey: displayID)
+        if isDisplayOnline(displayID) {
+            MirageLogger.host("Orphaned display \(displayID) still online; will create a new display ID")
+        } else {
+            MirageLogger.host("Orphaned display \(displayID) already reclaimed by OS")
+        }
+    }
+
     static func isDisplayOnline(_ displayID: CGDirectDisplayID) -> Bool {
         var displayCount: UInt32 = 0
         CGGetOnlineDisplayList(0, nil, &displayCount)

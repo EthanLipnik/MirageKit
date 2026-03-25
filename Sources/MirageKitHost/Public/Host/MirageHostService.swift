@@ -199,6 +199,7 @@ public final class MirageHostService {
     var mediaPathSnapshotByStreamID: [StreamID: MirageNetworkPathSnapshot] = [:]
     var sendErrorBursts: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
+    var transportSendErrorReported: Set<StreamID> = []
 
     // Quality test tasks
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]

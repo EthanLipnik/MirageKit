@@ -47,6 +47,9 @@ final class AudioPlaybackController {
 #if os(iOS) || os(visionOS)
     private var audioSessionConfigured = false
     private var hasLoggedInactiveSessionDeferral = false
+    private var audioSessionActivationBackoffUntil: ContinuousClock.Instant?
+    private var audioSessionActivationFailureCount: Int = 0
+    private static let audioSessionMaxRetries = 3
 #endif
 
     init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
@@ -274,6 +277,20 @@ final class AudioPlaybackController {
             return false
         }
         hasLoggedInactiveSessionDeferral = false
+        // App became active — reset backoff so we retry.
+        audioSessionActivationFailureCount = 0
+        audioSessionActivationBackoffUntil = nil
+
+        // Backoff: don't spam activation attempts after repeated failures.
+        // Each failed attempt previously ran per audio packet (~60/s),
+        // flooding the main thread and causing presentation stalls.
+        if let backoffUntil = audioSessionActivationBackoffUntil,
+           ContinuousClock.now < backoffUntil {
+            return false
+        }
+        if audioSessionActivationFailureCount > Self.audioSessionMaxRetries {
+            return false
+        }
 
         let session = AVAudioSession.sharedInstance()
         let configuration = PlaybackAudioSessionConfiguration.ambient
@@ -286,10 +303,23 @@ final class AudioPlaybackController {
                 try session.setActive(true)
             }
             audioSessionConfigured = true
+            audioSessionActivationFailureCount = 0
+            audioSessionActivationBackoffUntil = nil
             return true
         } catch {
             if shouldSuppressAudioSessionActivationError(error) {
-                MirageLogger.debug(.client, "Audio session activation deferred: \(error)")
+                audioSessionActivationFailureCount += 1
+                if audioSessionActivationFailureCount <= Self.audioSessionMaxRetries {
+                    // Exponential backoff: 100ms, 500ms, 2s
+                    let backoffs: [Duration] = [.milliseconds(100), .milliseconds(500), .seconds(2)]
+                    let idx = min(audioSessionActivationFailureCount - 1, backoffs.count - 1)
+                    audioSessionActivationBackoffUntil = .now + backoffs[idx]
+                    MirageLogger.debug(.client,
+                        "Audio session activation deferred (attempt \(audioSessionActivationFailureCount)/\(Self.audioSessionMaxRetries)): \(error)")
+                } else if audioSessionActivationFailureCount == Self.audioSessionMaxRetries + 1 {
+                    MirageLogger.client(
+                        "Audio session activation failed after \(Self.audioSessionMaxRetries) attempts; waiting for app to become active")
+                }
                 return false
             }
             MirageLogger.error(.client, error: error, message: "Audio session setup failed: ")

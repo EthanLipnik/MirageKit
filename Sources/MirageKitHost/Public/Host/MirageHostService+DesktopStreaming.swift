@@ -337,6 +337,7 @@ extension MirageHostService {
         nextStreamID += 1
         streamStartupBaseTimes[streamID] = desktopStartTime
         streamStartupRegistrationLogged.remove(streamID)
+        transportSendErrorReported.remove(streamID)
         let streamContext = StreamContext(
             streamID: streamID,
             windowID: 0,
@@ -584,6 +585,7 @@ extension MirageHostService {
         unregisterStallWindowPointerRoute(streamID: streamID)
         streamStartupBaseTimes.removeValue(forKey: streamID)
         streamStartupRegistrationLogged.remove(streamID)
+        transportSendErrorReported.remove(streamID)
         if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
             Task { try? await videoStream.close() }
         }

@@ -53,7 +53,11 @@ extension MirageClientService {
             pingTimeoutTask?.cancel()
             pingTimeoutTask = Task { @MainActor [weak self] in
                 guard let self else { return }
-                try? await Task.sleep(for: .seconds(1))
+                // Allow enough time for the control channel to drain under
+                // load.  The previous 1-second timeout caused false positives
+                // when the Loom session actor was contended during stream
+                // start or heavy metadata transfers.
+                try? await Task.sleep(for: .seconds(5))
                 self.completePingRequest(
                     expectedRequestID: requestID,
                     result: .failure(MirageError.protocolError("Ping timed out"))

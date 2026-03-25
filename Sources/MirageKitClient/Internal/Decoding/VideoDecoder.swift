@@ -124,10 +124,6 @@ extension VideoDecoder {
     }
 
     func preferredOutputPixelFormat(for colorDepth: MirageStreamColorDepth) -> OSType {
-        if metalFXOutputOverrideEnabled {
-            return kCVPixelFormatType_32BGRA
-        }
-
         switch colorDepth {
         case .standard:
             return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange

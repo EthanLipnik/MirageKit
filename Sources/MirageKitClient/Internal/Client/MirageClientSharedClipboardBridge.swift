@@ -84,22 +84,9 @@ final class MirageClientSharedClipboardBridge {
 
     private func activate() {
         clipboardState.activate(changeCount: currentChangeCount())
-        if autoSync {
-            sendInitialClipboardIfNeeded()
-        }
+        // No initial clipboard send — clipboard sharing only applies to changes
+        // that happen while a stream is active, not pre-existing clipboard content.
         startObservation()
-    }
-
-    private func sendInitialClipboardIfNeeded() {
-        switch clipboardState.observeInitialText(
-            currentClipboardText(),
-            changeCount: currentChangeCount()
-        ) {
-        case .ignore:
-            break
-        case let .send(text):
-            onLocalTextChanged(text, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
-        }
     }
 
     private func deactivate() {
