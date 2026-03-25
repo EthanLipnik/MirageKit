@@ -163,25 +163,30 @@ final class MirageClientSharedClipboardBridge {
         let changeCount = currentChangeCount()
         guard changeCount != clipboardState.lastObservedChangeCount else { return }
 
-        switch clipboardState.observeLocalText(
-            currentClipboardText(),
-            changeCount: changeCount
-        ) {
+        // UIPasteboard.general.string blocks the calling thread for IPC to
+        // the pasteboard daemon (can stall 2-8 seconds).  Read it off the
+        // main actor to keep the UI responsive.
+        Task.detached(priority: .utility) { [weak self] in
+            #if os(macOS)
+            let text = NSPasteboard.general.string(forType: .string)
+            #elseif canImport(UIKit)
+            let text = UIPasteboard.general.string
+            #else
+            let text: String? = nil
+            #endif
+            await self?.completeClipboardObservation(text: text, changeCount: changeCount)
+        }
+    }
+
+    @MainActor
+    private func completeClipboardObservation(text: String?, changeCount: Int) {
+        guard isActive else { return }
+        switch clipboardState.observeLocalText(text, changeCount: changeCount) {
         case .ignore:
             break
         case let .send(text):
             onLocalTextChanged(text, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
         }
-    }
-
-    private func currentClipboardText() -> String? {
-        #if os(macOS)
-        NSPasteboard.general.string(forType: .string)
-        #elseif canImport(UIKit)
-        UIPasteboard.general.string
-        #else
-        nil
-        #endif
     }
 
     private func currentChangeCount() -> Int {

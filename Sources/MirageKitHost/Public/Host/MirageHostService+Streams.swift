@@ -571,11 +571,20 @@ public extension MirageHostService {
                         )
                     }
                 } else {
-                    MirageLogger.error(
-                        .host,
-                        error: virtualDisplayError,
-                        message: "Virtual-display stream start failed: "
-                    )
+                    // windowNotFound / noSavedWindowState are expected when
+                    // the target window was closed before streaming started.
+                    // Log at info level to avoid Sentry noise.
+                    if failureCode == .windowNotFound || failureCode == .noSavedWindowState {
+                        MirageLogger.host(
+                            "Virtual-display stream start skipped (\(failureCode)): \(virtualDisplayError)"
+                        )
+                    } else {
+                        MirageLogger.error(
+                            .host,
+                            error: virtualDisplayError,
+                            message: "Virtual-display stream start failed: "
+                        )
+                    }
                     await cleanupFailedStreamStart(
                         streamID: streamID,
                         context: context,

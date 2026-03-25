@@ -348,6 +348,8 @@ final class AudioPlaybackController {
             Int(AVAudioSession.ErrorCode.cannotStartPlaying.rawValue),
             1836282486, // 'msrv': media services failed
             561210739, // '!ses': session unavailable while mediaserverd is recovering
+            561017449, // '!ini': session not initialized
+            -50, // kAudio_ParamError: invalid parameter (session not active)
         ]
         return deferredCodes.contains(nsError.code)
     }

@@ -16,7 +16,10 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
-        let fatalPosixCodes: Set<POSIXErrorCode> = [.ECANCELED, .ECONNRESET, .ENOTCONN, .EPIPE]
+        let fatalPosixCodes: Set<POSIXErrorCode> = [
+            .ECANCELED, .ECONNRESET, .ENOTCONN, .EPIPE,
+            .EADDRNOTAVAIL, // 49 — can't assign requested address (transport gone)
+        ]
         if let nwError = error as? NWError {
             switch nwError {
             case let .posix(code):
@@ -26,12 +29,35 @@ extension MirageHostService {
             }
         }
 
+        // NWError.connectionFailed wraps the underlying POSIX code in its
+        // description but doesn't expose it as .posix().  Extract it from
+        // the NSError bridge.
         let nsError = error as NSError
         if nsError.domain == NSPOSIXErrorDomain,
            let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
             return fatalPosixCodes.contains(code)
         }
-        if nsError.domain == "NWError", nsError.code == -65554 || nsError.code == -65555 {
+        // NWError domain uses negative codes; the underlying POSIX code is
+        // embedded in the userInfo or the code itself for connectionFailed.
+        if nsError.domain == "NWError" {
+            if nsError.code == -65554 || nsError.code == -65555 {
+                return true
+            }
+            // connectionFailed wraps a POSIX code as a positive value in
+            // the underlying error chain.
+            if let underlying = nsError.userInfo[NSUnderlyingErrorKey] as? NSError,
+               underlying.domain == NSPOSIXErrorDomain,
+               let code = POSIXErrorCode(rawValue: Int32(underlying.code)) {
+                return fatalPosixCodes.contains(code)
+            }
+        }
+        // Last resort: check the string representation for known POSIX codes
+        let desc = String(describing: error)
+        if desc.contains("POSIXErrorCode(rawValue: 89)") ||
+           desc.contains("POSIXErrorCode(rawValue: 57)") ||
+           desc.contains("POSIXErrorCode(rawValue: 54)") ||
+           desc.contains("POSIXErrorCode(rawValue: 49)") ||
+           desc.contains("POSIXErrorCode(rawValue: 32)") {
             return true
         }
         return false
@@ -42,11 +68,19 @@ extension MirageHostService {
         error: Error,
         operation: String
     ) async {
+        // After the first send failure for a client, subsequent sends will
+        // also fail while disconnectClient() is in flight.  Log only the
+        // first failure as a Sentry event to avoid flooding diagnostics
+        // with one error per queued app icon / metadata send.
+        let isFirstFailure = controlChannelSendFailureReported.insert(client.id).inserted
+
         if isFatalConnectionError(error) || LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
-            MirageLogger.host(
-                "\(operation) skipped because the control channel closed for \(client.name): \(error.localizedDescription)"
-            )
-        } else {
+            if isFirstFailure {
+                MirageLogger.host(
+                    "\(operation) skipped because the control channel closed for \(client.name): \(error.localizedDescription)"
+                )
+            }
+        } else if isFirstFailure {
             MirageLogger.error(.host, error: error, message: "\(operation) failed: ")
         }
 

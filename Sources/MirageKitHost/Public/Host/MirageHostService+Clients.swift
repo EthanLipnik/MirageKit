@@ -16,7 +16,10 @@ extension MirageHostService {
     public func disconnectClient(_ client: MirageConnectedClient) async {
         if disconnectingClientIDs.contains(client.id) { return }
         disconnectingClientIDs.insert(client.id)
-        defer { disconnectingClientIDs.remove(client.id) }
+        defer {
+            disconnectingClientIDs.remove(client.id)
+            controlChannelSendFailureReported.remove(client.id)
+        }
 
         MirageInstrumentation.record(.hostClientDisconnected)
 

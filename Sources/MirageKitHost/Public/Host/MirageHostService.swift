@@ -200,6 +200,7 @@ public final class MirageHostService {
     var sendErrorBursts: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
     var transportSendErrorReported: Set<StreamID> = []
+    var controlChannelSendFailureReported: Set<UUID> = []
 
     // Quality test tasks
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
