@@ -9,11 +9,32 @@ import Foundation
 
 package enum MirageSharedClipboard {
     package static let maximumTextBytes = 32 * 1024
+    package static let chunkSize = 4 * 1024
 
     package static func validatedText(_ text: String?) -> String? {
         guard let text, !text.isEmpty else { return nil }
         guard text.utf8.count <= maximumTextBytes else { return nil }
         return text
+    }
+
+    package static func chunkText(_ text: String) -> [String] {
+        let utf8 = Array(text.utf8)
+        guard utf8.count > chunkSize else { return [text] }
+
+        var chunks: [String] = []
+        var offset = 0
+        while offset < utf8.count {
+            var end = min(offset + chunkSize, utf8.count)
+            // Ensure we split at a character boundary. A valid split is where
+            // utf8[end] is not a continuation byte (0b10xxxxxx).
+            while end > offset, end < utf8.count, utf8[end] & 0xC0 == 0x80 {
+                end -= 1
+            }
+            if end == offset { end = min(offset + chunkSize, utf8.count) }
+            chunks.append(String(decoding: utf8[offset ..< end], as: UTF8.self))
+            offset = end
+        }
+        return chunks
     }
 }
 

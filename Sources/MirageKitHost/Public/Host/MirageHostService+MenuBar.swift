@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 1/11/26.
 //
 
+import CoreGraphics
 import Foundation
 import MirageKit
 
@@ -109,12 +110,24 @@ extension MirageHostService {
             MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
             let audioConfiguration = request.audioConfiguration ?? .default
 
+            let displayResolution: CGSize = if request.useHostResolution == true {
+                Self.hostMainDisplayResolution()
+                    ?? CGSize(width: request.displayWidth, height: request.displayHeight)
+            } else {
+                CGSize(width: request.displayWidth, height: request.displayHeight)
+            }
+            if request.useHostResolution == true {
+                MirageLogger.host(
+                    "Using host display resolution: \(Int(displayResolution.width))x\(Int(displayResolution.height)) pts"
+                )
+            }
+
             desktopStreamMode = request.mode ?? .mirrored
             pendingLightsOutSetup = true
             await beginPendingDesktopStreamLightsOutSetup()
             try await startDesktopStream(
                 to: clientContext,
-                displayResolution: CGSize(width: request.displayWidth, height: request.displayHeight),
+                displayResolution: displayResolution,
                 clientScaleFactor: request.scaleFactor,
                 mode: request.mode ?? .mirrored,
                 keyFrameInterval: request.keyFrameInterval,
@@ -193,6 +206,17 @@ extension MirageHostService {
             code: .virtualDisplayStartFailed,
             message: "Failed to start desktop stream: \(error.localizedDescription)"
         )
+    }
+
+    // MARK: - Host Display Resolution
+
+    /// Query the host's current main display resolution in logical points.
+    static func hostMainDisplayResolution() -> CGSize? {
+        let mainDisplay = CGMainDisplayID()
+        let width = CGDisplayPixelsWide(mainDisplay)
+        let height = CGDisplayPixelsHigh(mainDisplay)
+        guard width > 0, height > 0 else { return nil }
+        return CGSize(width: width, height: height)
     }
 }
 

@@ -44,24 +44,51 @@ extension MirageClientService {
             return
         }
 
-        do {
-            let update = try message.decode(SharedClipboardUpdateMessage.self)
-            let decryptedText = try MirageMediaSecurity.decryptClipboardText(
-                update.encryptedText,
-                context: mediaSecurityContext
-            )
-            guard let clipboardText = MirageSharedClipboard.validatedText(decryptedText) else {
-                MirageLogger.client("Ignoring invalid shared clipboard payload from host")
-                return
+        let secCtx = mediaSecurityContext
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                let update = try message.decode(SharedClipboardUpdateMessage.self)
+                let decryptedText = try MirageMediaSecurity.decryptClipboardText(
+                    update.encryptedText,
+                    context: secCtx
+                )
+                guard let chunkText = MirageSharedClipboard.validatedText(decryptedText) else {
+                    MirageLogger.client("Ignoring invalid shared clipboard payload from host")
+                    return
+                }
+                await self?.applyReceivedClipboardChunk(
+                    text: chunkText,
+                    changeID: update.changeID,
+                    sentAtMs: update.sentAtMs,
+                    chunkIndex: update.chunkIndex,
+                    chunkCount: update.chunkCount
+                )
+            } catch {
+                MirageLogger.error(.client, error: error, message: "Failed to handle shared clipboard update: ")
             }
-
-            ensureSharedClipboardBridge().applyRemoteText(
-                clipboardText,
-                changeID: update.changeID,
-                sentAtMs: update.sentAtMs
-            )
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to handle shared clipboard update: ")
         }
+    }
+
+    private func applyReceivedClipboardChunk(
+        text: String,
+        changeID: UUID,
+        sentAtMs: Int64,
+        chunkIndex: Int,
+        chunkCount: Int
+    ) {
+        guard let fullText = clipboardChunkBuffer.addChunk(
+            changeID: changeID,
+            chunkIndex: chunkIndex,
+            chunkCount: chunkCount,
+            text: text
+        ) else { return }
+
+        guard let validatedText = MirageSharedClipboard.validatedText(fullText) else { return }
+
+        ensureSharedClipboardBridge().applyRemoteText(
+            validatedText,
+            changeID: changeID,
+            sentAtMs: sentAtMs
+        )
     }
 }

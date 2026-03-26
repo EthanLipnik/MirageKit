@@ -48,13 +48,28 @@ struct SharedClipboardTests {
             content: SharedClipboardUpdateMessage(
                 changeID: UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!,
                 sentAtMs: 1_234_567,
-                encryptedText: Data([0x01, 0x02, 0x03])
+                encryptedText: Data([0x01, 0x02, 0x03]),
+                chunkIndex: 2,
+                chunkCount: 5
             )
         )
         let (decodedUpdateEnvelope, _) = try requireParsedControlMessage(from: updateEnvelope.serialize())
         let decodedUpdate = try decodedUpdateEnvelope.decode(SharedClipboardUpdateMessage.self)
         #expect(decodedUpdate.sentAtMs == 1_234_567)
         #expect(decodedUpdate.encryptedText == Data([0x01, 0x02, 0x03]))
+        #expect(decodedUpdate.chunkIndex == 2)
+        #expect(decodedUpdate.chunkCount == 5)
+    }
+
+    @Test("Shared clipboard messages default to single chunk")
+    func sharedClipboardMessageDefaultChunk() throws {
+        let update = SharedClipboardUpdateMessage(
+            changeID: UUID(),
+            sentAtMs: 100,
+            encryptedText: Data([0xFF])
+        )
+        #expect(update.chunkIndex == 0)
+        #expect(update.chunkCount == 1)
     }
 
     @Test("Shared clipboard crypto round-trips")
@@ -133,5 +148,68 @@ struct SharedClipboardTests {
         state.recordRemoteWrite(text: "remote", changeCount: 9)
         #expect(state.observeLocalText("remote", changeCount: 9) == .ignore)
         #expect(state.observeLocalText("remote", changeCount: 10) == .send("remote"))
+    }
+
+    // MARK: - Chunk Text
+
+    @Test("chunkText returns single chunk for small text")
+    func chunkTextSmall() {
+        let text = "Hello, world!"
+        let chunks = MirageSharedClipboard.chunkText(text)
+        #expect(chunks.count == 1)
+        #expect(chunks[0] == text)
+    }
+
+    @Test("chunkText splits large text into multiple chunks")
+    func chunkTextLarge() {
+        let text = String(repeating: "a", count: 10_000)
+        let chunks = MirageSharedClipboard.chunkText(text)
+        #expect(chunks.count > 1)
+        #expect(chunks.joined() == text)
+        for chunk in chunks {
+            #expect(chunk.utf8.count <= MirageSharedClipboard.chunkSize)
+        }
+    }
+
+    @Test("chunkText preserves multi-byte characters at boundaries")
+    func chunkTextMultiByte() {
+        // Each emoji is 4 bytes UTF-8. Fill just over one chunk with emojis.
+        let emoji = "\u{1F600}" // 4 bytes
+        let count = (MirageSharedClipboard.chunkSize / 4) + 10
+        let text = String(repeating: emoji, count: count)
+        let chunks = MirageSharedClipboard.chunkText(text)
+        #expect(chunks.count >= 2)
+        #expect(chunks.joined() == text)
+    }
+
+    // MARK: - Chunk Buffer
+
+    @Test("Chunk buffer returns text immediately for single chunk")
+    func chunkBufferSingleChunk() {
+        var buffer = MirageSharedClipboardChunkBuffer()
+        let id = UUID()
+        let result = buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 1, text: "hello")
+        #expect(result == "hello")
+    }
+
+    @Test("Chunk buffer reassembles multiple chunks in order")
+    func chunkBufferMultipleChunks() {
+        var buffer = MirageSharedClipboardChunkBuffer()
+        let id = UUID()
+        #expect(buffer.addChunk(changeID: id, chunkIndex: 0, chunkCount: 3, text: "aaa") == nil)
+        #expect(buffer.addChunk(changeID: id, chunkIndex: 2, chunkCount: 3, text: "ccc") == nil)
+        let result = buffer.addChunk(changeID: id, chunkIndex: 1, chunkCount: 3, text: "bbb")
+        #expect(result == "aaabbbccc")
+    }
+
+    @Test("Chunk buffer handles interleaved transfers")
+    func chunkBufferInterleaved() {
+        var buffer = MirageSharedClipboardChunkBuffer()
+        let id1 = UUID()
+        let id2 = UUID()
+        #expect(buffer.addChunk(changeID: id1, chunkIndex: 0, chunkCount: 2, text: "A") == nil)
+        #expect(buffer.addChunk(changeID: id2, chunkIndex: 0, chunkCount: 2, text: "X") == nil)
+        #expect(buffer.addChunk(changeID: id1, chunkIndex: 1, chunkCount: 2, text: "B") == "AB")
+        #expect(buffer.addChunk(changeID: id2, chunkIndex: 1, chunkCount: 2, text: "Y") == "XY")
     }
 }

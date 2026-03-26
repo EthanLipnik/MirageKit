@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import AVFoundation
 import Foundation
 import SwiftUI
 import MirageKit
@@ -39,6 +40,12 @@ public struct MirageStreamContentView: View {
     public let dictationMode: MirageDictationMode
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
+    #if os(iOS) || os(visionOS)
+    /// Called once when the display layer is ready (e.g. for PiP integration).
+    public var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
+    /// When `true`, display-resolution-change messages are suppressed (e.g. during PiP).
+    public var suppressResizeEvents: Bool = false
+    #endif
     private let desktopResizeAckTimeout: Duration = .seconds(3)
     private let desktopResizeConvergenceTolerance: CGFloat = 4
     private let desktopResizeSendDebounce: Duration = .milliseconds(120)
@@ -114,7 +121,9 @@ public struct MirageStreamContentView: View {
         onDictationError: ((String) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         maxDrawableSize: CGSize? = nil,
-        onWindowWillClose: (() -> Void)? = nil
+        onWindowWillClose: (() -> Void)? = nil,
+        onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil,
+        suppressResizeEvents: Bool = false
     ) {
         self.session = session
         self.sessionStore = sessionStore
@@ -138,6 +147,10 @@ public struct MirageStreamContentView: View {
         self.dictationMode = dictationMode
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
+        #if os(iOS) || os(visionOS)
+        self.onDisplayLayerReady = onDisplayLayerReady
+        self.suppressResizeEvents = suppressResizeEvents
+        #endif
     }
 
     public var body: some View {
@@ -182,7 +195,8 @@ public struct MirageStreamContentView: View {
                 dictationMode: dictationMode,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 presentationTier: streamPresentationTier,
-                maxDrawableSize: maxDrawableSize
+                maxDrawableSize: maxDrawableSize,
+                onDisplayLayerReady: onDisplayLayerReady
             )
             .ignoresSafeArea()
             .blur(radius: resizeBlurRadius)
@@ -391,6 +405,12 @@ public struct MirageStreamContentView: View {
 
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
+
+        #if os(iOS) || os(visionOS)
+        // During PiP the SwiftUI view may report a tiny geometry; ignore it
+        // so the host keeps streaming at the original full resolution.
+        if suppressResizeEvents { return }
+        #endif
 
         let viewSize = metrics.viewSize
         let resolvedRawPixelSize = metrics.pixelSize

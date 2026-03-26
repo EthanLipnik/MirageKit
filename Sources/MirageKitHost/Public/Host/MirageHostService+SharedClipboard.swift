@@ -92,25 +92,53 @@ extension MirageHostService {
             return
         }
 
-        do {
-            let update = try message.decode(SharedClipboardUpdateMessage.self)
-            let decryptedText = try MirageMediaSecurity.decryptClipboardText(
-                update.encryptedText,
-                context: mediaSecurityContext
-            )
-            guard let clipboardText = MirageSharedClipboard.validatedText(decryptedText) else {
-                MirageLogger.host("Ignoring invalid shared clipboard payload from \(client.name)")
-                return
+        let secCtx = mediaSecurityContext
+        let clientName = client.name
+        Task.detached(priority: .utility) { [weak self] in
+            do {
+                let update = try message.decode(SharedClipboardUpdateMessage.self)
+                let decryptedText = try MirageMediaSecurity.decryptClipboardText(
+                    update.encryptedText,
+                    context: secCtx
+                )
+                guard let chunkText = MirageSharedClipboard.validatedText(decryptedText) else {
+                    MirageLogger.host("Ignoring invalid shared clipboard payload from \(clientName)")
+                    return
+                }
+                await self?.applyReceivedClipboardChunk(
+                    text: chunkText,
+                    changeID: update.changeID,
+                    sentAtMs: update.sentAtMs,
+                    chunkIndex: update.chunkIndex,
+                    chunkCount: update.chunkCount
+                )
+            } catch {
+                MirageLogger.error(.host, error: error, message: "Failed to handle shared clipboard update: ")
             }
-
-            ensureSharedClipboardBridge().applyRemoteText(
-                clipboardText,
-                changeID: update.changeID,
-                sentAtMs: update.sentAtMs
-            )
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle shared clipboard update: ")
         }
+    }
+
+    private func applyReceivedClipboardChunk(
+        text: String,
+        changeID: UUID,
+        sentAtMs: Int64,
+        chunkIndex: Int,
+        chunkCount: Int
+    ) {
+        guard let fullText = clipboardChunkBuffer.addChunk(
+            changeID: changeID,
+            chunkIndex: chunkIndex,
+            chunkCount: chunkCount,
+            text: text
+        ) else { return }
+
+        guard let validatedText = MirageSharedClipboard.validatedText(fullText) else { return }
+
+        ensureSharedClipboardBridge().applyRemoteText(
+            validatedText,
+            changeID: changeID,
+            sentAtMs: sentAtMs
+        )
     }
 
     private func ensureSharedClipboardBridge() -> MirageHostSharedClipboardBridge {
@@ -156,6 +184,7 @@ extension MirageHostService {
     ) {
         guard let clipboardText = MirageSharedClipboard.validatedText(text) else { return }
 
+        var targets: [(MirageMediaSecurityContext, MirageControlChannel)] = []
         for clientContext in clientsBySessionID.values {
             guard Self.shouldEnableSharedClipboard(
                 settingEnabled: sharedClipboardEnabled,
@@ -166,26 +195,38 @@ extension MirageHostService {
             ) else {
                 continue
             }
-
-            guard let mediaSecurityContext = mediaSecurityByClientID[clientContext.client.id] else {
+            guard let secCtx = mediaSecurityByClientID[clientContext.client.id] else {
                 continue
             }
+            targets.append((secCtx, clientContext.controlChannel))
+        }
+        guard !targets.isEmpty else { return }
 
-            do {
-                let encryptedText = try MirageMediaSecurity.encryptClipboardText(
-                    clipboardText,
-                    context: mediaSecurityContext
-                )
-                let update = SharedClipboardUpdateMessage(
-                    changeID: changeID,
-                    sentAtMs: sentAtMs,
-                    encryptedText: encryptedText
-                )
-                if !clientContext.sendBestEffort(.sharedClipboardUpdate, content: update) {
-                    MirageLogger.host("Failed to encode shared clipboard update for \(clientContext.client.name)")
+        let chunks = MirageSharedClipboard.chunkText(clipboardText)
+        let chunkCount = chunks.count
+
+        Task.detached(priority: .utility) {
+            for (secCtx, channel) in targets {
+                for (index, chunk) in chunks.enumerated() {
+                    do {
+                        let encryptedText = try MirageMediaSecurity.encryptClipboardText(
+                            chunk,
+                            context: secCtx
+                        )
+                        let update = SharedClipboardUpdateMessage(
+                            changeID: changeID,
+                            sentAtMs: sentAtMs,
+                            encryptedText: encryptedText,
+                            chunkIndex: index,
+                            chunkCount: chunkCount
+                        )
+                        let message = try ControlMessage(type: .sharedClipboardUpdate, content: update)
+                        channel.sendBestEffort(message)
+                    } catch {
+                        MirageLogger.error(.host, error: error, message: "Failed to encrypt shared clipboard update: ")
+                    }
+                    if chunkCount > 1 { await Task.yield() }
                 }
-            } catch {
-                MirageLogger.error(.host, error: error, message: "Failed to encrypt shared clipboard update: ")
             }
         }
     }

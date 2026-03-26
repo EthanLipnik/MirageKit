@@ -346,6 +346,7 @@ public final class MirageHostService {
     let appIconSignatureStore = HostAppIconSignatureStore()
     @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
     @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]
+    @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
 
     /// Menu bar passthrough - internal for extension access
     let menuBarMonitor = MenuBarMonitor()

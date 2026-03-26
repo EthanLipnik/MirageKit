@@ -27,7 +27,7 @@ struct PlaybackAudioSessionConfiguration: Equatable {
 }
 
 @MainActor
-final class AudioPlaybackController {
+public final class AudioPlaybackController {
     private let startupBufferSeconds: Double
     private let maxQueuedSeconds: Double
     private let maxRuntimeExtraDelaySeconds: Double = 0.250
@@ -340,6 +340,39 @@ final class AudioPlaybackController {
 
     private var isApplicationActive: Bool {
         UIApplication.shared.applicationState == .active
+    }
+
+    /// Attempt to upgrade the audio session to `.playback` for Picture-in-Picture.
+    /// Returns `false` if another app is actively playing audio (music, podcast, etc.)
+    /// or if the session cannot be activated, in which case PiP should not start.
+    public func activateForPictureInPicture() -> Bool {
+        let session = AVAudioSession.sharedInstance()
+        if session.isOtherAudioPlaying {
+            MirageLogger.client("PiP audio activation skipped: other audio is playing")
+            return false
+        }
+        do {
+            try session.setCategory(.playback, mode: .default, options: [])
+            try session.setActive(true)
+            audioSessionConfigured = true
+            MirageLogger.client("PiP audio session activated (.playback)")
+            return true
+        } catch {
+            MirageLogger.error(.client, error: error, message: "PiP audio session activation failed: ")
+            return false
+        }
+    }
+
+    /// Restore the audio session to `.ambient` after Picture-in-Picture ends.
+    public func deactivateForPictureInPicture() {
+        let session = AVAudioSession.sharedInstance()
+        do {
+            try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            MirageLogger.client("PiP audio session deactivated (restored .ambient)")
+        } catch {
+            MirageLogger.error(.client, error: error, message: "PiP audio session restore failed: ")
+        }
+        audioSessionConfigured = false
     }
 
     private func shouldSuppressAudioSessionActivationError(_ error: Error) -> Bool {

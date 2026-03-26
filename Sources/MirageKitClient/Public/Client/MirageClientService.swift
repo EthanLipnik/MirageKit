@@ -463,6 +463,7 @@ public final class MirageClientService {
     typealias ControlMessageHandler = @MainActor (ControlMessage) async -> Void
     var controlMessageHandlers: [ControlMessageType: ControlMessageHandler] = [:]
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
+    @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
     let awdlExperimentEnabled: Bool = true
     public var currentControlPathKind: MirageNetworkPathKind? {
         controlPathSnapshot?.kind
@@ -495,7 +496,7 @@ public final class MirageClientService {
     var activeAudioStreamMessage: AudioStreamStartedMessage?
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
     nonisolated let audioPacketIngressQueue: ClientAudioPacketIngressQueue
-    @ObservationIgnored let audioPlaybackController = AudioPlaybackController()
+    @ObservationIgnored public let audioPlaybackController = AudioPlaybackController()
     public var audioConfiguration: MirageAudioConfiguration = .default {
         didSet {
             guard oldValue != audioConfiguration else { return }

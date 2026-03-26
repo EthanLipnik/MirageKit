@@ -68,24 +68,38 @@ extension MirageClientService {
     ) {
         guard case .connected = connectionState,
               sharedClipboardEnabled,
-              let mediaSecurityContext else {
+              let mediaSecurityContext,
+              let controlChannel else {
             return
         }
         guard let clipboardText = MirageSharedClipboard.validatedText(text) else { return }
 
-        do {
-            let encryptedText = try MirageMediaSecurity.encryptClipboardText(
-                clipboardText,
-                context: mediaSecurityContext
-            )
-            let update = SharedClipboardUpdateMessage(
-                changeID: changeID,
-                sentAtMs: sentAtMs,
-                encryptedText: encryptedText
-            )
-            sendControlMessageBestEffort(.sharedClipboardUpdate, content: update)
-        } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to send shared clipboard update: ")
+        let secCtx = mediaSecurityContext
+        let channel = controlChannel
+        let chunks = MirageSharedClipboard.chunkText(clipboardText)
+        let chunkCount = chunks.count
+
+        Task.detached(priority: .utility) {
+            for (index, chunk) in chunks.enumerated() {
+                do {
+                    let encryptedText = try MirageMediaSecurity.encryptClipboardText(
+                        chunk,
+                        context: secCtx
+                    )
+                    let update = SharedClipboardUpdateMessage(
+                        changeID: changeID,
+                        sentAtMs: sentAtMs,
+                        encryptedText: encryptedText,
+                        chunkIndex: index,
+                        chunkCount: chunkCount
+                    )
+                    let message = try ControlMessage(type: .sharedClipboardUpdate, content: update)
+                    channel.sendBestEffort(message)
+                } catch {
+                    MirageLogger.error(.client, error: error, message: "Failed to send shared clipboard update: ")
+                }
+                if chunkCount > 1 { await Task.yield() }
+            }
         }
     }
 

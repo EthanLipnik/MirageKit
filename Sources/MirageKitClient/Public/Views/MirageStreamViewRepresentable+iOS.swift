@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
+import AVFoundation
 import MirageKit
 #if os(iOS) || os(visionOS)
 import SwiftUI
@@ -72,6 +73,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
+    /// Called once when the underlying view controller is created, providing
+    /// the `AVSampleBufferDisplayLayer` for external use (e.g. PiP).
+    public var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -92,7 +97,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         dictationMode: MirageDictationMode = .best,
         cursorLockEnabled: Bool = false,
         presentationTier: StreamPresentationTier = .activeLive,
-        maxDrawableSize: CGSize? = nil
+        maxDrawableSize: CGSize? = nil,
+        onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -114,6 +120,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.cursorLockEnabled = cursorLockEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
+        self.onDisplayLayerReady = onDisplayLayerReady
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -156,6 +163,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
         )
+        onDisplayLayerReady?(controller.sampleBufferDisplayLayer)
         return controller
     }
 
@@ -189,6 +197,12 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
 }
 
 public final class MirageStreamViewController: UIViewController {
+    /// The backing sample buffer display layer used for video presentation.
+    /// Exposed for Picture-in-Picture controller integration.
+    public var sampleBufferDisplayLayer: AVSampleBufferDisplayLayer {
+        captureView.metalView.displayLayer
+    }
+
     private let captureView = InputCapturingView(frame: .zero)
     private var pointerLockRequested: Bool = false {
         didSet {

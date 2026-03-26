@@ -19,14 +19,20 @@ package struct SharedClipboardUpdateMessage: Codable, Sendable {
     package let changeID: UUID
     package let sentAtMs: Int64
     package let encryptedText: Data
+    package let chunkIndex: Int
+    package let chunkCount: Int
 
     package init(
         changeID: UUID,
         sentAtMs: Int64,
-        encryptedText: Data
+        encryptedText: Data,
+        chunkIndex: Int = 0,
+        chunkCount: Int = 1
     ) {
         self.changeID = changeID
         self.sentAtMs = sentAtMs
         self.encryptedText = encryptedText
+        self.chunkIndex = chunkIndex
+        self.chunkCount = chunkCount
     }
 }

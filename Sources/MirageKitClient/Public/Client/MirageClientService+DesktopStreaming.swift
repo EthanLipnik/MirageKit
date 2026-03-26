@@ -27,7 +27,8 @@ public extension MirageClientService {
         mode: MirageDesktopStreamMode = .mirrored,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
-        audioConfiguration: MirageAudioConfiguration? = nil
+        audioConfiguration: MirageAudioConfiguration? = nil,
+        useHostResolution: Bool = false
     )
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
@@ -74,6 +75,7 @@ public extension MirageClientService {
             streamScale: clampedStreamScale(),
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             dataPort: nil,
+            useHostResolution: useHostResolution ? true : nil,
             maxRefreshRate: getScreenMaxRefreshRate()
         )
 
