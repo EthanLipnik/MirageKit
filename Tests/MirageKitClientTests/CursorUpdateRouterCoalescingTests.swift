@@ -57,6 +57,45 @@ struct CursorUpdateRouterCoalescingTests {
         #expect(forcedRefreshCount == 0)
     }
 
+    @Test("Forced notify survives coalescing and wins over non-forced refreshes")
+    func forcedNotifyWinsOverNonForcedRefreshes() async throws {
+        let streamID: StreamID = 77
+        let sequence = SharedSequence()
+        let router = MirageCursorUpdateRouter.makeForTesting(
+            flushInterval: MirageInteractionCadence.frameInterval120Duration
+        )
+        let probe = await MainActor.run {
+            CursorRefreshProbe(sequenceSource: sequence)
+        }
+        await MainActor.run {
+            router.register(view: probe, for: streamID)
+        }
+        defer {
+            Task { @MainActor in
+                router.unregister(streamID: streamID)
+            }
+        }
+
+        sequence.store(1)
+        router.notify(streamID: streamID)
+        sequence.store(2)
+        router.notify(streamID: streamID, force: true)
+
+        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            let lastSeen = await MainActor.run { probe.lastSeenSequence }
+            let forcedCount = await MainActor.run { probe.forcedRefreshCount }
+            if lastSeen == 2, forcedCount > 0 { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+
+        let lastSeenSequence = await MainActor.run { probe.lastSeenSequence }
+        let forcedRefreshCount = await MainActor.run { probe.forcedRefreshCount }
+
+        #expect(lastSeenSequence == 2)
+        #expect(forcedRefreshCount == 1)
+    }
+
     @Test("High-frequency cursor control messages are excluded from receive logging")
     func highFrequencyCursorControlMessagesAreExcludedFromReceiveLogging() {
         #expect(!MirageClientService.shouldLogControlMessage(.cursorUpdate))

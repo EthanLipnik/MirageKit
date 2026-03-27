@@ -71,6 +71,7 @@ extension MirageClientService {
         }
 
         let attemptID = beginConnectAttempt()
+        beginConnectionStartupCriticalSection()
         MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name) using established session...")
         connectionState = .connecting
@@ -102,12 +103,13 @@ extension MirageClientService {
                 try await controlChannel.sendSerialized(data)
             }
             installControlSessionObservers(session)
+            startMediaStreamListener()
             try await performBootstrap(over: controlChannel, provisionalHost: host)
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
-            startMediaStreamListener()
             finishConnectAttempt(attemptID)
+            armConnectionStartupIdleRelease()
 
             // The host immediately streams a large hardware icon (~1 MB) plus
             // app-icon updates after bootstrap.  Give the initial data exchange
@@ -119,6 +121,7 @@ extension MirageClientService {
                 MirageLogger.client("Mirage bootstrap accepted for \(acceptedHost.name)")
             }
         } catch {
+            clearStartupCriticalSection()
             if let pendingChannel {
                 await pendingChannel.cancel()
             }
@@ -147,6 +150,7 @@ extension MirageClientService {
         }
 
         let attemptID = beginConnectAttempt()
+        beginConnectionStartupCriticalSection()
         MirageInstrumentation.record(.clientConnectionRequested)
         MirageLogger.client("Connecting to \(host.name)...")
         connectionState = .connecting
@@ -184,12 +188,13 @@ extension MirageClientService {
                 try await controlChannel.sendSerialized(data)
             }
             installControlSessionObservers(session)
+            startMediaStreamListener()
             try await performBootstrap(over: controlChannel, provisionalHost: host)
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
-            startMediaStreamListener()
             finishConnectAttempt(attemptID)
+            armConnectionStartupIdleRelease()
 
             // The host immediately streams a large hardware icon (~1 MB) plus
             // app-icon updates after bootstrap.  Give the initial data exchange
@@ -201,6 +206,7 @@ extension MirageClientService {
                 MirageLogger.client("Mirage bootstrap accepted for \(acceptedHost.name)")
             }
         } catch {
+            clearStartupCriticalSection()
             if let pendingChannel {
                 await pendingChannel.cancel()
             }
@@ -289,6 +295,7 @@ extension MirageClientService {
         controlSessionStateObserverTask = nil
         controlSessionPathObserverTask?.cancel()
         controlSessionPathObserverTask = nil
+        clearStartupCriticalSection()
         sharedClipboardEnabled = false
         sharedClipboardBridge?.setActive(false)
         inputEventSender.updateSendHandler(nil)
@@ -324,6 +331,7 @@ extension MirageClientService {
             await controller.stop()
         }
         controllersByStream.removeAll()
+        startupAttemptIDByStream.removeAll()
         registeredStreamIDs.removeAll()
         desktopStreamRequestStartTime = 0
         streamStartupBaseTimes.removeAll()
@@ -379,7 +387,7 @@ extension MirageClientService {
             hostSupportLogArchiveTransferTask = nil
             hostSupportLogArchiveTimeoutTask?.cancel()
             hostSupportLogArchiveTimeoutTask = nil
-            hostSupportLogArchiveContinuation.resume(throwing: MirageError.protocolError(reason))
+            hostSupportLogArchiveContinuation.resume(throwing: CancellationError())
         }
         hasCompletedBootstrap = false
         negotiatedFeatures = []
@@ -402,70 +410,63 @@ extension MirageClientService {
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
 
-        // NWConnection can't resolve Bonjour .service endpoints with UDP parameters.
-        // Use the real mDNS hostname from the peer's advertisement instead.
-        // When the host has no UDP listener, fall back to TCP via the Bonjour endpoint.
-        let endpoint: NWEndpoint
-        let transportKind: LoomTransportKind
-        if let udpTransport = host.advertisement.directTransports.first(where: { $0.transportKind == .udp }),
-           let port = NWEndpoint.Port(rawValue: udpTransport.port),
-           let hostName = host.advertisement.hostName {
-            endpoint = .hostPort(host: NWEndpoint.Host(hostName), port: port)
-            transportKind = .udp
-        } else {
-            endpoint = host.endpoint
-            transportKind = .tcp
-        }
+        let attempts = controlSessionAttempts(for: host)
+        var lastFailureReason: String?
 
-        // Retry transient Loom/NWConnection failures. After a client disconnect
-        // the host listener may need a moment before accepting a new session;
-        // NWConnection surfaces this as a CancellationError well before the 30s
-        // timeout fires.
-        let maxAttempts = 3
-        for attempt in 1...maxAttempts {
+        for attempt in attempts {
             try throwIfConnectAttemptIsStale(attemptID)
             do {
                 return try await establishControlSession(
-                    to: endpoint,
-                    hostName: host.name,
+                    attempt: attempt,
                     hello: hello,
-                    attemptID: attemptID,
-                    transportKind: transportKind,
-                    requiredInterfaceType: preferredNetworkType.requiredInterfaceType
+                    attemptID: attemptID
                 )
-            } catch is CancellationError where attempt < maxAttempts {
-                // Real cancellation (user action / new connect) — propagate immediately.
-                guard isCurrentConnectAttempt(attemptID) else { throw CancellationError() }
-                MirageLogger.client(
-                    "Control session attempt \(attempt)/\(maxAttempts) failed, retrying..."
+            } catch {
+                let classification = Self.classifyControlSessionFailure(error)
+                if error is CancellationError || classification == .cancelled {
+                    throw error
+                }
+
+                let failureReason = Self.controlSessionFailureReason(
+                    for: attempt,
+                    classification: classification,
+                    underlyingError: error
                 )
-                try await Task.sleep(for: .milliseconds(500))
+                lastFailureReason = failureReason
+
+                if attempt.transportKind == .udp,
+                   classification.shouldRetryOverTCP,
+                   attempts.contains(where: { $0.transportKind == .tcp }) {
+                    MirageLogger.client("\(failureReason); retrying over advertised TCP")
+                    continue
+                }
+
+                throw MirageError.protocolError(failureReason)
             }
         }
+
         throw MirageError.protocolError(
-            "Failed to establish \(transportKind) session to \(endpoint) after \(maxAttempts) attempts"
+            lastFailureReason ?? "Failed to establish control session to \(host.name)"
         )
     }
 
     private func establishControlSession(
-        to endpoint: NWEndpoint,
-        hostName: String,
+        attempt: ControlSessionAttempt,
         hello: LoomSessionHelloRequest,
-        attemptID: UUID,
-        transportKind: LoomTransportKind = .udp,
-        requiredInterfaceType: NWInterface.InterfaceType? = nil
+        attemptID: UUID
     ) async throws -> LoomAuthenticatedSession {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
-            "Starting \(transportKind) control session to \(hostName) endpoint=\(endpoint)"
+            "Starting \(attempt.transportKind) control session to \(attempt.hostName) " +
+                "endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription)"
         )
         let node = loomNode
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
             let session = try await node.connect(
-                to: endpoint,
-                using: transportKind,
+                to: attempt.endpoint,
+                using: attempt.transportKind,
                 hello: hello,
-                requiredInterfaceType: requiredInterfaceType,
+                requiredInterfaceType: attempt.requiredInterfaceType,
                 onTrustPending: { @MainActor [weak self] in
                     self?.isAwaitingManualApproval = true
                 }
@@ -486,8 +487,6 @@ extension MirageClientService {
         do {
             let session = try await awaitConnectSession(
                 connectTask,
-                endpoint: endpoint,
-                transportKind: transportKind,
                 attemptID: attemptID
             )
             clearPendingConnectTaskIfNeeded(for: attemptID)
@@ -504,14 +503,10 @@ extension MirageClientService {
     /// the macOS NECP policy engine is in a corrupted state).
     private func awaitConnectSession(
         _ connectTask: Task<LoomAuthenticatedSession, Error>,
-        endpoint: NWEndpoint,
-        transportKind: LoomTransportKind,
         attemptID: UUID
     ) async throws -> LoomAuthenticatedSession {
         let timeout = controlSessionConnectTimeout
-        let timeoutError = MirageError.protocolError(
-            "Timed out establishing \(transportKind) control session to \(endpoint)"
-        )
+        let timeoutError = MirageError.timeout
 
         do {
             return try await withCheckedThrowingContinuation { continuation in
@@ -537,6 +532,169 @@ extension MirageClientService {
                 cancelPendingConnectTask(attemptID: attemptID)
             }
             throw error
+        }
+    }
+
+    func controlSessionAttempts(for host: LoomPeer) -> [ControlSessionAttempt] {
+        let requiredInterfaceType = preferredNetworkType.requiredInterfaceType
+        var attempts: [ControlSessionAttempt] = []
+
+        if let udpTransport = host.advertisement.directTransports.first(where: { $0.transportKind == .udp }),
+           let port = NWEndpoint.Port(rawValue: udpTransport.port),
+           let udpHost = controlSessionUDPHost(for: host) {
+            attempts.append(
+                ControlSessionAttempt(
+                    hostName: host.name,
+                    endpoint: .hostPort(host: udpHost, port: port),
+                    transportKind: .udp,
+                    requiredInterfaceType: requiredInterfaceType
+                )
+            )
+        }
+
+        let tcpAttempt = ControlSessionAttempt(
+            hostName: host.name,
+            endpoint: host.endpoint,
+            transportKind: .tcp,
+            requiredInterfaceType: requiredInterfaceType
+        )
+
+        if attempts.isEmpty {
+            attempts.append(tcpAttempt)
+        } else if attempts[0].endpoint.debugDescription != tcpAttempt.endpoint.debugDescription {
+            attempts.append(tcpAttempt)
+        }
+
+        return attempts
+    }
+
+    private func controlSessionUDPHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        let advertisedHostName = host.advertisement.hostName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let advertisedHostName, !advertisedHostName.isEmpty {
+            let expandedHosts = Self.expandedBonjourHosts(for: NWEndpoint.Host(advertisedHostName))
+            if let preferredHost = expandedHosts.first {
+                return preferredHost
+            }
+        }
+
+        let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peerName.isEmpty else { return nil }
+        return Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first
+    }
+
+    internal struct ControlSessionAttempt {
+        let hostName: String
+        let endpoint: NWEndpoint
+        let transportKind: LoomTransportKind
+        let requiredInterfaceType: NWInterface.InterfaceType?
+
+        var interfaceDescription: String {
+            requiredInterfaceType.map(String.init(describing:)) ?? "any"
+        }
+    }
+
+    internal enum ControlSessionFailureClassification: String {
+        case timeout
+        case transportLoss
+        case connectionRefused
+        case addressUnavailable
+        case cancelled
+        case other
+
+        var shouldRetryOverTCP: Bool {
+            switch self {
+            case .timeout, .transportLoss, .connectionRefused, .addressUnavailable:
+                true
+            case .cancelled, .other:
+                false
+            }
+        }
+    }
+
+    internal static func classifyControlSessionFailure(_ error: Error) -> ControlSessionFailureClassification {
+        if error is CancellationError {
+            return .cancelled
+        }
+
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case .timeout:
+                return .timeout
+            case let .connectionFailed(underlyingError):
+                return classifyControlSessionFailure(underlyingError)
+            default:
+                break
+            }
+        }
+
+        if let loomError = error as? LoomError {
+            switch loomError {
+            case .timeout:
+                return .timeout
+            case let .connectionFailed(underlyingError):
+                return classifyControlSessionFailure(underlyingError)
+            default:
+                break
+            }
+        }
+
+        if let nwError = error as? NWError {
+            return classifyNetworkFailure(nwError)
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == NSPOSIXErrorDomain,
+           let code = POSIXErrorCode(rawValue: Int32(nsError.code)) {
+            return classifyPOSIXError(code)
+        }
+
+        return .other
+    }
+
+    internal static func controlSessionFailureReason(
+        for attempt: ControlSessionAttempt,
+        classification: ControlSessionFailureClassification,
+        underlyingError: Error
+    ) -> String {
+        "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed for " +
+            "\(attempt.hostName) endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription) " +
+            "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
+    }
+
+    private static func classifyNetworkFailure(_ error: NWError) -> ControlSessionFailureClassification {
+        switch error {
+        case let .posix(code):
+            return classifyPOSIXError(code)
+        case .dns,
+             .tls:
+            return .other
+        @unknown default:
+            return .other
+        }
+    }
+
+    private static func classifyPOSIXError(_ code: POSIXErrorCode) -> ControlSessionFailureClassification {
+        switch code {
+        case .ETIMEDOUT:
+            .timeout
+        case .ECONNREFUSED:
+            .connectionRefused
+        case .EADDRNOTAVAIL:
+            .addressUnavailable
+        case .ENETDOWN,
+             .ENETUNREACH,
+             .EHOSTDOWN,
+             .EHOSTUNREACH,
+             .ENETRESET,
+             .ECONNABORTED,
+             .ECONNRESET,
+             .ENOTCONN,
+             .EPIPE:
+            .transportLoss
+        case .ECANCELED:
+            .cancelled
+        default:
+            .other
         }
     }
 

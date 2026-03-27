@@ -98,6 +98,7 @@ extension MirageClientService {
     func stopMediaStreamListener() {
         mediaStreamListenerTask?.cancel()
         mediaStreamListenerTask = nil
+        cancelRecoveryKeyframeRetries()
         for task in videoStreamReceiveTasks.values {
             task.cancel()
         }
@@ -193,6 +194,7 @@ extension MirageClientService {
         }
         streamStartupFirstPacketReceived.insert(streamID)
         let deltaMs = Int((CFAbsoluteTimeGetCurrent() - baseTime) * 1000)
+        MirageLogger.signpostEvent(.client, "Startup.FirstVideoPacketReceived", "stream=\(streamID)")
         MirageLogger.client("Desktop start: first video packet received for stream \(streamID) (+\(deltaMs)ms)")
     }
 
@@ -201,6 +203,7 @@ extension MirageClientService {
         videoStreamReceiveTasks[streamID]?.cancel()
         videoStreamReceiveTasks.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        cancelRecoveryKeyframeRetry(for: streamID)
     }
 
     // MARK: - Control Path Handling
@@ -303,6 +306,10 @@ extension MirageClientService {
         MirageLogger.client("Stream recovery requested for stream \(streamID) trigger=\(trigger.logLabel)")
 
         MirageFrameCache.shared.clear(for: streamID)
+        cancelRecoveryKeyframeRetry(for: streamID)
+        if trigger.awaitFirstPresentedFrame {
+            startRecoveryKeyframeRetry(for: streamID, controller: controller, trigger: trigger)
+        }
 
         Task { [weak self] in
             guard let self else { return }
@@ -313,6 +320,68 @@ extension MirageClientService {
             )
             self.sendKeyframeRequest(for: streamID)
         }
+    }
+
+    private func startRecoveryKeyframeRetry(
+        for streamID: StreamID,
+        controller: StreamController,
+        trigger: MirageClientStreamRecoveryTrigger
+    ) {
+        let token = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer { self.finishRecoveryKeyframeRetry(for: streamID, token: token) }
+
+            let reassembler = await controller.getReassembler()
+            var lastPacketTime = reassembler.latestPacketReceivedTime()
+
+            for attempt in 1...self.recoveryKeyframeRetryLimit {
+                do {
+                    try await Task.sleep(for: self.recoveryKeyframeRetryInterval)
+                } catch {
+                    return
+                }
+
+                guard case .connected = self.connectionState,
+                      self.controllersByStream[streamID] != nil else {
+                    return
+                }
+
+                let latestPacketTime = reassembler.latestPacketReceivedTime()
+                if latestPacketTime > lastPacketTime {
+                    MirageLogger.client(
+                        "Recovery packet flow resumed for stream \(streamID); ending retry loop trigger=\(trigger.logLabel)"
+                    )
+                    return
+                }
+
+                MirageLogger.client(
+                    "Recovery packet flow stalled for stream \(streamID); retrying keyframe (\(attempt)/\(self.recoveryKeyframeRetryLimit)) trigger=\(trigger.logLabel)"
+                )
+                self.sendKeyframeRequest(for: streamID)
+                lastPacketTime = latestPacketTime
+            }
+        }
+
+        recoveryKeyframeRetryTasks[streamID] = (token: token, task: task)
+    }
+
+    func cancelRecoveryKeyframeRetry(for streamID: StreamID) {
+        guard let retry = recoveryKeyframeRetryTasks.removeValue(forKey: streamID) else { return }
+        retry.task.cancel()
+    }
+
+    private func cancelRecoveryKeyframeRetries() {
+        let retries = recoveryKeyframeRetryTasks.values
+        recoveryKeyframeRetryTasks.removeAll()
+        for retry in retries {
+            retry.task.cancel()
+        }
+    }
+
+    private func finishRecoveryKeyframeRetry(for streamID: StreamID, token: UUID) {
+        guard recoveryKeyframeRetryTasks[streamID]?.token == token else { return }
+        recoveryKeyframeRetryTasks.removeValue(forKey: streamID)
     }
 
     // MARK: - Encoder Settings

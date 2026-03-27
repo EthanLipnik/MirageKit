@@ -22,6 +22,14 @@ struct StreamControllerRecoveryTests {
         #expect(StreamController.freezeCheckInterval == .milliseconds(250))
     }
 
+    @Test("Recovery-mode first-frame watchdog is tighter than startup")
+    func recoveryModeFirstFrameWatchdogIsTighterThanStartup() {
+        #expect(
+            StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .recovery) <
+                StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup)
+        )
+    }
+
     @Test("Post-resize decode admission stays keyframe-only until first frame")
     func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstFrame() {
         let dropDecision = StreamController.postResizeDecodeAdmissionDecision(
@@ -583,6 +591,39 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Freeze monitor requests recovery after real presentation progress stalls")
+    func freezeMonitorRequestsRecoveryAfterPresentationStall() async throws {
+        let keyframeCounter = LockedCounter()
+        let streamID: StreamID = 148
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.updatePresentationTier(.activeLive)
+        await controller.recordDecodedFrame()
+        MirageFrameCache.shared.markPresented(sequence: 1, for: streamID)
+        await controller.markFirstFramePresented()
+
+        #expect(await controller.lastPresentedProgressTime > 0)
+
+        let reassembler = await controller.getReassembler()
+        reassembler.enterKeyframeOnlyMode()
+
+        try await waitUntil("freeze monitor keyframe request", timeout: .seconds(3)) {
+            keyframeCounter.value >= 1
+        }
+        #expect(keyframeCounter.value >= 1)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     @Test("First-frame watchdog requests bootstrap recovery when startup stalls")
     func firstFrameWatchdogRequestsBootstrapRecoveryWhenStartupStalls() async throws {
         let clock = ManualTimeProvider(start: 1_000)
@@ -593,7 +634,7 @@ struct StreamControllerRecoveryTests {
         )
 
         await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-stall")
-        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace + 0.1)
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
 
         var watchdogTriggered = false
         let timeoutAt = ContinuousClock.now + .seconds(2)
@@ -633,7 +674,7 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.awaitingFirstPresentedFrame)
         #expect(await controller.firstPresentedFrameLastRecoveryRequestTime == 0)
 
-        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace + 0.1)
+        clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .recovery) + 0.1)
 
         var watchdogTriggered = false
         let timeoutAt = ContinuousClock.now + .seconds(2)

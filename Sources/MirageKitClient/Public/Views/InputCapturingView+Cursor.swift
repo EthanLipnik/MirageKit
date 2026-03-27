@@ -20,6 +20,7 @@ extension InputCapturingView {
     func revealCursorAfterPointerMovement() {
         guard cursorHiddenForTyping else { return }
         cursorHiddenForTyping = false
+        refreshCursorUpdates(force: true)
         pointerInteraction?.invalidate()
         updateLockedCursorViewVisibility()
     }
@@ -37,9 +38,9 @@ extension InputCapturingView {
     /// - Parameters:
     ///   - type: The cursor type from the host
     ///   - isVisible: Whether the cursor is within the host window bounds
-    public func updateCursor(type: MirageCursorType, isVisible: Bool) {
+    public func updateCursor(type: MirageCursorType, isVisible: Bool, force: Bool = false) {
         // Only update if something changed
-        guard type != currentCursorType || isVisible != cursorIsVisible else { return }
+        guard force || type != currentCursorType || isVisible != cursorIsVisible else { return }
 
         currentCursorType = type
         cursorIsVisible = isVisible
@@ -56,9 +57,9 @@ extension InputCapturingView {
         if !force, now - lastCursorRefreshTime < cursorRefreshInterval { return }
         lastCursorRefreshTime = now
         guard let snapshot = cursorStore.snapshot(for: streamID) else { return }
-        guard snapshot.sequence != cursorSequence else { return }
+        guard force || snapshot.sequence != cursorSequence else { return }
         cursorSequence = snapshot.sequence
-        updateCursor(type: snapshot.cursorType, isVisible: snapshot.isVisible)
+        updateCursor(type: snapshot.cursorType, isVisible: snapshot.isVisible, force: force)
         refreshLockedCursorIfNeeded(force: force)
     }
 
@@ -86,6 +87,9 @@ extension InputCapturingView: UIPointerInteractionDelegate {
         }
         guard cursorIsVisible else {
             // Cursor is outside the host window, use default pointer
+            return nil
+        }
+        if currentCursorType == .arrow {
             return nil
         }
         return currentCursorType.pointerStyle(for: region)

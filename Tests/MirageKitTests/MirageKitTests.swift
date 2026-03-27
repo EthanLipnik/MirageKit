@@ -631,6 +631,20 @@ struct MirageKitTests {
         #expect(decoded.reason == "Dedicated display correction failed")
     }
 
+    @Test("Desktop stream failed payload serialization")
+    func desktopStreamFailedSerialization() throws {
+        let payload = DesktopStreamFailedMessage(
+            reason: "Virtual display failed activation",
+            errorCode: .virtualDisplayStartFailed
+        )
+
+        let envelope = try ControlMessage(type: .desktopStreamFailed, content: payload)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(DesktopStreamFailedMessage.self)
+        #expect(decoded.reason == "Virtual display failed activation")
+        #expect(decoded.errorCode == .virtualDisplayStartFailed)
+    }
+
     @Test("App window control message IDs are registered")
     func appWindowControlMessageTypeIDsRegistered() {
         #expect(ControlMessageType(rawValue: 0x87) == .appWindowInventory)

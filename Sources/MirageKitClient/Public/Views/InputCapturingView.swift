@@ -69,6 +69,16 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// When `true`, the display layer remains alive across application
+    /// backgrounding and temporary UIKit detachment. This is required for
+    /// sample-buffer PiP because the PiP controller continues consuming the
+    /// same display layer while the app is inactive.
+    public var keepRenderingWhenBackgrounded: Bool = false {
+        didSet {
+            metalView.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
+        }
+    }
+
     /// Stream ID for direct frame cache access (iOS gesture tracking support)
     /// Forwards to the underlying Metal view
     public var streamID: StreamID? {
@@ -181,6 +191,7 @@ public class InputCapturingView: UIView {
     private(set) var hardwareKeyboardPresent: Bool = false
     private var didResignActiveSinceLastActivation = false
     private var didEnterBackgroundSinceLastActive = false
+    private var keptRenderingDuringLastBackground = false
 
     // Virtual cursor state (direct touch trackpad mode)
     private let virtualCursorView = InputCapturingView.makeCursorEffectView()
@@ -1127,7 +1138,16 @@ public class InputCapturingView: UIView {
     @objc
     private func appDidEnterBackground() {
         didEnterBackgroundSinceLastActive = true
-        // iOS does not allow foreground rendering work while backgrounded.
+        guard !keepRenderingWhenBackgrounded else {
+            keptRenderingDuringLastBackground = true
+            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+            MirageLogger.client("Background render keepalive enabled for stream \(streamIDText)")
+            return
+        }
+
+        keptRenderingDuringLastBackground = false
+        // Ordinary app backgrounding should suspend the display layer so we
+        // restart presentation cleanly when the scene becomes active again.
         metalView.suspendRendering()
     }
 
@@ -1136,7 +1156,7 @@ public class InputCapturingView: UIView {
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
         let displayLayerFailed = metalView.hasDisplayLayerFailure
-        let shouldRequestRecovery = backgrounded || displayLayerFailed
+        let shouldRequestRecovery = displayLayerFailed || (backgrounded && !keptRenderingDuringLastBackground)
 
         if window != nil {
             metalView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)
@@ -1151,6 +1171,7 @@ public class InputCapturingView: UIView {
 
         didResignActiveSinceLastActivation = false
         didEnterBackgroundSinceLastActive = false
+        keptRenderingDuringLastBackground = false
         guard shouldRequestRecovery else { return }
 
         let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"

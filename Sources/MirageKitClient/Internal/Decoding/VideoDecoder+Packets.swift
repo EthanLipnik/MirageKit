@@ -12,6 +12,13 @@ import Foundation
 import MirageKit
 
 extension FrameReassembler {
+    struct PendingKeyframeProgress: Sendable, Equatable {
+        let frameNumber: UInt32
+        let receivedCount: Int
+        let totalCount: Int
+        let lastProgressTime: CFAbsoluteTime
+    }
+
     func setFrameHandler(_ handler: @escaping @Sendable (
         StreamID,
         Data,
@@ -48,8 +55,9 @@ extension FrameReassembler {
 
         let frameNumber = header.frameNumber
         let isKeyframePacket = header.flags.contains(.keyframe)
+        let packetReceivedAt = Date()
         lock.lock()
-        lastPacketReceivedTime = CFAbsoluteTimeGetCurrent()
+        lastPacketReceivedTime = packetReceivedAt.timeIntervalSinceReferenceDate
         totalPacketsReceived += 1
 
         // Log stats every 1000 packets
@@ -166,7 +174,8 @@ extension FrameReassembler {
                 dataFragmentCount: dataFragmentCount,
                 isKeyframe: isKeyframePacket,
                 timestamp: header.timestamp,
-                receivedAt: Date(),
+                receivedAt: packetReceivedAt,
+                lastProgressAt: packetReceivedAt,
                 contentRect: header.contentRect,
                 expectedTotalBytes: usesHeaderByteCount ? frameByteCount : capacity
             )
@@ -190,6 +199,7 @@ extension FrameReassembler {
             if frame.parityFragments[parityIndex] == nil {
                 frame.parityFragments[parityIndex] = data
                 frame.receivedParityCount += 1
+                frame.lastProgressAt = packetReceivedAt
                 tryRecoverMissingFragment(
                     frame: frame,
                     parityIndex: parityIndex,
@@ -202,6 +212,7 @@ extension FrameReassembler {
                 frame.buffer.write(data, at: offset)
                 frame.receivedMap[fragmentIndex] = true
                 frame.receivedCount += 1
+                frame.lastProgressAt = packetReceivedAt
                 if !usesHeaderByteCount, fragmentIndex == frame.receivedMap.count - 1 {
                     let end = offset + data.count
                     frame.expectedTotalBytes = min(end, frame.buffer.capacity)
@@ -536,8 +547,13 @@ extension FrameReassembler {
                 staleKeyframeCount += 1
                 continue
             }
-            let timeout = frame.isKeyframe ? keyframeTimeout : pFrameTimeout
-            let shouldKeep = now.timeIntervalSince(frame.receivedAt) < timeout
+            let timeout = if frame.isKeyframe {
+                startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
+            } else {
+                pFrameTimeout
+            }
+            let progressReference = frame.isKeyframe ? frame.lastProgressAt : frame.receivedAt
+            let shouldKeep = now.timeIntervalSince(progressReference) < timeout
             if !shouldKeep {
                 // Log timeout with fragment completion info for debugging
                 let receivedCount = frame.receivedCount
@@ -683,7 +699,16 @@ extension FrameReassembler {
     }
 
     func keyframeTimeoutSeconds() -> CFAbsoluteTime {
-        keyframeTimeout
+        lock.lock()
+        let timeout = startupKeyframeTimeoutOverrideEnabled ? startupKeyframeTimeout : keyframeTimeout
+        lock.unlock()
+        return timeout
+    }
+
+    func setStartupKeyframeTimeoutOverrideEnabled(_ enabled: Bool) {
+        lock.lock()
+        startupKeyframeTimeoutOverrideEnabled = enabled
+        lock.unlock()
     }
 
     func latestPacketReceivedTime() -> CFAbsoluteTime {
@@ -698,6 +723,26 @@ extension FrameReassembler {
         let awaiting = awaitingKeyframe
         lock.unlock()
         return awaiting
+    }
+
+    func latestPendingKeyframeProgress() -> PendingKeyframeProgress? {
+        lock.lock()
+        let progress = pendingFrames
+            .filter { $0.value.isKeyframe }
+            .max { lhs, rhs in
+                if lhs.key == rhs.key { return lhs.value.lastProgressAt < rhs.value.lastProgressAt }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            }
+            .map { frameNumber, frame in
+                PendingKeyframeProgress(
+                    frameNumber: frameNumber,
+                    receivedCount: frame.receivedCount,
+                    totalCount: frame.dataFragmentCount,
+                    lastProgressTime: frame.lastProgressAt.timeIntervalSinceReferenceDate
+                )
+            }
+        lock.unlock()
+        return progress
     }
 
     func hasKeyframeAnchor() -> Bool {
@@ -720,6 +765,7 @@ extension FrameReassembler {
         clearAwaitingKeyframe()
         droppedFrameCount = 0
         lastPacketReceivedTime = 0
+        startupKeyframeTimeoutOverrideEnabled = false
         lock.unlock()
         MirageLogger.log(.frameAssembly, "Reassembler reset for stream \(streamID)")
     }

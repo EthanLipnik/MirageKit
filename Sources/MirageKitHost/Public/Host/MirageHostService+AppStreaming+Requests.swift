@@ -1383,6 +1383,7 @@ extension MirageHostService {
             if appListRequestTask == nil {
                 sendPendingAppListRequestIfPossible()
             }
+            sendPendingNonEssentialMetadataRequestsIfPossible()
         case .beginDeferral:
             appListRequestDeferredForInteractiveWorkload = true
             if appListRequestTask != nil {
@@ -1390,18 +1391,33 @@ extension MirageHostService {
             }
             appListRequestTask?.cancel()
             appListRequestTask = nil
+            cancelPendingNonEssentialMetadataRequestTasks()
             await appStreamManager.cancelAppListScans()
         case .remainDeferred:
             if appListRequestTask != nil {
                 appListRequestTask?.cancel()
                 appListRequestTask = nil
-                await appStreamManager.cancelAppListScans()
             }
+            cancelPendingNonEssentialMetadataRequestTasks()
+            await appStreamManager.cancelAppListScans()
         case .resumeDeferred:
             appListRequestDeferredForInteractiveWorkload = false
             MirageLogger.host("Interactive workload idle; resuming deferred app list request if needed")
             sendPendingAppListRequestIfPossible()
+            sendPendingNonEssentialMetadataRequestsIfPossible()
         }
+    }
+
+    private func cancelPendingNonEssentialMetadataRequestTasks() {
+        hostHardwareIconRequestTask?.cancel()
+        hostHardwareIconRequestTask = nil
+        hostSoftwareUpdateStatusRequestTask?.cancel()
+        hostSoftwareUpdateStatusRequestTask = nil
+    }
+
+    private func sendPendingNonEssentialMetadataRequestsIfPossible() {
+        sendPendingHostHardwareIconRequestIfPossible()
+        sendPendingHostSoftwareUpdateStatusRequestIfPossible()
     }
 
     private func updatePendingAppListRequest(

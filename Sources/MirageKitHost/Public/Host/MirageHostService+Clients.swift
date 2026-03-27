@@ -32,6 +32,16 @@ extension MirageHostService {
             appListRequestTask = nil
             await appStreamManager.cancelAppListScans()
         }
+        if pendingHostHardwareIconRequest?.clientID == client.id {
+            pendingHostHardwareIconRequest = nil
+            hostHardwareIconRequestTask?.cancel()
+            hostHardwareIconRequestTask = nil
+        }
+        if pendingHostSoftwareUpdateStatusRequest?.clientID == client.id {
+            pendingHostSoftwareUpdateStatusRequest = nil
+            hostSoftwareUpdateStatusRequestTask?.cancel()
+            hostSoftwareUpdateStatusRequestTask = nil
+        }
         clearPendingAppWindowCloseAlertTokens(forClientID: client.id)
 
         // Fail closed before asynchronous teardown work so queued handlers no longer

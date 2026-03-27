@@ -217,6 +217,42 @@ extension SharedVirtualDisplayManager {
         }
     }
 
+    func destroyAttemptDisplay(
+        _ displayContext: CGVirtualDisplayBridge.VirtualDisplayContext,
+        removalWaitMs: Int = 1500
+    )
+    async {
+        let displayID = displayContext.displayID
+        let invalidateSelector = NSSelectorFromString("invalidate")
+        let displayObject = displayContext.display
+
+        await MainActor.run {
+            VirtualDisplayKeepaliveController.shared.stop(displayID: displayID)
+        }
+
+        if (displayObject as AnyObject).responds(to: invalidateSelector) {
+            _ = (displayObject as AnyObject).perform(invalidateSelector)
+            MirageLogger.host("Invalidated failed-attempt virtual display object \(displayID)")
+        }
+
+        CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayID)
+        await waitForDisplayRemoval(displayID: displayID, timeoutMs: removalWaitMs)
+
+        if CGVirtualDisplayBridge.isDisplayOnline(displayID) {
+            orphanedDisplayIDs.insert(displayID)
+            CGVirtualDisplayBridge.clearPreferredDescriptorProfile(for: displayContext.colorSpace)
+            CGVirtualDisplayBridge.invalidatePersistentSerial(for: displayContext.colorSpace)
+            MirageLogger.debug(
+                .host,
+                "WARNING: Failed-attempt virtual display \(displayID) remained online after invalidation; marked orphaned and rotated descriptor profile/serial"
+            )
+            return
+        }
+
+        orphanedDisplayIDs.remove(displayID)
+        MirageLogger.host("Failed-attempt virtual display \(displayID) successfully destroyed")
+    }
+
     func updateDisplayInPlace(
         display: ManagedDisplayContext,
         newResolution: CGSize,
@@ -343,14 +379,6 @@ extension SharedVirtualDisplayManager {
                 continue
             }
 
-            let invalidateSelector = NSSelectorFromString("invalidate")
-            func invalidateAttemptDisplay() {
-                if (displayContext.display as AnyObject).responds(to: invalidateSelector) {
-                    _ = (displayContext.display as AnyObject).perform(invalidateSelector)
-                }
-                CGVirtualDisplayBridge.configuredDisplayOrigins.removeValue(forKey: displayContext.displayID)
-            }
-
             let modeSizesAtCreate = CGVirtualDisplayBridge.currentDisplayModeSizes(displayContext.displayID)
             let effectiveScaleHint: CGFloat = if let modeSizesAtCreate,
                                                  modeSizesAtCreate.logical.width > 0 {
@@ -369,7 +397,7 @@ extension SharedVirtualDisplayManager {
                 expectedResolution: effectiveLogical,
                 alternateExpectedResolution: effectivePixel
             ) != nil else {
-                invalidateAttemptDisplay()
+                await destroyAttemptDisplay(displayContext)
                 continue
             }
 
@@ -384,13 +412,13 @@ extension SharedVirtualDisplayManager {
                 isFallbackProbe: true
             )
             guard enforced else {
-                invalidateAttemptDisplay()
+                await destroyAttemptDisplay(displayContext)
                 continue
             }
 
             let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(displayContext.displayID)
             guard spaceID != 0 else {
-                invalidateAttemptDisplay()
+                await destroyAttemptDisplay(displayContext)
                 throw SharedDisplayError.spaceNotFound(displayContext.displayID)
             }
 
@@ -413,7 +441,7 @@ extension SharedVirtualDisplayManager {
                 expectedPixelResolution: validatedPixelResolution
             )
             guard isValid else {
-                invalidateAttemptDisplay()
+                await destroyAttemptDisplay(displayContext)
                 continue
             }
 

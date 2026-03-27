@@ -89,12 +89,24 @@ extension CGVirtualDisplayBridge {
     )
     async -> CGRect? {
         let deadline = Date().addingTimeInterval(timeout)
+        let earlyExitDeadline = Date().addingTimeInterval(min(1.0, timeout))
         var lastBounds = CGRect.zero
+        var everOnline = false
 
         while Date() < deadline {
             let online = isDisplayOnline(displayID)
             let bounds = CGDisplayBounds(displayID)
             lastBounds = bounds
+            if online { everOnline = true }
+
+            // Early exit: if the display has never come online after 1s,
+            // it likely won't — skip to the next creation attempt.
+            if !everOnline, Date() >= earlyExitDeadline {
+                MirageLogger.host(
+                    "Display \(displayID) not online after 1s; skipping to next attempt"
+                )
+                return nil
+            }
 
             if online, bounds.width > 0, bounds.height > 0 {
                 if expectedResolution.width > 0, expectedResolution.height > 0 {

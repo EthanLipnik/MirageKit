@@ -268,9 +268,16 @@ extension MirageClientService {
         }
     }
 
-    func handleStreamStarted(_ message: ControlMessage) {
+    func handleStreamStarted(_ message: ControlMessage) async {
         if let started = try? message.decode(StreamStartedMessage.self) {
             let streamID = started.streamID
+            let startupAttemptID = started.startupAttemptID
+            guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
+                MirageLogger.client(
+                    "Ignoring stale streamStarted for stream \(streamID) startupAttemptID=\(startupAttemptID?.uuidString ?? "nil")"
+                )
+                return
+            }
             MirageLogger.client("Stream started: \(streamID) for window \(started.windowID)")
             let resolvedWindow = resolveWindowForStartedStream(
                 streamID: streamID,
@@ -337,34 +344,41 @@ extension MirageClientService {
                 streamStartupFirstPacketReceived.remove(streamID)
                 markStartupPacketPending(streamID)
             }
+            registerStartupAttempt(startupAttemptID, for: streamID)
 
-            Task {
-                if shouldSetupController {
-                    await self.setupControllerForStream(streamID)
-                }
-                self.addActiveStreamID(streamID)
-                if isAppCentricStream, shouldSetupController {
-                    MirageLogger.client("Controller set up for app-centric stream \(streamID)")
-                }
+            if shouldSetupController {
+                await self.setupControllerForStream(streamID)
+            }
+            self.addActiveStreamID(streamID)
+            if isAppCentricStream, shouldSetupController {
+                MirageLogger.client("Controller set up for app-centric stream \(streamID)")
+            }
 
-                if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
-                    let reassembler = await controller.getReassembler()
-                    reassembler.updateExpectedDimensionToken(token)
-                }
+            if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
+                let reassembler = await controller.getReassembler()
+                reassembler.updateExpectedDimensionToken(token)
+            }
 
-                if shouldRegisterVideo {
-                    self.registeredStreamIDs.insert(streamID)
-                    let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                    try? await self.sendStreamRefreshRateChange(
-                        streamID: streamID,
-                        maxRefreshRate: refreshRate
-                    )
-                    MirageLogger.client(
-                        "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                    )
-                    if shouldMarkStartupPending {
-                        self.startStartupRegistrationRetry(streamID: streamID)
-                    }
+            if let startupAttemptID {
+                await self.sendStreamReadyAck(
+                    streamID: streamID,
+                    startupAttemptID: startupAttemptID,
+                    kind: .window
+                )
+            }
+
+            if shouldRegisterVideo {
+                self.registeredStreamIDs.insert(streamID)
+                let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                try? await self.sendStreamRefreshRateChange(
+                    streamID: streamID,
+                    maxRefreshRate: refreshRate
+                )
+                MirageLogger.client(
+                    "Refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
+                )
+                if shouldMarkStartupPending {
+                    self.startStartupRegistrationRetry(streamID: streamID)
                 }
             }
         }
@@ -384,12 +398,14 @@ extension MirageClientService {
             clearStreamRefreshRateOverride(streamID: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             clearAdaptiveFallbackState(for: streamID)
+            clearStartupAttempt(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
             streamStartupBaseTimes.removeValue(forKey: streamID)
             streamStartupFirstRegistrationSent.remove(streamID)
             streamStartupFirstPacketReceived.remove(streamID)
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
+            cancelRecoveryKeyframeRetry(for: streamID)
             activeJitterHoldMs = 0
 
             Task { [weak self] in

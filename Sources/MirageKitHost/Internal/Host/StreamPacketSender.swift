@@ -13,6 +13,11 @@ import MirageKit
 #if os(macOS)
 
 actor StreamPacketSender {
+    struct PacingOverride: Sendable, Equatable {
+        let rateBps: Int
+        let burstBytes: Int
+    }
+
     struct WorkItem: Sendable {
         let encodedData: Data
         let frameByteCount: Int
@@ -29,6 +34,7 @@ actor StreamPacketSender {
         let wireBytes: Int
         let logPrefix: String
         let generation: UInt32
+        let pacingOverride: PacingOverride?
         let onSendStart: (@Sendable () -> Void)?
         let onSendComplete: (@Sendable () -> Void)?
     }
@@ -102,6 +108,43 @@ actor StreamPacketSender {
         guard isKeyframeBurst else { return packetPacerBurstWindowMs }
         guard totalFragments > 0 else { return packetPacerBurstWindowMs }
         return packetPacerBurstWindowMs
+    }
+
+    nonisolated static func packetPacingParameters(
+        targetRateBps: Int,
+        packetBytes: Int,
+        isKeyframeBurst: Bool,
+        totalFragments: Int,
+        pacingOverride: PacingOverride?
+    ) -> (bytesPerSecond: Double, burstBytes: Double)? {
+        guard isKeyframeBurst else { return nil }
+        guard packetBytes > 0 else { return nil }
+
+        let overrideRate = max(0, pacingOverride?.rateBps ?? 0)
+        let effectiveRateBps = if targetRateBps > 0, overrideRate > 0 {
+            min(targetRateBps, overrideRate)
+        } else {
+            max(targetRateBps, overrideRate)
+        }
+        guard effectiveRateBps > 0 else { return nil }
+
+        let bytesPerSecond = max(1.0, Double(effectiveRateBps) / 8.0)
+        let bytesPerMillisecond = max(1.0, bytesPerSecond / 1_000.0)
+        let burstWindowMs = packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: isKeyframeBurst,
+            totalFragments: totalFragments
+        )
+        let computedBurstBytes = max(
+            bytesPerMillisecond,
+            bytesPerMillisecond * burstWindowMs
+        )
+        let burstBytes = if let pacingOverride {
+            min(computedBurstBytes, Double(max(packetBytes, pacingOverride.burstBytes)))
+        } else {
+            computedBurstBytes
+        }
+
+        return (bytesPerSecond, burstBytes)
     }
 
     init(
@@ -362,7 +405,8 @@ actor StreamPacketSender {
                 await paceIfNeeded(
                     packetBytes: packetLength,
                     isKeyframeBurst: item.isKeyframe,
-                    totalFragments: totalFragments
+                    totalFragments: totalFragments,
+                    pacingOverride: item.pacingOverride
                 )
 
                 let packetBuffer = packetBufferPool.acquire()
@@ -485,7 +529,8 @@ actor StreamPacketSender {
                 await paceIfNeeded(
                     packetBytes: mirageHeaderSize + wirePayload.count,
                     isKeyframeBurst: item.isKeyframe,
-                    totalFragments: totalFragments
+                    totalFragments: totalFragments,
+                    pacingOverride: item.pacingOverride
                 )
 
                 let packetBuffer = packetBufferPool.acquire()
@@ -632,22 +677,20 @@ actor StreamPacketSender {
     private func paceIfNeeded(
         packetBytes: Int,
         isKeyframeBurst: Bool,
-        totalFragments: Int
+        totalFragments: Int,
+        pacingOverride: PacingOverride?
     ) async {
-        guard isKeyframeBurst else { return }
-        guard packetBytes > 0 else { return }
-        guard pacerRateBps > 0 else { return }
-
-        let bytesPerSecond = max(1.0, Double(pacerRateBps) / 8.0)
-        let bytesPerMillisecond = max(1.0, bytesPerSecond / 1_000.0)
-        let burstWindowMs = Self.packetPacerBurstWindowMilliseconds(
+        guard let parameters = Self.packetPacingParameters(
+            targetRateBps: pacerRateBps,
+            packetBytes: packetBytes,
             isKeyframeBurst: isKeyframeBurst,
-            totalFragments: totalFragments
-        )
-        let burstBytes = max(
-            bytesPerMillisecond,
-            bytesPerMillisecond * burstWindowMs
-        )
+            totalFragments: totalFragments,
+            pacingOverride: pacingOverride
+        ) else { return }
+
+        let bytesPerSecond = parameters.bytesPerSecond
+        let bytesPerMillisecond = max(1.0, bytesPerSecond / 1_000.0)
+        let burstBytes = parameters.burstBytes
         refillPacketPacerTokens(
             now: CFAbsoluteTimeGetCurrent(),
             bytesPerSecond: bytesPerSecond,

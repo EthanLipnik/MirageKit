@@ -625,6 +625,7 @@ public extension MirageHostService {
             let encodedDimensions = await context.getEncodedDimensions()
             let targetFrameRate = await context.getTargetFrameRate()
             let codec = await context.getCodec()
+            let startupAttemptID = UUID()
 
             // Get dimension token from stream context
             let dimensionToken = await context.getDimensionToken()
@@ -636,16 +637,19 @@ public extension MirageHostService {
                 height: encodedDimensions.height,
                 frameRate: targetFrameRate,
                 codec: codec,
+                startupAttemptID: startupAttemptID,
                 minWidth: minWidth,
                 minHeight: minHeight,
                 dimensionToken: dimensionToken
             )
             try await clientContext.send(.streamStarted, content: message)
-        }
-
-        // Enable encoding immediately since the Loom video stream is already open.
-        if loomVideoStreamsByStreamID[streamID] != nil {
-            await context.allowEncodingAfterRegistration()
+            MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=window")
+            registerPendingStartupAttempt(
+                streamID: streamID,
+                startupAttemptID: startupAttemptID,
+                clientID: clientContext.client.id,
+                kind: .window
+            )
         }
 
         await markAppStreamInteraction(streamID: streamID, reason: "stream started")
@@ -740,11 +744,23 @@ public extension MirageHostService {
     async {
         await context.stop()
         clearVirtualDisplayState(windowID: windowID)
+        pendingWindowResizeResolutionByStreamID.removeValue(forKey: streamID)
+        windowResizeRequestCounterByStreamID.removeValue(forKey: streamID)
+        windowResizeInFlightStreamIDs.remove(streamID)
+        clearAppStreamGovernorState(streamID: streamID)
+        stopWindowVisibleFrameMonitor(streamID: streamID)
         streamsByID.removeValue(forKey: streamID)
         transportSendErrorReported.remove(streamID)
+        unregisterTypingBurstRoute(streamID: streamID)
+        unregisterStallWindowPointerRoute(streamID: streamID)
         removeActiveStreamSession(streamID: streamID)
         await syncAppListRequestDeferralForInteractiveWorkload()
         await deactivateAudioSourceIfNeeded(streamID: streamID)
+        inputStreamCacheActor.remove(streamID)
+        if let videoStream = loomVideoStreamsByStreamID.removeValue(forKey: streamID) {
+            Task { try? await videoStream.close() }
+        }
+        transportRegistry.unregisterVideoStream(streamID: streamID)
     }
 
     private func conflictingOwnerStreamID(from error: Error) -> StreamID? {
@@ -1128,6 +1144,7 @@ public extension MirageHostService {
     )
     async {
         clearPendingAppWindowReplacement(streamID: session.id)
+        cancelPendingStartupAttempt(streamID: session.id)
         guard let context = streamsByID[session.id] else { return }
 
         // Clear any stuck modifier state when stream ends

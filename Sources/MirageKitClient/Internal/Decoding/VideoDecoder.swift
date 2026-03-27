@@ -397,6 +397,8 @@ final class FrameReassembler: @unchecked Sendable {
     var lastPacketReceivedTime: CFAbsoluteTime = 0
     var currentEpoch: UInt16 = 0
     let keyframeTimeout: TimeInterval = 3.0
+    let startupKeyframeTimeout: TimeInterval = 5.0
+    var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token - frames with mismatched tokens are silently discarded.
     /// Updated when stream starts or client receives a resize notification.
@@ -444,6 +446,7 @@ final class FrameReassembler: @unchecked Sendable {
         var isKeyframe: Bool
         let timestamp: UInt64
         let receivedAt: Date
+        var lastProgressAt: Date
         let contentRect: CGRect
         var expectedTotalBytes: Int
         var parityFragments: [Int: Data]
@@ -459,6 +462,7 @@ final class FrameReassembler: @unchecked Sendable {
             isKeyframe: Bool,
             timestamp: UInt64,
             receivedAt: Date,
+            lastProgressAt: Date,
             contentRect: CGRect,
             expectedTotalBytes: Int,
             parityFragments: [Int: Data] = [:],
@@ -473,6 +477,7 @@ final class FrameReassembler: @unchecked Sendable {
             self.isKeyframe = isKeyframe
             self.timestamp = timestamp
             self.receivedAt = receivedAt
+            self.lastProgressAt = lastProgressAt
             self.contentRect = contentRect
             self.expectedTotalBytes = expectedTotalBytes
             self.parityFragments = parityFragments

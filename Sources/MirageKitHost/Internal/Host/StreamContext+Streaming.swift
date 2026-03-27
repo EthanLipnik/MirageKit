@@ -101,6 +101,7 @@ extension StreamContext {
 
                 let now = CFAbsoluteTimeGetCurrent()
                 let fecBlockSize = resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
+                let pacingOverride = isKeyframe ? startupKeyframePacingOverride(now: now) : nil
                 let frameByteCount = encodedData.count
                 let dataFragments = (frameByteCount + maxPayloadSize - 1) / maxPayloadSize
                 let parityFragments = fecBlockSize > 1 ? (dataFragments + fecBlockSize - 1) / fecBlockSize : 0
@@ -136,6 +137,7 @@ extension StreamContext {
                     wireBytes: wireBytes,
                     logPrefix: logPrefix,
                     generation: generation,
+                    pacingOverride: pacingOverride,
                     onSendStart: nil,
                     onSendComplete: nil
                 )

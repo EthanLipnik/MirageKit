@@ -111,7 +111,7 @@ extension MirageHostService {
             let audioConfiguration = request.audioConfiguration ?? .default
 
             let displayResolution: CGSize = if request.useHostResolution == true {
-                Self.hostMainDisplayResolution()
+                Self.hostMainDisplayLogicalResolution()
                     ?? CGSize(width: request.displayWidth, height: request.displayHeight)
             } else {
                 CGSize(width: request.displayWidth, height: request.displayHeight)
@@ -164,8 +164,17 @@ extension MirageHostService {
                 MirageLogger.error(.host, error: error, message: "Failed to handle desktop stream request: ")
             }
             let errorPayload = Self.desktopStartErrorPayload(for: error)
-            if let response = try? ControlMessage(type: .error, content: errorPayload) {
-                clientContext.sendBestEffort(response)
+            let failedMessage = DesktopStreamFailedMessage(
+                reason: errorPayload.message,
+                errorCode: errorPayload.code
+            )
+            do {
+                try await clientContext.send(.desktopStreamFailed, content: failedMessage)
+            } catch {
+                // Fallback to generic error if the dedicated message fails
+                if let response = try? ControlMessage(type: .error, content: errorPayload) {
+                    clientContext.sendBestEffort(response)
+                }
             }
         }
     }
@@ -211,12 +220,13 @@ extension MirageHostService {
     // MARK: - Host Display Resolution
 
     /// Query the host's current main display resolution in logical points.
-    static func hostMainDisplayResolution() -> CGSize? {
+    static func hostMainDisplayLogicalResolution() -> CGSize? {
         let mainDisplay = CGMainDisplayID()
-        let width = CGDisplayPixelsWide(mainDisplay)
-        let height = CGDisplayPixelsHigh(mainDisplay)
-        guard width > 0, height > 0 else { return nil }
-        return CGSize(width: width, height: height)
+        let modeLogicalResolution = CGVirtualDisplayBridge.currentDisplayModeSizes(mainDisplay)?.logical
+        return resolvedHostLogicalDisplayResolution(
+            bounds: CGDisplayBounds(mainDisplay),
+            modeLogicalResolution: modeLogicalResolution
+        )
     }
 }
 

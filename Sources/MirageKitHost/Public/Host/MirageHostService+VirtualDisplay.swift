@@ -48,6 +48,20 @@ struct DesktopBackingScaleResolution: Equatable {
     let pixelResolution: CGSize
 }
 
+func resolvedHostLogicalDisplayResolution(
+    bounds: CGRect,
+    modeLogicalResolution: CGSize?
+) -> CGSize? {
+    if let modeLogicalResolution,
+       modeLogicalResolution.width > 0,
+       modeLogicalResolution.height > 0 {
+        return modeLogicalResolution
+    }
+
+    guard bounds.width > 0, bounds.height > 0 else { return nil }
+    return bounds.size
+}
+
 func resolvedDesktopBackingScaleResolution(
     logicalResolution: CGSize,
     defaultScaleFactor: CGFloat

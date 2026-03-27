@@ -32,6 +32,7 @@ package enum ControlMessageType: UInt8, Codable {
     case streamStarted = 0x25
     case streamStopped = 0x26
     case streamMetricsUpdate = 0x27
+    case streamReady = 0x28
 
     /// Input events
     case inputEvent = 0x30
@@ -88,6 +89,7 @@ package enum ControlMessageType: UInt8, Codable {
     case stopDesktopStream = 0xA1 // Client → Host: Stop desktop stream
     case desktopStreamStarted = 0xA2 // Host → Client: Desktop stream is active
     case desktopStreamStopped = 0xA3 // Host → Client: Desktop stream ended
+    case desktopStreamFailed = 0xA6 // Host → Client: Desktop stream start failed
     case qualityTestRequest = 0xA4 // Client → Host: Run quality test
     case qualityTestResult = 0xA5 // Host → Client: Quality test metadata/result
 

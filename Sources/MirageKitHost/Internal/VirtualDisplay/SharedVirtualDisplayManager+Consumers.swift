@@ -59,7 +59,7 @@ extension SharedVirtualDisplayManager {
                 CGVirtualDisplayBridge.forceInvalidateOrphan(orphanID)
             }
             orphanedDisplayIDs.removeAll()
-            try? await Task.sleep(for: .milliseconds(200))
+            try? await Task.sleep(for: .milliseconds(500))
         }
 
         let requestedRate = refreshRate

@@ -93,61 +93,50 @@ struct SharedClipboardTests {
         #expect(MirageSharedClipboard.validatedText("clipboard") == "clipboard")
     }
 
-    @Test("Initial observation sends current text")
-    func initialObservationSendsText() {
-        var state = MirageSharedClipboardState()
-        state.activate(changeCount: 5)
-        #expect(state.observeInitialText("hello", changeCount: 5) == .send("hello"))
-    }
-
-    @Test("Initial observation ignores nil and empty text")
-    func initialObservationIgnoresNilEmpty() {
-        var state = MirageSharedClipboardState()
-        state.activate(changeCount: 5)
-        #expect(state.observeInitialText(nil, changeCount: 5) == .ignore)
-
-        state.activate(changeCount: 6)
-        #expect(state.observeInitialText("", changeCount: 6) == .ignore)
-    }
-
-    @Test("Initial observation ignores when inactive")
-    func initialObservationIgnoresInactive() {
-        var state = MirageSharedClipboardState()
-        #expect(state.observeInitialText("hello", changeCount: 5) == .ignore)
-    }
-
-    @Test("After initial observation, same changeCount is ignored by regular observeLocalText")
-    func initialObservationUpdatesChangeCount() {
-        var state = MirageSharedClipboardState()
-        state.activate(changeCount: 5)
-        #expect(state.observeInitialText("hello", changeCount: 5) == .send("hello"))
-        #expect(state.observeLocalText("hello", changeCount: 5) == .ignore)
-        #expect(state.observeLocalText("updated", changeCount: 6) == .send("updated"))
-    }
-
-    @Test("Initial observation followed by remote write and echo suppression")
-    func initialObservationThenRemoteEcho() {
-        var state = MirageSharedClipboardState()
-        state.activate(changeCount: 5)
-        #expect(state.observeInitialText("local", changeCount: 5) == .send("local"))
-
-        state.recordRemoteWrite(text: "remote", changeCount: 6)
-        #expect(state.observeLocalText("remote", changeCount: 6) == .ignore)
-        #expect(state.pendingRemoteText == nil)
-        #expect(state.observeLocalText("new-local", changeCount: 7) == .send("new-local"))
-    }
-
-    @Test("Shared clipboard uses changes-only activation baseline and suppresses remote echo once")
-    func sharedClipboardStateMachine() {
+    @Test("Shared clipboard uses changes-only activation baseline")
+    func sharedClipboardUsesChangesOnlyActivationBaseline() {
         var state = MirageSharedClipboardState()
 
         state.activate(changeCount: 7)
-        #expect(state.observeLocalText("existing", changeCount: 7) == .ignore)
-        #expect(state.observeLocalText("fresh", changeCount: 8) == .send("fresh"))
+        #expect(state.observeLocalText("existing", changeCount: 7, sentAtMs: 100) == .ignore)
+        #expect(state.observeLocalText("fresh", changeCount: 8, sentAtMs: 200) == .send("fresh"))
+    }
 
-        state.recordRemoteWrite(text: "remote", changeCount: 9)
-        #expect(state.observeLocalText("remote", changeCount: 9) == .ignore)
-        #expect(state.observeLocalText("remote", changeCount: 10) == .send("remote"))
+    @Test("Shared clipboard suppresses remote echo once")
+    func sharedClipboardSuppressesRemoteEchoOnce() {
+        var state = MirageSharedClipboardState()
+
+        state.activate(changeCount: 5)
+        state.recordRemoteWrite(text: "remote", changeCount: 6, sentAtMs: 200)
+        #expect(state.observeLocalText("remote", changeCount: 6, sentAtMs: 250) == .ignore)
+        #expect(state.pendingRemoteText == nil)
+        #expect(state.observeLocalText("remote", changeCount: 7, sentAtMs: 300) == .send("remote"))
+    }
+
+    @Test("Shared clipboard rejects older remote updates after a newer local send")
+    func sharedClipboardRejectsOlderRemoteUpdates() {
+        var state = MirageSharedClipboardState()
+
+        state.activate(changeCount: 7)
+        #expect(state.observeLocalText("fresh", changeCount: 8, sentAtMs: 2_000) == .send("fresh"))
+        #expect(!state.shouldApplyRemoteText(sentAtMs: 1_999))
+        #expect(state.shouldApplyRemoteText(sentAtMs: 2_000))
+        #expect(state.shouldApplyRemoteText(sentAtMs: 2_001))
+    }
+
+    @Test("Manual sync prefers the newest remote clipboard until a local change advances")
+    func manualSyncPrefersNewestRemoteClipboard() {
+        var state = MirageSharedClipboardState()
+
+        state.activate(changeCount: 5)
+        state.recordRemoteWrite(text: "host", changeCount: 5, sentAtMs: 500)
+        #expect(state.preferredTextForManualLocalSync(currentText: "slack", changeCount: 5) == "host")
+
+        state.recordObservedLocalChangeCount(6, observedAtMs: 600)
+        #expect(state.preferredTextForManualLocalSync(currentText: "notes", changeCount: 6) == "notes")
+
+        state.recordManualLocalSend(changeCount: 6, sentAtMs: 700)
+        #expect(!state.shouldApplyRemoteText(sentAtMs: 650))
     }
 
     // MARK: - Chunk Text

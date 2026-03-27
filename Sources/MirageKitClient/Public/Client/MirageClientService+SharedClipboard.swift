@@ -8,10 +8,6 @@
 import Foundation
 import MirageKit
 
-#if canImport(UIKit)
-import UIKit
-#endif
-
 @MainActor
 extension MirageClientService {
     nonisolated static func shouldEnableSharedClipboard(
@@ -56,8 +52,7 @@ extension MirageClientService {
               sharedClipboardEnabled,
               clientClipboardSharingEnabled else { return }
         #if canImport(UIKit)
-        guard let text = UIPasteboard.general.string else { return }
-        ensureSharedClipboardBridge().injectLocalClipboardText(text)
+        ensureSharedClipboardBridge().syncCurrentClipboardToRemote()
         #endif
     }
 

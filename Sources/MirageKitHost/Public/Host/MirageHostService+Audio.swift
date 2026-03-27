@@ -240,7 +240,7 @@ extension MirageHostService {
         do {
             try await clientContext.send(.audioStreamStopped, content: message)
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed sending audioStreamStopped: ")
+            MirageLogger.host("Failed sending audioStreamStopped (client likely disconnected): \(error.localizedDescription)")
         }
     }
 }

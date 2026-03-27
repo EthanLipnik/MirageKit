@@ -345,11 +345,14 @@ public final class AudioPlaybackController {
     /// Attempt to upgrade the audio session to `.playback` for Picture-in-Picture.
     /// Returns `false` if another app is actively playing audio (music, podcast, etc.)
     /// or if the session cannot be activated, in which case PiP should not start.
-    public func activateForPictureInPicture() -> Bool {
+    public func activateForPictureInPicture(allowOtherAudio: Bool = false) -> Bool {
         let session = AVAudioSession.sharedInstance()
-        if session.isOtherAudioPlaying {
+        if session.isOtherAudioPlaying, !allowOtherAudio {
             MirageLogger.client("PiP audio activation skipped: other audio is playing")
             return false
+        }
+        if session.isOtherAudioPlaying, allowOtherAudio {
+            MirageLogger.client("PiP probe continuing despite other audio playing")
         }
         do {
             try session.setCategory(.playback, mode: .default, options: [])

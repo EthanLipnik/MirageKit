@@ -48,7 +48,7 @@ Session setup is explicit:
 2. Loom authenticates the peer identity and runs trust evaluation.
 3. Mirage opens its control stream on top of the authenticated Loom session and exchanges bootstrap request/response control messages to negotiate protocol compatibility and media registration state.
 4. Client registers stream and audio channels.
-5. Host begins sending media packets once registration succeeds.
+5. Host begins sending media packets once registration succeeds. The first startup keyframe uses a temporary protection window with stronger keyframe FEC, tighter sender pacing, and a longer client-side startup timeout than steady-state traffic.
 
 This separation keeps connection ownership, protocol negotiation, and media throughput concerns isolated from one another.
 
@@ -67,6 +67,7 @@ Core wire definitions live under `Internal/Protocol`:
 - `ControlMessageType` defines the control taxonomy.
 - `ControlMessage` is the framed envelope used on the control plane.
 - `FrameHeader`, `AudioPacketHeader`, and `QualityTestPacketHeader` define the media-plane packet formats.
+- Desktop stream startup uses explicit `desktopStreamStarted`, `desktopStreamFailed`, and `desktopStreamStopped` control messages so startup rejection is distinguishable from later transport loss.
 
 The shared target also owns:
 
@@ -133,6 +134,13 @@ Host startup is staged:
 4. Start cursor, session-state, and app-stream monitors.
 5. Accept clients and provision per-client stream state on demand.
 
+Desktop stream startup uses a two-layer virtual-display cache:
+
+- a descriptor/profile cache in `CGVirtualDisplayBridge` keyed by machine + mode to prefer the last known-good private-API descriptor path
+- a higher-level startup-target cache keyed by requested virtual-display settings so repeated starts can jump directly to the last known-good Retina or fallback target
+
+Gross Retina activation mismatches, such as a requested ~`3008x1688` logical mode materializing as `800x600`, are treated as poisoned startup paths and aborted early instead of spending the full validation ladder on that descriptor profile.
+
 The host keeps stream-specific policy local to the host runtime. That includes frame rate, bitrate, performance mode, window/app routing, virtual display ownership, and session-state behavior.
 
 Connection approval is also host-owned policy. `MirageHostService` distinguishes two control-plane origins:
@@ -157,7 +165,9 @@ Color depth is now negotiated as a capability-driven tier instead of exposing ra
 
 The host advertises supported color-depth tiers in peer metadata, clamps incoming requests to the highest supported tier, and logs downgrades when a requested tier is unavailable. `Ultra` support is probed by creating a temporary `xf44` HEVC session and validating the encoded SPS `chroma_format_idc`; active streams repeat that validation at runtime, export host-encoder and client-decoder fidelity telemetry over stream metrics, and automatically downgrade to `pro` if the encoder falls below 4:4:4.
 
-Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active.
+Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active. Both bridges treat the newest accepted clipboard update as authoritative, reject stale remote writes, and keep the last accepted remote text available for client-side manual paste sync until the local pasteboard advances again.
+
+While interactive app or desktop startup/workload is active, the host defers nonessential reliable metadata replies such as app lists, app icons, host hardware icons, and software-update status. Only the latest pending request per client is retained and replayed once the workload returns to idle so startup control traffic stays ahead of bulk metadata on the Loom control stream.
 
 QUIC connections require ALPN negotiation. Both host and client set `quicALPN` on `LoomNetworkConfiguration` to `["mirage-v2"]` so that the Loom transport layer passes the ALPN token through to `NWProtocolQUIC.Options`. Without ALPN, the TLS 1.3 handshake embedded in QUIC will fail.
 
@@ -179,7 +189,7 @@ Its responsibilities include:
 - registering for video, audio, and quality-test media
 - decoding audio and video payloads
 - forwarding local input events back to the host
-- bridging eligible local clipboard changes when the host enables shared clipboard for the connection
+- bridging shared clipboard updates with newest-update preference when the host enables the feature for the connection
 - coordinating UI-facing state through `MirageClientSessionStore`
 
 Client presentation is split from transport:
@@ -193,11 +203,13 @@ That split keeps high-frequency media state out of SwiftUI update paths.
 Recovery policy is package-owned inside `MirageKitClient`:
 
 - desktop and app streams only clear client-side transport state from authoritative host stop/disconnect events
+- desktop startup failures prefer the host's explicit `desktopStreamFailed` control message; the client-side startup timeout remains the fallback when the host never reaches a response path
 - freeze detection distinguishes keyframe-starved stalls from packet-starved stalls
 - the first active-stream freeze uses bounded recovery, while repeated freezes escalate to the existing hard reset path
+- activation and hard-recovery resets now use a short first-frame watchdog and resend bounded keyframe requests until packet flow resumes
 - adaptive color-depth fallback for custom quality mode steps `ultra -> pro -> standard` and restores in the reverse order
 
-Client connection establishment is a single attempt with no retry logic. The client resolves endpoints through Bonjour service discovery and connects using the Loom node's `connect()` method, which handles transport parameter construction including ALPN for QUIC. Connection timeout is a fixed 3-second budget.
+Client connection establishment tries UDP first when the peer advertises it, then falls back to the advertised TCP endpoint when the UDP control path times out or fails with a retryable pre-bootstrap transport classification. The client resolves endpoints through Bonjour service discovery and connects using the Loom node's `connect()` method, which handles transport parameter construction including ALPN for QUIC. Direct UDP control attempts treat the advertised `hostName` as an explicit mDNS hostname when present, and otherwise derive a `.local` Bonjour host from the discovered peer name instead of treating the UI service name as a routable hostname. Each transport attempt uses the existing control-session timeout budget.
 
 The client also tracks whether the connected host explicitly granted remote signaling access in the accepted hello response. MirageKit does not decide how that grant is surfaced in app UI, but it exposes the signed result so the app can remember remote-capable hosts independently from CloudKit sharing.
 

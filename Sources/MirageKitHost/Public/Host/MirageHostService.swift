@@ -193,6 +193,9 @@ public final class MirageHostService {
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []
+    var pendingStartupAttemptsByStreamID: [StreamID: PendingStartupAttempt] = [:]
+    var startupAttemptTimeoutTasksByStreamID: [StreamID: Task<Void, Never>] = [:]
+    let startupAttemptTimeoutSeconds: Duration = .seconds(5)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"
     let lightsOutDisabledByEnvironment: Bool = MirageHostService.isLightsOutDisabledByEnvironment()
@@ -343,6 +346,20 @@ public final class MirageHostService {
     var appListRequestTask: Task<Void, Never>?
     var appListRequestToken: UUID = .init()
     var appListRequestDeferredForInteractiveWorkload: Bool = false
+    struct PendingHostHardwareIconRequest: Sendable {
+        let clientID: UUID
+        var preferredMaxPixelSize: Int
+    }
+    var pendingHostHardwareIconRequest: PendingHostHardwareIconRequest?
+    var hostHardwareIconRequestTask: Task<Void, Never>?
+    var hostHardwareIconRequestToken: UUID = .init()
+    struct PendingHostSoftwareUpdateStatusRequest: Sendable {
+        let clientID: UUID
+        var forceRefresh: Bool
+    }
+    var pendingHostSoftwareUpdateStatusRequest: PendingHostSoftwareUpdateStatusRequest?
+    var hostSoftwareUpdateStatusRequestTask: Task<Void, Never>?
+    var hostSoftwareUpdateStatusRequestToken: UUID = .init()
     let appIconSignatureStore = HostAppIconSignatureStore()
     @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
     @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]

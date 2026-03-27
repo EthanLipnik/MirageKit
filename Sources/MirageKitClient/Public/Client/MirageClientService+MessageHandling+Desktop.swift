@@ -13,12 +13,19 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
-    func handleDesktopStreamStarted(_ message: ControlMessage) {
+    func handleDesktopStreamStarted(_ message: ControlMessage) async {
         do {
             let started = try message.decode(DesktopStreamStartedMessage.self)
             MirageLogger
                 .client("Desktop stream started: stream=\(started.streamID), \(started.width)x\(started.height)")
             let streamID = started.streamID
+            let startupAttemptID = started.startupAttemptID
+            guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
+                MirageLogger.client(
+                    "Ignoring stale desktopStreamStarted for stream \(streamID) startupAttemptID=\(startupAttemptID?.uuidString ?? "nil")"
+                )
+                return
+            }
             let previousStreamID = desktopStreamID
             let hasController = controllersByStream[streamID] != nil
             let previousDimensionToken = desktopDimensionTokenByStream[streamID]
@@ -77,37 +84,44 @@ extension MirageClientService {
                 markStartupPacketPending(streamID)
                 desktopStreamRequestStartTime = 0
             }
+            registerStartupAttempt(startupAttemptID, for: streamID)
 
-            Task {
-                if shouldResetController {
-                    await self.setupControllerForStream(
-                        streamID,
-                        beginPostResizeTransition: isResizeTokenAdvance,
-                        codec: started.codec,
-                        streamDimensions: (width: started.width, height: started.height)
+            if shouldResetController {
+                await self.setupControllerForStream(
+                    streamID,
+                    beginPostResizeTransition: isResizeTokenAdvance,
+                    codec: started.codec,
+                    streamDimensions: (width: started.width, height: started.height)
+                )
+            }
+            self.addActiveStreamID(streamID)
+
+            if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
+                let reassembler = await controller.getReassembler()
+                reassembler.updateExpectedDimensionToken(token)
+            }
+
+            if let startupAttemptID {
+                await self.sendStreamReadyAck(
+                    streamID: streamID,
+                    startupAttemptID: startupAttemptID,
+                    kind: .desktop
+                )
+            }
+
+            if !self.registeredStreamIDs.contains(streamID) {
+                self.registeredStreamIDs.insert(streamID)
+                let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
+                try? await self.sendStreamRefreshRateChange(
+                    streamID: streamID,
+                    maxRefreshRate: refreshRate
+                )
+                MirageLogger
+                    .client(
+                        "Desktop start: refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
                     )
-                }
-                self.addActiveStreamID(streamID)
-
-                if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
-                    let reassembler = await controller.getReassembler()
-                    reassembler.updateExpectedDimensionToken(token)
-                }
-
-                if !self.registeredStreamIDs.contains(streamID) {
-                    self.registeredStreamIDs.insert(streamID)
-                    let refreshRate = self.refreshRateOverridesByStream[streamID] ?? self.getScreenMaxRefreshRate()
-                    try? await self.sendStreamRefreshRateChange(
-                        streamID: streamID,
-                        maxRefreshRate: refreshRate
-                    )
-                    MirageLogger
-                        .client(
-                            "Desktop start: refresh override sync sent for stream \(streamID): \(refreshRate)Hz"
-                        )
-                    MirageLogger.client("Registered for desktop stream video \(streamID)")
-                    self.startStartupRegistrationRetry(streamID: streamID)
-                }
+                MirageLogger.client("Registered for desktop stream video \(streamID)")
+                self.startStartupRegistrationRetry(streamID: streamID)
             }
 
             onDesktopStreamStarted?(
@@ -125,6 +139,28 @@ extension MirageClientService {
         }
     }
 
+    func handleDesktopStreamFailed(_ message: ControlMessage) {
+        do {
+            let failed = try message.decode(DesktopStreamFailedMessage.self)
+            MirageLogger.error(.client, "Desktop stream start failed: \(failed.reason)")
+            if let streamID = desktopStreamID {
+                clearStartupAttempt(for: streamID)
+            }
+            clearPendingDesktopStreamStartState()
+            delegate?.clientService(
+                self,
+                didEncounterError: MirageError.protocolError("Desktop stream failed: \(failed.reason)")
+            )
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream failed: ")
+            clearPendingDesktopStreamStartState()
+            delegate?.clientService(
+                self,
+                didEncounterError: MirageError.protocolError("Desktop stream start failed (unknown reason)")
+            )
+        }
+    }
+
     func handleDesktopStreamStopped(_ message: ControlMessage) {
         do {
             let stopped = try message.decode(DesktopStreamStoppedMessage.self)
@@ -135,6 +171,7 @@ extension MirageClientService {
             desktopStreamResolution = nil
             desktopStreamMode = nil
             desktopDimensionTokenByStream.removeValue(forKey: streamID)
+            clearStartupAttempt(for: streamID)
             sessionStore.clearPostResizeTransition(for: streamID)
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
@@ -148,6 +185,7 @@ extension MirageClientService {
             streamStartupFirstPacketReceived.remove(streamID)
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
+            cancelRecoveryKeyframeRetry(for: streamID)
             clearAdaptiveFallbackState(for: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             pendingDesktopAdaptiveFallbackBitrate = nil

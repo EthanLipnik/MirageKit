@@ -138,6 +138,7 @@ extension MirageClientService {
         case .appList,
              .appIconUpdate,
              .appIconStreamComplete,
+             .hostHardwareIcon,
              .windowList,
              .windowUpdate,
              .hostSoftwareUpdateStatus:

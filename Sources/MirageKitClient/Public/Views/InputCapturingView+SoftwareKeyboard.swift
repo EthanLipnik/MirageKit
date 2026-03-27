@@ -214,6 +214,7 @@ extension InputCapturingView: UITextFieldDelegate {
         softwareHeldModifiers = []
         updateSoftwareModifierButtons()
         sendModifierStateIfNeeded(force: true)
+        refreshCursorUpdates(force: true)
         onSoftwareKeyboardVisibilityChanged?(false)
     }
 }

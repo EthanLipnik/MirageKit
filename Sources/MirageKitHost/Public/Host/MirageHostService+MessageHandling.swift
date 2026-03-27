@@ -13,7 +13,7 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    private func sendControlError(
+    func sendControlError(
         _ code: ErrorMessage.ErrorCode,
         message: String,
         streamID: StreamID? = nil,
@@ -40,6 +40,9 @@ extension MirageHostService {
             },
             .streamRefreshRateChange: { [weak self] message, _ in
                 await self?.handleStreamRefreshRateChangeMessage(message)
+            },
+            .streamReady: { [weak self] message, _ in
+                await self?.handleStreamReadyMessage(message)
             },
             .streamEncoderSettingsChange: { [weak self] message, _ in
                 await self?.handleStreamEncoderSettingsChangeMessage(message)
@@ -312,6 +315,19 @@ extension MirageHostService {
         }
 
         await stopStream(session, minimizeWindow: request.minimizeWindow)
+    }
+
+    private func handleStreamReadyMessage(_ message: ControlMessage) async {
+        do {
+            let ready = try message.decode(StreamReadyMessage.self)
+            await acknowledgePendingStartupAttempt(
+                streamID: ready.streamID,
+                startupAttemptID: ready.startupAttemptID,
+                kind: ready.kind
+            )
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle streamReady: ")
+        }
     }
 
     private func handleKeyframeRequestMessage(_ message: ControlMessage) async {

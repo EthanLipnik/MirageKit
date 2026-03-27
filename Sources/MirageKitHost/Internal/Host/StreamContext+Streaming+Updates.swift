@@ -755,12 +755,14 @@ extension StreamContext {
 
     func allowEncodingAfterRegistration() async {
         guard !shouldEncodeFrames else { return }
+        let now = CFAbsoluteTimeGetCurrent()
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
         if !startupRegistrationLogged {
             startupRegistrationLogged = true
             logStartupEvent("UDP registration confirmed")
         }
+        enableStartupTransportProtection(now: now)
         noteLossEvent(reason: "UDP registration warmup", enablePFrameFEC: true)
 
         // Configure the encoder for a keyframe BEFORE allowing frames through.
@@ -773,12 +775,14 @@ extension StreamContext {
         }
 
         shouldEncodeFrames = true
+        MirageLogger.signpostEvent(.stream, "Startup.EncodingEnabled", "stream=\(streamID)")
         MirageLogger.stream("UDP registration confirmed, encoding resumed")
     }
 
     func stop() async {
         guard isRunning else { return }
         isRunning = false
+        disableStartupTransportProtection()
         typingBurstExpiryTask?.cancel()
         typingBurstExpiryTask = nil
 

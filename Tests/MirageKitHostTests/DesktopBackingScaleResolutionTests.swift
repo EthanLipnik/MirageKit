@@ -35,5 +35,25 @@ struct DesktopBackingScaleResolutionTests {
         #expect(decision.scaleFactor == 1.0)
         #expect(decision.pixelResolution == CGSize(width: 3008, height: 1680))
     }
+
+    @Test("Host logical resolution prefers display mode logical size")
+    func hostLogicalResolutionPrefersDisplayModeLogicalSize() {
+        let resolved = resolvedHostLogicalDisplayResolution(
+            bounds: CGRect(x: 0, y: 0, width: 6016, height: 3384),
+            modeLogicalResolution: CGSize(width: 3008, height: 1692)
+        )
+
+        #expect(resolved == CGSize(width: 3008, height: 1692))
+    }
+
+    @Test("Host logical resolution falls back to display bounds")
+    func hostLogicalResolutionFallsBackToDisplayBounds() {
+        let resolved = resolvedHostLogicalDisplayResolution(
+            bounds: CGRect(x: 0, y: 0, width: 3008, height: 1692),
+            modeLogicalResolution: nil
+        )
+
+        #expect(resolved == CGSize(width: 3008, height: 1692))
+    }
 }
 #endif

@@ -17,19 +17,81 @@ extension MirageHostService {
         _ message: ControlMessage,
         from clientContext: ClientContext
     ) async {
+        let request: HostSoftwareUpdateStatusRequestMessage
         do {
-            let request = try message.decode(HostSoftwareUpdateStatusRequestMessage.self)
-            let peer = peerIdentityByClientID[clientContext.client.id]
-            let status = await resolveHostSoftwareUpdateStatus(for: peer, forceRefresh: request.forceRefresh)
-
-            try await clientContext.send(.hostSoftwareUpdateStatus, content: status)
-            MirageLogger.host("Sent host software update status to \(clientContext.client.name)")
+            request = try message.decode(HostSoftwareUpdateStatusRequestMessage.self)
         } catch {
-            await handleControlChannelSendFailure(
-                client: clientContext.client,
-                error: error,
-                operation: "Host software update status"
+            MirageLogger.error(.host, error: error, message: "Failed to decode host software update status request: ")
+            return
+        }
+
+        updatePendingHostSoftwareUpdateStatusRequest(
+            clientID: clientContext.client.id,
+            forceRefresh: request.forceRefresh
+        )
+        if isInteractiveWorkloadActiveForAppListRequests() {
+            MirageLogger.host("Deferring host software update status while interactive workload is active")
+        }
+        await syncAppListRequestDeferralForInteractiveWorkload()
+    }
+
+    private func updatePendingHostSoftwareUpdateStatusRequest(
+        clientID: UUID,
+        forceRefresh: Bool
+    ) {
+        if var pending = pendingHostSoftwareUpdateStatusRequest,
+           pending.clientID == clientID {
+            pending.forceRefresh = pending.forceRefresh || forceRefresh
+            pendingHostSoftwareUpdateStatusRequest = pending
+            return
+        }
+        pendingHostSoftwareUpdateStatusRequest = PendingHostSoftwareUpdateStatusRequest(
+            clientID: clientID,
+            forceRefresh: forceRefresh
+        )
+    }
+
+    func sendPendingHostSoftwareUpdateStatusRequestIfPossible() {
+        guard !isInteractiveWorkloadActiveForAppListRequests() else { return }
+        guard let pending = pendingHostSoftwareUpdateStatusRequest else { return }
+        guard let clientContext = findClientContext(clientID: pending.clientID) else {
+            pendingHostSoftwareUpdateStatusRequest = nil
+            return
+        }
+
+        hostSoftwareUpdateStatusRequestTask?.cancel()
+        let token = UUID()
+        let clientID = pending.clientID
+        let forceRefresh = pending.forceRefresh
+        hostSoftwareUpdateStatusRequestToken = token
+        hostSoftwareUpdateStatusRequestTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+
+            let peer = peerIdentityByClientID[clientID]
+            let status = await resolveHostSoftwareUpdateStatus(
+                for: peer,
+                forceRefresh: forceRefresh
             )
+            guard !Task.isCancelled else { return }
+
+            do {
+                try await clientContext.send(.hostSoftwareUpdateStatus, content: status)
+                MirageLogger.host("Sent host software update status to \(clientContext.client.name)")
+            } catch {
+                await handleControlChannelSendFailure(
+                    client: clientContext.client,
+                    error: error,
+                    operation: "Host software update status"
+                )
+                return
+            }
+            guard !Task.isCancelled else { return }
+
+            if hostSoftwareUpdateStatusRequestToken == token,
+               pendingHostSoftwareUpdateStatusRequest?.clientID == clientID {
+                pendingHostSoftwareUpdateStatusRequest = nil
+                hostSoftwareUpdateStatusRequestTask = nil
+            }
         }
     }
 

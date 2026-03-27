@@ -73,10 +73,11 @@ extension MirageHostService {
                 "Desktop color depth request downgraded: requested=\(colorDepth.displayName), effective=\(resolvedColorDepth.displayName)"
             )
         }
-        let virtualDisplayStartupAttempts = desktopVirtualDisplayStartupAttempts(
+        let virtualDisplayStartupPlan = desktopVirtualDisplayStartupPlan(
             logicalResolution: displayResolution,
             requestedScaleFactor: defaultDesktopBackingScale,
             requestedRefreshRate: virtualDisplayRefreshRate,
+            requestedColorDepth: resolvedColorDepth ?? encoderConfig.colorDepth,
             requestedColorSpace: encoderConfig.withOverrides(
                 keyFrameInterval: keyFrameInterval,
                 colorDepth: resolvedColorDepth,
@@ -84,6 +85,7 @@ extension MirageHostService {
                 bitrate: bitrate
             ).withTargetFrameRate(targetFrameRate ?? encoderConfig.targetFrameRate).colorSpace
         )
+        let virtualDisplayStartupAttempts = virtualDisplayStartupPlan.attempts
         let desktopBackingScale = virtualDisplayStartupAttempts.first?.backingScale ??
             resolvedDesktopBackingScaleResolution(
                 logicalResolution: displayResolution,
@@ -180,13 +182,34 @@ extension MirageHostService {
             colorSpace: MirageColorSpace?
         )?
         var lastVirtualDisplayError: Error?
+        let acquisitionDeadline = ContinuousClock.now + .seconds(20)
 
         acquisitionLoop: for (index, attempt) in virtualDisplayStartupAttempts.enumerated() {
+            if ContinuousClock.now >= acquisitionDeadline {
+                MirageLogger.error(.host, "Desktop virtual display acquisition deadline exceeded (20s)")
+                break acquisitionLoop
+            }
+
+            // Abort early if the client disconnected during acquisition to avoid
+            // creating virtual displays that will be immediately destroyed.
+            if disconnectingClientIDs.contains(clientContext.client.id)
+                || clientsByID[clientContext.client.id] == nil {
+                MirageLogger.host("Desktop stream client disconnected during acquisition loop; aborting")
+                await cleanupFailedDesktopStreamStartup(mode: mode)
+                throw MirageError.protocolError("Desktop stream client disconnected during startup")
+            }
+
             let attemptConfig = config.withInternalOverrides(colorSpace: attempt.colorSpace)
             let attemptResolution = attempt.backingScale.pixelResolution
             let isFinalAttempt = index == virtualDisplayStartupAttempts.count - 1
 
-            if attempt.isConservativeRetry {
+            if attempt.isCachedTarget {
+                MirageLogger.host(
+                    "Retrying desktop virtual display acquisition with cached startup target: " +
+                        "\(Int(attemptResolution.width))x\(Int(attemptResolution.height)) px, " +
+                        "\(attempt.refreshRate)Hz, \(attempt.colorSpace.displayName)"
+                )
+            } else if attempt.isConservativeRetry {
                 MirageLogger.host(
                     "Retrying desktop virtual display acquisition with conservative settings: " +
                         "\(Int(attemptResolution.width))x\(Int(attemptResolution.height)) px, " +
@@ -249,7 +272,11 @@ extension MirageHostService {
                         "Desktop display color space adjusted by virtual display manager: requested=\(config.colorSpace.displayName), effective=\(context.colorSpace.displayName), coverage=\(context.displayP3CoverageStatus.rawValue)"
                     )
                 }
-                if attempt.isConservativeRetry {
+                if attempt.isCachedTarget {
+                    MirageLogger.host(
+                        "Desktop virtual display cached startup target succeeded for stream startup"
+                    )
+                } else if attempt.isConservativeRetry {
                     MirageLogger.host(
                         "Desktop virtual display conservative retry succeeded for stream startup"
                     )
@@ -264,6 +291,10 @@ extension MirageHostService {
                     p3CoverageStatus: captureDisplayP3CoverageStatus,
                     colorSpace: captureDisplayColorSpace
                 )
+                recordDesktopVirtualDisplayStartupTargetSuccess(
+                    attempt,
+                    for: virtualDisplayStartupPlan.request
+                )
                 break acquisitionLoop
             } catch {
                 await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
@@ -272,6 +303,13 @@ extension MirageHostService {
                 sharedVirtualDisplayScaleFactor = 1.0
                 desktopDisplayBounds = nil
                 lastVirtualDisplayError = error
+
+                if attempt.isCachedTarget {
+                    clearDesktopVirtualDisplayStartupTarget(for: virtualDisplayStartupPlan.request)
+                    MirageLogger.host(
+                        "Cached desktop virtual display startup target failed; evicting cached target for current mode"
+                    )
+                }
 
                 if !isFinalAttempt {
                     MirageLogger.host(
@@ -495,27 +533,30 @@ extension MirageHostService {
         let startedDisplayResolution = await currentDesktopStartedResolution(fallback: captureResolution)
         let targetFrameRate = await streamContext.getTargetFrameRate()
         let codec = await streamContext.getCodec()
+        let startupAttemptID = UUID()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
             width: Int(startedDisplayResolution.width),
             height: Int(startedDisplayResolution.height),
             frameRate: targetFrameRate,
             codec: codec,
+            startupAttemptID: startupAttemptID,
             displayCount: 1,
             dimensionToken: dimensionToken
         )
         do {
             try await clientContext.send(.desktopStreamStarted, content: message)
+            MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=desktop")
             logDesktopStartStep("desktopStreamStarted sent")
+            registerPendingStartupAttempt(
+                streamID: streamID,
+                startupAttemptID: startupAttemptID,
+                clientID: clientContext.client.id,
+                kind: .desktop
+            )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to send desktopStreamStarted: ")
             logDesktopStartStep("desktopStreamStarted send failed")
-        }
-
-        // NOW enable encoding — client has the stream-started message and can set up its
-        // controller/reassembler before the first video packets (including the keyframe) arrive.
-        if loomVideoStreamsByStreamID[streamID] != nil {
-            await streamContext.allowEncodingAfterRegistration()
         }
 
         MirageLogger
@@ -557,6 +598,7 @@ extension MirageHostService {
             return
         }
 
+        cancelPendingStartupAttempt(streamID: streamID)
         MirageLogger.host("Stopping desktop stream: streamID=\(streamID), reason=\(reason)")
         resetDesktopResizeTransactionState()
 
@@ -625,14 +667,16 @@ extension MirageHostService {
         MirageLogger.host("Stopping all streams for desktop mode")
 
         let sessions = await appStreamManager.getAllSessions()
+        let windowStreams = activeStreams
+
+        for session in windowStreams {
+            MirageLogger.host("Stopping window stream: \(session.id)")
+            await stopStream(session, minimizeWindow: false, updateAppSession: false)
+        }
+
         for session in sessions {
             MirageLogger.host("Ending app session: \(session.bundleIdentifier)")
             await appStreamManager.endSession(bundleIdentifier: session.bundleIdentifier)
-        }
-
-        for session in activeStreams {
-            MirageLogger.host("Stopping window stream: \(session.id)")
-            await stopStream(session, minimizeWindow: false)
         }
 
         await restoreStageManagerAfterAppStreamingIfNeeded()

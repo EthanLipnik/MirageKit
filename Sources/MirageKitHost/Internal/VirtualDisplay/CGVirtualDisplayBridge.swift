@@ -46,6 +46,9 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     private static let colorValidationDelaySeconds: TimeInterval = 0.06
     private static let retinaQuantizedRelativeTolerance: CGFloat = 0.12
     private static let retinaQuantizedScaleTolerance: CGFloat = 0.12
+    private static let grossRetinaMismatchScaleThreshold: CGFloat = 0.6
+    private static let grossRetinaMismatchPollThreshold = 3
+    private static let grossRetinaMismatchAbortSeconds: CFAbsoluteTime = 0.25
     private static let transferFunctionCodeSRGB = UInt32(
         CVTransferFunctionGetIntegerCodePointForString(kCVImageBufferTransferFunction_sRGB)
     )
@@ -286,23 +289,69 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return getter(mode as AnyObject, selector)
     }
 
-    private struct DescriptorAttempt {
+    struct DescriptorAttempt {
         let profile: DescriptorProfile
         let serial: UInt32
         let queue: DispatchQueue
         let label: String
     }
 
-    private enum DescriptorProfile: String, CaseIterable, Codable {
+    enum DescriptorProfile: String, CaseIterable, Codable {
         case persistentMainQueue = "persistent-main-queue"
         case persistentGlobalQueue = "persistent-global-queue"
         case serial0GlobalQueue = "serial0-global-queue"
     }
 
-    private struct CachedValidationHint: Codable, Sendable {
+    struct CachedValidationHint: Codable, Sendable {
         let profile: DescriptorProfile
         let serial: UInt32
         let coverageStatus: MirageDisplayP3CoverageStatus
+    }
+
+    static func isGrossRetinaModeMismatch(
+        requestedLogical: CGSize,
+        requestedPixel: CGSize,
+        observedLogical: CGSize,
+        observedPixel: CGSize,
+        hiDPISetting: UInt32
+    ) -> Bool {
+        guard hiDPISetting == hiDPIEnabledSetting else { return false }
+        guard requestedLogical.width > 0,
+              requestedLogical.height > 0,
+              requestedPixel.width > 0,
+              requestedPixel.height > 0,
+              observedLogical.width > 0,
+              observedLogical.height > 0,
+              observedPixel.width > 0,
+              observedPixel.height > 0 else {
+            return false
+        }
+
+        let logicalWidthRatio = observedLogical.width / requestedLogical.width
+        let logicalHeightRatio = observedLogical.height / requestedLogical.height
+        let pixelWidthRatio = observedPixel.width / requestedPixel.width
+        let pixelHeightRatio = observedPixel.height / requestedPixel.height
+
+        return logicalWidthRatio <= grossRetinaMismatchScaleThreshold ||
+            logicalHeightRatio <= grossRetinaMismatchScaleThreshold ||
+            pixelWidthRatio <= grossRetinaMismatchScaleThreshold ||
+            pixelHeightRatio <= grossRetinaMismatchScaleThreshold
+    }
+
+    static func shouldEvictCachedDescriptorProfile(
+        failedAttempt: DescriptorAttempt,
+        preferredProfile: DescriptorProfile?,
+        cachedHint: CachedValidationHint?
+    ) -> Bool {
+        if failedAttempt.profile == preferredProfile {
+            return true
+        }
+        if let cachedHint,
+           cachedHint.profile == failedAttempt.profile,
+           cachedHint.serial == failedAttempt.serial {
+            return true
+        }
+        return false
     }
 
     private static func hardwareModel() -> String {
@@ -360,7 +409,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         "\(validationHintDefaultsPrefix).\(colorSpace.rawValue).\(machineModeCacheSuffix(width: width, height: height, refreshRate: refreshRate, hiDPI: hiDPI))"
     }
 
-    private static func preferredDescriptorProfile(
+    static func preferredDescriptorProfile(
         for colorSpace: MirageColorSpace,
         width: Int,
         height: Int,
@@ -384,7 +433,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return profile
     }
 
-    private static func storePreferredDescriptorProfile(
+    static func storePreferredDescriptorProfile(
         _ profile: DescriptorProfile,
         for colorSpace: MirageColorSpace,
         width: Int,
@@ -412,6 +461,34 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         for key in keysToClear {
             defaults.removeObject(forKey: key)
         }
+    }
+
+    static func clearPreferredDescriptorProfile(
+        for colorSpace: MirageColorSpace,
+        width: Int,
+        height: Int,
+        refreshRate: Double,
+        hiDPI: Bool
+    ) {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(
+            forKey: descriptorProfileDefaultsKey(
+                for: colorSpace,
+                width: width,
+                height: height,
+                refreshRate: refreshRate,
+                hiDPI: hiDPI
+            )
+        )
+        defaults.removeObject(
+            forKey: validationHintDefaultsKey(
+                for: colorSpace,
+                width: width,
+                height: height,
+                refreshRate: refreshRate,
+                hiDPI: hiDPI
+            )
+        )
     }
 
     private static func cachedValidationHint(
@@ -490,7 +567,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         }
     }
 
-    private static func descriptorAttempts(
+    static func descriptorAttempts(
         persistentSerial: UInt32,
         hiDPI: Bool,
         colorSpace: MirageColorSpace,
@@ -502,13 +579,15 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
     -> [DescriptorAttempt] {
         // Skip persistent-serial profiles when the serial maps to an orphaned online display.
         // This avoids ~2s-per-attempt mode validation failures against stale 800x600 displays.
+        // When stale, rotate to the alternate serial slot AND include serial0 as a fallback.
         let serialIsStale = isMirageSerialOnline(persistentSerial)
         let defaults: [DescriptorProfile]
         if serialIsStale {
             MirageLogger.host(
-                "Persistent serial \(persistentSerial) maps to online orphaned display; skipping persistent-serial profiles"
+                "Persistent serial \(persistentSerial) maps to online orphaned display; rotating serial and using fallback profiles"
             )
-            defaults = [.serial0GlobalQueue]
+            invalidatePersistentSerial(for: colorSpace)
+            defaults = [.persistentGlobalQueue, .serial0GlobalQueue]
         } else {
             defaults = hiDPI
                 ? [.persistentGlobalQueue, .serial0GlobalQueue, .persistentMainQueue]
@@ -705,7 +784,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         }
 
         configuredDisplayOrigins.removeValue(forKey: displayID)
-        MirageLogger.error(.host, "Failed to tear down virtual display \(displayID) after profile \(profileLabel) failure; marking as orphan")
+        MirageLogger.host("Virtual display \(displayID) still online after profile \(profileLabel) failure; marking as orphan for cleanup")
 
         // Register this display as orphaned so the next acquisition attempt
         // force-invalidates it instead of blocking on a stale display.
@@ -763,8 +842,11 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         var lastBounds = CGRect.zero
         var lastPixelDimensions = CGSize.zero
         var sawOnline = false
+        var grossMismatchPollCount = 0
+        var grossMismatchFirstObservedAt: CFAbsoluteTime = 0
 
         while Date() < deadline {
+            let pollNow = CFAbsoluteTimeGetCurrent()
             let isOnline = isDisplayOnline(displayID)
             sawOnline = sawOnline || isOnline
 
@@ -802,6 +884,30 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                     return true
                 }
 
+                if isGrossRetinaModeMismatch(
+                    requestedLogical: requestedLogical,
+                    requestedPixel: requestedPixel,
+                    observedLogical: observed.logical,
+                    observedPixel: observed.pixel,
+                    hiDPISetting: hiDPISetting
+                ) {
+                    grossMismatchPollCount += 1
+                    if grossMismatchFirstObservedAt == 0 {
+                        grossMismatchFirstObservedAt = pollNow
+                    }
+                    let grossMismatchDuration = pollNow - grossMismatchFirstObservedAt
+                    if grossMismatchPollCount >= grossRetinaMismatchPollThreshold ||
+                        grossMismatchDuration >= grossRetinaMismatchAbortSeconds {
+                        MirageLogger.host(
+                            "Virtual display Retina validation aborted early after gross mismatch: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observed.logical), observedPixel=\(observed.pixel), polls=\(grossMismatchPollCount)"
+                        )
+                        break
+                    }
+                } else {
+                    grossMismatchPollCount = 0
+                    grossMismatchFirstObservedAt = 0
+                }
+
                 if hiDPISetting == hiDPIEnabledSetting {
                     let observedScale = observed.logical.width > 0 ? observed.pixel.width / observed.logical.width : 0
                     let requestedScale = requestedLogical.width > 0 ? requestedPixel.width / requestedLogical.width : 0
@@ -826,6 +932,8 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                 }
             } else {
                 lastObserved = nil
+                grossMismatchPollCount = 0
+                grossMismatchFirstObservedAt = 0
             }
 
             // Some hosts keep CGDisplayCopyDisplayMode unset during 1x fallback bring-up.
@@ -906,7 +1014,14 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         var serialRetryAttempted = false
         while true {
             let persistentSerial = persistentSerialNumber(for: colorSpace)
-            let validationHint = cachedValidationHint(
+            var validationHint = cachedValidationHint(
+                for: colorSpace,
+                width: width,
+                height: height,
+                refreshRate: refreshRate,
+                hiDPI: hiDPI
+            )
+            var preferredProfile = preferredDescriptorProfile(
                 for: colorSpace,
                 width: width,
                 height: height,
@@ -1106,20 +1221,51 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                     return creationResult
                 }
 
+                if shouldEvictCachedDescriptorProfile(
+                    failedAttempt: profile,
+                    preferredProfile: preferredProfile,
+                    cachedHint: validationHint
+                ) {
+                    clearPreferredDescriptorProfile(
+                        for: colorSpace,
+                        width: width,
+                        height: height,
+                        refreshRate: refreshRate,
+                        hiDPI: hiDPI
+                    )
+                    clearValidationHint(
+                        for: colorSpace,
+                        width: width,
+                        height: height,
+                        refreshRate: refreshRate,
+                        hiDPI: hiDPI
+                    )
+                    preferredProfile = nil
+                    validationHint = nil
+                    MirageLogger.host(
+                        "Evicted cached descriptor profile after activation failure: profile=\(profile.label), serial=\(profile.serial)"
+                    )
+                }
+
                 if let failedDisplayID,
                    !teardownFailedDisplay(displayID: failedDisplayID, profileLabel: profile.label) {
                     return nil
                 }
             }
 
-            if sawColorValidationFailure, !serialRetryAttempted {
+            if !serialRetryAttempted {
                 serialRetryAttempted = true
                 invalidatePersistentSerial(for: colorSpace)
-                MirageLogger.host("Retrying virtual display creation with rotated serial after color validation failure")
+                let retryReason = sawColorValidationFailure ? "color validation failure" : "activation failure"
+                MirageLogger.host("Retrying virtual display creation with rotated serial after \(retryReason)")
                 continue
             }
             break
         }
+
+        // Clear cached descriptor profile on total failure so the next attempt
+        // doesn't deterministically reuse a known-bad profile.
+        clearPreferredDescriptorProfile(for: colorSpace)
 
         if hiDPI {
             MirageLogger.host("Virtual display failed Retina activation for all descriptor profiles")

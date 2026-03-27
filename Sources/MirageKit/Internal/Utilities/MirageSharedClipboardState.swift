@@ -36,6 +36,10 @@ package enum MirageSharedClipboard {
         }
         return chunks
     }
+
+    package static func currentTimestampMs() -> Int64 {
+        Int64(Date().timeIntervalSince1970 * 1000)
+    }
 }
 
 package enum MirageSharedClipboardObservationAction: Equatable, Sendable {
@@ -47,6 +51,9 @@ package struct MirageSharedClipboardState: Sendable {
     package private(set) var isActive = false
     package private(set) var lastObservedChangeCount: Int?
     package private(set) var pendingRemoteText: String?
+    package private(set) var lastRemoteText: String?
+    package private(set) var lastRemoteChangeCount: Int?
+    package private(set) var latestKnownSentAtMs: Int64?
 
     package init() {}
 
@@ -54,38 +61,87 @@ package struct MirageSharedClipboardState: Sendable {
         isActive = true
         lastObservedChangeCount = changeCount
         pendingRemoteText = nil
+        lastRemoteText = nil
+        lastRemoteChangeCount = nil
+        latestKnownSentAtMs = nil
     }
 
     package mutating func deactivate() {
         isActive = false
         lastObservedChangeCount = nil
         pendingRemoteText = nil
+        lastRemoteText = nil
+        lastRemoteChangeCount = nil
+        latestKnownSentAtMs = nil
     }
 
-    package mutating func updateChangeCount(_ changeCount: Int) {
-        lastObservedChangeCount = changeCount
-    }
+    package mutating func recordObservedLocalChangeCount(
+        _ changeCount: Int,
+        observedAtMs: Int64
+    ) {
+        guard isActive else { return }
+        guard lastObservedChangeCount != changeCount else { return }
 
-    package mutating func recordRemoteWrite(text: String, changeCount: Int) {
-        pendingRemoteText = text
         lastObservedChangeCount = changeCount
-    }
+        latestKnownSentAtMs = max(latestKnownSentAtMs ?? observedAtMs, observedAtMs)
+        pendingRemoteText = nil
 
-    package mutating func observeInitialText(
-        _ text: String?,
-        changeCount: Int
-    ) -> MirageSharedClipboardObservationAction {
-        guard isActive else { return .ignore }
-        lastObservedChangeCount = changeCount
-        guard let validatedText = MirageSharedClipboard.validatedText(text) else {
-            return .ignore
+        if let lastRemoteChangeCount, changeCount > lastRemoteChangeCount {
+            lastRemoteText = nil
+            self.lastRemoteChangeCount = nil
         }
-        return .send(validatedText)
+    }
+
+    package mutating func recordManualLocalSend(
+        changeCount: Int,
+        sentAtMs: Int64
+    ) {
+        guard isActive else { return }
+
+        lastObservedChangeCount = changeCount
+        latestKnownSentAtMs = max(latestKnownSentAtMs ?? sentAtMs, sentAtMs)
+        pendingRemoteText = nil
+        lastRemoteText = nil
+        lastRemoteChangeCount = nil
+    }
+
+    package func shouldApplyRemoteText(sentAtMs: Int64) -> Bool {
+        guard let latestKnownSentAtMs else { return true }
+        return sentAtMs >= latestKnownSentAtMs
+    }
+
+    package mutating func recordRemoteWrite(
+        text: String,
+        changeCount: Int,
+        sentAtMs: Int64
+    ) {
+        pendingRemoteText = text
+        lastRemoteText = text
+        lastRemoteChangeCount = changeCount
+        lastObservedChangeCount = changeCount
+        latestKnownSentAtMs = max(latestKnownSentAtMs ?? sentAtMs, sentAtMs)
+    }
+
+    package mutating func preferredTextForManualLocalSync(
+        currentText: String?,
+        changeCount: Int
+    ) -> String? {
+        if let lastRemoteText, let lastRemoteChangeCount, changeCount <= lastRemoteChangeCount {
+            return lastRemoteText
+        }
+
+        if let lastRemoteChangeCount, changeCount > lastRemoteChangeCount {
+            lastRemoteText = nil
+            self.lastRemoteChangeCount = nil
+        }
+
+        return MirageSharedClipboard.validatedText(currentText)
     }
 
     package mutating func observeLocalText(
         _ text: String?,
-        changeCount: Int
+        changeCount: Int,
+        sentAtMs: Int64
     ) -> MirageSharedClipboardObservationAction {
         guard isActive else { return .ignore }
 
@@ -101,6 +157,10 @@ package struct MirageSharedClipboardState: Sendable {
 
         guard let validatedText = MirageSharedClipboard.validatedText(text) else {
             pendingRemoteText = nil
+            if let lastRemoteChangeCount, changeCount > lastRemoteChangeCount {
+                lastRemoteText = nil
+                self.lastRemoteChangeCount = nil
+            }
             return .ignore
         }
 
@@ -109,7 +169,10 @@ package struct MirageSharedClipboardState: Sendable {
             return .ignore
         }
 
+        latestKnownSentAtMs = max(latestKnownSentAtMs ?? sentAtMs, sentAtMs)
         pendingRemoteText = nil
+        lastRemoteText = nil
+        lastRemoteChangeCount = nil
         return .send(validatedText)
     }
 }

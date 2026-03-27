@@ -20,6 +20,7 @@ struct ControlUpdatePolicySuppressionTests {
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appList))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appIconUpdate))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appIconStreamComplete))
+        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.hostHardwareIcon))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.windowList))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.windowUpdate))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.hostSoftwareUpdateStatus))

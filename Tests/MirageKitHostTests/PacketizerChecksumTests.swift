@@ -50,6 +50,7 @@ struct PacketizerChecksumTests {
                 wireBytes: payload.count,
                 logPrefix: "test",
                 generation: generation,
+                pacingOverride: nil,
                 onSendStart: nil,
                 onSendComplete: nil
             )
@@ -103,6 +104,7 @@ struct PacketizerChecksumTests {
                 wireBytes: payload.count,
                 logPrefix: "test",
                 generation: generation,
+                pacingOverride: nil,
                 onSendStart: nil,
                 onSendComplete: nil
             )
@@ -298,6 +300,7 @@ struct PacketizerChecksumTests {
             wireBytes: wireBytes,
             logPrefix: "test",
             generation: generation,
+            pacingOverride: nil,
             onSendStart: nil,
             onSendComplete: nil
         )

@@ -45,13 +45,18 @@ final class MirageHostSharedClipboardBridge {
     func applyRemoteText(
         _ text: String,
         changeID _: UUID,
-        sentAtMs _: Int64
+        sentAtMs: Int64
     ) {
         guard let text = MirageSharedClipboard.validatedText(text) else { return }
+        guard clipboardState.shouldApplyRemoteText(sentAtMs: sentAtMs) else { return }
 
         _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
         pasteboard.setString(text, forType: .string)
-        clipboardState.recordRemoteWrite(text: text, changeCount: pasteboard.changeCount)
+        clipboardState.recordRemoteWrite(
+            text: text,
+            changeCount: pasteboard.changeCount,
+            sentAtMs: sentAtMs
+        )
     }
 
     private func activate() {
@@ -84,11 +89,16 @@ final class MirageHostSharedClipboardBridge {
 
     private func completePollPasteboard(text: String?, changeCount: Int) {
         guard isActive else { return }
-        switch clipboardState.observeLocalText(text, changeCount: changeCount) {
+        let sentAtMs = MirageSharedClipboard.currentTimestampMs()
+        switch clipboardState.observeLocalText(
+            text,
+            changeCount: changeCount,
+            sentAtMs: sentAtMs
+        ) {
         case .ignore:
             break
         case let .send(text):
-            onLocalTextChanged(text, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
+            onLocalTextChanged(text, UUID(), sentAtMs)
         }
     }
 }

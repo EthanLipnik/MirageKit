@@ -319,6 +319,8 @@ public final class MirageClientService {
 
     /// Request identifier for the latest app list snapshot received from the host.
     var activeAppListRequestID: UUID?
+    /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
+    var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
     /// App-icon stream state keyed by app-list request identifier.
     var appIconStreamStateByRequestID: [UUID: AppIconStreamState] = [:]
@@ -332,6 +334,15 @@ public final class MirageClientService {
     var droppedAppIconUpdateMessagesWhileSuppressed: Int = 0
     /// Deferred refresh requirements gathered while non-essential updates are suppressed.
     var deferredControlRefreshRequirements: DeferredControlRefreshRequirements = .none
+    /// Whether a connection or first-frame startup critical section is active.
+    public internal(set) var startupCriticalSectionActive = false
+    /// Streams still waiting for the first presented frame while startup is gated.
+    var pendingStartupCriticalStreamIDs: Set<StreamID> = []
+    /// Delayed release task used after connect when no stream start follows immediately.
+    var startupCriticalIdleReleaseTask: Task<Void, Never>?
+    let startupCriticalIdleGrace: Duration = .seconds(2)
+    /// Callback fired when startup-critical suppression changes.
+    public var onStartupCriticalSectionChanged: (@MainActor @Sendable (Bool) -> Void)?
     /// Cursor update/control counters sampled at 1s windows to avoid per-message logging overhead.
     var cursorUpdateMessagesSinceLastSample: UInt64 = 0
     var cursorPositionMessagesSinceLastSample: UInt64 = 0
@@ -512,6 +523,9 @@ public final class MirageClientService {
     var registeredStreamIDs: Set<StreamID> = []
     var lastKeyframeRequestTime: [StreamID: CFAbsoluteTime] = [:]
     let keyframeRequestCooldown: CFAbsoluteTime = 0.75
+    var recoveryKeyframeRetryTasks: [StreamID: (token: UUID, task: Task<Void, Never>)] = [:]
+    let recoveryKeyframeRetryInterval: Duration = .seconds(1)
+    let recoveryKeyframeRetryLimit: Int = 2
     var lastDisplayResolutionRequestByStream: [StreamID: CGSize] = [:]
     var lastDisplayResolutionRequestTimeByStream: [StreamID: CFAbsoluteTime] = [:]
     let duplicateDisplayResolutionSuppressionWindow: CFAbsoluteTime = 0.2

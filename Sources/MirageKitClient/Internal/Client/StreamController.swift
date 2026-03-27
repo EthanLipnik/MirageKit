@@ -233,12 +233,27 @@ actor StreamController {
     static let firstPresentedFramePollInterval: Duration = .milliseconds(8)
     /// Interval for progress logs while waiting on first-frame presentation.
     static let firstPresentedFrameWaitLogInterval: CFAbsoluteTime = 0.5
-    /// Grace period before issuing bootstrap recovery while startup has no presentation progress.
-    static let firstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 5.0
+    /// Grace period before issuing bootstrap recovery while initial startup has no presentation progress.
+    static let startupFirstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 5.0
+    /// Grace period before issuing bootstrap recovery after an established stream is reset.
+    static let recoveryFirstPresentedFrameBootstrapRecoveryGrace: CFAbsoluteTime = 1.0
     /// Treat startup as packet-starved when no recent packets arrive inside this window.
     static let firstPresentedFramePacketStallThreshold: CFAbsoluteTime = 0.35
     /// Cooldown between bootstrap recovery probes while awaiting the first presented frame.
     static let firstPresentedFrameRecoveryCooldown: CFAbsoluteTime = 1.0
+    /// Escalate to a hard recovery after a single bounded bootstrap request stalls again.
+    static let firstPresentedFrameHardRecoveryThreshold: Int = 2
+
+    nonisolated static func firstPresentedFrameBootstrapRecoveryGrace(
+        for mode: FirstPresentedFrameAwaitMode
+    ) -> CFAbsoluteTime {
+        switch mode {
+        case .startup:
+            startupFirstPresentedFrameBootstrapRecoveryGrace
+        case .recovery:
+            recoveryFirstPresentedFrameBootstrapRecoveryGrace
+        }
+    }
 
     /// Minimum interval between decode backpressure drop logs.
     static let queueDropLogInterval: CFAbsoluteTime = 1.0
@@ -295,6 +310,8 @@ actor StreamController {
     var firstPresentedFrameLastWaitLogTime: CFAbsoluteTime = 0
     /// Last time first-frame startup watchdog requested bootstrap recovery.
     var firstPresentedFrameLastRecoveryRequestTime: CFAbsoluteTime = 0
+    /// Number of bootstrap recovery actions dispatched in the current first-frame wait window.
+    var firstPresentedFrameRecoveryAttemptCount: Int = 0
     /// True while local client resize orchestration keeps decode paused pre-ack.
     var decodePausedForLocalResize = false
 
@@ -952,6 +969,7 @@ actor StreamController {
 
     private func dispatchMetrics() async {
         let now = currentTime()
+        syncPresentationProgressFromFrameCache(now: now)
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
         let renderTelemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)

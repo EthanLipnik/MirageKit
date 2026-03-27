@@ -345,6 +345,49 @@ struct KeyframeRecoveryPolicyTests {
         #expect(context.resolvedFECBlockSize(isKeyframe: false, now: hardTime) == 16)
     }
 
+    @Test("Startup transport protection strengthens keyframe FEC")
+    func startupTransportProtectionStrengthensKeyframeFEC() async {
+        let context = makeContext()
+
+        await context.enableStartupTransportProtection(now: 10.0)
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 4)
+        #expect(context.resolvedFECBlockSize(isKeyframe: false, now: 10.0) == 0)
+        #expect(context.startupKeyframePacingOverride(now: 10.0) == StreamPacketSender.PacingOverride(
+            rateBps: 120_000_000,
+            burstBytes: 64 * 1024
+        ))
+
+        await context.disableStartupTransportProtection()
+        #expect(context.resolvedFECBlockSize(isKeyframe: true, now: 10.0) == 0)
+    }
+
+    @Test("Startup packet pacing caps keyframe burst budget while leaving steady state unchanged")
+    func startupPacketPacingCapsKeyframeBurstBudget() {
+        let startupParameters = StreamPacketSender.packetPacingParameters(
+            targetRateBps: 600_000_000,
+            packetBytes: 1_500,
+            isKeyframeBurst: true,
+            totalFragments: 1_200,
+            pacingOverride: StreamPacketSender.PacingOverride(
+                rateBps: 120_000_000,
+                burstBytes: 64 * 1024
+            )
+        )
+        let steadyStateParameters = StreamPacketSender.packetPacingParameters(
+            targetRateBps: 600_000_000,
+            packetBytes: 1_500,
+            isKeyframeBurst: true,
+            totalFragments: 1_200,
+            pacingOverride: nil
+        )
+
+        #expect(startupParameters != nil)
+        #expect(steadyStateParameters != nil)
+        #expect(Int(startupParameters?.burstBytes ?? 0) == 64 * 1024)
+        #expect((startupParameters?.bytesPerSecond ?? 0) < (steadyStateParameters?.bytesPerSecond ?? 0))
+        #expect((startupParameters?.burstBytes ?? 0) < (steadyStateParameters?.burstBytes ?? 0))
+    }
+
     private func makeContext(
         frameRate: Int = 60,
         bitrate: Int = 600_000_000,

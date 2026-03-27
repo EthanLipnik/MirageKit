@@ -156,6 +156,8 @@ package struct DesktopStreamStartedMessage: Codable {
     package let frameRate: Int
     /// Video codec being used
     package let codec: MirageVideoCodec
+    /// Startup-attempt identifier used to gate first-frame readiness.
+    package let startupAttemptID: UUID?
     /// Number of physical displays being mirrored
     package let displayCount: Int
     /// Dimension token for rejecting old-dimension P-frames after resize.
@@ -168,6 +170,7 @@ package struct DesktopStreamStartedMessage: Codable {
         height: Int,
         frameRate: Int,
         codec: MirageVideoCodec,
+        startupAttemptID: UUID? = nil,
         displayCount: Int,
         dimensionToken: UInt16? = nil
     ) {
@@ -176,6 +179,7 @@ package struct DesktopStreamStartedMessage: Codable {
         self.height = height
         self.frameRate = frameRate
         self.codec = codec
+        self.startupAttemptID = startupAttemptID
         self.displayCount = displayCount
         self.dimensionToken = dimensionToken
     }
@@ -191,6 +195,19 @@ package struct DesktopStreamStoppedMessage: Codable {
     package init(streamID: StreamID, reason: DesktopStreamStopReason) {
         self.streamID = streamID
         self.reason = reason
+    }
+}
+
+/// Desktop stream start failed notification (Host → Client)
+package struct DesktopStreamFailedMessage: Codable {
+    /// Human-readable reason the stream failed to start
+    package let reason: String
+    /// Error classification for client-side disposition
+    package let errorCode: ErrorMessage.ErrorCode
+
+    package init(reason: String, errorCode: ErrorMessage.ErrorCode) {
+        self.reason = reason
+        self.errorCode = errorCode
     }
 }
 

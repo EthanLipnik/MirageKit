@@ -43,6 +43,9 @@ public struct MirageStreamContentView: View {
     #if os(iOS) || os(visionOS)
     /// Called once when the display layer is ready (e.g. for PiP integration).
     public var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
+    /// When `true`, local presentation remains active while the app is backgrounded
+    /// and through temporary UIKit detachment during PiP ownership.
+    public var keepRenderingWhenBackgrounded: Bool = false
     /// When `true`, display-resolution-change messages are suppressed (e.g. during PiP).
     public var suppressResizeEvents: Bool = false
     #endif
@@ -123,6 +126,7 @@ public struct MirageStreamContentView: View {
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,
         onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil,
+        keepRenderingWhenBackgrounded: Bool = false,
         suppressResizeEvents: Bool = false
     ) {
         self.session = session
@@ -149,6 +153,7 @@ public struct MirageStreamContentView: View {
         self.onWindowWillClose = onWindowWillClose
         #if os(iOS) || os(visionOS)
         self.onDisplayLayerReady = onDisplayLayerReady
+        self.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
         self.suppressResizeEvents = suppressResizeEvents
         #endif
     }
@@ -196,6 +201,7 @@ public struct MirageStreamContentView: View {
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize,
+                keepRenderingWhenBackgrounded: keepRenderingWhenBackgrounded,
                 onDisplayLayerReady: onDisplayLayerReady
             )
             .ignoresSafeArea()
@@ -317,6 +323,12 @@ public struct MirageStreamContentView: View {
                 if isResizing { isResizing = false }
             }
             desktopResizeMaskActive = false
+            #if os(iOS) || os(visionOS)
+            MirageStreamViewRepresentable.releaseCachedControllerIfPossible(
+                streamID: session.streamID,
+                sessionStore: sessionStore
+            )
+            #endif
         }
         #if os(macOS)
         .background(
@@ -406,12 +418,6 @@ public struct MirageStreamContentView: View {
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
 
-        #if os(iOS) || os(visionOS)
-        // During PiP the SwiftUI view may report a tiny geometry; ignore it
-        // so the host keeps streaming at the original full resolution.
-        if suppressResizeEvents { return }
-        #endif
-
         let viewSize = metrics.viewSize
         let resolvedRawPixelSize = metrics.pixelSize
 
@@ -438,6 +444,14 @@ public struct MirageStreamContentView: View {
         if let nativeScale = metrics.screenNativeScale, nativeScale > 0 {
             MirageClientService.lastKnownScreenNativeScale = nativeScale
         }
+        #endif
+
+        latestDrawableDisplaySize = viewSize
+
+        #if os(iOS) || os(visionOS)
+        // During PiP the SwiftUI view may report transient geometry changes.
+        // Cache them, but suppress the outbound resize message path.
+        if suppressResizeEvents { return }
         #endif
 
         Task { @MainActor [clientService] in
@@ -1060,4 +1074,3 @@ public struct MirageStreamContentView: View {
     }
     #endif
 }
-

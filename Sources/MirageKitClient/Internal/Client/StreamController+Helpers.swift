@@ -89,6 +89,33 @@ extension StreamController {
         return next
     }
 
+    @discardableResult
+    func syncPresentationProgressFromFrameCache(now: CFAbsoluteTime? = nil) -> Bool {
+        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+        let referenceNow = now ?? currentTime()
+
+        if snapshot.sequence > lastPresentedSequenceObserved {
+            lastPresentedSequenceObserved = snapshot.sequence
+            lastPresentedProgressTime = snapshot.presentedTime > 0 ? snapshot.presentedTime : referenceNow
+            return true
+        }
+
+        if lastPresentedProgressTime == 0 {
+            if snapshot.presentedTime > 0 {
+                lastPresentedSequenceObserved = max(lastPresentedSequenceObserved, snapshot.sequence)
+                lastPresentedProgressTime = snapshot.presentedTime
+                return true
+            }
+
+            if hasPresentedFirstFrame {
+                lastPresentedProgressTime = referenceNow
+                return true
+            }
+        }
+
+        return false
+    }
+
     func armFirstPresentedFrameAwaiter(
         reason: String,
         mode: FirstPresentedFrameAwaitMode = .startup
@@ -101,6 +128,8 @@ extension StreamController {
         firstPresentedFrameWaitStartTime = currentTime()
         firstPresentedFrameLastWaitLogTime = firstPresentedFrameWaitStartTime
         firstPresentedFrameLastRecoveryRequestTime = 0
+        firstPresentedFrameRecoveryAttemptCount = 0
+        reassembler.setStartupKeyframeTimeoutOverrideEnabled(true)
 
         MirageLogger
             .client(
@@ -119,6 +148,8 @@ extension StreamController {
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
+        firstPresentedFrameRecoveryAttemptCount = 0
+        reassembler.setStartupKeyframeTimeoutOverrideEnabled(false)
     }
 
     func markFirstFrameDecoded() async {
@@ -148,6 +179,8 @@ extension StreamController {
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
+        firstPresentedFrameRecoveryAttemptCount = 0
+        reassembler.setStartupKeyframeTimeoutOverrideEnabled(false)
 
         if awaitingFirstFrameAfterResize {
             awaitingFirstFrameAfterResize = false
@@ -168,6 +201,7 @@ extension StreamController {
         if !hasDecodedFirstFrame {
             hasDecodedFirstFrame = true
         }
+        syncPresentationProgressFromFrameCache(now: now)
         guard shouldNotify, let handler = onFirstFramePresented else { return }
         await MainActor.run {
             handler()
@@ -228,21 +262,53 @@ extension StreamController {
         now: CFAbsoluteTime,
         latestSequence: UInt64
     ) async {
-        // Only fire when we are genuinely stuck: waiting for the first presented frame,
-        // video packets are flowing (the stream is active), but the reassembler is stuck
-        // awaiting a keyframe that never arrived. A 3-second cooldown prevents storms.
         guard awaitingFirstPresentedFrame,
               firstPresentedFrameWaitStartTime > 0 else { return }
         let elapsed = now - firstPresentedFrameWaitStartTime
-        guard elapsed >= 3.0 else { return }
-        guard reassembler.hasReceivedPackets() else { return }
-        guard reassembler.isAwaitingKeyframe() else { return }
+        let recoveryGrace = Self.firstPresentedFrameBootstrapRecoveryGrace(for: firstPresentedFrameAwaitMode)
+        guard elapsed >= recoveryGrace else { return }
         guard firstPresentedFrameLastRecoveryRequestTime == 0
-           || now - firstPresentedFrameLastRecoveryRequestTime >= 3.0 else { return }
+           || now - firstPresentedFrameLastRecoveryRequestTime >= Self.firstPresentedFrameRecoveryCooldown else { return }
+
+        if reassembler.isAwaitingKeyframe(),
+           let pendingKeyframeProgress = reassembler.latestPendingKeyframeProgress(),
+           now - pendingKeyframeProgress.lastProgressTime < Self.firstPresentedFramePacketStallThreshold {
+            return
+        }
+
+        let hasPackets = reassembler.hasReceivedPackets()
+        let awaitingKeyframe = reassembler.isAwaitingKeyframe()
+        let startupStallKind: String
+        if awaitingKeyframe {
+            startupStallKind = "reassembler awaiting keyframe"
+        } else if !hasPackets {
+            startupStallKind = "no startup packets received"
+        } else if latestSequence <= firstPresentedFrameBaselineSequence {
+            startupStallKind = "no presented frame progress"
+        } else {
+            startupStallKind = "startup presentation stalled"
+        }
+
         firstPresentedFrameLastRecoveryRequestTime = now
+        firstPresentedFrameRecoveryAttemptCount &+= 1
+
+        if firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold {
+            MirageLogger.client(
+                "Bootstrap first frame recovery escalating to hard reset for stream \(streamID) "
+                    + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"
+            )
+            await requestRecovery(
+                reason: .startupKeyframeTimeout,
+                restartRecoveryLoop: false,
+                awaitFirstPresentedFrame: true,
+                firstPresentedFrameWaitReason: "startup-hard-recovery"
+            )
+            return
+        }
+
         MirageLogger.client(
             "Bootstrap first frame recovery: requesting keyframe for stream \(streamID) "
-            + "(waited \(Int(elapsed * 1000))ms, reassembler awaiting keyframe)"
+                + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"
         )
         await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
     }
@@ -251,6 +317,11 @@ extension StreamController {
         lastDecodedFrameTime = currentTime()
         if !decodeRecoveryEscalationTimestamps.isEmpty {
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+        }
+        if presentationTier == .activeLive,
+           !hasPresentedFirstFrame,
+           !awaitingFirstPresentedFrame {
+            armFirstPresentedFrameAwaiter(reason: "decode-without-presentation")
         }
         if presentationTier == .activeLive {
             startFreezeMonitorIfNeeded()
@@ -291,6 +362,20 @@ extension StreamController {
     }
 
     func handleFrameLossSignal() async {
+        if !hasDecodedFirstFrame || !hasPresentedFirstFrame {
+            if presentationTier == .activeLive, !awaitingFirstPresentedFrame {
+                armFirstPresentedFrameAwaiter(reason: "frame-loss-bootstrap")
+            }
+            let now = currentTime()
+            firstPresentedFrameLastRecoveryRequestTime = now
+            firstPresentedFrameRecoveryAttemptCount = max(1, firstPresentedFrameRecoveryAttemptCount)
+            MirageLogger.client(
+                "Frame loss detected before first frame for stream \(streamID); requesting bootstrap recovery keyframe"
+            )
+            await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
+            return
+        }
+
         if presentationTier == .passiveSnapshot {
             reassembler.enterKeyframeOnlyMode()
             MirageLogger.client(
@@ -385,6 +470,7 @@ extension StreamController {
         let keyframeStarved = reassembler.isAwaitingKeyframe()
 
         if hasPresentedFirstFrame {
+            syncPresentationProgressFromFrameCache(now: now)
             guard lastPresentedProgressTime > 0 else { return false }
             let stalledPresentation = now - lastPresentedProgressTime >= Self.freezeTimeout
             guard stalledPresentation else { return false }
@@ -532,6 +618,7 @@ extension StreamController {
         guard hasPresentedFirstFrame,
               presentationTier == .activeLive else { return }
         let now = currentTime()
+        syncPresentationProgressFromFrameCache(now: now)
         guard lastPresentedProgressTime > 0,
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
         guard reassembler.isAwaitingKeyframe() else { return }

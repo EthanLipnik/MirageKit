@@ -30,6 +30,7 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
     private let lock = NSLock()
     private var viewsByStream: [StreamID: WeakCursorView] = [:]
     private var pendingStreamIDs: Set<StreamID> = []
+    private var forcedStreamIDs: Set<StreamID> = []
     private var flushTask: Task<Void, Never>?
     private let flushInterval: Duration
 
@@ -55,18 +56,23 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
         lock.lock()
         viewsByStream.removeValue(forKey: streamID)
         pendingStreamIDs.remove(streamID)
+        forcedStreamIDs.remove(streamID)
         lock.unlock()
     }
 
-    public func notify(streamID: StreamID) {
+    public func notify(streamID: StreamID, force: Bool = false) {
         lock.lock()
         if viewsByStream[streamID]?.value == nil {
             viewsByStream.removeValue(forKey: streamID)
             pendingStreamIDs.remove(streamID)
+            forcedStreamIDs.remove(streamID)
             lock.unlock()
             return
         }
         pendingStreamIDs.insert(streamID)
+        if force {
+            forcedStreamIDs.insert(streamID)
+        }
         startFlushTaskIfNeededLocked()
         lock.unlock()
     }
@@ -80,13 +86,13 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
 
     private func flushLoop() async {
         while !Task.isCancelled {
-            let streamIDs = takePendingStreamIDs()
-            guard !streamIDs.isEmpty else { break }
+            let refreshes = takePendingRefreshes()
+            guard !refreshes.isEmpty else { break }
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
-                for streamID in streamIDs {
-                    self.view(for: streamID)?.refreshCursorUpdates(force: false)
+                for (streamID, force) in refreshes {
+                    self.view(for: streamID)?.refreshCursorUpdates(force: force)
                 }
             }
 
@@ -109,12 +115,15 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
         lock.unlock()
     }
 
-    private func takePendingStreamIDs() -> [StreamID] {
+    private func takePendingRefreshes() -> [(StreamID, Bool)] {
         lock.lock()
-        let streamIDs = Array(pendingStreamIDs)
+        let refreshes = pendingStreamIDs.map { streamID in
+            (streamID, forcedStreamIDs.contains(streamID))
+        }
         pendingStreamIDs.removeAll(keepingCapacity: true)
+        forcedStreamIDs.removeAll(keepingCapacity: true)
         lock.unlock()
-        return streamIDs
+        return refreshes
     }
 
     private func view(for streamID: StreamID) -> (any MirageCursorUpdateHandling)? {
@@ -123,6 +132,7 @@ public final class MirageCursorUpdateRouter: @unchecked Sendable {
         if view == nil {
             viewsByStream.removeValue(forKey: streamID)
             pendingStreamIDs.remove(streamID)
+            forcedStreamIDs.remove(streamID)
         }
         lock.unlock()
         return view

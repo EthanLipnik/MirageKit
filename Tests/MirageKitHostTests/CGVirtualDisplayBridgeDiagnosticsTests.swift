@@ -7,6 +7,8 @@
 
 @testable import MirageKit
 @testable import MirageKitHost
+import CoreGraphics
+import Foundation
 import Testing
 
 #if os(macOS)
@@ -59,6 +61,83 @@ struct CGVirtualDisplayBridgeDiagnosticsTests {
 
         #expect(event.category == LoomLogCategory(rawValue: MirageLogCategory.host.rawValue))
         #expect(event.message.contains("Updated virtual display failed Retina activation"))
+    }
+
+    @Test("Gross Retina mismatch helper flags 800x600 fallback modes")
+    func grossRetinaMismatchHelperFlagsBadFallbackModes() {
+        let isMismatch = CGVirtualDisplayBridge.isGrossRetinaModeMismatch(
+            requestedLogical: CGSize(width: 3008, height: 1688),
+            requestedPixel: CGSize(width: 6016, height: 3376),
+            observedLogical: CGSize(width: 800, height: 600),
+            observedPixel: CGSize(width: 1600, height: 1200),
+            hiDPISetting: 2
+        )
+
+        #expect(isMismatch)
+    }
+
+    @Test("Cached descriptor profile is evicted immediately after failure")
+    func cachedDescriptorProfileEvictionDecision() {
+        let failedAttempt = CGVirtualDisplayBridge.DescriptorAttempt(
+            profile: .persistentGlobalQueue,
+            serial: 42,
+            queue: .global(qos: .userInteractive),
+            label: "persistent-global-queue"
+        )
+        let cachedHint = CGVirtualDisplayBridge.CachedValidationHint(
+            profile: .persistentGlobalQueue,
+            serial: 42,
+            coverageStatus: .strictCanonical
+        )
+
+        #expect(
+            CGVirtualDisplayBridge.shouldEvictCachedDescriptorProfile(
+                failedAttempt: failedAttempt,
+                preferredProfile: .persistentGlobalQueue,
+                cachedHint: cachedHint
+            )
+        )
+    }
+
+    @Test("Cached descriptor profile is tried first for an exact mode")
+    func cachedDescriptorProfileIsTriedFirst() {
+        CGVirtualDisplayBridge.clearPreferredDescriptorProfile(
+            for: .displayP3,
+            width: 6016,
+            height: 3376,
+            refreshRate: 60,
+            hiDPI: true
+        )
+        defer {
+            CGVirtualDisplayBridge.clearPreferredDescriptorProfile(
+                for: .displayP3,
+                width: 6016,
+                height: 3376,
+                refreshRate: 60,
+                hiDPI: true
+            )
+        }
+
+        CGVirtualDisplayBridge.storePreferredDescriptorProfile(
+            .serial0GlobalQueue,
+            for: .displayP3,
+            width: 6016,
+            height: 3376,
+            refreshRate: 60,
+            hiDPI: true
+        )
+
+        let attempts = CGVirtualDisplayBridge.descriptorAttempts(
+            persistentSerial: 99,
+            hiDPI: true,
+            colorSpace: .displayP3,
+            width: 6016,
+            height: 3376,
+            refreshRate: 60,
+            cachedHint: nil
+        )
+
+        #expect(attempts.first?.profile == .serial0GlobalQueue)
     }
 
     private func waitUntil(

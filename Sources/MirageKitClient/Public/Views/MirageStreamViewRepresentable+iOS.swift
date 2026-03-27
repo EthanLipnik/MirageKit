@@ -73,6 +73,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
+    /// When `true`, local presentation remains active while the app is backgrounded
+    /// and through temporary UIKit detachment during PiP ownership.
+    public var keepRenderingWhenBackgrounded: Bool
+
     /// Called once when the underlying view controller is created, providing
     /// the `AVSampleBufferDisplayLayer` for external use (e.g. PiP).
     public var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
@@ -98,6 +102,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         cursorLockEnabled: Bool = false,
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil,
+        keepRenderingWhenBackgrounded: Bool = false,
         onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil
     ) {
         self.streamID = streamID
@@ -120,6 +125,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.cursorLockEnabled = cursorLockEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
+        self.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
         self.onDisplayLayerReady = onDisplayLayerReady
     }
 
@@ -138,7 +144,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     }
 
     public func makeUIViewController(context: Context) -> MirageStreamViewController {
-        let controller = MirageStreamViewController()
+        let controller = MirageStreamViewControllerCache.shared.controller(for: streamID)
         controller.configureCallbacks(
             onInputEvent: context.coordinator.handleInputEvent,
             onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
@@ -150,6 +156,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError
         )
+        controller.onDisplayLayerReady = onDisplayLayerReady
         controller.updateState(
             streamID: streamID,
             directTouchInputMode: directTouchInputMode,
@@ -161,9 +168,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
             presentationTier: presentationTier,
-            maxDrawableSize: maxDrawableSize
+            maxDrawableSize: maxDrawableSize,
+            keepRenderingWhenBackgrounded: keepRenderingWhenBackgrounded
         )
-        onDisplayLayerReady?(controller.sampleBufferDisplayLayer)
         return controller
     }
 
@@ -178,6 +185,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.onDirectTouchActivity = onDirectTouchActivity
         context.coordinator.onDictationStateChanged = onDictationStateChanged
         context.coordinator.onDictationError = onDictationError
+        uiViewController.onDisplayLayerReady = onDisplayLayerReady
         context.coordinator.noteRepresentableUpdate(for: streamID)
 
         uiViewController.updateState(
@@ -191,8 +199,40 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
             presentationTier: presentationTier,
-            maxDrawableSize: maxDrawableSize
+            maxDrawableSize: maxDrawableSize,
+            keepRenderingWhenBackgrounded: keepRenderingWhenBackgrounded
         )
+    }
+
+    static func releaseCachedControllerIfPossible(
+        streamID: StreamID,
+        sessionStore: MirageClientSessionStore
+    ) {
+        guard sessionStore.sessionByStreamID(streamID) == nil else { return }
+        MirageStreamViewControllerCache.shared.releaseController(for: streamID)
+    }
+}
+
+@MainActor
+private final class MirageStreamViewControllerCache {
+    static let shared = MirageStreamViewControllerCache()
+
+    private var controllersByStreamID: [StreamID: MirageStreamViewController] = [:]
+
+    private init() {}
+
+    func controller(for streamID: StreamID) -> MirageStreamViewController {
+        if let controller = controllersByStreamID[streamID] {
+            return controller
+        }
+
+        let controller = MirageStreamViewController()
+        controllersByStreamID[streamID] = controller
+        return controller
+    }
+
+    func releaseController(for streamID: StreamID) {
+        controllersByStreamID.removeValue(forKey: streamID)
     }
 }
 
@@ -203,6 +243,8 @@ public final class MirageStreamViewController: UIViewController {
         captureView.metalView.displayLayer
     }
 
+    var currentStreamID: StreamID?
+    var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
     private let captureView = InputCapturingView(frame: .zero)
     private var pointerLockRequested: Bool = false {
         didSet {
@@ -226,6 +268,7 @@ public final class MirageStreamViewController: UIViewController {
         super.viewDidAppear(animated)
         setNeedsUpdateOfPrefersPointerLocked()
         startPointerLockObserverIfNeeded()
+        reportDisplayLayerReadyIfNeeded()
     }
 
     override public func viewWillDisappear(_ animated: Bool) {
@@ -266,10 +309,12 @@ public final class MirageStreamViewController: UIViewController {
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
         presentationTier: StreamPresentationTier,
-        maxDrawableSize: CGSize?
+        maxDrawableSize: CGSize?,
+        keepRenderingWhenBackgrounded: Bool
     ) {
         // Set stream ID first so cursor router registration is ready
         // before cursorStore/cursorPositionStore didSet triggers refreshCursorIfNeeded.
+        currentStreamID = streamID
         captureView.streamID = streamID
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
@@ -281,6 +326,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorLockEnabled = cursorLockEnabled
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
+        captureView.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()
@@ -321,6 +367,11 @@ public final class MirageStreamViewController: UIViewController {
                 MirageLogger.client("Pointer lock not active for scene.")
             }
         }
+    }
+
+    private func reportDisplayLayerReadyIfNeeded() {
+        guard view.window != nil else { return }
+        onDisplayLayerReady?(sampleBufferDisplayLayer)
     }
 }
 #endif

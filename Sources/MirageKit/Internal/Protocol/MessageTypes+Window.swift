@@ -12,6 +12,11 @@ import Foundation
 
 // MARK: - Window Messages
 
+package enum MirageStartupStreamKind: String, Codable, Sendable {
+    case window
+    case desktop
+}
+
 package struct WindowListMessage: Codable {
     package let windows: [MirageWindow]
 
@@ -185,6 +190,7 @@ package struct StreamStartedMessage: Codable {
     package let height: Int
     package let frameRate: Int
     package let codec: MirageVideoCodec
+    package let startupAttemptID: UUID?
     /// Minimum window size in points - client should not resize smaller
     package var minWidth: Int?
     package var minHeight: Int?
@@ -199,6 +205,7 @@ package struct StreamStartedMessage: Codable {
         height: Int,
         frameRate: Int,
         codec: MirageVideoCodec,
+        startupAttemptID: UUID? = nil,
         minWidth: Int? = nil,
         minHeight: Int? = nil,
         dimensionToken: UInt16? = nil
@@ -209,9 +216,26 @@ package struct StreamStartedMessage: Codable {
         self.height = height
         self.frameRate = frameRate
         self.codec = codec
+        self.startupAttemptID = startupAttemptID
         self.minWidth = minWidth
         self.minHeight = minHeight
         self.dimensionToken = dimensionToken
+    }
+}
+
+package struct StreamReadyMessage: Codable, Sendable {
+    package let streamID: StreamID
+    package let startupAttemptID: UUID
+    package let kind: MirageStartupStreamKind
+
+    package init(
+        streamID: StreamID,
+        startupAttemptID: UUID,
+        kind: MirageStartupStreamKind
+    ) {
+        self.streamID = streamID
+        self.startupAttemptID = startupAttemptID
+        self.kind = kind
     }
 }
 

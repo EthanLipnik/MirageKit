@@ -14,7 +14,6 @@ import AppKit
 
 #if canImport(UIKit)
 import UIKit
-import UniformTypeIdentifiers
 #endif
 
 @MainActor
@@ -58,28 +57,43 @@ final class MirageClientSharedClipboardBridge {
     func applyRemoteText(
         _ text: String,
         changeID _: UUID,
-        sentAtMs _: Int64
+        sentAtMs: Int64
     ) {
         guard let text = MirageSharedClipboard.validatedText(text) else { return }
+        guard clipboardState.shouldApplyRemoteText(sentAtMs: sentAtMs) else { return }
 
         #if os(macOS)
         let pasteboard = NSPasteboard.general
         _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
         pasteboard.setString(text, forType: .string)
-        clipboardState.recordRemoteWrite(text: text, changeCount: pasteboard.changeCount)
-        #elseif canImport(UIKit)
-        UIPasteboard.general.setItems(
-            [[UTType.plainText.identifier: text]],
-            options: [.localOnly: true]
+        clipboardState.recordRemoteWrite(
+            text: text,
+            changeCount: pasteboard.changeCount,
+            sentAtMs: sentAtMs
         )
-        clipboardState.recordRemoteWrite(text: text, changeCount: UIPasteboard.general.changeCount)
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = text
+        clipboardState.recordRemoteWrite(
+            text: text,
+            changeCount: UIPasteboard.general.changeCount,
+            sentAtMs: sentAtMs
+        )
         #endif
     }
 
-    func injectLocalClipboardText(_ text: String) {
-        guard let validatedText = MirageSharedClipboard.validatedText(text) else { return }
-        clipboardState.updateChangeCount(currentChangeCount())
-        onLocalTextChanged(validatedText, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
+    func syncCurrentClipboardToRemote() {
+        let changeCount = currentChangeCount()
+        let currentText = currentClipboardText()
+        guard let text = clipboardState.preferredTextForManualLocalSync(
+            currentText: currentText,
+            changeCount: changeCount
+        ) else {
+            return
+        }
+
+        let sentAtMs = MirageSharedClipboard.currentTimestampMs()
+        clipboardState.recordManualLocalSend(changeCount: changeCount, sentAtMs: sentAtMs)
+        onLocalTextChanged(text, UUID(), sentAtMs)
     }
 
     private func activate() {
@@ -156,7 +170,10 @@ final class MirageClientSharedClipboardBridge {
     }
 
     private func trackChangeCountOnly() {
-        clipboardState.updateChangeCount(currentChangeCount())
+        clipboardState.recordObservedLocalChangeCount(
+            currentChangeCount(),
+            observedAtMs: MirageSharedClipboard.currentTimestampMs()
+        )
     }
 
     private func observeLocalClipboardIfNeeded() {
@@ -181,12 +198,27 @@ final class MirageClientSharedClipboardBridge {
     @MainActor
     private func completeClipboardObservation(text: String?, changeCount: Int) {
         guard isActive else { return }
-        switch clipboardState.observeLocalText(text, changeCount: changeCount) {
+        let sentAtMs = MirageSharedClipboard.currentTimestampMs()
+        switch clipboardState.observeLocalText(
+            text,
+            changeCount: changeCount,
+            sentAtMs: sentAtMs
+        ) {
         case .ignore:
             break
         case let .send(text):
-            onLocalTextChanged(text, UUID(), Int64(Date().timeIntervalSince1970 * 1000))
+            onLocalTextChanged(text, UUID(), sentAtMs)
         }
+    }
+
+    private func currentClipboardText() -> String? {
+        #if os(macOS)
+        NSPasteboard.general.string(forType: .string)
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string
+        #else
+        nil
+        #endif
     }
 
     private func currentChangeCount() -> Int {

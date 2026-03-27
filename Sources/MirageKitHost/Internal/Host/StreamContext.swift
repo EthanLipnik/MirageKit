@@ -259,6 +259,10 @@ actor StreamContext {
     let keyframeInFlightCap: CFAbsoluteTime = 1.0
     let keyframeSettleTimeout: CFAbsoluteTime = 2.0
     let keyframeQueueSettleFactor: Double = 0.4
+    let startupTransportProtectionHold: CFAbsoluteTime = 5.0
+    let startupKeyframeFECBlockSize: Int = 4
+    let startupKeyframePacerRateCapBps: Int = 120_000_000
+    let startupKeyframeBurstBytes: Int = 64 * 1024
     var lastKeyframeRequestTime: CFAbsoluteTime = 0
     var keyframeSendDeadline: CFAbsoluteTime = 0
 
@@ -284,6 +288,7 @@ actor StreamContext {
     /// When active, keyframes and P-frames include FEC parity fragments.
     nonisolated(unsafe) var lossModeDeadline: CFAbsoluteTime = 0
     nonisolated(unsafe) var lossModePFrameFECDeadline: CFAbsoluteTime = 0
+    nonisolated(unsafe) var startupTransportProtectionDeadline: CFAbsoluteTime = 0
     let lossModeHold: CFAbsoluteTime = 4.0
     let pFrameFECLossModeHold: CFAbsoluteTime = 8.0
 

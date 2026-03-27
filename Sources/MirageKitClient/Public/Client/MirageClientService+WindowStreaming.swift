@@ -103,12 +103,6 @@ public extension MirageClientService {
 
         MirageLogger.client("Stream started with ID \(realStreamID)")
 
-        // Create per-stream controller (owns decoder and reassembler).
-        await setupControllerForStream(realStreamID)
-
-        // Add to active streams set (thread-safe for packet filtering).
-        addActiveStreamID(realStreamID)
-
         let session = ClientStreamSession(
             id: realStreamID,
             window: window
@@ -196,9 +190,12 @@ public extension MirageClientService {
             },
             onFirstFrameDecoded: { [weak self] in
                 self?.sessionStore.markFirstFrameDecoded(for: capturedStreamID)
+                MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(capturedStreamID)")
             },
             onFirstFramePresented: { [weak self] in
                 self?.sessionStore.markFirstFramePresented(for: capturedStreamID)
+                self?.clearStartupAttempt(for: capturedStreamID)
+                MirageLogger.signpostEvent(.client, "Startup.FirstFramePresented", "stream=\(capturedStreamID)")
             },
             onAdaptiveFallbackNeeded: { [weak self] in
                 self?.handleAdaptiveFallbackTrigger(for: capturedStreamID)

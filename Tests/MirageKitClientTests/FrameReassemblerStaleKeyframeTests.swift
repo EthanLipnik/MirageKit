@@ -419,6 +419,83 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe() == false)
     }
 
+    @Test("Keyframe timeout tracks assembly progress instead of first-fragment age")
+    func keyframeTimeoutTracksAssemblyProgress() async throws {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        let deliveredCounter = LockedCounter()
+        let lossCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _ in
+            lossCounter.increment()
+        }
+
+        let fragment0 = Data([0x00, 0x00, 0x00, 0x01])
+        reassembler.processPacket(
+            fragment0,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 30,
+                payload: fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(2500))
+
+        let fragment1 = Data([0x26, 0x30, 0x30, 0x30])
+        reassembler.processPacket(
+            fragment1,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 30,
+                payload: fragment1,
+                fragmentIndex: 1,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        try await Task.sleep(for: .milliseconds(1000))
+
+        let timeoutProbe = Data([0x00, 0x00, 0x00, 0x02])
+        reassembler.processPacket(
+            timeoutProbe,
+            header: makeHeader(
+                flags: [],
+                frameNumber: 31,
+                payload: timeoutProbe,
+                fragmentIndex: 0,
+                fragmentCount: 2,
+                frameByteCount: 8
+            )
+        )
+
+        #expect(lossCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+
+        let fragment2 = Data([0x40, 0x40, 0x40, 0x40])
+        reassembler.processPacket(
+            fragment2,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 30,
+                payload: fragment2,
+                fragmentIndex: 2,
+                fragmentCount: 3,
+                frameByteCount: 12
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 0)
+    }
+
     private func makeHeader(
         flags: FrameFlags,
         frameNumber: UInt32,

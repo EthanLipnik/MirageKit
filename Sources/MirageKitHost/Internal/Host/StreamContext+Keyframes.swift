@@ -211,6 +211,18 @@ extension StreamContext {
             )
     }
 
+    func enableStartupTransportProtection(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        startupTransportProtectionDeadline = now + startupTransportProtectionHold
+    }
+
+    func disableStartupTransportProtection() {
+        startupTransportProtectionDeadline = 0
+    }
+
+    nonisolated func isStartupTransportProtectionActive(now: CFAbsoluteTime) -> Bool {
+        now < startupTransportProtectionDeadline
+    }
+
     nonisolated func isLossModeActive(now: CFAbsoluteTime) -> Bool {
         now < lossModeDeadline
     }
@@ -220,9 +232,20 @@ extension StreamContext {
     }
 
     nonisolated func resolvedFECBlockSize(isKeyframe: Bool, now: CFAbsoluteTime) -> Int {
+        if isKeyframe, isStartupTransportProtectionActive(now: now) {
+            return startupKeyframeFECBlockSize
+        }
         guard isLossModeActive(now: now) else { return 0 }
         if isKeyframe { return 8 }
         return isPFrameFECActive(now: now) ? 16 : 0
+    }
+
+    nonisolated func startupKeyframePacingOverride(now: CFAbsoluteTime) -> StreamPacketSender.PacingOverride? {
+        guard isStartupTransportProtectionActive(now: now) else { return nil }
+        return StreamPacketSender.PacingOverride(
+            rateBps: startupKeyframePacerRateCapBps,
+            burstBytes: startupKeyframeBurstBytes
+        )
     }
 
     private func resetRecoveryWindowIfNeeded(now: CFAbsoluteTime) {
