@@ -94,6 +94,7 @@ actor SharedVirtualDisplayManager {
         case noActiveDisplay
         case streamDisplayNotFound(StreamID)
         case spaceNotFound(CGDirectDisplayID)
+        case screenCaptureKitVisibilityDelayed(CGDirectDisplayID)
         case scDisplayNotFound(CGDirectDisplayID)
 
         var errorDescription: String? {
@@ -108,6 +109,8 @@ actor SharedVirtualDisplayManager {
                 "No dedicated display found for stream \(streamID)"
             case let .spaceNotFound(displayID):
                 "No space found for display \(displayID)"
+            case let .screenCaptureKitVisibilityDelayed(displayID):
+                "ScreenCaptureKit did not surface virtual display \(displayID) before the startup deadline"
             case let .scDisplayNotFound(displayID):
                 "SCDisplay not found for virtual display \(displayID)"
             }

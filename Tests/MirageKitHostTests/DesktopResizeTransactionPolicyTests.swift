@@ -102,6 +102,7 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = windowResizeNoOpDecision(
             currentVisibleResolution: CGSize(width: 2560, height: 1440),
             currentDisplayResolution: nil,
+            currentEncodedResolution: CGSize(width: 2560, height: 1440),
             requestedVisibleResolution: CGSize(width: 2560, height: 1440)
         )
 
@@ -113,6 +114,7 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = windowResizeNoOpDecision(
             currentVisibleResolution: CGSize(width: 2560, height: 1440),
             currentDisplayResolution: nil,
+            currentEncodedResolution: CGSize(width: 2560, height: 1440),
             requestedVisibleResolution: CGSize(width: 3008, height: 1692)
         )
 
@@ -124,6 +126,7 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = windowResizeNoOpDecision(
             currentVisibleResolution: CGSize(width: 2560, height: 1440),
             currentDisplayResolution: nil,
+            currentEncodedResolution: CGSize(width: 2560, height: 1440),
             requestedVisibleResolution: CGSize(width: 2561, height: 1442)
         )
 
@@ -135,6 +138,7 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = windowResizeNoOpDecision(
             currentVisibleResolution: CGSize(width: 6016, height: 3324),
             currentDisplayResolution: CGSize(width: 6016, height: 3384),
+            currentEncodedResolution: CGSize(width: 6016, height: 3384),
             requestedVisibleResolution: CGSize(width: 6016, height: 3384)
         )
 
@@ -146,7 +150,20 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = windowResizeNoOpDecision(
             currentVisibleResolution: CGSize(width: 2450, height: 1548),
             currentDisplayResolution: CGSize(width: 2450, height: 1608),
+            currentEncodedResolution: CGSize(width: 2450, height: 1608),
             requestedVisibleResolution: CGSize(width: 2450, height: 1608)
+        )
+
+        #expect(decision == .apply)
+    }
+
+    @Test("Window resize no-op applies when encoded dimensions still lag requested visible size")
+    func windowResizeNoOpAppliesWhenEncodedDimensionsLag() {
+        let decision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 2420, height: 1668),
+            currentDisplayResolution: CGSize(width: 2420, height: 1668),
+            currentEncodedResolution: CGSize(width: 2416, height: 1664),
+            requestedVisibleResolution: CGSize(width: 2420, height: 1668)
         )
 
         #expect(decision == .apply)

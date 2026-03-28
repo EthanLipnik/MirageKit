@@ -170,6 +170,16 @@ struct ClientConnectionEndpointPlanningTests {
             ) == .addressUnavailable
         )
         #expect(
+            MirageClientService.classifyControlSessionFailure(
+                LoomError.connectionFailed(
+                    LoomConnectionFailure(
+                        reason: .timedOut,
+                        detail: "Reliable UDP transport timed out awaiting acknowledgement."
+                    )
+                )
+            ) == .timeout
+        )
+        #expect(
             MirageClientService.classifyControlSessionFailure(MirageError.timeout) == .timeout
         )
     }

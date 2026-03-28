@@ -49,7 +49,6 @@ extension SharedVirtualDisplayManager {
                     refreshRate: targetRefreshRate,
                     colorSpace: colorSpace,
                     displayNameOverride: "Mirage App Stream",
-                    allowAspectMismatchRetinaCandidate: false,
                     preferFastRecreate: true
                 )
                 appStreamDisplay = recreated
@@ -69,8 +68,7 @@ extension SharedVirtualDisplayManager {
             resolution: resolution,
             refreshRate: targetRefreshRate,
             colorSpace: colorSpace,
-            displayNameOverride: "Mirage App Stream",
-            allowAspectMismatchRetinaCandidate: false
+            displayNameOverride: "Mirage App Stream"
         )
         appStreamDisplay = created
         appStreamPreset = preset
@@ -130,8 +128,7 @@ extension SharedVirtualDisplayManager {
                     newResolution: resolution,
                     refreshRate: targetRefreshRate,
                     colorSpace: colorSpace,
-                    displayNameOverride: displayName,
-                    allowAspectMismatchRetinaCandidate: true
+                    displayNameOverride: displayName
                 )
                 dedicatedDisplaysByStreamID[streamID] = recreated
                 return snapshot(from: recreated)
@@ -157,7 +154,6 @@ extension SharedVirtualDisplayManager {
                 refreshRate: targetRefreshRate,
                 colorSpace: colorSpace,
                 displayNameOverride: displayName,
-                allowAspectMismatchRetinaCandidate: false,
                 preferFastRecreate: true
             )
             dedicatedDisplaysByStreamID[streamID] = recreated
@@ -168,8 +164,7 @@ extension SharedVirtualDisplayManager {
             resolution: resolution,
             refreshRate: targetRefreshRate,
             colorSpace: colorSpace,
-            displayNameOverride: displayName,
-            allowAspectMismatchRetinaCandidate: true
+            displayNameOverride: displayName
         )
         dedicatedDisplaysByStreamID[streamID] = created
         return snapshot(from: created)
@@ -214,7 +209,6 @@ extension SharedVirtualDisplayManager {
             refreshRate: targetRefreshRate,
             colorSpace: existing.colorSpace,
             displayNameOverride: dedicatedDisplayName(for: streamID),
-            allowAspectMismatchRetinaCandidate: false,
             preferFastRecreate: true
         )
         dedicatedDisplaysByStreamID[streamID] = recreated

@@ -15,6 +15,12 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
+    enum DisplayValidationOutcome: Sendable, Equatable {
+        case ready
+        case screenCaptureKitVisibilityDelayed(CGDirectDisplayID)
+        case modeMismatch
+    }
+
     struct DisplayCreationAttempt: Sendable {
         let resolution: CGSize
         let hiDPI: Bool
@@ -130,14 +136,15 @@ extension SharedVirtualDisplayManager {
         expectedLogicalResolution: CGSize,
         expectedPixelResolution: CGSize
     )
-    async -> Bool {
+    async -> DisplayValidationOutcome {
         guard expectedLogicalResolution.width > 0,
               expectedLogicalResolution.height > 0,
               expectedPixelResolution.width > 0,
-              expectedPixelResolution.height > 0 else { return true }
+              expectedPixelResolution.height > 0 else { return .ready }
 
         let maxAttempts = 6
         var delayMs = 80
+        var sawScreenCaptureKitDelay = false
 
         for attempt in 1 ... maxAttempts {
             let bounds = CGDisplayBounds(displayID)
@@ -171,7 +178,7 @@ extension SharedVirtualDisplayManager {
                     abs(expectedLogicalResolution.height - expectedPixelResolution.height) <= 1
 
                 if boundsReady, sizeMatches, modeMatches {
-                    return true
+                    return .ready
                 }
 
                 if expectsOneX, boundsReady, sizeMatches {
@@ -182,7 +189,7 @@ extension SharedVirtualDisplayManager {
                                 "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), " +
                                 "expected=\(expectedPixelResolution)"
                         )
-                    return true
+                    return .ready
                 }
 
                 MirageLogger
@@ -191,6 +198,17 @@ extension SharedVirtualDisplayManager {
                             "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
                             "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), " +
                             "expectedLogical=\(expectedLogicalResolution), expectedPixel=\(expectedPixelResolution)"
+                    )
+            } catch let error as SharedDisplayError {
+                switch error {
+                case .noActiveDisplay, .scDisplayNotFound:
+                    sawScreenCaptureKitDelay = true
+                default:
+                    break
+                }
+                MirageLogger
+                    .host(
+                        "Virtual display \(displayID) size validation failed (attempt \(attempt)/\(maxAttempts)): \(error)"
                     )
             } catch {
                 MirageLogger
@@ -205,7 +223,10 @@ extension SharedVirtualDisplayManager {
             }
         }
 
-        return false
+        if sawScreenCaptureKitDelay {
+            return .screenCaptureKitVisibilityDelayed(displayID)
+        }
+        return .modeMismatch
     }
 
     func waitForDisplayRemoval(displayID: CGDirectDisplayID, timeoutMs: Int = 1500) async {
@@ -319,8 +340,7 @@ extension SharedVirtualDisplayManager {
         resolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        displayNameOverride: String? = nil,
-        allowAspectMismatchRetinaCandidate: Bool = false
+        displayNameOverride: String? = nil
     )
     async throws -> ManagedDisplayContext {
         if displayCounter == 0 {
@@ -333,6 +353,7 @@ extension SharedVirtualDisplayManager {
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
         let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
         let fallback1x = Self.fallbackResolution(for: normalizedRequested)
+        var lastValidationOutcome: DisplayValidationOutcome?
 
         // Build attempt list: retina at requested size, then 1x fallback, across color spaces.
         var dedupedAttempts: [DisplayCreationAttempt] = []
@@ -435,12 +456,18 @@ extension SharedVirtualDisplayManager {
                 scaleFactor: validatedScaleHint
             )
 
-            let isValid = await validateDisplayMode(
+            let validationOutcome = await validateDisplayMode(
                 displayID: displayContext.displayID,
                 expectedLogicalResolution: validatedLogicalResolution,
                 expectedPixelResolution: validatedPixelResolution
             )
-            guard isValid else {
+            guard validationOutcome == .ready else {
+                lastValidationOutcome = validationOutcome
+                if case .screenCaptureKitVisibilityDelayed = validationOutcome {
+                    MirageLogger.host(
+                        "Virtual display \(displayContext.displayID) activated but ScreenCaptureKit visibility lagged beyond validation budget"
+                    )
+                }
                 await destroyAttemptDisplay(displayContext)
                 continue
             }
@@ -505,9 +532,11 @@ extension SharedVirtualDisplayManager {
             return managedContext
         }
 
-        throw SharedDisplayError.creationFailed(
-            "Virtual display failed activation (retina-first, 1x fallback, closest-aspect fallback)"
-        )
+        if case let .screenCaptureKitVisibilityDelayed(displayID) = lastValidationOutcome {
+            throw SharedDisplayError.screenCaptureKitVisibilityDelayed(displayID)
+        }
+
+        throw SharedDisplayError.creationFailed("Virtual display failed activation (retina-first, 1x fallback)")
     }
 
     /// Recreate the display at a new resolution.
@@ -515,7 +544,6 @@ extension SharedVirtualDisplayManager {
         newResolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        allowAspectMismatchRetinaCandidate: Bool = false,
         preferFastRecreate: Bool = false
     )
     async throws -> ManagedDisplayContext {
@@ -524,8 +552,7 @@ extension SharedVirtualDisplayManager {
         return try await createDisplay(
             resolution: newResolution,
             refreshRate: refreshRate,
-            colorSpace: colorSpace,
-            allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
+            colorSpace: colorSpace
         )
     }
 
@@ -536,7 +563,6 @@ extension SharedVirtualDisplayManager {
         refreshRate: Int,
         colorSpace: MirageColorSpace,
         displayNameOverride: String? = nil,
-        allowAspectMismatchRetinaCandidate: Bool = false,
         preferFastRecreate: Bool = false
     )
     async throws -> ManagedDisplayContext {
@@ -546,8 +572,7 @@ extension SharedVirtualDisplayManager {
             resolution: newResolution,
             refreshRate: refreshRate,
             colorSpace: colorSpace,
-            displayNameOverride: displayNameOverride,
-            allowAspectMismatchRetinaCandidate: allowAspectMismatchRetinaCandidate
+            displayNameOverride: displayNameOverride
         )
     }
 

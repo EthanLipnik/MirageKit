@@ -324,6 +324,11 @@ extension MirageClientService {
             if let dimensionToken {
                 appDimensionTokenByStream[streamID] = dimensionToken
             }
+            appStreamStartAcknowledgementByStreamID[streamID] = StreamStartAcknowledgement(
+                width: started.width,
+                height: started.height,
+                dimensionToken: dimensionToken
+            )
 
             if let minW = started.minWidth, let minH = started.minHeight {
                 streamMinSizes[streamID] = (minWidth: minW, minHeight: minH)
@@ -400,6 +405,7 @@ extension MirageClientService {
             clearAdaptiveFallbackState(for: streamID)
             clearStartupAttempt(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
+            appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
             streamStartupBaseTimes.removeValue(forKey: streamID)
             streamStartupFirstRegistrationSent.remove(streamID)
             streamStartupFirstPacketReceived.remove(streamID)

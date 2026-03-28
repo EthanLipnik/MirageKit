@@ -389,7 +389,7 @@ extension StreamContext {
                 syntheticIntervalCount += 1
             }
 
-            setContentRect(frame.info.contentRect)
+            setContentRect(resolvedOutgoingContentRect(for: frame))
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
             applyTrafficLightCloneStampIfNeeded(frame: frame)
 
@@ -513,6 +513,26 @@ extension StreamContext {
             width: CVPixelBufferGetWidth(frame.pixelBuffer),
             height: CVPixelBufferGetHeight(frame.pixelBuffer)
         )
+    }
+
+    func resolvedOutgoingContentRect(for frame: CapturedFrame) -> CGRect {
+        let fullFrameRect = CGRect(
+            x: 0,
+            y: 0,
+            width: CVPixelBufferGetWidth(frame.pixelBuffer),
+            height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        )
+        guard fullFrameRect.width > 0, fullFrameRect.height > 0 else { return .zero }
+
+        if useVirtualDisplay, isAppStream, captureMode == .window {
+            return fullFrameRect
+        }
+
+        let candidate = frame.info.contentRect
+        guard candidate.width > 0, candidate.height > 0 else { return fullFrameRect }
+        let sanitized = candidate.intersection(fullFrameRect)
+        guard sanitized.width > 0, sanitized.height > 0 else { return fullFrameRect }
+        return sanitized
     }
 
     func resolveTrafficLightMaskGeometry(windowFramePoints: CGRect) -> HostTrafficLightMaskGeometryResolver.ResolvedGeometry {

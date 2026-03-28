@@ -113,10 +113,18 @@ private func virtualDisplayResolutionMatches(
 func windowResizeNoOpDecision(
     currentVisibleResolution: CGSize?,
     currentDisplayResolution: CGSize?,
+    currentEncodedResolution: CGSize?,
     requestedVisibleResolution: CGSize
 )
 -> WindowResizeNoOpDecision {
     guard requestedVisibleResolution.width > 0, requestedVisibleResolution.height > 0 else { return .noOp }
+    if let currentEncodedResolution,
+       !virtualDisplayResolutionMatches(currentEncodedResolution, requestedVisibleResolution) {
+        MirageLogger.host(
+            "Window resize no-op rejected due to encoded-size mismatch: encoded=\(currentEncodedResolution), requested=\(requestedVisibleResolution)"
+        )
+        return .apply
+    }
     // Prefer the calibrated visible pixel size for no-op decisions.
     // Falling back to display pixels is only safe when visible pixels are unavailable.
     if let currentVisibleResolution {
@@ -928,9 +936,15 @@ extension MirageHostService {
         let currentState = getVirtualDisplayState(streamID: streamID)
         let currentVisibleResolution = currentState?.visiblePixelResolution
         let currentDisplayResolution = currentState?.pixelResolution
+        let currentEncodedDimensions = await context.getEncodedDimensions()
+        let currentEncodedResolution = CGSize(
+            width: currentEncodedDimensions.width,
+            height: currentEncodedDimensions.height
+        )
         if windowResizeNoOpDecision(
             currentVisibleResolution: currentVisibleResolution,
             currentDisplayResolution: currentDisplayResolution,
+            currentEncodedResolution: currentEncodedResolution,
             requestedVisibleResolution: pixelResolution
         ) == .noOp {
             await sendWindowResizeCompletion(

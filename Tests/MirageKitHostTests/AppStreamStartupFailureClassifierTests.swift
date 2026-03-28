@@ -47,6 +47,15 @@ struct AppStreamStartupFailureClassifierTests {
         #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
     }
 
+    @Test("ScreenCaptureKit visibility delays remain retryable")
+    func screenCaptureKitVisibilityDelayIsRetryable() {
+        let error = SharedVirtualDisplayManager.SharedDisplayError.screenCaptureKitVisibilityDelayed(101)
+
+        #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(error))
+        #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(error))
+        #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
+    }
+
     @Test("Recoverable CoreGraphics virtual-display startup errors map to direct-capture fallback")
     func recoverableCoreGraphicsVirtualDisplayFailureFallsBackToDirectCapture() {
         let error = NSError(domain: "CoreGraphicsErrorDomain", code: 1003)

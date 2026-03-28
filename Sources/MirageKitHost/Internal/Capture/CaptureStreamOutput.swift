@@ -223,6 +223,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         wasInFallbackMode = false
         fallbackStartTime = 0
         fallbackLock.unlock()
+        lastContentRect = .zero
         expectationLock.withLock {
             lastCadenceAdmittedPresentationTime = 0
             nextCadenceAdmitPresentationTime = 0
@@ -231,6 +232,25 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             cadenceSkewSampleCount = 0
         }
         MirageLogger.capture("Reset fallback state for resize")
+    }
+
+    private func fullBufferContentRect(
+        bufferWidth: Int,
+        bufferHeight: Int
+    ) -> CGRect {
+        CGRect(x: 0, y: 0, width: CGFloat(bufferWidth), height: CGFloat(bufferHeight))
+    }
+
+    private func normalizedContentRect(
+        _ rect: CGRect,
+        bufferWidth: Int,
+        bufferHeight: Int
+    ) -> CGRect? {
+        let fullRect = fullBufferContentRect(bufferWidth: bufferWidth, bufferHeight: bufferHeight)
+        guard rect.width > 0, rect.height > 0 else { return nil }
+        let sanitized = rect.intersection(fullRect)
+        guard sanitized.width > 0, sanitized.height > 0 else { return nil }
+        return sanitized
     }
 
     static func resolvedStallLimit(
@@ -627,7 +647,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         // fast-path to full-buffer rect to minimize per-frame work.
         let bufferWidth = CVPixelBufferGetWidth(pixelBuffer)
         let bufferHeight = CVPixelBufferGetHeight(pixelBuffer)
-        var contentRect = CGRect(x: 0, y: 0, width: CGFloat(bufferWidth), height: CGFloat(bufferHeight))
+        let fullRect = fullBufferContentRect(bufferWidth: bufferWidth, bufferHeight: bufferHeight)
+        var contentRect = fullRect
+        let shouldReuseCachedContentRect = windowID == 0
         if usesDetailedMetadata,
            !isIdleFrame,
            let attachments,
@@ -643,17 +665,31 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             }
             let contentRectDict = contentRectValue as! CFDictionary
             if let rect = CGRect(dictionaryRepresentation: contentRectDict) {
-                contentRect = CGRect(
+                let scaledRect = CGRect(
                     x: rect.origin.x * scaleFactor,
                     y: rect.origin.y * scaleFactor,
                     width: rect.width * scaleFactor,
                     height: rect.height * scaleFactor
                 )
-                lastContentRect = contentRect
-            } else if !lastContentRect.isEmpty {
+                if let normalizedRect = normalizedContentRect(
+                    scaledRect,
+                    bufferWidth: bufferWidth,
+                    bufferHeight: bufferHeight
+                ) {
+                    contentRect = normalizedRect
+                    lastContentRect = normalizedRect
+                } else if shouldReuseCachedContentRect, !lastContentRect.isEmpty {
+                    contentRect = lastContentRect
+                } else if !shouldReuseCachedContentRect {
+                    MirageLogger.debug(
+                        .capture,
+                        "Discarding invalid window contentRect \(scaledRect) for buffer \(bufferWidth)x\(bufferHeight); using full-frame rect"
+                    )
+                }
+            } else if shouldReuseCachedContentRect, !lastContentRect.isEmpty {
                 contentRect = lastContentRect
             }
-        } else if !lastContentRect.isEmpty {
+        } else if shouldReuseCachedContentRect, !lastContentRect.isEmpty {
             contentRect = lastContentRect
         }
 
@@ -668,14 +704,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         // Fallback: if contentRect is zero/invalid, use full buffer dimensions
-        if contentRect.isEmpty {
-            contentRect = CGRect(
-                x: 0,
-                y: 0,
-                width: CGFloat(CVPixelBufferGetWidth(pixelBuffer)),
-                height: CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-            )
-        }
+        if contentRect.isEmpty { contentRect = fullRect }
 
         // Log frame dimensions periodically (first frame and every 10 seconds at 60fps)
         frameCount += 1

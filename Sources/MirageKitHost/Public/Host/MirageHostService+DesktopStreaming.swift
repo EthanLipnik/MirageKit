@@ -684,27 +684,16 @@ extension MirageHostService {
 
     /// Find SCDisplay with retry - faster than fixed sleep
     func findSCDisplayWithRetry(maxAttempts: Int, delayMs: UInt64) async throws -> SCDisplayWrapper {
-        var attemptDelayMs = max(10, Int(delayMs))
-        for attempt in 1 ... maxAttempts {
-            do {
-                let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(maxAttempts: 1)
-                MirageLogger.host("Found SCDisplay on attempt \(attempt)")
-                return scDisplay
-            } catch {
-                if attempt < maxAttempts {
-                    MirageLogger
-                        .host(
-                            "SCDisplay not ready (attempt \(attempt)/\(maxAttempts)); retrying in \(attemptDelayMs)ms"
-                        )
-                    try? await Task.sleep(for: .milliseconds(attemptDelayMs))
-                    attemptDelayMs = min(1000, Int(Double(attemptDelayMs) * 1.6))
-                } else {
-                    MirageLogger.host("Failed to find SCDisplay after \(maxAttempts) attempts")
-                    throw error
-                }
-            }
+        _ = delayMs
+        let resolvedAttempts = max(maxAttempts, 12)
+        do {
+            let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(maxAttempts: resolvedAttempts)
+            MirageLogger.host("Found SCDisplay using shared startup policy (attempt budget \(resolvedAttempts))")
+            return scDisplay
+        } catch {
+            MirageLogger.host("Failed to find SCDisplay using shared startup policy after \(resolvedAttempts) attempts")
+            throw error
         }
-        throw MirageError.protocolError("Failed to find SCDisplay")
     }
 
     /// Find main SCDisplay with retry - for desktop streaming capture

@@ -13,6 +13,22 @@ import MirageKit
 import AppKit
 #endif
 
+func isMeaningfulAppResizeAcknowledgement(
+    _ latest: MirageClientService.StreamStartAcknowledgement?,
+    comparedTo baseline: MirageClientService.StreamStartAcknowledgement?
+) -> Bool {
+    guard let latest else { return false }
+    guard let baseline else {
+        return latest.width > 0 && latest.height > 0
+    }
+    if let latestToken = latest.dimensionToken,
+       let baselineToken = baseline.dimensionToken,
+       latestToken != baselineToken {
+        return true
+    }
+    return latest.width != baseline.width || latest.height != baseline.height
+}
+
 /// Streaming content view that handles input, resizing, and focus.
 ///
 /// This view bridges `MirageStreamViewRepresentable` with a `MirageClientSessionStore`
@@ -71,6 +87,7 @@ public struct MirageStreamContentView: View {
     @State private var streamScaleTask: Task<Void, Never>?
     @State private var lastSentEncodedPixelSize: CGSize = .zero
     @State private var awaitingAppResizeAck: Bool = false
+    @State private var appResizeBaselineAcknowledgement: MirageClientService.StreamStartAcknowledgement?
     @State private var appResizeAckTimeoutTask: Task<Void, Never>?
     @State private var awaitingDesktopResizeAck: Bool = false
     @State private var latestDrawableDisplaySize: CGSize = .zero
@@ -756,6 +773,7 @@ public struct MirageStreamContentView: View {
 
     private func beginAppResizeAwaitingAck() {
         awaitingAppResizeAck = true
+        appResizeBaselineAcknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
         isResizing = true
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = Task { @MainActor in
@@ -773,6 +791,7 @@ public struct MirageStreamContentView: View {
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = nil
         awaitingAppResizeAck = false
+        appResizeBaselineAcknowledgement = nil
         if isResizing { isResizing = false }
     }
 
@@ -780,6 +799,13 @@ public struct MirageStreamContentView: View {
         guard isDesktopStream else {
             guard awaitingAppResizeAck else { return }
             guard let minSize, minSize.width > 0, minSize.height > 0 else { return }
+            let latestAcknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
+            guard isMeaningfulAppResizeAcknowledgement(
+                latestAcknowledgement,
+                comparedTo: appResizeBaselineAcknowledgement
+            ) else {
+                return
+            }
             finishAppResizeAwaitingAck()
             return
         }

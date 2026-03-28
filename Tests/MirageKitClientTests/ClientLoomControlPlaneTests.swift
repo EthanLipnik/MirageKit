@@ -169,6 +169,72 @@ struct ClientLoomControlPlaneTests {
         let pathSnapshot = try #require(await service.currentControlPathSnapshot())
         #expect(pathSnapshot.remoteEndpoint == endpoint)
     }
+
+    @MainActor
+    @Test("TCP fallback sessions keep control traffic and labeled media streams coherent")
+    func tcpFallbackSessionKeepsControlAndMediaTrafficCoherent() async throws {
+        let pair = try await makeLoopbackControlPair()
+        defer {
+            Task {
+                await pair.stop()
+            }
+        }
+
+        async let clientContext = pair.client.start(
+            localHello: pair.clientHello,
+            identityManager: pair.clientIdentityManager
+        )
+        async let serverContext = pair.server.start(
+            localHello: pair.serverHello,
+            identityManager: pair.serverIdentityManager
+        )
+        _ = try await (clientContext, serverContext)
+
+        let serverControlTask = Task {
+            try await MirageControlChannel.accept(from: pair.server)
+        }
+        let clientControl = try await MirageControlChannel.open(on: pair.client)
+        let serverControl = try await serverControlTask.value
+        let incomingStreamsTask = Task<[LoomMultiplexedStream], Never> {
+            var streams: [LoomMultiplexedStream] = []
+            let observer = await pair.server.makeIncomingStreamObserver()
+            for await stream in observer {
+                guard stream.label == "control/42" || stream.label == "video/42" else { continue }
+                streams.append(stream)
+                if streams.count == 2 {
+                    return streams
+                }
+            }
+            return streams
+        }
+
+        let controlStream = try await pair.client.openStream(label: "control/42")
+        let videoStream = try await pair.client.openStream(label: "video/42")
+        let incomingStreams = await incomingStreamsTask.value
+        #expect(incomingStreams.count == 2)
+        let serverVideoStream = try #require(incomingStreams.first { $0.label == "video/42" })
+
+        let expectedVideoPayloads = (0..<6).map { Data("video-\($0)".utf8) }
+        let receivedVideoTask = Task {
+            await collectPayloads(from: serverVideoStream, count: expectedVideoPayloads.count)
+        }
+
+        for index in expectedVideoPayloads.indices {
+            try await clientControl.send(ControlMessage(type: .ping))
+            let receivedPing = try await receiveControlMessage(from: serverControl)
+            #expect(receivedPing.type == .ping)
+
+            try await controlStream.send(Data("control-\(index)".utf8))
+            try await videoStream.sendUnreliable(expectedVideoPayloads[index])
+        }
+
+        try await controlStream.close()
+        try await videoStream.close()
+
+        #expect(await receivedVideoTask.value == expectedVideoPayloads)
+        #expect(await pair.client.state == .ready)
+        #expect(await pair.server.state == .ready)
+    }
 }
 
 private struct LoopbackControlPair {
@@ -271,6 +337,20 @@ private func receiveControlMessage(from channel: MirageControlChannel) async thr
         return message
     }
     throw MirageError.protocolError("Control stream closed before receiving a Mirage control message")
+}
+
+private func collectPayloads(
+    from stream: LoomMultiplexedStream,
+    count: Int
+) async -> [Data] {
+    var payloads: [Data] = []
+    for await payload in stream.incomingBytes {
+        payloads.append(payload)
+        if payloads.count == count {
+            return payloads
+        }
+    }
+    return payloads
 }
 
 private actor AsyncBox<Value: Sendable> {

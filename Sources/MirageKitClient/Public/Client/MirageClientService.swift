@@ -23,6 +23,12 @@ import AppKit
 @Observable
 @MainActor
 public final class MirageClientService {
+    struct StreamStartAcknowledgement: Sendable, Equatable {
+        let width: Int
+        let height: Int
+        let dimensionToken: UInt16?
+    }
+
     public enum ControlUpdatePolicy: Sendable {
         case normal
         case interactiveStreaming
@@ -260,6 +266,8 @@ public final class MirageClientService {
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
     /// Last seen app/window stream dimension token per stream.
     var appDimensionTokenByStream: [StreamID: UInt16] = [:]
+    /// Last app/window stream-start acknowledgement per stream.
+    var appStreamStartAcknowledgementByStreamID: [StreamID: StreamStartAcknowledgement] = [:]
 
     /// Stream scale for post-capture downscaling
     /// 1.0 = native resolution, lower values reduce encoded size
@@ -545,7 +553,7 @@ public final class MirageClientService {
     var hostSupportLogArchiveRequestID: UUID?
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
-    let hostSupportLogArchiveTimeout: Duration = .seconds(5)
+    let hostSupportLogArchiveTimeout: Duration = .seconds(30)
     var pingContinuation: CheckedContinuation<Void, Error>?
     var pingRequestID: UInt64 = 0
     var pingTimeoutTask: Task<Void, Never>?

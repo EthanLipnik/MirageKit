@@ -357,6 +357,7 @@ extension MirageClientService {
         pendingAppAdaptiveFallbackBitrate = nil
         pendingAppAdaptiveFallbackColorDepth = nil
         desktopDimensionTokenByStream.removeAll()
+        appStreamStartAcknowledgementByStreamID.removeAll()
         fastPathState.clearAllStartupPacketPending()
         for task in startupRegistrationRetryTasks.values {
             task.cancel()
@@ -487,7 +488,8 @@ extension MirageClientService {
         do {
             let session = try await awaitConnectSession(
                 connectTask,
-                attemptID: attemptID
+                attemptID: attemptID,
+                timeout: controlSessionConnectTimeout(for: attempt)
             )
             clearPendingConnectTaskIfNeeded(for: attemptID)
             return session
@@ -503,9 +505,9 @@ extension MirageClientService {
     /// the macOS NECP policy engine is in a corrupted state).
     private func awaitConnectSession(
         _ connectTask: Task<LoomAuthenticatedSession, Error>,
-        attemptID: UUID
+        attemptID: UUID,
+        timeout: Duration
     ) async throws -> LoomAuthenticatedSession {
-        let timeout = controlSessionConnectTimeout
         let timeoutError = MirageError.timeout
 
         do {
@@ -533,6 +535,13 @@ extension MirageClientService {
             }
             throw error
         }
+    }
+
+    private func controlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.transportKind == .udp {
+            return .seconds(5)
+        }
+        return controlSessionConnectTimeout
     }
 
     func controlSessionAttempts(for host: LoomPeer) -> [ControlSessionAttempt] {
@@ -632,6 +641,9 @@ extension MirageClientService {
             case .timeout:
                 return .timeout
             case let .connectionFailed(underlyingError):
+                if let failure = underlyingError as? LoomConnectionFailure {
+                    return classifyLoomConnectionFailure(failure)
+                }
                 return classifyControlSessionFailure(underlyingError)
             default:
                 break
@@ -649,6 +661,25 @@ extension MirageClientService {
         }
 
         return .other
+    }
+
+    private static func classifyLoomConnectionFailure(
+        _ failure: LoomConnectionFailure
+    ) -> ControlSessionFailureClassification {
+        switch failure.reason {
+        case .timedOut:
+            .timeout
+        case .transportLoss, .closed:
+            .transportLoss
+        case .connectionRefused:
+            .connectionRefused
+        case .addressUnavailable:
+            .addressUnavailable
+        case .cancelled:
+            .cancelled
+        case .other:
+            .other
+        }
     }
 
     internal static func controlSessionFailureReason(

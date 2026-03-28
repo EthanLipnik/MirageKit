@@ -128,8 +128,13 @@ extension StreamContext {
             label: "startup"
         )
 
+        let settledWindowWrapper = try await resolveSCWindowWrapper(
+            windowID: windowID,
+            label: "post-resize window capture"
+        )
+
         // 6. Configure capture dimensions from actual window frame
-        let captureTarget = streamTargetDimensions(windowFrame: resolvedWindowWrapper.window.frame)
+        let captureTarget = streamTargetDimensions(windowFrame: settledWindowWrapper.window.frame)
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
@@ -140,7 +145,7 @@ extension StreamContext {
         currentCaptureSize = outputSize
         currentEncodedSize = outputSize
         captureMode = .window
-        lastWindowFrame = resolvedWindowWrapper.window.frame
+        lastWindowFrame = settledWindowWrapper.window.frame
         updateQueueLimits()
         await applyDerivedQuality(for: outputSize, logLabel: "Window capture init")
         MirageLogger.stream(
@@ -158,7 +163,7 @@ extension StreamContext {
 
         let captureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: false)
         try await captureEngine.startCapture(
-            window: resolvedWindowWrapper.window,
+            window: settledWindowWrapper.window,
             application: applicationWrapper.application,
             display: resolvedDisplayWrapper.display,
             outputScale: streamScale,

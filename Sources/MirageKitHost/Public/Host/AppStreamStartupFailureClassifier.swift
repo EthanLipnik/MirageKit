@@ -37,7 +37,7 @@ enum AppStreamStartupFailureClassifier {
             switch sharedDisplayError {
             case .creationFailed, .apiNotAvailable:
                 return false
-            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
+            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
                 return true
             }
         }
@@ -97,7 +97,7 @@ enum AppStreamStartupFailureClassifier {
             switch sharedDisplayError {
             case .creationFailed, .apiNotAvailable:
                 return true
-            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .scDisplayNotFound:
+            case .noActiveDisplay, .streamDisplayNotFound, .spaceNotFound, .screenCaptureKitVisibilityDelayed, .scDisplayNotFound:
                 return false
             }
         }
