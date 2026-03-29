@@ -12,7 +12,6 @@ import ImageIO
 import MirageKit
 import UniformTypeIdentifiers
 
-@MainActor
 enum MirageHostHardwareIconResolver {
     struct Payload {
         let pngData: Data
@@ -24,6 +23,14 @@ enum MirageHostHardwareIconResolver {
         let lowercasedFilename: String
         let originalFilename: String
         let fileSize: Int
+    }
+
+    private static let cachedBundlePath: String? = resolveMetadataCoreTypesBundlePath()
+    private static let cachedIconAssets: [CoreTypesIconAsset] = loadMetadataCoreTypesIconAssets()
+
+    static func prewarmCache() {
+        _ = cachedBundlePath
+        _ = cachedIconAssets
     }
 
     static func payload(
@@ -125,7 +132,15 @@ enum MirageHostHardwareIconResolver {
     }
 
     private static func metadataCoreTypesIconAssets() -> [CoreTypesIconAsset] {
-        guard let bundlePath = metadataCoreTypesBundlePath() else {
+        cachedIconAssets
+    }
+
+    private static func metadataCoreTypesBundlePath() -> String? {
+        cachedBundlePath
+    }
+
+    private static func loadMetadataCoreTypesIconAssets() -> [CoreTypesIconAsset] {
+        guard let bundlePath = resolveMetadataCoreTypesBundlePath() else {
             return []
         }
 
@@ -156,7 +171,7 @@ enum MirageHostHardwareIconResolver {
         return assets
     }
 
-    private static func metadataCoreTypesBundlePath() -> String? {
+    private static func resolveMetadataCoreTypesBundlePath() -> String? {
         if let bundlePath = Bundle(identifier: "com.apple.CoreTypes")?.bundlePath,
            FileManager.default.fileExists(atPath: bundlePath) {
             return bundlePath

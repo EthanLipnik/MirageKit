@@ -29,6 +29,9 @@ public final class MirageHostWindowController {
     /// Minimum window sizes per window.
     private var minimumWindowSizes: [WindowID: CGSize] = [:]
 
+    /// Cached CGWindowList frames keyed by window ID.
+    private var cachedWindowFrames: [WindowID: CGRect] = [:]
+
     // MARK: - Timers
 
     /// Timer for periodically re-centering streamed windows.
@@ -129,6 +132,7 @@ public final class MirageHostWindowController {
     /// Removes a cached AX window for the provided window ID.
     public func invalidateCache(for windowID: WindowID) {
         cachedAXWindows.removeValue(forKey: windowID)
+        cachedWindowFrames.removeValue(forKey: windowID)
     }
 
     private func findAXWindow(for window: MirageWindow) -> AXUIElement? {
@@ -175,6 +179,30 @@ public final class MirageHostWindowController {
 
     /// Returns the current CGWindowList frame for a window ID.
     public func currentWindowFrame(for windowID: WindowID) -> CGRect? {
+        if let cachedFrame = cachedWindowFrames[windowID] {
+            refreshWindowFrameCache(for: windowID)
+            return cachedFrame
+        }
+        let freshFrame = Self.fetchWindowFrameSnapshot(for: windowID)
+        if let freshFrame {
+            cachedWindowFrames[windowID] = freshFrame
+        }
+        return freshFrame
+    }
+
+    public func refreshWindowFrameCache(for windowID: WindowID) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let frame = await Self.fetchWindowFrameSnapshotAsync(for: windowID)
+            if let frame {
+                self.cachedWindowFrames[windowID] = frame
+            } else {
+                self.cachedWindowFrames.removeValue(forKey: windowID)
+            }
+        }
+    }
+
+    nonisolated private static func fetchWindowFrameSnapshot(for windowID: WindowID) -> CGRect? {
         if let windowList = CGWindowListCopyWindowInfo([.optionIncludingWindow], windowID) as? [[String: Any]],
            let windowInfo = windowList.first,
            let bounds = windowInfo[kCGWindowBounds as String] as? [String: CGFloat],
@@ -183,6 +211,12 @@ public final class MirageHostWindowController {
             return CGRect(x: x, y: y, width: w, height: h)
         }
         return nil
+    }
+
+    nonisolated private static func fetchWindowFrameSnapshotAsync(for windowID: WindowID) async -> CGRect? {
+        await Task.detached(priority: .utility) {
+            fetchWindowFrameSnapshot(for: windowID)
+        }.value
     }
 
     /// Returns the AX frame for a window element if available.

@@ -642,14 +642,19 @@ public extension MirageHostService {
                 minHeight: minHeight,
                 dimensionToken: dimensionToken
             )
-            try await clientContext.send(.streamStarted, content: message)
-            MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=window")
-            registerPendingStartupAttempt(
-                streamID: streamID,
-                startupAttemptID: startupAttemptID,
-                clientID: clientContext.client.id,
-                kind: .window
-            )
+            do {
+                registerPendingStartupAttempt(
+                    streamID: streamID,
+                    startupAttemptID: startupAttemptID,
+                    clientID: clientContext.client.id,
+                    kind: .window
+                )
+                try await clientContext.send(.streamStarted, content: message)
+                MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=window")
+            } catch {
+                cancelPendingStartupAttempt(streamID: streamID)
+                throw error
+            }
         }
 
         await markAppStreamInteraction(streamID: streamID, reason: "stream started")

@@ -73,6 +73,46 @@ extension MirageHostService {
         return false
     }
 
+    nonisolated func isExpectedLifecycleControlSendFailure(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        let nsError = error as NSError
+        if nsError.domain == "Loom.LoomError", nsError.code == 0 {
+            return true
+        }
+
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case let .connectionFailed(underlyingError):
+                return isExpectedLifecycleControlSendFailure(underlyingError)
+            default:
+                break
+            }
+        }
+
+        if let loomError = error as? LoomError {
+            switch loomError {
+            case let .connectionFailed(underlyingError):
+                return isExpectedLifecycleControlSendFailure(underlyingError)
+            default:
+                break
+            }
+        }
+
+        if let failure = error as? LoomConnectionFailure {
+            switch failure.reason {
+            case .cancelled, .closed:
+                return true
+            case .timedOut, .transportLoss, .connectionRefused, .addressUnavailable, .other:
+                break
+            }
+        }
+
+        return false
+    }
+
     func handleControlChannelSendFailure(
         client: MirageConnectedClient,
         error: Error,
@@ -84,7 +124,9 @@ extension MirageHostService {
         // with one error per queued app icon / metadata send.
         let isFirstFailure = controlChannelSendFailureReported.insert(client.id).inserted
 
-        if isFatalConnectionError(error) || LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+        if isFatalConnectionError(error) ||
+            isExpectedLifecycleControlSendFailure(error) ||
+            LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
             if isFirstFailure {
                 MirageLogger.host(
                     "\(operation) skipped because the control channel closed for \(client.name): \(error.localizedDescription)"

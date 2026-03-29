@@ -20,8 +20,10 @@ extension MirageClientService {
         activeAudioStreamMessage = nil
         setActiveAudioStreamIDForFiltering(nil)
         setAudioDecodeTargetChannelCountForPipeline(2)
-        audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
-        audioPlaybackController.reset()
+        if let audioPlaybackController = audioPlaybackControllerIfInitialized {
+            audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+            audioPlaybackController.reset()
+        }
         Task { [audioPacketIngressQueue] in
             await audioPacketIngressQueue.reset()
         }
@@ -116,7 +118,7 @@ extension MirageClientService {
             let previous = activeAudioStreamMessage
             activeAudioStreamMessage = started
             setActiveAudioStreamIDForFiltering(started.streamID)
-            let preferredChannels = audioPlaybackController.preferredChannelCount(
+            let preferredChannels = resolveAudioPlaybackController().preferredChannelCount(
                 for: Int(started.channelCount)
             )
             setAudioDecodeTargetChannelCountForPipeline(preferredChannels)
@@ -130,7 +132,7 @@ extension MirageClientService {
                 guard let self else { return }
                 if previous != started {
                     await self.audioPacketIngressQueue.reset()
-                    self.audioPlaybackController.reset()
+                    self.audioPlaybackControllerIfInitialized?.reset()
                 }
             }
         } catch {
@@ -152,8 +154,10 @@ extension MirageClientService {
             Task { [weak self] in
                 guard let self else { return }
                 await self.audioPacketIngressQueue.reset()
-                self.audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
-                self.audioPlaybackController.reset()
+                if let audioPlaybackController = self.audioPlaybackControllerIfInitialized {
+                    audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+                    audioPlaybackController.reset()
+                }
             }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode audioStreamStopped: ")
@@ -164,6 +168,7 @@ extension MirageClientService {
         guard audioConfiguration.enabled else { return }
         guard activeAudioStreamMessage?.streamID == streamID else { return }
         guard !decodedFrames.isEmpty else { return }
+        let audioPlaybackController = resolveAudioPlaybackController()
         updateAudioSyncDelay(for: streamID)
         for decodedFrame in decodedFrames {
             audioPlaybackController.enqueue(decodedFrame)
@@ -171,6 +176,7 @@ extension MirageClientService {
     }
 
     private func updateAudioSyncDelay(for streamID: StreamID) {
+        guard let audioPlaybackController = audioPlaybackControllerIfInitialized else { return }
         guard let snapshot = metricsStore.snapshot(for: streamID) else {
             audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
             return

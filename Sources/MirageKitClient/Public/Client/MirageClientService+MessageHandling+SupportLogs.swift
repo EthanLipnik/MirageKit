@@ -42,11 +42,9 @@ extension MirageClientService {
             }
 
             guard let fileName = response.fileName?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !fileName.isEmpty,
-                  let transportKind = response.transportKind,
-                  let port = response.port else {
+                  !fileName.isEmpty else {
                 completeHostSupportLogArchiveRequest(
-                    .failure(MirageError.protocolError("Host returned incomplete Loom transfer bootstrap data"))
+                    .failure(MirageError.protocolError("Host returned incomplete support log transfer metadata"))
                 )
                 return
             }
@@ -57,9 +55,7 @@ extension MirageClientService {
                 do {
                     let archiveURL = try await downloadHostSupportLogArchive(
                         requestID: requestID,
-                        fileName: fileName,
-                        transportKind: transportKind,
-                        port: port
+                        fileName: fileName
                     )
                     completeHostSupportLogArchiveRequest(.success(archiveURL))
                 } catch {

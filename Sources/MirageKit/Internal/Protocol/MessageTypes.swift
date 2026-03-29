@@ -81,7 +81,7 @@ package enum ControlMessageType: UInt8, Codable {
     case appIconUpdate = 0x95 // Host -> Client: Incremental app icon payload update
     case appIconStreamComplete = 0x96 // Host -> Client: App icon update stream completion marker
     case hostSupportLogArchiveRequest = 0x97 // Client -> Host: Request host support log archive
-    case hostSupportLogArchive = 0x98 // Host -> Client: Host support log transfer session bootstrap
+    case hostSupportLogArchive = 0x98 // Host -> Client: Host support log in-session transfer metadata
     case auxiliaryWindowUpdate = 0x99 // Host -> Client: Auxiliary window position/visibility update
 
     // Desktop streaming (full virtual display mirroring)

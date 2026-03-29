@@ -515,7 +515,13 @@ public final class MirageClientService {
     var activeAudioStreamMessage: AudioStreamStartedMessage?
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
     nonisolated let audioPacketIngressQueue: ClientAudioPacketIngressQueue
-    @ObservationIgnored public let audioPlaybackController = AudioPlaybackController()
+    @ObservationIgnored private var lazyAudioPlaybackController: AudioPlaybackController?
+    @ObservationIgnored public var audioPlaybackControllerIfInitialized: AudioPlaybackController? {
+        lazyAudioPlaybackController
+    }
+    @ObservationIgnored public var audioPlaybackController: AudioPlaybackController {
+        resolveAudioPlaybackController()
+    }
     public var audioConfiguration: MirageAudioConfiguration = .default {
         didSet {
             guard oldValue != audioConfiguration else { return }
@@ -587,6 +593,15 @@ public final class MirageClientService {
 
     func clearStartupPacketPending(_ streamID: StreamID) {
         fastPathState.clearStartupPacketPending(streamID)
+    }
+
+    func resolveAudioPlaybackController() -> AudioPlaybackController {
+        if let lazyAudioPlaybackController {
+            return lazyAudioPlaybackController
+        }
+        let audioPlaybackController = AudioPlaybackController()
+        lazyAudioPlaybackController = audioPlaybackController
+        return audioPlaybackController
     }
 
     func setActiveAudioStreamIDForFiltering(_ streamID: StreamID?) {

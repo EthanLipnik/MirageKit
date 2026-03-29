@@ -28,12 +28,20 @@ struct PlaybackAudioSessionConfiguration: Equatable {
 
 @MainActor
 public final class AudioPlaybackController {
+    private final class PlaybackGraph {
+        let engine = AVAudioEngine()
+        let playerNode = AVAudioPlayerNode()
+
+        init() {
+            engine.attach(playerNode)
+        }
+    }
+
     private let startupBufferSeconds: Double
     private let maxQueuedSeconds: Double
     private let maxRuntimeExtraDelaySeconds: Double = 0.250
 
-    private let engine = AVAudioEngine()
-    private let playerNode = AVAudioPlayerNode()
+    private var playbackGraph: PlaybackGraph?
 
     private var configuredSampleRate: Int = 0
     private var configuredChannelCount: Int = 0
@@ -56,20 +64,34 @@ public final class AudioPlaybackController {
     init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
         self.maxQueuedSeconds = max(0.2, maxQueuedSeconds)
-        engine.attach(playerNode)
     }
 
     private func tearDownPlaybackGraph() {
-        if playerNode.isPlaying {
-            playerNode.pause()
+        guard let playbackGraph else { return }
+        if playbackGraph.playerNode.isPlaying {
+            playbackGraph.playerNode.pause()
         }
-        playerNode.reset()
-        if engine.isRunning {
-            engine.stop()
+        playbackGraph.playerNode.reset()
+        if playbackGraph.engine.isRunning {
+            playbackGraph.engine.stop()
         }
         if isConfigured {
-            engine.disconnectNodeOutput(playerNode)
+            playbackGraph.engine.disconnectNodeOutput(playbackGraph.playerNode)
         }
+        self.playbackGraph = nil
+    }
+
+    private func resolvePlaybackGraph() -> PlaybackGraph {
+        if let playbackGraph {
+            return playbackGraph
+        }
+        let playbackGraph = PlaybackGraph()
+        self.playbackGraph = playbackGraph
+        return playbackGraph
+    }
+
+    func hasInitializedPlaybackGraphForTesting() -> Bool {
+        playbackGraph != nil
     }
 
     func reset() {
@@ -94,7 +116,7 @@ public final class AudioPlaybackController {
 #if os(iOS) || os(visionOS)
         _ = ensureAudioSessionConfiguredForPlayback()
 #endif
-        let outputChannels = Int(engine.outputNode.outputFormat(forBus: 0).channelCount)
+        let outputChannels = Int(resolvePlaybackGraph().engine.outputNode.outputFormat(forBus: 0).channelCount)
         if incoming >= 6, outputChannels < 6 { return 2 }
         return incoming
     }
@@ -110,7 +132,7 @@ public final class AudioPlaybackController {
         if clamped > previousDelay,
            hasStartedPlayback,
            totalBufferedSeconds() < requiredBuffered {
-            if playerNode.isPlaying {
+            if let playerNode = playbackGraph?.playerNode, playerNode.isPlaying {
                 playerNode.pause()
             }
             isDelayHoldActive = true
@@ -147,6 +169,7 @@ public final class AudioPlaybackController {
         }
 
         tearDownPlaybackGraph()
+        let playbackGraph = resolvePlaybackGraph()
 
         guard let format = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
@@ -157,12 +180,12 @@ public final class AudioPlaybackController {
             return false
         }
 
-        engine.connect(playerNode, to: engine.mainMixerNode, format: format)
+        playbackGraph.engine.connect(playbackGraph.playerNode, to: playbackGraph.engine.mainMixerNode, format: format)
 #if os(iOS) || os(visionOS)
         guard ensureAudioSessionConfiguredForPlayback() else { return false }
 #endif
         do {
-            try engine.start()
+            try playbackGraph.engine.start()
         } catch {
             MirageLogger.error(.client, error: error, message: "Audio playback engine failed to start: ")
             return false
@@ -255,7 +278,7 @@ public final class AudioPlaybackController {
 
         scheduledDurationSeconds += frame.durationSeconds
         let durationSeconds = frame.durationSeconds
-        playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
+        resolvePlaybackGraph().playerNode.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.scheduledDurationSeconds = max(0, self.scheduledDurationSeconds - durationSeconds)
@@ -265,6 +288,7 @@ public final class AudioPlaybackController {
     }
 
     private func startPlayerIfNeeded() {
+        guard let playerNode = playbackGraph?.playerNode else { return }
         if !playerNode.isPlaying { playerNode.play() }
     }
 

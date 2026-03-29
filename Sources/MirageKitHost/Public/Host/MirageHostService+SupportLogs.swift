@@ -10,7 +10,6 @@
 import Foundation
 import Loom
 import MirageKit
-import Network
 
 #if os(macOS)
 @MainActor
@@ -33,31 +32,24 @@ extension MirageHostService {
             }
 
             let archiveURL = try await hostSupportLogArchiveProvider()
-            let listener = try await startHostSupportLogTransferListener(
-                requestID: request.requestID,
-                archiveURL: archiveURL,
-                expectedClient: clientContext.client
-            )
-
-            let transportKind = listener.transportKind
-            let port = await listener.port
             let response = HostSupportLogArchiveMessage(
                 requestID: request.requestID,
-                fileName: archiveURL.lastPathComponent,
-                transportKind: transportKind,
-                port: port
+                fileName: archiveURL.lastPathComponent
             )
             try await clientContext.send(.hostSupportLogArchive, content: response)
 
-            Task {
-                try? await Task.sleep(for: .seconds(300))
-                await listener.stop()
-                try? FileManager.default.removeItem(at: archiveURL)
+            Task { @MainActor [weak self] in
+                await self?.handleHostSupportLogTransfer(
+                    clientContext.controlChannel.session,
+                    requestID: request.requestID,
+                    archiveURL: archiveURL,
+                    expectedClient: clientContext.client
+                )
             }
 
             MirageLogger.host(
                 "Prepared host support log Loom transfer requestID=\(request.requestID.uuidString.lowercased()) " +
-                    "port=\(port) filename=\(archiveURL.lastPathComponent)"
+                    "filename=\(archiveURL.lastPathComponent)"
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle host support log archive request: ")
@@ -70,32 +62,20 @@ extension MirageHostService {
         }
     }
 
-    private func makeHostSupportLogTransferHelloRequest() throws -> LoomSessionHelloRequest {
-        LoomSessionHelloRequest(
-            deviceID: hostID,
-            deviceName: serviceName,
-            deviceType: .mac,
-            advertisement: advertisedPeerAdvertisement
-        )
-    }
-
-    private func handleHostSupportLogTransferSession(
+    private func handleHostSupportLogTransfer(
         _ session: LoomAuthenticatedSession,
         requestID: UUID,
         archiveURL: URL,
-        listener: MirageHostSupportLogTransferListener,
         expectedClient: MirageConnectedClient
     ) async {
         defer {
             Task {
-                await listener.stop()
-                await session.cancel()
                 try? FileManager.default.removeItem(at: archiveURL)
             }
         }
 
         do {
-            try await validateHostSupportLogTransferSession(
+            try await validateExistingClientTransferSession(
                 session,
                 expectedClient: expectedClient
             )
@@ -139,7 +119,7 @@ extension MirageHostService {
         }
     }
 
-    private func validateHostSupportLogTransferSession(
+    private func validateExistingClientTransferSession(
         _ session: LoomAuthenticatedSession,
         expectedClient: MirageConnectedClient
     ) async throws {
@@ -169,127 +149,6 @@ extension MirageHostService {
             }
         }
         return lastProgress
-    }
-
-    private func startHostSupportLogTransferListener(
-        requestID: UUID,
-        archiveURL: URL,
-        expectedClient: MirageConnectedClient
-    ) async throws -> MirageHostSupportLogTransferListener {
-        let transportKind: LoomTransportKind = .tcp
-        let parameters = makeHostSupportLogTransferParameters()
-        let listener = try NWListener(using: parameters, on: .any)
-        let transferListener = MirageHostSupportLogTransferListener(
-            listener: listener,
-            transportKind: transportKind
-        )
-
-        listener.newConnectionHandler = { [weak self, transferListener] connection in
-            Task { @MainActor [weak self] in
-                guard let self else {
-                    connection.cancel()
-                    return
-                }
-
-                let session = loomNode.makeAuthenticatedSession(
-                    connection: connection,
-                    role: .receiver,
-                    transportKind: transportKind
-                )
-
-                do {
-                    let identityManager = self.identityManager ?? MirageKit.identityManager
-                    let hello = try self.makeHostSupportLogTransferHelloRequest()
-                    _ = try await session.start(
-                        localHello: hello,
-                        identityManager: identityManager,
-                        trustProvider: self.trustProvider
-                    )
-                    await self.handleHostSupportLogTransferSession(
-                        session,
-                        requestID: requestID,
-                        archiveURL: archiveURL,
-                        listener: transferListener,
-                        expectedClient: expectedClient
-                    )
-                } catch {
-                    MirageLogger.error(
-                        .host,
-                        error: error,
-                        message: "Rejected host support log transfer connection: "
-                    )
-                    await session.cancel()
-                }
-            }
-        }
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let continuationBox = ContinuationBox<MirageHostSupportLogTransferListener>(continuation)
-
-            listener.stateUpdateHandler = { [transferListener] state in
-                switch state {
-                case .ready:
-                    guard let boundPort = listener.port?.rawValue else {
-                        continuationBox.resume(
-                            throwing: MirageError.protocolError("Host support log Loom listener missing port")
-                        )
-                        return
-                    }
-
-                    Task {
-                        await transferListener.setPort(boundPort)
-                        continuationBox.resume(returning: transferListener)
-                    }
-
-                case let .failed(error):
-                    continuationBox.resume(throwing: error)
-
-                case .cancelled:
-                    continuationBox.resume(
-                        throwing: MirageError.protocolError("Host support log Loom listener cancelled")
-                    )
-
-                default:
-                    break
-                }
-            }
-
-            listener.start(queue: .global(qos: .userInitiated))
-        }
-    }
-
-    private func makeHostSupportLogTransferParameters() -> NWParameters {
-        let parameters = NWParameters.tcp
-        parameters.includePeerToPeer = networkConfig.enablePeerToPeer
-        if let tcpOptions = parameters.defaultProtocolStack.transportProtocol as? NWProtocolTCP.Options {
-            tcpOptions.noDelay = true
-            tcpOptions.enableKeepalive = true
-            tcpOptions.keepaliveInterval = 5
-        }
-        return parameters
-    }
-}
-
-private actor MirageHostSupportLogTransferListener {
-    let transportKind: LoomTransportKind
-    private(set) var port: UInt16 = 0
-
-    private let listener: NWListener
-
-    init(
-        listener: NWListener,
-        transportKind: LoomTransportKind
-    ) {
-        self.listener = listener
-        self.transportKind = transportKind
-    }
-
-    func setPort(_ port: UInt16) {
-        self.port = port
-    }
-
-    func stop() {
-        listener.cancel()
     }
 }
 #endif

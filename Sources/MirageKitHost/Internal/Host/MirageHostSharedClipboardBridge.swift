@@ -80,11 +80,7 @@ final class MirageHostSharedClipboardBridge {
     private func pollPasteboard() {
         let changeCount = pasteboard.changeCount
         guard changeCount != clipboardState.lastObservedChangeCount else { return }
-
-        Task.detached(priority: .utility) { [weak self] in
-            let text = NSPasteboard.general.string(forType: .string)
-            await self?.completePollPasteboard(text: text, changeCount: changeCount)
-        }
+        completePollPasteboard(text: pasteboard.string(forType: .string), changeCount: changeCount)
     }
 
     private func completePollPasteboard(text: String?, changeCount: Int) {

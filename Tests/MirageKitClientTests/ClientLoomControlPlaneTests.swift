@@ -19,11 +19,6 @@ struct ClientLoomControlPlaneTests {
     @Test("Loom-backed control channel carries bootstrap and follow-up control traffic")
     func loomBackedControlChannelCarriesPostBootstrapTraffic() async throws {
         let pair = try await makeLoopbackControlPair()
-        defer {
-            Task {
-                await pair.stop()
-            }
-        }
 
         async let clientContext = pair.client.start(
             localHello: pair.clientHello,
@@ -40,88 +35,93 @@ struct ClientLoomControlPlaneTests {
         }
         let clientControl = try await MirageControlChannel.open(on: pair.client)
         let serverControl = try await serverControlTask.value
+        do {
+            let bootstrapRequest = MirageSessionBootstrapRequest(
+                protocolVersion: Int(MirageKit.protocolVersion),
+                requestedFeatures: mirageSupportedFeatures
+            )
+            try await clientControl.send(.sessionBootstrapRequest, content: bootstrapRequest)
 
-        let bootstrapRequest = MirageSessionBootstrapRequest(
-            protocolVersion: Int(MirageKit.protocolVersion),
-            requestedFeatures: mirageSupportedFeatures
-        )
-        try await clientControl.send(.sessionBootstrapRequest, content: bootstrapRequest)
+            let receivedBootstrapEnvelope = try await receiveControlMessage(from: serverControl)
+            #expect(receivedBootstrapEnvelope.type == .sessionBootstrapRequest)
+            let receivedBootstrapRequest = try receivedBootstrapEnvelope.decode(MirageSessionBootstrapRequest.self)
+            #expect(receivedBootstrapRequest.protocolVersion == bootstrapRequest.protocolVersion)
+            #expect(receivedBootstrapRequest.requestedFeatures == bootstrapRequest.requestedFeatures)
 
-        let receivedBootstrapEnvelope = try await receiveControlMessage(from: serverControl)
-        #expect(receivedBootstrapEnvelope.type == .sessionBootstrapRequest)
-        let receivedBootstrapRequest = try receivedBootstrapEnvelope.decode(MirageSessionBootstrapRequest.self)
-        #expect(receivedBootstrapRequest.protocolVersion == bootstrapRequest.protocolVersion)
-        #expect(receivedBootstrapRequest.requestedFeatures == bootstrapRequest.requestedFeatures)
+            let bootstrapResponse = MirageSessionBootstrapResponse(
+                accepted: true,
+                hostID: UUID(),
+                hostName: "Loopback Host",
+                selectedFeatures: mirageSupportedFeatures,
+                mediaEncryptionEnabled: true,
+                udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
+            )
+            try await serverControl.send(.sessionBootstrapResponse, content: bootstrapResponse)
 
-        let bootstrapResponse = MirageSessionBootstrapResponse(
-            accepted: true,
-            hostID: UUID(),
-            hostName: "Loopback Host",
-            selectedFeatures: mirageSupportedFeatures,
-            mediaEncryptionEnabled: true,
-            udpRegistrationToken: Data(repeating: 0xAB, count: MirageMediaSecurity.registrationTokenLength)
-        )
-        try await serverControl.send(.sessionBootstrapResponse, content: bootstrapResponse)
+            let receivedBootstrapResponseEnvelope = try await receiveControlMessage(from: clientControl)
+            #expect(receivedBootstrapResponseEnvelope.type == .sessionBootstrapResponse)
+            let receivedBootstrapResponse = try receivedBootstrapResponseEnvelope.decode(MirageSessionBootstrapResponse.self)
+            #expect(receivedBootstrapResponse.accepted == true)
+            #expect(receivedBootstrapResponse.hostName == "Loopback Host")
 
-        let receivedBootstrapResponseEnvelope = try await receiveControlMessage(from: clientControl)
-        #expect(receivedBootstrapResponseEnvelope.type == .sessionBootstrapResponse)
-        let receivedBootstrapResponse = try receivedBootstrapResponseEnvelope.decode(MirageSessionBootstrapResponse.self)
-        #expect(receivedBootstrapResponse.accepted == true)
-        #expect(receivedBootstrapResponse.hostName == "Loopback Host")
+            let appListRequest = AppListRequestMessage(
+                forceRefresh: true,
+                priorityBundleIdentifiers: ["com.apple.Safari"],
+                requestID: UUID()
+            )
+            try await clientControl.send(.appListRequest, content: appListRequest)
 
-        let appListRequest = AppListRequestMessage(
-            forceRefresh: true,
-            priorityBundleIdentifiers: ["com.apple.Safari"],
-            requestID: UUID()
-        )
-        try await clientControl.send(.appListRequest, content: appListRequest)
+            let receivedAppListRequestEnvelope = try await receiveControlMessage(from: serverControl)
+            #expect(receivedAppListRequestEnvelope.type == .appListRequest)
+            let receivedAppListRequest = try receivedAppListRequestEnvelope.decode(AppListRequestMessage.self)
+            #expect(receivedAppListRequest.forceRefresh == true)
+            #expect(receivedAppListRequest.priorityBundleIdentifiers == ["com.apple.Safari"])
 
-        let receivedAppListRequestEnvelope = try await receiveControlMessage(from: serverControl)
-        #expect(receivedAppListRequestEnvelope.type == .appListRequest)
-        let receivedAppListRequest = try receivedAppListRequestEnvelope.decode(AppListRequestMessage.self)
-        #expect(receivedAppListRequest.forceRefresh == true)
-        #expect(receivedAppListRequest.priorityBundleIdentifiers == ["com.apple.Safari"])
+            let appListResponse = AppListMessage(
+                requestID: receivedAppListRequest.requestID,
+                apps: [
+                    MirageInstalledApp(
+                        bundleIdentifier: "com.apple.Safari",
+                        name: "Safari",
+                        path: "/Applications/Safari.app"
+                    ),
+                ]
+            )
+            try await serverControl.send(.appList, content: appListResponse)
 
-        let appListResponse = AppListMessage(
-            requestID: receivedAppListRequest.requestID,
-            apps: [
-                MirageInstalledApp(
-                    bundleIdentifier: "com.apple.Safari",
-                    name: "Safari",
-                    path: "/Applications/Safari.app"
-                ),
-            ]
-        )
-        try await serverControl.send(.appList, content: appListResponse)
+            let receivedAppListEnvelope = try await receiveControlMessage(from: clientControl)
+            #expect(receivedAppListEnvelope.type == .appList)
+            let receivedAppList = try receivedAppListEnvelope.decode(AppListMessage.self)
+            #expect(receivedAppList.requestID == appListResponse.requestID)
+            #expect(receivedAppList.apps.count == 1)
+            #expect(receivedAppList.apps.first?.bundleIdentifier == "com.apple.Safari")
 
-        let receivedAppListEnvelope = try await receiveControlMessage(from: clientControl)
-        #expect(receivedAppListEnvelope.type == .appList)
-        let receivedAppList = try receivedAppListEnvelope.decode(AppListMessage.self)
-        #expect(receivedAppList.requestID == appListResponse.requestID)
-        #expect(receivedAppList.apps.count == 1)
-        #expect(receivedAppList.apps.first?.bundleIdentifier == "com.apple.Safari")
+            try await clientControl.send(ControlMessage(type: .ping))
+            let receivedPing = try await receiveControlMessage(from: serverControl)
+            #expect(receivedPing.type == .ping)
 
-        try await clientControl.send(ControlMessage(type: .ping))
-        let receivedPing = try await receiveControlMessage(from: serverControl)
-        #expect(receivedPing.type == .ping)
+            try await serverControl.send(ControlMessage(type: .pong))
+            let receivedPong = try await receiveControlMessage(from: clientControl)
+            #expect(receivedPong.type == .pong)
 
-        try await serverControl.send(ControlMessage(type: .pong))
-        let receivedPong = try await receiveControlMessage(from: clientControl)
-        #expect(receivedPong.type == .pong)
+            #expect(await pair.client.state == .ready)
+            #expect(await pair.server.state == .ready)
+        } catch {
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
 
-        #expect(await pair.client.state == .ready)
-        #expect(await pair.server.state == .ready)
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
     }
 
     @MainActor
     @Test("Client control send helpers write onto the Loom control stream")
     func clientControlSendHelpersUseLoomControlChannel() async throws {
         let pair = try await makeLoopbackControlPair()
-        defer {
-            Task {
-                await pair.stop()
-            }
-        }
 
         async let clientContext = pair.client.start(
             localHello: pair.clientHello,
@@ -138,47 +138,52 @@ struct ClientLoomControlPlaneTests {
         }
         let clientControl = try await MirageControlChannel.open(on: pair.client)
         let serverControl = try await serverControlTask.value
+        do {
+            let service = MirageClientService(deviceName: "Loopback Client")
+            service.loomSession = pair.client
+            service.controlChannel = clientControl
+            service.connectionState = .connected(host: "Loopback Host")
 
-        let service = MirageClientService(deviceName: "Loopback Client")
-        service.loomSession = pair.client
-        service.controlChannel = clientControl
-        service.connectionState = .connected(host: "Loopback Host")
+            let request = AppListRequestMessage(
+                forceRefresh: true,
+                forceIconReset: true,
+                priorityBundleIdentifiers: ["com.apple.Terminal"],
+                requestID: UUID()
+            )
+            try await service.sendControlMessage(.appListRequest, content: request)
 
-        let request = AppListRequestMessage(
-            forceRefresh: true,
-            forceIconReset: true,
-            priorityBundleIdentifiers: ["com.apple.Terminal"],
-            requestID: UUID()
-        )
-        try await service.sendControlMessage(.appListRequest, content: request)
+            let receivedRequestEnvelope = try await receiveControlMessage(from: serverControl)
+            #expect(receivedRequestEnvelope.type == .appListRequest)
+            let receivedRequest = try receivedRequestEnvelope.decode(AppListRequestMessage.self)
+            #expect(receivedRequest.forceRefresh == true)
+            #expect(receivedRequest.forceIconReset == true)
+            #expect(receivedRequest.priorityBundleIdentifiers == ["com.apple.Terminal"])
 
-        let receivedRequestEnvelope = try await receiveControlMessage(from: serverControl)
-        #expect(receivedRequestEnvelope.type == .appListRequest)
-        let receivedRequest = try receivedRequestEnvelope.decode(AppListRequestMessage.self)
-        #expect(receivedRequest.forceRefresh == true)
-        #expect(receivedRequest.forceIconReset == true)
-        #expect(receivedRequest.priorityBundleIdentifiers == ["com.apple.Terminal"])
+            #expect(service.sendControlMessageBestEffort(ControlMessage(type: .ping)) == true)
+            let receivedPing = try await receiveControlMessage(from: serverControl)
+            #expect(receivedPing.type == .ping)
 
-        #expect(service.sendControlMessageBestEffort(ControlMessage(type: .ping)) == true)
-        let receivedPing = try await receiveControlMessage(from: serverControl)
-        #expect(receivedPing.type == .ping)
+            let endpoint = try #require(await service.currentControlRemoteEndpoint())
+            let sessionRemoteEndpoint = await pair.client.remoteEndpoint
+            #expect(endpoint == sessionRemoteEndpoint)
+            let pathSnapshot = try #require(await service.currentControlPathSnapshot())
+            #expect(pathSnapshot.remoteEndpoint == endpoint)
+        } catch {
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
 
-        let endpoint = try #require(await service.currentControlRemoteEndpoint())
-        let sessionRemoteEndpoint = await pair.client.remoteEndpoint
-        #expect(endpoint == sessionRemoteEndpoint)
-        let pathSnapshot = try #require(await service.currentControlPathSnapshot())
-        #expect(pathSnapshot.remoteEndpoint == endpoint)
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
     }
 
     @MainActor
     @Test("TCP fallback sessions keep control traffic and labeled media streams coherent")
     func tcpFallbackSessionKeepsControlAndMediaTrafficCoherent() async throws {
         let pair = try await makeLoopbackControlPair()
-        defer {
-            Task {
-                await pair.stop()
-            }
-        }
 
         async let clientContext = pair.client.start(
             localHello: pair.clientHello,
@@ -218,22 +223,34 @@ struct ClientLoomControlPlaneTests {
         let receivedVideoTask = Task {
             await collectPayloads(from: serverVideoStream, count: expectedVideoPayloads.count)
         }
+        do {
+            for index in expectedVideoPayloads.indices {
+                try await clientControl.send(ControlMessage(type: .ping))
+                let receivedPing = try await receiveControlMessage(from: serverControl)
+                #expect(receivedPing.type == .ping)
 
-        for index in expectedVideoPayloads.indices {
-            try await clientControl.send(ControlMessage(type: .ping))
-            let receivedPing = try await receiveControlMessage(from: serverControl)
-            #expect(receivedPing.type == .ping)
+                try await controlStream.send(Data("control-\(index)".utf8))
+                try await videoStream.sendUnreliable(expectedVideoPayloads[index])
+            }
 
-            try await controlStream.send(Data("control-\(index)".utf8))
-            try await videoStream.sendUnreliable(expectedVideoPayloads[index])
+            try await controlStream.close()
+            try await videoStream.close()
+
+            #expect(await receivedVideoTask.value == expectedVideoPayloads)
+            #expect(await pair.client.state == .ready)
+            #expect(await pair.server.state == .ready)
+        } catch {
+            try? await controlStream.close()
+            try? await videoStream.close()
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
         }
 
-        try await controlStream.close()
-        try await videoStream.close()
-
-        #expect(await receivedVideoTask.value == expectedVideoPayloads)
-        #expect(await pair.client.state == .ready)
-        #expect(await pair.server.state == .ready)
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
     }
 }
 

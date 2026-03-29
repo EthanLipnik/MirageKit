@@ -545,16 +545,17 @@ extension MirageHostService {
             dimensionToken: dimensionToken
         )
         do {
-            try await clientContext.send(.desktopStreamStarted, content: message)
-            MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=desktop")
-            logDesktopStartStep("desktopStreamStarted sent")
             registerPendingStartupAttempt(
                 streamID: streamID,
                 startupAttemptID: startupAttemptID,
                 clientID: clientContext.client.id,
                 kind: .desktop
             )
+            try await clientContext.send(.desktopStreamStarted, content: message)
+            MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=desktop")
+            logDesktopStartStep("desktopStreamStarted sent")
         } catch {
+            cancelPendingStartupAttempt(streamID: streamID)
             MirageLogger.error(.host, error: error, message: "Failed to send desktopStreamStarted: ")
             logDesktopStartStep("desktopStreamStarted send failed")
         }

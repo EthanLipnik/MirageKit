@@ -54,9 +54,9 @@ This separation keeps connection ownership, protocol negotiation, and media thro
 
 The control-plane transport boundary is strict:
 
-- Loom owns the authenticated control session lifecycle, remote endpoint observation, path observation, and multiplexed stream transport.
+- Loom owns the authenticated control session lifecycle, remote endpoint observation, path observation, and multiplexed stream transport, including ad-hoc file transfers such as host support-log export.
 - Mirage owns the `ControlMessage` schema, bootstrap semantics, and all post-bootstrap request/response handling carried over the Loom control stream.
-- Raw `NWConnection` access is reserved for non-control transport concerns such as UDP media/audio/quality-test sockets and temporary file-transfer listeners.
+- Raw `NWConnection` access is reserved for non-control transport concerns such as UDP media/audio/quality-test sockets.
 
 ## 3. Shared Target (`Sources/MirageKit`)
 

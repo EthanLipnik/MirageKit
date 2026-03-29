@@ -10,11 +10,6 @@
 import Foundation
 import Loom
 import MirageKit
-import Network
-
-#if canImport(UIKit)
-import UIKit
-#endif
 
 @MainActor
 public extension MirageClientService {
@@ -76,40 +71,14 @@ extension MirageClientService {
 
     func downloadHostSupportLogArchive(
         requestID: UUID,
-        fileName: String,
-        transportKind: LoomTransportKind,
-        port: UInt16
+        fileName: String
     ) async throws -> URL {
         let rid = requestID.uuidString.lowercased()
-        MirageLogger.client(
-            "Downloading host support log archive requestID=\(rid) port=\(port) transport=\(transportKind)"
-        )
+        MirageLogger.client("Downloading host support log archive requestID=\(rid) using active Loom session")
 
-        guard let connectedHost else {
-            throw MirageError.protocolError("No connected host")
+        guard let session = controlChannel?.session ?? loomSession else {
+            throw MirageError.protocolError("Missing authenticated Loom session for host support logs")
         }
-
-        let endpoint = try await supportLogTransferEndpoint(
-            from: connectedHost.endpoint,
-            advertisedPort: port
-        )
-        MirageLogger.client("Resolved host support log transfer endpoint: \(endpoint)")
-
-        let hello = try makeSupportLogTransferHelloRequest()
-        let session = try await loomNode.connect(
-            to: endpoint,
-            using: transportKind,
-            hello: hello
-        )
-        defer {
-            Task {
-                await session.cancel()
-            }
-        }
-        MirageLogger.client("Established Loom session for host support log transfer")
-
-        try await validateSupportLogTransferSession(session, connectedHost: connectedHost)
-        MirageLogger.client("Validated host support log transfer session")
 
         let transferEngine = LoomTransferEngine(session: session)
         let incomingTransfer = try await requireMatchingHostSupportLogTransfer(
@@ -147,79 +116,6 @@ extension MirageClientService {
         }
 
         return destinationURL
-    }
-
-    private func makeSupportLogTransferHelloRequest() throws -> LoomSessionHelloRequest {
-        let resolvedIdentityManager = identityManager ?? MirageKit.identityManager
-        let identity = try resolvedIdentityManager.currentIdentity()
-        let advertisement = MiragePeerAdvertisementMetadata.makeClientAdvertisement(
-            deviceID: deviceID,
-            deviceType: supportLogTransferCurrentDeviceType,
-            identityKeyID: identity.keyID
-        )
-        return LoomSessionHelloRequest(
-            deviceID: deviceID,
-            deviceName: deviceName,
-            deviceType: supportLogTransferCurrentDeviceType,
-            advertisement: advertisement
-        )
-    }
-
-    private var supportLogTransferCurrentDeviceType: DeviceType {
-        #if os(macOS)
-        .mac
-        #elseif os(iOS)
-        UIDevice.current.userInterfaceIdiom == .pad ? .iPad : .iPhone
-        #elseif os(visionOS)
-        .vision
-        #else
-        .unknown
-        #endif
-    }
-
-    private func supportLogTransferEndpoint(
-        from endpoint: NWEndpoint,
-        advertisedPort: UInt16
-    ) async throws -> NWEndpoint {
-        guard advertisedPort > 0,
-              let port = NWEndpoint.Port(rawValue: advertisedPort) else {
-            throw MirageError.protocolError("Host returned an invalid Loom transfer port")
-        }
-
-        let controlRemoteEndpoint = await currentControlRemoteEndpoint()
-        let bonjourHost = {
-            if let serviceName = Self.serviceName(from: endpoint) ?? Self.serviceName(from: controlRemoteEndpoint),
-               !serviceName.isEmpty {
-                return Self.expandedBonjourHosts(for: NWEndpoint.Host(serviceName)).first
-            }
-            return nil
-        }()
-
-        let host = Self.host(from: (await currentControlPathSnapshot())?.remoteEndpoint)
-            ?? Self.host(from: endpoint)
-            ?? Self.host(from: controlRemoteEndpoint)
-            ?? bonjourHost
-
-        guard let host else {
-            throw MirageError.protocolError("Connected host endpoint does not support direct Loom transfer")
-        }
-        return .hostPort(host: host, port: port)
-    }
-
-    private func validateSupportLogTransferSession(
-        _ session: LoomAuthenticatedSession,
-        connectedHost: LoomPeer
-    ) async throws {
-        guard let context = await session.context else {
-            throw MirageError.protocolError("Loom transfer session is missing authenticated context")
-        }
-        if let expectedKeyID = connectedHostIdentityKeyID ?? expectedHostIdentityKeyID ?? connectedHost.advertisement.identityKeyID,
-           context.peerIdentity.identityKeyID != expectedKeyID {
-            throw MirageError.protocolError("Loom transfer session host identity mismatch")
-        }
-        if context.peerIdentity.deviceID != connectedHost.deviceID {
-            throw MirageError.protocolError("Loom transfer session host device mismatch")
-        }
     }
 
     private func requireMatchingHostSupportLogTransfer(
