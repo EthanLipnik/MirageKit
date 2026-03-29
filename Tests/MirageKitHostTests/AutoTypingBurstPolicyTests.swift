@@ -101,8 +101,8 @@ struct AutoTypingBurstPolicyTests {
         #expect(!snapshot.newestFrameDrainEnabled)
     }
 
-    @Test("Stream context default latency mode behaves as auto")
-    func streamContextDefaultModeIsAuto() async {
+    @Test("Stream context default latency mode behaves as lowest latency")
+    func streamContextDefaultModeIsLowestLatency() async {
         let config = MirageEncoderConfiguration(targetFrameRate: 60)
         let context = StreamContext(
             streamID: 99,
@@ -112,10 +112,10 @@ struct AutoTypingBurstPolicyTests {
 
         await context.noteTypingBurstActivity(at: 300.0, scheduleExpiry: false)
         let snapshot = await context.typingBurstSnapshot()
-        #expect(snapshot.isActive)
-        #expect(snapshot.latencyBurstActive)
+        #expect(!snapshot.isActive)
+        #expect(!snapshot.latencyBurstActive)
         #expect(snapshot.maxInFlightFrames == 1)
-        #expect(snapshot.captureQueueDepthOverride == 2)
+        #expect(snapshot.captureQueueDepthOverride == nil)
     }
 
     private func makeContext(latencyMode: MirageStreamLatencyMode) -> StreamContext {

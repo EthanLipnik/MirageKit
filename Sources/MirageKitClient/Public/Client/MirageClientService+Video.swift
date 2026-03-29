@@ -50,6 +50,35 @@ private enum MirageClientStreamRecoveryTrigger: Sendable {
     }
 }
 
+enum IncomingMediaStreamKind: Equatable {
+    case video(StreamID)
+    case audio(StreamID)
+    case qualityTest(UUID)
+    case unknown
+
+    static func classify(label: String) -> IncomingMediaStreamKind {
+        if label.hasPrefix("video/") {
+            let streamIDString = String(label.dropFirst("video/".count))
+            guard let streamID = StreamID(streamIDString) else { return .unknown }
+            return .video(streamID)
+        }
+
+        if label.hasPrefix("audio/") {
+            let streamIDString = String(label.dropFirst("audio/".count))
+            guard let streamID = StreamID(streamIDString) else { return .unknown }
+            return .audio(streamID)
+        }
+
+        if label.hasPrefix("quality-test/") {
+            let testIDString = String(label.dropFirst("quality-test/".count))
+            guard let testID = UUID(uuidString: testIDString) else { return .unknown }
+            return .qualityTest(testID)
+        }
+
+        return .unknown
+    }
+}
+
 @MainActor
 extension MirageClientService {
     // MARK: - Loom Media Stream Listener
@@ -69,25 +98,23 @@ extension MirageClientService {
                     continue
                 }
 
-                if label.hasPrefix("video/") {
-                    let streamIDString = String(label.dropFirst("video/".count))
-                    guard let streamID = StreamID(streamIDString) else {
-                        MirageLogger.client("Ignoring video stream with invalid ID: \(label)")
-                        continue
-                    }
+                switch IncomingMediaStreamKind.classify(label: label) {
+                case .video(let streamID):
                     MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
                     self.activeMediaStreams[label] = stream
                     self.startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
-                } else if label.hasPrefix("audio/") {
-                    let streamIDString = String(label.dropFirst("audio/".count))
-                    guard let streamID = StreamID(streamIDString) else {
-                        MirageLogger.client("Ignoring audio stream with invalid ID: \(label)")
-                        continue
-                    }
+
+                case .audio(let streamID):
                     MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
                     self.activeMediaStreams[label] = stream
                     self.startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
-                } else {
+
+                case .qualityTest(let testID):
+                    MirageLogger.client("Accepted incoming quality-test stream for test \(testID.uuidString)")
+                    self.activeMediaStreams[label] = stream
+                    self.startQualityTestStreamReceiveLoop(stream: stream, testID: testID, label: label)
+
+                case .unknown:
                     MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")
                 }
             }
@@ -105,6 +132,10 @@ extension MirageClientService {
         videoStreamReceiveTasks.removeAll()
         audioStreamReceiveTask?.cancel()
         audioStreamReceiveTask = nil
+        for task in qualityTestStreamReceiveTasks.values {
+            task.cancel()
+        }
+        qualityTestStreamReceiveTasks.removeAll()
         activeMediaStreams.removeAll()
     }
 
@@ -124,6 +155,27 @@ extension MirageClientService {
                 service.videoStreamReceiveTasks.removeValue(forKey: streamID)
                 service.activeMediaStreams.removeValue(forKey: "video/\(streamID)")
                 MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
+            }
+        }
+    }
+
+    private func startQualityTestStreamReceiveLoop(
+        stream: LoomMultiplexedStream,
+        testID: UUID,
+        label: String
+    ) {
+        qualityTestStreamReceiveTasks[testID]?.cancel()
+        let service = self
+        qualityTestStreamReceiveTasks[testID] = Task { [weak service] in
+            guard let service else { return }
+            for await data in stream.incomingBytes {
+                guard !Task.isCancelled else { break }
+                service.handleIncomingQualityTestData(data, expectedTestID: testID)
+            }
+            await MainActor.run {
+                service.qualityTestStreamReceiveTasks.removeValue(forKey: testID)
+                service.activeMediaStreams.removeValue(forKey: label)
+                MirageLogger.client("Quality-test stream receive loop ended for test \(testID.uuidString)")
             }
         }
     }
@@ -185,6 +237,16 @@ extension MirageClientService {
         }
 
         reassembler.processPacket(payload, header: header)
+    }
+
+    private nonisolated func handleIncomingQualityTestData(_ data: Data, expectedTestID: UUID) {
+        guard data.count >= mirageQualityTestHeaderSize,
+              let header = QualityTestPacketHeader.deserialize(from: data),
+              header.testID == expectedTestID else {
+            return
+        }
+
+        handleQualityTestPacket(header, data: data)
     }
 
     func logStartupFirstPacketIfNeeded(streamID: StreamID) {

@@ -95,7 +95,7 @@ actor VideoEncoder {
 
     init(
         configuration: MirageEncoderConfiguration,
-        latencyMode: MirageStreamLatencyMode = .auto,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
         streamKind: StreamKind = .window,
         inFlightLimit: Int? = nil,

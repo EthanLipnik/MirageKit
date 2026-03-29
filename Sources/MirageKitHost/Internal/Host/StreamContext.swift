@@ -170,8 +170,9 @@ actor StreamContext {
     let temporaryDegradationRampStep: Double = 1.30
     let temporaryDegradationBitrateStepFramerate: Double = 0.85
     let temporaryDegradationBitrateStepVisuals: Double = 0.90
-    let temporaryDegradationStableThresholdRatio: Double = 0.95
-    let temporaryDegradationSevereThresholdRatio: Double = 0.70
+    let temporaryDegradationRestoreThresholdRatio: Double = 0.85
+    let temporaryDegradationReliefThresholdRatio: Double = 0.60
+    let temporaryDegradationSevereThresholdRatio: Double = 0.45
     let temporaryDegradationStableEncodeBudgetRatio: Double = 0.85
     let temporaryDegradationOverBudgetRatio: Double = 1.05
     let temporaryDegradationSevereEncodeBudgetRatio: Double = 1.35
@@ -415,7 +416,7 @@ actor StreamContext {
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .auto,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,

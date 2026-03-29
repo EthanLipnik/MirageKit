@@ -175,7 +175,7 @@ extension MirageHostService {
             let keyFrameInterval = request.keyFrameInterval
             let colorDepth = request.colorDepth
             let bitrate = request.bitrate
-            let latencyMode = request.latencyMode ?? .auto
+            let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? true

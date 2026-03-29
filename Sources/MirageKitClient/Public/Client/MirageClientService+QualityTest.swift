@@ -13,6 +13,14 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    nonisolated static func resolvedQualityTestCandidateBitrate(
+        stableBitrateBps: Int,
+        measuredBitrateBps: Int
+    ) -> Int {
+        if stableBitrateBps > 0 { return stableBitrateBps }
+        return max(0, measuredBitrateBps)
+    }
+
     public func runQualityTest(
         includeThroughput: Bool = true,
         onStageUpdate: (@MainActor (_ currentStage: Int, _ totalStages: Int) -> Void)? = nil
@@ -40,6 +48,10 @@ extension MirageClientService {
         let hostBenchmarkTask = Task { [weak self] in
             await self?.awaitQualityTestResult(testID: testID, timeout: .seconds(15))
         }
+        defer {
+            benchmarkTask.cancel()
+            hostBenchmarkTask.cancel()
+        }
 
         if !includeThroughput {
             let requestPlan = MirageQualityTestPlan(stages: [])
@@ -51,7 +63,7 @@ extension MirageClientService {
             try await sendControlMessage(.qualityTestRequest, content: request)
         }
 
-        let minTargetBitrate = 20_000_000
+        let minTargetBitrate = 8_000_000
         let maxTargetBitrate = 150_000_000
         let warmupDurationMs = 800
         let stageDurationMs = 1500
@@ -77,6 +89,8 @@ extension MirageClientService {
         var lastStableBitrate = 0
         var lastStableThroughput = 0
         var lastStableLoss = 0.0
+        var candidateBitrate = 0
+        var candidateLoss = 0.0
         var plateauCount = 0
         var refining = false
         var refineLow = 0
@@ -100,6 +114,10 @@ extension MirageClientService {
             }
 
             measurementStages += 1
+            if stage.throughputBps > candidateBitrate {
+                candidateBitrate = stage.throughputBps
+                candidateLoss = stage.lossPercent
+            }
             let isStable = stageIsStable(
                 stage,
                 targetBitrate: targetBitrate,
@@ -133,9 +151,6 @@ extension MirageClientService {
                 }
             } else {
                 if lastStableBitrate == 0 {
-                    lastStableBitrate = max(minTargetBitrate, stage.throughputBps)
-                    lastStableThroughput = stage.throughputBps
-                    lastStableLoss = stage.lossPercent
                     if stage.throughputBps <= 0 || measurementStages >= minMeasurementStages {
                         break
                     }
@@ -171,12 +186,19 @@ extension MirageClientService {
 
         let benchmarkRecord = try await benchmarkTask.value
         let hostBenchmark = await hostBenchmarkTask.value
-        let maxStableBitrate = max(minTargetBitrate, lastStableBitrate)
+        let maxStableBitrate = Self.resolvedQualityTestCandidateBitrate(
+            stableBitrateBps: lastStableBitrate,
+            measuredBitrateBps: candidateBitrate
+        )
+        if maxStableBitrate <= 0 {
+            throw MirageError.protocolError("Connection test failed: no usable throughput measurement was recorded.")
+        }
+        let lossPercent = lastStableBitrate > 0 ? lastStableLoss : candidateLoss
 
         return MirageQualityTestSummary(
             testID: testID,
             rttMs: rttMs,
-            lossPercent: lastStableLoss,
+            lossPercent: lossPercent,
             maxStableBitrateBps: maxStableBitrate,
             targetFrameRate: getScreenMaxRefreshRate(),
             benchmarkWidth: benchmarkRecord.benchmarkWidth,

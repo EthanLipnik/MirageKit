@@ -40,7 +40,7 @@ MirageKit is split into two runtime planes:
 - Control plane
   Typed `ControlMessage` frames over a persistent control connection.
 - Media plane
-  UDP channels for video (`MIRG`), audio (`MIRA`), and quality test (`MIRQ`).
+  UDP channels for video (`MIRG`) and audio (`MIRA`), plus Loom multiplexed media streams for video (`video/<streamID>`), audio (`audio/<streamID>`), and connection testing (`quality-test/<uuid>`).
 
 Session setup is explicit:
 
@@ -56,7 +56,7 @@ The control-plane transport boundary is strict:
 
 - Loom owns the authenticated control session lifecycle, remote endpoint observation, path observation, and multiplexed stream transport, including ad-hoc file transfers such as host support-log export.
 - Mirage owns the `ControlMessage` schema, bootstrap semantics, and all post-bootstrap request/response handling carried over the Loom control stream.
-- Raw `NWConnection` access is reserved for non-control transport concerns such as UDP media/audio/quality-test sockets.
+- Raw `NWConnection` access is reserved for non-control transport concerns such as UDP media/audio sockets.
 
 ## 3. Shared Target (`Sources/MirageKit`)
 
@@ -186,7 +186,7 @@ Its responsibilities include:
 - initiating control connections and handshake flow
 - tracking connection state and approval state
 - maintaining host window, app, and stream inventories
-- registering for video, audio, and quality-test media
+- registering for video and audio media, and receiving quality-test media over dedicated Loom streams
 - decoding audio and video payloads
 - forwarding local input events back to the host
 - bridging shared clipboard updates with newest-update preference when the host enables the feature for the connection

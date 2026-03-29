@@ -26,7 +26,7 @@ extension MirageHostService {
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
         bitrate: Int?,
-        latencyMode: MirageStreamLatencyMode = .auto,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool?,
         lowLatencyHighResolutionCompressionBoost: Bool,

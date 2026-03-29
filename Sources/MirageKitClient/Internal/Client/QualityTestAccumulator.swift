@@ -96,6 +96,7 @@ final class QualityTestAccumulator: @unchecked Sendable {
                 ? Int(Double(receivedBytes * 8) / (measuredDurationMs / 1000.0))
                 : 0
             let lossPercent: Double = {
+                guard packetCount > 0 else { return 0 }
                 if let minSequence, let maxSequence, maxSequence >= minSequence {
                     let expectedPackets = Int(maxSequence - minSequence + 1)
                     guard expectedPackets > 0 else { return 0 }

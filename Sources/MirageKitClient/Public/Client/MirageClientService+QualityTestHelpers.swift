@@ -13,6 +13,16 @@ import Network
 
 @MainActor
 extension MirageClientService {
+    nonisolated static func validatedQualityTestStageResult(
+        _ stageResult: MirageQualityTestSummary.StageResult,
+        metrics: (expectedBytes: Int, receivedBytes: Int, packetCount: Int)
+    ) throws -> MirageQualityTestSummary.StageResult {
+        guard metrics.packetCount > 0, metrics.receivedBytes > 0 else {
+            throw MirageError.protocolError("Connection test failed: no quality-test packets were received.")
+        }
+        return stageResult
+    }
+
     nonisolated func handleQualityTestPacket(_ header: QualityTestPacketHeader, data: Data) {
         let context = fastPathState.qualityTestContext()
         let accumulator = context.accumulator
@@ -156,21 +166,19 @@ extension MirageClientService {
         let results = accumulator.makeStageResults()
         if let stageResult = results.first {
             let metrics = accumulator.stageMetrics(for: stage)
+            let validatedStageResult = try Self.validatedQualityTestStageResult(
+                stageResult,
+                metrics: metrics
+            )
             let throughputMbps = Double(stageResult.throughputBps) / 1_000_000.0
             let lossText = stageResult.lossPercent.formatted(.number.precision(.fractionLength(1)))
             MirageLogger.client(
                 "Quality test stage \(stageID) result: throughput \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, received \(metrics.receivedBytes)B, expected \(metrics.expectedBytes)B, packets \(metrics.packetCount)"
             )
-            return stageResult
+            return validatedStageResult
         }
 
-        return MirageQualityTestSummary.StageResult(
-            stageID: stageID,
-            targetBitrateBps: targetBitrateBps,
-            durationMs: durationMs,
-            throughputBps: 0,
-            lossPercent: 100
-        )
+        throw MirageError.protocolError("Connection test failed: no quality-test results were produced.")
     }
 
     func stageIsStable(

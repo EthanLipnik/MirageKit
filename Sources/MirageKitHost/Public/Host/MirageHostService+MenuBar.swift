@@ -104,7 +104,7 @@ extension MirageHostService {
                 .host(
                     "Desktop stream frame rate: \(targetFrameRate)fps (client max=\(clientMaxRefreshRate)Hz)"
                 )
-            let latencyMode = request.latencyMode ?? .auto
+            let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
             MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")

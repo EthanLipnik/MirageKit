@@ -294,7 +294,7 @@ struct GameModePolicyTests {
 
         let settings = await context.getEncoderSettings()
         #expect(settings.performanceMode == .standard)
-        #expect(settings.latencyMode == .auto)
+        #expect(settings.latencyMode == .lowestLatency)
     }
 
     private func makeContext(

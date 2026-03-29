@@ -190,7 +190,7 @@ public extension MirageHostService {
         colorDepth: MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
         bitrate: Int? = nil,
-        latencyMode: MirageStreamLatencyMode = .auto,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = true,

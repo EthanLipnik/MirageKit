@@ -223,7 +223,7 @@ extension MirageHostService {
                     "Frame rate: \(targetFrameRate)fps (client max=\(clientMaxRefreshRate)Hz)"
                 )
 
-            let latencyMode = request.latencyMode ?? .auto
+            let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
             guard let displayWidth = request.displayWidth,
                   let displayHeight = request.displayHeight,
@@ -739,7 +739,7 @@ extension MirageHostService {
                 colorDepth: encoderSettings?.colorDepth ?? selectRequest.colorDepth,
                 captureQueueDepth: encoderSettings?.captureQueueDepth ?? selectRequest.captureQueueDepth,
                 bitrate: requestedBitrate,
-                latencyMode: encoderSettings?.latencyMode ?? selectRequest.latencyMode ?? .auto,
+                latencyMode: encoderSettings?.latencyMode ?? selectRequest.latencyMode ?? .lowestLatency,
                 performanceMode: encoderSettings?.performanceMode ?? selectRequest.performanceMode ?? .standard,
                 allowRuntimeQualityAdjustment: encoderSettings?.runtimeQualityAdjustmentEnabled ??
                     selectRequest.allowRuntimeQualityAdjustment,
@@ -1274,7 +1274,7 @@ extension MirageHostService {
             colorDepth: selectRequest.colorDepth,
             captureQueueDepth: selectRequest.captureQueueDepth,
             bitrate: requestedBitrateOverride ?? selectRequest.bitrate,
-            latencyMode: selectRequest.latencyMode ?? .auto,
+            latencyMode: selectRequest.latencyMode ?? .lowestLatency,
             performanceMode: selectRequest.performanceMode ?? .standard,
             allowRuntimeQualityAdjustment: selectRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? true,

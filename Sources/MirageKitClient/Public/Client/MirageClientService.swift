@@ -509,6 +509,7 @@ public final class MirageClientService {
     var activeMediaStreams: [String: LoomMultiplexedStream] = [:]
     var videoStreamReceiveTasks: [StreamID: Task<Void, Never>] = [:]
     var audioStreamReceiveTask: Task<Void, Never>?
+    var qualityTestStreamReceiveTasks: [UUID: Task<Void, Never>] = [:]
 
     // Audio receiving state
     var audioRegisteredStreamID: StreamID?

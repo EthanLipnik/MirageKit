@@ -1076,11 +1076,11 @@ extension StreamContext {
         let queuePressured = queueBytes > queuePressureBytes
         let queueSeverelyPressured = queueBytes > maxQueuedBytes
         let isStable = averageEncodeMs > 0 &&
-            fpsRatio >= temporaryDegradationStableThresholdRatio &&
+            fpsRatio >= temporaryDegradationRestoreThresholdRatio &&
             averageEncodeMs <= frameBudgetMs * temporaryDegradationStableEncodeBudgetRatio &&
             captureDroppedFrames == 0 &&
             !queuePressured
-        let isOverloaded = fpsRatio < temporaryDegradationStableThresholdRatio ||
+        let isOverloaded = fpsRatio < temporaryDegradationReliefThresholdRatio ||
             averageEncodeMs > frameBudgetMs * temporaryDegradationOverBudgetRatio ||
             captureDroppedFrames > 0 ||
             queuePressured

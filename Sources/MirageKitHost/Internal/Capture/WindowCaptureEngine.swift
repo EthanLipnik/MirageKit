@@ -136,7 +136,7 @@ actor WindowCaptureEngine {
     init(
         configuration: MirageEncoderConfiguration,
         capturePressureProfile: CapturePressureProfile = .baseline,
-        latencyMode: MirageStreamLatencyMode = .auto,
+        latencyMode: MirageStreamLatencyMode = .lowestLatency,
         captureFrameRate: Int? = nil,
         usesDisplayRefreshCadence: Bool = false
     ) {

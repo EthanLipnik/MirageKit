@@ -40,7 +40,7 @@ struct StandardTemporaryDegradationPolicyTests {
     func prioritizeFramerateDropsBitrateOnly() async {
         let context = makeContext(mode: .prioritizeFramerate)
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 40,
+            encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
             captureDroppedFrames: 0,
@@ -57,7 +57,7 @@ struct StandardTemporaryDegradationPolicyTests {
     func prioritizeFramerateDropsBitrateWhenAlreadyEightBit() async {
         let context = makeContext(mode: .prioritizeFramerate, bitDepth: .eightBit)
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 40,
+            encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
             captureDroppedFrames: 0,
@@ -74,7 +74,7 @@ struct StandardTemporaryDegradationPolicyTests {
     func prioritizeVisualsDropsBitrateFirst() async {
         let context = makeContext(mode: .prioritizeVisuals)
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 40,
+            encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
             captureDroppedFrames: 0,
@@ -84,6 +84,22 @@ struct StandardTemporaryDegradationPolicyTests {
         let settings = await context.getEncoderSettings()
         #expect(settings.bitDepth == .tenBit)
         #expect(settings.bitrate == 99_360_000)
+    }
+
+    @Test("Forty FPS does not trigger temporary degradation by itself")
+    func fortyFPSDoesNotTriggerReliefWithoutOtherPressure() async {
+        let context = makeContext(mode: .prioritizeFramerate)
+        await context.evaluateStandardTemporaryDegradationIfNeeded(
+            encodedFPS: 40,
+            averageEncodeMs: 14,
+            queueBytes: 0,
+            captureDroppedFrames: 0,
+            at: 10
+        )
+
+        let settings = await context.getEncoderSettings()
+        #expect(settings.bitDepth == .tenBit)
+        #expect(settings.bitrate == 102_000_000)
     }
 
     @Test("Prioritize visuals keeps bit depth fixed after repeated severe overload")
