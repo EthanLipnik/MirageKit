@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import Loom
 import Network
 import MirageKit
 
@@ -474,12 +475,14 @@ extension MirageHostService {
         await PowerAssertionManager.shared.enable()
 
         // Open Loom video stream for desktop streaming
+        var videoStream: LoomMultiplexedStream?
         do {
-            let videoStream = try await clientContext.controlChannel.session.openStream(
+            let openedVideoStream = try await clientContext.controlChannel.session.openStream(
                 label: "video/\(streamID)"
             )
-            loomVideoStreamsByStreamID[streamID] = videoStream
-            transportRegistry.registerVideoStream(videoStream, streamID: streamID)
+            videoStream = openedVideoStream
+            loomVideoStreamsByStreamID[streamID] = openedVideoStream
+            transportRegistry.registerVideoStream(openedVideoStream, streamID: streamID)
             MirageLogger.host("Opened Loom video stream for desktop stream \(streamID)")
         } catch {
             MirageLogger.error(
@@ -488,39 +491,32 @@ extension MirageHostService {
                 message: "Failed to open Loom video stream for desktop stream \(streamID): "
             )
         }
+        let activeVideoStream = videoStream
 
-        // Start streaming the display
+        // Start streaming the display with direct Loom send ownership in StreamPacketSender.
         let firstSuccessfulVideoPacketSent = Locked(false)
         try await streamContext.startDesktopDisplay(
             displayWrapper: captureDisplay,
             resolution: captureResolution,
             excludedWindows: excludedWindows,
-            onEncodedFrame: { [weak self] packetData, _, releasePacket in
-                guard let self else {
-                    releasePacket()
-                    return
+            sendPacket: { packetData in
+                guard let activeVideoStream else { return }
+                try await activeVideoStream.sendUnreliable(packetData)
+                let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
+                    guard !didMark else { return false }
+                    didMark = true
+                    return true
                 }
-                sendVideoPacketForStream(streamID, data: packetData) { [weak self] error in
-                    releasePacket()
-                    if error == nil {
-                        let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
-                            guard !didMark else { return false }
-                            didMark = true
-                            return true
-                        }
-                        if shouldMarkFirstPacket {
-                            Task {
-                                await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
-                                    streamID: streamID
-                                )
-                            }
-                        }
-                        return
-                    }
-                    guard let self, let error else { return }
-                    dispatchMainWork {
-                        await self.handleVideoSendError(streamID: streamID, error: error)
-                    }
+                if shouldMarkFirstPacket {
+                    await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
+                        streamID: streamID
+                    )
+                }
+            },
+            onSendError: { [weak self] error in
+                guard let self else { return }
+                dispatchMainWork {
+                    await self.handleVideoSendError(streamID: streamID, error: error)
                 }
             }
         )

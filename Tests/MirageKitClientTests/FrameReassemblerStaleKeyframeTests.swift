@@ -496,13 +496,60 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("Keyframe FEC recovery infers startup block size from fragment layout")
+    func keyframeFECRecoveryInfersStartupBlockSize() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        let deliveredFrame = LockedOptionalData()
+
+        reassembler.setFrameHandler { _, data, _, _, _, release in
+            deliveredFrame.set(data)
+            release()
+        }
+
+        let fragment0 = Data([0x00, 0x00, 0x00, 0x18])
+        let fragment1 = Data([0x00, 0x00, 0x00, 0x01])
+        let fragment2 = Data([0x40, 0x01, 0x0C, 0x01])
+        let fragment3 = Data([0xFF, 0xFF, 0x01, 0x60])
+        let fragment4 = Data([0x00, 0x00, 0x00, 0x04])
+        let fragment5 = Data([0x26, 0xAA, 0xBB, 0xCC])
+        let parity0 = xorFragments([fragment0, fragment1, fragment2, fragment3])
+
+        let payloadsByFragment: [(UInt16, FrameFlags, Data)] = [
+            (1, [.keyframe], fragment1),
+            (2, [.keyframe], fragment2),
+            (3, [.keyframe], fragment3),
+            (4, [.keyframe], fragment4),
+            (5, [.keyframe], fragment5),
+            (6, [.keyframe, .fecParity], parity0),
+        ]
+
+        for (fragmentIndex, flags, payload) in payloadsByFragment {
+            reassembler.processPacket(
+                payload,
+                header: makeHeader(
+                flags: flags,
+                frameNumber: 40,
+                payload: payload,
+                fragmentIndex: fragmentIndex,
+                fragmentCount: 8,
+                frameByteCount: 24,
+                fecBlockSize: 4
+            )
+        )
+    }
+
+        let expectedFrame = fragment0 + fragment1 + fragment2 + fragment3 + fragment4 + fragment5
+        #expect(deliveredFrame.value == expectedFrame)
+    }
+
     private func makeHeader(
         flags: FrameFlags,
         frameNumber: UInt32,
         payload: Data,
         fragmentIndex: UInt16,
         fragmentCount: UInt16,
-        frameByteCount: UInt32? = nil
+        frameByteCount: UInt32? = nil,
+        fecBlockSize: UInt8 = 0
     )
     -> FrameHeader {
         FrameHeader(
@@ -513,6 +560,7 @@ struct FrameReassemblerStaleKeyframeTests {
             frameNumber: frameNumber,
             fragmentIndex: fragmentIndex,
             fragmentCount: fragmentCount,
+            fecBlockSize: fecBlockSize,
             payloadLength: UInt32(payload.count),
             frameByteCount: frameByteCount ?? UInt32(payload.count),
             checksum: crc32(payload),
@@ -538,6 +586,25 @@ struct FrameReassemblerStaleKeyframeTests {
         }
         return crc ^ 0xFFFFFFFF
     }
+
+    private func xorFragments(_ fragments: [Data]) -> Data {
+        guard let first = fragments.first else { return Data() }
+        var result = Data(repeating: 0, count: first.count)
+        result.withUnsafeMutableBytes { resultBytes in
+            let resultPointer = resultBytes.bindMemory(to: UInt8.self)
+            guard let resultBase = resultPointer.baseAddress else { return }
+            for fragment in fragments {
+                fragment.withUnsafeBytes { fragmentBytes in
+                    let fragmentPointer = fragmentBytes.bindMemory(to: UInt8.self)
+                    guard let fragmentBase = fragmentPointer.baseAddress else { return }
+                    for index in 0 ..< min(fragment.count, first.count) {
+                        resultBase[index] ^= fragmentBase[index]
+                    }
+                }
+            }
+        }
+        return result
+    }
 }
 
 private final class LockedCounter: @unchecked Sendable {
@@ -553,6 +620,23 @@ private final class LockedCounter: @unchecked Sendable {
     func increment() {
         lock.lock()
         storage += 1
+        lock.unlock()
+    }
+}
+
+private final class LockedOptionalData: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Data?
+
+    var value: Data? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func set(_ data: Data) {
+        lock.lock()
+        storage = data
         lock.unlock()
     }
 }

@@ -172,6 +172,7 @@ extension FrameReassembler {
                 receivedCount: 0,
                 totalFragments: header.fragmentCount,
                 dataFragmentCount: dataFragmentCount,
+                fecBlockSize: Int(header.fecBlockSize),
                 isKeyframe: isKeyframePacket,
                 timestamp: header.timestamp,
                 receivedAt: packetReceivedAt,
@@ -822,7 +823,7 @@ extension FrameReassembler {
     private func parityIndexForDataFragment(fragmentIndex: Int, frame: PendingFrame) -> Int? {
         let parityCount = Int(frame.totalFragments) - frame.dataFragmentCount
         guard parityCount > 0 else { return nil }
-        let blockSize = frame.isKeyframe ? keyframeFECBlockSize : pFrameFECBlockSize
+        let blockSize = frame.fecBlockSize
         guard blockSize > 1 else { return nil }
         let blockIndex = fragmentIndex / blockSize
         guard blockIndex < parityCount else { return nil }
@@ -847,7 +848,7 @@ extension FrameReassembler {
         frameByteCount: Int
     ) {
         guard let parityData = frame.parityFragments[parityIndex] else { return }
-        let blockSize = frame.isKeyframe ? keyframeFECBlockSize : pFrameFECBlockSize
+        let blockSize = frame.fecBlockSize
         guard blockSize > 1 else { return }
 
         let blockStart = parityIndex * blockSize

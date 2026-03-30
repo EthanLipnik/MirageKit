@@ -95,6 +95,8 @@ extension MirageClientService {
             try throwIfConnectAttemptIsStale(attemptID)
 
             loomSession = session
+            transferEngine = LoomTransferEngine(session: session)
+            startTransferObserver()
             self.controlChannel = controlChannel
             inputEventSender.updateSendHandler { [weak controlChannel] data, _ in
                 guard let controlChannel else {
@@ -180,6 +182,8 @@ extension MirageClientService {
             try throwIfConnectAttemptIsStale(attemptID)
 
             loomSession = session
+            transferEngine = LoomTransferEngine(session: session)
+            startTransferObserver()
             self.controlChannel = controlChannel
             inputEventSender.updateSendHandler { [weak controlChannel] data, _ in
                 guard let controlChannel else {
@@ -283,6 +287,8 @@ extension MirageClientService {
 
         self.controlChannel = nil
         loomSession = nil
+        transferEngine = nil
+        stopTransferObserver()
 
         if let disconnectedControlChannel {
             await disconnectedControlChannel.cancel()
@@ -389,6 +395,15 @@ extension MirageClientService {
             hostSupportLogArchiveTimeoutTask?.cancel()
             hostSupportLogArchiveTimeoutTask = nil
             hostSupportLogArchiveContinuation.resume(throwing: CancellationError())
+        }
+        if let hostWallpaperContinuation {
+            self.hostWallpaperContinuation = nil
+            hostWallpaperRequestID = nil
+            hostWallpaperTransferTask?.cancel()
+            hostWallpaperTransferTask = nil
+            hostWallpaperTimeoutTask?.cancel()
+            hostWallpaperTimeoutTask = nil
+            hostWallpaperContinuation.resume(throwing: CancellationError())
         }
         hasCompletedBootstrap = false
         negotiatedFeatures = []

@@ -143,6 +143,8 @@ Gross Retina activation mismatches, such as a requested ~`3008x1688` logical mod
 
 The host keeps stream-specific policy local to the host runtime. That includes frame rate, bitrate, performance mode, window/app routing, virtual display ownership, and session-state behavior.
 
+App-stream visible slots are lifecycle-bound to the app session rather than permanently bound to the first discovered host window ID. During initial startup, the host keeps trying to fill each visible slot until the startup deadline expires, re-evaluating the app's current eligible primary windows after launcher, document-picker, or first-window churn. After startup, the host preserves the current streamed primary window until that window closes or otherwise fails out of the slot lifecycle, at which point the existing slot-replacement path can rebind the same stream identity to another eligible primary window from the same app.
+
 Connection approval is also host-owned policy. `MirageHostService` distinguishes two control-plane origins:
 
 - local

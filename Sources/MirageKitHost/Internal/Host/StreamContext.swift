@@ -205,6 +205,12 @@ actor StreamContext {
     var lastPipelineStatsLogTime: CFAbsoluteTime = 0
     let pipelineStatsInterval: CFAbsoluteTime = 2.0
     var lastCapturedFrameTime: CFAbsoluteTime = 0
+    var captureIngressDelayTotalMs: Double = 0
+    var captureIngressDelayMaxMs: Double = 0
+    var captureIngressDelayCount: UInt64 = 0
+    var preEncodeWaitTotalMs: Double = 0
+    var preEncodeWaitMaxMs: Double = 0
+    var preEncodeWaitCount: UInt64 = 0
     var startupBaseTime: CFAbsoluteTime = 0
     var startupLabel: String = ""
     var startupFirstCaptureLogged = false
@@ -309,8 +315,6 @@ actor StreamContext {
     let motionSmoothingFactor: Double = 0.2
     let keyframeMotionThreshold: Double = 0.25
 
-    /// Callback for sending encoded packets
-    var onEncodedPacket: (@Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void)?
     /// Callback for captured audio buffers from ScreenCaptureKit.
     var onCapturedAudioBuffer: (@Sendable (CapturedAudioBuffer) -> Void)?
     /// Requested ScreenCaptureKit audio capture channel count for this stream.
@@ -509,6 +513,11 @@ actor StreamContext {
             bufferDepth = max(bufferDepth, gameModeInFlightLimit)
             minInFlight = max(minInFlight, gameModeInFlightLimit)
             inFlightCap = max(inFlightCap, gameModeInFlightLimit)
+        } else if streamKind == .desktop,
+                  useLowLatencyPipeline,
+                  resolvedEncoderConfig.targetFrameRate <= 60 {
+            bufferDepth = max(bufferDepth, 2)
+            inFlightCap = max(inFlightCap, 2)
         }
         let resolvedInFlightCap = max(1, inFlightCap)
         let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)

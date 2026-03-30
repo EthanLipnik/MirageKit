@@ -34,9 +34,8 @@ actor StreamPacketSender {
         let wireBytes: Int
         let logPrefix: String
         let generation: UInt32
+        let encodedAt: CFAbsoluteTime
         let pacingOverride: PacingOverride?
-        let onSendStart: (@Sendable () -> Void)?
-        let onSendComplete: (@Sendable () -> Void)?
     }
 
     struct PacketBudgetSnapshot: Sendable {
@@ -46,6 +45,22 @@ actor StreamPacketSender {
         let measuredBytesPerSecond: Double
         let budgetBytesPerSecond: Double
         let utilization: Double
+    }
+
+    struct TelemetrySnapshot: Sendable {
+        let queuedBytes: Int
+        let sendStartDelayAverageMs: Double
+        let sendStartDelayMaxMs: Double
+        let sendCompletionAverageMs: Double
+        let sendCompletionMaxMs: Double
+        let keyframeSendAverageMs: Double
+        let keyframeSendMaxMs: Double
+        let packetPacerSleepAverageMs: Double
+        let packetPacerSleepMaxMs: Int
+        let packetPacerSleepCount: UInt64
+        let stalePacketDrops: UInt64
+        let generationAbortDrops: UInt64
+        let nonKeyframeHoldDrops: UInt64
     }
 
     private struct PacketBudgetSample: Sendable {
@@ -62,7 +77,8 @@ actor StreamPacketSender {
 
     private let maxPayloadSize: Int
     private let mediaSecurityKey: MirageMediaPacketKey?
-    private let onEncodedFrame: @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
+    private let sendPacket: @Sendable (Data) async throws -> Void
+    private let onSendError: (@Sendable (Error) -> Void)?
     private let packetBufferPool: PacketBufferPool
     private let awdlExperimentEnabled = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     private var sendTask: Task<Void, Never>?
@@ -84,6 +100,18 @@ actor StreamPacketSender {
     private var pacerSleepMaxMs: Int = 0
     private var pacerSleepPacketCount: Int = 0
     private var pacerLastLogTime: CFAbsoluteTime = 0
+    private var sendStartDelayTotalMs: Double = 0
+    private var sendStartDelayMaxMs: Double = 0
+    private var sendStartDelayCount: UInt64 = 0
+    private var sendCompletionTotalMs: Double = 0
+    private var sendCompletionMaxMs: Double = 0
+    private var sendCompletionCount: UInt64 = 0
+    private var keyframeSendTotalMs: Double = 0
+    private var keyframeSendMaxMs: Double = 0
+    private var keyframeSendCount: UInt64 = 0
+    private var stalePacketDropCount: UInt64 = 0
+    private var generationAbortDropCount: UInt64 = 0
+    private var nonKeyframeHoldDropCount: UInt64 = 0
 
     nonisolated static func packetPacerSleepMilliseconds(
         tokensBeforeSend: Double,
@@ -150,11 +178,13 @@ actor StreamPacketSender {
     init(
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
+        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil
     ) {
         self.maxPayloadSize = maxPayloadSize
         mediaSecurityKey = mediaSecurityContext.map { MirageMediaSecurity.makePacketKey(context: $0) }
-        self.onEncodedFrame = onEncodedFrame
+        self.sendPacket = sendPacket
+        self.onSendError = onSendError
         packetBufferPool = PacketBufferPool(
             capacity: mirageHeaderSize + maxPayloadSize + MirageMediaSecurity.authTagLength
         )
@@ -170,6 +200,7 @@ actor StreamPacketSender {
             packetBudgetSampleBytes = 0
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
+        resetTelemetry()
         sendTask = Task(priority: .userInitiated) { [weak self] in
             guard let self else { return }
             for await item in stream {
@@ -189,6 +220,7 @@ actor StreamPacketSender {
             packetBudgetSampleBytes = 0
         }
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
+        resetTelemetry()
     }
 
     func setTargetBitrateBps(_ bitrate: Int?) {
@@ -224,6 +256,37 @@ actor StreamPacketSender {
 
     nonisolated func currentGenerationSnapshot() -> UInt32 {
         generation
+    }
+
+    func telemetrySnapshot() -> TelemetrySnapshot {
+        let queuedBytesSnapshot = queueLock.withLock { self.queuedBytes }
+        let sendStartDelayAverageMs = sendStartDelayCount > 0
+            ? sendStartDelayTotalMs / Double(sendStartDelayCount)
+            : 0
+        let sendCompletionAverageMs = sendCompletionCount > 0
+            ? sendCompletionTotalMs / Double(sendCompletionCount)
+            : 0
+        let keyframeSendAverageMs = keyframeSendCount > 0
+            ? keyframeSendTotalMs / Double(keyframeSendCount)
+            : 0
+        let packetPacerSleepAverageMs = pacerSleepPacketCount > 0
+            ? Double(pacerSleepTotalMs) / Double(pacerSleepPacketCount)
+            : 0
+        return TelemetrySnapshot(
+            queuedBytes: queuedBytesSnapshot,
+            sendStartDelayAverageMs: sendStartDelayAverageMs,
+            sendStartDelayMaxMs: sendStartDelayMaxMs,
+            sendCompletionAverageMs: sendCompletionAverageMs,
+            sendCompletionMaxMs: sendCompletionMaxMs,
+            keyframeSendAverageMs: keyframeSendAverageMs,
+            keyframeSendMaxMs: keyframeSendMaxMs,
+            packetPacerSleepAverageMs: packetPacerSleepAverageMs,
+            packetPacerSleepMaxMs: pacerSleepMaxMs,
+            packetPacerSleepCount: UInt64(pacerSleepPacketCount),
+            stalePacketDrops: stalePacketDropCount,
+            generationAbortDrops: generationAbortDropCount,
+            nonKeyframeHoldDrops: nonKeyframeHoldDropCount
+        )
     }
 
     func packetBudgetSnapshot(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> PacketBudgetSnapshot? {
@@ -280,15 +343,18 @@ actor StreamPacketSender {
             (dropNonKeyframesUntilKeyframe, latestKeyframeFrameNumber)
         }
         if shouldDropNonKeyframes, !item.isKeyframe {
+            nonKeyframeHoldDropCount &+= 1
             reduceQueuedBytes(accountedBytes)
             return
         }
         if item.isKeyframe, newestKeyframe > 0, item.frameNumber < newestKeyframe {
+            stalePacketDropCount &+= 1
             reduceQueuedBytes(accountedBytes)
             MirageLogger.stream("Dropping stale keyframe \(item.frameNumber) (newest \(newestKeyframe))")
             return
         }
         guard item.generation == generation else {
+            generationAbortDropCount &+= 1
             if item.isKeyframe {
                 MirageLogger
                     .stream("Dropping stale keyframe \(item.frameNumber) (gen \(item.generation) != \(generation))")
@@ -300,10 +366,8 @@ actor StreamPacketSender {
             return
         }
 
-        if item.isKeyframe { item.onSendStart?() }
         await fragmentAndSendPackets(item, accountedBytes: accountedBytes)
         if item.isKeyframe {
-            item.onSendComplete?()
             queueLock.withLock {
                 if latestKeyframeFrameNumber == item.frameNumber { dropNonKeyframesUntilKeyframe = false }
             }
@@ -324,10 +388,12 @@ actor StreamPacketSender {
         )
         let totalFragments = dataFragmentCount + parityFragmentCount
         let timestamp = UInt64(CMTimeGetSeconds(item.presentationTime) * 1_000_000_000)
+        var didRecordSendStart = false
 
         var currentSequence = item.sequenceNumberStart
         for fragmentIndex in 0 ..< totalFragments {
             if item.generation != generation {
+                generationAbortDropCount &+= 1
                 MirageLogger
                     .stream("Aborting send for frame \(item.frameNumber) (gen \(item.generation) != \(generation))")
                 if item.isKeyframe {
@@ -370,6 +436,7 @@ actor StreamPacketSender {
                     frameNumber: item.frameNumber,
                     fragmentIndex: UInt16(fragmentIndex),
                     fragmentCount: UInt16(totalFragments),
+                    fecBlockSize: UInt8(clamping: fecBlockSize),
                     payloadLength: UInt32(fragmentSize),
                     frameByteCount: UInt32(frameByteCount),
                     checksum: checksum,
@@ -444,19 +511,42 @@ actor StreamPacketSender {
                 let packet = packetBuffer.finalize(length: packetLength)
                 let accountedPayloadBytes = fragmentSize
                 remainingQueuedBytes = max(0, remainingQueuedBytes - accountedPayloadBytes)
-                let releasePacket: @Sendable () -> Void = { [weak self] in
-                    packetBuffer.release()
-                    self?.reduceQueuedBytes(accountedPayloadBytes)
+                if !didRecordSendStart {
+                    recordSendStartDelay(item: item, now: CFAbsoluteTimeGetCurrent())
+                    didRecordSendStart = true
                 }
-                onEncodedFrame(packet, header, releasePacket)
-                if Self.shouldDuplicateParameterSetPacket(
+                let duplicatePacket: Data? = if Self.shouldDuplicateParameterSetPacket(
                     isExperimentEnabled: awdlExperimentEnabled,
                     isKeyframe: item.isKeyframe,
                     fragmentIndex: fragmentIndex,
                     flags: flags
                 ) {
-                    onEncodedFrame(Data(packet), header, {})
+                    Data(packet)
+                } else {
+                    nil
                 }
+
+                do {
+                    try await sendPacket(packet)
+                } catch {
+                    packetBuffer.release()
+                    if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
+                    onSendError?(error)
+                    return
+                }
+                if let duplicatePacket {
+                    do {
+                        try await sendPacket(duplicatePacket)
+                    } catch {
+                        packetBuffer.release()
+                        reduceQueuedBytes(accountedPayloadBytes)
+                        if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
+                        onSendError?(error)
+                        return
+                    }
+                }
+                packetBuffer.release()
+                reduceQueuedBytes(accountedPayloadBytes)
             } else if parityFragmentCount > 0 {
                 let parityIndex = fragmentIndex - dataFragmentCount
                 let blockIndex = parityIndex
@@ -496,6 +586,7 @@ actor StreamPacketSender {
                     frameNumber: item.frameNumber,
                     fragmentIndex: UInt16(fragmentIndex),
                     fragmentCount: UInt16(totalFragments),
+                    fecBlockSize: UInt8(clamping: fecBlockSize),
                     payloadLength: UInt32(parityData.count),
                     frameByteCount: UInt32(frameByteCount),
                     checksum: checksum,
@@ -557,16 +648,27 @@ actor StreamPacketSender {
                 let packet = packetBuffer.finalize(length: mirageHeaderSize + wirePayload.count)
                 let accountedPayloadBytes = maxPayload
                 remainingQueuedBytes = max(0, remainingQueuedBytes - accountedPayloadBytes)
-                let releasePacket: @Sendable () -> Void = { [weak self] in
-                    packetBuffer.release()
-                    self?.reduceQueuedBytes(accountedPayloadBytes)
+                if !didRecordSendStart {
+                    recordSendStartDelay(item: item, now: CFAbsoluteTimeGetCurrent())
+                    didRecordSendStart = true
                 }
-                onEncodedFrame(packet, header, releasePacket)
+
+                do {
+                    try await sendPacket(packet)
+                } catch {
+                    packetBuffer.release()
+                    if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
+                    onSendError?(error)
+                    return
+                }
+                packetBuffer.release()
+                reduceQueuedBytes(accountedPayloadBytes)
             }
             currentSequence += 1
         }
 
         if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
+        recordSendCompletion(item: item, startedAt: fragmentStartTime, completedAt: CFAbsoluteTimeGetCurrent())
 
         if item.isKeyframe {
             let fragmentDurationMs = (CFAbsoluteTimeGetCurrent() - fragmentStartTime) * 1000
@@ -758,10 +860,43 @@ actor StreamPacketSender {
         MirageLogger.stream(
             "Packet pacer: sleeps=\(pacerSleepPacketCount), totalMs=\(pacerSleepTotalMs), maxMs=\(pacerSleepMaxMs)"
         )
-        pacerSleepTotalMs = 0
-        pacerSleepMaxMs = 0
-        pacerSleepPacketCount = 0
         pacerLastLogTime = now
+    }
+
+    private func resetTelemetry() {
+        sendStartDelayTotalMs = 0
+        sendStartDelayMaxMs = 0
+        sendStartDelayCount = 0
+        sendCompletionTotalMs = 0
+        sendCompletionMaxMs = 0
+        sendCompletionCount = 0
+        keyframeSendTotalMs = 0
+        keyframeSendMaxMs = 0
+        keyframeSendCount = 0
+        stalePacketDropCount = 0
+        generationAbortDropCount = 0
+        nonKeyframeHoldDropCount = 0
+    }
+
+    private func recordSendStartDelay(item: WorkItem, now: CFAbsoluteTime) {
+        let delayMs = max(0, (now - item.encodedAt) * 1000)
+        sendStartDelayTotalMs += delayMs
+        sendStartDelayMaxMs = max(sendStartDelayMaxMs, delayMs)
+        sendStartDelayCount &+= 1
+    }
+
+    private func recordSendCompletion(item: WorkItem, startedAt: CFAbsoluteTime, completedAt: CFAbsoluteTime) {
+        let completionMs = max(0, (completedAt - item.encodedAt) * 1000)
+        sendCompletionTotalMs += completionMs
+        sendCompletionMaxMs = max(sendCompletionMaxMs, completionMs)
+        sendCompletionCount &+= 1
+
+        if item.isKeyframe {
+            let keyframeMs = max(0, (completedAt - startedAt) * 1000)
+            keyframeSendTotalMs += keyframeMs
+            keyframeSendMaxMs = max(keyframeSendMaxMs, keyframeMs)
+            keyframeSendCount &+= 1
+        }
     }
 }
 

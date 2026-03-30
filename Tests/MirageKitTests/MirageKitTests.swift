@@ -142,6 +142,43 @@ struct MirageKitTests {
         }
     }
 
+    @Test("Control parser rejects oversized host wallpaper payload")
+    func controlParserRejectsOversizedHostWallpaperPayload() {
+        var data = Data([ControlMessageType.hostWallpaper.rawValue])
+        let oversizedLength = UInt32(LoomMessageLimits.maxInlineAssetPayloadBytes + 1)
+        withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
+
+        switch ControlMessage.deserialize(from: data) {
+        case .invalidFrame:
+            break
+        default:
+            Issue.record("Expected invalidFrame for oversized hostWallpaper payload.")
+        }
+    }
+
+    @Test("Host wallpaper message serialization")
+    func hostWallpaperMessageSerialization() throws {
+        let wallpaper = HostWallpaperMessage(
+            requestID: UUID(),
+            fileName: "wallpaper.jpg",
+            pixelWidth: 1_280,
+            pixelHeight: 720,
+            bytesPerPixelEstimate: 4
+        )
+
+        let envelope = try ControlMessage(type: .hostWallpaper, content: wallpaper)
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        #expect(decodedEnvelope.type == .hostWallpaper)
+
+        let decoded = try decodedEnvelope.decode(HostWallpaperMessage.self)
+        #expect(decoded.requestID == wallpaper.requestID)
+        #expect(decoded.fileName == "wallpaper.jpg")
+        #expect(decoded.pixelWidth == 1_280)
+        #expect(decoded.pixelHeight == 720)
+        #expect(decoded.bytesPerPixelEstimate == 4)
+    }
+
     @Test("Bootstrap request optional mismatch update flag serialization")
     func bootstrapRequestOptionalMismatchUpdateFlagSerialization() throws {
         let bootstrap = MirageSessionBootstrapRequest(
@@ -792,6 +829,26 @@ struct MirageKitTests {
             activeQuality: 0.74,
             targetFrameRate: 60,
             averageEncodeMs: 13.2,
+            captureIngressAverageMs: 4.1,
+            captureIngressMaxMs: 10.9,
+            preEncodeWaitAverageMs: 5.6,
+            preEncodeWaitMaxMs: 12.4,
+            captureCallbackAverageMs: 1.8,
+            captureCallbackMaxMs: 4.2,
+            captureCopyAverageMs: 2.4,
+            captureCopyMaxMs: 5.7,
+            captureCopyPoolDrops: 2,
+            captureCopyInFlightDrops: 3,
+            sendQueueBytes: 262_144,
+            sendStartDelayAverageMs: 3.7,
+            sendStartDelayMaxMs: 8.8,
+            sendCompletionAverageMs: 9.4,
+            sendCompletionMaxMs: 21.1,
+            packetPacerAverageSleepMs: 1.3,
+            packetPacerMaxSleepMs: 6,
+            stalePacketDrops: 1,
+            generationAbortDrops: 0,
+            nonKeyframeHoldDrops: 4,
             usingHardwareEncoder: true,
             encoderGPURegistryID: 12345,
             capturePixelFormat: "xf20",
@@ -808,6 +865,11 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
         #expect(decoded.averageEncodeMs == 13.2)
+        #expect(decoded.captureIngressAverageMs == 4.1)
+        #expect(decoded.captureCopyPoolDrops == 2)
+        #expect(decoded.sendQueueBytes == 262_144)
+        #expect(decoded.sendCompletionMaxMs == 21.1)
+        #expect(decoded.nonKeyframeHoldDrops == 4)
         #expect(decoded.usingHardwareEncoder == true)
         #expect(decoded.encoderGPURegistryID == 12345)
         #expect(decoded.capturePixelFormat == "xf20")

@@ -25,11 +25,12 @@ struct PacketizerChecksumTests {
 
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
-            mediaSecurityContext: makeSecurityContext()
-        ) { packet, header, release in
-            captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
-            release()
-        }
+            mediaSecurityContext: makeSecurityContext(),
+            sendPacket: { packet in
+                guard let header = FrameHeader.deserialize(from: packet) else { return }
+                captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
+            }
+        )
 
         await sender.start()
         let generation = sender.currentGenerationSnapshot()
@@ -50,9 +51,8 @@ struct PacketizerChecksumTests {
                 wireBytes: payload.count,
                 logPrefix: "test",
                 generation: generation,
-                pacingOverride: nil,
-                onSendStart: nil,
-                onSendComplete: nil
+                encodedAt: CFAbsoluteTimeGetCurrent(),
+                pacingOverride: nil
             )
         )
 
@@ -80,10 +80,13 @@ struct PacketizerChecksumTests {
         let expectedFragments = (payload.count + maxPayloadSize - 1) / maxPayloadSize
         let captured = Locked<[CapturedVideoPacket]>([])
 
-        let sender = StreamPacketSender(maxPayloadSize: maxPayloadSize) { packet, header, release in
-            captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
-            release()
-        }
+        let sender = StreamPacketSender(
+            maxPayloadSize: maxPayloadSize,
+            sendPacket: { packet in
+                guard let header = FrameHeader.deserialize(from: packet) else { return }
+                captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
+            }
+        )
 
         await sender.start()
         let generation = sender.currentGenerationSnapshot()
@@ -104,9 +107,8 @@ struct PacketizerChecksumTests {
                 wireBytes: payload.count,
                 logPrefix: "test",
                 generation: generation,
-                pacingOverride: nil,
-                onSendStart: nil,
-                onSendComplete: nil
+                encodedAt: CFAbsoluteTimeGetCurrent(),
+                pacingOverride: nil
             )
         )
 
@@ -135,9 +137,7 @@ struct PacketizerChecksumTests {
     @Test("Stream packet sender reports packet budget utilization from estimated wire bytes")
     func streamPacketSenderPacketBudgetUtilization() async {
         let payload = makePayload(byteCount: 420_000)
-        let sender = StreamPacketSender(maxPayloadSize: 512) { _, _, release in
-            release()
-        }
+        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _ in })
 
         await sender.start()
         await sender.setTargetBitrateBps(2_000_000)
@@ -168,9 +168,7 @@ struct PacketizerChecksumTests {
     @Test("Packet budget utilization stays low when frame fits bitrate budget")
     func streamPacketSenderPacketBudgetUnderUtilization() async {
         let payload = makePayload(byteCount: 10_000)
-        let sender = StreamPacketSender(maxPayloadSize: 512) { _, _, release in
-            release()
-        }
+        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _ in })
 
         await sender.start()
         await sender.setTargetBitrateBps(200_000_000)
@@ -194,6 +192,86 @@ struct PacketizerChecksumTests {
         #expect(snapshot.targetBitrateBps == 200_000_000)
         #expect(snapshot.utilization < 0.25)
 
+        await sender.stop()
+    }
+
+    @Test("Serialized send path preserves packet order across queued frames")
+    func streamPacketSenderPreservesPacketOrder() async throws {
+        let recordedSequences = Locked<[UInt32]>([])
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { packet in
+                try await Task.sleep(for: .milliseconds(1))
+                guard let header = FrameHeader.deserialize(from: packet) else { return }
+                recordedSequences.withLock { $0.append(header.sequenceNumber) }
+            }
+        )
+        let firstPayload = makePayload(byteCount: 900)
+        let secondPayload = makePayload(byteCount: 900)
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: firstPayload,
+                streamID: 21,
+                frameNumber: 41,
+                sequenceNumberStart: 10,
+                wireBytes: firstPayload.count,
+                generation: generation
+            )
+        )
+        sender.enqueue(
+            makeWorkItem(
+                payload: secondPayload,
+                streamID: 21,
+                frameNumber: 42,
+                sequenceNumberStart: 100,
+                wireBytes: secondPayload.count,
+                generation: generation
+            )
+        )
+
+        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while recordedSequences.read({ $0.count }) < 4, CFAbsoluteTimeGetCurrent() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(recordedSequences.read { $0 } == [10, 11, 100, 101])
+        await sender.stop()
+    }
+
+    @Test("Queued-byte accounting drains when serialized sends complete")
+    func streamPacketSenderQueuedBytesDrainAfterSendCompletion() async throws {
+        let payload = makePayload(byteCount: 900)
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { _ in
+                try await Task.sleep(for: .milliseconds(20))
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: payload,
+                streamID: 22,
+                frameNumber: 43,
+                sequenceNumberStart: 200,
+                wireBytes: payload.count,
+                generation: generation
+            )
+        )
+
+        #expect(sender.queuedBytesSnapshot() == payload.count)
+
+        let deadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while sender.queuedBytesSnapshot() > 0, CFAbsoluteTimeGetCurrent() < deadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(sender.queuedBytesSnapshot() == 0)
         await sender.stop()
     }
 
@@ -300,9 +378,8 @@ struct PacketizerChecksumTests {
             wireBytes: wireBytes,
             logPrefix: "test",
             generation: generation,
-            pacingOverride: nil,
-            onSendStart: nil,
-            onSendComplete: nil
+            encodedAt: CFAbsoluteTimeGetCurrent(),
+            pacingOverride: nil
         )
     }
 }

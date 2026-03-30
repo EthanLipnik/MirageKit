@@ -80,6 +80,9 @@ extension MirageHostService {
             .hostHardwareIconRequest: { [weak self] message, clientContext in
                 await self?.handleHostHardwareIconRequest(message, from: clientContext)
             },
+            .hostWallpaperRequest: { [weak self] message, clientContext in
+                await self?.handleHostWallpaperRequest(message, from: clientContext)
+            },
             .hostSupportLogArchiveRequest: { [weak self] message, clientContext in
                 await self?.handleHostSupportLogArchiveRequest(message, from: clientContext)
             },

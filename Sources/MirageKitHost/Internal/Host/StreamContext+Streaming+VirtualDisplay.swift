@@ -24,7 +24,8 @@ extension StreamContext {
         applicationWrapper: SCApplicationWrapper,
         clientLogicalSize: CGSize,
         sizePreset: MirageDisplaySizePreset,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void,
+        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil,
         onContentBoundsChanged: @escaping @Sendable (CGRect) -> Void,
         onNewWindowDetected: @escaping @Sendable (MirageWindow) -> Void
     )
@@ -43,7 +44,7 @@ extension StreamContext {
 
         self.onContentBoundsChanged = onContentBoundsChanged
         self.onNewWindowDetected = onNewWindowDetected
-        await setupPacketSender(onEncodedFrame: onEncodedFrame)
+        await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
 
         // 1. Acquire the shared app-stream virtual display
         let colorSpace = encoderConfig.colorSpace

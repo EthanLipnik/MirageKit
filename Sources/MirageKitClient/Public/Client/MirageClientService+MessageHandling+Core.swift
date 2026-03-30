@@ -467,6 +467,29 @@ extension MirageClientService {
                 tenBitDisplayP3Validated: metrics.tenBitDisplayP3Validated,
                 ultra444Validated: metrics.ultra444Validated
             )
+            metricsStore.updateHostPipelineMetrics(
+                streamID: metrics.streamID,
+                captureIngressAverageMs: metrics.captureIngressAverageMs,
+                captureIngressMaxMs: metrics.captureIngressMaxMs,
+                preEncodeWaitAverageMs: metrics.preEncodeWaitAverageMs,
+                preEncodeWaitMaxMs: metrics.preEncodeWaitMaxMs,
+                captureCallbackAverageMs: metrics.captureCallbackAverageMs,
+                captureCallbackMaxMs: metrics.captureCallbackMaxMs,
+                captureCopyAverageMs: metrics.captureCopyAverageMs,
+                captureCopyMaxMs: metrics.captureCopyMaxMs,
+                captureCopyPoolDrops: metrics.captureCopyPoolDrops,
+                captureCopyInFlightDrops: metrics.captureCopyInFlightDrops,
+                sendQueueBytes: metrics.sendQueueBytes,
+                sendStartDelayAverageMs: metrics.sendStartDelayAverageMs,
+                sendStartDelayMaxMs: metrics.sendStartDelayMaxMs,
+                sendCompletionAverageMs: metrics.sendCompletionAverageMs,
+                sendCompletionMaxMs: metrics.sendCompletionMaxMs,
+                packetPacerAverageSleepMs: metrics.packetPacerAverageSleepMs,
+                packetPacerMaxSleepMs: metrics.packetPacerMaxSleepMs,
+                stalePacketDrops: metrics.stalePacketDrops,
+                generationAbortDrops: metrics.generationAbortDrops,
+                nonKeyframeHoldDrops: metrics.nonKeyframeHoldDrops
+            )
             updateAdaptiveFallbackPressure(
                 streamID: metrics.streamID,
                 targetFrameRate: metrics.targetFrameRate

@@ -14,19 +14,6 @@ import Testing
 
 @Suite("Host Transport Registry")
 struct HostTransportRegistryTests {
-    @Test("Missing video stream completes queued-byte release callback")
-    func missingVideoStreamStillCompletes() async {
-        let registry = HostTransportRegistry()
-        let didComplete = Locked(false)
-
-        registry.sendVideo(streamID: 42, data: Data([0x01, 0x02])) { _ in
-            didComplete.withLock { $0 = true }
-        }
-
-        // sendVideo fires completion synchronously when no stream is registered.
-        #expect(didComplete.read { $0 })
-    }
-
     @Test("hasVideoConnection returns false for unregistered stream")
     func hasVideoConnectionFalseForUnregistered() {
         let registry = HostTransportRegistry()

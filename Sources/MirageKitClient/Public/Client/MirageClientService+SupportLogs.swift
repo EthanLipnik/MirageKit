@@ -76,13 +76,11 @@ extension MirageClientService {
         let rid = requestID.uuidString.lowercased()
         MirageLogger.client("Downloading host support log archive requestID=\(rid) using active Loom session")
 
-        guard let session = controlChannel?.session ?? loomSession else {
-            throw MirageError.protocolError("Missing authenticated Loom session for host support logs")
+        guard let transferEngine else {
+            throw MirageError.protocolError("Missing authenticated Loom transfer engine for host support logs")
         }
-
-        let transferEngine = LoomTransferEngine(session: session)
-        let incomingTransfer = try await requireMatchingHostSupportLogTransfer(
-            from: transferEngine,
+        let incomingTransfer = try await awaitIncomingTransfer(
+            kind: "host-support-log-archive",
             requestID: requestID
         )
         MirageLogger.client(
@@ -116,24 +114,6 @@ extension MirageClientService {
         }
 
         return destinationURL
-    }
-
-    private func requireMatchingHostSupportLogTransfer(
-        from engine: LoomTransferEngine,
-        requestID: UUID
-    ) async throws -> LoomIncomingTransfer {
-        for await transfer in engine.incomingTransfers {
-            guard transfer.offer.metadata["mirage.transfer-kind"] == "host-support-log-archive" else {
-                try? await transfer.decline()
-                continue
-            }
-            guard transfer.offer.metadata["mirage.request-id"] == requestID.uuidString.lowercased() else {
-                try? await transfer.decline()
-                continue
-            }
-            return transfer
-        }
-        throw MirageError.protocolError("Host did not offer a matching support log transfer")
     }
 
     private func uniqueSupportLogDestinationURL(fileName: String) -> URL {

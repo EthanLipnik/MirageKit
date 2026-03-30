@@ -19,7 +19,8 @@ extension StreamContext {
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
+        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
         guard !isRunning else { return }
@@ -36,7 +37,7 @@ extension StreamContext {
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
-        await setupPacketSender(onEncodedFrame: onEncodedFrame)
+        await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
 
         let captureTarget = streamTargetDimensions(windowFrame: window.frame)
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
@@ -85,7 +86,8 @@ extension StreamContext {
         displayWrapper: SCDisplayWrapper,
         resolution: CGSize? = nil,
         excludedWindows: [SCWindowWrapper] = [],
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
+        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
         guard !isRunning else { return }
@@ -100,7 +102,7 @@ extension StreamContext {
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
-        await setupPacketSender(onEncodedFrame: onEncodedFrame)
+        await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
 
         let captureResolution = resolution ?? CGSize(width: display.width, height: display.height)
         baseCaptureSize = captureResolution

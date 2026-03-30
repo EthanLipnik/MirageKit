@@ -175,6 +175,10 @@ actor WindowCaptureEngine {
         captureStallStageHandler = handler
     }
 
+    func captureTelemetrySnapshot() -> CaptureStreamOutput.TelemetrySnapshot? {
+        streamOutput?.telemetrySnapshot()
+    }
+
     nonisolated func enqueueKeyframeRequest(_ reason: CaptureStreamOutput.KeyframeRequestReason) {
         Task(priority: .userInitiated) {
             await self.markKeyframeRequested(reason: reason)

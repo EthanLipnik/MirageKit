@@ -75,6 +75,118 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(plan.unresolvedCandidates.map(\ .window.id) == [candidate.window.id])
     }
 
+    @Test("Initial startup handoff rebinds from stale launcher to replacement primary window")
+    func initialStartupHandoffRebindsFromStaleLauncherToReplacementPrimaryWindow() {
+        let launcherCandidate = makeCandidate(
+            windowID: 9101,
+            title: "Welcome",
+            origin: CGPoint(x: 40, y: 40)
+        )
+        let projectCandidate = makeCandidate(
+            windowID: 9102,
+            title: "Project",
+            origin: CGPoint(x: 80, y: 80)
+        )
+        let liveProjectWindow = makeWindow(
+            id: projectCandidate.window.id,
+            title: "Project",
+            origin: CGPoint(x: 80, y: 80)
+        )
+
+        let binding = MirageHostService.resolveInitialAppWindowStartupBinding(
+            candidates: [launcherCandidate, projectCandidate],
+            liveWindows: [liveProjectWindow],
+            visibleWindowIDs: [],
+            claimedWindowIDs: [],
+            preferredWindowID: launcherCandidate.window.id,
+            deprioritizedWindowIDs: [launcherCandidate.window.id],
+            excludedWindowIDs: []
+        )
+
+        #expect(binding?.candidate.window.id == projectCandidate.window.id)
+        #expect(binding?.resolvedWindow.id == liveProjectWindow.id)
+    }
+
+    @Test("Initial startup handoff keeps the healthy preferred primary window")
+    func initialStartupHandoffKeepsHealthyPreferredPrimaryWindow() {
+        let launcherCandidate = makeCandidate(
+            windowID: 9111,
+            title: "Welcome",
+            origin: CGPoint(x: 40, y: 40)
+        )
+        let projectCandidate = makeCandidate(
+            windowID: 9112,
+            title: "Project",
+            origin: CGPoint(x: 80, y: 80)
+        )
+        let liveLauncherWindow = makeWindow(
+            id: launcherCandidate.window.id,
+            title: "Welcome",
+            origin: CGPoint(x: 40, y: 40)
+        )
+        let liveProjectWindow = makeWindow(
+            id: projectCandidate.window.id,
+            title: "Project",
+            origin: CGPoint(x: 80, y: 80)
+        )
+
+        let binding = MirageHostService.resolveInitialAppWindowStartupBinding(
+            candidates: [launcherCandidate, projectCandidate],
+            liveWindows: [liveLauncherWindow, liveProjectWindow],
+            visibleWindowIDs: [],
+            claimedWindowIDs: [],
+            preferredWindowID: launcherCandidate.window.id,
+            deprioritizedWindowIDs: [],
+            excludedWindowIDs: []
+        )
+
+        #expect(binding?.candidate.window.id == launcherCandidate.window.id)
+        #expect(binding?.resolvedWindow.id == liveLauncherWindow.id)
+    }
+
+    @Test("Initial startup handoff rejects auxiliary and claimed window candidates")
+    func initialStartupHandoffRejectsAuxiliaryAndClaimedWindowCandidates() {
+        let auxiliaryCandidate = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(
+                id: 9121,
+                title: "Inspector",
+                origin: CGPoint(x: 20, y: 20)
+            ),
+            classification: .auxiliary,
+            role: "AXSheet",
+            subrole: "AXSystemDialog",
+            parentWindowID: 9000
+        )
+        let claimedCandidate = makeCandidate(
+            windowID: 9122,
+            title: "Claimed",
+            origin: CGPoint(x: 60, y: 60)
+        )
+        let eligibleCandidate = makeCandidate(
+            windowID: 9123,
+            title: "Eligible",
+            origin: CGPoint(x: 100, y: 100)
+        )
+
+        let binding = MirageHostService.resolveInitialAppWindowStartupBinding(
+            candidates: [auxiliaryCandidate, claimedCandidate, eligibleCandidate],
+            liveWindows: [
+                auxiliaryCandidate.window,
+                claimedCandidate.window,
+                eligibleCandidate.window,
+            ],
+            visibleWindowIDs: [],
+            claimedWindowIDs: [claimedCandidate.window.id],
+            preferredWindowID: nil,
+            deprioritizedWindowIDs: [],
+            excludedWindowIDs: []
+        )
+
+        #expect(binding?.candidate.window.id == eligibleCandidate.window.id)
+        #expect(binding?.resolvedWindow.id == eligibleCandidate.window.id)
+    }
+
     @Test("Window-added callback payload uses resolved stream window ID")
     func windowAddedCallbackUsesResolvedWindowID() {
         let candidateWindowID = WindowID(111)
@@ -423,6 +535,51 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(host.activeSessionByStreamID[55] == nil)
         #expect(host.activeStreamIDByWindowID[7002] == nil)
         #expect(host.activeWindowIDByStreamID[55] == nil)
+    }
+
+    @MainActor
+    @Test("New primary window stays hidden when an existing streamed window is healthy")
+    func newPrimaryWindowStaysHiddenWhenExistingStreamedWindowIsHealthy() async {
+        let host = MirageHostService(hostName: "LifecycleHost")
+        let clientID = UUID()
+        let bundleID = "com.example.app"
+        let streamedWindowID = WindowID(9131)
+        let newWindowID = WindowID(9132)
+
+        _ = await host.appStreamManager.startAppSession(
+            bundleIdentifier: bundleID,
+            appName: "Example App",
+            appPath: "/Applications/Example.app",
+            clientID: clientID,
+            clientName: "Client",
+            requestedDisplayResolution: CGSize(width: 1280, height: 720),
+            requestedClientScaleFactor: nil,
+            maxVisibleSlots: 1,
+            bitrateBudgetBps: nil
+        )
+        await host.appStreamManager.markSessionStreaming(bundleID)
+        _ = await host.appStreamManager.addWindowToSession(
+            bundleIdentifier: bundleID,
+            windowID: streamedWindowID,
+            streamID: 77,
+            title: "Current Project",
+            width: 1280,
+            height: 720,
+            isResizable: true,
+            slotIndex: 0
+        )
+
+        let newCandidate = makeCandidate(
+            windowID: newWindowID,
+            title: "Second Project",
+            origin: CGPoint(x: 120, y: 120)
+        )
+        await host.handleNewWindowFromStreamedApp(bundleID: bundleID, candidate: newCandidate)
+
+        let session = await host.appStreamManager.getSession(bundleIdentifier: bundleID)
+        let visibleWindowIDs = session.map { Array($0.windowStreams.keys).sorted(by: <) } ?? []
+        #expect(visibleWindowIDs == [streamedWindowID])
+        #expect(session?.hiddenWindows[newWindowID] != nil)
     }
 
     private func makeCandidate(

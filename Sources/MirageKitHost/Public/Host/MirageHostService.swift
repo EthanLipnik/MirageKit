@@ -353,6 +353,15 @@ public final class MirageHostService {
     var pendingHostHardwareIconRequest: PendingHostHardwareIconRequest?
     var hostHardwareIconRequestTask: Task<Void, Never>?
     var hostHardwareIconRequestToken: UUID = .init()
+    struct PendingHostWallpaperRequest: Sendable {
+        let clientID: UUID
+        let requestID: UUID
+        var preferredMaxPixelWidth: Int
+        var preferredMaxPixelHeight: Int
+    }
+    var pendingHostWallpaperRequest: PendingHostWallpaperRequest?
+    var hostWallpaperRequestTask: Task<Void, Never>?
+    var hostWallpaperRequestToken: UUID = .init()
     struct PendingHostSoftwareUpdateStatusRequest: Sendable {
         let clientID: UUID
         var forceRefresh: Bool

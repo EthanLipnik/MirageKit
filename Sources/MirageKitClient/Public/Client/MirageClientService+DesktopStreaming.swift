@@ -92,6 +92,11 @@ public extension MirageClientService {
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
         MirageLogger.client("Desktop start: request sent")
         try await sendControlMessage(.startDesktopStream, content: request)
+        // Desktop startup shares the same control channel as metadata refreshes,
+        // startup acks, and refresh-override traffic. Extend heartbeat grace so
+        // we do not tear down the control session while startup control work is
+        // still in flight.
+        heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         scheduleDesktopStreamStartTimeout()
 
         MirageLogger

@@ -32,11 +32,11 @@ package let mirageQualityTestRegistrationMagic: UInt32 = 0x4D49_5251 // "MIRQ"
 public let mirageDefaultMaxPacketSize: Int = 1200
 
 /// Header size in bytes:
-/// Base fields (4+1+2+2+4+8+4+2+2+4+4+4 = 41) +
+/// Base fields (4+1+2+2+4+8+4+2+2+1+4+4+4 = 42) +
 /// contentRect (4 x Float32 = 16) +
 /// dimensionToken (UInt16 = 2) +
-/// epoch (UInt16 = 2) = 61 total
-package let mirageHeaderSize: Int = 61
+/// epoch (UInt16 = 2) = 62 total
+package let mirageHeaderSize: Int = 62
 
 /// Audio packet header size in bytes.
 /// Base fields (4+1+1+1+1+2+4+8+4+2+2+2+4+4+1+2+4 = 47).
@@ -275,6 +275,10 @@ package struct FrameHeader {
     /// Total fragments for this frame
     package var fragmentCount: UInt16
 
+    /// Effective FEC block size used by the sender for this frame.
+    /// `0` means no parity fragments are present.
+    package var fecBlockSize: UInt8
+
     /// Payload length in bytes
     package var payloadLength: UInt32
 
@@ -310,6 +314,7 @@ package struct FrameHeader {
         frameNumber: UInt32,
         fragmentIndex: UInt16,
         fragmentCount: UInt16,
+        fecBlockSize: UInt8 = 0,
         payloadLength: UInt32,
         frameByteCount: UInt32,
         checksum: UInt32,
@@ -324,6 +329,7 @@ package struct FrameHeader {
         self.frameNumber = frameNumber
         self.fragmentIndex = fragmentIndex
         self.fragmentCount = fragmentCount
+        self.fecBlockSize = fecBlockSize
         self.payloadLength = payloadLength
         self.frameByteCount = frameByteCount
         self.checksum = checksum
@@ -358,6 +364,7 @@ package struct FrameHeader {
         withUnsafeBytes(of: frameNumber.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: fragmentIndex.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: fragmentCount.littleEndian) { data.append(contentsOf: $0) }
+        data.append(fecBlockSize)
         withUnsafeBytes(of: payloadLength.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: frameByteCount.littleEndian) { data.append(contentsOf: $0) }
         withUnsafeBytes(of: checksum.littleEndian) { data.append(contentsOf: $0) }
@@ -381,13 +388,13 @@ package struct FrameHeader {
         var offset = 0
 
         func write<T: FixedWidthInteger>(_ value: T) {
-            buffer.storeBytes(of: value.littleEndian, toByteOffset: offset, as: T.self)
-            offset += MemoryLayout<T>.size
-        }
-
-        func writeByte(_ value: UInt8) {
-            buffer.storeBytes(of: value, toByteOffset: offset, as: UInt8.self)
-            offset += 1
+            var littleEndian = value.littleEndian
+            withUnsafeBytes(of: &littleEndian) { bytes in
+                let end = offset + bytes.count
+                guard end <= buffer.count else { return }
+                buffer[offset ..< end].copyBytes(from: bytes)
+                offset = end
+            }
         }
 
         func writeFloat32(_ value: Float32) {
@@ -395,7 +402,7 @@ package struct FrameHeader {
         }
 
         write(magic)
-        writeByte(version)
+        write(version)
         write(flags.rawValue)
         write(streamID)
         write(sequenceNumber)
@@ -403,6 +410,7 @@ package struct FrameHeader {
         write(frameNumber)
         write(fragmentIndex)
         write(fragmentCount)
+        write(fecBlockSize)
         write(payloadLength)
         write(frameByteCount)
         write(checksum)
@@ -453,6 +461,7 @@ package struct FrameHeader {
         let frameNumber = read(UInt32.self)
         let fragmentIndex = read(UInt16.self)
         let fragmentCount = read(UInt16.self)
+        let fecBlockSize = readByte()
         let payloadLength = read(UInt32.self)
         let frameByteCount = read(UInt32.self)
         let checksum = read(UInt32.self)
@@ -475,6 +484,7 @@ package struct FrameHeader {
             frameNumber: frameNumber,
             fragmentIndex: fragmentIndex,
             fragmentCount: fragmentCount,
+            fecBlockSize: fecBlockSize,
             payloadLength: payloadLength,
             frameByteCount: frameByteCount,
             checksum: checksum,

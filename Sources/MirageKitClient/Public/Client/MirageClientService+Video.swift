@@ -54,9 +54,19 @@ enum IncomingMediaStreamKind: Equatable {
     case video(StreamID)
     case audio(StreamID)
     case qualityTest(UUID)
+    case transferControl
+    case transferData
     case unknown
 
     static func classify(label: String) -> IncomingMediaStreamKind {
+        if label == "loom.transfer.control.v1" {
+            return .transferControl
+        }
+
+        if label.hasPrefix("loom.transfer.data.") {
+            return .transferData
+        }
+
         if label.hasPrefix("video/") {
             let streamIDString = String(label.dropFirst("video/".count))
             guard let streamID = StreamID(streamIDString) else { return .unknown }
@@ -113,6 +123,9 @@ extension MirageClientService {
                     MirageLogger.client("Accepted incoming quality-test stream for test \(testID.uuidString)")
                     self.activeMediaStreams[label] = stream
                     self.startQualityTestStreamReceiveLoop(stream: stream, testID: testID, label: label)
+
+                case .transferControl, .transferData:
+                    continue
 
                 case .unknown:
                     MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")

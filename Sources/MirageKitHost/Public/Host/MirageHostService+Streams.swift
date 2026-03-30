@@ -8,6 +8,7 @@
 //
 
 import Foundation
+import Loom
 import MirageKit
 
 #if os(macOS)
@@ -364,13 +365,15 @@ public extension MirageHostService {
         inputStreamCacheActor.set(streamID, window: updatedWindow, client: client)
 
         // Open Loom video stream for this stream
+        var videoStream: LoomMultiplexedStream?
         if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) {
             do {
-                let videoStream = try await clientContext.controlChannel.session.openStream(
+                let openedVideoStream = try await clientContext.controlChannel.session.openStream(
                     label: "video/\(streamID)"
                 )
-                loomVideoStreamsByStreamID[streamID] = videoStream
-                transportRegistry.registerVideoStream(videoStream, streamID: streamID)
+                videoStream = openedVideoStream
+                loomVideoStreamsByStreamID[streamID] = openedVideoStream
+                transportRegistry.registerVideoStream(openedVideoStream, streamID: streamID)
                 MirageLogger.host("Opened Loom video stream for stream \(streamID)")
             } catch {
                 MirageLogger.error(
@@ -385,21 +388,18 @@ public extension MirageHostService {
         let windowWrapper = SCWindowWrapper(window: scWindow)
         let applicationWrapper = SCApplicationWrapper(application: scApplication)
         let displayWrapper = SCDisplayWrapper(display: captureSource.display)
+        let activeVideoStream = videoStream
 
-        // Start capture with callback to send video data
-        // This will throw if screen recording permission is not granted
-        let onEncodedFrame: @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void = {
-            [weak self] packetData, _, releasePacket in
-            guard let self else {
-                releasePacket()
-                return
-            }
-            sendVideoPacketForStream(streamID, data: packetData) { [weak self] error in
-                releasePacket()
-                guard let self, let error else { return }
-                dispatchMainWork {
-                    await self.handleVideoSendError(streamID: streamID, error: error)
-                }
+        // Start capture with direct Loom send ownership in StreamPacketSender.
+        // This will throw if screen recording permission is not granted.
+        let sendPacket: @Sendable (Data) async throws -> Void = { packetData in
+            guard let activeVideoStream else { return }
+            try await activeVideoStream.sendUnreliable(packetData)
+        }
+        let onSendError: @Sendable (Error) -> Void = { [weak self] error in
+            guard let self else { return }
+            dispatchMainWork {
+                await self.handleVideoSendError(streamID: streamID, error: error)
             }
         }
 
@@ -430,7 +430,8 @@ public extension MirageHostService {
                     applicationWrapper: applicationWrapper,
                     clientLogicalSize: clientDisplayResolution,
                     sizePreset: sizePreset,
-                    onEncodedFrame: onEncodedFrame,
+                    sendPacket: sendPacket,
+                    onSendError: onSendError,
                     onContentBoundsChanged: { [weak self] bounds in
                         guard let self else { return }
                         dispatchControlWork(clientID: client.id) { [weak self] in
@@ -551,7 +552,8 @@ public extension MirageHostService {
                             windowWrapper: windowWrapper,
                             applicationWrapper: applicationWrapper,
                             displayWrapper: displayWrapper,
-                            onEncodedFrame: onEncodedFrame
+                            sendPacket: sendPacket,
+                            onSendError: onSendError
                         )
                         if let newFrame = currentWindowFrame(for: updatedWindow.id) {
                             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: newFrame)

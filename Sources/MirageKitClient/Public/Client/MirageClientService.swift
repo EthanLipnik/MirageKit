@@ -333,6 +333,11 @@ public final class MirageClientService {
     /// App-icon stream state keyed by app-list request identifier.
     var appIconStreamStateByRequestID: [UUID: AppIconStreamState] = [:]
 
+    /// Whether the host is currently streaming or diffing app icons for the active app list.
+    public var isAppIconStreamInProgress: Bool {
+        !appIconStreamStateByRequestID.isEmpty
+    }
+
     /// Whether the next app-list request should force a full icon reset on host.
     var pendingForceIconResetForNextAppListRequest: Bool = false
 
@@ -373,6 +378,9 @@ public final class MirageClientService {
 
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
+
+    /// Callback when host wallpaper payload is received.
+    public var onHostWallpaperReceived: ((UUID, Data, Int, Int, Int) -> Void)?
 
     /// Callback when host software update status is received.
     public var onHostSoftwareUpdateStatus: ((HostSoftwareUpdateStatus) -> Void)?
@@ -466,6 +474,10 @@ public final class MirageClientService {
     var networkConfig: LoomNetworkConfiguration
     var controlChannel: MirageControlChannel?
     public internal(set) var loomSession: LoomAuthenticatedSession?
+    @ObservationIgnored var transferEngine: LoomTransferEngine?
+    @ObservationIgnored var transferObserverTask: Task<Void, Never>?
+    var pendingIncomingTransfersByKey: [String: LoomIncomingTransfer] = [:]
+    var transferWaitersByKey: [String: CheckedContinuation<LoomIncomingTransfer, Error>] = [:]
     @ObservationIgnored var controlSessionStateObserverTask: Task<Void, Never>?
     @ObservationIgnored var controlSessionPathObserverTask: Task<Void, Never>?
     @ObservationIgnored var pendingConnectTask: Task<LoomAuthenticatedSession, Error>?
@@ -561,6 +573,11 @@ public final class MirageClientService {
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
     let hostSupportLogArchiveTimeout: Duration = .seconds(30)
+    var hostWallpaperRequestID: UUID?
+    var hostWallpaperContinuation: CheckedContinuation<Void, Error>?
+    var hostWallpaperTransferTask: Task<Void, Never>?
+    var hostWallpaperTimeoutTask: Task<Void, Never>?
+    let hostWallpaperTimeout: Duration = .seconds(45)
     var pingContinuation: CheckedContinuation<Void, Error>?
     var pingRequestID: UInt64 = 0
     var pingTimeoutTask: Task<Void, Never>?

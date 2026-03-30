@@ -37,6 +37,10 @@ public extension MirageClientService {
             requestID: requestID
         )
         try await sendControlMessage(.appListRequest, content: request)
+        // App-list snapshots and follow-up icon diffs can temporarily monopolize
+        // the control channel. Give the heartbeat room so it does not declare a
+        // false disconnect while the host is still servicing metadata work.
+        heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         activeAppListRequestID = requestID
         appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
         appIconStreamStateByRequestID[requestID] = AppIconStreamState()
@@ -51,7 +55,60 @@ public extension MirageClientService {
 
         let request = HostHardwareIconRequestMessage(preferredMaxPixelSize: preferredMaxPixelSize)
         try await sendControlMessage(.hostHardwareIconRequest, content: request)
+        // Hardware-icon payloads are large enough to compete with heartbeat pings.
+        // Keep the connection in a grace window until the host finishes responding.
+        heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         MirageLogger.client("Host hardware icon request sent")
+    }
+
+    /// Request the connected host's wallpaper payload.
+    /// - Parameters:
+    ///   - preferredMaxPixelWidth: Preferred maximum wallpaper width in pixels.
+    ///   - preferredMaxPixelHeight: Preferred maximum wallpaper height in pixels.
+    func requestHostWallpaper(
+        preferredMaxPixelWidth: Int = 1_280,
+        preferredMaxPixelHeight: Int = 720
+    ) async throws {
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard hostWallpaperContinuation == nil else {
+            throw MirageError.protocolError("Host wallpaper request already in progress")
+        }
+
+        let requestID = UUID()
+        let request = HostWallpaperRequestMessage(
+            requestID: requestID,
+            preferredMaxPixelWidth: preferredMaxPixelWidth,
+            preferredMaxPixelHeight: preferredMaxPixelHeight
+        )
+        heartbeatGraceDeadline = ContinuousClock.now + hostWallpaperTimeout
+
+        try await withCheckedThrowingContinuation { continuation in
+            hostWallpaperRequestID = requestID
+            hostWallpaperContinuation = continuation
+            hostWallpaperTransferTask?.cancel()
+            hostWallpaperTransferTask = nil
+            hostWallpaperTimeoutTask?.cancel()
+            hostWallpaperTimeoutTask = Task { @MainActor [weak self] in
+                try? await Task.sleep(for: self?.hostWallpaperTimeout ?? .seconds(45))
+                guard let self,
+                      self.hostWallpaperContinuation != nil else {
+                    return
+                }
+                completeHostWallpaperRequest(
+                    .failure(MirageError.protocolError("Timed out waiting for host wallpaper"))
+                )
+            }
+            Task { @MainActor [weak self] in
+                do {
+                    try await self?.sendControlMessage(.hostWallpaperRequest, content: request)
+                    MirageLogger.client(
+                        "Host wallpaper request sent requestID=\(requestID.uuidString.lowercased()) target=\(preferredMaxPixelWidth)x\(preferredMaxPixelHeight)"
+                    )
+                } catch {
+                    self?.completeHostWallpaperRequest(.failure(error))
+                }
+            }
+        }
     }
 
     /// Select an app to stream.

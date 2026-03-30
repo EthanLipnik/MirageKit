@@ -62,7 +62,7 @@ extension WindowCaptureEngine {
             latencyMode == .lowestLatency &&
             isHighResolutionCapture(width: safeWidth, height: safeHeight)
         if tunedHighResLowestLatency {
-            depth -= frameRate >= 120 ? 2 : 1
+            depth -= frameRate >= 120 ? 3 : 2
         }
 
         let minDepth: Int = {
@@ -83,7 +83,7 @@ extension WindowCaptureEngine {
         depth = max(depth, minDepth)
 
         if tunedHighResLowestLatency {
-            let tunedCap = frameRate >= 120 ? 7 : 6
+            let tunedCap = frameRate >= 120 ? 5 : 4
             return min(max(1, depth), tunedCap)
         }
 
@@ -111,11 +111,11 @@ extension WindowCaptureEngine {
            latencyMode == .lowestLatency,
            highResolutionCapture {
             if frameRate >= 120 {
-                extra = max(1, extra - 2)
-                minimum = 5
-            } else {
-                extra = max(1, extra - 1)
+                extra = max(1, extra - 3)
                 minimum = 4
+            } else {
+                extra = max(1, extra - 2)
+                minimum = 3
             }
         }
 

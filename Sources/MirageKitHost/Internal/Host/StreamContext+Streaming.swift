@@ -20,13 +20,14 @@ extension StreamContext {
 
     /// Configures the packet sender for encoded frame output.
     func setupPacketSender(
-        onEncodedFrame: @escaping @Sendable (Data, FrameHeader, @escaping @Sendable () -> Void) -> Void
+        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil
     ) async {
-        onEncodedPacket = onEncodedFrame
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: mediaSecurityContext,
-            onEncodedFrame: onEncodedFrame
+            sendPacket: sendPacket,
+            onSendError: onSendError
         )
         self.packetSender = sender
         await sender.start()
@@ -137,9 +138,8 @@ extension StreamContext {
                     wireBytes: wireBytes,
                     logPrefix: logPrefix,
                     generation: generation,
+                    encodedAt: now,
                     pacingOverride: pacingOverride,
-                    onSendStart: nil,
-                    onSendComplete: nil
                 )
                 packetSender.enqueue(workItem)
             }, onFrameComplete: { [weak self] in
@@ -169,8 +169,11 @@ extension StreamContext {
         let frameInbox = self.frameInbox
         await engine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
-            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
             let backpressure = self?.backpressureActiveSnapshot ?? false
+            let pendingThreshold = backpressure
+                ? max(1, snapshot.capacity - 1)
+                : snapshot.capacity
+            let pendingPressure = snapshot.pending >= pendingThreshold
             guard pendingPressure || backpressure else { return false }
             if frameInbox.scheduleIfNeeded() {
                 Task(priority: .userInitiated) { await self?.processPendingFrames() }

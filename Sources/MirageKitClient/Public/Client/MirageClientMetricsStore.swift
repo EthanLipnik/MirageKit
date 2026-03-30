@@ -47,6 +47,26 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostTenBitDisplayP3Validated: Bool?
     public var hostUltra444Validated: Bool?
     public var clientDecoderOutputPixelFormat: String?
+    package var hostCaptureIngressAverageMs: Double? = nil
+    package var hostCaptureIngressMaxMs: Double? = nil
+    package var hostPreEncodeWaitAverageMs: Double? = nil
+    package var hostPreEncodeWaitMaxMs: Double? = nil
+    package var hostCaptureCallbackAverageMs: Double? = nil
+    package var hostCaptureCallbackMaxMs: Double? = nil
+    package var hostCaptureCopyAverageMs: Double? = nil
+    package var hostCaptureCopyMaxMs: Double? = nil
+    package var hostCaptureCopyPoolDrops: UInt64? = nil
+    package var hostCaptureCopyInFlightDrops: UInt64? = nil
+    package var hostSendQueueBytes: Int? = nil
+    package var hostSendStartDelayAverageMs: Double? = nil
+    package var hostSendStartDelayMaxMs: Double? = nil
+    package var hostSendCompletionAverageMs: Double? = nil
+    package var hostSendCompletionMaxMs: Double? = nil
+    package var hostPacketPacerAverageSleepMs: Double? = nil
+    package var hostPacketPacerMaxSleepMs: Int? = nil
+    package var hostStalePacketDrops: UInt64? = nil
+    package var hostGenerationAbortDrops: UInt64? = nil
+    package var hostNonKeyframeHoldDrops: UInt64? = nil
     public var hasHostMetrics: Bool
 
     public init(
@@ -223,6 +243,55 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostTenBitDisplayP3Validated = tenBitDisplayP3Validated
         snapshot.hostUltra444Validated = ultra444Validated
         snapshot.hasHostMetrics = true
+        metricsByStream[streamID] = snapshot
+        lock.unlock()
+    }
+
+    func updateHostPipelineMetrics(
+        streamID: StreamID,
+        captureIngressAverageMs: Double?,
+        captureIngressMaxMs: Double?,
+        preEncodeWaitAverageMs: Double?,
+        preEncodeWaitMaxMs: Double?,
+        captureCallbackAverageMs: Double?,
+        captureCallbackMaxMs: Double?,
+        captureCopyAverageMs: Double?,
+        captureCopyMaxMs: Double?,
+        captureCopyPoolDrops: UInt64?,
+        captureCopyInFlightDrops: UInt64?,
+        sendQueueBytes: Int?,
+        sendStartDelayAverageMs: Double?,
+        sendStartDelayMaxMs: Double?,
+        sendCompletionAverageMs: Double?,
+        sendCompletionMaxMs: Double?,
+        packetPacerAverageSleepMs: Double?,
+        packetPacerMaxSleepMs: Int?,
+        stalePacketDrops: UInt64?,
+        generationAbortDrops: UInt64?,
+        nonKeyframeHoldDrops: UInt64?
+    ) {
+        lock.lock()
+        var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
+        snapshot.hostCaptureIngressAverageMs = captureIngressAverageMs
+        snapshot.hostCaptureIngressMaxMs = captureIngressMaxMs
+        snapshot.hostPreEncodeWaitAverageMs = preEncodeWaitAverageMs
+        snapshot.hostPreEncodeWaitMaxMs = preEncodeWaitMaxMs
+        snapshot.hostCaptureCallbackAverageMs = captureCallbackAverageMs
+        snapshot.hostCaptureCallbackMaxMs = captureCallbackMaxMs
+        snapshot.hostCaptureCopyAverageMs = captureCopyAverageMs
+        snapshot.hostCaptureCopyMaxMs = captureCopyMaxMs
+        snapshot.hostCaptureCopyPoolDrops = captureCopyPoolDrops
+        snapshot.hostCaptureCopyInFlightDrops = captureCopyInFlightDrops
+        snapshot.hostSendQueueBytes = sendQueueBytes
+        snapshot.hostSendStartDelayAverageMs = sendStartDelayAverageMs
+        snapshot.hostSendStartDelayMaxMs = sendStartDelayMaxMs
+        snapshot.hostSendCompletionAverageMs = sendCompletionAverageMs
+        snapshot.hostSendCompletionMaxMs = sendCompletionMaxMs
+        snapshot.hostPacketPacerAverageSleepMs = packetPacerAverageSleepMs
+        snapshot.hostPacketPacerMaxSleepMs = packetPacerMaxSleepMs
+        snapshot.hostStalePacketDrops = stalePacketDrops
+        snapshot.hostGenerationAbortDrops = generationAbortDrops
+        snapshot.hostNonKeyframeHoldDrops = nonKeyframeHoldDrops
         metricsByStream[streamID] = snapshot
         lock.unlock()
     }

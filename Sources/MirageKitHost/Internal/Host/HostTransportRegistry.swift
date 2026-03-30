@@ -48,29 +48,6 @@ final class HostTransportRegistry: @unchecked Sendable {
         }
     }
 
-    func sendVideo(
-        streamID: StreamID,
-        data: Data,
-        onComplete: (@Sendable (Error?) -> Void)? = nil
-    ) {
-        let stream: LoomMultiplexedStream? = state.read { state in
-            state.videoByStream[streamID]
-        }
-        guard let stream else {
-            onComplete?(nil)
-            return
-        }
-
-        Task {
-            do {
-                try await stream.sendUnreliable(data)
-                onComplete?(nil)
-            } catch {
-                onComplete?(error)
-            }
-        }
-    }
-
     func sendAudio(clientID: UUID, data: Data) {
         let stream: LoomMultiplexedStream? = state.read { $0.audioByClientID[clientID] }
         guard let stream else { return }

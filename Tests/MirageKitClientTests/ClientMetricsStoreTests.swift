@@ -45,6 +45,29 @@ struct ClientMetricsStoreTests {
             streamID: 7,
             outputPixelFormat: "x420 (10-bit FullRange)"
         )
+        store.updateHostPipelineMetrics(
+            streamID: 7,
+            captureIngressAverageMs: 4.2,
+            captureIngressMaxMs: 11.8,
+            preEncodeWaitAverageMs: 5.4,
+            preEncodeWaitMaxMs: 13.1,
+            captureCallbackAverageMs: 1.9,
+            captureCallbackMaxMs: 4.6,
+            captureCopyAverageMs: 2.7,
+            captureCopyMaxMs: 6.2,
+            captureCopyPoolDrops: 3,
+            captureCopyInFlightDrops: 5,
+            sendQueueBytes: 196_608,
+            sendStartDelayAverageMs: 3.3,
+            sendStartDelayMaxMs: 8.4,
+            sendCompletionAverageMs: 9.1,
+            sendCompletionMaxMs: 22.7,
+            packetPacerAverageSleepMs: 1.4,
+            packetPacerMaxSleepMs: 6,
+            stalePacketDrops: 2,
+            generationAbortDrops: 1,
+            nonKeyframeHoldDrops: 7
+        )
 
         let snapshot = store.snapshot(for: 7)
         #expect(snapshot?.hostAverageEncodeMs == 14.6)
@@ -59,6 +82,11 @@ struct ClientMetricsStoreTests {
         #expect(snapshot?.hostTenBitDisplayP3Validated == true)
         #expect(snapshot?.hostUltra444Validated == false)
         #expect(snapshot?.clientDecoderOutputPixelFormat == "x420 (10-bit FullRange)")
+        #expect(snapshot?.hostCaptureIngressAverageMs == 4.2)
+        #expect(snapshot?.hostCaptureCopyPoolDrops == 3)
+        #expect(snapshot?.hostSendQueueBytes == 196_608)
+        #expect(snapshot?.hostSendCompletionMaxMs == 22.7)
+        #expect(snapshot?.hostNonKeyframeHoldDrops == 7)
         #expect(snapshot?.hasHostMetrics == true)
     }
 }

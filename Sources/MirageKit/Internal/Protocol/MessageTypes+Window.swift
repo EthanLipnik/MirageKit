@@ -271,6 +271,26 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let captureAdmissionDrops: UInt64?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
+    package let captureIngressAverageMs: Double?
+    package let captureIngressMaxMs: Double?
+    package let preEncodeWaitAverageMs: Double?
+    package let preEncodeWaitMaxMs: Double?
+    package let captureCallbackAverageMs: Double?
+    package let captureCallbackMaxMs: Double?
+    package let captureCopyAverageMs: Double?
+    package let captureCopyMaxMs: Double?
+    package let captureCopyPoolDrops: UInt64?
+    package let captureCopyInFlightDrops: UInt64?
+    package let sendQueueBytes: Int?
+    package let sendStartDelayAverageMs: Double?
+    package let sendStartDelayMaxMs: Double?
+    package let sendCompletionAverageMs: Double?
+    package let sendCompletionMaxMs: Double?
+    package let packetPacerAverageSleepMs: Double?
+    package let packetPacerMaxSleepMs: Int?
+    package let stalePacketDrops: UInt64?
+    package let generationAbortDrops: UInt64?
+    package let nonKeyframeHoldDrops: UInt64?
     package let usingHardwareEncoder: Bool?
     package let encoderGPURegistryID: UInt64?
     package let encodedWidth: Int?
@@ -303,6 +323,26 @@ package struct StreamMetricsMessage: Codable, Sendable {
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
+        captureIngressAverageMs: Double? = nil,
+        captureIngressMaxMs: Double? = nil,
+        preEncodeWaitAverageMs: Double? = nil,
+        preEncodeWaitMaxMs: Double? = nil,
+        captureCallbackAverageMs: Double? = nil,
+        captureCallbackMaxMs: Double? = nil,
+        captureCopyAverageMs: Double? = nil,
+        captureCopyMaxMs: Double? = nil,
+        captureCopyPoolDrops: UInt64? = nil,
+        captureCopyInFlightDrops: UInt64? = nil,
+        sendQueueBytes: Int? = nil,
+        sendStartDelayAverageMs: Double? = nil,
+        sendStartDelayMaxMs: Double? = nil,
+        sendCompletionAverageMs: Double? = nil,
+        sendCompletionMaxMs: Double? = nil,
+        packetPacerAverageSleepMs: Double? = nil,
+        packetPacerMaxSleepMs: Int? = nil,
+        stalePacketDrops: UInt64? = nil,
+        generationAbortDrops: UInt64? = nil,
+        nonKeyframeHoldDrops: UInt64? = nil,
         usingHardwareEncoder: Bool? = nil,
         encoderGPURegistryID: UInt64? = nil,
         encodedWidth: Int? = nil,
@@ -334,6 +374,26 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.captureAdmissionDrops = captureAdmissionDrops
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs
+        self.captureIngressAverageMs = captureIngressAverageMs
+        self.captureIngressMaxMs = captureIngressMaxMs
+        self.preEncodeWaitAverageMs = preEncodeWaitAverageMs
+        self.preEncodeWaitMaxMs = preEncodeWaitMaxMs
+        self.captureCallbackAverageMs = captureCallbackAverageMs
+        self.captureCallbackMaxMs = captureCallbackMaxMs
+        self.captureCopyAverageMs = captureCopyAverageMs
+        self.captureCopyMaxMs = captureCopyMaxMs
+        self.captureCopyPoolDrops = captureCopyPoolDrops
+        self.captureCopyInFlightDrops = captureCopyInFlightDrops
+        self.sendQueueBytes = sendQueueBytes
+        self.sendStartDelayAverageMs = sendStartDelayAverageMs
+        self.sendStartDelayMaxMs = sendStartDelayMaxMs
+        self.sendCompletionAverageMs = sendCompletionAverageMs
+        self.sendCompletionMaxMs = sendCompletionMaxMs
+        self.packetPacerAverageSleepMs = packetPacerAverageSleepMs
+        self.packetPacerMaxSleepMs = packetPacerMaxSleepMs
+        self.stalePacketDrops = stalePacketDrops
+        self.generationAbortDrops = generationAbortDrops
+        self.nonKeyframeHoldDrops = nonKeyframeHoldDrops
         self.usingHardwareEncoder = usingHardwareEncoder
         self.encoderGPURegistryID = encoderGPURegistryID
         self.encodedWidth = encodedWidth

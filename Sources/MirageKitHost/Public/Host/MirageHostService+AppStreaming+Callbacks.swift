@@ -19,6 +19,13 @@ extension MirageHostService {
         case ignoreDuplicate
     }
 
+    enum AppLifecycleCandidateDisposition: String, Equatable, Sendable {
+        case eligible
+        case auxiliary
+        case visibleStreamBound
+        case claimedByActiveStream
+    }
+
     struct ResolvedWindowAddedEvent: Sendable, Equatable {
         let windowID: WindowID
         let title: String?
@@ -46,6 +53,36 @@ extension MirageHostService {
             return .ignoreDuplicate
         }
         return .enterCooldown
+    }
+
+    nonisolated static func appLifecycleCandidateDisposition(
+        candidate: AppStreamWindowCandidate,
+        visibleWindowIDs: Set<WindowID>,
+        claimedWindowIDs: Set<WindowID>
+    ) -> AppLifecycleCandidateDisposition {
+        guard candidate.classification == .primary else { return .auxiliary }
+        if visibleWindowIDs.contains(candidate.window.id) {
+            return .visibleStreamBound
+        }
+        if claimedWindowIDs.contains(candidate.window.id) {
+            return .claimedByActiveStream
+        }
+        return .eligible
+    }
+
+    nonisolated static func appLifecycleCandidateDispositionReason(
+        _ disposition: AppLifecycleCandidateDisposition
+    ) -> String {
+        switch disposition {
+        case .eligible:
+            "eligible"
+        case .auxiliary:
+            "auxiliary child window"
+        case .visibleStreamBound:
+            "already bound to a visible stream"
+        case .claimedByActiveStream:
+            "claimed by an active stream owner"
+        }
     }
 
     func findClientContext(clientID: UUID) -> ClientContext? {
@@ -78,19 +115,31 @@ extension MirageHostService {
 
     func handleNewWindowFromStreamedApp(bundleID: String, candidate: AppStreamWindowCandidate) async {
         let windowID = candidate.window.id
-        if candidate.classification == .auxiliary {
-            MirageLogger.host(
-                "Skipping auxiliary child window for app-stream inventory: \(windowID) (\(candidate.logMetadata))"
-            )
-            return
-        }
-
         guard let session = await appStreamManager.getSession(bundleIdentifier: bundleID),
               case .streaming = session.state else {
             return
         }
 
         if await appStreamManager.hasTrackedWindow(bundleIdentifier: bundleID, windowID: windowID) { return }
+
+        let visibleWindowIDs = Set(session.windowStreams.keys)
+        let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+            activeStreamIDs: Set(activeSessionByStreamID.keys)
+        )
+        let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
+        let disposition = Self.appLifecycleCandidateDisposition(
+            candidate: candidate,
+            visibleWindowIDs: visibleWindowIDs,
+            claimedWindowIDs: claimedWindowIDs
+        )
+        guard disposition == .eligible else {
+            MirageLogger.host(
+                "Skipping app lifecycle candidate \(windowID) for \(bundleID): " +
+                    "\(Self.appLifecycleCandidateDispositionReason(disposition)) (\(candidate.logMetadata))"
+            )
+            return
+        }
+
         if await tryFulfillPendingAppWindowReplacement(
             bundleID: bundleID,
             candidate: candidate,

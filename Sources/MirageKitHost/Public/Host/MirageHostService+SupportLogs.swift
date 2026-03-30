@@ -119,7 +119,7 @@ extension MirageHostService {
         }
     }
 
-    private func validateExistingClientTransferSession(
+    func validateExistingClientTransferSession(
         _ session: LoomAuthenticatedSession,
         expectedClient: MirageConnectedClient
     ) async throws {
@@ -135,7 +135,7 @@ extension MirageHostService {
         }
     }
 
-    private func terminalProgress(
+    func terminalProgress(
         from stream: AsyncStream<LoomTransferProgress>
     ) async -> LoomTransferProgress? {
         var lastProgress: LoomTransferProgress?

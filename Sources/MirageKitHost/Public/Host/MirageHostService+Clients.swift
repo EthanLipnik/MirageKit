@@ -37,6 +37,11 @@ extension MirageHostService {
             hostHardwareIconRequestTask?.cancel()
             hostHardwareIconRequestTask = nil
         }
+        if pendingHostWallpaperRequest?.clientID == client.id {
+            pendingHostWallpaperRequest = nil
+            hostWallpaperRequestTask?.cancel()
+            hostWallpaperRequestTask = nil
+        }
         if pendingHostSoftwareUpdateStatusRequest?.clientID == client.id {
             pendingHostSoftwareUpdateStatusRequest = nil
             hostSoftwareUpdateStatusRequestTask?.cancel()
@@ -47,8 +52,9 @@ extension MirageHostService {
         // Fail closed before asynchronous teardown work so queued handlers no longer
         // treat this client as active.
         var removedSessionID: UUID?
+        var removedClientContext: ClientContext?
         if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
-            clientsBySessionID.removeValue(forKey: key)
+            removedClientContext = clientsBySessionID.removeValue(forKey: key)
             removedSessionID = key
             stopReceiveLoop(sessionID: key)
         }
@@ -90,6 +96,12 @@ extension MirageHostService {
         transportRegistry.unregisterAllStreams(clientID: client.id)
         if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: client.id) {
             Task { try? await audioStream.close() }
+        }
+
+        // Close the authenticated control session so the remote client observes
+        // the disconnect immediately instead of waiting for heartbeat expiry.
+        if let removedClientContext {
+            await removedClientContext.controlChannel.cancel()
         }
 
         let hasConnectedClients = !connectedClients.isEmpty

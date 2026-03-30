@@ -443,6 +443,7 @@ final class FrameReassembler: @unchecked Sendable {
         var isComplete: Bool
         let totalFragments: UInt16
         let dataFragmentCount: Int
+        let fecBlockSize: Int
         var isKeyframe: Bool
         let timestamp: UInt64
         let receivedAt: Date
@@ -459,6 +460,7 @@ final class FrameReassembler: @unchecked Sendable {
             isComplete: Bool = false,
             totalFragments: UInt16,
             dataFragmentCount: Int,
+            fecBlockSize: Int,
             isKeyframe: Bool,
             timestamp: UInt64,
             receivedAt: Date,
@@ -474,6 +476,7 @@ final class FrameReassembler: @unchecked Sendable {
             self.isComplete = isComplete
             self.totalFragments = totalFragments
             self.dataFragmentCount = dataFragmentCount
+            self.fecBlockSize = fecBlockSize
             self.isKeyframe = isKeyframe
             self.timestamp = timestamp
             self.receivedAt = receivedAt

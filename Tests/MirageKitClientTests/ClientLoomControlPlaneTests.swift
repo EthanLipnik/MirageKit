@@ -181,6 +181,112 @@ struct ClientLoomControlPlaneTests {
     }
 
     @MainActor
+    @Test("Concurrent control sends remain intact on the Loom control stream")
+    func concurrentControlSendsRemainIntact() async throws {
+        let pair = try await makeLoopbackControlPair()
+
+        async let clientContext = pair.client.start(
+            localHello: pair.clientHello,
+            identityManager: pair.clientIdentityManager
+        )
+        async let serverContext = pair.server.start(
+            localHello: pair.serverHello,
+            identityManager: pair.serverIdentityManager
+        )
+        _ = try await (clientContext, serverContext)
+
+        let serverControlTask = Task {
+            try await MirageControlChannel.accept(from: pair.server)
+        }
+        let clientControl = try await MirageControlChannel.open(on: pair.client)
+        let serverControl = try await serverControlTask.value
+
+        let expectedRequestID = UUID()
+        let expectedIconData = Data(repeating: 0xA5, count: 256 * 1024)
+        let expectedStatus = HostSoftwareUpdateStatusMessage(
+            isSparkleAvailable: true,
+            isCheckingForUpdates: false,
+            isInstallInProgress: false,
+            channel: .release,
+            automationMode: .metadataOnly,
+            installDisposition: .idle,
+            lastBlockReason: nil,
+            lastInstallResultCode: nil,
+            currentVersion: "1.0.0",
+            availableVersion: nil,
+            availableVersionTitle: nil,
+            releaseNotesSummary: nil,
+            releaseNotesBody: nil,
+            releaseNotesFormat: nil,
+            lastCheckedAtMs: nil
+        )
+
+        let receiveTask = Task<[ControlMessage], Error> {
+            var messages: [ControlMessage] = []
+            messages.reserveCapacity(3)
+            for _ in 0..<3 {
+                messages.append(try await receiveControlMessage(from: serverControl))
+            }
+            return messages
+        }
+
+        do {
+            async let sendIcon: Void = clientControl.send(
+                .hostHardwareIcon,
+                content: HostHardwareIconMessage(
+                    pngData: expectedIconData,
+                    iconName: "test-hardware-icon",
+                    hardwareModelIdentifier: "Mac16,5",
+                    hardwareMachineFamily: "macBook"
+                )
+            )
+            async let sendAppList: Void = clientControl.send(
+                .appListRequest,
+                content: AppListRequestMessage(
+                    forceRefresh: true,
+                    forceIconReset: true,
+                    priorityBundleIdentifiers: ["com.apple.Safari"],
+                    requestID: expectedRequestID
+                )
+            )
+            async let sendStatus: Void = clientControl.send(
+                .hostSoftwareUpdateStatus,
+                content: expectedStatus
+            )
+
+            _ = try await (sendIcon, sendAppList, sendStatus)
+
+            let receivedMessages = try await receiveTask.value
+            #expect(receivedMessages.count == 3)
+
+            let iconEnvelope = try #require(receivedMessages.first { $0.type == .hostHardwareIcon })
+            let iconMessage = try iconEnvelope.decode(HostHardwareIconMessage.self)
+            #expect(iconMessage.pngData == expectedIconData)
+            #expect(iconMessage.iconName == "test-hardware-icon")
+
+            let appListEnvelope = try #require(receivedMessages.first { $0.type == .appListRequest })
+            let appListMessage = try appListEnvelope.decode(AppListRequestMessage.self)
+            #expect(appListMessage.requestID == expectedRequestID)
+            #expect(appListMessage.forceIconReset == true)
+
+            let statusEnvelope = try #require(receivedMessages.first { $0.type == .hostSoftwareUpdateStatus })
+            let statusMessage = try statusEnvelope.decode(HostSoftwareUpdateStatusMessage.self)
+            #expect(statusMessage.currentVersion == expectedStatus.currentVersion)
+            #expect(statusMessage.channel == expectedStatus.channel)
+        } catch {
+            receiveTask.cancel()
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
+
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
+    }
+
+    @MainActor
     @Test("TCP fallback sessions keep control traffic and labeled media streams coherent")
     func tcpFallbackSessionKeepsControlAndMediaTrafficCoherent() async throws {
         let pair = try await makeLoopbackControlPair()

@@ -38,6 +38,17 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let restartEligible: Bool
     }
 
+    struct TelemetrySnapshot: Sendable, Equatable {
+        let callbackDurationTotalMs: Double
+        let callbackDurationMaxMs: Double
+        let callbackSampleCount: UInt64
+        let cadenceDropCount: UInt64
+        let poolDropCount: UInt64
+        let inFlightDropCount: UInt64
+        let admissionDropCount: UInt64
+        let copyTelemetry: CaptureFrameCopier.TelemetrySnapshot?
+    }
+
     private let onFrame: @Sendable (CapturedFrame) -> Void
     private let onAudio: (@Sendable (CapturedAudioBuffer) -> Void)?
     private let onKeyframeRequest: @Sendable (KeyframeRequestReason) -> Void
@@ -63,6 +74,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var callbackDurationTotalMs: Double = 0
     private var callbackDurationMaxMs: Double = 0
     private var callbackSampleCount: UInt64 = 0
+    private var callbackDurationTotalCumulativeMs: Double = 0
+    private var callbackDurationMaxCumulativeMs: Double = 0
+    private var callbackSampleCountCumulative: UInt64 = 0
     private var lastCallbackLogTime: CFAbsoluteTime = 0
     private var audioBufferCount: UInt64 = 0
     private var lastAudioLogTime: CFAbsoluteTime = 0
@@ -91,6 +105,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var lastCadenceAdmittedPresentationTime: Double = 0
     private var nextCadenceAdmitPresentationTime: Double = 0
     private var cadenceDropCount: UInt64 = 0
+    private var cadenceDropTotalCount: UInt64 = 0
     private var cadencePassCount: UInt64 = 0
     private var cadenceSkewTotalMs: Double = 0
     private var cadenceSkewSampleCount: UInt64 = 0
@@ -105,10 +120,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let frameCopier: CaptureFrameCopier?
     private var loggedCopyFallback = false
     private var poolDropCount: UInt64 = 0
+    private var poolDropTotalCount: UInt64 = 0
     private var lastPoolLogTime: CFAbsoluteTime = 0
     private var inFlightDropCount: UInt64 = 0
+    private var inFlightDropTotalCount: UInt64 = 0
     private var lastInFlightLogTime: CFAbsoluteTime = 0
     private var admissionDropCount: UInt64 = 0
+    private var admissionDropTotalCount: UInt64 = 0
     private var lastAdmissionLogTime: CFAbsoluteTime = 0
     private let poolLogLock = NSLock()
     private var loggedPoolWarmFailure = false
@@ -215,6 +233,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
         stopWatchdogTimer()
         startWatchdogTimer()
+    }
+
+    func telemetrySnapshot() -> TelemetrySnapshot {
+        let copyTelemetry = frameCopier?.telemetrySnapshot()
+        return poolLogLock.withLock {
+            TelemetrySnapshot(
+                callbackDurationTotalMs: callbackDurationTotalCumulativeMs,
+                callbackDurationMaxMs: callbackDurationMaxCumulativeMs,
+                callbackSampleCount: callbackSampleCountCumulative,
+                cadenceDropCount: cadenceDropTotalCount,
+                poolDropCount: poolDropTotalCount,
+                inFlightDropCount: inFlightDropTotalCount,
+                admissionDropCount: admissionDropTotalCount,
+                copyTelemetry: copyTelemetry
+            )
+        }
     }
 
     /// Reset fallback state (called during dimension changes)
@@ -740,23 +774,28 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     private func recordCallbackDuration(_ durationMs: Double) {
-        callbackDurationTotalMs += durationMs
-        callbackDurationMaxMs = max(callbackDurationMaxMs, durationMs)
-        callbackSampleCount += 1
         let now = CFAbsoluteTimeGetCurrent()
-        if lastCallbackLogTime == 0 {
+        poolLogLock.withLock {
+            callbackDurationTotalMs += durationMs
+            callbackDurationMaxMs = max(callbackDurationMaxMs, durationMs)
+            callbackSampleCount += 1
+            callbackDurationTotalCumulativeMs += durationMs
+            callbackDurationMaxCumulativeMs = max(callbackDurationMaxCumulativeMs, durationMs)
+            callbackSampleCountCumulative &+= 1
+            if lastCallbackLogTime == 0 {
+                lastCallbackLogTime = now
+                return
+            }
+            guard now - lastCallbackLogTime > 2.0 else { return }
+            let avgMs = callbackSampleCount > 0 ? callbackDurationTotalMs / Double(callbackSampleCount) : 0
+            let avgText = avgMs.formatted(.number.precision(.fractionLength(2)))
+            let maxText = callbackDurationMaxMs.formatted(.number.precision(.fractionLength(2)))
+            MirageLogger.capture("Capture callback: avg=\(avgText)ms max=\(maxText)ms")
+            callbackDurationTotalMs = 0
+            callbackDurationMaxMs = 0
+            callbackSampleCount = 0
             lastCallbackLogTime = now
-            return
         }
-        guard now - lastCallbackLogTime > 2.0 else { return }
-        let avgMs = callbackSampleCount > 0 ? callbackDurationTotalMs / Double(callbackSampleCount) : 0
-        let avgText = avgMs.formatted(.number.precision(.fractionLength(2)))
-        let maxText = callbackDurationMaxMs.formatted(.number.precision(.fractionLength(2)))
-        MirageLogger.capture("Capture callback: avg=\(avgText)ms max=\(maxText)ms")
-        callbackDurationTotalMs = 0
-        callbackDurationMaxMs = 0
-        callbackSampleCount = 0
-        lastCallbackLogTime = now
     }
 
     private func emitAudio(sampleBuffer: CMSampleBuffer) {
@@ -979,6 +1018,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private func logPoolDrop() {
         poolLogLock.withLock {
             poolDropCount += 1
+            poolDropTotalCount &+= 1
             guard MirageLogger.isEnabled(.capture) else { return }
             let now = CFAbsoluteTimeGetCurrent()
             if lastPoolLogTime == 0 || now - lastPoolLogTime > 2.0 {
@@ -992,6 +1032,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private func logInFlightDrop() {
         poolLogLock.withLock {
             inFlightDropCount += 1
+            inFlightDropTotalCount &+= 1
             guard MirageLogger.isEnabled(.capture) else { return }
             let now = CFAbsoluteTimeGetCurrent()
             if lastInFlightLogTime == 0 || now - lastInFlightLogTime > 2.0 {
@@ -1005,6 +1046,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private func logAdmissionDrop() {
         poolLogLock.withLock {
             admissionDropCount += 1
+            admissionDropTotalCount &+= 1
             guard MirageLogger.isEnabled(.capture) else { return }
             let now = CFAbsoluteTimeGetCurrent()
             if lastAdmissionLogTime == 0 || now - lastAdmissionLogTime > 2.0 {
@@ -1066,6 +1108,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private func logCadenceDrop() {
         poolLogLock.withLock {
             cadenceDropCount += 1
+            cadenceDropTotalCount &+= 1
             guard MirageLogger.isEnabled(.capture) else { return }
             let now = CFAbsoluteTimeGetCurrent()
             if lastCadenceLogTime == 0 || now - lastCadenceLogTime > 2.0 {

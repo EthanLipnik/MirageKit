@@ -17,6 +17,19 @@ import Metal
 
 /// Copies SCK pixel buffers into owned CVPixelBuffers to release SCK buffers quickly.
 final class CaptureFrameCopier: @unchecked Sendable {
+    struct TelemetrySnapshot: Sendable, Equatable {
+        let copyAttempts: UInt64
+        let copySuccesses: UInt64
+        let metalCopies: UInt64
+        let cpuCopies: UInt64
+        let copyFailures: UInt64
+        let inFlightLimitDrops: UInt64
+        let poolFailures: UInt64
+        let bufferFailures: UInt64
+        let durationTotalMs: Double
+        let durationMaxMs: Double
+    }
+
     enum CopyResult {
         case copied(CVPixelBuffer)
         case poolExhausted
@@ -80,6 +93,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private var poolConfig: PoolConfig?
     private let telemetryLock = NSLock()
     private var telemetry = CopyTelemetry()
+    private var telemetryTotals = CopyTelemetry()
     private var lastTelemetryLogTime: CFAbsoluteTime = 0
     private let telemetryLogInterval: CFAbsoluteTime = 2.0
     private let backendFallbackDurationDefault: CFAbsoluteTime = 5.0
@@ -96,6 +110,24 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private var metalTextureCache: CVMetalTextureCache?
 
     init() {}
+
+    func telemetrySnapshot() -> TelemetrySnapshot {
+        telemetryLock.lock()
+        let snapshot = telemetryTotals
+        telemetryLock.unlock()
+        return TelemetrySnapshot(
+            copyAttempts: snapshot.copyAttempts,
+            copySuccesses: snapshot.copySuccesses,
+            metalCopies: snapshot.metalCopies,
+            cpuCopies: snapshot.cpuCopies,
+            copyFailures: snapshot.copyFailures,
+            inFlightLimitDrops: snapshot.inFlightLimitDrops,
+            poolFailures: snapshot.poolFailures,
+            bufferFailures: snapshot.bufferFailures,
+            durationTotalMs: snapshot.durationTotalMs,
+            durationMaxMs: snapshot.durationMaxMs
+        )
+    }
 
     func preparePool(width: Int, height: Int, pixelFormat: OSType, minimumBufferCount: Int) -> Bool {
         let config = PoolConfig(
@@ -382,6 +414,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private func recordInFlightLimitDrop() {
         telemetryLock.lock()
         telemetry.inFlightLimitDrops += 1
+        telemetryTotals.inFlightLimitDrops += 1
         telemetryLock.unlock()
         logTelemetryIfNeeded()
     }
@@ -389,6 +422,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private func recordPoolFailure() {
         telemetryLock.lock()
         telemetry.poolFailures += 1
+        telemetryTotals.poolFailures += 1
         telemetryLock.unlock()
         logTelemetryIfNeeded()
     }
@@ -396,6 +430,7 @@ final class CaptureFrameCopier: @unchecked Sendable {
     private func recordBufferFailure() {
         telemetryLock.lock()
         telemetry.bufferFailures += 1
+        telemetryTotals.bufferFailures += 1
         telemetryLock.unlock()
         logTelemetryIfNeeded()
     }
@@ -413,15 +448,23 @@ final class CaptureFrameCopier: @unchecked Sendable {
         }
         telemetryLock.lock()
         telemetry.copyAttempts += 1
+        telemetryTotals.copyAttempts += 1
         if usedMetal { telemetry.metalCopies += 1 } else {
             telemetry.cpuCopies += 1
+        }
+        if usedMetal { telemetryTotals.metalCopies += 1 } else {
+            telemetryTotals.cpuCopies += 1
         }
         if success {
             telemetry.copySuccesses += 1
             telemetry.durationTotalMs += durationMs
             telemetry.durationMaxMs = max(telemetry.durationMaxMs, durationMs)
+            telemetryTotals.copySuccesses += 1
+            telemetryTotals.durationTotalMs += durationMs
+            telemetryTotals.durationMaxMs = max(telemetryTotals.durationMaxMs, durationMs)
         } else {
             telemetry.copyFailures += 1
+            telemetryTotals.copyFailures += 1
         }
         telemetryLock.unlock()
         logTelemetryIfNeeded()

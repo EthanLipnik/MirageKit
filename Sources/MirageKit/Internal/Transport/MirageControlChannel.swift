@@ -8,11 +8,49 @@
 import Foundation
 import Loom
 
+// The Mirage control stream carries mixed metadata and lifecycle traffic.
+// Serialize writes so host-side response tasks cannot overlap sends on the
+// same multiplexed stream during connection setup or app-selection refreshes.
+private actor MirageControlChannelSendLane {
+    private var tail: Task<Void, Never>?
+    private var latestOperationID: UInt64 = 0
+
+    func perform(_ operation: @escaping @Sendable () async throws -> Void) async throws {
+        let previous = tail
+        latestOperationID &+= 1
+        let operationID = latestOperationID
+
+        let task = Task<Void, Error> {
+            _ = await previous?.result
+            try Task.checkCancellation()
+            try await operation()
+        }
+
+        tail = Task {
+            _ = await task.result
+        }
+
+        do {
+            try await task.value
+        } catch {
+            if latestOperationID == operationID {
+                tail = nil
+            }
+            throw error
+        }
+
+        if latestOperationID == operationID {
+            tail = nil
+        }
+    }
+}
+
 package final class MirageControlChannel: @unchecked Sendable {
     package static let label = "com.ethanlipnik.mirage.control.v1"
 
     package let session: LoomAuthenticatedSession
     package let stream: LoomMultiplexedStream
+    private let sendLane = MirageControlChannelSendLane()
 
     package init(session: LoomAuthenticatedSession, stream: LoomMultiplexedStream) {
         self.session = session
@@ -24,7 +62,7 @@ package final class MirageControlChannel: @unchecked Sendable {
     }
 
     package func send(_ message: ControlMessage) async throws {
-        try await stream.send(message.serialize())
+        try await sendSerialized(message.serialize())
     }
 
     package func send(_ type: ControlMessageType, content: some Encodable) async throws {
@@ -32,7 +70,9 @@ package final class MirageControlChannel: @unchecked Sendable {
     }
 
     package func sendSerialized(_ data: Data) async throws {
-        try await stream.send(data)
+        try await sendLane.perform { [stream] in
+            try await stream.send(data)
+        }
     }
 
     package func sendBestEffort(_ message: ControlMessage) {

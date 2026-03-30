@@ -2,32 +2,25 @@
 //  MessageTypes+HostMetadata.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 2/11/26.
+//  Created by Ethan Lipnik on 3/29/26.
 //
-//  Host metadata message type definitions.
+//  Host metadata request/response message definitions.
 //
 
 import Foundation
 
-/// Request host hardware icon data from the connected host (Client -> Host).
-package struct HostHardwareIconRequestMessage: Codable {
-    /// Preferred max pixel dimension for the encoded icon PNG payload.
+package struct HostHardwareIconRequestMessage: Codable, Sendable {
     package let preferredMaxPixelSize: Int
 
-    package init(preferredMaxPixelSize: Int = 512) {
+    package init(preferredMaxPixelSize: Int) {
         self.preferredMaxPixelSize = preferredMaxPixelSize
     }
 }
 
-/// Host hardware icon payload (Host -> Client).
-package struct HostHardwareIconMessage: Codable {
-    /// PNG-encoded icon payload.
+package struct HostHardwareIconMessage: Codable, Sendable {
     package let pngData: Data
-    /// Host-resolved icon basename.
     package let iconName: String?
-    /// Host hardware model identifier.
     package let hardwareModelIdentifier: String?
-    /// Host machine-family hint (`macBook`, `iMac`, `macMini`, `macStudio`, `macPro`, `macGeneric`).
     package let hardwareMachineFamily: String?
 
     package init(
@@ -40,5 +33,46 @@ package struct HostHardwareIconMessage: Codable {
         self.iconName = iconName
         self.hardwareModelIdentifier = hardwareModelIdentifier
         self.hardwareMachineFamily = hardwareMachineFamily
+    }
+}
+
+package struct HostWallpaperRequestMessage: Codable, Sendable {
+    package let requestID: UUID
+    package let preferredMaxPixelWidth: Int
+    package let preferredMaxPixelHeight: Int
+
+    package init(
+        requestID: UUID,
+        preferredMaxPixelWidth: Int,
+        preferredMaxPixelHeight: Int
+    ) {
+        self.requestID = requestID
+        self.preferredMaxPixelWidth = preferredMaxPixelWidth
+        self.preferredMaxPixelHeight = preferredMaxPixelHeight
+    }
+}
+
+package struct HostWallpaperMessage: Codable, Sendable {
+    package let requestID: UUID?
+    package let fileName: String?
+    package let pixelWidth: Int
+    package let pixelHeight: Int
+    package let bytesPerPixelEstimate: Int
+    package let errorMessage: String?
+
+    package init(
+        requestID: UUID? = nil,
+        fileName: String? = nil,
+        pixelWidth: Int,
+        pixelHeight: Int,
+        bytesPerPixelEstimate: Int,
+        errorMessage: String? = nil
+    ) {
+        self.requestID = requestID
+        self.fileName = fileName
+        self.pixelWidth = pixelWidth
+        self.pixelHeight = pixelHeight
+        self.bytesPerPixelEstimate = bytesPerPixelEstimate
+        self.errorMessage = errorMessage
     }
 }

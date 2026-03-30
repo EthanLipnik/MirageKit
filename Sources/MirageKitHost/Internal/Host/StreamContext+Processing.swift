@@ -76,6 +76,10 @@ extension StreamContext {
 
     func recordCaptureIngress(_ frame: CapturedFrame) {
         captureIngressIntervalCount += 1
+        let ingressDelayMs = max(0, (CFAbsoluteTimeGetCurrent() - frame.captureTime) * 1000)
+        captureIngressDelayTotalMs += ingressDelayMs
+        captureIngressDelayMaxMs = max(captureIngressDelayMaxMs, ingressDelayMs)
+        captureIngressDelayCount &+= 1
         lastCapturedFrameTime = CFAbsoluteTimeGetCurrent()
         lastCapturedFrame = frame
         lastCapturedDuration = frame.duration
@@ -397,6 +401,10 @@ extension StreamContext {
                 guard let encoder else { continue }
                 encodeAttemptIntervalCount += 1
                 let encodeStartTime = CFAbsoluteTimeGetCurrent()
+                let preEncodeWaitMs = max(0, (encodeStartTime - frame.captureTime) * 1000)
+                preEncodeWaitTotalMs += preEncodeWaitMs
+                preEncodeWaitMaxMs = max(preEncodeWaitMaxMs, preEncodeWaitMs)
+                preEncodeWaitCount &+= 1
                 if startupBaseTime > 0, !startupFirstEncodeLogged {
                     startupFirstEncodeLogged = true
                     logStartupEvent("first encode attempt")
@@ -598,6 +606,8 @@ extension StreamContext {
             }
             let captureValidation = captureValidationSnapshot()
             let encoderValidation = await encoder?.runtimeValidationSnapshot()
+            let captureTelemetry = await captureEngine?.captureTelemetrySnapshot()
+            let packetTelemetry = await packetSender?.telemetrySnapshot()
             let displayP3CoverageStatus = resolvedDisplayP3CoverageStatus(
                 capture: captureValidation,
                 encoder: encoderValidation
@@ -612,6 +622,36 @@ extension StreamContext {
             let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
             let encodedWidth = Int(currentEncodedSize.width)
             let encodedHeight = Int(currentEncodedSize.height)
+            let captureIngressAverageMs: Double? = captureIngressDelayCount > 0
+                ? captureIngressDelayTotalMs / Double(captureIngressDelayCount)
+                : nil
+            let preEncodeWaitAverageMs: Double? = preEncodeWaitCount > 0
+                ? preEncodeWaitTotalMs / Double(preEncodeWaitCount)
+                : nil
+            let captureCallbackAverageMs: Double? = if let captureTelemetry,
+                captureTelemetry.callbackSampleCount > 0 {
+                captureTelemetry.callbackDurationTotalMs / Double(captureTelemetry.callbackSampleCount)
+            } else {
+                nil
+            }
+            let captureCopyAverageMs: Double? = if let copyTelemetry = captureTelemetry?.copyTelemetry,
+                copyTelemetry.copySuccesses > 0 {
+                copyTelemetry.durationTotalMs / Double(copyTelemetry.copySuccesses)
+            } else {
+                nil
+            }
+            let captureCallbackMaxMs: Double? = if let captureTelemetry,
+                captureTelemetry.callbackSampleCount > 0 {
+                captureTelemetry.callbackDurationMaxMs
+            } else {
+                nil
+            }
+            let captureCopyMaxMs: Double? = if let copyTelemetry = captureTelemetry?.copyTelemetry,
+                copyTelemetry.copySuccesses > 0 {
+                copyTelemetry.durationMaxMs
+            } else {
+                nil
+            }
             let message = StreamMetricsMessage(
                 streamID: streamID,
                 encodedFPS: encodedFPS,
@@ -628,6 +668,26 @@ extension StreamContext {
                 captureAdmissionDrops: captureDroppedIntervalCount,
                 frameBudgetMs: frameBudgetMs,
                 averageEncodeMs: resolvedAverageEncodeMs,
+                captureIngressAverageMs: captureIngressAverageMs,
+                captureIngressMaxMs: captureIngressDelayCount > 0 ? captureIngressDelayMaxMs : nil,
+                preEncodeWaitAverageMs: preEncodeWaitAverageMs,
+                preEncodeWaitMaxMs: preEncodeWaitCount > 0 ? preEncodeWaitMaxMs : nil,
+                captureCallbackAverageMs: captureCallbackAverageMs,
+                captureCallbackMaxMs: captureCallbackMaxMs,
+                captureCopyAverageMs: captureCopyAverageMs,
+                captureCopyMaxMs: captureCopyMaxMs,
+                captureCopyPoolDrops: captureTelemetry?.poolDropCount,
+                captureCopyInFlightDrops: captureTelemetry?.inFlightDropCount,
+                sendQueueBytes: packetTelemetry?.queuedBytes,
+                sendStartDelayAverageMs: packetTelemetry?.sendStartDelayAverageMs,
+                sendStartDelayMaxMs: packetTelemetry?.sendStartDelayMaxMs,
+                sendCompletionAverageMs: packetTelemetry?.sendCompletionAverageMs,
+                sendCompletionMaxMs: packetTelemetry?.sendCompletionMaxMs,
+                packetPacerAverageSleepMs: packetTelemetry?.packetPacerSleepAverageMs,
+                packetPacerMaxSleepMs: packetTelemetry?.packetPacerSleepMaxMs,
+                stalePacketDrops: packetTelemetry?.stalePacketDrops,
+                generationAbortDrops: packetTelemetry?.generationAbortDrops,
+                nonKeyframeHoldDrops: packetTelemetry?.nonKeyframeHoldDrops,
                 usingHardwareEncoder: encoderValidation?.usingHardwareEncoder,
                 encoderGPURegistryID: encoderValidation?.encoderGPURegistryID,
                 encodedWidth: encodedWidth > 0 ? encodedWidth : nil,
@@ -915,6 +975,8 @@ extension StreamContext {
                 baselineLowLatencyLimit = currentFrameRate >= 120
                     ? 2
                     : StreamContext.gameModeLowLatencyInFlightLimit
+            } else if streamKind == .desktop, currentFrameRate <= 60, maxInFlightFramesCap > 1 {
+                baselineLowLatencyLimit = 2
             } else {
                 baselineLowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
             }

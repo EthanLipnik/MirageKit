@@ -51,7 +51,8 @@ extension MirageClientService {
                 }
 
                 // A quality-test ping already in flight proves the connection is alive.
-                guard self.pingContinuation == nil else {
+                guard self.pingContinuation == nil,
+                      self.hostWallpaperContinuation == nil else {
                     consecutiveFailures = 0
                     continue
                 }
