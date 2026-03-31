@@ -161,6 +161,9 @@ public class InputCapturingView: UIView {
     /// Dictation behavior selection for latency vs finalization quality.
     public var dictationMode: MirageDictationMode = .best
 
+    /// Dictation language selection. System default follows the current device locale.
+    public var dictationLocalePreference: MirageDictationLocalePreference = .system
+
     var isDictationActive: Bool = false
     var lastHandledDictationToggleRequestID: UInt64 = 0
     var dictationTask: Task<Void, Never>?

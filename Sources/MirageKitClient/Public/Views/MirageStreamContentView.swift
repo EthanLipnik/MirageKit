@@ -54,6 +54,7 @@ public struct MirageStreamContentView: View {
     public let onDictationStateChanged: ((Bool) -> Void)?
     public let onDictationError: ((String) -> Void)?
     public let dictationMode: MirageDictationMode
+    public let dictationLocalePreference: MirageDictationLocalePreference
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
     #if os(iOS) || os(visionOS)
@@ -118,6 +119,7 @@ public struct MirageStreamContentView: View {
     ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
     ///   - onDictationError: Optional callback for user-facing dictation errors.
     ///   - dictationMode: Dictation behavior for realtime versus finalized output.
+    ///   - dictationLocalePreference: Dictation language selection.
     ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
     public init(
         session: MirageStreamSessionState,
@@ -140,6 +142,7 @@ public struct MirageStreamContentView: View {
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
+        dictationLocalePreference: MirageDictationLocalePreference = .system,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil,
         onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil,
@@ -166,6 +169,7 @@ public struct MirageStreamContentView: View {
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
         self.dictationMode = dictationMode
+        self.dictationLocalePreference = dictationLocalePreference
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
         #if os(iOS) || os(visionOS)
@@ -215,6 +219,7 @@ public struct MirageStreamContentView: View {
                 onDictationStateChanged: onDictationStateChanged,
                 onDictationError: onDictationError,
                 dictationMode: dictationMode,
+                dictationLocalePreference: dictationLocalePreference,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize,

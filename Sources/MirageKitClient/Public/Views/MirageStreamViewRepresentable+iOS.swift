@@ -64,6 +64,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Dictation behavior selection for latency vs finalization quality.
     public var dictationMode: MirageDictationMode
 
+    /// Dictation locale selection. System default follows the current device locale.
+    public var dictationLocalePreference: MirageDictationLocalePreference
+
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
@@ -99,6 +102,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
+        dictationLocalePreference: MirageDictationLocalePreference = .system,
         cursorLockEnabled: Bool = false,
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil,
@@ -122,6 +126,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
         self.dictationMode = dictationMode
+        self.dictationLocalePreference = dictationLocalePreference
         self.cursorLockEnabled = cursorLockEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
@@ -164,6 +169,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             pencilInputMode: pencilInputMode,
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
+            dictationLocalePreference: dictationLocalePreference,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
@@ -195,6 +201,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             pencilInputMode: pencilInputMode,
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
+            dictationLocalePreference: dictationLocalePreference,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
@@ -305,6 +312,7 @@ public final class MirageStreamViewController: UIViewController {
         pencilInputMode: MiragePencilInputMode,
         dictationToggleRequestID: UInt64,
         dictationMode: MirageDictationMode,
+        dictationLocalePreference: MirageDictationLocalePreference,
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
@@ -321,6 +329,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.pencilInputMode = pencilInputMode
         captureView.dictationToggleRequestID = dictationToggleRequestID
         captureView.dictationMode = dictationMode
+        captureView.dictationLocalePreference = dictationLocalePreference
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
         captureView.cursorLockEnabled = cursorLockEnabled

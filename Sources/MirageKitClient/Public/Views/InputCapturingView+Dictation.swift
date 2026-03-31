@@ -40,14 +40,15 @@ extension InputCapturingView {
             do {
                 try await requestDictationPermissions()
                 try await configureAudioSessionForDictation()
+                let dictationLocale = try await resolveDictationLocale()
                 MirageLogger.client("Dictation permissions and audio session ready")
 
                 if #available(iOS 26.0, visionOS 26.0, *) {
-                    MirageLogger.client("Starting modern dictation analyzer locale=\(Locale.autoupdatingCurrent.identifier)")
-                    try await startSpeechAnalyzerDictationModern()
+                    MirageLogger.client("Starting modern dictation analyzer locale=\(dictationLocale.identifier)")
+                    try await startSpeechAnalyzerDictationModern(locale: dictationLocale)
                 } else {
-                    MirageLogger.client("Starting legacy dictation recognizer locale=\(Locale.autoupdatingCurrent.identifier)")
-                    try startSpeechRecognizerDictationLegacy()
+                    MirageLogger.client("Starting legacy dictation recognizer locale=\(dictationLocale.identifier)")
+                    try startSpeechRecognizerDictationLegacy(locale: dictationLocale)
                 }
 
                 isDictationActive = true
@@ -168,9 +169,16 @@ extension InputCapturingView {
         dictationAudioSessionActive = true
     }
 
+    private func resolveDictationLocale() async throws -> Locale {
+        guard let locale = await MirageDictationLocaleSupport.resolvedLocale(for: dictationLocalePreference) else {
+            MirageLogger.client("Dictation locale resolution failed preference=\(dictationLocalePreference.rawValue)")
+            throw DictationError.recognizerUnavailable
+        }
+        return locale
+    }
+
     @available(iOS 26.0, visionOS 26.0, *)
-    private func startSpeechAnalyzerDictationModern() async throws {
-        let locale = Locale.autoupdatingCurrent
+    private func startSpeechAnalyzerDictationModern(locale: Locale) async throws {
         let moduleChoice = DictationModuleChoice(locale: locale, mode: dictationMode)
         MirageLogger.client("Dictation analyzer module=\(String(describing: moduleChoice)) locale=\(locale.identifier)")
         dictationLastCommittedText = ""
@@ -262,11 +270,11 @@ extension InputCapturingView {
         }
     }
 
-    private func startSpeechRecognizerDictationLegacy() throws {
+    private func startSpeechRecognizerDictationLegacy(locale: Locale) throws {
         dictationLastCommittedText = ""
 
-        guard let recognizer = SFSpeechRecognizer(locale: .autoupdatingCurrent), recognizer.isAvailable else {
-            MirageLogger.client("Legacy dictation recognizer unavailable locale=\(Locale.autoupdatingCurrent.identifier)")
+        guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
+            MirageLogger.client("Legacy dictation recognizer unavailable locale=\(locale.identifier)")
             throw DictationError.recognizerUnavailable
         }
 
