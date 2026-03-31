@@ -9,6 +9,9 @@ import Foundation
 
 /// Represents a keyboard event
 public struct MirageKeyEvent: Codable, Sendable, Hashable {
+    /// Reserved key code for Unicode-only injection when no physical macOS key maps cleanly.
+    public static let unicodeScalarFallbackKeyCode = UInt16.max
+
     /// Virtual key code
     public let keyCode: UInt16
 
@@ -26,6 +29,11 @@ public struct MirageKeyEvent: Codable, Sendable, Hashable {
 
     /// Event timestamp
     public let timestamp: TimeInterval
+
+    /// Whether this event should be injected through the Unicode fallback path.
+    public var usesUnicodeScalarFallback: Bool {
+        keyCode == Self.unicodeScalarFallbackKeyCode
+    }
 
     /// Creates a keyboard event payload.
     ///

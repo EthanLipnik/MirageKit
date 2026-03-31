@@ -5,12 +5,14 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
-import AVFoundation
 import Foundation
-import SwiftUI
 import MirageKit
+import SwiftUI
 #if os(macOS)
 import AppKit
+#endif
+#if os(iOS) || os(visionOS)
+import UIKit
 #endif
 
 func isMeaningfulAppResizeAcknowledgement(
@@ -57,15 +59,6 @@ public struct MirageStreamContentView: View {
     public let dictationLocalePreference: MirageDictationLocalePreference
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
-    #if os(iOS) || os(visionOS)
-    /// Called once when the display layer is ready (e.g. for PiP integration).
-    public var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
-    /// When `true`, local presentation remains active while the app is backgrounded
-    /// and through temporary UIKit detachment during PiP ownership.
-    public var keepRenderingWhenBackgrounded: Bool = false
-    /// When `true`, display-resolution-change messages are suppressed (e.g. during PiP).
-    public var suppressResizeEvents: Bool = false
-    #endif
     private let desktopResizeAckTimeout: Duration = .seconds(3)
     private let desktopResizeConvergenceTolerance: CGFloat = 4
     private let desktopResizeSendDebounce: Duration = .milliseconds(120)
@@ -73,8 +66,8 @@ public struct MirageStreamContentView: View {
     /// Resize holdoff task used during foreground transitions (iOS).
     @State private var resizeHoldoffTask: Task<Void, Never>?
 
-    /// Whether resize events are currently allowed.
-    @State private var allowsResizeEvents: Bool = true
+    /// Foreground/background gating for local resize dispatch.
+    @State private var resizeLifecycleState: DesktopResizeLifecycleState = .active
 
     /// Whether the client is currently waiting for host to complete resize.
     @State private var isResizing: Bool = false
@@ -144,10 +137,7 @@ public struct MirageStreamContentView: View {
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
         maxDrawableSize: CGSize? = nil,
-        onWindowWillClose: (() -> Void)? = nil,
-        onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil,
-        keepRenderingWhenBackgrounded: Bool = false,
-        suppressResizeEvents: Bool = false
+        onWindowWillClose: (() -> Void)? = nil
     ) {
         self.session = session
         self.sessionStore = sessionStore
@@ -172,11 +162,6 @@ public struct MirageStreamContentView: View {
         self.dictationLocalePreference = dictationLocalePreference
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
-        #if os(iOS) || os(visionOS)
-        self.onDisplayLayerReady = onDisplayLayerReady
-        self.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
-        self.suppressResizeEvents = suppressResizeEvents
-        #endif
     }
 
     public var body: some View {
@@ -222,9 +207,7 @@ public struct MirageStreamContentView: View {
                 dictationLocalePreference: dictationLocalePreference,
                 cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
                 presentationTier: streamPresentationTier,
-                maxDrawableSize: maxDrawableSize,
-                keepRenderingWhenBackgrounded: keepRenderingWhenBackgrounded,
-                onDisplayLayerReady: onDisplayLayerReady
+                maxDrawableSize: maxDrawableSize
             )
             .ignoresSafeArea()
             .blur(radius: resizeBlurRadius)
@@ -323,6 +306,8 @@ public struct MirageStreamContentView: View {
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
         }
         .onDisappear {
+            resizeHoldoffTask?.cancel()
+            resizeHoldoffTask = nil
             resizeFallbackTask?.cancel()
             resizeFallbackTask = nil
             displayResolutionTask?.cancel()
@@ -335,15 +320,15 @@ public struct MirageStreamContentView: View {
             appResizeAckTimeoutTask?.cancel()
             appResizeAckTimeoutTask = nil
             awaitingAppResizeAck = false
+            appResizeBaselineAcknowledgement = nil
             pendingDesktopDisplayResolutionAfterAck = .zero
             desktopResizeAckTimeoutTask?.cancel()
             desktopResizeAckTimeoutTask = nil
+            awaitingDesktopResizeAck = false
+            sentDesktopPostAckCorrection = false
+            resizeLifecycleState = .active
             setLocalResizeDecodePause(false, requestRecoveryKeyframeOnResume: false)
-            if awaitingDesktopResizeAck {
-                finishDesktopResizeAwaitingAck()
-            } else {
-                if isResizing { isResizing = false }
-            }
+            if isResizing { isResizing = false }
             desktopResizeMaskActive = false
             #if os(iOS) || os(visionOS)
             MirageStreamViewRepresentable.releaseCachedControllerIfPossible(
@@ -352,6 +337,14 @@ public struct MirageStreamContentView: View {
             )
             #endif
         }
+        #if os(iOS) || os(visionOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            handleResizeLifecycleSuspension(event: .didResignActive)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
+            handleResizeLifecycleSuspension(event: .didEnterBackground)
+        }
+        #endif
         #if os(macOS)
         .background(
             MirageWindowFocusObserver(
@@ -440,6 +433,15 @@ public struct MirageStreamContentView: View {
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
 
+        #if os(iOS) || os(visionOS)
+        let lifecycleDecision = desktopResizeLifecycleDecision(
+            state: resizeLifecycleState,
+            event: .drawableMetricsChanged
+        )
+        resizeLifecycleState = lifecycleDecision.nextState
+        guard lifecycleDecision.shouldProcessDrawableMetrics else { return }
+        #endif
+
         let viewSize = metrics.viewSize
         let resolvedRawPixelSize = metrics.pixelSize
 
@@ -470,12 +472,6 @@ public struct MirageStreamContentView: View {
 
         latestDrawableDisplaySize = viewSize
 
-        #if os(iOS) || os(visionOS)
-        // During PiP the SwiftUI view may report transient geometry changes.
-        // Cache them, but suppress the outbound resize message path.
-        if suppressResizeEvents { return }
-        #endif
-
         Task { @MainActor [clientService] in
             await Task.yield()
             do {
@@ -483,7 +479,7 @@ public struct MirageStreamContentView: View {
             } catch {
                 return
             }
-            guard allowsResizeEvents else { return }
+            guard resizeLifecycleState == .active else { return }
 
             if session.hasPresentedFrame, !isDesktopStream {
                 isResizing = true
@@ -1072,16 +1068,56 @@ public struct MirageStreamContentView: View {
     }
 
     #if os(iOS) || os(visionOS)
+    private func handleResizeLifecycleSuspension(event: DesktopResizeLifecycleEvent) {
+        let lifecycleDecision = desktopResizeLifecycleDecision(
+            state: resizeLifecycleState,
+            event: event
+        )
+        resizeLifecycleState = lifecycleDecision.nextState
+        cancelPendingResizeWorkForLifecycleSuspension()
+    }
+
+    private func cancelPendingResizeWorkForLifecycleSuspension() {
+        resizeHoldoffTask?.cancel()
+        resizeHoldoffTask = nil
+        resizeFallbackTask?.cancel()
+        resizeFallbackTask = nil
+        displayResolutionTask?.cancel()
+        displayResolutionTask = nil
+        pendingDisplayResolutionDispatchTarget = .zero
+        pendingAppDisplayResolutionCandidate = .zero
+        pendingAppDisplayResolutionCandidateSince = .distantPast
+        streamScaleTask?.cancel()
+        streamScaleTask = nil
+        appResizeAckTimeoutTask?.cancel()
+        appResizeAckTimeoutTask = nil
+        awaitingAppResizeAck = false
+        appResizeBaselineAcknowledgement = nil
+        desktopResizeAckTimeoutTask?.cancel()
+        desktopResizeAckTimeoutTask = nil
+        awaitingDesktopResizeAck = false
+        pendingDesktopDisplayResolutionAfterAck = .zero
+        sentDesktopPostAckCorrection = false
+        latestDrawableDisplaySize = .zero
+        if isResizing { isResizing = false }
+        desktopResizeMaskActive = false
+        setLocalResizeDecodePause(false, requestRecoveryKeyframeOnResume: false)
+    }
+
     private func scheduleResizeHoldoff() {
         resizeHoldoffTask?.cancel()
-        allowsResizeEvents = false
+        resizeLifecycleState = .suspended
         resizeHoldoffTask = Task { @MainActor in
             do {
                 try await Task.sleep(for: .milliseconds(600))
             } catch {
                 return
             }
-            allowsResizeEvents = true
+            let lifecycleDecision = desktopResizeLifecycleDecision(
+                state: resizeLifecycleState,
+                event: .foregroundHoldoffElapsed
+            )
+            resizeLifecycleState = lifecycleDecision.nextState
         }
     }
 
@@ -1092,12 +1128,6 @@ public struct MirageStreamContentView: View {
             )
             return
         }
-        if awaitingDesktopResizeAck {
-            finishDesktopResizeAwaitingAck()
-        } else if isResizing {
-            isResizing = false
-        }
-        desktopResizeMaskActive = false
 
         scheduleResizeHoldoff()
         MirageLogger.client("Foreground recovery dispatch for stream \(session.streamID)")

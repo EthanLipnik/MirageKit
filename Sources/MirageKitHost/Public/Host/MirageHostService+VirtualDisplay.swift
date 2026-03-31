@@ -43,6 +43,22 @@ func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopRes
     return .unchanged
 }
 
+enum DesktopResizeTransactionContinuationDecision: Equatable {
+    case continueTransaction
+    case abortStreamInactive
+}
+
+func desktopResizeTransactionContinuationDecision(
+    requestedStreamID: StreamID,
+    activeDesktopStreamID: StreamID?,
+    hasDesktopContext: Bool
+) -> DesktopResizeTransactionContinuationDecision {
+    guard requestedStreamID == activeDesktopStreamID, hasDesktopContext else {
+        return .abortStreamInactive
+    }
+    return .continueTransaction
+}
+
 struct DesktopBackingScaleResolution: Equatable {
     let scaleFactor: CGFloat
     let pixelResolution: CGSize
@@ -646,6 +662,7 @@ extension MirageHostService {
         var shouldStopDesktopStreamWithError = false
         var shouldResumeEncodingAfterResize = false
         do {
+            try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
             let pixelResolution = virtualDisplayPixelResolution(
                 for: logicalResolution,
                 client: desktopStreamClientContext?.client,
@@ -667,6 +684,7 @@ extension MirageHostService {
                             "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                             "\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px @\(streamRefreshRate)Hz)"
                     )
+                try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
                 await sendDesktopResizeCompletion(
                     streamID: streamID,
                     requestNumber: requestNumber,
@@ -682,6 +700,7 @@ extension MirageHostService {
                         "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
                 )
+            try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
             await desktopContext.suspendEncodingForDesktopResize()
             shouldResumeEncodingAfterResize = true
 
@@ -690,6 +709,7 @@ extension MirageHostService {
                 suspendedMirroringDisplayID = displayID
                 shouldRestoreMirroring = true
             }
+            try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
 
             try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                 for: .desktopStream,
@@ -697,7 +717,7 @@ extension MirageHostService {
                 refreshRate: streamRefreshRate
             )
 
-            guard streamID == desktopStreamID else { throw DesktopResizeTransactionAbort.streamNoLongerActive }
+            try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
 
             guard let postResizeSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() else {
                 throw MirageError.protocolError("Missing shared display snapshot after desktop resize")
@@ -722,7 +742,8 @@ extension MirageHostService {
             }
 
             let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
-            guard streamID == desktopStreamID, let latestDesktopContext = desktopStreamContext else {
+            try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
+            guard let latestDesktopContext = desktopStreamContext else {
                 throw DesktopResizeTransactionAbort.streamNoLongerActive
             }
             try await latestDesktopContext.hardResetDesktopDisplayCapture(
@@ -760,6 +781,7 @@ extension MirageHostService {
             resizeCompletionContext = latestDesktopContext
         } catch DesktopResizeTransactionAbort.streamNoLongerActive {
             MirageLogger.host("Desktop resize transaction #\(requestNumber) aborted because stream is no longer active")
+            return
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to resize desktop stream: ")
             shouldStopDesktopStreamWithError = streamID == desktopStreamID
@@ -784,6 +806,14 @@ extension MirageHostService {
             return
         }
 
+        guard desktopResizeTransactionContinuationDecision(
+            requestedStreamID: streamID,
+            activeDesktopStreamID: desktopStreamID,
+            hasDesktopContext: desktopStreamContext != nil
+        ) == .continueTransaction else {
+            return
+        }
+
         if let resizeCompletionContext,
            streamID == desktopStreamID {
             await sendDesktopResizeCompletion(
@@ -802,6 +832,17 @@ extension MirageHostService {
            streamID == desktopStreamID,
            let latestDesktopContext = desktopStreamContext {
             await latestDesktopContext.resumeEncodingAfterDesktopResize()
+        }
+    }
+
+    private func ensureDesktopResizeTransactionCanContinue(streamID: StreamID) throws {
+        let continuationDecision = desktopResizeTransactionContinuationDecision(
+            requestedStreamID: streamID,
+            activeDesktopStreamID: desktopStreamID,
+            hasDesktopContext: desktopStreamContext != nil
+        )
+        guard continuationDecision == .continueTransaction else {
+            throw DesktopResizeTransactionAbort.streamNoLongerActive
         }
     }
 

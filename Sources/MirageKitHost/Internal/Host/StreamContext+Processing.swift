@@ -921,6 +921,7 @@ extension StreamContext {
             encodedFPS: encodeFPS,
             averageEncodeMs: encodeAvgMs,
             queueBytes: queueBytes,
+            backpressureDropIntervalCount: backpressureDropIntervalCount,
             captureDroppedFrames: captureDroppedIntervalCount,
             at: now
         )
@@ -1114,6 +1115,7 @@ extension StreamContext {
         encodedFPS: Double,
         averageEncodeMs: Double,
         queueBytes: Int,
+        backpressureDropIntervalCount: UInt64,
         captureDroppedFrames: UInt64,
         at now: CFAbsoluteTime
     ) async {
@@ -1136,15 +1138,18 @@ extension StreamContext {
         let targetFPS = Double(max(1, currentFrameRate))
         let frameBudgetMs = 1000.0 / targetFPS
         let fpsRatio = encodedFPS / targetFPS
+        let sawBackpressureDrops = backpressureDropIntervalCount > 0
         let queuePressured = queueBytes > queuePressureBytes
         let queueSeverelyPressured = queueBytes > maxQueuedBytes
         let isStable = averageEncodeMs > 0 &&
             fpsRatio >= temporaryDegradationRestoreThresholdRatio &&
             averageEncodeMs <= frameBudgetMs * temporaryDegradationStableEncodeBudgetRatio &&
+            !sawBackpressureDrops &&
             captureDroppedFrames == 0 &&
             !queuePressured
         let isOverloaded = fpsRatio < temporaryDegradationReliefThresholdRatio ||
             averageEncodeMs > frameBudgetMs * temporaryDegradationOverBudgetRatio ||
+            sawBackpressureDrops ||
             captureDroppedFrames > 0 ||
             queuePressured
         let isSeverelyOverloaded = fpsRatio < temporaryDegradationSevereThresholdRatio ||

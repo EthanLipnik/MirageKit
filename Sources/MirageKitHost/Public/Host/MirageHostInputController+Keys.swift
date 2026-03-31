@@ -18,32 +18,68 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Key Event Injection (runs on accessibilityQueue)
 
-    func injectKeyEvent(
+    struct KeyboardInjectionPlan: Equatable {
+        let virtualKey: CGKeyCode
+        let unicodeString: String?
+    }
+
+    static func keyboardInjectionPlan(for event: MirageKeyEvent) -> KeyboardInjectionPlan {
+        guard event.usesUnicodeScalarFallback else {
+            return KeyboardInjectionPlan(
+                virtualKey: CGKeyCode(event.keyCode),
+                unicodeString: nil
+            )
+        }
+
+        let unicodeString: String?
+        if let characters = event.characters, !characters.isEmpty {
+            unicodeString = characters
+        } else {
+            unicodeString = nil
+        }
+
+        return KeyboardInjectionPlan(
+            virtualKey: 0,
+            unicodeString: unicodeString
+        )
+    }
+
+    func makeInjectedKeyboardEvent(
         isKeyDown: Bool,
-        _ event: MirageKeyEvent,
-        domain: HostKeyboardInjectionDomain,
-        app _: MirageApplication?
-    ) {
+        _ event: MirageKeyEvent
+    ) -> CGEvent? {
+        let injectionPlan = Self.keyboardInjectionPlan(for: event)
         guard let cgEvent = CGEvent(
             keyboardEventSource: nil,
-            virtualKey: CGKeyCode(event.keyCode),
+            virtualKey: injectionPlan.virtualKey,
             keyDown: isKeyDown
         ) else {
-            return
+            return nil
         }
 
         cgEvent.flags = event.modifiers.cgEventFlags
-        if event.keyCode == 0,
-           let characters = event.characters,
-           !characters.isEmpty {
-            let unicodeScalars = Array(characters.utf16)
+        if let unicodeString = injectionPlan.unicodeString {
+            let unicodeScalars = Array(unicodeString.utf16)
             cgEvent.keyboardSetUnicodeString(
                 stringLength: unicodeScalars.count,
                 unicodeString: unicodeScalars
             )
         }
 
-        if event.isRepeat { cgEvent.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
+        if event.isRepeat {
+            cgEvent.setIntegerValueField(.keyboardEventAutorepeat, value: 1)
+        }
+
+        return cgEvent
+    }
+
+    func injectKeyEvent(
+        isKeyDown: Bool,
+        _ event: MirageKeyEvent,
+        domain: HostKeyboardInjectionDomain,
+        app _: MirageApplication?
+    ) {
+        guard let cgEvent = makeInjectedKeyboardEvent(isKeyDown: isKeyDown, event) else { return }
 
         postEvent(cgEvent, domain: domain)
 

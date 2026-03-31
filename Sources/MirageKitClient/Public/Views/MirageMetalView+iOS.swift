@@ -27,16 +27,6 @@ public class MirageMetalView: UIView {
 
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
     public var onRefreshRateOverrideChange: ((Int) -> Void)?
-    public var keepRenderingWhenBackgrounded: Bool = false {
-        didSet {
-            if keepRenderingWhenBackgrounded {
-                presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-                requestDraw()
-            } else if superview == nil {
-                suspendRendering()
-            }
-        }
-    }
 
     public var maxDrawableSize: CGSize? {
         didSet {
@@ -130,12 +120,7 @@ public class MirageMetalView: UIView {
         } else {
             refreshRateMonitor.stop()
             stopDisplayLink()
-            if keepRenderingWhenBackgrounded {
-                presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-                requestDraw()
-            } else {
-                suspendRendering()
-            }
+            suspendRendering()
         }
     }
 

@@ -159,40 +159,9 @@ extension InputCapturingView {
     }
 
     func softwareKeyEvent(for character: String, baseModifiers: MirageModifierFlags) -> SoftwareKeyEvent? {
-        var modifiers = baseModifiers
-        var charactersIgnoring = character
-        let lowercased = character.lowercased()
-
-        if let shifted = Self.shiftedCharacterMap[character] {
-            modifiers.insert(.shift)
-            charactersIgnoring = shifted
-            let keyCode = Self.characterToMacKeyCode(shifted)
-            return SoftwareKeyEvent(
-                keyCode: keyCode,
-                characters: character,
-                charactersIgnoringModifiers: shifted,
-                modifiers: modifiers
-            )
-        }
-
-        if character != lowercased {
-            modifiers.insert(.shift)
-            charactersIgnoring = lowercased
-        }
-
-        guard let keyCode = Self.characterToMacKeyCodeIfKnown(lowercased) else {
-            return SoftwareKeyEvent(
-                keyCode: 0,
-                characters: character,
-                charactersIgnoringModifiers: character,
-                modifiers: baseModifiers
-            )
-        }
-        return SoftwareKeyEvent(
-            keyCode: keyCode,
-            characters: character,
-            charactersIgnoringModifiers: charactersIgnoring,
-            modifiers: modifiers
+        MirageClientKeyEventBuilder.softwareKeyEvent(
+            for: character,
+            baseModifiers: baseModifiers
         )
     }
 }
@@ -224,13 +193,6 @@ extension InputCapturingView: UITextFieldDelegate {
         refreshCursorUpdates(force: true)
         onSoftwareKeyboardVisibilityChanged?(false)
     }
-}
-
-struct SoftwareKeyEvent {
-    let keyCode: UInt16
-    let characters: String
-    let charactersIgnoringModifiers: String
-    let modifiers: MirageModifierFlags
 }
 
 struct SoftwareModifierKey: Hashable {
@@ -365,31 +327,5 @@ final class SoftwareKeyboardAccessoryView: UIView {
         }
         button.configuration = configuration
     }
-}
-
-extension InputCapturingView {
-    static let shiftedCharacterMap: [String: String] = [
-        "!": "1",
-        "@": "2",
-        "#": "3",
-        "$": "4",
-        "%": "5",
-        "^": "6",
-        "&": "7",
-        "*": "8",
-        "(": "9",
-        ")": "0",
-        "_": "-",
-        "+": "=",
-        "{": "[",
-        "}": "]",
-        "|": "\\",
-        ":": ";",
-        "\"": "'",
-        "<": ",",
-        ">": ".",
-        "?": "/",
-        "~": "`",
-    ]
 }
 #endif

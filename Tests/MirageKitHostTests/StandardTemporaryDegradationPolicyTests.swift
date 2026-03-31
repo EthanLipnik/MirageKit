@@ -43,6 +43,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
@@ -60,6 +61,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
@@ -77,6 +79,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
@@ -93,6 +96,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 40,
             averageEncodeMs: 14,
             queueBytes: 0,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
@@ -110,6 +114,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 30,
             averageEncodeMs: 30,
             queueBytes: 4_000_000,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 20,
             at: 10
         )
@@ -117,6 +122,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 30,
             averageEncodeMs: 30,
             queueBytes: 4_000_000,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 20,
             at: 12
         )
@@ -124,6 +130,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 30,
             averageEncodeMs: 30,
             queueBytes: 4_000_000,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 20,
             at: 14
         )
@@ -146,6 +153,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 0,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
@@ -153,6 +161,7 @@ struct StandardTemporaryDegradationPolicyTests {
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 0,
+            backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 12
         )
@@ -160,6 +169,24 @@ struct StandardTemporaryDegradationPolicyTests {
         let settings = await context.getEncoderSettings()
         #expect(settings.bitrate == 60_000_000)
         #expect(settings.bitDepth == .eightBit)
+    }
+
+    @Test("Backpressure drops trigger framerate-first bitrate relief even after queue drains")
+    func backpressureDropsTriggerRelief() async {
+        let context = makeContext(mode: .prioritizeFramerate)
+        await context.evaluateStandardTemporaryDegradationIfNeeded(
+            encodedFPS: 60,
+            averageEncodeMs: 10,
+            queueBytes: 0,
+            backpressureDropIntervalCount: 3,
+            captureDroppedFrames: 0,
+            at: 10
+        )
+
+        let settings = await context.getEncoderSettings()
+        let expectedBitrate = Int((Double(102_000_000) * 0.85).rounded(.down))
+        #expect(settings.bitDepth == .tenBit)
+        #expect(settings.bitrate == expectedBitrate)
     }
 
     private func makeContext(

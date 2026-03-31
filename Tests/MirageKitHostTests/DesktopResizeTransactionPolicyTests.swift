@@ -75,6 +75,39 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(plan == .unchanged)
     }
 
+    @Test("Resize transaction aborts when desktop stream is already inactive")
+    func resizeTransactionAbortsWhenStreamIsInactive() {
+        let decision = desktopResizeTransactionContinuationDecision(
+            requestedStreamID: 41,
+            activeDesktopStreamID: nil,
+            hasDesktopContext: false
+        )
+
+        #expect(decision == .abortStreamInactive)
+    }
+
+    @Test("Resize transaction aborts when stream dies mid-transaction")
+    func resizeTransactionAbortsWhenContextDisappears() {
+        let decision = desktopResizeTransactionContinuationDecision(
+            requestedStreamID: 41,
+            activeDesktopStreamID: 41,
+            hasDesktopContext: false
+        )
+
+        #expect(decision == .abortStreamInactive)
+    }
+
+    @Test("Resize transaction continues only for active stream with live context")
+    func resizeTransactionContinuesForActiveLiveStream() {
+        let decision = desktopResizeTransactionContinuationDecision(
+            requestedStreamID: 41,
+            activeDesktopStreamID: 41,
+            hasDesktopContext: true
+        )
+
+        #expect(decision == .continueTransaction)
+    }
+
     @Test("Generation-change rebind is suppressed during resize transaction")
     func generationRebindSuppressedDuringResize() {
         let decision = desktopGenerationChangeRebindDecision(

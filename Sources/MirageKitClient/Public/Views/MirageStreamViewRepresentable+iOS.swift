@@ -5,7 +5,6 @@
 //  Created by Ethan Lipnik on 1/23/26.
 //
 
-import AVFoundation
 import MirageKit
 #if os(iOS) || os(visionOS)
 import SwiftUI
@@ -76,14 +75,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
-    /// When `true`, local presentation remains active while the app is backgrounded
-    /// and through temporary UIKit detachment during PiP ownership.
-    public var keepRenderingWhenBackgrounded: Bool
-
-    /// Called once when the underlying view controller is created, providing
-    /// the `AVSampleBufferDisplayLayer` for external use (e.g. PiP).
-    public var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
-
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -105,9 +96,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         dictationLocalePreference: MirageDictationLocalePreference = .system,
         cursorLockEnabled: Bool = false,
         presentationTier: StreamPresentationTier = .activeLive,
-        maxDrawableSize: CGSize? = nil,
-        keepRenderingWhenBackgrounded: Bool = false,
-        onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)? = nil
+        maxDrawableSize: CGSize? = nil
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -130,8 +119,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.cursorLockEnabled = cursorLockEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
-        self.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
-        self.onDisplayLayerReady = onDisplayLayerReady
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -161,7 +148,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError
         )
-        controller.onDisplayLayerReady = onDisplayLayerReady
         controller.updateState(
             streamID: streamID,
             directTouchInputMode: directTouchInputMode,
@@ -174,8 +160,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
             presentationTier: presentationTier,
-            maxDrawableSize: maxDrawableSize,
-            keepRenderingWhenBackgrounded: keepRenderingWhenBackgrounded
+            maxDrawableSize: maxDrawableSize
         )
         return controller
     }
@@ -191,7 +176,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.onDirectTouchActivity = onDirectTouchActivity
         context.coordinator.onDictationStateChanged = onDictationStateChanged
         context.coordinator.onDictationError = onDictationError
-        uiViewController.onDisplayLayerReady = onDisplayLayerReady
         context.coordinator.noteRepresentableUpdate(for: streamID)
 
         uiViewController.updateState(
@@ -206,8 +190,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
             presentationTier: presentationTier,
-            maxDrawableSize: maxDrawableSize,
-            keepRenderingWhenBackgrounded: keepRenderingWhenBackgrounded
+            maxDrawableSize: maxDrawableSize
         )
     }
 
@@ -244,14 +227,7 @@ private final class MirageStreamViewControllerCache {
 }
 
 public final class MirageStreamViewController: UIViewController {
-    /// The backing sample buffer display layer used for video presentation.
-    /// Exposed for Picture-in-Picture controller integration.
-    public var sampleBufferDisplayLayer: AVSampleBufferDisplayLayer {
-        captureView.metalView.displayLayer
-    }
-
     var currentStreamID: StreamID?
-    var onDisplayLayerReady: ((AVSampleBufferDisplayLayer) -> Void)?
     private let captureView = InputCapturingView(frame: .zero)
     private var pointerLockRequested: Bool = false {
         didSet {
@@ -275,7 +251,6 @@ public final class MirageStreamViewController: UIViewController {
         super.viewDidAppear(animated)
         setNeedsUpdateOfPrefersPointerLocked()
         startPointerLockObserverIfNeeded()
-        reportDisplayLayerReadyIfNeeded()
     }
 
     override public func viewWillDisappear(_ animated: Bool) {
@@ -317,8 +292,7 @@ public final class MirageStreamViewController: UIViewController {
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
         presentationTier: StreamPresentationTier,
-        maxDrawableSize: CGSize?,
-        keepRenderingWhenBackgrounded: Bool
+        maxDrawableSize: CGSize?
     ) {
         // Set stream ID first so cursor router registration is ready
         // before cursorStore/cursorPositionStore didSet triggers refreshCursorIfNeeded.
@@ -335,7 +309,6 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorLockEnabled = cursorLockEnabled
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
-        captureView.keepRenderingWhenBackgrounded = keepRenderingWhenBackgrounded
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()
@@ -376,11 +349,6 @@ public final class MirageStreamViewController: UIViewController {
                 MirageLogger.client("Pointer lock not active for scene.")
             }
         }
-    }
-
-    private func reportDisplayLayerReadyIfNeeded() {
-        guard view.window != nil else { return }
-        onDisplayLayerReady?(sampleBufferDisplayLayer)
     }
 }
 #endif
