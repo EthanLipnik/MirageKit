@@ -26,9 +26,10 @@ struct PacketizerChecksumTests {
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
             mediaSecurityContext: makeSecurityContext(),
-            sendPacket: { packet in
+            sendPacket: { packet, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else { return }
                 captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
+                onComplete(nil)
             }
         )
 
@@ -82,9 +83,10 @@ struct PacketizerChecksumTests {
 
         let sender = StreamPacketSender(
             maxPayloadSize: maxPayloadSize,
-            sendPacket: { packet in
+            sendPacket: { packet, onComplete in
                 guard let header = FrameHeader.deserialize(from: packet) else { return }
                 captured.withLock { $0.append(CapturedVideoPacket(packet: packet, header: header)) }
+                onComplete(nil)
             }
         )
 
@@ -137,7 +139,9 @@ struct PacketizerChecksumTests {
     @Test("Stream packet sender reports packet budget utilization from estimated wire bytes")
     func streamPacketSenderPacketBudgetUtilization() async {
         let payload = makePayload(byteCount: 420_000)
-        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _ in })
+        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _, onComplete in
+            onComplete(nil)
+        })
 
         await sender.start()
         await sender.setTargetBitrateBps(2_000_000)
@@ -168,7 +172,9 @@ struct PacketizerChecksumTests {
     @Test("Packet budget utilization stays low when frame fits bitrate budget")
     func streamPacketSenderPacketBudgetUnderUtilization() async {
         let payload = makePayload(byteCount: 10_000)
-        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _ in })
+        let sender = StreamPacketSender(maxPayloadSize: 512, sendPacket: { _, onComplete in
+            onComplete(nil)
+        })
 
         await sender.start()
         await sender.setTargetBitrateBps(200_000_000)
@@ -200,10 +206,16 @@ struct PacketizerChecksumTests {
         let recordedSequences = Locked<[UInt32]>([])
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { packet in
-                try await Task.sleep(for: .milliseconds(1))
-                guard let header = FrameHeader.deserialize(from: packet) else { return }
+            sendPacket: { packet, onComplete in
+                guard let header = FrameHeader.deserialize(from: packet) else {
+                    onComplete(nil)
+                    return
+                }
                 recordedSequences.withLock { $0.append(header.sequenceNumber) }
+                Task {
+                    try? await Task.sleep(for: .milliseconds(1))
+                    onComplete(nil)
+                }
             }
         )
         let firstPayload = makePayload(byteCount: 900)
@@ -246,8 +258,11 @@ struct PacketizerChecksumTests {
         let payload = makePayload(byteCount: 900)
         let sender = StreamPacketSender(
             maxPayloadSize: 512,
-            sendPacket: { _ in
-                try await Task.sleep(for: .milliseconds(20))
+            sendPacket: { _, onComplete in
+                Task {
+                    try? await Task.sleep(for: .milliseconds(20))
+                    onComplete(nil)
+                }
             }
         )
 
@@ -272,6 +287,59 @@ struct PacketizerChecksumTests {
         }
 
         #expect(sender.queuedBytesSnapshot() == 0)
+        await sender.stop()
+    }
+
+    @Test("Reset queue stays responsive while transport send is blocked")
+    func streamPacketSenderResetQueueWhileTransportBlocked() async throws {
+        let payload = makePayload(byteCount: 900)
+        let sendStarted = Locked(false)
+        let sendContinuation = Locked<CheckedContinuationBox?>(nil)
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { _, onComplete in
+                sendStarted.withLock { $0 = true }
+                sendContinuation.withLock { $0 = CheckedContinuationBox(onComplete: onComplete) }
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: payload,
+                streamID: 23,
+                frameNumber: 44,
+                sequenceNumberStart: 300,
+                wireBytes: payload.count,
+                generation: generation
+            )
+        )
+
+        let sendStartDeadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while !sendStarted.read({ $0 }), CFAbsoluteTimeGetCurrent() < sendStartDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(sendStarted.read { $0 })
+
+        let didReset = Locked(false)
+        let resetTask = Task {
+            await sender.resetQueue(reason: "test reset while blocked")
+            didReset.withLock { $0 = true }
+        }
+
+        let resetDeadline = CFAbsoluteTimeGetCurrent() + 0.25
+        while !didReset.read({ $0 }), CFAbsoluteTimeGetCurrent() < resetDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(didReset.read { $0 })
+
+        sendContinuation.withLock { continuation in
+            continuation?.resume()
+            continuation = nil
+        }
+        _ = await resetTask.value
         await sender.stop()
     }
 
@@ -387,5 +455,17 @@ struct PacketizerChecksumTests {
 private struct CapturedVideoPacket: Sendable {
     let packet: Data
     let header: FrameHeader
+}
+
+private final class CheckedContinuationBox: @unchecked Sendable {
+    private let onComplete: @Sendable (Error?) -> Void
+
+    init(onComplete: @escaping @Sendable (Error?) -> Void) {
+        self.onComplete = onComplete
+    }
+
+    func resume() {
+        onComplete(nil)
+    }
 }
 #endif

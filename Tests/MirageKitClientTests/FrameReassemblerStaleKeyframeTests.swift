@@ -419,6 +419,106 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(reassembler.isAwaitingKeyframe() == false)
     }
 
+    @Test("Newer keyframe progress fast-forwards a stalled P-frame gap")
+    func pendingKeyframeProgressPromotesFastForwardRecovery() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
+        let deliveredCounter = LockedCounter()
+        let lossCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _ in
+            lossCounter.increment()
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                frameByteCount: 4
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let pFrame2 = Data([0x00, 0x00, 0x00, 0x02])
+        reassembler.processPacket(
+            pFrame2,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 2,
+                payload: pFrame2,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                frameByteCount: 4
+            )
+        )
+        #expect(reassembler.isAwaitingKeyframe() == false)
+
+        let keyframe4Fragment0 = Data([0x00, 0x00, 0x00, 0x04])
+        reassembler.processPacket(
+            keyframe4Fragment0,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 4,
+                payload: keyframe4Fragment0,
+                fragmentIndex: 0,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        #expect(reassembler.isAwaitingKeyframe() == true)
+        #expect(lossCounter.value >= 1)
+
+        let keyframe4Fragment1 = Data([0x26, 0x04, 0x04, 0x04])
+        let keyframe4Fragment2 = Data([0x40, 0x40, 0x40, 0x40])
+        let keyframe4Fragment3 = Data([0x41, 0x41, 0x41, 0x41])
+
+        reassembler.processPacket(
+            keyframe4Fragment1,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 4,
+                payload: keyframe4Fragment1,
+                fragmentIndex: 1,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+        reassembler.processPacket(
+            keyframe4Fragment2,
+            header: makeHeader(
+                flags: [.keyframe],
+                frameNumber: 4,
+                payload: keyframe4Fragment2,
+                fragmentIndex: 2,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+        reassembler.processPacket(
+            keyframe4Fragment3,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 4,
+                payload: keyframe4Fragment3,
+                fragmentIndex: 3,
+                fragmentCount: 4,
+                frameByteCount: 16
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+    }
+
     @Test("Keyframe timeout tracks assembly progress instead of first-fragment age")
     func keyframeTimeoutTracksAssemblyProgress() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)

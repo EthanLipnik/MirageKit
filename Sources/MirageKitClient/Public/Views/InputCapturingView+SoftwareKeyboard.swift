@@ -180,7 +180,14 @@ extension InputCapturingView {
             charactersIgnoring = lowercased
         }
 
-        let keyCode = Self.characterToMacKeyCode(lowercased)
+        guard let keyCode = Self.characterToMacKeyCodeIfKnown(lowercased) else {
+            return SoftwareKeyEvent(
+                keyCode: 0,
+                characters: character,
+                charactersIgnoringModifiers: character,
+                modifiers: baseModifiers
+            )
+        }
         return SoftwareKeyEvent(
             keyCode: keyCode,
             characters: character,

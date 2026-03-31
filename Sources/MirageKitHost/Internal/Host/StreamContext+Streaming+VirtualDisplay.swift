@@ -24,7 +24,7 @@ extension StreamContext {
         applicationWrapper: SCApplicationWrapper,
         clientLogicalSize: CGSize,
         sizePreset: MirageDisplaySizePreset,
-        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil,
         onContentBoundsChanged: @escaping @Sendable (CGRect) -> Void,
         onNewWindowDetected: @escaping @Sendable (MirageWindow) -> Void

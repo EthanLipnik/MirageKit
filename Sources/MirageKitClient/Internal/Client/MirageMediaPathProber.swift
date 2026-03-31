@@ -16,6 +16,21 @@ struct MediaPathProbeResult: Sendable {
     let rttMs: Double
     let includePeerToPeer: Bool
     let interfaceType: NWInterface.InterfaceType?
+    let interfaceName: String?
+
+    init(
+        interfaceLabel: String,
+        rttMs: Double,
+        includePeerToPeer: Bool,
+        interfaceType: NWInterface.InterfaceType?,
+        interfaceName: String? = nil
+    ) {
+        self.interfaceLabel = interfaceLabel
+        self.rttMs = rttMs
+        self.includePeerToPeer = includePeerToPeer
+        self.interfaceType = interfaceType
+        self.interfaceName = interfaceName
+    }
 
     static func bestCandidate(from results: [MediaPathProbeResult]) -> MediaPathProbeResult? {
         results.min(by: { $0.rttMs < $1.rttMs })
@@ -75,12 +90,21 @@ final class MirageMediaPathProber {
     // MARK: - Public API
 
     func probeAllInterfaces() async -> [MediaPathProbeResult] {
-        var candidates: [(label: String, interfaceType: NWInterface.InterfaceType?, includePeerToPeer: Bool)] = [
-            ("ethernet", .wiredEthernet, false),
-            ("wifi", .wifi, false),
+        let availableInterfaces = await Self.currentInterfaces()
+        var candidates: [(
+            label: String,
+            interfaceType: NWInterface.InterfaceType?,
+            requiredInterface: NWInterface?,
+            includePeerToPeer: Bool
+        )] = [
+            ("ethernet", .wiredEthernet, nil, false),
+            ("wifi", .wifi, nil, false),
         ]
+        if let thunderboltInterface = availableInterfaces.first(where: Self.isThunderboltInterface(_:)) {
+            candidates.append(("thunderbolt", .wiredEthernet, thunderboltInterface, false))
+        }
         if enablePeerToPeer {
-            candidates.append(("p2p", nil, true))
+            candidates.append(("p2p", nil, nil, true))
         }
 
         return await withTaskGroup(of: MediaPathProbeResult?.self) { group in
@@ -91,6 +115,7 @@ final class MirageMediaPathProber {
                         port: port,
                         interfaceLabel: candidate.label,
                         interfaceType: candidate.interfaceType,
+                        requiredInterface: candidate.requiredInterface,
                         includePeerToPeer: candidate.includePeerToPeer,
                         probeCount: probeCount,
                         probeTimeoutMs: probeTimeoutMs
@@ -178,6 +203,7 @@ final class MirageMediaPathProber {
         port: UInt16,
         interfaceLabel: String,
         interfaceType: NWInterface.InterfaceType?,
+        requiredInterface: NWInterface?,
         includePeerToPeer: Bool,
         probeCount: Int,
         probeTimeoutMs: Int
@@ -186,7 +212,9 @@ final class MirageMediaPathProber {
 
         let params = NWParameters.udp
         params.includePeerToPeer = includePeerToPeer
-        if let interfaceType {
+        if let requiredInterface {
+            params.requiredInterface = requiredInterface
+        } else if let interfaceType {
             params.requiredInterfaceType = interfaceType
         }
 
@@ -225,8 +253,44 @@ final class MirageMediaPathProber {
             interfaceLabel: interfaceLabel,
             rttMs: median,
             includePeerToPeer: includePeerToPeer,
-            interfaceType: interfaceType
+            interfaceType: interfaceType,
+            interfaceName: requiredInterface?.name
         )
+    }
+
+    private nonisolated static func currentInterfaces(timeoutSeconds: Double = 1.0) async -> [NWInterface] {
+        await withCheckedContinuation { continuation in
+            let monitor = NWPathMonitor()
+            let queue = DispatchQueue(label: "io.miragekit.client.media-path-interfaces")
+            let lock = NSLock()
+            final class ResumeState: @unchecked Sendable {
+                var didResume = false
+            }
+            let state = ResumeState()
+
+            let finish: @Sendable ([NWInterface]) -> Void = { interfaces in
+                lock.lock()
+                defer { lock.unlock() }
+                guard !state.didResume else { return }
+                state.didResume = true
+                monitor.cancel()
+                continuation.resume(returning: interfaces)
+            }
+
+            monitor.pathUpdateHandler = { path in
+                finish(Array(path.availableInterfaces))
+            }
+            monitor.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + timeoutSeconds) {
+                finish([])
+            }
+        }
+    }
+
+    private nonisolated static func isThunderboltInterface(_ interface: NWInterface) -> Bool {
+        let normalized = interface.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return false }
+        return normalized.contains("thunderbolt") || normalized.contains("bridge")
     }
 
     private nonisolated static func connectWithTimeout(

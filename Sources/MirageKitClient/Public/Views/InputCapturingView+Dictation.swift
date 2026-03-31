@@ -27,6 +27,7 @@ extension InputCapturingView {
 
     func startDictation() {
         guard !isDictationActive else { return }
+        MirageLogger.client("Dictation start requested mode=\(dictationMode.rawValue)")
 
         dictationFinalizeTask?.cancel()
         dictationFinalizeTask = nil
@@ -39,16 +40,20 @@ extension InputCapturingView {
             do {
                 try await requestDictationPermissions()
                 try await configureAudioSessionForDictation()
+                MirageLogger.client("Dictation permissions and audio session ready")
 
                 if #available(iOS 26.0, visionOS 26.0, *) {
+                    MirageLogger.client("Starting modern dictation analyzer locale=\(Locale.autoupdatingCurrent.identifier)")
                     try await startSpeechAnalyzerDictationModern()
                 } else {
+                    MirageLogger.client("Starting legacy dictation recognizer locale=\(Locale.autoupdatingCurrent.identifier)")
                     try startSpeechRecognizerDictationLegacy()
                 }
 
                 isDictationActive = true
                 onDictationStateChanged?(true)
             } catch {
+                MirageLogger.client("Dictation start failed: \(error.localizedDescription)")
                 stopDictation()
                 onDictationError?(dictationErrorMessage(for: error))
             }
@@ -143,10 +148,16 @@ extension InputCapturingView {
 
     private func requestDictationPermissions() async throws {
         let microphoneGranted = await AVAudioApplication.requestRecordPermission()
-        guard microphoneGranted else { throw DictationError.microphonePermissionDenied }
+        guard microphoneGranted else {
+            MirageLogger.client("Dictation microphone permission denied")
+            throw DictationError.microphonePermissionDenied
+        }
 
         let speechAuthorization = await SpeechAuthorizationBridge.requestStatus()
-        guard speechAuthorization == .authorized else { throw DictationError.speechPermissionDenied }
+        guard speechAuthorization == .authorized else {
+            MirageLogger.client("Dictation speech authorization denied status=\(speechAuthorization.rawValue)")
+            throw DictationError.speechPermissionDenied
+        }
     }
 
     private func configureAudioSessionForDictation() async throws {
@@ -161,6 +172,7 @@ extension InputCapturingView {
     private func startSpeechAnalyzerDictationModern() async throws {
         let locale = Locale.autoupdatingCurrent
         let moduleChoice = DictationModuleChoice(locale: locale, mode: dictationMode)
+        MirageLogger.client("Dictation analyzer module=\(String(describing: moduleChoice)) locale=\(locale.identifier)")
         dictationLastCommittedText = ""
         if let selectedLocale = moduleChoice.selectedLocale {
             do {
@@ -254,6 +266,7 @@ extension InputCapturingView {
         dictationLastCommittedText = ""
 
         guard let recognizer = SFSpeechRecognizer(locale: .autoupdatingCurrent), recognizer.isAvailable else {
+            MirageLogger.client("Legacy dictation recognizer unavailable locale=\(Locale.autoupdatingCurrent.identifier)")
             throw DictationError.recognizerUnavailable
         }
 

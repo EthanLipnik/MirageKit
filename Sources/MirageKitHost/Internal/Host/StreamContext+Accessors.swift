@@ -65,7 +65,9 @@ extension StreamContext {
     }
 
     func isUsingVirtualDisplay() -> Bool {
-        useVirtualDisplay && virtualDisplayContext != nil
+        useVirtualDisplay &&
+            virtualDisplayContext != nil &&
+            (captureMode == .display || !virtualDisplayVisibleBounds.isEmpty)
     }
 
     func getVirtualDisplayID() -> CGDirectDisplayID? {

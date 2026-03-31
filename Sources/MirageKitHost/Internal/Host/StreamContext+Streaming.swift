@@ -20,7 +20,7 @@ extension StreamContext {
 
     /// Configures the packet sender for encoded frame output.
     func setupPacketSender(
-        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
     ) async {
         let sender = StreamPacketSender(

@@ -50,6 +50,8 @@ Session setup is explicit:
 4. Client registers stream and audio channels.
 5. Host begins sending media packets once registration succeeds. The first startup keyframe uses a temporary protection window with stronger keyframe FEC, tighter sender pacing, and a longer client-side startup timeout than steady-state traffic.
 
+Steady-state media transport is now explicitly bounded rather than relying on `NWConnection.send(... .contentProcessed)` as an accidental pacing mechanism. Loom owns ordered unreliable media submission with a fixed outstanding datagram/byte budget, while Mirage host-side packet pacing applies to both keyframes and P-frames. Mirage clears post-keyframe P-frame holds once packets have been handed to Loom rather than waiting for network completion callbacks. Under sustained transport pressure, the host prefers dropping stale P-frames over spending bandwidth on already-obsolete intermediate frames, and the client can fast-forward to a newer in-progress keyframe instead of waiting through a long forward-gap stall.
+
 This separation keeps connection ownership, protocol negotiation, and media throughput concerns isolated from one another.
 
 The control-plane transport boundary is strict:
@@ -145,6 +147,8 @@ The host keeps stream-specific policy local to the host runtime. That includes f
 
 App-stream visible slots are lifecycle-bound to the app session rather than permanently bound to the first discovered host window ID. During initial startup, the host keeps trying to fill each visible slot until the startup deadline expires, re-evaluating the app's current eligible primary windows after launcher, document-picker, or first-window churn. After startup, the host preserves the current streamed primary window until that window closes or otherwise fails out of the slot lifecycle, at which point the existing slot-replacement path can rebind the same stream identity to another eligible primary window from the same app.
 
+App streams no longer relocate windows onto per-stream virtual displays. Instead, the host keeps one shared app-stream virtual display mirrored from the current physical-display set, uses normal window activation and ownership switching to decide which app window is currently frontmost, and captures app windows in place. The wire/session model stays window-centric: the active visible slot remains the live stream, while other visible slots stay on the existing passive snapshot tier.
+
 Connection approval is also host-owned policy. `MirageHostService` distinguishes two control-plane origins:
 
 - local
@@ -169,7 +173,7 @@ The host advertises supported color-depth tiers in peer metadata, clamps incomin
 
 Shared clipboard is also coordinated at the host-service layer. It is negotiated per connection, status is published over the control channel, and clipboard bridging only runs while the host session is `.ready` and at least one app or desktop stream is active. Both bridges treat the newest accepted clipboard update as authoritative, reject stale remote writes, and keep the last accepted remote text available for client-side manual paste sync until the local pasteboard advances again.
 
-While interactive app or desktop startup/workload is active, the host defers nonessential reliable metadata replies such as app lists, app icons, host hardware icons, and software-update status. Only the latest pending request per client is retained and replayed once the workload returns to idle so startup control traffic stays ahead of bulk metadata on the Loom control stream.
+While interactive app or desktop startup/workload is active, the host still defers bulk app-list refresh work. Smaller host metadata replies such as wallpaper, hardware icon, and software-update status now bypass that gate so startup control traffic does not starve connected-selection UI refreshes behind the app-list queue.
 
 QUIC connections require ALPN negotiation. Both host and client set `quicALPN` on `LoomNetworkConfiguration` to `["mirage-v2"]` so that the Loom transport layer passes the ALPN token through to `NWProtocolQUIC.Options`. Without ALPN, the TLS 1.3 handshake embedded in QUIC will fail.
 

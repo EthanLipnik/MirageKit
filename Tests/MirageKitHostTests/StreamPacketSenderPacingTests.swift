@@ -65,5 +65,41 @@ struct StreamPacketSenderPacingTests {
         #expect(large == baseline)
         #expect(huge == baseline)
     }
+
+    @Test("Steady-state burst window is smaller than keyframe burst window")
+    func steadyStateBurstWindowIsSmallerThanKeyframeBurst() {
+        let steadyState = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: false,
+            totalFragments: 1
+        )
+        let keyframe = StreamPacketSender.packetPacerBurstWindowMilliseconds(
+            isKeyframeBurst: true,
+            totalFragments: 100
+        )
+
+        #expect(steadyState < keyframe)
+    }
+
+    @Test("Non-keyframe packets participate in pacing parameters")
+    func nonKeyframePacketsParticipateInPacing() {
+        let steadyState = StreamPacketSender.packetPacingParameters(
+            targetRateBps: 600_000_000,
+            packetBytes: 1400,
+            isKeyframeBurst: false,
+            totalFragments: 1,
+            pacingOverride: nil
+        )
+        let keyframe = StreamPacketSender.packetPacingParameters(
+            targetRateBps: 600_000_000,
+            packetBytes: 1400,
+            isKeyframeBurst: true,
+            totalFragments: 900,
+            pacingOverride: nil
+        )
+
+        #expect(steadyState != nil)
+        #expect(keyframe != nil)
+        #expect(steadyState?.burstBytes ?? 0 < keyframe?.burstBytes ?? 0)
+    }
 }
 #endif

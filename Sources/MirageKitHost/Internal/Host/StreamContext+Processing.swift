@@ -240,7 +240,10 @@ extension StreamContext {
         }
 
         while inFlightCount < maxInFlightFrames {
+            let queueBytesBeforeDrain = packetSender?.queuedBytesSnapshot() ?? 0
             let drainPolicy: StreamFrameInbox.DrainPolicy = if latencyBurstDrainsNewestFrames {
+                .newest
+            } else if queueBytesBeforeDrain > queuePressureBytes {
                 .newest
             } else {
                 .fifo
@@ -975,8 +978,6 @@ extension StreamContext {
                 baselineLowLatencyLimit = currentFrameRate >= 120
                     ? 2
                     : StreamContext.gameModeLowLatencyInFlightLimit
-            } else if streamKind == .desktop, currentFrameRate <= 60, maxInFlightFramesCap > 1 {
-                baselineLowLatencyLimit = 2
             } else {
                 baselineLowLatencyLimit = currentFrameRate >= 120 ? 2 : 1
             }
@@ -1355,14 +1356,20 @@ extension StreamContext {
         let queuePressured = queueBytes > queuePressureBytes
         let highPressure = queueBytes > maxQueuedBytes
         let packetBudget = await packetSender?.packetBudgetSnapshot(now: now)
+        let packetTelemetry = await packetSender?.telemetrySnapshot()
         let packetUtilization = packetBudget?.utilization ?? 0
         let packetOverBudget = packetUtilization > packetBudgetDropUtilizationThreshold
         let packetHighPressure = packetUtilization > packetBudgetHighPressureUtilizationThreshold
+        let sendStartDelayAverageMs = packetTelemetry?.sendStartDelayAverageMs ?? 0
+        let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
+        let transportPressured = sendStartDelayAverageMs > 2.0 || sendCompletionAverageMs > 12.0
+        let transportHighPressure = sendStartDelayAverageMs > 6.0 || sendCompletionAverageMs > 24.0
         let packetWithinRaiseBudget = packetUtilization > 0
             ? packetUtilization < packetBudgetRaiseUtilizationThreshold
             : true
         let fixedGameModeQuality = performanceMode == .game && !gameModeAggressiveQualityDropEnabled
-        let qualityDropSignal = queuePressured || packetOverBudget || (!fixedGameModeQuality && encodeOverBudget)
+        let qualityDropSignal = queuePressured || packetOverBudget || transportPressured ||
+            (!fixedGameModeQuality && encodeOverBudget)
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = gameModeAggressiveQualityDropEnabled
             ? gameModeAggressiveQualityDropThreshold
@@ -1377,18 +1384,18 @@ extension StreamContext {
         if qualityDropSignal {
             qualityUnderBudgetCount = 0
             qualityOverBudgetCount += 1
-            let dropThreshold: Int = if bitrateConstrained && (highPressure || packetHighPressure) {
+            let dropThreshold: Int = if bitrateConstrained && (highPressure || packetHighPressure || transportHighPressure) {
                 1
-            } else if bitrateConstrained && (queuePressured || packetOverBudget) {
+            } else if bitrateConstrained && (queuePressured || packetOverBudget || transportPressured) {
                 max(1, baseDropThreshold - 1)
             } else {
                 baseDropThreshold
             }
-            let step: Float = if highPressure || packetHighPressure {
+            let step: Float = if highPressure || packetHighPressure || transportHighPressure {
                 bitrateConstrained
                     ? (baseHighPressureDropStep + 0.03)
                     : baseHighPressureDropStep
-            } else if bitrateConstrained && (queuePressured || packetOverBudget) {
+            } else if bitrateConstrained && (queuePressured || packetOverBudget || transportPressured) {
                 baseDropStep + 0.01
             } else {
                 baseDropStep

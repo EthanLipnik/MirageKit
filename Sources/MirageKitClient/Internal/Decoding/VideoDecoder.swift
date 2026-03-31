@@ -398,6 +398,8 @@ final class FrameReassembler: @unchecked Sendable {
     var currentEpoch: UInt16 = 0
     let keyframeTimeout: TimeInterval = 3.0
     let startupKeyframeTimeout: TimeInterval = 5.0
+    let pendingKeyframePromotionDelay: TimeInterval = 0.15
+    let pendingKeyframePromotionProgressThreshold: Double = 0.25
     var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token - frames with mismatched tokens are silently discarded.

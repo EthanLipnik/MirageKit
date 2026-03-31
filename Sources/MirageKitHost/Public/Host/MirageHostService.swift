@@ -99,6 +99,9 @@ public final class MirageHostService {
     /// Accessibility permission manager for input injection.
     public let permissionManager = MirageAccessibilityPermissionManager()
 
+    /// Whether the most recent capture inventory attempt hit an explicit screen-recording denial.
+    public internal(set) var lastScreenRecordingPermissionDenied = false
+
     /// Window controller for host window management.
     public let windowController = MirageHostWindowController()
 
@@ -1373,9 +1376,8 @@ public final class MirageHostService {
         } else {
             bounds = desktopDisplayBounds
         }
-        guard let bounds, let mainScreen = NSScreen.main else { return nil }
-        let cocoaY = mainScreen.frame.height - bounds.origin.y - bounds.height
-        return CGRect(x: bounds.origin.x, y: cocoaY, width: bounds.width, height: bounds.height)
+        guard let bounds else { return nil }
+        return bounds
     }
 
     /// Refresh cached physical display bounds after mirroring changes.

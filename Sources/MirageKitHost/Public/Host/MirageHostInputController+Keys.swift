@@ -33,6 +33,15 @@ extension MirageHostInputController {
         }
 
         cgEvent.flags = event.modifiers.cgEventFlags
+        if event.keyCode == 0,
+           let characters = event.characters,
+           !characters.isEmpty {
+            let unicodeScalars = Array(characters.utf16)
+            cgEvent.keyboardSetUnicodeString(
+                stringLength: unicodeScalars.count,
+                unicodeString: unicodeScalars
+            )
+        }
 
         if event.isRepeat { cgEvent.setIntegerValueField(.keyboardEventAutorepeat, value: 1) }
 

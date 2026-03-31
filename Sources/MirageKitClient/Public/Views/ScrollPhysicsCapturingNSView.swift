@@ -137,15 +137,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private func setupLockedCursorView() {
         lockedCursorView.wantsLayer = true
-        lockedCursorView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.25).cgColor
-        lockedCursorView.layer?.cornerRadius = 6
-        lockedCursorView.layer?.borderWidth = 1
-        lockedCursorView.layer?.borderColor = NSColor.black.withAlphaComponent(0.35).cgColor
+        lockedCursorView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
+        lockedCursorView.layer?.cornerRadius = 8
+        lockedCursorView.layer?.borderWidth = 2
+        lockedCursorView.layer?.borderColor = NSColor.black.withAlphaComponent(0.75).cgColor
         lockedCursorView.layer?.shadowColor = NSColor.black.cgColor
-        lockedCursorView.layer?.shadowOpacity = 0.2
-        lockedCursorView.layer?.shadowRadius = 2
+        lockedCursorView.layer?.shadowOpacity = 0.35
+        lockedCursorView.layer?.shadowRadius = 4
         lockedCursorView.layer?.shadowOffset = CGSize(width: 0, height: -1)
-        lockedCursorView.frame = CGRect(x: 0, y: 0, width: 12, height: 12)
+        lockedCursorView.frame = CGRect(x: 0, y: 0, width: 16, height: 16)
         lockedCursorView.isHidden = true
         contentView.addSubview(lockedCursorView)
     }
@@ -240,7 +240,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func updateLockedCursorViewVisibility() {
-        let shouldShow = cursorLockEnabled && lockedCursorVisible && !cursorHiddenForTyping
+        let shouldShow = cursorLockEnabled && !cursorHiddenForTyping
         lockedCursorView.isHidden = !shouldShow
     }
 

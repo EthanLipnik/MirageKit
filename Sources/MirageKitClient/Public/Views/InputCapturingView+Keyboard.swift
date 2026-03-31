@@ -613,5 +613,9 @@ extension InputCapturingView {
         // Default to 'a' for unknown characters
         characterToMacKeyCodeMap[char.lowercased()] ?? 0x00
     }
+
+    static func characterToMacKeyCodeIfKnown(_ char: String) -> UInt16? {
+        characterToMacKeyCodeMap[char.lowercased()]
+    }
 }
 #endif

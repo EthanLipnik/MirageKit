@@ -29,10 +29,7 @@ extension MirageHostService {
             clientID: clientContext.client.id,
             forceRefresh: request.forceRefresh
         )
-        if isInteractiveWorkloadActiveForAppListRequests() {
-            MirageLogger.host("Deferring host software update status while interactive workload is active")
-        }
-        await syncAppListRequestDeferralForInteractiveWorkload()
+        sendPendingHostSoftwareUpdateStatusRequestIfPossible()
     }
 
     private func updatePendingHostSoftwareUpdateStatusRequest(
@@ -52,7 +49,6 @@ extension MirageHostService {
     }
 
     func sendPendingHostSoftwareUpdateStatusRequestIfPossible() {
-        guard !isInteractiveWorkloadActiveForAppListRequests() else { return }
         guard let pending = pendingHostSoftwareUpdateStatusRequest else { return }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
             pendingHostSoftwareUpdateStatusRequest = nil

@@ -106,7 +106,7 @@ public extension MirageClientService {
             )
     }
 
-    private static let desktopStreamStartTimeoutSeconds: Double = 30
+    private static let desktopStreamStartTimeoutSeconds: Double = 75
 
     private func scheduleDesktopStreamStartTimeout() {
         desktopStreamStartTimeoutTask?.cancel()

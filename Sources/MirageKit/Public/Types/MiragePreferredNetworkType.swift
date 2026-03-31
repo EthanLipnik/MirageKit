@@ -15,6 +15,7 @@ import Network
 public enum MiragePreferredNetworkType: String, Sendable, Codable, CaseIterable, Identifiable {
     case automatic
     case ethernet
+    case thunderbolt
     case wifi
 
     public var id: String { rawValue }
@@ -25,6 +26,8 @@ public enum MiragePreferredNetworkType: String, Sendable, Codable, CaseIterable,
             "Automatic"
         case .ethernet:
             "Ethernet"
+        case .thunderbolt:
+            "Thunderbolt Bridge"
         case .wifi:
             "Wi-Fi"
         }
@@ -36,6 +39,8 @@ public enum MiragePreferredNetworkType: String, Sendable, Codable, CaseIterable,
         case .automatic:
             nil
         case .ethernet:
+            .wiredEthernet
+        case .thunderbolt:
             .wiredEthernet
         case .wifi:
             .wifi

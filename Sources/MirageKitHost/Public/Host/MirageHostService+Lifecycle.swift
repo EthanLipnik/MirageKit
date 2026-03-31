@@ -54,8 +54,10 @@ public extension MirageHostService {
         // Initial window refresh (non-blocking - may fail if no screen recording permission)
         do {
             try await refreshWindows()
+            lastScreenRecordingPermissionDenied = false
             MirageLogger.host("Window refresh complete, found \(availableWindows.count) windows")
         } catch {
+            lastScreenRecordingPermissionDenied = Self.isScreenRecordingPermissionDenied(error)
             MirageLogger.host("Initial window refresh failed (screen recording permission may be needed): \(error)")
         }
 
@@ -69,6 +71,11 @@ public extension MirageHostService {
     private nonisolated static func isAddressInUseError(_ error: NWError) -> Bool {
         if case let .posix(code) = error, code == .EADDRINUSE { return true }
         return false
+    }
+
+    private nonisolated static func isScreenRecordingPermissionDenied(_ error: Error) -> Bool {
+        let nsError = error as NSError
+        return nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3801
     }
 
     private func startListeners() async throws {

@@ -19,13 +19,55 @@ extension StreamContext {
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
-        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil
+    )
+    async throws {
+        try await startWindowCapture(
+            windowWrapper: windowWrapper,
+            applicationWrapper: applicationWrapper,
+            displayWrapper: displayWrapper,
+            mirroredDisplaySnapshot: nil,
+            sendPacket: sendPacket,
+            onSendError: onSendError
+        )
+    }
+
+    func startMirroredAppWindowCapture(
+        windowWrapper: SCWindowWrapper,
+        applicationWrapper: SCApplicationWrapper,
+        displayWrapper: SCDisplayWrapper,
+        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
+        onSendError: (@Sendable (Error) -> Void)? = nil
+    )
+    async throws {
+        try await startWindowCapture(
+            windowWrapper: windowWrapper,
+            applicationWrapper: applicationWrapper,
+            displayWrapper: displayWrapper,
+            mirroredDisplaySnapshot: mirroredDisplaySnapshot,
+            sendPacket: sendPacket,
+            onSendError: onSendError
+        )
+    }
+
+    private func startWindowCapture(
+        windowWrapper: SCWindowWrapper,
+        applicationWrapper: SCApplicationWrapper,
+        displayWrapper: SCDisplayWrapper,
+        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
         guard !isRunning else { return }
         isRunning = true
-        useVirtualDisplay = false
+        useVirtualDisplay = mirroredDisplaySnapshot != nil
+        virtualDisplayContext = mirroredDisplaySnapshot
+        virtualDisplayVisibleBounds = .zero
+        virtualDisplayCaptureSourceRect = .zero
+        virtualDisplayVisiblePixelResolution = .zero
         captureFrameRateOverride = currentFrameRate
         captureFrameRate = currentFrameRate
 
@@ -79,14 +121,20 @@ extension StreamContext {
         )
         await refreshCaptureCadence()
 
-        MirageLogger.stream("Started stream \(streamID) for window \(windowID)")
+        if let mirroredDisplaySnapshot {
+            MirageLogger.stream(
+                "Started stream \(streamID) for window \(windowID) using mirrored app display \(mirroredDisplaySnapshot.displayID)"
+            )
+        } else {
+            MirageLogger.stream("Started stream \(streamID) for window \(windowID)")
+        }
     }
 
     func startDesktopDisplay(
         displayWrapper: SCDisplayWrapper,
         resolution: CGSize? = nil,
         excludedWindows: [SCWindowWrapper] = [],
-        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {

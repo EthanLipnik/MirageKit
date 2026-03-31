@@ -281,6 +281,17 @@ extension FrameReassembler {
             shouldSignalFrameLoss = true
             hasSignaledGapFrameLoss = true
         }
+        if !awaitingKeyframe,
+           shouldPromotePendingKeyframeLocked(now: packetReceivedAt) {
+            let expectedFrame = lastCompletedFrame &+ 1
+            promotePendingKeyframeLocked()
+            shouldSignalFrameLoss = true
+            hasSignaledGapFrameLoss = true
+            MirageLogger.log(
+                .frameAssembly,
+                "Promoting pending keyframe over stalled P-frame gap: expected=\(expectedFrame)"
+            )
+        }
         lock.unlock()
 
         if shouldSignalFrameLoss {
@@ -640,6 +651,44 @@ extension FrameReassembler {
 
         guard isFrameNewer(earliestBufferedForwardFrame.key, than: expectedFrame) else { return false }
         return now.timeIntervalSince(earliestBufferedForwardFrame.value.receivedAt) >= timeout
+    }
+
+    private func shouldPromotePendingKeyframeLocked(now: Date) -> Bool {
+        guard hasDeliveredKeyframeAnchor, !awaitingKeyframe else { return false }
+
+        let expectedFrame = lastCompletedFrame &+ 1
+        guard pendingFrames[expectedFrame] == nil else { return false }
+
+        guard let newestPendingKeyframe = pendingFrames
+            .filter({ $0.value.isKeyframe && isFrameNewer($0.key, than: expectedFrame) })
+            .max(by: { lhs, rhs in
+                if lhs.key == rhs.key {
+                    return lhs.value.lastProgressAt < rhs.value.lastProgressAt
+                }
+                return isFrameNewer(rhs.key, than: lhs.key)
+            })
+        else {
+            return false
+        }
+
+        let elapsed = now.timeIntervalSince(newestPendingKeyframe.value.receivedAt)
+        let progressRatio: Double = if newestPendingKeyframe.value.dataFragmentCount > 0 {
+            Double(newestPendingKeyframe.value.receivedCount) /
+                Double(newestPendingKeyframe.value.dataFragmentCount)
+        } else {
+            0
+        }
+        return elapsed >= pendingKeyframePromotionDelay ||
+            progressRatio >= pendingKeyframePromotionProgressThreshold
+    }
+
+    private func promotePendingKeyframeLocked() {
+        beginAwaitingKeyframe()
+        let preservedKeyframes = pendingFrames.filter { $0.value.isKeyframe }
+        for frame in pendingFrames.values where !frame.isKeyframe {
+            frame.buffer.release()
+        }
+        pendingFrames = preservedKeyframes
     }
 
     func shouldRequestKeyframe() -> Bool {

@@ -12,6 +12,65 @@ import MirageKit
 
 #if os(macOS)
 
+private final class TransportCompletionTracker: @unchecked Sendable {
+    private struct State {
+        var remainingSubmissions = 0
+        var didDrop = false
+        var firstFailure: (any Error)?
+        var isClosed = false
+        var didFinish = false
+    }
+
+    private let state: Locked<State>
+    private let onFinish: @Sendable (_ didDrop: Bool, _ error: (any Error)?, _ completedAt: CFAbsoluteTime) -> Void
+
+    init(
+        onFinish: @escaping @Sendable (_ didDrop: Bool, _ error: (any Error)?, _ completedAt: CFAbsoluteTime) -> Void
+    ) {
+        state = Locked(State())
+        self.onFinish = onFinish
+    }
+
+    func registerSubmission() {
+        state.withLock { $0.remainingSubmissions += 1 }
+    }
+
+    func recordDrop() {
+        let finalState = state.withLock { state -> (Bool, (any Error)?)? in
+            state.didDrop = true
+            return finalizeIfNeeded(state: &state)
+        }
+        guard let finalState else { return }
+        onFinish(finalState.0, finalState.1, CFAbsoluteTimeGetCurrent())
+    }
+
+    func finishSubmission(error: (any Error)?) {
+        let finalState = state.withLock { state -> (Bool, (any Error)?)? in
+            if let error, state.firstFailure == nil { state.firstFailure = error }
+            guard state.remainingSubmissions > 0 else { return nil }
+            state.remainingSubmissions -= 1
+            return finalizeIfNeeded(state: &state)
+        }
+        guard let finalState else { return }
+        onFinish(finalState.0, finalState.1, CFAbsoluteTimeGetCurrent())
+    }
+
+    func close() {
+        let finalState = state.withLock { state -> (Bool, (any Error)?)? in
+            state.isClosed = true
+            return finalizeIfNeeded(state: &state)
+        }
+        guard let finalState else { return }
+        onFinish(finalState.0, finalState.1, CFAbsoluteTimeGetCurrent())
+    }
+
+    private func finalizeIfNeeded(state: inout State) -> (Bool, (any Error)?)? {
+        guard state.isClosed, !state.didFinish, state.remainingSubmissions == 0 else { return nil }
+        state.didFinish = true
+        return (state.didDrop, state.firstFailure)
+    }
+}
+
 actor StreamPacketSender {
     struct PacingOverride: Sendable, Equatable {
         let rateBps: Int
@@ -71,13 +130,14 @@ actor StreamPacketSender {
     nonisolated static let packetBudgetWindowSeconds: CFAbsoluteTime = 0.75
     nonisolated static let packetBudgetMinWindowSeconds: CFAbsoluteTime = 0.20
     nonisolated static let packetPacerBurstWindowMs: Double = 6.0
+    nonisolated static let packetPacerSteadyStateBurstWindowMs: Double = 0.5
     nonisolated static let packetPacerDebtToleranceMs: Double = 1.0
     nonisolated static let packetPacerMaxSleepMsPerPacket: Int = 12
     nonisolated static let packetPacerLogIntervalSeconds: CFAbsoluteTime = 2.0
 
     private let maxPayloadSize: Int
     private let mediaSecurityKey: MirageMediaPacketKey?
-    private let sendPacket: @Sendable (Data) async throws -> Void
+    private let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void
     private let onSendError: (@Sendable (Error) -> Void)?
     private let packetBufferPool: PacketBufferPool
     private let awdlExperimentEnabled = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
@@ -133,7 +193,7 @@ actor StreamPacketSender {
         isKeyframeBurst: Bool,
         totalFragments: Int
     ) -> Double {
-        guard isKeyframeBurst else { return packetPacerBurstWindowMs }
+        guard isKeyframeBurst else { return packetPacerSteadyStateBurstWindowMs }
         guard totalFragments > 0 else { return packetPacerBurstWindowMs }
         return packetPacerBurstWindowMs
     }
@@ -145,12 +205,15 @@ actor StreamPacketSender {
         totalFragments: Int,
         pacingOverride: PacingOverride?
     ) -> (bytesPerSecond: Double, burstBytes: Double)? {
-        guard isKeyframeBurst else { return nil }
         guard packetBytes > 0 else { return nil }
 
         let overrideRate = max(0, pacingOverride?.rateBps ?? 0)
-        let effectiveRateBps = if targetRateBps > 0, overrideRate > 0 {
-            min(targetRateBps, overrideRate)
+        let effectiveRateBps = if isKeyframeBurst {
+            if targetRateBps > 0, overrideRate > 0 {
+                min(targetRateBps, overrideRate)
+            } else {
+                max(targetRateBps, overrideRate)
+            }
         } else {
             max(targetRateBps, overrideRate)
         }
@@ -178,7 +241,7 @@ actor StreamPacketSender {
     init(
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
-        sendPacket: @escaping @Sendable (Data) async throws -> Void,
+        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
     ) {
         self.maxPayloadSize = maxPayloadSize
@@ -209,7 +272,7 @@ actor StreamPacketSender {
         }
     }
 
-    func stop() {
+    func stop() async {
         sendContinuation?.finish()
         sendContinuation = nil
         sendTask?.cancel()
@@ -234,12 +297,12 @@ actor StreamPacketSender {
         resetPacketPacerState(now: CFAbsoluteTimeGetCurrent())
     }
 
-    func bumpGeneration(reason: String) {
+    func bumpGeneration(reason: String) async {
         generation &+= 1
         MirageLogger.stream("Packet send generation bumped to \(generation) (\(reason))")
     }
 
-    func resetQueue(reason: String) {
+    func resetQueue(reason: String) async {
         generation &+= 1
         queueLock.withLock {
             queuedBytes = 0
@@ -389,6 +452,20 @@ actor StreamPacketSender {
         let totalFragments = dataFragmentCount + parityFragmentCount
         let timestamp = UInt64(CMTimeGetSeconds(item.presentationTime) * 1_000_000_000)
         var didRecordSendStart = false
+        let transportCompletionTracker = TransportCompletionTracker(
+            onFinish: { [item, fragmentStartTime, totalFragments] didDrop, error, completedAt in
+                Task {
+                    await self.completeTransportWorkItem(
+                        item: item,
+                        startedAt: fragmentStartTime,
+                        completedAt: completedAt,
+                        totalFragments: totalFragments,
+                        didDrop: didDrop,
+                        error: error
+                    )
+                }
+            }
+        )
 
         var currentSequence = item.sequenceNumberStart
         for fragmentIndex in 0 ..< totalFragments {
@@ -396,11 +473,8 @@ actor StreamPacketSender {
                 generationAbortDropCount &+= 1
                 MirageLogger
                     .stream("Aborting send for frame \(item.frameNumber) (gen \(item.generation) != \(generation))")
-                if item.isKeyframe {
-                    queueLock.withLock {
-                        if latestKeyframeFrameNumber == item.frameNumber { dropNonKeyframesUntilKeyframe = false }
-                    }
-                }
+                transportCompletionTracker.recordDrop()
+                transportCompletionTracker.close()
                 if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
                 return
             }
@@ -415,7 +489,10 @@ actor StreamPacketSender {
                 let start = fragmentIndex * maxPayload
                 let end = min(start + maxPayload, frameByteCount)
                 let fragmentSize = end - start
-                guard fragmentSize > 0 else { continue }
+                guard fragmentSize > 0 else {
+                    transportCompletionTracker.recordDrop()
+                    continue
+                }
                 let checksum: UInt32 = if mediaSecurityKey == nil {
                     item.encodedData.withUnsafeBytes { frameBytes in
                         CRC32.calculate(UnsafeRawBufferPointer(rebasing: frameBytes[start ..< end]))
@@ -461,6 +538,7 @@ actor StreamPacketSender {
                             .stream,
                             "Failed to encrypt video packet for stream \(item.streamID) frame \(item.frameNumber) seq \(currentSequence): \(error)"
                         )
+                        transportCompletionTracker.recordDrop()
                         continue
                     }
                 } else {
@@ -526,35 +604,32 @@ actor StreamPacketSender {
                     nil
                 }
 
-                do {
-                    try await sendPacket(packet)
-                } catch {
+                transportCompletionTracker.registerSubmission()
+                sendPacket(packet) { error in
                     packetBuffer.release()
-                    if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
-                    onSendError?(error)
-                    return
+                    self.reduceQueuedBytes(accountedPayloadBytes)
+                    transportCompletionTracker.finishSubmission(error: error)
                 }
                 if let duplicatePacket {
-                    do {
-                        try await sendPacket(duplicatePacket)
-                    } catch {
-                        packetBuffer.release()
-                        reduceQueuedBytes(accountedPayloadBytes)
-                        if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
-                        onSendError?(error)
-                        return
+                    transportCompletionTracker.registerSubmission()
+                    sendPacket(duplicatePacket) { error in
+                        transportCompletionTracker.finishSubmission(error: error)
                     }
                 }
-                packetBuffer.release()
-                reduceQueuedBytes(accountedPayloadBytes)
             } else if parityFragmentCount > 0 {
                 let parityIndex = fragmentIndex - dataFragmentCount
                 let blockIndex = parityIndex
                 let blockSize = fecBlockSize
-                guard blockSize > 0 else { continue }
+                guard blockSize > 0 else {
+                    transportCompletionTracker.recordDrop()
+                    continue
+                }
                 let blockStart = blockIndex * blockSize
                 let blockEnd = min(blockStart + blockSize, dataFragmentCount)
-                guard blockStart < blockEnd else { continue }
+                guard blockStart < blockEnd else {
+                    transportCompletionTracker.recordDrop()
+                    continue
+                }
 
                 let parityLength = parityPayloadLength(
                     frameByteCount: frameByteCount,
@@ -569,7 +644,10 @@ actor StreamPacketSender {
                     payloadLength: parityLength,
                     maxPayload: maxPayload
                 )
-                guard !parityData.isEmpty else { continue }
+                guard !parityData.isEmpty else {
+                    transportCompletionTracker.recordDrop()
+                    continue
+                }
 
                 var parityFlags = flags
                 parityFlags.insert(.fecParity)
@@ -611,6 +689,7 @@ actor StreamPacketSender {
                             .stream,
                             "Failed to encrypt parity packet for stream \(item.streamID) frame \(item.frameNumber) seq \(currentSequence): \(error)"
                         )
+                        transportCompletionTracker.recordDrop()
                         continue
                     }
                 } else {
@@ -652,33 +731,45 @@ actor StreamPacketSender {
                     recordSendStartDelay(item: item, now: CFAbsoluteTimeGetCurrent())
                     didRecordSendStart = true
                 }
-
-                do {
-                    try await sendPacket(packet)
-                } catch {
+                transportCompletionTracker.registerSubmission()
+                sendPacket(packet) { error in
                     packetBuffer.release()
-                    if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
-                    onSendError?(error)
-                    return
+                    self.reduceQueuedBytes(accountedPayloadBytes)
+                    transportCompletionTracker.finishSubmission(error: error)
                 }
-                packetBuffer.release()
-                reduceQueuedBytes(accountedPayloadBytes)
             }
             currentSequence += 1
         }
 
         if remainingQueuedBytes > 0 { reduceQueuedBytes(remainingQueuedBytes) }
-        recordSendCompletion(item: item, startedAt: fragmentStartTime, completedAt: CFAbsoluteTimeGetCurrent())
+        transportCompletionTracker.close()
+    }
+
+    private func completeTransportWorkItem(
+        item: WorkItem,
+        startedAt: CFAbsoluteTime,
+        completedAt: CFAbsoluteTime,
+        totalFragments: Int,
+        didDrop: Bool,
+        error: (any Error)?
+    ) {
+        if let error {
+            onSendError?(error)
+        } else if !didDrop {
+            recordSendCompletion(item: item, startedAt: startedAt, completedAt: completedAt)
+        }
 
         if item.isKeyframe {
-            let fragmentDurationMs = (CFAbsoluteTimeGetCurrent() - fragmentStartTime) * 1000
-            let roundedDuration = (fragmentDurationMs * 100).rounded() / 100
-            let bytesKB = Double(item.encodedData.count) / 1024.0
-            let roundedBytes = (bytesKB * 10).rounded() / 10
-            MirageLogger
-                .timing(
-                    "\(item.logPrefix) \(item.frameNumber) keyframe: \(roundedDuration)ms, \(totalFragments) packets, \(roundedBytes)KB"
-                )
+            if error == nil, !didDrop {
+                let fragmentDurationMs = (completedAt - startedAt) * 1000
+                let roundedDuration = (fragmentDurationMs * 100).rounded() / 100
+                let bytesKB = Double(item.encodedData.count) / 1024.0
+                let roundedBytes = (bytesKB * 10).rounded() / 10
+                MirageLogger
+                    .timing(
+                        "\(item.logPrefix) \(item.frameNumber) keyframe: \(roundedDuration)ms, \(totalFragments) packets, \(roundedBytes)KB"
+                    )
+            }
         }
     }
 

@@ -513,11 +513,6 @@ actor StreamContext {
             bufferDepth = max(bufferDepth, gameModeInFlightLimit)
             minInFlight = max(minInFlight, gameModeInFlightLimit)
             inFlightCap = max(inFlightCap, gameModeInFlightLimit)
-        } else if streamKind == .desktop,
-                  useLowLatencyPipeline,
-                  resolvedEncoderConfig.targetFrameRate <= 60 {
-            bufferDepth = max(bufferDepth, 2)
-            inFlightCap = max(inFlightCap, 2)
         }
         let resolvedInFlightCap = max(1, inFlightCap)
         let resolvedInitialInFlight = min(minInFlight, resolvedInFlightCap)

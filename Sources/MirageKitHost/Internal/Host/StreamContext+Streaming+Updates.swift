@@ -420,6 +420,100 @@ extension StreamContext {
         MirageLogger.stream("Dimension update complete (frames resumed)")
     }
 
+    func restartWindowCapture(
+        windowWrapper: SCWindowWrapper,
+        applicationWrapper: SCApplicationWrapper,
+        displayWrapper: SCDisplayWrapper
+    )
+    async throws {
+        guard isRunning else { return }
+
+        let window = windowWrapper.window
+        let application = applicationWrapper.application
+        let resolvedWindowID = window.windowID
+
+        isResizing = true
+        defer { isResizing = false }
+
+        currentContentRect = .zero
+
+        dimensionToken &+= 1
+        MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
+        advanceEpoch(reason: "window binding update")
+        await packetSender?.bumpGeneration(reason: "window binding update")
+        await packetSender?.resetQueue(reason: "window binding update")
+        resetPipelineStateForReconfiguration(reason: "window binding update")
+
+        let captureTarget = streamTargetDimensions(windowFrame: window.frame)
+        baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
+        streamScale = resolvedStreamScale(
+            for: baseCaptureSize,
+            requestedScale: requestedStreamScale,
+            logLabel: "Resolution cap"
+        )
+        let outputSize = scaledOutputSize(for: baseCaptureSize)
+        let scaledWidth = Int(outputSize.width)
+        let scaledHeight = Int(outputSize.height)
+        guard scaledWidth > 0, scaledHeight > 0 else { return }
+
+        currentCaptureSize = outputSize
+        currentEncodedSize = outputSize
+        lastWindowFrame = window.frame
+        captureMode = .window
+        updateQueueLimits()
+
+        await captureEngine?.stopCapture()
+
+        guard let encoder else { throw MirageError.protocolError("Window binding reset missing encoder") }
+        try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+        try await encoder.reset()
+        let resolvedPixelFormat = await encoder.getActivePixelFormat()
+        activePixelFormat = resolvedPixelFormat
+
+        let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
+        let restartCaptureEngine = WindowCaptureEngine(
+            configuration: captureConfig,
+            capturePressureProfile: capturePressureProfile,
+            latencyMode: latencyMode,
+            captureFrameRate: captureFrameRate,
+            usesDisplayRefreshCadence: false
+        )
+        captureEngine = restartCaptureEngine
+        if let captureStallStageHandler {
+            await restartCaptureEngine.setCaptureStallStageHandler(captureStallStageHandler)
+        }
+        let frameInbox = self.frameInbox
+        await restartCaptureEngine.setAdmissionDropper { [weak self] in
+            let snapshot = frameInbox.pendingSnapshot()
+            let pendingPressure = snapshot.pending >= max(1, snapshot.capacity - 1)
+            let backpressure = self?.backpressureActiveSnapshot ?? false
+            guard pendingPressure || backpressure else { return false }
+
+            if frameInbox.scheduleIfNeeded() {
+                Task(priority: .userInitiated) { await self?.processPendingFrames() }
+            }
+            return true
+        }
+
+        try await restartCaptureEngine.startCapture(
+            window: window,
+            application: application,
+            display: displayWrapper.display,
+            outputScale: streamScale,
+            onFrame: { [weak self] frame in
+                self?.enqueueCapturedFrame(frame)
+            },
+            onAudio: onCapturedAudioBuffer,
+            audioChannelCount: requestedAudioChannelCount
+        )
+        await refreshCaptureCadence()
+        await applyDerivedQuality(for: outputSize, logLabel: "Window binding update")
+        await encoder.forceKeyframe()
+        MirageLogger.stream(
+            "Window binding reset complete for stream \(streamID) window \(resolvedWindowID) at \(scaledWidth)x\(scaledHeight)"
+        )
+    }
+
     func updateResolution(width: Int, height: Int) async throws {
         guard isRunning else { return }
 

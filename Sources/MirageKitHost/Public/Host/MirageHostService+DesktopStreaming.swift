@@ -183,11 +183,11 @@ extension MirageHostService {
             colorSpace: MirageColorSpace?
         )?
         var lastVirtualDisplayError: Error?
-        let acquisitionDeadline = ContinuousClock.now + .seconds(20)
+        let acquisitionDeadline = ContinuousClock.now + .seconds(75)
 
         acquisitionLoop: for (index, attempt) in virtualDisplayStartupAttempts.enumerated() {
             if ContinuousClock.now >= acquisitionDeadline {
-                MirageLogger.error(.host, "Desktop virtual display acquisition deadline exceeded (20s)")
+                MirageLogger.error(.host, "Desktop virtual display acquisition deadline exceeded (75s)")
                 break acquisitionLoop
             }
 
@@ -499,18 +499,27 @@ extension MirageHostService {
             displayWrapper: captureDisplay,
             resolution: captureResolution,
             excludedWindows: excludedWindows,
-            sendPacket: { packetData in
-                guard let activeVideoStream else { return }
-                try await activeVideoStream.sendUnreliable(packetData)
-                let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
-                    guard !didMark else { return false }
-                    didMark = true
-                    return true
+            sendPacket: { packetData, onComplete in
+                guard let activeVideoStream else {
+                    onComplete(nil)
+                    return
                 }
-                if shouldMarkFirstPacket {
-                    await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
-                        streamID: streamID
-                    )
+                activeVideoStream.sendUnreliableQueued(packetData) { error in
+                    if error == nil {
+                        let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
+                            guard !didMark else { return false }
+                            didMark = true
+                            return true
+                        }
+                        if shouldMarkFirstPacket {
+                            Task {
+                                await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
+                                    streamID: streamID
+                                )
+                            }
+                        }
+                    }
+                    onComplete(error)
                 }
             },
             onSendError: { [weak self] error in

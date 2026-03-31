@@ -257,6 +257,12 @@ extension MirageHostService {
         let policyUpdate = StreamPolicyUpdateMessage(epoch: snapshot.epoch, policies: snapshot.policies)
         try? await clientContext.send(.streamPolicyUpdate, content: policyUpdate)
 
+        if snapshot.activeChanged,
+           let activeStreamID = snapshot.activeStreamID,
+           let activeSession = activeSessionByStreamID[activeStreamID] {
+            activateWindow(activeSession.window)
+        }
+
         let activeText = snapshot.activeStreamID.map(String.init) ?? "none"
         let targetsText = snapshot.policies.map { policy in
             let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"

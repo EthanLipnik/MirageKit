@@ -76,6 +76,12 @@ extension SharedVirtualDisplayManager {
         activeConsumers.count
     }
 
+    /// Get the shared app-stream display snapshot.
+    func getAppStreamDisplaySnapshot() -> DisplaySnapshot? {
+        guard let display = appStreamDisplay else { return nil }
+        return snapshot(from: display)
+    }
+
     /// Get a dedicated display snapshot for a stream.
     func getDedicatedDisplaySnapshot(for streamID: StreamID) -> DisplaySnapshot? {
         guard let display = dedicatedDisplaysByStreamID[streamID] else { return nil }

@@ -619,9 +619,6 @@ extension MirageHostService {
             return failure("Target slot stream context is unavailable")
         }
         let previousWindowInfo = appSession.windowStreams[currentWindowID]
-        guard let virtualDisplayState = getVirtualDisplayState(streamID: targetSlotStreamID) else {
-            return failure("Target slot stream does not have virtual-display state")
-        }
         guard let clientContext = findClientContext(clientID: clientID) else {
             return failure("Client context unavailable")
         }
@@ -636,67 +633,133 @@ extension MirageHostService {
             )
         }
 
-        let resolvedSpaceID = CGVirtualDisplayBridge.getSpaceForDisplay(virtualDisplayState.displayID)
-        guard resolvedSpaceID != 0 else {
-            return failure("Unable to resolve target display space for slot")
-        }
+        let virtualDisplayState = getVirtualDisplayState(streamID: targetSlotStreamID)
+        if let virtualDisplayState {
+            let resolvedSpaceID = CGVirtualDisplayBridge.getSpaceForDisplay(virtualDisplayState.displayID)
+            guard resolvedSpaceID != 0 else {
+                return failure("Unable to resolve target display space for slot")
+            }
 
-        let oldOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: targetSlotStreamID,
-            windowID: currentWindowID,
-            displayID: virtualDisplayState.displayID,
-            generation: virtualDisplayState.generation
-        )
-        let newGeneration = virtualDisplayState.generation &+ 1
-        let newOwner = WindowSpaceManager.WindowBindingOwner(
-            streamID: targetSlotStreamID,
-            windowID: targetWindowID,
-            displayID: virtualDisplayState.displayID,
-            generation: newGeneration
-        )
-
-        do {
-            try await WindowSpaceManager.shared.restoreWindow(
-                currentWindowID,
-                expectedOwner: oldOwner
-            )
-        } catch {
-            return failure("Failed to release previous slot window: \(error.localizedDescription)")
-        }
-
-        do {
-            try await WindowSpaceManager.shared.moveWindow(
-                targetWindowID,
-                toSpaceID: resolvedSpaceID,
+            let oldOwner = WindowSpaceManager.WindowBindingOwner(
+                streamID: targetSlotStreamID,
+                windowID: currentWindowID,
                 displayID: virtualDisplayState.displayID,
-                displayBounds: virtualDisplayState.bounds,
-                targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
-                owner: newOwner
+                generation: virtualDisplayState.generation
             )
-        } catch {
-            // Fail closed: attempt to restore prior slot binding before returning error.
+            let newGeneration = virtualDisplayState.generation &+ 1
+            let newOwner = WindowSpaceManager.WindowBindingOwner(
+                streamID: targetSlotStreamID,
+                windowID: targetWindowID,
+                displayID: virtualDisplayState.displayID,
+                generation: newGeneration
+            )
+
+            do {
+                try await WindowSpaceManager.shared.restoreWindow(
+                    currentWindowID,
+                    expectedOwner: oldOwner
+                )
+            } catch {
+                return failure("Failed to release previous slot window: \(error.localizedDescription)")
+            }
+
             do {
                 try await WindowSpaceManager.shared.moveWindow(
-                    currentWindowID,
+                    targetWindowID,
                     toSpaceID: resolvedSpaceID,
                     displayID: virtualDisplayState.displayID,
                     displayBounds: virtualDisplayState.bounds,
                     targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
-                    owner: oldOwner
+                    owner: newOwner
                 )
             } catch {
-                MirageLogger.error(
-                    .host,
-                    error: error,
-                    message: "Failed to restore prior slot binding after swap failure: "
-                )
+                // Fail closed: attempt to restore prior slot binding before returning error.
+                do {
+                    try await WindowSpaceManager.shared.moveWindow(
+                        currentWindowID,
+                        toSpaceID: resolvedSpaceID,
+                        displayID: virtualDisplayState.displayID,
+                        displayBounds: virtualDisplayState.bounds,
+                        targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
+                        owner: oldOwner
+                    )
+                } catch {
+                    MirageLogger.error(
+                        .host,
+                        error: error,
+                        message: "Failed to restore prior slot binding after swap failure: "
+                    )
+                }
+                return failure("Failed to bind requested hidden window into slot: \(error.localizedDescription)")
             }
-            return failure("Failed to bind requested hidden window into slot: \(error.localizedDescription)")
+
+            let targetFrame = currentWindowFrame(for: targetWindowID) ?? CGRect(
+                x: virtualDisplayState.bounds.origin.x,
+                y: virtualDisplayState.bounds.origin.y,
+                width: CGFloat(max(1, hiddenInfo.width)),
+                height: CGFloat(max(1, hiddenInfo.height))
+            )
+            let targetWindow = MirageWindow(
+                id: targetWindowID,
+                title: hiddenInfo.title,
+                application: activeSessionByStreamID[targetSlotStreamID]?.window.application,
+                frame: targetFrame,
+                isOnScreen: true,
+                windowLayer: 0
+            )
+
+            registerActiveStreamSession(
+                MirageStreamSession(
+                    id: targetSlotStreamID,
+                    window: targetWindow,
+                    client: streamSession.client
+                )
+            )
+            inputStreamCacheActor.set(targetSlotStreamID, window: targetWindow, client: streamSession.client)
+            clearVirtualDisplayState(windowID: currentWindowID)
+            setVirtualDisplayState(
+                windowID: targetWindowID,
+                state: WindowVirtualDisplayState(
+                    streamID: targetSlotStreamID,
+                    displayID: virtualDisplayState.displayID,
+                    generation: newGeneration,
+                    bounds: virtualDisplayState.bounds,
+                    targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
+                    captureSourceRect: virtualDisplayState.captureSourceRect,
+                    visiblePixelResolution: virtualDisplayState.visiblePixelResolution,
+                    scaleFactor: virtualDisplayState.scaleFactor,
+                    pixelResolution: virtualDisplayState.pixelResolution,
+                    clientScaleFactor: virtualDisplayState.clientScaleFactor
+                )
+            )
+            await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: newGeneration)
+            activateWindow(targetWindow)
+            await enforceVirtualDisplayPlacementAfterActivation(windowID: targetWindowID, force: true)
+        } else {
+            let restartComponents: (
+                window: SCWindowWrapper,
+                application: SCApplicationWrapper,
+                display: SCDisplayWrapper
+            )
+            do {
+                restartComponents = try await resolveDirectWindowCaptureComponents(
+                    windowID: targetWindowID,
+                    label: "slot-swap"
+                )
+                await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: nil)
+                try await context.restartWindowCapture(
+                    windowWrapper: restartComponents.window,
+                    applicationWrapper: restartComponents.application,
+                    displayWrapper: restartComponents.display
+                )
+            } catch {
+                return failure("Failed to retarget requested hidden window into slot: \(error.localizedDescription)")
+            }
         }
 
         let targetFrame = currentWindowFrame(for: targetWindowID) ?? CGRect(
-            x: virtualDisplayState.bounds.origin.x,
-            y: virtualDisplayState.bounds.origin.y,
+            x: streamSession.window.frame.origin.x,
+            y: streamSession.window.frame.origin.y,
             width: CGFloat(max(1, hiddenInfo.width)),
             height: CGFloat(max(1, hiddenInfo.height))
         )
@@ -717,25 +780,7 @@ extension MirageHostService {
             )
         )
         inputStreamCacheActor.set(targetSlotStreamID, window: targetWindow, client: streamSession.client)
-        clearVirtualDisplayState(windowID: currentWindowID)
-        setVirtualDisplayState(
-            windowID: targetWindowID,
-            state: WindowVirtualDisplayState(
-                streamID: targetSlotStreamID,
-                displayID: virtualDisplayState.displayID,
-                generation: newGeneration,
-                bounds: virtualDisplayState.bounds,
-                targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
-                captureSourceRect: virtualDisplayState.captureSourceRect,
-                visiblePixelResolution: virtualDisplayState.visiblePixelResolution,
-                scaleFactor: virtualDisplayState.scaleFactor,
-                pixelResolution: virtualDisplayState.pixelResolution,
-                clientScaleFactor: virtualDisplayState.clientScaleFactor
-            )
-        )
-        await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: newGeneration)
         activateWindow(targetWindow)
-        await enforceVirtualDisplayPlacementAfterActivation(windowID: targetWindowID, force: true)
 
         let processID = targetWindow.application?.id ?? 0
         let isResizable = appStreamManager.checkWindowResizability(windowID: targetWindowID, processID: processID)
@@ -793,6 +838,44 @@ extension MirageHostService {
             success: true,
             reason: nil
         )
+    }
+
+    private func resolveDirectWindowCaptureComponents(
+        windowID: WindowID,
+        label: String,
+        maxAttempts: Int = 10,
+        initialDelayMs: Int = 100
+    )
+    async throws -> (
+        window: SCWindowWrapper,
+        application: SCApplicationWrapper,
+        display: SCDisplayWrapper
+    ) {
+        let attempts = max(1, maxAttempts)
+        var delayMs = max(40, initialDelayMs)
+
+        for attempt in 1 ... attempts {
+            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+            if let window = content.windows.first(where: { $0.windowID == CGWindowID(windowID) }),
+               let application = window.owningApplication {
+                let display = try await findMainSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
+                if attempt > 1 {
+                    MirageLogger.host("Resolved direct window-capture components for window \(windowID) on attempt \(attempt) (\(label))")
+                }
+                return (
+                    window: SCWindowWrapper(window: window),
+                    application: SCApplicationWrapper(application: application),
+                    display: display
+                )
+            }
+
+            if attempt < attempts {
+                try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
+                delayMs = min(600, Int(Double(delayMs) * 1.5))
+            }
+        }
+
+        throw MirageError.protocolError("Unable to resolve direct window-capture components for window \(windowID) (\(label))")
     }
 
     private func startAdditionalStreamForExistingAppSession(
@@ -1546,14 +1629,12 @@ extension MirageHostService {
             }
             appListRequestTask?.cancel()
             appListRequestTask = nil
-            cancelPendingNonEssentialMetadataRequestTasks()
             await appStreamManager.cancelAppListScans()
         case .remainDeferred:
             if appListRequestTask != nil {
                 appListRequestTask?.cancel()
                 appListRequestTask = nil
             }
-            cancelPendingNonEssentialMetadataRequestTasks()
             await appStreamManager.cancelAppListScans()
         case .resumeDeferred:
             appListRequestDeferredForInteractiveWorkload = false
