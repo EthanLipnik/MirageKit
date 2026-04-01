@@ -352,7 +352,10 @@ extension MirageClientService {
             registerStartupAttempt(startupAttemptID, for: streamID)
 
             if shouldSetupController {
-                await self.setupControllerForStream(streamID)
+                await self.setupControllerForStream(
+                    streamID,
+                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
+                )
             }
             self.addActiveStreamID(streamID)
             if isAppCentricStream, shouldSetupController {
@@ -403,6 +406,7 @@ extension MirageClientService {
             clearStreamRefreshRateOverride(streamID: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             clearAdaptiveFallbackState(for: streamID)
+            mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
             clearStartupAttempt(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
             appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)

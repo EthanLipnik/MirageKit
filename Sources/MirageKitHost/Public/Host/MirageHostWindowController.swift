@@ -34,8 +34,19 @@ public final class MirageHostWindowController {
 
     // MARK: - Timers
 
-    /// Timer for periodically re-centering streamed windows.
-    private var windowCenteringTimer: Timer?
+    private struct FrameEnforcementRequest {
+        let targetSize: CGSize
+        let remainingAttempts: Int
+    }
+
+    /// Pending follow-up enforcement for windows that drifted after an AX mutation.
+    private var pendingFrameEnforcementByWindowID: [WindowID: FrameEnforcementRequest] = [:]
+
+    /// One-shot enforcement tasks keyed by streamed window ID.
+    private var frameEnforcementTasksByWindowID: [WindowID: Task<Void, Never>] = [:]
+
+    /// Whether direct-stream frame enforcement is active.
+    private var frameEnforcementEnabled = false
 
     /// Poll interval for enforcing streamed window frame.
     private let windowFrameEnforcementInterval: TimeInterval = 0.12
@@ -43,11 +54,14 @@ public final class MirageHostWindowController {
     /// Tolerance for considering two sizes equivalent.
     private let windowSizeEnforcementTolerance: CGFloat = 2.0
 
-    /// Pending resize request for debouncing.
-    private var pendingResizeRequest: (windowID: WindowID, width: Int, height: Int)?
+    /// Maximum number of follow-up enforcement attempts after a resize.
+    private let maxFrameEnforcementAttempts = 4
 
-    /// Timer for debouncing resize updates.
-    private var resizeDebounceTimer: DispatchSourceTimer?
+    /// Pending resize requests keyed by window for debouncing.
+    private var pendingResizeRequestsByWindowID: [WindowID: (width: Int, height: Int)] = [:]
+
+    /// Timers for debouncing resize updates keyed by window.
+    private var resizeDebounceTimersByWindowID: [WindowID: DispatchSourceTimer] = [:]
 
     /// Debounce interval for resize events (ms).
     private let resizeDebounceIntervalMs: UInt64 = 150
@@ -61,41 +75,42 @@ public final class MirageHostWindowController {
 
     /// Starts periodic re-centering for active streamed windows.
     public func startWindowCenteringTimer() {
-        windowCenteringTimer?.invalidate()
-        windowCenteringTimer = Timer.scheduledTimer(
-            withTimeInterval: windowFrameEnforcementInterval,
-            repeats: true
-        ) { [weak self] _ in
-            Task { @MainActor in
-                self?.recenterAllStreamedWindows()
-            }
-        }
+        frameEnforcementEnabled = true
+        recenterAllStreamedWindows()
     }
 
     /// Stops periodic re-centering for streamed windows.
     public func stopWindowCenteringTimer() {
-        windowCenteringTimer?.invalidate()
-        windowCenteringTimer = nil
+        frameEnforcementEnabled = false
+        pendingFrameEnforcementByWindowID.removeAll()
+        for task in frameEnforcementTasksByWindowID.values {
+            task.cancel()
+        }
+        frameEnforcementTasksByWindowID.removeAll()
+        for timer in resizeDebounceTimersByWindowID.values {
+            timer.cancel()
+        }
+        resizeDebounceTimersByWindowID.removeAll()
+        pendingResizeRequestsByWindowID.removeAll()
     }
 
     private func recenterAllStreamedWindows() {
         guard let sessions = hostService?.activeStreams else { return }
         for session in sessions {
-            let window = session.window
-            if hostService?.isStreamUsingVirtualDisplay(windowID: window.id) == true {
-                continue
-            }
-            guard let axWindow = getOrCacheAXWindow(for: window) else { continue }
-            enforceDirectStreamWindowFrame(axWindow: axWindow, window: window)
+            requestFrameEnforcement(for: session.window)
         }
     }
 
-    private func enforceDirectStreamWindowFrame(axWindow: AXUIElement, window: MirageWindow) {
+    private func enforceDirectStreamWindowFrame(
+        axWindow: AXUIElement,
+        window: MirageWindow,
+        desiredSizeOverride: CGSize? = nil
+    ) -> Bool {
         let currentFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id)
         let fallbackSize = currentFrame?.size ?? window.frame.size
         let desiredSize = CGSize(
-            width: max(1, window.frame.width),
-            height: max(1, window.frame.height)
+            width: max(1, desiredSizeOverride?.width ?? window.frame.width),
+            height: max(1, desiredSizeOverride?.height ?? window.frame.height)
         )
         var enforcedSize = desiredSize
         if let visibleFrame = maxWindowSizeRect(for: window) {
@@ -109,12 +124,86 @@ public final class MirageHostWindowController {
             if let sizeValue = AXValueCreate(.cgSize, &mutableSize) {
                 let setResult = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
                 if setResult != .success {
-                    enforcedSize = fallbackSize
+                    return false
                 }
             }
         }
 
-        centerWindowOnScreen(axWindow, newSize: enforcedSize, windowID: window.id)
+        centerWindowOnScreen(
+            axWindow,
+            newSize: enforcedSize,
+            windowID: window.id,
+            scheduleFollowUp: false
+        )
+        guard let finalFrame = axWindowFrame(axWindow) ?? currentWindowFrame(for: window.id) else {
+            return false
+        }
+        let remainingWidthDrift = abs(finalFrame.width - enforcedSize.width)
+        let remainingHeightDrift = abs(finalFrame.height - enforcedSize.height)
+        return remainingWidthDrift > windowSizeEnforcementTolerance ||
+            remainingHeightDrift > windowSizeEnforcementTolerance
+    }
+
+    public func requestFrameEnforcement(
+        for window: MirageWindow,
+        targetSize: CGSize? = nil,
+        remainingAttempts: Int? = nil
+    ) {
+        guard frameEnforcementEnabled else { return }
+        guard hostService?.isStreamUsingVirtualDisplay(windowID: window.id) != true else { return }
+
+        let attempts = max(1, remainingAttempts ?? maxFrameEnforcementAttempts)
+        let target = CGSize(
+            width: max(1, targetSize?.width ?? window.frame.width),
+            height: max(1, targetSize?.height ?? window.frame.height)
+        )
+        pendingFrameEnforcementByWindowID[window.id] = FrameEnforcementRequest(
+            targetSize: target,
+            remainingAttempts: attempts
+        )
+        frameEnforcementTasksByWindowID[window.id]?.cancel()
+        frameEnforcementTasksByWindowID[window.id] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(
+                    for: .milliseconds(Int((self?.windowFrameEnforcementInterval ?? 0.12) * 1000))
+                )
+            } catch {
+                return
+            }
+            self?.performFrameEnforcement(windowID: window.id)
+        }
+    }
+
+    private func performFrameEnforcement(windowID: WindowID) {
+        guard frameEnforcementEnabled else { return }
+        guard let session = hostService?.activeStreams.first(where: { $0.window.id == windowID }) else {
+            pendingFrameEnforcementByWindowID.removeValue(forKey: windowID)
+            frameEnforcementTasksByWindowID.removeValue(forKey: windowID)
+            return
+        }
+        guard let request = pendingFrameEnforcementByWindowID[windowID] else { return }
+        guard let axWindow = getOrCacheAXWindow(for: session.window) else {
+            pendingFrameEnforcementByWindowID.removeValue(forKey: windowID)
+            frameEnforcementTasksByWindowID.removeValue(forKey: windowID)
+            return
+        }
+
+        let needsFollowUp = enforceDirectStreamWindowFrame(
+            axWindow: axWindow,
+            window: session.window,
+            desiredSizeOverride: request.targetSize
+        )
+        if needsFollowUp, request.remainingAttempts > 1 {
+            requestFrameEnforcement(
+                for: session.window,
+                targetSize: request.targetSize,
+                remainingAttempts: request.remainingAttempts - 1
+            )
+            return
+        }
+
+        pendingFrameEnforcementByWindowID.removeValue(forKey: windowID)
+        frameEnforcementTasksByWindowID.removeValue(forKey: windowID)
     }
 
     // MARK: - AX Window Caching
@@ -304,7 +393,12 @@ public final class MirageHostWindowController {
     ///   - axWindow: Accessibility window element.
     ///   - newSize: Target size in points.
     ///   - windowID: Optional window identifier for cache updates.
-    public func centerWindowOnScreen(_ axWindow: AXUIElement, newSize: CGSize, windowID: WindowID? = nil) {
+    public func centerWindowOnScreen(
+        _ axWindow: AXUIElement,
+        newSize: CGSize,
+        windowID: WindowID? = nil,
+        scheduleFollowUp: Bool = true
+    ) {
         guard let currentFrame = axWindowFrame(axWindow) else { return }
 
         let screenFrame: CGRect
@@ -338,6 +432,10 @@ public final class MirageHostWindowController {
                 let newFrame = CGRect(origin: newPosition, size: newSize)
                 hostService?.updateInputCacheFrame(windowID: wid, newFrame: newFrame)
             }
+            if scheduleFollowUp,
+               let session = hostService?.activeStreams.first(where: { $0.window.id == wid }) {
+                requestFrameEnforcement(for: session.window, targetSize: newSize)
+            }
         }
     }
 
@@ -362,7 +460,11 @@ public final class MirageHostWindowController {
             screenFrame = virtualBounds
             isVirtualDisplay = true
         } else {
-            guard let screen = NSScreen.main else { return }
+            let referenceFrame = currentWindowFrame(for: window.id) ?? window.frame
+            let windowCenter = CGPoint(x: referenceFrame.midX, y: referenceFrame.midY)
+            guard let screen = NSScreen.screens.first(where: { $0.frame.contains(windowCenter) }) ?? NSScreen.main else {
+                return
+            }
             screenFrame = screen.visibleFrame
             isVirtualDisplay = false
         }
@@ -393,8 +495,16 @@ public final class MirageHostWindowController {
                     let newFrame = CGRect(origin: newPosition, size: newSize)
                     hostService?.updateInputCacheFrame(windowID: window.id, newFrame: newFrame)
                 }
+                requestFrameEnforcement(for: window, targetSize: newSize)
             }
         }
+    }
+
+    public func screenScaleFactor(for window: MirageWindow, fallbackFrame: CGRect? = nil) -> CGFloat {
+        let referenceFrame = currentWindowFrame(for: window.id) ?? fallbackFrame ?? window.frame
+        let windowCenter = CGPoint(x: referenceFrame.midX, y: referenceFrame.midY)
+        let screen = NSScreen.screens.first(where: { $0.frame.contains(windowCenter) }) ?? NSScreen.main
+        return screen?.backingScaleFactor ?? 2.0
     }
 
     /// Debounces capture resolution updates for a window.
@@ -403,26 +513,28 @@ public final class MirageHostWindowController {
     ///   - width: Target pixel width.
     ///   - height: Target pixel height.
     public func scheduleResizeUpdate(windowID: WindowID, width: Int, height: Int) {
-        pendingResizeRequest = (windowID, width, height)
-
-        resizeDebounceTimer?.cancel()
+        pendingResizeRequestsByWindowID[windowID] = (width, height)
+        resizeDebounceTimersByWindowID[windowID]?.cancel()
 
         let timer = DispatchSource.makeTimerSource(queue: .main)
         timer.schedule(deadline: .now() + .milliseconds(Int(resizeDebounceIntervalMs)))
         timer.setEventHandler { [weak self] in
-            guard let self, let request = pendingResizeRequest else { return }
-            pendingResizeRequest = nil
+            guard let self,
+                  let request = pendingResizeRequestsByWindowID.removeValue(forKey: windowID) else {
+                return
+            }
+            resizeDebounceTimersByWindowID.removeValue(forKey: windowID)
 
             Task {
                 await self.hostService?.updateCaptureResolution(
-                    for: request.windowID,
+                    for: windowID,
                     width: request.width,
                     height: request.height
                 )
             }
         }
         timer.resume()
-        resizeDebounceTimer = timer
+        resizeDebounceTimersByWindowID[windowID] = timer
     }
 
     // MARK: - Helper Methods

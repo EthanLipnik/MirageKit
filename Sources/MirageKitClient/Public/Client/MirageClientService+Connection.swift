@@ -477,6 +477,7 @@ extension MirageClientService {
                 "endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription)"
         )
         let node = loomNode
+        let bootstrapProgressTracker = ConnectSessionBootstrapProgressTracker()
         let connectTask = Task<LoomAuthenticatedSession, Error> { [weak self] in
             let session = try await node.connect(
                 to: attempt.endpoint,
@@ -485,6 +486,18 @@ extension MirageClientService {
                 requiredInterfaceType: attempt.requiredInterfaceType,
                 onTrustPending: { @MainActor [weak self] in
                     self?.isAwaitingManualApproval = true
+                },
+                onBootstrapProgress: { [weak self] progress in
+                    Task {
+                        await bootstrapProgressTracker.record(progress)
+                        await MainActor.run {
+                            self?.handleConnectBootstrapProgress(
+                                progress,
+                                attempt: attempt,
+                                attemptID: attemptID
+                            )
+                        }
+                    }
                 }
             )
             let shouldCancelSession = await MainActor.run {
@@ -503,8 +516,10 @@ extension MirageClientService {
         do {
             let session = try await awaitConnectSession(
                 connectTask,
+                attempt: attempt,
                 attemptID: attemptID,
-                timeout: controlSessionConnectTimeout(for: attempt)
+                timeout: controlSessionConnectTimeout(for: attempt),
+                bootstrapProgressTracker: bootstrapProgressTracker
             )
             clearPendingConnectTaskIfNeeded(for: attemptID)
             return session
@@ -520,8 +535,10 @@ extension MirageClientService {
     /// the macOS NECP policy engine is in a corrupted state).
     private func awaitConnectSession(
         _ connectTask: Task<LoomAuthenticatedSession, Error>,
+        attempt: ControlSessionAttempt,
         attemptID: UUID,
-        timeout: Duration
+        timeout: Duration,
+        bootstrapProgressTracker: ConnectSessionBootstrapProgressTracker?
     ) async throws -> LoomAuthenticatedSession {
         let timeoutError = MirageError.timeout
 
@@ -539,6 +556,25 @@ extension MirageClientService {
                 }
 
                 Task { [timeout, timeoutError] in
+                    if attempt.transportKind == .udp,
+                       let bootstrapProgressTracker {
+                        let absoluteTimeout = absoluteControlSessionConnectTimeout(for: attempt)
+                        while !Task.isCancelled {
+                            try? await Task.sleep(for: .milliseconds(250))
+                            let timedOut = await bootstrapProgressTracker.shouldTimeOut(
+                                now: ContinuousClock.now,
+                                initialTimeout: timeout,
+                                activePhaseIdleTimeout: timeout,
+                                absoluteTimeout: absoluteTimeout
+                            )
+                            guard timedOut else { continue }
+                            connectTask.cancel()
+                            await box.resume(throwing: timeoutError)
+                            return
+                        }
+                        return
+                    }
+
                     try? await Task.sleep(for: timeout)
                     connectTask.cancel()
                     await box.resume(throwing: timeoutError)
@@ -557,6 +593,39 @@ extension MirageClientService {
             return .seconds(5)
         }
         return controlSessionConnectTimeout
+    }
+
+    private func absoluteControlSessionConnectTimeout(for attempt: ControlSessionAttempt) -> Duration {
+        if attempt.transportKind == .udp {
+            return .seconds(20)
+        }
+        return controlSessionConnectTimeout(for: attempt)
+    }
+
+    private func handleConnectBootstrapProgress(
+        _ progress: LoomAuthenticatedSessionBootstrapProgress,
+        attempt: ControlSessionAttempt,
+        attemptID: UUID
+    ) {
+        guard isCurrentConnectAttempt(attemptID) else { return }
+
+        if progress.phase == .remoteHelloReceived || progress.phase == .trustPendingApproval {
+            if case .connecting = connectionState {
+                connectionState = .handshaking(host: attempt.hostName)
+            }
+        }
+
+        if let failureReason = progress.failureReason {
+            MirageLogger.client(
+                "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed at " +
+                    "\(progress.phase.rawValue) for \(attempt.hostName): \(failureReason)"
+            )
+            return
+        }
+
+        MirageLogger.client(
+            "Pre-bootstrap \(attempt.transportKind.rawValue) progress for \(attempt.hostName): \(progress.phase.rawValue)"
+        )
     }
 
     func controlSessionAttempts(for host: LoomPeer) -> [ControlSessionAttempt] {
@@ -940,5 +1009,38 @@ private actor ConnectSessionContinuationBox {
         guard let c = continuation else { return }
         continuation = nil
         c.resume(throwing: error)
+    }
+}
+
+private actor ConnectSessionBootstrapProgressTracker {
+    private let startedAt = ContinuousClock.now
+    private var latestProgress = LoomAuthenticatedSessionBootstrapProgress(phase: .idle)
+    private var lastProgressAt = ContinuousClock.now
+
+    func record(
+        _ progress: LoomAuthenticatedSessionBootstrapProgress,
+        now: ContinuousClock.Instant = ContinuousClock.now
+    ) {
+        guard progress != latestProgress else { return }
+        latestProgress = progress
+        lastProgressAt = now
+    }
+
+    func shouldTimeOut(
+        now: ContinuousClock.Instant,
+        initialTimeout: Duration,
+        activePhaseIdleTimeout: Duration,
+        absoluteTimeout: Duration
+    ) -> Bool {
+        if now - startedAt >= absoluteTimeout {
+            return true
+        }
+        if latestProgress.phase == .ready || latestProgress.isFailure {
+            return false
+        }
+        if latestProgress.phase == .idle {
+            return now - startedAt >= initialTimeout
+        }
+        return now - lastProgressAt >= activePhaseIdleTimeout
     }
 }

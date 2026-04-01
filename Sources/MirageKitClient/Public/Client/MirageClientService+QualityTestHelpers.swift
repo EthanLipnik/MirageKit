@@ -136,7 +136,8 @@ extension MirageClientService {
         stageID: Int,
         targetBitrateBps: Int,
         durationMs: Int,
-        payloadBytes: Int
+        payloadBytes: Int,
+        mediaMaxPacketSize: Int
     ) async throws -> MirageQualityTestSummary.StageResult {
         let stage = MirageQualityTestPlan.Stage(
             id: stageID,
@@ -156,7 +157,8 @@ extension MirageClientService {
         let request = QualityTestRequestMessage(
             testID: testID,
             plan: plan,
-            payloadBytes: payloadBytes
+            payloadBytes: payloadBytes,
+            mediaMaxPacketSize: mediaMaxPacketSize
         )
         try await sendControlMessage(.qualityTestRequest, content: request)
 

@@ -901,13 +901,14 @@ public struct MirageStreamContentView: View {
 
         let basePoints = clientService.scaledDisplayResolution(displaySize)
         guard basePoints.width > 0, basePoints.height > 0 else { return 1.0 }
-
-        let basePixels = clientService.virtualDisplayPixelResolution(for: basePoints)
-        guard basePixels.width > 0, basePixels.height > 0 else { return 1.0 }
-
-        let widthScale = maxDrawableSize.width / basePixels.width
-        let heightScale = maxDrawableSize.height / basePixels.height
-        return clientService.clampStreamScale(min(1.0, widthScale, heightScale))
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: basePoints,
+            displayScaleFactor: desktopPointScale(for: basePoints),
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: Int(maxDrawableSize.width),
+            encoderMaxHeight: Int(maxDrawableSize.height)
+        )
+        return geometry.resolvedStreamScale
     }
 
     private func inferredDesktopPointScaleFromAcknowledged(
@@ -959,9 +960,14 @@ public struct MirageStreamContentView: View {
 
         let basePoints = clientService.scaledDisplayResolution(displaySize)
         guard basePoints.width > 0, basePoints.height > 0 else { return }
-
-        let basePixels = clientService.virtualDisplayPixelResolution(for: basePoints)
-        let clampedScale = resolvedDesktopStreamScale(for: displaySize)
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: basePoints,
+            displayScaleFactor: desktopPointScale(for: basePoints),
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: Int(maxDrawableSize.width),
+            encoderMaxHeight: Int(maxDrawableSize.height)
+        )
+        let clampedScale = geometry.resolvedStreamScale
 
         if isDesktopStream,
            clampedScale >= 0.999,
@@ -969,23 +975,20 @@ public struct MirageStreamContentView: View {
                displaySize: basePoints,
                acknowledgedPixelSize: currentDesktopAcknowledgedPixelSize()
            ) {
-            let inferredTargetSize = CGSize(
-                width: alignedEven(basePoints.width * inferredScale),
-                height: alignedEven(basePoints.height * inferredScale)
+            let inferredTargetSize = MirageStreamGeometry.alignedEncodedSize(
+                CGSize(
+                    width: basePoints.width * inferredScale,
+                    height: basePoints.height * inferredScale
+                )
             )
             lastSentEncodedPixelSize = inferredTargetSize
             streamScaleTask?.cancel()
             streamScaleTask = nil
             return
         }
-
-        let rawTargetSize = CGSize(
-            width: basePixels.width * clampedScale,
-            height: basePixels.height * clampedScale
-        )
         let alignedTargetSize = CGSize(
-            width: min(maxDrawableSize.width, alignedEven(rawTargetSize.width)),
-            height: min(maxDrawableSize.height, alignedEven(rawTargetSize.height))
+            width: min(maxDrawableSize.width, geometry.encodedPixelSize.width),
+            height: min(maxDrawableSize.height, geometry.encodedPixelSize.height)
         )
 
         if isDesktopStream {
@@ -1017,12 +1020,6 @@ public struct MirageStreamContentView: View {
                 scale: targetScale
             )
         }
-    }
-
-    private func alignedEven(_ value: CGFloat) -> CGFloat {
-        let rounded = CGFloat(Int(value.rounded()))
-        let even = rounded - CGFloat(Int(rounded) % 2)
-        return max(2, even)
     }
 
     private func appDisplayResolutionStabilizationDuration(

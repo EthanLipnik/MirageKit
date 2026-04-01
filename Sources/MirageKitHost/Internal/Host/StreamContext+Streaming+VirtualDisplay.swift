@@ -89,7 +89,7 @@ extension StreamContext {
         // 3. Resolve SCWindow BEFORE moving it to the virtual display.
         //    After the move, SCK may not immediately see the window in its new space,
         //    causing resolution failures for Electron apps (Discord, Slack, etc.).
-        let resolvedWindowWrapper = try await resolveSCWindowWrapper(
+        _ = try await resolveSCWindowWrapper(
             windowID: windowID,
             label: "pre-move window capture"
         )
@@ -186,10 +186,11 @@ extension StreamContext {
         guard isRunning, useVirtualDisplay else { return }
 
         let currentSize = baseCaptureSize
-        let requestedPixels = CGSize(
-            width: max(1, ceil(newLogicalSize.width * 2)),
-            height: max(1, ceil(newLogicalSize.height * 2))
+        let requestedPixels = MirageStreamGeometry.resolve(
+            logicalSize: newLogicalSize,
+            displayScaleFactor: virtualDisplayContext?.scaleFactor ?? 1.0
         )
+        .displayPixelSize
         guard abs(currentSize.width - requestedPixels.width) > 4
             || abs(currentSize.height - requestedPixels.height) > 4 else {
             MirageLogger.stream(
@@ -203,10 +204,7 @@ extension StreamContext {
 
         currentContentRect = .zero
         dimensionToken &+= 1
-        advanceEpoch(reason: "window resize")
         await packetSender?.bumpGeneration(reason: "window resize")
-        await packetSender?.resetQueue(reason: "window resize")
-        resetPipelineStateForReconfiguration(reason: "window resize")
 
         // Aspect-fit the requested size into the virtual display's visible bounds
         let effectiveSize: CGSize
@@ -238,9 +236,6 @@ extension StreamContext {
             "Resizing window for stream \(streamID) to \(Int(effectiveSize.width))x\(Int(effectiveSize.height)) logical " +
             "(client requested \(Int(newLogicalSize.width))x\(Int(newLogicalSize.height)))"
         )
-
-        // Stop capture before resizing
-        await captureEngine?.stopCapture()
 
         // Iteratively resize the window to match target aspect ratio
         await iterativelyResizeWindow(
@@ -274,45 +269,29 @@ extension StreamContext {
         lastWindowFrame = windowFrame
         updateQueueLimits()
 
+        if let captureEngine {
+            try await captureEngine.updateDimensions(
+                windowFrame: windowFrame,
+                outputScale: streamScale
+            )
+        }
+
         if let encoder {
             try await encoder.updateDimensions(
                 width: Int(outputSize.width),
                 height: Int(outputSize.height)
             )
-            try await encoder.reset()
             activePixelFormat = await encoder.getActivePixelFormat()
             MirageLogger.encoder(
-                "Encoder updated to \(Int(outputSize.width))x\(Int(outputSize.height)) for window resize"
+                "Encoder updated in place to \(Int(outputSize.width))x\(Int(outputSize.height)) for window resize"
             )
         }
 
         await applyDerivedQuality(for: outputSize, logLabel: "Window resize")
-
-        // Restart capture with the new window dimensions
-        guard let vdContext = virtualDisplayContext else {
-            MirageLogger.error(.stream, "No virtual display context during window resize for stream \(streamID)")
-            return
-        }
-        let resolvedDisplayWrapper = try await resolveSCDisplayWrapper(
-            displayID: vdContext.displayID,
-            label: "window resize"
-        )
-        let newCaptureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: false)
-        try await newCaptureEngine.startCapture(
-            window: resolvedWindowWrapper.window,
-            application: resolvedWindowWrapper.window.owningApplication!,
-            display: resolvedDisplayWrapper.display,
-            outputScale: streamScale,
-            onFrame: { [weak self] frame in
-                self?.enqueueCapturedFrame(frame)
-            },
-            onAudio: onCapturedAudioBuffer,
-            audioChannelCount: requestedAudioChannelCount
-        )
         await refreshCaptureCadence()
         await encoder?.forceKeyframe()
 
-        MirageLogger.stream("Window resize complete for stream \(streamID)")
+        MirageLogger.stream("Window resize complete in place for stream \(streamID)")
     }
 
     // MARK: - SCK Resolution Helpers

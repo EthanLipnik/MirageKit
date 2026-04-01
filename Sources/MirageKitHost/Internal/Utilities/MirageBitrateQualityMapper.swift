@@ -94,6 +94,50 @@ enum MirageBitrateQualityMapper {
         return (frameQuality, keyframeQuality)
     }
 
+    static func targetBitrateBps(
+        forFrameQuality desiredFrameQuality: Float,
+        width: Int,
+        height: Int,
+        frameRate: Int,
+        maxBitrateBps: Int = 1_000_000_000
+    ) -> Int? {
+        guard width > 0, height > 0, frameRate > 0, maxBitrateBps > 0 else { return nil }
+
+        let clampedTargetQuality = max(
+            Float(minimumFrameQuality),
+            min(frameQualityCeiling, desiredFrameQuality)
+        )
+        let maximumDerivedQuality = derivedQualities(
+            targetBitrateBps: maxBitrateBps,
+            width: width,
+            height: height,
+            frameRate: frameRate
+        ).frameQuality
+        guard maximumDerivedQuality >= clampedTargetQuality else { return nil }
+
+        var low = 1
+        var high = maxBitrateBps
+        var best: Int?
+        while low <= high {
+            let mid = low + (high - low) / 2
+            let derivedFrameQuality = derivedQualities(
+                targetBitrateBps: mid,
+                width: width,
+                height: height,
+                frameRate: frameRate
+            ).frameQuality
+
+            if derivedFrameQuality >= clampedTargetQuality {
+                best = mid
+                high = mid - 1
+            } else {
+                low = mid + 1
+            }
+        }
+
+        return best
+    }
+
     static func bitsPerPixelPerFrame(
         targetBitrateBps: Int,
         width: Int,

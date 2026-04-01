@@ -168,6 +168,7 @@ actor StreamController {
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
         let decoderOutputPixelFormat: String?
+        let usingHardwareDecoder: Bool?
     }
 
     // MARK: - Properties
@@ -992,7 +993,8 @@ actor StreamController {
             renderBufferDepth: renderTelemetry.queueDepth,
             decodeHealthy: renderTelemetry.decodeHealthy,
             activeJitterHoldMs: adaptiveJitterHoldMs,
-            decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName()
+            decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),
+            usingHardwareDecoder: await decoder.currentHardwareDecoderStatus()
         )
         let callback = onFrameDecoded
         await MainActor.run {

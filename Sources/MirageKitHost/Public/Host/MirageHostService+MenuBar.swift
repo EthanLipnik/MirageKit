@@ -106,6 +106,11 @@ extension MirageHostService {
                 )
             let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
+            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+            let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
+                requested: request.mediaMaxPacketSize,
+                pathKind: pathKind
+            )
             MirageLogger.host("Desktop stream latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
             let audioConfiguration = request.audioConfiguration ?? .default
@@ -146,6 +151,7 @@ extension MirageHostService {
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,
                 encoderMaxHeight: request.encoderMaxHeight,
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize,
                 upscalingMode: request.upscalingMode,
                 codec: request.codec
             )

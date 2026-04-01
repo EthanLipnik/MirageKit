@@ -58,7 +58,7 @@ extension MirageClientService {
                 }
                 await self?.applyReceivedClipboardChunk(
                     text: chunkText,
-                    changeID: update.changeID,
+                    orderingToken: update.orderingToken,
                     sentAtMs: update.sentAtMs,
                     chunkIndex: update.chunkIndex,
                     chunkCount: update.chunkCount
@@ -71,13 +71,13 @@ extension MirageClientService {
 
     private func applyReceivedClipboardChunk(
         text: String,
-        changeID: UUID,
+        orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64,
         chunkIndex: Int,
         chunkCount: Int
     ) {
         guard let fullText = clipboardChunkBuffer.addChunk(
-            changeID: changeID,
+            changeID: orderingToken.changeID,
             chunkIndex: chunkIndex,
             chunkCount: chunkCount,
             text: text
@@ -87,7 +87,7 @@ extension MirageClientService {
 
         ensureSharedClipboardBridge().applyRemoteText(
             validatedText,
-            changeID: changeID,
+            orderingToken: orderingToken,
             sentAtMs: sentAtMs
         )
     }

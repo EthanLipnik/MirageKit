@@ -210,6 +210,8 @@ package struct SelectAppMessage: Codable {
     package var encoderMaxWidth: Int?
     /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+    /// Requested media packet size for this stream.
+    package var mediaMaxPacketSize: Int?
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
     /// Client-requested video codec.
@@ -243,6 +245,7 @@ package struct SelectAppMessage: Codable {
         case bitrateAdaptationCeiling
         case encoderMaxWidth
         case encoderMaxHeight
+        case mediaMaxPacketSize
         case upscalingMode
         case codec
         case maxConcurrentVisibleWindows
@@ -271,7 +274,8 @@ package struct SelectAppMessage: Codable {
         audioConfiguration: MirageAudioConfiguration? = nil,
         maxConcurrentVisibleWindows: Int = 1,
         bitrateAllocationPolicy: MirageAppStreamBitrateAllocationPolicy? = nil,
-        sizePreset: MirageDisplaySizePreset? = nil
+        sizePreset: MirageDisplaySizePreset? = nil,
+        mediaMaxPacketSize: Int? = nil
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.dataPort = dataPort
@@ -294,6 +298,7 @@ package struct SelectAppMessage: Codable {
         self.maxConcurrentVisibleWindows = max(1, maxConcurrentVisibleWindows)
         self.bitrateAllocationPolicy = bitrateAllocationPolicy
         self.sizePreset = sizePreset
+        self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 }
 

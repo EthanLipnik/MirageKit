@@ -21,20 +21,18 @@ extension StreamContext {
         logLabel: String?
     )
     -> CGFloat {
-        let clampedRequested = StreamContext.clampStreamScale(requestedScale)
-        guard baseSize.width > 0, baseSize.height > 0 else { return clampedRequested }
-        if disableResolutionCap { return clampedRequested }
-
-        let maxScale = min(
-            1.0,
-            Self.maxEncodedWidth / baseSize.width,
-            Self.maxEncodedHeight / baseSize.height
+        let plan = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: baseSize,
+            requestedStreamScale: requestedScale,
+            encoderMaxWidth: encoderMaxWidth ?? Int(Self.maxEncodedWidth),
+            encoderMaxHeight: encoderMaxHeight ?? Int(Self.maxEncodedHeight),
+            disableResolutionCap: disableResolutionCap
         )
-        let resolved = min(clampedRequested, maxScale)
+        let resolved = plan.resolvedStreamScale
 
-        if resolved < clampedRequested, let logLabel {
+        if resolved < plan.requestedStreamScale, let logLabel {
             MirageLogger.stream(
-                "\(logLabel): requested \(clampedRequested), capped \(resolved) for \(Int(baseSize.width))x\(Int(baseSize.height))"
+                "\(logLabel): requested \(plan.requestedStreamScale), capped \(resolved) for \(Int(baseSize.width))x\(Int(baseSize.height))"
             )
         }
 
@@ -46,9 +44,7 @@ extension StreamContext {
     /// 16 for NV12/P010 pixel formats; unaligned dimensions cause silent encode
     /// failures during preheat.
     static func alignedEvenPixel(_ value: CGFloat) -> Int {
-        let rounded = Int(value.rounded())
-        let aligned = rounded & ~15 // round down to nearest multiple of 16
-        return max(aligned, 16)
+        MirageStreamGeometry.alignedEncodedDimension(value)
     }
 }
 

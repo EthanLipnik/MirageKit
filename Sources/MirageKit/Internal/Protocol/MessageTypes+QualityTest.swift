@@ -13,11 +13,18 @@ package struct QualityTestRequestMessage: Codable {
     package let testID: UUID
     package let plan: MirageQualityTestPlan
     package let payloadBytes: Int
+    package let mediaMaxPacketSize: Int
 
-    package init(testID: UUID, plan: MirageQualityTestPlan, payloadBytes: Int) {
+    package init(
+        testID: UUID,
+        plan: MirageQualityTestPlan,
+        payloadBytes: Int,
+        mediaMaxPacketSize: Int
+    ) {
         self.testID = testID
         self.plan = plan
         self.payloadBytes = payloadBytes
+        self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 }
 

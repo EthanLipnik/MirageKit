@@ -152,6 +152,10 @@ extension StreamContext {
         encoderConfig.codec
     }
 
+    func getMediaMaxPacketSize() -> Int {
+        mediaMaxPacketSize
+    }
+
     func getStreamScale() -> CGFloat {
         streamScale
     }

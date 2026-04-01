@@ -12,13 +12,26 @@ import MirageKit
 #if os(macOS)
 private let desktopVirtualDisplayStartupTargetDefaultsPrefix = "MirageDesktopVirtualDisplayStartupTarget.v1"
 
+enum DesktopVirtualDisplayStartupTargetTier: String, Codable, Equatable {
+    case preferred
+    case degraded
+}
+
+enum DesktopVirtualDisplayStartupFallbackKind: Equatable {
+    case primary
+    case descriptorFallback
+    case conservative
+}
+
 struct DesktopVirtualDisplayStartupAttempt: Equatable {
     let backingScale: DesktopBackingScaleResolution
     let refreshRate: Int
     let colorSpace: MirageColorSpace
     let label: String
+    let fallbackKind: DesktopVirtualDisplayStartupFallbackKind
     let isConservativeRetry: Bool
     let isCachedTarget: Bool
+    let targetTier: DesktopVirtualDisplayStartupTargetTier
 }
 
 struct DesktopVirtualDisplayStartupRequest: Equatable, Codable {
@@ -41,6 +54,7 @@ private struct DesktopVirtualDisplayStartupCacheEntry: Equatable, Codable {
     let hiDPI: Bool
     let refreshRate: Int
     let colorSpace: MirageColorSpace
+    let targetTier: DesktopVirtualDisplayStartupTargetTier
 }
 
 private func desktopVirtualDisplayStartupAttemptKey(
@@ -79,12 +93,41 @@ func recordDesktopVirtualDisplayStartupTargetSuccess(
     _ attempt: DesktopVirtualDisplayStartupAttempt,
     for request: DesktopVirtualDisplayStartupRequest
 ) {
-    let entry = DesktopVirtualDisplayStartupCacheEntry(
-        pixelWidth: Int(attempt.backingScale.pixelResolution.width.rounded()),
-        pixelHeight: Int(attempt.backingScale.pixelResolution.height.rounded()),
-        hiDPI: attempt.backingScale.scaleFactor > 1.5,
+    guard attempt.targetTier == .preferred else {
+        MirageLogger.host(
+            "Not caching degraded desktop virtual display startup target \(attempt.label)"
+        )
+        return
+    }
+    recordDesktopVirtualDisplayStartupTargetSuccess(
+        pixelResolution: attempt.backingScale.pixelResolution,
+        scaleFactor: attempt.backingScale.scaleFactor,
         refreshRate: attempt.refreshRate,
-        colorSpace: attempt.colorSpace
+        colorSpace: attempt.colorSpace,
+        targetTier: attempt.targetTier,
+        for: request
+    )
+}
+
+func recordDesktopVirtualDisplayStartupTargetSuccess(
+    pixelResolution: CGSize,
+    scaleFactor: CGFloat,
+    refreshRate: Int,
+    colorSpace: MirageColorSpace,
+    targetTier: DesktopVirtualDisplayStartupTargetTier,
+    for request: DesktopVirtualDisplayStartupRequest
+) {
+    guard targetTier == .preferred else {
+        MirageLogger.host("Not caching degraded desktop virtual display startup result")
+        return
+    }
+    let entry = DesktopVirtualDisplayStartupCacheEntry(
+        pixelWidth: Int(pixelResolution.width.rounded()),
+        pixelHeight: Int(pixelResolution.height.rounded()),
+        hiDPI: scaleFactor > 1.5,
+        refreshRate: refreshRate,
+        colorSpace: colorSpace,
+        targetTier: targetTier
     )
     guard let data = try? JSONEncoder().encode(entry) else { return }
     let key = desktopVirtualDisplayStartupTargetDefaultsKey(for: request)
@@ -102,8 +145,10 @@ private func cachedDesktopVirtualDisplayStartupAttempt(
         refreshRate: entry.refreshRate,
         colorSpace: entry.colorSpace,
         label: "cached-target",
-        isConservativeRetry: !entry.hiDPI || entry.colorSpace != .displayP3 || entry.refreshRate <= 60,
-        isCachedTarget: true
+        fallbackKind: .primary,
+        isConservativeRetry: entry.targetTier == .degraded,
+        isCachedTarget: true,
+        targetTier: entry.targetTier
     )
 }
 
@@ -114,6 +159,14 @@ func desktopVirtualDisplayStartupPlan(
     requestedColorDepth: MirageStreamColorDepth,
     requestedColorSpace: MirageColorSpace
 ) -> DesktopVirtualDisplayStartupPlan {
+    func prioritizedColorSpaces(requestedColorSpace: MirageColorSpace) -> [MirageColorSpace] {
+        var ordered = [requestedColorSpace]
+        for candidate in MirageColorSpace.allCases where candidate != requestedColorSpace {
+            ordered.append(candidate)
+        }
+        return ordered
+    }
+
     let primary = DesktopVirtualDisplayStartupAttempt(
         backingScale: resolvedDesktopBackingScaleResolution(
             logicalResolution: logicalResolution,
@@ -122,8 +175,10 @@ func desktopVirtualDisplayStartupPlan(
         refreshRate: requestedRefreshRate,
         colorSpace: requestedColorSpace,
         label: "primary",
+        fallbackKind: .primary,
         isConservativeRetry: false,
-        isCachedTarget: false
+        isCachedTarget: false,
+        targetTier: .preferred
     )
 
     let request = DesktopVirtualDisplayStartupRequest(
@@ -143,8 +198,10 @@ func desktopVirtualDisplayStartupPlan(
         refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: 60),
         colorSpace: .sRGB,
         label: "conservative-retry",
+        fallbackKind: .conservative,
         isConservativeRetry: true,
-        isCachedTarget: false
+        isCachedTarget: false,
+        targetTier: .degraded
     )
 
     var attempts: [DesktopVirtualDisplayStartupAttempt] = []
@@ -161,6 +218,23 @@ func desktopVirtualDisplayStartupPlan(
         appendAttempt(cachedDesktopVirtualDisplayStartupAttempt(from: cachedTarget))
     }
     appendAttempt(primary)
+    if requestedColorSpace != .sRGB {
+        for candidateColorSpace in prioritizedColorSpaces(requestedColorSpace: requestedColorSpace)
+            where candidateColorSpace != requestedColorSpace {
+            appendAttempt(
+                DesktopVirtualDisplayStartupAttempt(
+                    backingScale: primary.backingScale,
+                    refreshRate: primary.refreshRate,
+                    colorSpace: candidateColorSpace,
+                    label: "descriptor-fallback-\(candidateColorSpace.rawValue)",
+                    fallbackKind: .descriptorFallback,
+                    isConservativeRetry: false,
+                    isCachedTarget: false,
+                    targetTier: .degraded
+                )
+            )
+        }
+    }
     appendAttempt(conservative)
 
     return DesktopVirtualDisplayStartupPlan(

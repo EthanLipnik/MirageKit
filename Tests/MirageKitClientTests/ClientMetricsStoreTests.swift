@@ -43,7 +43,8 @@ struct ClientMetricsStoreTests {
         )
         store.updateClientDecoderTelemetry(
             streamID: 7,
-            outputPixelFormat: "x420 (10-bit FullRange)"
+            outputPixelFormat: "x420 (10-bit FullRange)",
+            usingHardwareDecoder: true
         )
         store.updateHostPipelineMetrics(
             streamID: 7,
@@ -82,6 +83,7 @@ struct ClientMetricsStoreTests {
         #expect(snapshot?.hostTenBitDisplayP3Validated == true)
         #expect(snapshot?.hostUltra444Validated == false)
         #expect(snapshot?.clientDecoderOutputPixelFormat == "x420 (10-bit FullRange)")
+        #expect(snapshot?.clientUsingHardwareDecoder == true)
         #expect(snapshot?.hostCaptureIngressAverageMs == 4.2)
         #expect(snapshot?.hostCaptureCopyPoolDrops == 3)
         #expect(snapshot?.hostSendQueueBytes == 196_608)

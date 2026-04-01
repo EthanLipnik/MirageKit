@@ -82,33 +82,14 @@ func resolvedDesktopBackingScaleResolution(
     logicalResolution: CGSize,
     defaultScaleFactor: CGFloat
 ) -> DesktopBackingScaleResolution {
-    let resolvedDefaultScaleFactor = max(1.0, defaultScaleFactor)
-
-    func alignedPixelResolution(
-        width: CGFloat,
-        height: CGFloat
-    ) -> CGSize {
-        CGSize(
-            width: CGFloat(StreamContext.alignedEvenPixel(width)),
-            height: CGFloat(StreamContext.alignedEvenPixel(height))
-        )
-    }
-
-    guard logicalResolution.width > 0, logicalResolution.height > 0 else {
-        return DesktopBackingScaleResolution(
-            scaleFactor: resolvedDefaultScaleFactor,
-            pixelResolution: logicalResolution
-        )
-    }
-
-    let pixelResolution = alignedPixelResolution(
-        width: logicalResolution.width * resolvedDefaultScaleFactor,
-        height: logicalResolution.height * resolvedDefaultScaleFactor
+    let geometry = MirageStreamGeometry.resolve(
+        logicalSize: logicalResolution,
+        displayScaleFactor: defaultScaleFactor
     )
 
     return DesktopBackingScaleResolution(
-        scaleFactor: resolvedDefaultScaleFactor,
-        pixelResolution: pixelResolution
+        scaleFactor: max(1.0, defaultScaleFactor),
+        pixelResolution: geometry.displayPixelSize
     )
 }
 
@@ -130,27 +111,31 @@ func windowResizeNoOpDecision(
     currentVisibleResolution: CGSize?,
     currentDisplayResolution: CGSize?,
     currentEncodedResolution: CGSize?,
-    requestedVisibleResolution: CGSize
+    requestedVisibleResolution: CGSize,
+    requestedEncodedResolution: CGSize? = nil
 )
 -> WindowResizeNoOpDecision {
     guard requestedVisibleResolution.width > 0, requestedVisibleResolution.height > 0 else { return .noOp }
+    let canonicalRequestedResolution = MirageStreamGeometry.alignedEncodedSize(requestedVisibleResolution)
+    let canonicalRequestedEncodedResolution = requestedEncodedResolution.map(MirageStreamGeometry.alignedEncodedSize)
+        ?? canonicalRequestedResolution
     if let currentEncodedResolution,
-       !virtualDisplayResolutionMatches(currentEncodedResolution, requestedVisibleResolution) {
+       !virtualDisplayResolutionMatches(currentEncodedResolution, canonicalRequestedEncodedResolution) {
         MirageLogger.host(
-            "Window resize no-op rejected due to encoded-size mismatch: encoded=\(currentEncodedResolution), requested=\(requestedVisibleResolution)"
+            "Window resize no-op rejected due to encoded-size mismatch: encoded=\(currentEncodedResolution), requested=\(canonicalRequestedEncodedResolution)"
         )
         return .apply
     }
     // Prefer the calibrated visible pixel size for no-op decisions.
     // Falling back to display pixels is only safe when visible pixels are unavailable.
     if let currentVisibleResolution {
-        if virtualDisplayResolutionMatches(currentVisibleResolution, requestedVisibleResolution) {
+        if virtualDisplayResolutionMatches(currentVisibleResolution, canonicalRequestedResolution) {
             return .noOp
         }
         return .apply
     }
     if let currentDisplayResolution,
-       virtualDisplayResolutionMatches(currentDisplayResolution, requestedVisibleResolution) {
+       virtualDisplayResolutionMatches(currentDisplayResolution, canonicalRequestedResolution) {
         return .noOp
     }
     return .apply
@@ -332,6 +317,7 @@ extension MirageHostService {
         let disableResolutionCap = await originalContext.isResolutionCapDisabled()
         let encoderSettings = await originalContext.getEncoderSettings()
         let targetFrameRate = await originalContext.getTargetFrameRate()
+        let mediaMaxPacketSize = await originalContext.getMediaMaxPacketSize()
         let audioConfiguration = audioConfigurationByClientID[client.id] ?? .default
 
         // Auto-start a new stream for this window
@@ -353,7 +339,8 @@ extension MirageHostService {
                     .lowLatencyHighResolutionCompressionBoostEnabled,
                 temporaryDegradationMode: encoderSettings.temporaryDegradationMode,
                 disableResolutionCap: disableResolutionCap,
-                audioConfiguration: audioConfiguration
+                audioConfiguration: audioConfiguration,
+                mediaMaxPacketSize: mediaMaxPacketSize
             )
             MirageLogger.host("Auto-started stream for new independent window \(window.id)")
         } catch {
@@ -583,7 +570,8 @@ extension MirageHostService {
                     frameRate: context.getTargetFrameRate(),
                     codec: context.getCodec(),
                     displayCount: 1,
-                    dimensionToken: dimensionToken
+                    dimensionToken: dimensionToken,
+                    acceptedMediaMaxPacketSize: context.getMediaMaxPacketSize()
                 )
                 if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
                     MirageLogger.error(.host, "Failed to encode desktopStreamStarted update for stream \(streamID)")
@@ -605,7 +593,8 @@ extension MirageHostService {
             codec: context.getCodec(),
             minWidth: nil,
             minHeight: nil,
-            dimensionToken: dimensionToken
+            dimensionToken: dimensionToken,
+            acceptedMediaMaxPacketSize: context.getMediaMaxPacketSize()
         )
         try? await clientContext.send(.streamStarted, content: message)
     }
@@ -862,6 +851,7 @@ extension MirageHostService {
         )
         let updatedTargetFrameRate = await context.getTargetFrameRate()
         let codec = await context.getCodec()
+        let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
             width: Int(displayResolution.width),
@@ -869,7 +859,8 @@ extension MirageHostService {
             frameRate: updatedTargetFrameRate,
             codec: codec,
             displayCount: 1,
-            dimensionToken: dimensionToken
+            dimensionToken: dimensionToken,
+            acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
         )
         if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
             MirageLogger.error(.host, "Failed to encode desktop resize completion for stream \(streamID)")
@@ -982,11 +973,23 @@ extension MirageHostService {
             width: currentEncodedDimensions.width,
             height: currentEncodedDimensions.height
         )
+        let requestedStreamScale = await context.requestedStreamScale
+        let encoderMaxWidth = await context.encoderMaxWidth
+        let encoderMaxHeight = await context.encoderMaxHeight
+        let disableResolutionCap = context.disableResolutionCap
+        let requestedEncodedResolution = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: pixelResolution,
+            requestedStreamScale: requestedStreamScale,
+            encoderMaxWidth: encoderMaxWidth ?? Int(StreamContext.maxEncodedWidth),
+            encoderMaxHeight: encoderMaxHeight ?? Int(StreamContext.maxEncodedHeight),
+            disableResolutionCap: disableResolutionCap
+        ).encodedPixelSize
         if windowResizeNoOpDecision(
             currentVisibleResolution: currentVisibleResolution,
             currentDisplayResolution: currentDisplayResolution,
             currentEncodedResolution: currentEncodedResolution,
-            requestedVisibleResolution: pixelResolution
+            requestedVisibleResolution: pixelResolution,
+            requestedEncodedResolution: requestedEncodedResolution
         ) == .noOp {
             await sendWindowResizeCompletion(
                 streamID: streamID,
@@ -1085,6 +1088,7 @@ extension MirageHostService {
         let encodedDimensions = await context.getEncodedDimensions()
         let frameRate = await context.getTargetFrameRate()
         let codec = await context.getCodec()
+        let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
         let message = StreamStartedMessage(
             streamID: streamID,
             windowID: updatedWindow.id,
@@ -1094,7 +1098,8 @@ extension MirageHostService {
             codec: codec,
             minWidth: minWidth,
             minHeight: minHeight,
-            dimensionToken: dimensionToken
+            dimensionToken: dimensionToken,
+            acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
         )
         do {
             try await clientContext.send(.streamStarted, content: message)

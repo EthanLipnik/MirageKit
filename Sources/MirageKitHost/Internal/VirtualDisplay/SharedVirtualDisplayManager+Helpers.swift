@@ -58,6 +58,62 @@ extension SharedVirtualDisplayManager {
         )
     }
 
+    private func creationAttempts(
+        resolution: CGSize,
+        colorSpace: MirageColorSpace,
+        policy: DisplayCreationPolicy
+    ) -> [DisplayCreationAttempt] {
+        let normalizedRequested = Self.normalizedPixelResolution(resolution)
+        var attempts: [DisplayCreationAttempt] = []
+        var seenAttemptKeys = Set<String>()
+
+        func appendAttempt(_ attempt: DisplayCreationAttempt) {
+            let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")-\(attempt.colorSpace.rawValue)"
+            if seenAttemptKeys.insert(key).inserted {
+                attempts.append(attempt)
+            }
+        }
+
+        switch policy {
+        case let .singleAttempt(hiDPI):
+            appendAttempt(
+                DisplayCreationAttempt(
+                    resolution: normalizedRequested,
+                    hiDPI: hiDPI,
+                    colorSpace: colorSpace,
+                    label: hiDPI ? "explicit-retina" : "explicit-1x"
+                )
+            )
+        case .adaptiveRetinaThenFallback1xAndColor:
+            let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
+            let fallback1x = Self.fallbackResolution(for: normalizedRequested)
+
+            for candidateColorSpace in colorFallbackOrder {
+                appendAttempt(
+                    DisplayCreationAttempt(
+                        resolution: normalizedRequested,
+                        hiDPI: true,
+                        colorSpace: candidateColorSpace,
+                        label: "requested-retina-\(candidateColorSpace.rawValue)"
+                    )
+                )
+            }
+
+            for candidateColorSpace in colorFallbackOrder {
+                appendAttempt(
+                    DisplayCreationAttempt(
+                        resolution: fallback1x,
+                        hiDPI: false,
+                        colorSpace: candidateColorSpace,
+                        label: "requested-1x-\(candidateColorSpace.rawValue)"
+                    )
+                )
+            }
+        }
+
+        return attempts
+    }
+
     static func aspectRelativeDelta(requested: CGSize, candidate: CGSize) -> CGFloat {
         guard requested.width > 0,
               requested.height > 0,
@@ -238,6 +294,22 @@ extension SharedVirtualDisplayManager {
         }
     }
 
+    func waitForSpaceAssignment(
+        displayID: CGDirectDisplayID,
+        timeoutMs: Int = 1500
+    )
+    async -> CGSSpaceID? {
+        let clampedTimeoutMs = max(0, timeoutMs)
+        let deadline = Date().addingTimeInterval(Double(clampedTimeoutMs) / 1000.0)
+        while Date() < deadline {
+            let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(displayID)
+            if spaceID != 0 { return spaceID }
+            if !CGVirtualDisplayBridge.isDisplayOnline(displayID) { return nil }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        return nil
+    }
+
     func destroyAttemptDisplay(
         _ displayContext: CGVirtualDisplayBridge.VirtualDisplayContext,
         removalWaitMs: Int = 1500
@@ -340,7 +412,8 @@ extension SharedVirtualDisplayManager {
         resolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        displayNameOverride: String? = nil
+        displayNameOverride: String? = nil,
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
     )
     async throws -> ManagedDisplayContext {
         if displayCounter == 0 {
@@ -351,37 +424,12 @@ extension SharedVirtualDisplayManager {
         let displayName = displayNameOverride ?? "Mirage Shared Display (#\(displayCounter))"
 
         let normalizedRequested = Self.normalizedPixelResolution(resolution)
-        let colorFallbackOrder = prioritizedVirtualDisplayColorFallbackOrder(requestedColorSpace: colorSpace)
-        let fallback1x = Self.fallbackResolution(for: normalizedRequested)
         var lastValidationOutcome: DisplayValidationOutcome?
-
-        // Build attempt list: retina at requested size, then 1x fallback, across color spaces.
-        var dedupedAttempts: [DisplayCreationAttempt] = []
-        var seenAttemptKeys = Set<String>()
-
-        func appendAttempt(_ attempt: DisplayCreationAttempt) {
-            let key = "\(Int(attempt.resolution.width))x\(Int(attempt.resolution.height))-\(attempt.hiDPI ? "retina" : "1x")-\(attempt.colorSpace.rawValue)"
-            if seenAttemptKeys.insert(key).inserted {
-                dedupedAttempts.append(attempt)
-            }
-        }
-
-        for candidateColorSpace in colorFallbackOrder {
-            appendAttempt(DisplayCreationAttempt(
-                resolution: normalizedRequested,
-                hiDPI: true,
-                colorSpace: candidateColorSpace,
-                label: "requested-retina-\(candidateColorSpace.rawValue)"
-            ))
-        }
-        for candidateColorSpace in colorFallbackOrder {
-            appendAttempt(DisplayCreationAttempt(
-                resolution: fallback1x,
-                hiDPI: false,
-                colorSpace: candidateColorSpace,
-                label: "requested-1x-\(candidateColorSpace.rawValue)"
-            ))
-        }
+        let dedupedAttempts = creationAttempts(
+            resolution: normalizedRequested,
+            colorSpace: colorSpace,
+            policy: creationPolicy
+        )
 
         for attempt in dedupedAttempts {
             let requestedResolution = attempt.resolution
@@ -437,8 +485,7 @@ extension SharedVirtualDisplayManager {
                 continue
             }
 
-            let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(displayContext.displayID)
-            guard spaceID != 0 else {
+            guard let spaceID = await waitForSpaceAssignment(displayID: displayContext.displayID) else {
                 await destroyAttemptDisplay(displayContext)
                 throw SharedDisplayError.spaceNotFound(displayContext.displayID)
             }
@@ -536,7 +583,10 @@ extension SharedVirtualDisplayManager {
             throw SharedDisplayError.screenCaptureKitVisibilityDelayed(displayID)
         }
 
-        throw SharedDisplayError.creationFailed("Virtual display failed activation (retina-first, 1x fallback)")
+        let attemptSummary = dedupedAttempts.map(\.label).joined(separator: ", ")
+        throw SharedDisplayError.creationFailed(
+            "Virtual display failed activation (\(attemptSummary))"
+        )
     }
 
     /// Recreate the display at a new resolution.
@@ -544,7 +594,8 @@ extension SharedVirtualDisplayManager {
         newResolution: CGSize,
         refreshRate: Int,
         colorSpace: MirageColorSpace,
-        preferFastRecreate: Bool = false
+        preferFastRecreate: Bool = false,
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
     )
     async throws -> ManagedDisplayContext {
         await destroyDisplay(removalWaitMs: preferFastRecreate ? 250 : 1500)
@@ -552,7 +603,8 @@ extension SharedVirtualDisplayManager {
         return try await createDisplay(
             resolution: newResolution,
             refreshRate: refreshRate,
-            colorSpace: colorSpace
+            colorSpace: colorSpace,
+            creationPolicy: creationPolicy
         )
     }
 
@@ -563,7 +615,8 @@ extension SharedVirtualDisplayManager {
         refreshRate: Int,
         colorSpace: MirageColorSpace,
         displayNameOverride: String? = nil,
-        preferFastRecreate: Bool = false
+        preferFastRecreate: Bool = false,
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
     )
     async throws -> ManagedDisplayContext {
         await destroyDisplay(display, removalWaitMs: preferFastRecreate ? 250 : 1500)
@@ -572,7 +625,8 @@ extension SharedVirtualDisplayManager {
             resolution: newResolution,
             refreshRate: refreshRate,
             colorSpace: colorSpace,
-            displayNameOverride: displayNameOverride
+            displayNameOverride: displayNameOverride,
+            creationPolicy: creationPolicy
         )
     }
 

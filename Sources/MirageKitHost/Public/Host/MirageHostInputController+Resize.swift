@@ -60,6 +60,7 @@ extension MirageHostInputController {
         let setResult = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, newSizeValue)
 
         if setResult == .success {
+            windowController.requestFrameEnforcement(for: window, targetSize: newSize)
             let updatedFrame = windowController.axWindowFrame(axWindow)
                 ?? windowController.currentWindowFrame(for: window.id)
                 ?? CGRect(origin: window.frame.origin, size: newSize)
@@ -83,7 +84,7 @@ extension MirageHostInputController {
         }
 
         let clientAspectRatio = event.aspectRatio
-        let hostScale: CGFloat = NSScreen.main?.backingScaleFactor ?? 2.0
+        let hostScale = windowController.screenScaleFactor(for: window)
 
         let initialTargetSize: CGSize
         if event.pixelWidth > 0, event.pixelHeight > 0 {
@@ -106,66 +107,27 @@ extension MirageHostInputController {
         activeRelativeResizeTaskByWindowID[windowID]?.cancel()
 
         let task = Task {
-            var currentTargetSize = initialTargetSize
-            var finalSize: CGSize?
-
-            for _ in 0 ..< 5 {
-                try Task.checkCancellation()
-
-                var mutableSize = currentTargetSize
-                guard let sizeValue = AXValueCreate(.cgSize, &mutableSize) else { break }
-                AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
-
-                try await Task.sleep(for: .milliseconds(10))
-
-                let actualSize = (windowController.axWindowFrame(axWindow) ?? windowController
-                    .currentWindowFrame(for: windowID))?.size ?? currentTargetSize
-
-                // Early-exit when within 4pt of target (don't require aspect ratio convergence)
-                let widthDiff = abs(actualSize.width - currentTargetSize.width)
-                let heightDiff = abs(actualSize.height - currentTargetSize.height)
-                if widthDiff <= 4, heightDiff <= 4 {
-                    finalSize = actualSize
-                    break
-                }
-
-                let actualAspectRatio = actualSize.width / actualSize.height
-                let aspectDiff = abs(actualAspectRatio - clientAspectRatio)
-
-                if aspectDiff < 0.02 {
-                    finalSize = actualSize
-                    break
-                }
-
-                let widthConstrained = CGSize(width: actualSize.width, height: actualSize.width / clientAspectRatio)
-                let heightConstrained = CGSize(width: actualSize.height * clientAspectRatio, height: actualSize.height)
-
-                let newTarget = widthConstrained.height <= actualSize.height ? widthConstrained : heightConstrained
-
-                if newTarget.width < 200 || newTarget.height < 200 {
-                    finalSize = actualSize
-                    break
-                }
-
-                let sizeDiff = abs(newTarget.width - currentTargetSize.width) +
-                    abs(newTarget.height - currentTargetSize.height)
-                if sizeDiff < 2 {
-                    finalSize = actualSize
-                    break
-                }
-
-                currentTargetSize = newTarget
-            }
-
             try Task.checkCancellation()
-            guard let size = finalSize else { return }
+
+            var mutableSize = initialTargetSize
+            guard let sizeValue = AXValueCreate(.cgSize, &mutableSize) else { return }
+            let setResult = AXUIElementSetAttributeValue(axWindow, kAXSizeAttribute as CFString, sizeValue)
+            guard setResult == .success else { return }
+
+            try await Task.sleep(for: .milliseconds(20))
+
+            let size = (windowController.axWindowFrame(axWindow) ?? windowController
+                .currentWindowFrame(for: windowID))?.size ?? initialTargetSize
 
             let captureWidth = Int(size.width * hostScale)
             let captureHeight = Int(size.height * hostScale)
 
-            if captureWidth > 0, captureHeight > 0 { windowController.scheduleResizeUpdate(windowID: windowID, width: captureWidth, height: captureHeight) }
+            if captureWidth > 0, captureHeight > 0 {
+                windowController.scheduleResizeUpdate(windowID: windowID, width: captureWidth, height: captureHeight)
+            }
 
             windowController.centerWindowOnScreen(axWindow, newSize: size, windowID: windowID)
+            windowController.requestFrameEnforcement(for: window, targetSize: size)
         }
         activeRelativeResizeTaskByWindowID[windowID] = task
     }
@@ -181,7 +143,7 @@ extension MirageHostInputController {
         }
         guard let axWindow = windowController.getOrCacheAXWindow(for: window) else { return }
 
-        let hostScale = NSScreen.main?.backingScaleFactor ?? 2.0
+        let hostScale = windowController.screenScaleFactor(for: window)
         let targetSize = CGSize(
             width: CGFloat(event.pixelWidth) / hostScale,
             height: CGFloat(event.pixelHeight) / hostScale
@@ -194,6 +156,7 @@ extension MirageHostInputController {
 
         if result == .success {
             windowController.centerWindowOnScreen(axWindow, newSize: targetSize, windowID: window.id)
+            windowController.requestFrameEnforcement(for: window, targetSize: targetSize)
 
             Task { [weak self] in
                 await self?.hostService?.updateCaptureResolution(

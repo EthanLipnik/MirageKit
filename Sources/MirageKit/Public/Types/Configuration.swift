@@ -337,9 +337,10 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var lowLatencyHighResolutionCompressionBoost: Bool?
     public var temporaryDegradationMode: MirageTemporaryDegradationMode?
     public var disableResolutionCap: Bool
-    /// Maximum bitrate the in-stream adaptation governor may ramp toward.
-    /// When set, the governor can increase bitrate beyond the initial `bitrate`
-    /// value up to this ceiling based on in-stream probe results.
+    /// Maximum bitrate budget supplied by the client for app-owned adaptation.
+    /// When set, the host may temporarily shed bitrate below the initial
+    /// `bitrate` value to protect encode stability, but it does not
+    /// autonomously ramp back toward this ceiling.
     public var bitrateAdaptationCeiling: Int?
     /// Maximum encoded width in pixels. When set, the host computes the stream
     /// scale from these dimensions and the actual capture resolution instead of

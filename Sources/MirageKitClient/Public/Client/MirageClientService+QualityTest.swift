@@ -21,6 +21,15 @@ extension MirageClientService {
         return max(0, measuredBitrateBps)
     }
 
+    nonisolated static func defaultQualityTestSweepTargets() -> [Int] {
+        qualityTestSweepTargets(
+            minTargetBitrate: 8_000_000,
+            maxTargetBitrate: 600_000_000,
+            growthFactor: 1.55,
+            maxStages: 11
+        )
+    }
+
     public func runQualityTest(
         includeThroughput: Bool = true,
         onStageUpdate: (@MainActor (_ currentStage: Int, _ totalStages: Int) -> Void)? = nil
@@ -30,10 +39,11 @@ extension MirageClientService {
         }
 
         let testID = UUID()
-        let payloadBytes = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
+        let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
+        let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
         if includeThroughput {
             MirageLogger.client(
-                "Quality test starting (payload \(payloadBytes)B, p2p \(networkConfig.enablePeerToPeer), maxPacket \(networkConfig.maxPacketSize)B)"
+                "Quality test starting (payload \(payloadBytes)B, p2p \(networkConfig.enablePeerToPeer), maxPacket \(mediaMaxPacketSize)B)"
             )
         } else {
             MirageLogger.client("Quality baseline starting (stream probe only)")
@@ -58,17 +68,18 @@ extension MirageClientService {
             let request = QualityTestRequestMessage(
                 testID: testID,
                 plan: requestPlan,
-                payloadBytes: payloadBytes
+                payloadBytes: payloadBytes,
+                mediaMaxPacketSize: mediaMaxPacketSize
             )
             try await sendControlMessage(.qualityTestRequest, content: request)
         }
 
         let minTargetBitrate = 8_000_000
-        let maxTargetBitrate = 150_000_000
+        let maxTargetBitrate = 600_000_000
         let warmupDurationMs = 800
         let stageDurationMs = 1500
-        let growthFactor = 1.6
-        let maxStages = 8
+        let growthFactor = 1.55
+        let maxStages = 11
         let maxRefineSteps = 4
         let plateauThreshold = 0.05
         let plateauLimit = 2
@@ -104,7 +115,8 @@ extension MirageClientService {
                 stageID: stageID,
                 targetBitrateBps: targetBitrate,
                 durationMs: durationMs,
-                payloadBytes: payloadBytes
+                payloadBytes: payloadBytes,
+                mediaMaxPacketSize: mediaMaxPacketSize
             )
             stageResults.append(stage)
 
@@ -221,7 +233,8 @@ extension MirageClientService {
         }
 
         let testID = UUID()
-        let payloadBytes = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
+        let mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
+        let payloadBytes = miragePayloadSize(maxPacketSize: mediaMaxPacketSize)
 
         let targetMbps = (Double(targetBitrateBps) / 1_000_000.0)
             .formatted(.number.precision(.fractionLength(1)))
@@ -234,7 +247,8 @@ extension MirageClientService {
             stageID: 0,
             targetBitrateBps: targetBitrateBps,
             durationMs: durationMs,
-            payloadBytes: payloadBytes
+            payloadBytes: payloadBytes,
+            mediaMaxPacketSize: mediaMaxPacketSize
         )
 
         let throughputMbps = (Double(result.throughputBps) / 1_000_000.0)
@@ -270,19 +284,39 @@ extension MirageClientService {
         growthFactor: Double,
         maxStages: Int
     ) -> Int {
-        guard minTargetBitrate > 0 else { return 0 }
-        guard maxStages > 0 else { return 0 }
-        guard growthFactor > 1 else { return 1 }
+        Self.qualityTestSweepTargets(
+            minTargetBitrate: minTargetBitrate,
+            maxTargetBitrate: maxTargetBitrate,
+            growthFactor: growthFactor,
+            maxStages: maxStages
+        ).count
+    }
 
-        var count = 0
+    nonisolated private static func qualityTestSweepTargets(
+        minTargetBitrate: Int,
+        maxTargetBitrate: Int,
+        growthFactor: Double,
+        maxStages: Int
+    ) -> [Int] {
+        guard minTargetBitrate > 0 else { return [] }
+        guard maxStages > 0 else { return [] }
+        guard growthFactor > 1 else { return [minTargetBitrate] }
+
+        var targets: [Int] = []
         var targetBitrate = minTargetBitrate
-        while count < maxStages, targetBitrate <= maxTargetBitrate {
-            count += 1
+        while targets.count < maxStages, targetBitrate <= maxTargetBitrate {
+            targets.append(targetBitrate)
             let next = Int(Double(targetBitrate) * growthFactor)
             if next <= targetBitrate { break }
+            if next > maxTargetBitrate {
+                if targets.count < maxStages, targets.last != maxTargetBitrate {
+                    targets.append(maxTargetBitrate)
+                }
+                break
+            }
             targetBitrate = next
         }
 
-        return count
+        return targets
     }
 }

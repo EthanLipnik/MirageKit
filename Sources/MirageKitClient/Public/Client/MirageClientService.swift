@@ -545,6 +545,7 @@ public final class MirageClientService {
     /// Per-stream controllers for lifecycle management
     /// StreamController owns decoder, reassembler, and resize state machine
     var controllersByStream: [StreamID: StreamController] = [:]
+    var mediaMaxPacketSizeByStream: [StreamID: Int] = [:]
 
     // Track which streams have been registered with the host (prevents duplicate registrations)
     var registeredStreamIDs: Set<StreamID> = []
@@ -705,7 +706,7 @@ public final class MirageClientService {
     let adaptiveFallbackPressureTriggerCooldown: CFAbsoluteTime = 2.0
     let adaptiveFallbackBitrateStep: Double = 0.85
     let adaptiveRestoreBitrateStep: Double = 1.10
-    let adaptiveFallbackBitrateFloorBps: Int = 8_000_000
+    let adaptiveFallbackBitrateFloorBps: Int = 2_000_000
     @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
     // Internal for low-power policy extension.
     let decoderPowerStateMonitor = MiragePowerStateMonitor()
@@ -818,7 +819,8 @@ public final class MirageClientService {
     }
 
     private func makeDiagnosticsContextSnapshot() -> LoomDiagnosticsContext {
-        [
+        let primarySnapshot = diagnosticsPrimaryStreamSnapshot()
+        return [
             "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
             "client.awaitingManualApproval": .bool(isAwaitingManualApproval),
             "client.mediaPayloadEncryptionEnabled": .bool(mediaPayloadEncryptionEnabled),
@@ -830,8 +832,33 @@ public final class MirageClientService {
             "client.desktopStreamActive": .bool(desktopStreamID != nil),
             "client.adaptiveFallbackMode": .string(diagnosticsAdaptiveFallbackModeName(adaptiveFallbackMode)),
             "client.maxRefreshRateOverride": maxRefreshRateOverride.map(LoomDiagnosticsValue.int) ?? .null,
-            "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null
+            "client.hostSessionState": hostSessionState.map { .string(String(describing: $0)) } ?? .null,
+            "client.primaryStreamID": diagnosticsPrimaryStreamID().map { .int(Int($0)) } ?? .null,
+            "client.primaryStream.decoderOutputPixelFormat": primarySnapshot?.clientDecoderOutputPixelFormat.map(LoomDiagnosticsValue.string) ?? .null,
+            "client.primaryStream.decoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
+                primarySnapshot?.clientUsingHardwareDecoder
+            ),
+            "client.primaryStream.hostEncoderHardwareAcceleration": diagnosticsHardwareAccelerationState(
+                primarySnapshot?.hostUsingHardwareEncoder
+            )
         ]
+    }
+
+    private func diagnosticsPrimaryStreamID() -> StreamID? {
+        if let desktopStreamID {
+            return desktopStreamID
+        }
+        return activeStreams.first?.id
+    }
+
+    private func diagnosticsPrimaryStreamSnapshot() -> MirageClientMetricsSnapshot? {
+        guard let streamID = diagnosticsPrimaryStreamID() else { return nil }
+        return metricsStore.snapshot(for: streamID)
+    }
+
+    private func diagnosticsHardwareAccelerationState(_ enabled: Bool?) -> LoomDiagnosticsValue {
+        guard let enabled else { return .string("unknown") }
+        return .string(enabled ? "active" : "software_fallback")
     }
 
     private static func diagnosticsConnectionStateName(_ state: ConnectionState) -> String {

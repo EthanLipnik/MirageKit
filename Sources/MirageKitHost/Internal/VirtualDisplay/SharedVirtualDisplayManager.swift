@@ -87,6 +87,11 @@ actor SharedVirtualDisplayManager {
         case qualityTest
     }
 
+    enum DisplayCreationPolicy: Sendable, Equatable {
+        case adaptiveRetinaThenFallback1xAndColor
+        case singleAttempt(hiDPI: Bool)
+    }
+
     /// Error types for shared and dedicated display operations
     enum SharedDisplayError: Error, LocalizedError {
         case apiNotAvailable

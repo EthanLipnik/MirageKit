@@ -87,6 +87,8 @@ package struct StartStreamMessage: Codable {
     package var encoderMaxWidth: Int?
     /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+    /// Requested media packet size for this stream.
+    package var mediaMaxPacketSize: Int?
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
     /// Client-requested video codec.
@@ -116,6 +118,7 @@ package struct StartStreamMessage: Codable {
         case bitrateAdaptationCeiling
         case encoderMaxWidth
         case encoderMaxHeight
+        case mediaMaxPacketSize
         case upscalingMode
         case codec
     }
@@ -140,7 +143,8 @@ package struct StartStreamMessage: Codable {
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
-        maxRefreshRate: Int = 60
+        maxRefreshRate: Int = 60,
+        mediaMaxPacketSize: Int? = nil
     ) {
         self.windowID = windowID
         self.dataPort = dataPort
@@ -162,6 +166,7 @@ package struct StartStreamMessage: Codable {
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
         self.maxRefreshRate = maxRefreshRate
+        self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 }
 
@@ -197,6 +202,8 @@ package struct StreamStartedMessage: Codable {
     /// Dimension token for rejecting old-dimension P-frames after resize.
     /// Client should update its reassembler with this token.
     package var dimensionToken: UInt16?
+    /// Media packet size accepted by the host for this stream.
+    package var acceptedMediaMaxPacketSize: Int?
 
     package init(
         streamID: StreamID,
@@ -208,7 +215,8 @@ package struct StreamStartedMessage: Codable {
         startupAttemptID: UUID? = nil,
         minWidth: Int? = nil,
         minHeight: Int? = nil,
-        dimensionToken: UInt16? = nil
+        dimensionToken: UInt16? = nil,
+        acceptedMediaMaxPacketSize: Int? = nil
     ) {
         self.streamID = streamID
         self.windowID = windowID
@@ -220,6 +228,7 @@ package struct StreamStartedMessage: Codable {
         self.minWidth = minWidth
         self.minHeight = minHeight
         self.dimensionToken = dimensionToken
+        self.acceptedMediaMaxPacketSize = acceptedMediaMaxPacketSize
     }
 }
 

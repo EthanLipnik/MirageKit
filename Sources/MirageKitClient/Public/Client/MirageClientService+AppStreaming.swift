@@ -142,36 +142,82 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
         }
-        let resolvedScaleFactor = resolvedDisplayScaleFactor(
-            for: effectiveDisplayResolution,
-            explicitScaleFactor: scaleFactor
-        )
-
-        var request = SelectAppMessage(
+        var encoderRequest = SelectAppMessage(
             bundleIdentifier: bundleIdentifier,
             dataPort: nil,
-            scaleFactor: resolvedScaleFactor,
+            scaleFactor: nil,
             displayWidth: effectiveDisplayResolution.width > 0 ? Int(effectiveDisplayResolution.width) : nil,
             displayHeight: effectiveDisplayResolution.height > 0 ? Int(effectiveDisplayResolution.height) : nil,
             maxRefreshRate: getScreenMaxRefreshRate(),
             keyFrameInterval: nil,
             colorDepth: nil,
             bitrate: nil,
-            streamScale: clampedStreamScale(),
+            streamScale: nil,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             maxConcurrentVisibleWindows: max(1, maxConcurrentVisibleWindows),
             bitrateAllocationPolicy: bitrateAllocationPolicy,
-            sizePreset: sizePreset
+            sizePreset: sizePreset,
+            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize()
         )
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
-        applyEncoderOverrides(overrides, to: &request)
-        if let bitrate = request.bitrate, bitrate > 0 {
-            pendingAppAdaptiveFallbackBitrate = bitrate
+        applyEncoderOverrides(overrides, to: &encoderRequest)
+        let geometry = resolvedStreamGeometry(
+            for: effectiveDisplayResolution,
+            explicitScaleFactor: scaleFactor,
+            requestedStreamScale: clampedStreamScale(),
+            encoderMaxWidth: encoderRequest.encoderMaxWidth,
+            encoderMaxHeight: encoderRequest.encoderMaxHeight,
+            disableResolutionCap: encoderRequest.disableResolutionCap == true
+        )
+        resolutionScale = geometry.resolvedStreamScale
+        let scaledBitrate: Int?
+        if encoderRequest.bitrateAdaptationCeiling != nil {
+            scaledBitrate = encoderRequest.bitrate
+        } else if let bitrate = encoderRequest.bitrate, bitrate > 0 {
+            let baselinePixels: Double = 2560.0 * 1440.0
+            let scaleFactor = min(
+                max(
+                    Double(geometry.displayPixelSize.width) * Double(geometry.displayPixelSize.height) / baselinePixels,
+                    1.0
+                ),
+                2.0
+            )
+            scaledBitrate = Int(Double(bitrate) * scaleFactor)
         } else {
-            pendingAppAdaptiveFallbackBitrate = nil
+            scaledBitrate = nil
         }
+        var request = SelectAppMessage(
+            bundleIdentifier: encoderRequest.bundleIdentifier,
+            dataPort: encoderRequest.dataPort,
+            scaleFactor: geometry.displayScaleFactor,
+            displayWidth: encoderRequest.displayWidth,
+            displayHeight: encoderRequest.displayHeight,
+            maxRefreshRate: encoderRequest.maxRefreshRate,
+            keyFrameInterval: encoderRequest.keyFrameInterval,
+            captureQueueDepth: encoderRequest.captureQueueDepth,
+            colorDepth: encoderRequest.colorDepth,
+            bitrate: scaledBitrate,
+            latencyMode: encoderRequest.latencyMode,
+            performanceMode: encoderRequest.performanceMode,
+            allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
+            lowLatencyHighResolutionCompressionBoost: encoderRequest.lowLatencyHighResolutionCompressionBoost,
+            temporaryDegradationMode: encoderRequest.temporaryDegradationMode,
+            disableResolutionCap: encoderRequest.disableResolutionCap,
+            streamScale: geometry.resolvedStreamScale,
+            audioConfiguration: encoderRequest.audioConfiguration,
+            maxConcurrentVisibleWindows: encoderRequest.maxConcurrentVisibleWindows,
+            bitrateAllocationPolicy: encoderRequest.bitrateAllocationPolicy,
+            sizePreset: encoderRequest.sizePreset,
+            mediaMaxPacketSize: encoderRequest.mediaMaxPacketSize
+        )
+        request.bitrateAdaptationCeiling = encoderRequest.bitrateAdaptationCeiling
+        request.encoderMaxWidth = encoderRequest.encoderMaxWidth
+        request.encoderMaxHeight = encoderRequest.encoderMaxHeight
+        request.upscalingMode = encoderRequest.upscalingMode
+        request.codec = encoderRequest.codec
+        pendingAppAdaptiveFallbackBitrate = request.bitrate
         pendingAppAdaptiveFallbackColorDepth = request.colorDepth
 
         try await sendControlMessage(.selectApp, content: request)
@@ -183,7 +229,12 @@ public extension MirageClientService {
         heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
 
         streamingAppBundleID = bundleIdentifier
-        MirageLogger.client("Requested to stream app: \(bundleIdentifier)")
+        MirageLogger.client(
+            "Requested to stream app: \(bundleIdentifier) at " +
+                "\(Int(geometry.logicalSize.width))x\(Int(geometry.logicalSize.height)) pts, " +
+                "\(Int(geometry.displayPixelSize.width))x\(Int(geometry.displayPixelSize.height)) px, " +
+                "encode \(Int(geometry.encodedPixelSize.width))x\(Int(geometry.encodedPixelSize.height)) px"
+        )
     }
 
     /// Request a host-side slot swap from hidden inventory into a visible stream slot.

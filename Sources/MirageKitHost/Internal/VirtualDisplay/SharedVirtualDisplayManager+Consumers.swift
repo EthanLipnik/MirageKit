@@ -45,7 +45,8 @@ extension SharedVirtualDisplayManager {
         resolution: CGSize? = nil,
         refreshRate: Int = 60,
         colorSpace: MirageColorSpace = .displayP3,
-        allowActiveUpdate: Bool = false
+        allowActiveUpdate: Bool = false,
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
     )
     async throws -> DisplaySnapshot {
         // Force-destroy any orphaned displays from previous sessions before
@@ -55,11 +56,20 @@ extension SharedVirtualDisplayManager {
             MirageLogger.host(
                 "Cleaning up \(orphanedDisplayIDs.count) orphaned display(s) before acquisition: \(orphanedDisplayIDs)"
             )
+            var survivingOrphans: Set<CGDirectDisplayID> = []
             for orphanID in orphanedDisplayIDs {
                 CGVirtualDisplayBridge.forceInvalidateOrphan(orphanID)
+                if CGVirtualDisplayBridge.isDisplayOnline(orphanID) {
+                    survivingOrphans.insert(orphanID)
+                }
             }
-            orphanedDisplayIDs.removeAll()
-            try? await Task.sleep(for: .milliseconds(500))
+            orphanedDisplayIDs = survivingOrphans
+            if !survivingOrphans.isEmpty {
+                MirageLogger.host(
+                    "Virtual display orphan cleanup left \(survivingOrphans.count) display(s) online; keeping them tracked: \(survivingOrphans)"
+                )
+                try? await Task.sleep(for: .milliseconds(500))
+            }
         }
 
         let requestedRate = refreshRate
@@ -92,7 +102,8 @@ extension SharedVirtualDisplayManager {
                 sharedDisplay = try await recreateDisplay(
                     newResolution: targetResolution,
                     refreshRate: refreshRate,
-                    colorSpace: colorSpace
+                    colorSpace: colorSpace,
+                    creationPolicy: creationPolicy
                 )
             } else {
                 let needsRefresh = display.refreshRate != Double(refreshRate)
@@ -121,7 +132,8 @@ extension SharedVirtualDisplayManager {
                         sharedDisplay = try await recreateDisplay(
                             newResolution: targetResolution,
                             refreshRate: refreshRate,
-                            colorSpace: colorSpace
+                            colorSpace: colorSpace,
+                            creationPolicy: creationPolicy
                         )
                     }
                 }
@@ -136,7 +148,8 @@ extension SharedVirtualDisplayManager {
                 sharedDisplay = try await createDisplay(
                     resolution: targetResolution,
                     refreshRate: refreshRate,
-                    colorSpace: colorSpace
+                    colorSpace: colorSpace,
+                    creationPolicy: creationPolicy
                 )
             }
 
@@ -170,7 +183,8 @@ extension SharedVirtualDisplayManager {
                 sharedDisplay = try await createDisplay(
                     resolution: targetResolution,
                     refreshRate: refreshRate,
-                    colorSpace: colorSpace
+                    colorSpace: colorSpace,
+                    creationPolicy: creationPolicy
                 )
             } else if sharedDisplay?.colorSpace != colorSpace {
                 MirageLogger
@@ -180,7 +194,8 @@ extension SharedVirtualDisplayManager {
                 sharedDisplay = try await recreateDisplay(
                     newResolution: targetResolution,
                     refreshRate: refreshRate,
-                    colorSpace: colorSpace
+                    colorSpace: colorSpace,
+                    creationPolicy: creationPolicy
                 )
             } else {
                 let currentResolution = sharedDisplay!.resolution
@@ -210,7 +225,8 @@ extension SharedVirtualDisplayManager {
                         sharedDisplay = try await recreateDisplay(
                             newResolution: targetResolution,
                             refreshRate: refreshRate,
-                            colorSpace: colorSpace
+                            colorSpace: colorSpace,
+                            creationPolicy: creationPolicy
                         )
                     }
                 }
@@ -236,7 +252,8 @@ extension SharedVirtualDisplayManager {
             sharedDisplay = try await createDisplay(
                 resolution: targetResolution,
                 refreshRate: refreshRate,
-                colorSpace: colorSpace
+                colorSpace: colorSpace,
+                creationPolicy: creationPolicy
             )
         }
 

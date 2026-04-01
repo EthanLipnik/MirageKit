@@ -19,10 +19,13 @@ extension StreamContext {
     }
 
     func scaledOutputSize(for baseSize: CGSize) -> CGSize {
-        let clampedScale = streamScale
-        let width = StreamContext.alignedEvenPixel(baseSize.width * clampedScale)
-        let height = StreamContext.alignedEvenPixel(baseSize.height * clampedScale)
-        return CGSize(width: width, height: height)
+        MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: baseSize,
+            requestedStreamScale: streamScale,
+            encoderMaxWidth: encoderMaxWidth ?? Int(Self.maxEncodedWidth),
+            encoderMaxHeight: encoderMaxHeight ?? Int(Self.maxEncodedHeight),
+            disableResolutionCap: disableResolutionCap
+        ).encodedPixelSize
     }
 
     func updateCaptureSizesIfNeeded(_ bufferSize: CGSize) {

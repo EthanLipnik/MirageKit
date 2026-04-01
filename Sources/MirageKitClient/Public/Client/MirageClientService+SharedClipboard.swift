@@ -57,8 +57,7 @@ extension MirageClientService {
     }
 
     func sendSharedClipboardUpdate(
-        text: String,
-        changeID: UUID,
+        localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64
     ) {
         guard case .connected = connectionState,
@@ -67,7 +66,7 @@ extension MirageClientService {
               let controlChannel else {
             return
         }
-        guard let clipboardText = MirageSharedClipboard.validatedText(text) else { return }
+        guard let clipboardText = MirageSharedClipboard.validatedText(localSend.text) else { return }
 
         let secCtx = mediaSecurityContext
         let channel = controlChannel
@@ -82,7 +81,8 @@ extension MirageClientService {
                         context: secCtx
                     )
                     let update = SharedClipboardUpdateMessage(
-                        changeID: changeID,
+                        changeID: localSend.orderingToken.changeID,
+                        logicalVersion: localSend.orderingToken.logicalVersion,
                         sentAtMs: sentAtMs,
                         encryptedText: encryptedText,
                         chunkIndex: index,
@@ -103,10 +103,9 @@ extension MirageClientService {
             return sharedClipboardBridge
         }
 
-        let bridge = MirageClientSharedClipboardBridge { [weak self] text, changeID, sentAtMs in
+        let bridge = MirageClientSharedClipboardBridge { [weak self] localSend, sentAtMs in
             self?.sendSharedClipboardUpdate(
-                text: text,
-                changeID: changeID,
+                localSend: localSend,
                 sentAtMs: sentAtMs
             )
         }

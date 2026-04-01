@@ -8,41 +8,53 @@
 //
 
 #if os(macOS)
+import Loom
 @testable import MirageKitHost
 import Testing
 
 @Suite("Lights Out state policy")
 struct LightsOutStatePolicyTests {
     @Test
-    func enablesForActiveAppStreamsEvenWhenToggleIsOff() {
-        // In DEBUG builds, app streaming does not force lights out so the
-        // developer can still see and interact with the host display.
-        #if DEBUG
-        #expect(
-            !MirageHostService.shouldEnableLightsOut(
-                hasAppStreams: true,
-                hasDesktopStream: false,
-                hasPendingAppStreamStart: false,
-                hasPendingDesktopStreamStart: false,
-                lightsOutEnabled: false
-            )
-        )
-        #else
+    func enablesForActiveAppStreamsWhenToggleIsOn() {
         #expect(
             MirageHostService.shouldEnableLightsOut(
                 hasAppStreams: true,
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
-                lightsOutEnabled: false
+                lightsOutEnabled: true
             )
         )
-        #endif
     }
 
     @Test
-    func enablesForPendingAppStreamSetup() {
-        #if DEBUG
+    func staysOffForActiveAppStreamsWhenToggleIsOff() {
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: true,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false,
+                lightsOutEnabled: false
+            )
+        )
+    }
+
+    @Test
+    func enablesForPendingAppStreamSetupWhenToggleIsOn() {
+        #expect(
+            MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: true,
+                hasPendingDesktopStreamStart: false,
+                lightsOutEnabled: true
+            )
+        )
+    }
+
+    @Test
+    func staysOffForPendingAppStreamSetupWhenToggleIsOff() {
         #expect(
             !MirageHostService.shouldEnableLightsOut(
                 hasAppStreams: false,
@@ -52,17 +64,32 @@ struct LightsOutStatePolicyTests {
                 lightsOutEnabled: false
             )
         )
-        #else
+    }
+
+    @Test
+    func enablesForActiveDesktopStreamWhenToggleIsOn() {
         #expect(
             MirageHostService.shouldEnableLightsOut(
                 hasAppStreams: false,
-                hasDesktopStream: false,
-                hasPendingAppStreamStart: true,
+                hasDesktopStream: true,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false,
+                lightsOutEnabled: true
+            )
+        )
+    }
+
+    @Test
+    func staysOffForActiveDesktopStreamWhenToggleIsOff() {
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: false,
+                hasDesktopStream: true,
+                hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
                 lightsOutEnabled: false
             )
         )
-        #endif
     }
 
     @Test
@@ -119,18 +146,18 @@ struct LightsOutStatePolicyTests {
     }
 
     @Test
-    func secondaryDisplaySuppressesLightsOutForDesktopStream() {
-        // Secondary display mode overrides lightsOutEnabled to false,
-        // so desktop streams in secondary mode never trigger Lights Out.
-        #expect(
-            !MirageHostService.shouldEnableLightsOut(
-                hasAppStreams: false,
-                hasDesktopStream: true,
-                hasPendingAppStreamStart: false,
-                hasPendingDesktopStreamStart: false,
-                lightsOutEnabled: false
-            )
-        )
+    func allowsLightsOutWhileSessionIsLocked() {
+        #expect(MirageHostService.shouldAllowLightsOut(for: .credentialsRequired))
+    }
+
+    @Test
+    func allowsLightsOutAtLoginWindow() {
+        #expect(MirageHostService.shouldAllowLightsOut(for: .credentialsAndUserIdentifierRequired))
+    }
+
+    @Test
+    func disablesLightsOutWhenSessionIsUnavailable() {
+        #expect(!MirageHostService.shouldAllowLightsOut(for: .unavailable))
     }
 
     @Test

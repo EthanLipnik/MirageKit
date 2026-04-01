@@ -158,7 +158,7 @@ extension VideoDecoder {
         }
     }
 
-    private func refreshHardwareDecoderStatusIfNeeded(reason: String) {
+    func refreshHardwareDecoderStatusIfNeeded(reason: String) {
         guard decoderHardwareStatusRefreshAttempts < maxDecoderHardwareStatusRefreshAttempts else { return }
         guard usingHardwareDecoder == nil else { return }
         guard let session = decompressionSession else { return }

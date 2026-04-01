@@ -203,6 +203,7 @@ public extension MirageHostService {
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
+        mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
         upscalingMode: MirageUpscalingMode? = nil,
         codec: MirageVideoCodec? = nil,
         sizePreset: MirageDisplaySizePreset = .standard
@@ -301,7 +302,7 @@ public extension MirageHostService {
             encoderConfig: effectiveEncoderConfig,
             streamScale: streamScale ?? 1.0,
             requestedAudioChannelCount: resolvedAudioConfiguration.channelLayout.channelCount,
-            maxPacketSize: networkConfig.maxPacketSize,
+            maxPacketSize: mediaMaxPacketSize,
             mediaSecurityContext: nil,
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
@@ -462,6 +463,7 @@ public extension MirageHostService {
 
             // Get dimension token from stream context
             let dimensionToken = await context.getDimensionToken()
+            let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
 
             let message = StreamStartedMessage(
                 streamID: streamID,
@@ -473,7 +475,8 @@ public extension MirageHostService {
                 startupAttemptID: startupAttemptID,
                 minWidth: minWidth,
                 minHeight: minHeight,
-                dimensionToken: dimensionToken
+                dimensionToken: dimensionToken,
+                acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
             )
             do {
                 registerPendingStartupAttempt(
@@ -1140,7 +1143,8 @@ public extension MirageHostService {
                     codec: codec,
                     minWidth: minWidth,
                     minHeight: minHeight,
-                    dimensionToken: dimensionToken
+                    dimensionToken: dimensionToken,
+                    acceptedMediaMaxPacketSize: await context.getMediaMaxPacketSize()
                 )
                 try await clientContext.send(.streamStarted, content: message)
                 MirageLogger
@@ -1209,7 +1213,8 @@ public extension MirageHostService {
                     codec: encoderConfig.codec,
                     minWidth: minWidth,
                     minHeight: minHeight,
-                    dimensionToken: dimensionToken
+                    dimensionToken: dimensionToken,
+                    acceptedMediaMaxPacketSize: context.getMediaMaxPacketSize()
                 )
                 try await clientContext.send(.streamStarted, content: message)
                 MirageLogger.host("Capture resolution updated to \(width)x\(height)")

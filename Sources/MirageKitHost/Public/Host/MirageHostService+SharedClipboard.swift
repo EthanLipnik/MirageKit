@@ -107,7 +107,7 @@ extension MirageHostService {
                 }
                 await self?.applyReceivedClipboardChunk(
                     text: chunkText,
-                    changeID: update.changeID,
+                    orderingToken: update.orderingToken,
                     sentAtMs: update.sentAtMs,
                     chunkIndex: update.chunkIndex,
                     chunkCount: update.chunkCount
@@ -120,13 +120,13 @@ extension MirageHostService {
 
     private func applyReceivedClipboardChunk(
         text: String,
-        changeID: UUID,
+        orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64,
         chunkIndex: Int,
         chunkCount: Int
     ) {
         guard let fullText = clipboardChunkBuffer.addChunk(
-            changeID: changeID,
+            changeID: orderingToken.changeID,
             chunkIndex: chunkIndex,
             chunkCount: chunkCount,
             text: text
@@ -136,7 +136,7 @@ extension MirageHostService {
 
         ensureSharedClipboardBridge().applyRemoteText(
             validatedText,
-            changeID: changeID,
+            orderingToken: orderingToken,
             sentAtMs: sentAtMs
         )
     }
@@ -146,10 +146,9 @@ extension MirageHostService {
             return sharedClipboardBridge
         }
 
-        let bridge = MirageHostSharedClipboardBridge { [weak self] text, changeID, sentAtMs in
+        let bridge = MirageHostSharedClipboardBridge { [weak self] localSend, sentAtMs in
             self?.broadcastSharedClipboardUpdate(
-                text: text,
-                changeID: changeID,
+                localSend: localSend,
                 sentAtMs: sentAtMs
             )
         }
@@ -178,11 +177,10 @@ extension MirageHostService {
     }
 
     private func broadcastSharedClipboardUpdate(
-        text: String,
-        changeID: UUID,
+        localSend: MirageSharedClipboardLocalSend,
         sentAtMs: Int64
     ) {
-        guard let clipboardText = MirageSharedClipboard.validatedText(text) else { return }
+        guard let clipboardText = MirageSharedClipboard.validatedText(localSend.text) else { return }
 
         var targets: [(MirageMediaSecurityContext, MirageControlChannel)] = []
         for clientContext in clientsBySessionID.values {
@@ -214,7 +212,8 @@ extension MirageHostService {
                             context: secCtx
                         )
                         let update = SharedClipboardUpdateMessage(
-                            changeID: changeID,
+                            changeID: localSend.orderingToken.changeID,
+                            logicalVersion: localSend.orderingToken.logicalVersion,
                             sentAtMs: sentAtMs,
                             encryptedText: encryptedText,
                             chunkIndex: index,

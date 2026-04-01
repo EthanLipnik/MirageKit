@@ -10,21 +10,6 @@
 import AVFAudio
 import Foundation
 import MirageKit
-#if os(iOS) || os(visionOS)
-import UIKit
-#endif
-
-struct PlaybackAudioSessionConfiguration: Equatable {
-    static let ambient = PlaybackAudioSessionConfiguration()
-
-    private init() {}
-
-#if os(iOS) || os(visionOS)
-    var avCategory: AVAudioSession.Category {
-        .ambient
-    }
-#endif
-}
 
 @MainActor
 public final class AudioPlaybackController {
@@ -52,14 +37,7 @@ public final class AudioPlaybackController {
     private var runtimeExtraDelaySeconds: Double = 0
     private var isDelayHoldActive = false
     private var isConfigured = false
-#if os(iOS) || os(visionOS)
-    private var audioSessionConfigured = false
-    private var hasLoggedInactiveSessionDeferral = false
-    private var audioSessionActivationBackoffUntil: ContinuousClock.Instant?
-    private var audioSessionActivationFailureCount: Int = 0
-    private var wasApplicationInactive = false
-    private static let audioSessionMaxRetries = 3
-#endif
+    private var hasPlaybackSessionLease = false
 
     init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
@@ -105,17 +83,11 @@ public final class AudioPlaybackController {
         isConfigured = false
         configuredSampleRate = 0
         configuredChannelCount = 0
-#if os(iOS) || os(visionOS)
-        deactivateAudioSessionIfNeeded()
-        hasLoggedInactiveSessionDeferral = false
-#endif
+        releasePlaybackSessionIfNeeded()
     }
 
     func preferredChannelCount(for incomingChannelCount: Int) -> Int {
         let incoming = max(1, incomingChannelCount)
-#if os(iOS) || os(visionOS)
-        _ = ensureAudioSessionConfiguredForPlayback()
-#endif
         let outputChannels = Int(resolvePlaybackGraph().engine.outputNode.outputFormat(forBus: 0).channelCount)
         if incoming >= 6, outputChannels < 6 { return 2 }
         return incoming
@@ -151,9 +123,6 @@ public final class AudioPlaybackController {
 
     func enqueue(_ frame: DecodedPCMFrame) {
         guard configureIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount) else { return }
-#if os(iOS) || os(visionOS)
-        guard ensureAudioSessionConfiguredForPlayback() else { return }
-#endif
         pendingFrames.append(frame)
         pendingDurationSeconds += frame.durationSeconds
         drainPendingFramesIfNeeded()
@@ -169,6 +138,12 @@ public final class AudioPlaybackController {
         }
 
         tearDownPlaybackGraph()
+        let hadPlaybackSessionLease = hasPlaybackSessionLease
+
+        guard ensurePlaybackSessionConfigured() else {
+            return false
+        }
+
         let playbackGraph = resolvePlaybackGraph()
 
         guard let format = AVAudioFormat(
@@ -177,17 +152,20 @@ public final class AudioPlaybackController {
             channels: AVAudioChannelCount(resolvedChannels),
             interleaved: false
         ) else {
+            if !hadPlaybackSessionLease {
+                releasePlaybackSessionIfNeeded()
+            }
             return false
         }
 
         playbackGraph.engine.connect(playbackGraph.playerNode, to: playbackGraph.engine.mainMixerNode, format: format)
-#if os(iOS) || os(visionOS)
-        guard ensureAudioSessionConfiguredForPlayback() else { return false }
-#endif
         do {
             try playbackGraph.engine.start()
         } catch {
             MirageLogger.error(.client, error: error, message: "Audio playback engine failed to start: ")
+            if !hadPlaybackSessionLease {
+                releasePlaybackSessionIfNeeded()
+            }
             return false
         }
 
@@ -200,6 +178,23 @@ public final class AudioPlaybackController {
         isDelayHoldActive = false
         isConfigured = true
         return true
+    }
+
+    private func ensurePlaybackSessionConfigured() -> Bool {
+        guard !hasPlaybackSessionLease else { return true }
+
+        guard MirageClientAudioSessionCoordinator.shared.requestPlaybackSession() else {
+            return false
+        }
+
+        hasPlaybackSessionLease = true
+        return true
+    }
+
+    private func releasePlaybackSessionIfNeeded() {
+        guard hasPlaybackSessionLease else { return }
+        hasPlaybackSessionLease = false
+        MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
     }
 
     private func drainPendingFramesIfNeeded() {
@@ -292,96 +287,4 @@ public final class AudioPlaybackController {
         if !playerNode.isPlaying { playerNode.play() }
     }
 
-#if os(iOS) || os(visionOS)
-    private func ensureAudioSessionConfiguredForPlayback() -> Bool {
-        guard isApplicationActive else {
-            wasApplicationInactive = true
-            if !hasLoggedInactiveSessionDeferral {
-                MirageLogger.client("Deferring audio session activation until app becomes active")
-                hasLoggedInactiveSessionDeferral = true
-            }
-            return false
-        }
-        hasLoggedInactiveSessionDeferral = false
-        // Only reset backoff on inactive→active transition, not every call.
-        if wasApplicationInactive {
-            wasApplicationInactive = false
-            audioSessionActivationFailureCount = 0
-            audioSessionActivationBackoffUntil = nil
-        }
-
-        // Backoff: don't spam activation attempts after repeated failures.
-        // Each failed attempt previously ran per audio packet (~60/s),
-        // flooding the main thread and causing presentation stalls.
-        if let backoffUntil = audioSessionActivationBackoffUntil,
-           ContinuousClock.now < backoffUntil {
-            return false
-        }
-        if audioSessionActivationFailureCount > Self.audioSessionMaxRetries {
-            return false
-        }
-
-        let session = AVAudioSession.sharedInstance()
-        let configuration = PlaybackAudioSessionConfiguration.ambient
-        do {
-            let needsReconfiguration = !audioSessionConfigured
-                || session.category != configuration.avCategory
-                || session.mode != .default
-            if needsReconfiguration {
-                try session.setCategory(configuration.avCategory, mode: .default, options: [.mixWithOthers])
-                try session.setActive(true)
-            }
-            audioSessionConfigured = true
-            audioSessionActivationFailureCount = 0
-            audioSessionActivationBackoffUntil = nil
-            return true
-        } catch {
-            if shouldSuppressAudioSessionActivationError(error) {
-                audioSessionActivationFailureCount += 1
-                if audioSessionActivationFailureCount <= Self.audioSessionMaxRetries {
-                    // Exponential backoff: 100ms, 500ms, 2s
-                    let backoffs: [Duration] = [.milliseconds(100), .milliseconds(500), .seconds(2)]
-                    let idx = min(audioSessionActivationFailureCount - 1, backoffs.count - 1)
-                    audioSessionActivationBackoffUntil = .now + backoffs[idx]
-                    MirageLogger.debug(.client,
-                        "Audio session activation deferred (attempt \(audioSessionActivationFailureCount)/\(Self.audioSessionMaxRetries)): \(error)")
-                } else if audioSessionActivationFailureCount == Self.audioSessionMaxRetries + 1 {
-                    MirageLogger.client(
-                        "Audio session activation failed after \(Self.audioSessionMaxRetries) attempts; waiting for app to become active")
-                }
-                return false
-            }
-            MirageLogger.error(.client, error: error, message: "Audio session setup failed: ")
-            return false
-        }
-    }
-
-    private func deactivateAudioSessionIfNeeded() {
-        guard audioSessionConfigured else { return }
-        audioSessionConfigured = false
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-    }
-
-    private var isApplicationActive: Bool {
-        UIApplication.shared.applicationState == .active
-    }
-
-    private func shouldSuppressAudioSessionActivationError(_ error: Error) -> Bool {
-        let nsError = error as NSError
-        guard nsError.domain == NSOSStatusErrorDomain
-            || nsError.domain == "com.apple.coreaudio.avfaudio" else {
-            return false
-        }
-
-        let deferredCodes: Set<Int> = [
-            Int(AVAudioSession.ErrorCode.cannotStartPlaying.rawValue),
-            1836282486, // 'msrv': media services failed
-            561210739, // '!ses': session unavailable while mediaserverd is recovering
-            561017449, // '!ini': session not initialized
-            1936290409, // 'siri': Siri/system audio session conflict (visionOS)
-            -50, // kAudio_ParamError: invalid parameter (session not active)
-        ]
-        return deferredCodes.contains(nsError.code)
-    }
-#endif
 }

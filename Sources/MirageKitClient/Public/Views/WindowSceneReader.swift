@@ -6,7 +6,7 @@
 //
 
 import MirageKit
-#if os(iOS)
+#if os(iOS) || os(visionOS)
 import SwiftUI
 import UIKit
 
@@ -53,18 +53,22 @@ public struct WindowSceneReader: UIViewRepresentable {
         var onUpdate: (() -> Void)?
         var pollingInterval: TimeInterval = 2.0
 
+        #if os(iOS)
         private weak var lastKnownScreen: UIScreen?
         private var displayLink: CADisplayLink?
         private var lastCheckTime: CFTimeInterval = 0
+        #endif
 
         override public func didMoveToWindow() {
             super.didMoveToWindow()
-            updateLastKnownScreen()
             onUpdate?()
 
+            #if os(iOS)
+            updateLastKnownScreen()
             if window != nil { startPolling() } else {
                 stopPolling()
             }
+            #endif
         }
 
         override public func didMoveToSuperview() {
@@ -74,10 +78,13 @@ public struct WindowSceneReader: UIViewRepresentable {
 
         override public func traitCollectionDidChange(_ previousTraitCollection: UITraitCollection?) {
             super.traitCollectionDidChange(previousTraitCollection)
-            updateLastKnownScreen()
             onUpdate?()
+            #if os(iOS)
+            updateLastKnownScreen()
+            #endif
         }
 
+        #if os(iOS)
         private func startPolling() {
             guard displayLink == nil else { return }
 
@@ -112,9 +119,11 @@ public struct WindowSceneReader: UIViewRepresentable {
         deinit {
             stopPolling()
         }
+        #endif
     }
 }
 
+#if os(iOS)
 // MARK: - Screen Reader View Modifier
 
 /// A view modifier that provides the current screen to child views.
@@ -172,4 +181,5 @@ public extension View {
         modifier(ScreenReaderModifier(onScreenChange: onChange))
     }
 }
+#endif
 #endif

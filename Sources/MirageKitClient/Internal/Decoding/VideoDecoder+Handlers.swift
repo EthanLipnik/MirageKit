@@ -111,6 +111,13 @@ extension VideoDecoder {
         return VideoDecoder.pixelFormatName(pixelFormat)
     }
 
+    func currentHardwareDecoderStatus() -> Bool? {
+        if usingHardwareDecoder == nil {
+            refreshHardwareDecoderStatusIfNeeded(reason: "metrics_dispatch")
+        }
+        return usingHardwareDecoder
+    }
+
     func prepareForDimensionChange(expectedWidth: Int? = nil, expectedHeight: Int? = nil) {
         awaitingDimensionChange = true
         dimensionChangeStartTime = CFAbsoluteTimeGetCurrent()

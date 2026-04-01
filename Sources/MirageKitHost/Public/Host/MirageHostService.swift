@@ -383,8 +383,7 @@ public final class MirageHostService {
     /// Window activation (robust multi-method for headless Macs)
     @ObservationIgnored let windowActivator: WindowActivator = .forCurrentEnvironment()
 
-    /// Lights Out (curtain) preference for desktop streams.
-    /// App/window streams always force Lights Out while active.
+    /// Lights Out (curtain) preference for app/window and desktop streams.
     public var lightsOutEnabled: Bool = false {
         didSet {
             Task { @MainActor [weak self] in

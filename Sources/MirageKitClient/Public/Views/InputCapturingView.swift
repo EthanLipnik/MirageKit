@@ -166,7 +166,6 @@ public class InputCapturingView: UIView {
     var dictationRecognitionTask: SFSpeechRecognitionTask?
     var dictationReservedLocale: Locale?
     var dictationLastCommittedText: String = ""
-    var dictationAudioSessionActive: Bool = false
 
     // Cursor state from host
     var currentCursorType: MirageCursorType = .arrow

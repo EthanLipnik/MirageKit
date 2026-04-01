@@ -47,6 +47,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostTenBitDisplayP3Validated: Bool?
     public var hostUltra444Validated: Bool?
     public var clientDecoderOutputPixelFormat: String?
+    public var clientUsingHardwareDecoder: Bool?
     package var hostCaptureIngressAverageMs: Double? = nil
     package var hostCaptureIngressMaxMs: Double? = nil
     package var hostPreEncodeWaitAverageMs: Double? = nil
@@ -107,6 +108,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostTenBitDisplayP3Validated: Bool? = nil,
         hostUltra444Validated: Bool? = nil,
         clientDecoderOutputPixelFormat: String? = nil,
+        clientUsingHardwareDecoder: Bool? = nil,
         hasHostMetrics: Bool = false
     ) {
         self.decodedFPS = decodedFPS
@@ -146,6 +148,7 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostTenBitDisplayP3Validated = hostTenBitDisplayP3Validated
         self.hostUltra444Validated = hostUltra444Validated
         self.clientDecoderOutputPixelFormat = clientDecoderOutputPixelFormat
+        self.clientUsingHardwareDecoder = clientUsingHardwareDecoder
         self.hasHostMetrics = hasHostMetrics
     }
 }
@@ -298,11 +301,13 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
 
     public func updateClientDecoderTelemetry(
         streamID: StreamID,
-        outputPixelFormat: String?
+        outputPixelFormat: String?,
+        usingHardwareDecoder: Bool?
     ) {
         lock.lock()
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
         snapshot.clientDecoderOutputPixelFormat = outputPixelFormat
+        snapshot.clientUsingHardwareDecoder = usingHardwareDecoder
         metricsByStream[streamID] = snapshot
         lock.unlock()
     }

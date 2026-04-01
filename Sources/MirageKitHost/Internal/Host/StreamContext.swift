@@ -33,6 +33,8 @@ actor StreamContext {
         case display
     }
 
+    let mediaMaxPacketSize: Int
+
     enum GameModeStage: Int, Sendable {
         case baseline
         case stage1FrameRate60
@@ -470,6 +472,7 @@ actor StreamContext {
             ? additionalFrameFlags.union(.proResCodec)
             : additionalFrameFlags
         maxPayloadSize = miragePayloadSize(maxPacketSize: maxPacketSize)
+        mediaMaxPacketSize = maxPacketSize
         self.mediaSecurityContext = mediaSecurityContext
         currentFrameRate = resolvedEncoderConfig.targetFrameRate
         captureFrameRateOverride = nil

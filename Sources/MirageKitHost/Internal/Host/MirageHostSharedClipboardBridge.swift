@@ -13,7 +13,7 @@ import MirageKit
 final class MirageHostSharedClipboardBridge {
     private let pasteboard: NSPasteboard
     private let pollInterval: Duration
-    private let onLocalTextChanged: @MainActor (String, UUID, Int64) -> Void
+    private let onLocalTextChanged: @MainActor (MirageSharedClipboardLocalSend, Int64) -> Void
     private var clipboardState = MirageSharedClipboardState()
     private var pollTask: Task<Void, Never>?
     private var isActive = false
@@ -21,7 +21,7 @@ final class MirageHostSharedClipboardBridge {
     init(
         pasteboard: NSPasteboard = .general,
         pollInterval: Duration = .milliseconds(250),
-        onLocalTextChanged: @escaping @MainActor (String, UUID, Int64) -> Void
+        onLocalTextChanged: @escaping @MainActor (MirageSharedClipboardLocalSend, Int64) -> Void
     ) {
         self.pasteboard = pasteboard
         self.pollInterval = pollInterval
@@ -44,18 +44,18 @@ final class MirageHostSharedClipboardBridge {
 
     func applyRemoteText(
         _ text: String,
-        changeID _: UUID,
+        orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
     ) {
         guard let text = MirageSharedClipboard.validatedText(text) else { return }
-        guard clipboardState.shouldApplyRemoteText(sentAtMs: sentAtMs) else { return }
+        guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else { return }
 
         _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
         pasteboard.setString(text, forType: .string)
         clipboardState.recordRemoteWrite(
             text: text,
             changeCount: pasteboard.changeCount,
-            sentAtMs: sentAtMs
+            orderingToken: orderingToken
         )
     }
 
@@ -86,15 +86,11 @@ final class MirageHostSharedClipboardBridge {
     private func completePollPasteboard(text: String?, changeCount: Int) {
         guard isActive else { return }
         let sentAtMs = MirageSharedClipboard.currentTimestampMs()
-        switch clipboardState.observeLocalText(
-            text,
-            changeCount: changeCount,
-            sentAtMs: sentAtMs
-        ) {
+        switch clipboardState.observeLocalText(text, changeCount: changeCount) {
         case .ignore:
             break
-        case let .send(text):
-            onLocalTextChanged(text, UUID(), sentAtMs)
+        case let .send(localSend):
+            onLocalTextChanged(localSend, sentAtMs)
         }
     }
 }

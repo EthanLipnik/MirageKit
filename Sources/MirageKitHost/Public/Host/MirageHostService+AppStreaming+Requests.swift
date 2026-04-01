@@ -357,6 +357,11 @@ extension MirageHostService {
                 return
             }
             let requestedDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
+            let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+            let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
+                requested: request.mediaMaxPacketSize,
+                pathKind: pathKind
+            )
             let maxVisibleSlots = resolvedMaxVisibleAppWindowSlots(request.maxConcurrentVisibleWindows)
             let sharedBitrateBudget = resolvedAppSessionBitrateBudget(requestedBitrate: request.bitrate)
             let bitrateAllocationPolicy = request.bitrateAllocationPolicy ?? .prioritizeActiveWindow
@@ -428,7 +433,8 @@ extension MirageHostService {
                     clientContext: existingClientContext,
                     selectRequest: request,
                     targetFrameRate: targetFrameRate,
-                    requestedDisplayResolution: requestedDisplayResolution
+                    requestedDisplayResolution: requestedDisplayResolution,
+                    mediaMaxPacketSize: acceptedMediaMaxPacketSize
                 )
                 switch expansionResult {
                 case let .success(added):
@@ -504,7 +510,8 @@ extension MirageHostService {
                 client: client,
                 selectRequest: request,
                 targetFrameRate: targetFrameRate,
-                requestedDisplayResolution: requestedDisplayResolution
+                requestedDisplayResolution: requestedDisplayResolution,
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize
             )
             let startupDecision = Self.initialAppWindowStartupDecision(
                 startedWindowCount: startupResult.windows.count
@@ -807,6 +814,7 @@ extension MirageHostService {
             let targetFrameRate = await context.getTargetFrameRate()
             let codec = await context.getCodec()
             let dimensionToken = await context.getDimensionToken()
+            let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
             let fallbackMin = fallbackMinimumSize(for: targetWindow.frame)
             let minWidth = Int(minimumSizesByWindowID[targetWindowID]?.width ?? CGFloat(fallbackMin.minWidth))
             let minHeight = Int(minimumSizesByWindowID[targetWindowID]?.height ?? CGFloat(fallbackMin.minHeight))
@@ -819,7 +827,8 @@ extension MirageHostService {
                 codec: codec,
                 minWidth: minWidth,
                 minHeight: minHeight,
-                dimensionToken: dimensionToken
+                dimensionToken: dimensionToken,
+                acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
             )
             try await clientContext.send(.streamStarted, content: started)
         } catch {
@@ -884,7 +893,8 @@ extension MirageHostService {
         clientContext: ClientContext,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
-        requestedDisplayResolution: CGSize
+        requestedDisplayResolution: CGSize,
+        mediaMaxPacketSize: Int
     ) async -> ExistingSessionWindowStartResult {
         let normalizedBundleID = app.bundleIdentifier.lowercased()
         let catalog: [AppStreamWindowCandidate]
@@ -956,6 +966,7 @@ extension MirageHostService {
                 bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
                 encoderMaxWidth: selectRequest.encoderMaxWidth,
                 encoderMaxHeight: selectRequest.encoderMaxHeight,
+                mediaMaxPacketSize: mediaMaxPacketSize,
                 upscalingMode: selectRequest.upscalingMode,
                 codec: selectRequest.codec,
                 sizePreset: selectRequest.sizePreset ?? .standard
@@ -1090,7 +1101,8 @@ extension MirageHostService {
         client: MirageConnectedClient,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
-        requestedDisplayResolution: CGSize
+        requestedDisplayResolution: CGSize,
+        mediaMaxPacketSize: Int
     ) async -> InitialAppWindowStartupResult {
         let maxDiscoveryAttempts = 10
         let maxConcurrentWindowStarts = 2
@@ -1292,7 +1304,8 @@ extension MirageHostService {
                         selectRequest: selectRequest,
                         targetFrameRate: targetFrameRate,
                         requestedDisplayResolution: requestedDisplayResolution,
-                        startupBitratePerVisibleWindow: startupBitratePerVisibleWindow
+                        startupBitratePerVisibleWindow: startupBitratePerVisibleWindow,
+                        mediaMaxPacketSize: mediaMaxPacketSize
                     )
                 }
             }
@@ -1329,7 +1342,8 @@ extension MirageHostService {
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize,
-        startupBitratePerVisibleWindow: Int?
+        startupBitratePerVisibleWindow: Int?,
+        mediaMaxPacketSize: Int
     ) async -> InitialAppWindowStartAttemptResult {
         var failureNotes: [String] = []
         let startupDeadline = ContinuousClock.now + appWindowReplacementCooldownDuration
@@ -1382,7 +1396,8 @@ extension MirageHostService {
                     selectRequest: selectRequest,
                     targetFrameRate: targetFrameRate,
                     requestedDisplayResolution: requestedDisplayResolution,
-                    requestedBitrateOverride: startupBitratePerVisibleWindow
+                    requestedBitrateOverride: startupBitratePerVisibleWindow,
+                    mediaMaxPacketSize: mediaMaxPacketSize
                 )
                 let succeededWindowIDs = Set([
                     binding.candidate.window.id,
@@ -1499,7 +1514,8 @@ extension MirageHostService {
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize,
-        requestedBitrateOverride: Int?
+        requestedBitrateOverride: Int?,
+        mediaMaxPacketSize: Int
     ) async throws -> AppStreamStartedMessage.AppStreamWindow {
         let streamSession = try await startStream(
             for: preferredWindow,
@@ -1523,6 +1539,7 @@ extension MirageHostService {
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
             encoderMaxHeight: selectRequest.encoderMaxHeight,
+            mediaMaxPacketSize: mediaMaxPacketSize,
             upscalingMode: selectRequest.upscalingMode,
             codec: selectRequest.codec,
             sizePreset: selectRequest.sizePreset ?? .standard

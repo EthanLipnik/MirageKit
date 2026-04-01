@@ -40,15 +40,11 @@ public extension MirageClientService {
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
         var request = StartStreamMessage(windowID: window.id, dataPort: nil)
+        request.mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
         let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for window streaming")
         }
-        let resolvedScaleFactor = resolvedDisplayScaleFactor(
-            for: effectiveDisplayResolution,
-            explicitScaleFactor: scaleFactor
-        )
-        request.scaleFactor = resolvedScaleFactor
         if let expectedPixelSize, expectedPixelSize.width > 0, expectedPixelSize.height > 0 {
             request.pixelWidth = Int(expectedPixelSize.width)
             request.pixelHeight = Int(expectedPixelSize.height)
@@ -79,11 +75,26 @@ public extension MirageClientService {
             pendingAdaptiveFallbackColorDepthByWindowID.removeValue(forKey: window.id)
         }
 
-        request.streamScale = clampedStreamScale()
         request.audioConfiguration = audioConfiguration ?? self.audioConfiguration
         request.maxRefreshRate = getScreenMaxRefreshRate()
+        let geometry = resolvedStreamGeometry(
+            for: effectiveDisplayResolution,
+            explicitScaleFactor: scaleFactor,
+            requestedStreamScale: clampedStreamScale(),
+            encoderMaxWidth: request.encoderMaxWidth,
+            encoderMaxHeight: request.encoderMaxHeight,
+            disableResolutionCap: request.disableResolutionCap == true
+        )
+        resolutionScale = geometry.resolvedStreamScale
+        request.scaleFactor = geometry.displayScaleFactor
+        request.streamScale = geometry.resolvedStreamScale
 
-        MirageLogger.client("Sending startStream for window \(window.id)")
+        MirageLogger.client(
+            "Sending startStream for window \(window.id): " +
+                "\(Int(geometry.logicalSize.width))x\(Int(geometry.logicalSize.height)) pts, " +
+                "\(Int(geometry.displayPixelSize.width))x\(Int(geometry.displayPixelSize.height)) px, " +
+                "encode \(Int(geometry.encodedPixelSize.width))x\(Int(geometry.encodedPixelSize.height)) px"
+        )
         try await sendControlMessage(.startStream, content: request)
 
         // Wait for streamStarted response from server to get the real stream ID.
@@ -118,12 +129,32 @@ public extension MirageClientService {
         _ streamID: StreamID,
         beginPostResizeTransition: Bool = false,
         codec: MirageVideoCodec = .hevc,
-        streamDimensions: (width: Int, height: Int)? = nil
+        streamDimensions: (width: Int, height: Int)? = nil,
+        mediaMaxPacketSize: Int? = nil
     )
     async {
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
+        let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
+        let payloadSize = miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
 
         if let existingController = controllersByStream[streamID] {
+            let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
+            guard previousMediaMaxPacketSize == acceptedMediaMaxPacketSize else {
+                await existingController.stop()
+                controllersByStream.removeValue(forKey: streamID)
+                mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
+                MirageLogger.client(
+                    "Recreating controller for stream \(streamID) due to media packet size change \(previousMediaMaxPacketSize)B -> \(acceptedMediaMaxPacketSize)B"
+                )
+                return await setupControllerForStream(
+                    streamID,
+                    beginPostResizeTransition: beginPostResizeTransition,
+                    codec: codec,
+                    streamDimensions: streamDimensions,
+                    mediaMaxPacketSize: acceptedMediaMaxPacketSize
+                )
+            }
+
             await existingController.setDecoderCodec(codec, streamDimensions: streamDimensions)
             await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
             await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
@@ -134,6 +165,7 @@ public extension MirageClientService {
             let tier = sessionStore.presentationTier(for: streamID)
             await existingController.updatePresentationTier(tier)
             adaptiveFallbackLastAppliedTime[streamID] = 0
+            mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
                 .client(
                     "Reset existing controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
@@ -141,9 +173,9 @@ public extension MirageClientService {
             return
         }
 
-        let payloadSize = miragePayloadSize(maxPacketSize: networkConfig.maxPacketSize)
         let controller = StreamController(streamID: streamID, maxPayloadSize: payloadSize)
         controllersByStream[streamID] = controller
+        mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
         if adaptiveFallbackBaselineBitrateByStream[streamID] == nil,
            adaptiveFallbackBaselineColorDepthByStream[streamID] == nil,
            (pendingAppAdaptiveFallbackBitrate != nil ||
@@ -183,7 +215,8 @@ public extension MirageClientService {
                 )
                 metricsStore.updateClientDecoderTelemetry(
                     streamID: capturedStreamID,
-                    outputPixelFormat: metrics.decoderOutputPixelFormat
+                    outputPixelFormat: metrics.decoderOutputPixelFormat,
+                    usingHardwareDecoder: metrics.usingHardwareDecoder
                 )
                 self.activeJitterHoldMs = metrics.activeJitterHoldMs
                 self.logAwdlExperimentTelemetryIfNeeded()
@@ -221,8 +254,19 @@ public extension MirageClientService {
 
         MirageLogger
             .client(
-                "Created new controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
+                "Created new controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName), media packet \(acceptedMediaMaxPacketSize)B)"
             )
+    }
+
+    func resolvedRequestedMediaMaxPacketSize() -> Int {
+        miragePreferredMediaMaxPacketSize(for: controlPathSnapshot?.kind)
+    }
+
+    func resolvedAcceptedMediaMaxPacketSize(_ accepted: Int?) -> Int {
+        mirageNegotiatedMediaMaxPacketSize(
+            requested: accepted,
+            pathKind: controlPathSnapshot?.kind
+        )
     }
 
     package func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageStreamColorDepth {

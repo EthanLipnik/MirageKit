@@ -634,6 +634,94 @@ struct MirageKitTests {
         #expect(decoded.temporaryDegradationMode == .prioritizeVisuals)
     }
 
+    @Test("Media packet size helpers prefer direct local paths")
+    func mediaPacketSizeHelperSelection() {
+        #expect(miragePreferredMediaMaxPacketSize(for: .awdl) == 1400)
+        #expect(miragePreferredMediaMaxPacketSize(for: .wired) == 1400)
+        #expect(miragePreferredMediaMaxPacketSize(for: .wifi) == 1200)
+        #expect(mirageNegotiatedMediaMaxPacketSize(requested: 1400, pathKind: .awdl) == 1400)
+        #expect(mirageNegotiatedMediaMaxPacketSize(requested: 1400, pathKind: .wifi) == 1200)
+    }
+
+    @Test("Stream startup requests serialize media packet sizing")
+    func streamStartupRequestsSerializeMediaPacketSizing() throws {
+        let startStream = StartStreamMessage(
+            windowID: 12,
+            dataPort: 5000,
+            maxRefreshRate: 60,
+            mediaMaxPacketSize: 1400
+        )
+        let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
+        let (decodedStartStreamEnvelope, _) = try requireParsedControlMessage(from: startStreamEnvelope.serialize())
+        let decodedStartStream = try decodedStartStreamEnvelope.decode(StartStreamMessage.self)
+        #expect(decodedStartStream.mediaMaxPacketSize == 1400)
+
+        let selectApp = SelectAppMessage(
+            bundleIdentifier: "com.example.Editor",
+            maxRefreshRate: 120,
+            maxConcurrentVisibleWindows: 2,
+            mediaMaxPacketSize: 1400
+        )
+        let selectAppEnvelope = try ControlMessage(type: .selectApp, content: selectApp)
+        let (decodedSelectAppEnvelope, _) = try requireParsedControlMessage(from: selectAppEnvelope.serialize())
+        let decodedSelectApp = try decodedSelectAppEnvelope.decode(SelectAppMessage.self)
+        #expect(decodedSelectApp.mediaMaxPacketSize == 1400)
+
+        let startDesktop = StartDesktopStreamMessage(
+            scaleFactor: nil,
+            displayWidth: 3008,
+            displayHeight: 1692,
+            maxRefreshRate: 60,
+            mediaMaxPacketSize: 1200
+        )
+        let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
+        let (decodedStartDesktopEnvelope, _) = try requireParsedControlMessage(from: startDesktopEnvelope.serialize())
+        let decodedStartDesktop = try decodedStartDesktopEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decodedStartDesktop.mediaMaxPacketSize == 1200)
+    }
+
+    @Test("Quality test and started messages serialize accepted media packet sizing")
+    func qualityTestAndStartedMessagesSerializeMediaPacketSizing() throws {
+        let qualityRequest = QualityTestRequestMessage(
+            testID: UUID(),
+            plan: MirageQualityTestPlan(stages: []),
+            payloadBytes: 1188,
+            mediaMaxPacketSize: 1400
+        )
+        let qualityEnvelope = try ControlMessage(type: .qualityTestRequest, content: qualityRequest)
+        let (decodedQualityEnvelope, _) = try requireParsedControlMessage(from: qualityEnvelope.serialize())
+        let decodedQualityRequest = try decodedQualityEnvelope.decode(QualityTestRequestMessage.self)
+        #expect(decodedQualityRequest.mediaMaxPacketSize == 1400)
+
+        let started = StreamStartedMessage(
+            streamID: 42,
+            windowID: 12,
+            width: 1920,
+            height: 1080,
+            frameRate: 60,
+            codec: .hevc,
+            acceptedMediaMaxPacketSize: 1400
+        )
+        let startedEnvelope = try ControlMessage(type: .streamStarted, content: started)
+        let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
+        let decodedStarted = try decodedStartedEnvelope.decode(StreamStartedMessage.self)
+        #expect(decodedStarted.acceptedMediaMaxPacketSize == 1400)
+
+        let desktopStarted = DesktopStreamStartedMessage(
+            streamID: 77,
+            width: 3008,
+            height: 1692,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            acceptedMediaMaxPacketSize: 1200
+        )
+        let desktopStartedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: desktopStarted)
+        let (decodedDesktopStartedEnvelope, _) = try requireParsedControlMessage(from: desktopStartedEnvelope.serialize())
+        let decodedDesktopStarted = try decodedDesktopStartedEnvelope.decode(DesktopStreamStartedMessage.self)
+        #expect(decodedDesktopStarted.acceptedMediaMaxPacketSize == 1200)
+    }
+
     @Test("Window removed from stream payload serialization")
     func windowRemovedFromStreamSerialization() throws {
         let payload = WindowRemovedFromStreamMessage(

@@ -55,6 +55,8 @@ package struct StartDesktopStreamMessage: Codable {
     package var encoderMaxWidth: Int?
     /// Maximum encoded height in pixels for host-computed stream scaling.
     package var encoderMaxHeight: Int?
+    /// Requested media packet size for this stream.
+    package var mediaMaxPacketSize: Int?
     /// Client-requested MetalFX upscaling mode.
     package var upscalingMode: MirageUpscalingMode?
     /// Client-requested video codec.
@@ -86,6 +88,7 @@ package struct StartDesktopStreamMessage: Codable {
         case bitrateAdaptationCeiling
         case encoderMaxWidth
         case encoderMaxHeight
+        case mediaMaxPacketSize
         case upscalingMode
         case codec
         case useHostResolution
@@ -111,7 +114,8 @@ package struct StartDesktopStreamMessage: Codable {
         audioConfiguration: MirageAudioConfiguration? = nil,
         dataPort: UInt16? = nil,
         useHostResolution: Bool? = nil,
-        maxRefreshRate: Int
+        maxRefreshRate: Int,
+        mediaMaxPacketSize: Int? = nil
     ) {
         self.scaleFactor = scaleFactor
         self.displayWidth = displayWidth
@@ -132,6 +136,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.dataPort = dataPort
         self.useHostResolution = useHostResolution
         self.maxRefreshRate = maxRefreshRate
+        self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 }
 
@@ -163,6 +168,8 @@ package struct DesktopStreamStartedMessage: Codable {
     /// Dimension token for rejecting old-dimension P-frames after resize.
     /// Client should update its reassembler with this token.
     package var dimensionToken: UInt16?
+    /// Media packet size accepted by the host for this stream.
+    package var acceptedMediaMaxPacketSize: Int?
 
     package init(
         streamID: StreamID,
@@ -172,7 +179,8 @@ package struct DesktopStreamStartedMessage: Codable {
         codec: MirageVideoCodec,
         startupAttemptID: UUID? = nil,
         displayCount: Int,
-        dimensionToken: UInt16? = nil
+        dimensionToken: UInt16? = nil,
+        acceptedMediaMaxPacketSize: Int? = nil
     ) {
         self.streamID = streamID
         self.width = width
@@ -182,6 +190,7 @@ package struct DesktopStreamStartedMessage: Codable {
         self.startupAttemptID = startupAttemptID
         self.displayCount = displayCount
         self.dimensionToken = dimensionToken
+        self.acceptedMediaMaxPacketSize = acceptedMediaMaxPacketSize
     }
 }
 

@@ -50,7 +50,7 @@ Session setup is explicit:
 4. Client registers stream and audio channels.
 5. Host begins sending media packets once registration succeeds. The first startup keyframe uses a temporary protection window with stronger keyframe FEC, tighter sender pacing, and a longer client-side startup timeout than steady-state traffic.
 
-Steady-state media transport is now explicitly bounded rather than relying on `NWConnection.send(... .contentProcessed)` as an accidental pacing mechanism. Loom owns ordered unreliable media submission with a fixed outstanding datagram/byte budget, while Mirage host-side packet pacing applies to both keyframes and P-frames. Mirage clears post-keyframe P-frame holds once packets have been handed to Loom rather than waiting for network completion callbacks. Under sustained transport pressure, the host prefers dropping stale P-frames over spending bandwidth on already-obsolete intermediate frames, and the client can fast-forward to a newer in-progress keyframe instead of waiting through a long forward-gap stall.
+Steady-state media transport is now explicitly bounded rather than relying on `NWConnection.send(... .contentProcessed)` as an accidental pacing mechanism. Loom owns ordered unreliable media submission with a fixed outstanding datagram/byte budget sized for high-end local bursts (`1024` packets / `2 MB` by default), while Mirage host-side packet pacing applies to both keyframes and P-frames. Mirage clears post-keyframe P-frame holds once packets have been handed to Loom rather than waiting for network completion callbacks. Under sustained transport pressure, the host prefers dropping stale P-frames over spending bandwidth on already-obsolete intermediate frames, and the client can fast-forward to a newer in-progress keyframe instead of waiting through a long forward-gap stall.
 
 This separation keeps connection ownership, protocol negotiation, and media throughput concerns isolated from one another.
 
@@ -143,6 +143,8 @@ Desktop stream startup uses a two-layer virtual-display cache:
 
 Gross Retina activation mismatches, such as a requested ~`3008x1688` logical mode materializing as `800x600`, are treated as poisoned startup paths and aborted early instead of spending the full validation ladder on that descriptor profile.
 
+Desktop virtual-display startup is session-owned rather than manager-owned. `DesktopVirtualDisplayStartupSession` plans preferred, descriptor-fallback, and conservative attempts up front, classifies failures by activation vs readiness/Space binding, and decides which rung is eligible next. `SharedVirtualDisplayManager` still owns the OS object lifecycle, but the desktop path now asks it to execute one explicit creation attempt at a time instead of letting the manager silently walk a fallback ladder.
+
 The host keeps stream-specific policy local to the host runtime. That includes frame rate, bitrate, performance mode, window/app routing, virtual display ownership, and session-state behavior.
 
 App-stream visible slots are lifecycle-bound to the app session rather than permanently bound to the first discovered host window ID. During initial startup, the host keeps trying to fill each visible slot until the startup deadline expires, re-evaluating the app's current eligible primary windows after launcher, document-picker, or first-window churn. After startup, the host preserves the current streamed primary window until that window closes or otherwise fails out of the slot lifecycle, at which point the existing slot-replacement path can rebind the same stream identity to another eligible primary window from the same app.
@@ -206,6 +208,18 @@ Client presentation is split from transport:
 
 That split keeps high-frequency media state out of SwiftUI update paths.
 
+Stream sizing is also package-owned through a single canonical resolver. `MirageStreamGeometry` is the shared internal contract used by client startup, host startup, and live resize to resolve logical size, backing scale, encoded size, and capped stream scale from the same inputs. That keeps requested, visible, and encoded geometry from diverging across the client and host codepaths.
+
+Media packet sizing is negotiated per quality test and per stream startup. Clients request a preferred maximum packet size based on the current control-path safety profile, the host clamps that request against its current path classification, and the accepted value is echoed back in startup replies so packetization, reassembly, quality tests, and in-stream probes all use the same payload budget. Direct local paths such as AWDL and wired can use `1400`-byte media packets; all other paths stay on the conservative `1200`-byte profile until explicit MTU probing exists.
+
+Client audio presentation also uses a shared ownership boundary on iOS and visionOS:
+
+- `AudioPlaybackController` owns buffered stream playback
+- `InputCapturingView` owns dictation capture and result emission
+- `MirageClientAudioSessionCoordinator` arbitrates the shared `AVAudioSession` so playback and dictation can coexist without deactivating each other
+
+That coordination keeps audio-session policy centralized instead of letting playback and dictation independently reconfigure the shared session.
+
 Recovery policy is package-owned inside `MirageKitClient`:
 
 - desktop and app streams only clear client-side transport state from authoritative host stop/disconnect events
@@ -214,8 +228,13 @@ Recovery policy is package-owned inside `MirageKitClient`:
 - the first active-stream freeze uses bounded recovery, while repeated freezes escalate to the existing hard reset path
 - activation and hard-recovery resets now use a short first-frame watchdog and resend bounded keyframe requests until packet flow resumes
 - adaptive color-depth fallback for custom quality mode steps `ultra -> pro -> standard` and restores in the reverse order
+- automatic-quality bitrate control is app-owned through a receiver-health controller that reads client metrics snapshots, applies the existing 15%/25% backoff rules under loss or stalls, and probes back upward after sustained healthy windows until the stream reaches its geometry-driven saturation ceiling or the host reports `activeQuality >= 0.80`
+- automatic-mode bitrate ceilings are geometry-driven rather than path-gated: preset resolution, color depth, and target FPS stay fixed, while bitrate ramps toward the visually saturated HEVC target for that geometry instead of collapsing to a lower preset because the current link is not direct-local
+- host temporary degradation still protects encode stability under overload, but low-latency automatic sessions now bias toward faster encoder-quality relief under send-queue pressure so large P-frames fit inside the active transport budget without dragging interaction latency upward
+- automatic mode keeps its preset FPS and spends bitrate plus encoder-quality relief before any frame-rate fallback; client-side adaptive fallback remains reserved for custom temporary degradation paths
+- client-side adaptive fallback remains available for custom temporary degradation, but automatic-quality mode no longer uses the client fallback path directly
 
-Client connection establishment tries UDP first when the peer advertises it, then falls back to the advertised TCP endpoint when the UDP control path times out or fails with a retryable pre-bootstrap transport classification. The client resolves endpoints through Bonjour service discovery and connects using the Loom node's `connect()` method, which handles transport parameter construction including ALPN for QUIC. Direct UDP control attempts treat the advertised `hostName` as an explicit mDNS hostname when present, and otherwise derive a `.local` Bonjour host from the discovered peer name instead of treating the UI service name as a routable hostname. Each transport attempt uses the existing control-session timeout budget.
+Client connection establishment tries UDP first when the peer advertises it, then falls back to the advertised TCP endpoint when the UDP control path times out or fails with a retryable pre-bootstrap transport classification. The client resolves endpoints through Bonjour service discovery and connects using the Loom node's `connect()` method, which handles transport parameter construction including ALPN for QUIC. Direct UDP control attempts treat the advertised `hostName` as an explicit mDNS hostname when present, and otherwise derive a `.local` Bonjour host from the discovered peer name instead of treating the UI service name as a routable hostname. UDP control attempts no longer treat the entire pre-bootstrap period as a blind five-second race: Mirage observes Loom's authenticated-session bootstrap phases and keeps the attempt alive while transport and hello exchange continue making forward progress, still bounded by an absolute startup ceiling.
 
 The client also tracks whether the connected host explicitly granted remote signaling access in the accepted hello response. MirageKit does not decide how that grant is surfaced in app UI, but it exposes the signed result so the app can remember remote-capable hosts independently from CloudKit sharing.
 

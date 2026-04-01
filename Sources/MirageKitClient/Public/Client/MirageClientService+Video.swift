@@ -504,21 +504,23 @@ extension MirageClientService {
             )
             return
         }
-        guard adaptiveFallbackEnabled else {
-            MirageLogger.client("Adaptive fallback skipped (disabled) for stream \(streamID)")
-            return
-        }
-        guard adaptiveFallbackMutationsEnabled else {
-            MirageLogger.client("Adaptive fallback signal-only mode active (no encoder mutation) for stream \(streamID)")
-            return
-        }
 
         switch adaptiveFallbackMode {
         case .disabled:
             MirageLogger.client("Adaptive fallback skipped (mode disabled) for stream \(streamID)")
         case .automatic:
-            handleAutomaticAdaptiveFallbackTrigger(for: streamID)
+            MirageLogger.client(
+                "Automatic receiver-health adaptation is app-owned for stream \(streamID)"
+            )
         case .customTemporary:
+            guard adaptiveFallbackEnabled else {
+                MirageLogger.client("Adaptive fallback skipped (disabled) for stream \(streamID)")
+                return
+            }
+            guard adaptiveFallbackMutationsEnabled else {
+                MirageLogger.client("Adaptive fallback signal-only mode active (no encoder mutation) for stream \(streamID)")
+                return
+            }
             handleCustomAdaptiveFallbackTrigger(for: streamID)
         }
     }
@@ -772,47 +774,6 @@ extension MirageClientService {
                 } catch {
                     MirageLogger.error(.client, error: error, message: "Failed to restore color depth for stream \(streamID): ")
                 }
-            }
-        }
-    }
-
-    private func handleAutomaticAdaptiveFallbackTrigger(for streamID: StreamID) {
-        let now = CFAbsoluteTimeGetCurrent()
-        let lastApplied = adaptiveFallbackLastAppliedTime[streamID] ?? 0
-        if lastApplied > 0, now - lastApplied < adaptiveFallbackCooldown {
-            let remainingMs = Int(((adaptiveFallbackCooldown - (now - lastApplied)) * 1000).rounded())
-            MirageLogger.client("Adaptive fallback cooldown \(remainingMs)ms for stream \(streamID)")
-            return
-        }
-
-        guard let currentBitrate = adaptiveFallbackBitrateByStream[streamID], currentBitrate > 0 else {
-            MirageLogger.client("Adaptive fallback skipped (missing baseline bitrate) for stream \(streamID)")
-            return
-        }
-        guard let nextBitrate = Self.nextAdaptiveFallbackBitrate(
-            currentBitrate: currentBitrate,
-            step: adaptiveFallbackBitrateStep,
-            floor: adaptiveFallbackBitrateFloorBps
-        ) else {
-            let floorText = Double(adaptiveFallbackBitrateFloorBps / 1_000_000)
-                .formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.client("Adaptive fallback floor reached (\(floorText) Mbps) for stream \(streamID)")
-            return
-        }
-
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await sendStreamEncoderSettingsChange(streamID: streamID, bitrate: nextBitrate)
-                adaptiveFallbackBitrateByStream[streamID] = nextBitrate
-                adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
-                let fromMbps = (Double(currentBitrate) / 1_000_000.0)
-                    .formatted(.number.precision(.fractionLength(1)))
-                let toMbps = (Double(nextBitrate) / 1_000_000.0)
-                    .formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) -> \(toMbps) Mbps for stream \(streamID)")
-            } catch {
-                MirageLogger.error(.client, error: error, message: "Failed to apply adaptive fallback for stream \(streamID): ")
             }
         }
     }

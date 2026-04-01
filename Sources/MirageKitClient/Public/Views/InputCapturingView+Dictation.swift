@@ -39,7 +39,7 @@ extension InputCapturingView {
 
             do {
                 try await requestDictationPermissions()
-                try await configureAudioSessionForDictation()
+                try configureAudioSessionForDictation()
                 let dictationLocale = try await resolveDictationLocale()
                 MirageLogger.client("Dictation permissions and audio session ready")
 
@@ -139,12 +139,7 @@ extension InputCapturingView {
             onDictationStateChanged?(false)
         }
 
-        if dictationAudioSessionActive {
-            dictationAudioSessionActive = false
-            Task { @MainActor in
-                try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-            }
-        }
+        MirageClientAudioSessionCoordinator.shared.releaseDictationSession()
     }
 
     private func requestDictationPermissions() async throws {
@@ -161,12 +156,10 @@ extension InputCapturingView {
         }
     }
 
-    private func configureAudioSessionForDictation() async throws {
-        if dictationAudioSessionActive { return }
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker])
-        try session.setActive(true, options: .notifyOthersOnDeactivation)
-        dictationAudioSessionActive = true
+    private func configureAudioSessionForDictation() throws {
+        guard MirageClientAudioSessionCoordinator.shared.requestDictationSession() else {
+            throw DictationError.audioSessionUnavailable
+        }
     }
 
     private func resolveDictationLocale() async throws -> Locale {
@@ -370,6 +363,8 @@ extension InputCapturingView {
                 return "Speech recognizer is unavailable for the current locale."
             case .streamInitializationFailed:
                 return "Dictation input stream could not be created."
+            case .audioSessionUnavailable:
+                return "Dictation audio session could not be activated."
             }
         }
 
@@ -429,6 +424,7 @@ private enum DictationError: Error {
     case speechPermissionDenied
     case recognizerUnavailable
     case streamInitializationFailed
+    case audioSessionUnavailable
 }
 
 private enum SpeechAuthorizationBridge {

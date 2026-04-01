@@ -39,6 +39,7 @@ extension MirageHostService {
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
+        mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
         upscalingMode: MirageUpscalingMode? = nil,
         codec: MirageVideoCodec? = nil
     )
@@ -87,6 +88,7 @@ extension MirageHostService {
             ).withTargetFrameRate(targetFrameRate ?? encoderConfig.targetFrameRate).colorSpace
         )
         let virtualDisplayStartupAttempts = virtualDisplayStartupPlan.attempts
+        var virtualDisplayStartupSession = DesktopVirtualDisplayStartupSession(plan: virtualDisplayStartupPlan)
         let desktopBackingScale = virtualDisplayStartupAttempts.first?.backingScale ??
             resolvedDesktopBackingScaleResolution(
                 logicalResolution: displayResolution,
@@ -185,7 +187,10 @@ extension MirageHostService {
         var lastVirtualDisplayError: Error?
         let acquisitionDeadline = ContinuousClock.now + .seconds(75)
 
-        acquisitionLoop: for (index, attempt) in virtualDisplayStartupAttempts.enumerated() {
+        var attemptIndex = 0
+        acquisitionLoop: while attemptIndex < virtualDisplayStartupAttempts.count {
+            let attempt = virtualDisplayStartupAttempts[attemptIndex]
+            virtualDisplayStartupSession.begin(attempt)
             if ContinuousClock.now >= acquisitionDeadline {
                 MirageLogger.error(.host, "Desktop virtual display acquisition deadline exceeded (75s)")
                 break acquisitionLoop
@@ -202,11 +207,16 @@ extension MirageHostService {
 
             let attemptConfig = config.withInternalOverrides(colorSpace: attempt.colorSpace)
             let attemptResolution = attempt.backingScale.pixelResolution
-            let isFinalAttempt = index == virtualDisplayStartupAttempts.count - 1
 
             if attempt.isCachedTarget {
                 MirageLogger.host(
                     "Retrying desktop virtual display acquisition with cached startup target: " +
+                        "\(Int(attemptResolution.width))x\(Int(attemptResolution.height)) px, " +
+                        "\(attempt.refreshRate)Hz, \(attempt.colorSpace.displayName)"
+                )
+            } else if attempt.fallbackKind == .descriptorFallback {
+                MirageLogger.host(
+                    "Retrying desktop virtual display acquisition with descriptor fallback: " +
                         "\(Int(attemptResolution.width))x\(Int(attemptResolution.height)) px, " +
                         "\(attempt.refreshRate)Hz, \(attempt.colorSpace.displayName)"
                 )
@@ -223,13 +233,16 @@ extension MirageHostService {
                     .desktopStream,
                     resolution: attemptResolution,
                     refreshRate: attempt.refreshRate,
-                    colorSpace: attempt.colorSpace
+                    colorSpace: attempt.colorSpace,
+                    creationPolicy: .singleAttempt(hiDPI: attempt.backingScale.scaleFactor > 1.5)
                 )
                 config = attemptConfig
                 logDesktopStartStep("virtual display acquired (\(context.displayID), \(attempt.label))")
+                virtualDisplayStartupSession.awaitingCaptureDisplay(displayID: context.displayID)
 
                 let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
                 logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
+                virtualDisplayStartupSession.ready(displayID: context.displayID)
                 let captureResolution = context.resolution
                 let captureDisplayP3CoverageStatus = context.displayP3CoverageStatus
                 let captureDisplayColorSpace = context.colorSpace
@@ -292,12 +305,13 @@ extension MirageHostService {
                     p3CoverageStatus: captureDisplayP3CoverageStatus,
                     colorSpace: captureDisplayColorSpace
                 )
-                recordDesktopVirtualDisplayStartupTargetSuccess(
-                    attempt,
-                    for: virtualDisplayStartupPlan.request
+                virtualDisplayStartupSession.persistIfPreferred(
+                    from: context,
+                    attemptedRefreshRate: attempt.refreshRate
                 )
                 break acquisitionLoop
             } catch {
+                let failureClass = virtualDisplayStartupSession.recordFailure(error)
                 await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
                 desktopVirtualDisplayID = nil
                 sharedVirtualDisplayGeneration = 0
@@ -312,10 +326,23 @@ extension MirageHostService {
                     )
                 }
 
-                if !isFinalAttempt {
+                if let nextAttemptIndex = virtualDisplayStartupSession.nextRetryIndex(
+                    after: failureClass,
+                    attempts: virtualDisplayStartupAttempts,
+                    currentIndex: attemptIndex
+                ) {
+                    if nextAttemptIndex != attemptIndex + 1 {
+                        let skippedAttempts = virtualDisplayStartupAttempts[(attemptIndex + 1) ..< nextAttemptIndex]
+                            .map(\.label)
+                            .joined(separator: ", ")
+                        MirageLogger.host(
+                            "Desktop virtual display acquisition skipped ineligible retry rung(s) after \(attempt.label): \(skippedAttempts)"
+                        )
+                    }
                     MirageLogger.host(
                         "Desktop virtual display acquisition failed for \(attempt.label); retrying: \(error)"
                     )
+                    attemptIndex = nextAttemptIndex
                     continue
                 }
 
@@ -331,6 +358,8 @@ extension MirageHostService {
                     )
                 }
             }
+
+            attemptIndex += 1
         }
 
         if let lastVirtualDisplayError, desktopVirtualDisplayID == nil {
@@ -362,15 +391,13 @@ extension MirageHostService {
             )
         }
 
-        let computedStreamScale: CGFloat
-        if let maxW = encoderMaxWidth, let maxH = encoderMaxHeight, maxW > 0, maxH > 0,
-           virtualDisplayResolution.width > 0, virtualDisplayResolution.height > 0 {
-            let wScale = CGFloat(maxW) / virtualDisplayResolution.width
-            let hScale = CGFloat(maxH) / virtualDisplayResolution.height
-            computedStreamScale = max(0.1, min(1.0, min(wScale, hScale)))
-        } else {
-            computedStreamScale = StreamContext.clampStreamScale(streamScale ?? 1.0)
-        }
+        let computedStreamScale = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: captureResolution,
+            requestedStreamScale: streamScale ?? 1.0,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            disableResolutionCap: disableResolutionCap
+        ).resolvedStreamScale
 
         let streamID = nextStreamID
         nextStreamID += 1
@@ -384,7 +411,7 @@ extension MirageHostService {
             encoderConfig: config,
             streamScale: computedStreamScale,
             requestedAudioChannelCount: audioConfiguration.channelLayout.channelCount,
-            maxPacketSize: networkConfig.maxPacketSize,
+            maxPacketSize: mediaMaxPacketSize,
             mediaSecurityContext: nil,
             additionalFrameFlags: [.desktopStream],
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
@@ -538,6 +565,7 @@ extension MirageHostService {
         let startedDisplayResolution = await currentDesktopStartedResolution(fallback: captureResolution)
         let targetFrameRate = await streamContext.getTargetFrameRate()
         let codec = await streamContext.getCodec()
+        let acceptedMediaMaxPacketSize = await streamContext.getMediaMaxPacketSize()
         let startupAttemptID = UUID()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
@@ -547,7 +575,8 @@ extension MirageHostService {
             codec: codec,
             startupAttemptID: startupAttemptID,
             displayCount: 1,
-            dimensionToken: dimensionToken
+            dimensionToken: dimensionToken,
+            acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
         )
         do {
             registerPendingStartupAttempt(

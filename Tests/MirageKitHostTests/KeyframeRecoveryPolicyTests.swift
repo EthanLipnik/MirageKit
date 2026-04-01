@@ -105,6 +105,41 @@ struct KeyframeRecoveryPolicyTests {
         #expect(mapped.keyframeQuality <= mapped.frameQuality)
     }
 
+    @Test("Inverse quality mapper lands in the expected high-end bitrate range")
+    func inverseQualityMapperHighEndTargets() throws {
+        let fourK60 = try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: 0.80,
+                width: 3840,
+                height: 2160,
+                frameRate: 60
+            )
+        )
+        let sixK60 = try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: 0.80,
+                width: 6016,
+                height: 3384,
+                frameRate: 60
+            )
+        )
+        let sixK120 = try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: 0.80,
+                width: 6016,
+                height: 3384,
+                frameRate: 120
+            )
+        )
+
+        #expect(fourK60 >= 120_000_000)
+        #expect(fourK60 <= 135_000_000)
+        #expect(sixK60 >= 280_000_000)
+        #expect(sixK60 <= 330_000_000)
+        #expect(sixK120 >= 520_000_000)
+        #expect(sixK120 <= 650_000_000)
+    }
+
     @Test("High bitrate mapping targets near-lossless quality at 5K60")
     func highBitrateNearLosslessQuality() {
         let mapped = MirageBitrateQualityMapper.derivedQualities(

@@ -1111,6 +1111,16 @@ extension StreamContext {
             (requestedTargetBitrate ?? 0) > 0
     }
 
+    private var usesAppOwnedBitrateAdaptation: Bool {
+        bitrateAdaptationCeiling != nil
+    }
+
+    private var usesAppOwnedVisualPriorityDegradation: Bool {
+        usesAppOwnedBitrateAdaptation && temporaryDegradationMode == .prioritizeVisuals
+    }
+
+    private static let appOwnedVisualPriorityFrameRateSteps: [Int] = [120, 90, 60, 45, 30]
+
     func evaluateStandardTemporaryDegradationIfNeeded(
         encodedFPS: Double,
         averageEncodeMs: Double,
@@ -1161,6 +1171,7 @@ extension StreamContext {
             temporaryDegradationOverloadWindows = 0
             temporaryDegradationSevereOverloadWindows = 0
             temporaryDegradationStableWindows += 1
+            guard !usesAppOwnedBitrateAdaptation else { return }
             guard temporaryDegradationStableWindows >= temporaryDegradationStableWindowsThreshold else { return }
             if await attemptTemporaryDegradationRestore(
                 currentBitrate: currentBitrate,
@@ -1236,6 +1247,15 @@ extension StreamContext {
     ) async -> Bool {
         let floor = min(requestedBitrate, temporaryDegradationBitrateFloorBps)
 
+        if usesAppOwnedVisualPriorityDegradation,
+           let nextFrameRate = nextAppOwnedVisualPriorityFrameRate(current: currentFrameRate) {
+            return await applyTemporaryDegradationFrameRateAdjustment(
+                targetFrameRate: nextFrameRate,
+                reason: "temporary degradation frame-rate relief",
+                now: now
+            )
+        }
+
         switch temporaryDegradationMode {
         case .off:
             return false
@@ -1267,6 +1287,64 @@ extension StreamContext {
                 )
             }
 
+            return false
+        }
+    }
+
+    private func nextAppOwnedVisualPriorityFrameRate(current: Int) -> Int? {
+        let steps = Self.appOwnedVisualPriorityFrameRateSteps
+        guard let currentIndex = steps.firstIndex(where: { current >= $0 }) else {
+            return steps.last
+        }
+
+        let currentStep = steps[currentIndex]
+        if current > currentStep {
+            return currentStep
+        }
+
+        let nextIndex = steps.index(after: currentIndex)
+        guard nextIndex < steps.endIndex else { return nil }
+        return steps[nextIndex]
+    }
+
+    private func applyTemporaryDegradationFrameRateAdjustment(
+        targetFrameRate: Int,
+        reason: String,
+        now: CFAbsoluteTime
+    ) async -> Bool {
+        let previousFrameRate = currentFrameRate
+        guard targetFrameRate < previousFrameRate else { return false }
+
+        do {
+            if isRunning, captureEngine != nil {
+                try await updateFrameRate(targetFrameRate)
+            } else {
+                let clamped = max(1, targetFrameRate)
+                captureFrameRateOverride = clamped
+                currentFrameRate = clamped
+                captureFrameRate = clamped
+                encoderConfig = encoderConfig.withTargetFrameRate(clamped)
+                await encoder?.updateFrameRate(clamped)
+                updateKeyframeCadence()
+                updateQueueLimits()
+                if currentEncodedSize != .zero {
+                    await applyDerivedQuality(for: currentEncodedSize, logLabel: "Temporary degradation frame-rate update")
+                }
+            }
+
+            updateTemporaryDegradationBelowTargetState(
+                now: now,
+                currentBitrate: temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate ?? 0,
+                requestedBitrate: requestedTargetBitrate ?? 0
+            )
+            MirageLogger.metrics(
+                "event=temporary_degradation_adjustment stream=\(streamID) mode=\(temporaryDegradationMode.rawValue) " +
+                    "reason=\(reason) frameRate=\(currentFrameRate) previousFrameRate=\(previousFrameRate) " +
+                    "colorDepth=\(temporaryDegradationCurrentColorDepth.displayName) bitrate=\((temporaryDegradationCurrentBitrate ?? 0).formatted(.number.grouping(.never)))"
+            )
+            return true
+        } catch {
+            MirageLogger.error(.stream, error: error, message: "Temporary degradation frame-rate adjustment failed: ")
             return false
         }
     }
@@ -1367,13 +1445,18 @@ extension StreamContext {
         let packetHighPressure = packetUtilization > packetBudgetHighPressureUtilizationThreshold
         let sendStartDelayAverageMs = packetTelemetry?.sendStartDelayAverageMs ?? 0
         let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
-        let transportPressured = sendStartDelayAverageMs > 2.0 || sendCompletionAverageMs > 12.0
-        let transportHighPressure = sendStartDelayAverageMs > 6.0 || sendCompletionAverageMs > 24.0
+        let lowLatencyAutomaticRelief = usesAppOwnedBitrateAdaptation && latencyMode == .lowestLatency
+        let belowTargetBitrate = temporaryDegradationBelowTargetSince > 0
+        let transportPressured = sendStartDelayAverageMs > (lowLatencyAutomaticRelief ? 1.0 : 2.0) ||
+            sendCompletionAverageMs > (lowLatencyAutomaticRelief ? 8.0 : 12.0)
+        let transportHighPressure = sendStartDelayAverageMs > (lowLatencyAutomaticRelief ? 4.0 : 6.0) ||
+            sendCompletionAverageMs > (lowLatencyAutomaticRelief ? 16.0 : 24.0)
         let packetWithinRaiseBudget = packetUtilization > 0
             ? packetUtilization < packetBudgetRaiseUtilizationThreshold
             : true
         let fixedGameModeQuality = performanceMode == .game && !gameModeAggressiveQualityDropEnabled
         let qualityDropSignal = queuePressured || packetOverBudget || transportPressured ||
+            (lowLatencyAutomaticRelief && belowTargetBitrate) ||
             (!fixedGameModeQuality && encodeOverBudget)
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = gameModeAggressiveQualityDropEnabled
@@ -1389,21 +1472,29 @@ extension StreamContext {
         if qualityDropSignal {
             qualityUnderBudgetCount = 0
             qualityOverBudgetCount += 1
-            let dropThreshold: Int = if bitrateConstrained && (highPressure || packetHighPressure || transportHighPressure) {
+            let dropThreshold: Int = if lowLatencyAutomaticRelief &&
+                (belowTargetBitrate || highPressure || packetHighPressure || transportHighPressure) {
+                1
+            } else if bitrateConstrained && (highPressure || packetHighPressure || transportHighPressure) {
                 1
             } else if bitrateConstrained && (queuePressured || packetOverBudget || transportPressured) {
                 max(1, baseDropThreshold - 1)
             } else {
                 baseDropThreshold
             }
-            let step: Float = if highPressure || packetHighPressure || transportHighPressure {
-                bitrateConstrained
+            let step: Float
+            if highPressure || packetHighPressure || transportHighPressure {
+                let baseStep = bitrateConstrained
                     ? (baseHighPressureDropStep + 0.03)
                     : baseHighPressureDropStep
+                step = lowLatencyAutomaticRelief ? (baseStep + 0.02) : baseStep
+            } else if lowLatencyAutomaticRelief &&
+                (belowTargetBitrate || queuePressured || packetOverBudget || transportPressured) {
+                step = baseDropStep + 0.03
             } else if bitrateConstrained && (queuePressured || packetOverBudget || transportPressured) {
-                baseDropStep + 0.01
+                step = baseDropStep + 0.01
             } else {
-                baseDropStep
+                step = baseDropStep
             }
             if qualityOverBudgetCount >= dropThreshold {
                 let next = max(qualityFloor, activeQuality - step)

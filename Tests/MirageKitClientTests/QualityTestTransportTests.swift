@@ -54,4 +54,15 @@ struct QualityTestTransportTests {
             ) == 12_000_000
         )
     }
+
+    @Test("Default throughput sweep can climb into the 600 Mbps range")
+    func defaultThroughputSweepReachesSixHundredMegabits() {
+        let targets = MirageClientService.defaultQualityTestSweepTargets()
+        let first = try? #require(targets.first)
+        let last = try? #require(targets.last)
+
+        #expect(first == 8_000_000)
+        #expect((last ?? 0) >= 600_000_000)
+        #expect(targets.count >= 10)
+    }
 }

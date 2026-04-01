@@ -32,6 +32,16 @@ extension MirageHostService {
             }
         }
 
+        let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }
+        let acceptedMediaMaxPacketSize = mirageNegotiatedMediaMaxPacketSize(
+            requested: request.mediaMaxPacketSize,
+            pathKind: pathKind
+        )
+        let payloadBytes = min(
+            request.payloadBytes,
+            miragePayloadSize(maxPacketSize: acceptedMediaMaxPacketSize)
+        )
+
         // Open a Loom quality-test stream for this test.
         let qualityStream: LoomMultiplexedStream
         do {
@@ -52,7 +62,7 @@ extension MirageHostService {
                 via: qualityStream,
                 testID: request.testID,
                 plan: request.plan,
-                payloadBytes: request.payloadBytes
+                payloadBytes: payloadBytes
             )
             try? await qualityStream.close()
         }

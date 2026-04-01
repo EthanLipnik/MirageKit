@@ -23,10 +23,7 @@ import UIKit
 extension MirageClientService {
     /// Get the display resolution for the client stream.
     func scaledDisplayResolution(_ resolution: CGSize) -> CGSize {
-        guard resolution.width > 0, resolution.height > 0 else { return .zero }
-        let width = max(2, floor(resolution.width / 2) * 2)
-        let height = max(2, floor(resolution.height / 2) * 2)
-        return CGSize(width: width, height: height)
+        MirageStreamGeometry.normalizedLogicalSize(resolution)
     }
 
     func clampedStreamScale() -> CGFloat {
@@ -35,21 +32,16 @@ extension MirageClientService {
     }
 
     func clampStreamScale(_ scale: CGFloat) -> CGFloat {
-        guard scale > 0 else { return 1.0 }
-        return max(0.1, min(1.0, scale))
+        MirageStreamGeometry.clampStreamScale(scale)
     }
 
     public func virtualDisplayPixelResolution(for displayResolution: CGSize) -> CGSize {
         let alignedResolution = scaledDisplayResolution(displayResolution)
         guard alignedResolution.width > 0, alignedResolution.height > 0 else { return .zero }
 
+        let requestedScale: CGFloat
         #if os(macOS)
-        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
-        let pixelSize = CGSize(
-            width: alignedResolution.width * scale,
-            height: alignedResolution.height * scale
-        )
-        return scaledDisplayResolution(pixelSize)
+        requestedScale = NSScreen.main?.backingScaleFactor ?? 2.0
         #elseif os(iOS) || os(visionOS)
         let metrics = resolvedScreenMetrics()
         let nativePoints = scaledDisplayResolution(metrics.nativePointSize)
@@ -60,24 +52,20 @@ extension MirageClientService {
            nativePixels.height > 0 {
             let widthScale = nativePixels.width / nativePoints.width
             let heightScale = nativePixels.height / nativePoints.height
-            let pixelSize = CGSize(
-                width: alignedResolution.width * widthScale,
-                height: alignedResolution.height * heightScale
-            )
-            return scaledDisplayResolution(pixelSize)
+            requestedScale = max(widthScale, heightScale)
+        } else if metrics.nativeScale > 0 {
+            requestedScale = metrics.nativeScale
+        } else {
+            requestedScale = 1.0
         }
-
-        if metrics.nativeScale > 0 {
-            let pixelSize = CGSize(
-                width: alignedResolution.width * metrics.nativeScale,
-                height: alignedResolution.height * metrics.nativeScale
-            )
-            return scaledDisplayResolution(pixelSize)
-        }
-        return alignedResolution
         #else
-        return alignedResolution
+        requestedScale = 1.0
         #endif
+
+        return MirageStreamGeometry.resolve(
+            logicalSize: alignedResolution,
+            displayScaleFactor: requestedScale
+        ).displayPixelSize
     }
 
     func resolvedDisplayScaleFactor(
@@ -85,24 +73,14 @@ extension MirageClientService {
         explicitScaleFactor: CGFloat?
     )
     -> CGFloat? {
-        if let explicitScaleFactor, explicitScaleFactor > 0 {
-            return max(1.0, explicitScaleFactor)
-        }
-
         let alignedLogical = scaledDisplayResolution(logicalResolution)
         guard alignedLogical.width > 0, alignedLogical.height > 0 else { return nil }
-        let pixelResolution = virtualDisplayPixelResolution(for: alignedLogical)
-        guard pixelResolution.width > 0, pixelResolution.height > 0 else { return nil }
-
-        let widthScale = pixelResolution.width / alignedLogical.width
-        let heightScale = pixelResolution.height / alignedLogical.height
-        let resolvedScale = if widthScale > 0, heightScale > 0 {
-            (widthScale + heightScale) / 2.0
-        } else {
-            max(widthScale, heightScale)
-        }
-        guard resolvedScale > 0 else { return nil }
-        return max(1.0, resolvedScale)
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: alignedLogical,
+            displayScaleFactor: platformDisplayScaleFactor(explicitScaleFactor: explicitScaleFactor)
+        )
+        guard geometry.displayScaleFactor > 0 else { return nil }
+        return geometry.displayScaleFactor
     }
 
     func preferredDesktopDisplayResolution(for viewSize: CGSize) -> CGSize {
@@ -170,6 +148,52 @@ extension MirageClientService {
     public func getVirtualDisplayPixelResolution() -> CGSize {
         let displayResolution = getMainDisplayResolution()
         return virtualDisplayPixelResolution(for: displayResolution)
+    }
+
+    func resolvedStreamGeometry(
+        for logicalResolution: CGSize,
+        explicitScaleFactor: CGFloat? = nil,
+        requestedStreamScale: CGFloat? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil,
+        disableResolutionCap: Bool = false
+    ) -> MirageStreamGeometry {
+        let alignedLogicalResolution = scaledDisplayResolution(logicalResolution)
+
+        return MirageStreamGeometry.resolve(
+            logicalSize: alignedLogicalResolution,
+            displayScaleFactor: platformDisplayScaleFactor(explicitScaleFactor: explicitScaleFactor),
+            requestedStreamScale: requestedStreamScale ?? clampedStreamScale(),
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight,
+            disableResolutionCap: disableResolutionCap
+        )
+    }
+
+    private func platformDisplayScaleFactor(explicitScaleFactor: CGFloat?) -> CGFloat {
+        if let explicitScaleFactor, explicitScaleFactor > 0 {
+            return max(1.0, explicitScaleFactor)
+        }
+
+        #if os(macOS)
+        return NSScreen.main?.backingScaleFactor ?? 2.0
+        #elseif os(iOS) || os(visionOS)
+        let metrics = resolvedScreenMetrics()
+        let nativePoints = scaledDisplayResolution(metrics.nativePointSize)
+        let nativePixels = scaledDisplayResolution(metrics.nativePixelSize)
+        if nativePoints.width > 0,
+           nativePoints.height > 0,
+           nativePixels.width > 0,
+           nativePixels.height > 0 {
+            let widthScale = nativePixels.width / nativePoints.width
+            let heightScale = nativePixels.height / nativePoints.height
+            return max(1.0, max(widthScale, heightScale))
+        }
+        if metrics.nativeScale > 0 { return max(1.0, metrics.nativeScale) }
+        return 1.0
+        #else
+        return 1.0
+        #endif
     }
 
     /// Get the maximum refresh rate requested by the client.

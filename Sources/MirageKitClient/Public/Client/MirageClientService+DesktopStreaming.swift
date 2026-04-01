@@ -41,52 +41,79 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Invalid display resolution")
         }
-        let effectiveDisplayPixelResolution = virtualDisplayPixelResolution(for: effectiveDisplayResolution)
-        let resolvedScaleFactor: CGFloat? = {
-            if let scaleFactor, scaleFactor > 0 {
-                return scaleFactor
-            }
-            guard effectiveDisplayResolution.width > 0,
-                  effectiveDisplayResolution.height > 0,
-                  effectiveDisplayPixelResolution.width > 0,
-                  effectiveDisplayPixelResolution.height > 0 else {
-                return nil
-            }
-            let widthScale = effectiveDisplayPixelResolution.width / effectiveDisplayResolution.width
-            let heightScale = effectiveDisplayPixelResolution.height / effectiveDisplayResolution.height
-            let resolvedScale: CGFloat = if widthScale > 0, heightScale > 0 {
-                (widthScale + heightScale) / 2.0
-            } else {
-                max(widthScale, heightScale)
-            }
-            guard resolvedScale > 0 else { return nil }
-            return resolvedScale
-        }()
-
         desktopStreamMode = mode
 
-        var request = StartDesktopStreamMessage(
-            scaleFactor: resolvedScaleFactor,
+        var encoderRequest = StartDesktopStreamMessage(
+            scaleFactor: nil,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
             keyFrameInterval: nil,
             mode: mode,
             bitrate: nil,
-            streamScale: clampedStreamScale(),
+            streamScale: nil,
             audioConfiguration: audioConfiguration ?? self.audioConfiguration,
             dataPort: nil,
             useHostResolution: useHostResolution ? true : nil,
-            maxRefreshRate: getScreenMaxRefreshRate()
+            maxRefreshRate: getScreenMaxRefreshRate(),
+            mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize()
         )
 
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
-        applyEncoderOverrides(overrides, to: &request)
-        if let bitrate = request.bitrate, bitrate > 0 {
-            pendingDesktopAdaptiveFallbackBitrate = bitrate
+        applyEncoderOverrides(overrides, to: &encoderRequest)
+        let geometry = resolvedStreamGeometry(
+            for: effectiveDisplayResolution,
+            explicitScaleFactor: scaleFactor,
+            requestedStreamScale: clampedStreamScale(),
+            encoderMaxWidth: encoderRequest.encoderMaxWidth,
+            encoderMaxHeight: encoderRequest.encoderMaxHeight,
+            disableResolutionCap: encoderRequest.disableResolutionCap == true
+        )
+        resolutionScale = geometry.resolvedStreamScale
+        let scaledBitrate: Int?
+        if encoderRequest.bitrateAdaptationCeiling != nil {
+            scaledBitrate = encoderRequest.bitrate
+        } else if let bitrate = encoderRequest.bitrate, bitrate > 0 {
+            let baselinePixels: Double = 2560.0 * 1440.0
+            let scaleFactor = min(
+                max(
+                    Double(geometry.displayPixelSize.width) * Double(geometry.displayPixelSize.height) / baselinePixels,
+                    1.0
+                ),
+                2.0
+            )
+            scaledBitrate = Int(Double(bitrate) * scaleFactor)
         } else {
-            pendingDesktopAdaptiveFallbackBitrate = nil
+            scaledBitrate = nil
         }
+        var request = StartDesktopStreamMessage(
+            scaleFactor: geometry.displayScaleFactor,
+            displayWidth: encoderRequest.displayWidth,
+            displayHeight: encoderRequest.displayHeight,
+            streamScale: geometry.resolvedStreamScale,
+            audioConfiguration: encoderRequest.audioConfiguration,
+            dataPort: encoderRequest.dataPort,
+            useHostResolution: encoderRequest.useHostResolution,
+            maxRefreshRate: encoderRequest.maxRefreshRate
+        )
+        request.keyFrameInterval = encoderRequest.keyFrameInterval
+        request.captureQueueDepth = encoderRequest.captureQueueDepth
+        request.colorDepth = encoderRequest.colorDepth
+        request.mode = encoderRequest.mode
+        request.bitrate = scaledBitrate
+        request.latencyMode = encoderRequest.latencyMode
+        request.performanceMode = encoderRequest.performanceMode
+        request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
+        request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
+        request.temporaryDegradationMode = encoderRequest.temporaryDegradationMode
+        request.disableResolutionCap = encoderRequest.disableResolutionCap
+        request.bitrateAdaptationCeiling = encoderRequest.bitrateAdaptationCeiling
+        request.encoderMaxWidth = encoderRequest.encoderMaxWidth
+        request.encoderMaxHeight = encoderRequest.encoderMaxHeight
+        request.mediaMaxPacketSize = encoderRequest.mediaMaxPacketSize
+        request.upscalingMode = encoderRequest.upscalingMode
+        request.codec = encoderRequest.codec
+        pendingDesktopAdaptiveFallbackBitrate = request.bitrate
         pendingDesktopAdaptiveFallbackColorDepth = request.colorDepth
 
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
@@ -102,7 +129,10 @@ public extension MirageClientService {
         MirageLogger
             .client(
                 "Requested desktop stream: \(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height)) pts " +
-                    "(\(Int(effectiveDisplayPixelResolution.width))x\(Int(effectiveDisplayPixelResolution.height)) px)"
+                    "(\(Int(geometry.displayPixelSize.width))x\(Int(geometry.displayPixelSize.height)) px, " +
+                    "encode \(Int(geometry.encodedPixelSize.width))x\(Int(geometry.encodedPixelSize.height)) px, " +
+                    "scale \(String(format: "%.3f", geometry.displayScaleFactor))x, " +
+                    "stream \(String(format: "%.3f", geometry.resolvedStreamScale)))"
             )
     }
 

@@ -32,20 +32,29 @@ struct DesktopVirtualDisplayStartupAttemptTests {
             requestedColorSpace: .displayP3
         )
 
-        #expect(attempts.count == 2)
+        #expect(attempts.count == 3)
         #expect(attempts[0].label == "primary")
         #expect(attempts[0].backingScale.pixelResolution == CGSize(width: 6016, height: 3376))
         #expect(attempts[0].refreshRate == 120)
         #expect(attempts[0].colorSpace == .displayP3)
+        #expect(attempts[0].fallbackKind == .primary)
         #expect(!attempts[0].isConservativeRetry)
         #expect(!attempts[0].isCachedTarget)
 
-        #expect(attempts[1].label == "conservative-retry")
-        #expect(attempts[1].backingScale.pixelResolution == CGSize(width: 3008, height: 1680))
-        #expect(attempts[1].refreshRate == 60)
+        #expect(attempts[1].label == "descriptor-fallback-sRGB")
+        #expect(attempts[1].backingScale.pixelResolution == CGSize(width: 6016, height: 3376))
+        #expect(attempts[1].refreshRate == 120)
         #expect(attempts[1].colorSpace == .sRGB)
-        #expect(attempts[1].isConservativeRetry)
-        #expect(!attempts[1].isCachedTarget)
+        #expect(attempts[1].fallbackKind == .descriptorFallback)
+        #expect(!attempts[1].isConservativeRetry)
+
+        #expect(attempts[2].label == "conservative-retry")
+        #expect(attempts[2].backingScale.pixelResolution == CGSize(width: 3008, height: 1680))
+        #expect(attempts[2].refreshRate == 60)
+        #expect(attempts[2].colorSpace == .sRGB)
+        #expect(attempts[2].fallbackKind == .conservative)
+        #expect(attempts[2].isConservativeRetry)
+        #expect(!attempts[2].isCachedTarget)
     }
 
     @Test("Startup attempts avoid duplicate conservative retry when request is already safe")
@@ -76,8 +85,8 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         #expect(!attempts[0].isCachedTarget)
     }
 
-    @Test("Cached winning target is tried before the default ladder")
-    func cachedWinningTargetIsTriedFirst() {
+    @Test("Degraded startup targets are not persisted as preferred cache entries")
+    func degradedStartupTargetsAreNotPersistedAsPreferredCacheEntries() {
         let initialPlan = desktopVirtualDisplayStartupPlan(
             logicalResolution: CGSize(width: 3008, height: 1692),
             requestedScaleFactor: 2.0,
@@ -96,8 +105,10 @@ struct DesktopVirtualDisplayStartupAttemptTests {
             refreshRate: 60,
             colorSpace: .sRGB,
             label: "conservative-retry",
+            fallbackKind: .conservative,
             isConservativeRetry: true,
-            isCachedTarget: false
+            isCachedTarget: false,
+            targetTier: .degraded
         )
         recordDesktopVirtualDisplayStartupTargetSuccess(cachedAttempt, for: initialPlan.request)
 
@@ -109,12 +120,11 @@ struct DesktopVirtualDisplayStartupAttemptTests {
             requestedColorSpace: .displayP3
         )
 
-        #expect(attempts.count == 2)
-        #expect(attempts[0].isCachedTarget)
-        #expect(attempts[0].backingScale.pixelResolution == CGSize(width: 3008, height: 1680))
-        #expect(attempts[0].refreshRate == 60)
-        #expect(attempts[0].colorSpace == .sRGB)
-        #expect(attempts[1].label == "primary")
+        #expect(attempts.count == 3)
+        #expect(attempts[0].label == "primary")
+        #expect(!attempts[0].isCachedTarget)
+        #expect(attempts[1].label == "descriptor-fallback-sRGB")
+        #expect(attempts[2].label == "conservative-retry")
     }
 
     @Test("Cached target identical to primary does not duplicate the ladder")
@@ -138,8 +148,10 @@ struct DesktopVirtualDisplayStartupAttemptTests {
                 refreshRate: 120,
                 colorSpace: .displayP3,
                 label: "primary",
+                fallbackKind: .primary,
                 isConservativeRetry: false,
-                isCachedTarget: false
+                isCachedTarget: false,
+                targetTier: .preferred
             ),
             for: initialPlan.request
         )
@@ -152,9 +164,11 @@ struct DesktopVirtualDisplayStartupAttemptTests {
             requestedColorSpace: .displayP3
         )
 
-        #expect(attempts.count == 2)
+        #expect(attempts.count == 3)
         #expect(attempts[0].isCachedTarget)
-        #expect(attempts[1].label == "conservative-retry")
+        #expect(attempts[0].targetTier == .preferred)
+        #expect(attempts[1].label == "descriptor-fallback-sRGB")
+        #expect(attempts[2].label == "conservative-retry")
     }
 }
 #endif

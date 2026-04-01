@@ -17,6 +17,10 @@ import ScreenCaptureKit
 
 @MainActor
 extension MirageHostService {
+    nonisolated static func shouldAllowLightsOut(for sessionState: LoomSessionAvailability) -> Bool {
+        sessionState != .unavailable
+    }
+
     nonisolated static func shouldEnableLightsOut(
         hasAppStreams: Bool,
         hasDesktopStream: Bool,
@@ -25,15 +29,11 @@ extension MirageHostService {
         lightsOutEnabled: Bool,
         lightsOutDisabledByEnvironment: Bool = false
     ) -> Bool {
-        guard !lightsOutDisabledByEnvironment else { return false }
-        #if DEBUG
-        // In debug builds, app streaming does not force lights out so the
-        // developer can still see and interact with the host display.
-        return lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart)
-        #else
-        return hasAppStreams || hasPendingAppStreamStart ||
-            (lightsOutEnabled && (hasDesktopStream || hasPendingDesktopStreamStart))
-        #endif
+        guard !lightsOutDisabledByEnvironment, lightsOutEnabled else { return false }
+        return hasAppStreams ||
+            hasDesktopStream ||
+            hasPendingAppStreamStart ||
+            hasPendingDesktopStreamStart
     }
 
     /// Emergency recovery path for stuck Lights Out states.
@@ -91,7 +91,7 @@ extension MirageHostService {
     }
 
     func updateLightsOutState() async {
-        guard sessionState == .ready else {
+        guard Self.shouldAllowLightsOut(for: sessionState) else {
             lightsOutController.deactivate()
             await refreshLightsOutCaptureExclusions()
             return
@@ -107,13 +107,12 @@ extension MirageHostService {
         let hasDesktopStream = desktopStreamContext != nil
         let hasPendingAppStreamStart = pendingAppStreamStartCount > 0
         let hasPendingDesktopStreamStart = pendingDesktopStreamStartCount > 0
-        let effectiveLightsOutEnabled = lightsOutEnabled && desktopStreamMode != .secondary
         let shouldEnableLightsOut = Self.shouldEnableLightsOut(
             hasAppStreams: hasAppStreams,
             hasDesktopStream: hasDesktopStream,
             hasPendingAppStreamStart: hasPendingAppStreamStart,
             hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
-            lightsOutEnabled: effectiveLightsOutEnabled,
+            lightsOutEnabled: lightsOutEnabled,
             lightsOutDisabledByEnvironment: lightsOutDisabledByEnvironment
         )
         guard shouldEnableLightsOut else {

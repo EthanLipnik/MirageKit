@@ -91,7 +91,8 @@ extension MirageClientService {
                     streamID,
                     beginPostResizeTransition: isResizeTokenAdvance,
                     codec: started.codec,
-                    streamDimensions: (width: started.width, height: started.height)
+                    streamDimensions: (width: started.width, height: started.height),
+                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
                 )
             }
             self.addActiveStreamID(streamID)
