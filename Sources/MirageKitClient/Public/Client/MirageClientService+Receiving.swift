@@ -17,23 +17,22 @@ extension MirageClientService {
     func startReceiving() {
         guard let controlChannel else { return }
 
-        Task { @MainActor [weak self] in
-            guard let self else { return }
+        let serviceBox = WeakSendableBox(self)
+        Task.detached(priority: .userInitiated) { [controlChannel, serviceBox] in
             for await data in controlChannel.incomingBytes {
-                guard self.controlChannel === controlChannel else { return }
+                guard !Task.isCancelled else { return }
+                guard let service = serviceBox.value else { return }
+                guard await service.isCurrentControlChannel(controlChannel) else { return }
                 if !data.isEmpty {
-                    receiveBuffer.append(data)
-                    await processReceivedData()
+                    await service.handleIncomingControlChunk(
+                        data,
+                        for: controlChannel
+                    )
                 }
             }
 
-            guard self.controlChannel === controlChannel else { return }
-            MirageLogger.client("Control stream closed by server")
-            await handleDisconnect(
-                reason: "Host disconnected",
-                state: .disconnected,
-                notifyDelegate: hasCompletedBootstrap
-            )
+            guard let service = serviceBox.value else { return }
+            await service.handleControlChannelClosure(controlChannel)
         }
     }
 
@@ -268,5 +267,28 @@ extension MirageClientService {
         [
             89,
         ]
+    }
+
+    private func isCurrentControlChannel(_ channel: MirageControlChannel) -> Bool {
+        controlChannel === channel
+    }
+
+    private func handleIncomingControlChunk(
+        _ data: Data,
+        for controlChannel: MirageControlChannel
+    ) async {
+        guard self.controlChannel === controlChannel else { return }
+        receiveBuffer.append(data)
+        await processReceivedData()
+    }
+
+    private func handleControlChannelClosure(_ controlChannel: MirageControlChannel) async {
+        guard self.controlChannel === controlChannel else { return }
+        MirageLogger.client("Control stream closed by server")
+        await handleDisconnect(
+            reason: "Host disconnected",
+            state: .disconnected,
+            notifyDelegate: hasCompletedBootstrap
+        )
     }
 }

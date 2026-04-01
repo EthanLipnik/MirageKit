@@ -98,38 +98,22 @@ extension MirageClientService {
         guard let session = loomSession else { return }
         stopMediaStreamListener()
 
-        mediaStreamListenerTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        let serviceBox = WeakSendableBox(self)
+        mediaStreamListenerTask = Task.detached(priority: .userInitiated) { [session, serviceBox] in
             let observer = session.makeIncomingStreamObserver()
             for await stream in observer {
-                guard self.loomSession?.id == session.id else { break }
+                guard !Task.isCancelled else { break }
+                guard let service = serviceBox.value else { break }
+                guard await service.isCurrentLoomSession(sessionID: session.id) else { break }
                 guard let label = stream.label else {
                     MirageLogger.client("Ignoring incoming Loom stream with no label (id=\(stream.id))")
                     continue
                 }
-
-                switch IncomingMediaStreamKind.classify(label: label) {
-                case .video(let streamID):
-                    MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
-                    self.activeMediaStreams[label] = stream
-                    self.startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
-
-                case .audio(let streamID):
-                    MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
-                    self.activeMediaStreams[label] = stream
-                    self.startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
-
-                case .qualityTest(let testID):
-                    MirageLogger.client("Accepted incoming quality-test stream for test \(testID.uuidString)")
-                    self.activeMediaStreams[label] = stream
-                    self.startQualityTestStreamReceiveLoop(stream: stream, testID: testID, label: label)
-
-                case .transferControl, .transferData:
-                    continue
-
-                case .unknown:
-                    MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")
-                }
+                await service.handleObservedIncomingMediaStream(
+                    stream,
+                    label: label,
+                    sessionID: session.id
+                )
             }
         }
     }
@@ -157,18 +141,14 @@ extension MirageClientService {
     /// Start receiving video packets from a Loom multiplexed stream.
     private func startVideoStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
         videoStreamReceiveTasks[streamID]?.cancel()
-        let service = self
-        videoStreamReceiveTasks[streamID] = Task { [weak service] in
-            guard let service else { return }
+        let serviceBox = WeakSendableBox(self)
+        videoStreamReceiveTasks[streamID] = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
             for await data in stream.incomingBytes {
                 guard !Task.isCancelled else { break }
-                service.handleIncomingVideoData(data, expectedStreamID: streamID)
+                serviceBox.value?.handleIncomingVideoData(data, expectedStreamID: streamID)
             }
-            await MainActor.run {
-                service.videoStreamReceiveTasks.removeValue(forKey: streamID)
-                service.activeMediaStreams.removeValue(forKey: "video/\(streamID)")
-                MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
-            }
+            guard let service = serviceBox.value else { return }
+            await service.finishVideoStreamReceiveLoop(streamID: streamID)
         }
     }
 
@@ -178,18 +158,15 @@ extension MirageClientService {
         label: String
     ) {
         qualityTestStreamReceiveTasks[testID]?.cancel()
-        let service = self
-        qualityTestStreamReceiveTasks[testID] = Task { [weak service] in
-            guard let service else { return }
+        let serviceBox = WeakSendableBox(self)
+        qualityTestStreamReceiveTasks[testID] = Task.detached(priority: .userInitiated) {
+            [stream, testID, label, serviceBox] in
             for await data in stream.incomingBytes {
                 guard !Task.isCancelled else { break }
-                service.handleIncomingQualityTestData(data, expectedTestID: testID)
+                serviceBox.value?.handleIncomingQualityTestData(data, expectedTestID: testID)
             }
-            await MainActor.run {
-                service.qualityTestStreamReceiveTasks.removeValue(forKey: testID)
-                service.activeMediaStreams.removeValue(forKey: label)
-                MirageLogger.client("Quality-test stream receive loop ended for test \(testID.uuidString)")
-            }
+            guard let service = serviceBox.value else { return }
+            await service.finishQualityTestStreamReceiveLoop(testID: testID, label: label)
         }
     }
 
@@ -200,13 +177,24 @@ extension MirageClientService {
         }
 
         let streamID = header.streamID
-        guard streamID == expectedStreamID else { return }
+        guard streamID == expectedStreamID else {
+            logFirstVideoPacketRejectionIfNeeded(
+                .streamIDMismatch,
+                expectedStreamID: expectedStreamID,
+                actualStreamID: streamID
+            )
+            return
+        }
 
         guard let packetContext = fastPathState.videoPacketContext(for: streamID) else {
+            logFirstVideoPacketRejectionIfNeeded(.packetContextMissing, expectedStreamID: streamID)
             return
         }
 
         if packetContext.consumedStartupPending {
+            MirageLogger.client(
+                "Media stream \(streamID) consumed startup-pending on first packet bytes=\(data.count)"
+            )
             Task { @MainActor in
                 self.logStartupFirstPacketIfNeeded(streamID: streamID)
                 self.cancelStartupRegistrationRetry(streamID: streamID)
@@ -214,6 +202,7 @@ extension MirageClientService {
         }
 
         guard let reassembler = packetContext.reassembler else {
+            logFirstVideoPacketRejectionIfNeeded(.reassemblerMissing, expectedStreamID: streamID)
             return
         }
 
@@ -224,12 +213,14 @@ extension MirageClientService {
             ? Int(header.payloadLength) + MirageMediaSecurity.authTagLength
             : Int(header.payloadLength)
         guard wirePayload.count == expectedWireLength else {
+            logFirstVideoPacketRejectionIfNeeded(.invalidWireLength, expectedStreamID: streamID)
             return
         }
 
         let payload: Data
         if header.flags.contains(.encryptedPayload) {
             guard let mediaPacketKey = packetContext.mediaPacketKey else {
+                logFirstVideoPacketRejectionIfNeeded(.decryptFailure, expectedStreamID: streamID)
                 return
             }
             do {
@@ -240,9 +231,11 @@ extension MirageClientService {
                     direction: .hostToClient
                 )
             } catch {
+                logFirstVideoPacketRejectionIfNeeded(.decryptFailure, expectedStreamID: streamID)
                 return
             }
             guard payload.count == Int(header.payloadLength) else {
+                logFirstVideoPacketRejectionIfNeeded(.decryptFailure, expectedStreamID: streamID)
                 return
             }
         } else {
@@ -250,6 +243,26 @@ extension MirageClientService {
         }
 
         reassembler.processPacket(payload, header: header)
+    }
+
+    private nonisolated func logFirstVideoPacketRejectionIfNeeded(
+        _ reason: IncomingVideoPacketRejectionReason,
+        expectedStreamID: StreamID,
+        actualStreamID: StreamID? = nil
+    ) {
+        guard fastPathState.markFirstVideoPacketRejectionReason(reason, for: expectedStreamID) else {
+            return
+        }
+
+        if let actualStreamID {
+            MirageLogger.client(
+                "Media stream \(expectedStreamID) rejected first startup video packet reason=\(reason.rawValue) actualStream=\(actualStreamID)"
+            )
+        } else {
+            MirageLogger.client(
+                "Media stream \(expectedStreamID) rejected first startup video packet reason=\(reason.rawValue)"
+            )
+        }
     }
 
     private nonisolated func handleIncomingQualityTestData(_ data: Data, expectedTestID: UUID) {
@@ -279,6 +292,57 @@ extension MirageClientService {
         videoStreamReceiveTasks.removeValue(forKey: streamID)
         activeMediaStreams.removeValue(forKey: "video/\(streamID)")
         cancelRecoveryKeyframeRetry(for: streamID)
+    }
+
+    func isCurrentLoomSession(sessionID: UUID) -> Bool {
+        loomSession?.id == sessionID
+    }
+
+    private func handleObservedIncomingMediaStream(
+        _ stream: LoomMultiplexedStream,
+        label: String,
+        sessionID: UUID
+    ) {
+        if fastPathState.markObservedMediaStreamLabel(label) {
+            MirageLogger.client(
+                "Observed incoming Loom media stream label=\(label) session=\(sessionID.uuidString)"
+            )
+        }
+
+        switch IncomingMediaStreamKind.classify(label: label) {
+        case .video(let streamID):
+            MirageLogger.client("Accepted incoming video stream for stream \(streamID)")
+            activeMediaStreams[label] = stream
+            startVideoStreamReceiveLoop(stream: stream, streamID: streamID)
+
+        case .audio(let streamID):
+            MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
+            activeMediaStreams[label] = stream
+            startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
+
+        case .qualityTest(let testID):
+            MirageLogger.client("Accepted incoming quality-test stream for test \(testID.uuidString)")
+            activeMediaStreams[label] = stream
+            startQualityTestStreamReceiveLoop(stream: stream, testID: testID, label: label)
+
+        case .transferControl, .transferData:
+            break
+
+        case .unknown:
+            MirageLogger.client("Ignoring incoming Loom stream with unknown label: \(label)")
+        }
+    }
+
+    private func finishVideoStreamReceiveLoop(streamID: StreamID) {
+        videoStreamReceiveTasks.removeValue(forKey: streamID)
+        activeMediaStreams.removeValue(forKey: "video/\(streamID)")
+        MirageLogger.client("Video stream receive loop ended for stream \(streamID)")
+    }
+
+    private func finishQualityTestStreamReceiveLoop(testID: UUID, label: String) {
+        qualityTestStreamReceiveTasks.removeValue(forKey: testID)
+        activeMediaStreams.removeValue(forKey: label)
+        MirageLogger.client("Quality-test stream receive loop ended for test \(testID.uuidString)")
     }
 
     // MARK: - Control Path Handling
@@ -489,16 +553,16 @@ extension MirageClientService {
         if Self.shouldApplyDecoderCompatibilityFallback(
             mode: adaptiveFallbackMode,
             resolvedBitDepth: resolvedBitDepth,
-            lastAppliedTime: adaptiveFallbackLastAppliedTime[streamID],
+            lastAppliedTime: decoderCompatibilityFallbackLastAppliedTime[streamID],
             now: now,
-            cooldown: adaptiveFallbackCooldown
+            cooldown: decoderCompatibilityFallbackCooldown
         ) {
             applyDecoderCompatibilityFallback(for: streamID, at: now)
             return
         }
         if adaptiveFallbackMode == .disabled, resolvedBitDepth == .tenBit {
-            let lastApplied = adaptiveFallbackLastAppliedTime[streamID] ?? now
-            let remainingMs = Int(((adaptiveFallbackCooldown - (now - lastApplied)) * 1000).rounded(.up))
+            let lastApplied = decoderCompatibilityFallbackLastAppliedTime[streamID] ?? now
+            let remainingMs = Int(((decoderCompatibilityFallbackCooldown - (now - lastApplied)) * 1000).rounded(.up))
             MirageLogger.client(
                 "Decoder compatibility fallback cooldown \(max(0, remainingMs))ms for stream \(streamID)"
             )
@@ -508,20 +572,8 @@ extension MirageClientService {
         switch adaptiveFallbackMode {
         case .disabled:
             MirageLogger.client("Adaptive fallback skipped (mode disabled) for stream \(streamID)")
-        case .automatic:
-            MirageLogger.client(
-                "Automatic receiver-health adaptation is app-owned for stream \(streamID)"
-            )
-        case .customTemporary:
-            guard adaptiveFallbackEnabled else {
-                MirageLogger.client("Adaptive fallback skipped (disabled) for stream \(streamID)")
-                return
-            }
-            guard adaptiveFallbackMutationsEnabled else {
-                MirageLogger.client("Adaptive fallback signal-only mode active (no encoder mutation) for stream \(streamID)")
-                return
-            }
-            handleCustomAdaptiveFallbackTrigger(for: streamID)
+        case .adaptive:
+            MirageLogger.client("Adaptive receiver-health recovery is app-owned for stream \(streamID)")
         }
     }
 
@@ -546,7 +598,7 @@ extension MirageClientService {
             return
         }
 
-        adaptiveFallbackLastAppliedTime[streamID] = now
+        decoderCompatibilityFallbackLastAppliedTime[streamID] = now
         Task { [weak self] in
             guard let self else { return }
             do {
@@ -554,7 +606,7 @@ extension MirageClientService {
                     streamID: streamID,
                     colorDepth: .standard
                 )
-                adaptiveFallbackColorDepthByStream[streamID] = .standard
+                decoderCompatibilityCurrentColorDepthByStream[streamID] = .standard
                 if let controller = controllersByStream[streamID] {
                     await controller.setPreferredDecoderColorDepth(.standard)
                 }
@@ -563,7 +615,7 @@ extension MirageClientService {
                 )
                 requestStreamRecovery(for: streamID, trigger: .decoderCompatibilityFallback)
             } catch {
-                adaptiveFallbackLastAppliedTime.removeValue(forKey: streamID)
+                decoderCompatibilityFallbackLastAppliedTime.removeValue(forKey: streamID)
                 MirageLogger.error(
                     .client,
                     error: error,
@@ -573,330 +625,24 @@ extension MirageClientService {
         }
     }
 
-    func configureAdaptiveFallbackBaseline(
+    func configureDecoderColorDepthBaseline(
         for streamID: StreamID,
-        bitrate: Int?,
         colorDepth: MirageStreamColorDepth?
     ) {
-        if let bitrate, bitrate > 0 {
-            adaptiveFallbackBitrateByStream[streamID] = bitrate
-            adaptiveFallbackBaselineBitrateByStream[streamID] = bitrate
-        } else {
-            adaptiveFallbackBitrateByStream.removeValue(forKey: streamID)
-            adaptiveFallbackBaselineBitrateByStream.removeValue(forKey: streamID)
-        }
         if let colorDepth {
-            adaptiveFallbackColorDepthByStream[streamID] = colorDepth
-            adaptiveFallbackBaselineColorDepthByStream[streamID] = colorDepth
+            decoderCompatibilityCurrentColorDepthByStream[streamID] = colorDepth
+            decoderCompatibilityBaselineColorDepthByStream[streamID] = colorDepth
         } else {
-            adaptiveFallbackColorDepthByStream.removeValue(forKey: streamID)
-            adaptiveFallbackBaselineColorDepthByStream.removeValue(forKey: streamID)
+            decoderCompatibilityCurrentColorDepthByStream.removeValue(forKey: streamID)
+            decoderCompatibilityBaselineColorDepthByStream.removeValue(forKey: streamID)
         }
-
-        adaptiveFallbackCollapseTimestampsByStream[streamID] = []
-        adaptiveFallbackPressureCountByStream[streamID] = 0
-        adaptiveFallbackLastPressureTriggerTimeByStream.removeValue(forKey: streamID)
-        adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastRestoreTimeByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastCollapseTimeByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastAppliedTime[streamID] = 0
+        decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
     }
 
-    func clearAdaptiveFallbackState(for streamID: StreamID) {
-        adaptiveFallbackBitrateByStream.removeValue(forKey: streamID)
-        adaptiveFallbackBaselineBitrateByStream.removeValue(forKey: streamID)
-        adaptiveFallbackColorDepthByStream.removeValue(forKey: streamID)
-        adaptiveFallbackBaselineColorDepthByStream.removeValue(forKey: streamID)
-        adaptiveFallbackCollapseTimestampsByStream.removeValue(forKey: streamID)
-        adaptiveFallbackPressureCountByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastPressureTriggerTimeByStream.removeValue(forKey: streamID)
-        adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastRestoreTimeByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastCollapseTimeByStream.removeValue(forKey: streamID)
-        adaptiveFallbackLastAppliedTime.removeValue(forKey: streamID)
-    }
-
-    func updateAdaptiveFallbackPressure(streamID: StreamID, targetFrameRate: Int) {
-        guard adaptiveFallbackEnabled, adaptiveFallbackMode == .customTemporary else {
-            adaptiveFallbackPressureCountByStream.removeValue(forKey: streamID)
-            adaptiveFallbackLastPressureTriggerTimeByStream.removeValue(forKey: streamID)
-            return
-        }
-        guard let snapshot = metricsStore.snapshot(for: streamID), snapshot.hasHostMetrics else { return }
-
-        let targetFPS = Double(max(1, targetFrameRate))
-        let hostEncodedFPS = max(0.0, snapshot.hostEncodedFPS)
-        let underTargetThreshold = targetFPS * adaptiveFallbackPressureUnderTargetRatio
-        guard hostEncodedFPS > 0.0, hostEncodedFPS < underTargetThreshold else {
-            adaptiveFallbackPressureCountByStream.removeValue(forKey: streamID)
-            return
-        }
-
-        let receivedFPS = max(0.0, snapshot.receivedFPS)
-        let decodedFPS = max(0.0, snapshot.decodedFPS)
-        let transportBound = receivedFPS > hostEncodedFPS + adaptiveFallbackPressureHeadroomFPS
-        let decodeBound = decodedFPS > receivedFPS + adaptiveFallbackPressureHeadroomFPS
-        guard !transportBound, !decodeBound else {
-            adaptiveFallbackPressureCountByStream.removeValue(forKey: streamID)
-            return
-        }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let lastTrigger = adaptiveFallbackLastPressureTriggerTimeByStream[streamID] ?? 0
-        if lastTrigger > 0, now - lastTrigger < adaptiveFallbackPressureTriggerCooldown {
-            return
-        }
-
-        let nextCount = (adaptiveFallbackPressureCountByStream[streamID] ?? 0) + 1
-        adaptiveFallbackPressureCountByStream[streamID] = nextCount
-        guard nextCount >= adaptiveFallbackPressureTriggerCount else { return }
-
-        adaptiveFallbackPressureCountByStream[streamID] = 0
-        adaptiveFallbackLastPressureTriggerTimeByStream[streamID] = now
-        let hostText = hostEncodedFPS.formatted(.number.precision(.fractionLength(1)))
-        let targetText = targetFPS.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger.client(
-            "Adaptive fallback trigger (encode pressure): host \(hostText)fps vs target \(targetText)fps for stream \(streamID)"
-        )
-        handleAdaptiveFallbackTrigger(for: streamID)
-    }
-
-    func updateAdaptiveFallbackRecovery(streamID: StreamID, targetFrameRate: Int) {
-        guard adaptiveFallbackMutationsEnabled else { return }
-        guard adaptiveFallbackEnabled, adaptiveFallbackMode == .customTemporary else { return }
-
-        let baselineColorDepth = adaptiveFallbackBaselineColorDepthByStream[streamID]
-        let currentColorDepth = adaptiveFallbackColorDepthByStream[streamID]
-        let baselineBitrate = adaptiveFallbackBaselineBitrateByStream[streamID]
-        let currentBitrate = adaptiveFallbackBitrateByStream[streamID]
-
-        let colorDepthDegraded = if let baselineColorDepth, let currentColorDepth {
-            currentColorDepth != baselineColorDepth
-        } else {
-            false
-        }
-        let bitrateDegraded = if let baselineBitrate, let currentBitrate {
-            currentBitrate < baselineBitrate
-        } else {
-            false
-        }
-        guard colorDepthDegraded || bitrateDegraded else {
-            adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-            return
-        }
-
-        guard let snapshot = metricsStore.snapshot(for: streamID) else {
-            adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-            return
-        }
-
-        let targetFPS = max(1, targetFrameRate)
-        let decodedFPS = max(0, snapshot.decodedFPS)
-        let receivedFPS = max(0, snapshot.receivedFPS)
-        let effectiveFPS: Double = if decodedFPS > 0, receivedFPS > 0 {
-            min(decodedFPS, receivedFPS)
-        } else {
-            max(decodedFPS, receivedFPS)
-        }
-
-        let now = CFAbsoluteTimeGetCurrent()
-        let lastCollapse = adaptiveFallbackLastCollapseTimeByStream[streamID] ?? 0
-        if lastCollapse > 0, now - lastCollapse < customAdaptiveFallbackRestoreWindow {
-            adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-            return
-        }
-
-        let stabilityThreshold = Double(targetFPS) * 0.90
-        guard effectiveFPS >= stabilityThreshold else {
-            adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-            return
-        }
-
-        if adaptiveFallbackStableSinceByStream[streamID] == nil {
-            adaptiveFallbackStableSinceByStream[streamID] = now
-            return
-        }
-        let stableSince = adaptiveFallbackStableSinceByStream[streamID] ?? now
-        guard now - stableSince >= customAdaptiveFallbackRestoreWindow else { return }
-
-        let lastRestore = adaptiveFallbackLastRestoreTimeByStream[streamID] ?? 0
-        guard lastRestore == 0 || now - lastRestore >= customAdaptiveFallbackRestoreWindow else { return }
-
-        if bitrateDegraded,
-           let baselineBitrate,
-           let currentBitrate {
-            let stepped = Int((Double(currentBitrate) * adaptiveRestoreBitrateStep).rounded(.down))
-            let nextBitrate = min(baselineBitrate, max(currentBitrate + 1, stepped))
-            guard nextBitrate > currentBitrate else { return }
-
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    try await sendStreamEncoderSettingsChange(streamID: streamID, bitrate: nextBitrate)
-                    adaptiveFallbackBitrateByStream[streamID] = nextBitrate
-                    adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
-                    adaptiveFallbackLastRestoreTimeByStream[streamID] = CFAbsoluteTimeGetCurrent()
-                    adaptiveFallbackStableSinceByStream[streamID] = CFAbsoluteTimeGetCurrent()
-                    let fromMbps = (Double(currentBitrate) / 1_000_000.0)
-                        .formatted(.number.precision(.fractionLength(1)))
-                    let toMbps = (Double(nextBitrate) / 1_000_000.0)
-                        .formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.client("Adaptive restore bitrate step \(fromMbps) -> \(toMbps) Mbps for stream \(streamID)")
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to restore bitrate for stream \(streamID): ")
-                }
-            }
-            return
-        }
-
-        if colorDepthDegraded,
-           let baselineColorDepth,
-           let currentColorDepth,
-           let nextColorDepth = nextCustomRestoreColorDepth(current: currentColorDepth, baseline: baselineColorDepth) {
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    try await sendStreamEncoderSettingsChange(
-                        streamID: streamID,
-                        colorDepth: nextColorDepth
-                    )
-                    adaptiveFallbackColorDepthByStream[streamID] = nextColorDepth
-                    if let controller = controllersByStream[streamID] {
-                        await controller.setPreferredDecoderColorDepth(nextColorDepth)
-                    }
-                    adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
-                    adaptiveFallbackLastRestoreTimeByStream[streamID] = CFAbsoluteTimeGetCurrent()
-                    adaptiveFallbackStableSinceByStream[streamID] = CFAbsoluteTimeGetCurrent()
-                    MirageLogger
-                        .client(
-                            "Adaptive restore color depth step \(currentColorDepth.displayName) -> \(nextColorDepth.displayName) for stream \(streamID)"
-                        )
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to restore color depth for stream \(streamID): ")
-                }
-            }
-        }
-    }
-
-    private func handleCustomAdaptiveFallbackTrigger(for streamID: StreamID) {
-        let now = CFAbsoluteTimeGetCurrent()
-        var collapseTimes = adaptiveFallbackCollapseTimestampsByStream[streamID] ?? []
-        collapseTimes.append(now)
-        collapseTimes.removeAll { now - $0 > customAdaptiveFallbackCollapseWindow }
-        adaptiveFallbackCollapseTimestampsByStream[streamID] = collapseTimes
-        adaptiveFallbackLastCollapseTimeByStream[streamID] = now
-        adaptiveFallbackStableSinceByStream.removeValue(forKey: streamID)
-
-        guard collapseTimes.count >= customAdaptiveFallbackCollapseThreshold else {
-            MirageLogger
-                .client(
-                    "Adaptive fallback collapse observed (\(collapseTimes.count)/\(customAdaptiveFallbackCollapseThreshold)) for stream \(streamID)"
-                )
-            return
-        }
-
-        let lastApplied = adaptiveFallbackLastAppliedTime[streamID] ?? 0
-        if lastApplied > 0, now - lastApplied < adaptiveFallbackCooldown {
-            let remainingMs = Int(((adaptiveFallbackCooldown - (now - lastApplied)) * 1000).rounded())
-            MirageLogger.client("Adaptive fallback cooldown \(remainingMs)ms for stream \(streamID)")
-            return
-        }
-
-        if let currentColorDepth = adaptiveFallbackColorDepthByStream[streamID],
-           let nextColorDepth = nextCustomFallbackColorDepth(currentColorDepth) {
-            Task { [weak self] in
-                guard let self else { return }
-                do {
-                    try await sendStreamEncoderSettingsChange(
-                        streamID: streamID,
-                        colorDepth: nextColorDepth
-                    )
-                    adaptiveFallbackColorDepthByStream[streamID] = nextColorDepth
-                    if let controller = controllersByStream[streamID] {
-                        await controller.setPreferredDecoderColorDepth(nextColorDepth)
-                    }
-                    adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
-                    let currentName = currentColorDepth.displayName
-                    let nextName = nextColorDepth.displayName
-                    MirageLogger.client("Adaptive fallback color depth step \(currentName) -> \(nextName) for stream \(streamID)")
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to apply fallback color depth for stream \(streamID): ")
-                }
-            }
-            return
-        }
-
-        guard let currentBitrate = adaptiveFallbackBitrateByStream[streamID], currentBitrate > 0 else {
-            MirageLogger.client("Adaptive fallback skipped (missing current bitrate) for stream \(streamID)")
-            return
-        }
-        guard let nextBitrate = Self.nextAdaptiveFallbackBitrate(
-            currentBitrate: currentBitrate,
-            step: adaptiveFallbackBitrateStep,
-            floor: adaptiveFallbackBitrateFloorBps
-        ) else {
-            let floorText = Double(adaptiveFallbackBitrateFloorBps / 1_000_000)
-                .formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.client("Adaptive fallback floor reached (\(floorText) Mbps) for stream \(streamID)")
-            return
-        }
-
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await sendStreamEncoderSettingsChange(streamID: streamID, bitrate: nextBitrate)
-                adaptiveFallbackBitrateByStream[streamID] = nextBitrate
-                adaptiveFallbackLastAppliedTime[streamID] = CFAbsoluteTimeGetCurrent()
-                let fromMbps = (Double(currentBitrate) / 1_000_000.0)
-                    .formatted(.number.precision(.fractionLength(1)))
-                let toMbps = (Double(nextBitrate) / 1_000_000.0)
-                    .formatted(.number.precision(.fractionLength(1)))
-                MirageLogger.client("Adaptive fallback bitrate step \(fromMbps) -> \(toMbps) Mbps for stream \(streamID)")
-            } catch {
-                MirageLogger.error(.client, error: error, message: "Failed to apply adaptive fallback for stream \(streamID): ")
-            }
-        }
-    }
-
-    private func nextCustomFallbackColorDepth(_ current: MirageStreamColorDepth) -> MirageStreamColorDepth? {
-        switch current {
-        case .ultra:
-            .pro
-        case .pro:
-            .standard
-        case .standard:
-            nil
-        }
-    }
-
-    private func nextCustomRestoreColorDepth(
-        current: MirageStreamColorDepth,
-        baseline: MirageStreamColorDepth
-    ) -> MirageStreamColorDepth? {
-        if current == baseline { return nil }
-        switch current {
-        case .standard:
-            if baseline == .ultra { return .pro }
-            return baseline == .pro ? .pro : nil
-        case .pro:
-            return baseline == .ultra ? .ultra : nil
-        case .ultra:
-            return nil
-        }
-    }
-
-    nonisolated static func nextAdaptiveFallbackBitrate(
-        currentBitrate: Int,
-        step: Double,
-        floor: Int
-    )
-    -> Int? {
-        guard currentBitrate > 0 else { return nil }
-        let clampedStep = max(0.0, min(step, 1.0))
-        let clampedFloor = max(1, floor)
-        let steppedBitrate = Int((Double(currentBitrate) * clampedStep).rounded(.down))
-        let nextBitrate = max(clampedFloor, steppedBitrate)
-        return nextBitrate < currentBitrate ? nextBitrate : nil
+    func clearDecoderColorDepthState(for streamID: StreamID) {
+        decoderCompatibilityCurrentColorDepthByStream.removeValue(forKey: streamID)
+        decoderCompatibilityBaselineColorDepthByStream.removeValue(forKey: streamID)
+        decoderCompatibilityFallbackLastAppliedTime.removeValue(forKey: streamID)
     }
 
     func handleVideoPacket(_ data: Data, header: FrameHeader) async {

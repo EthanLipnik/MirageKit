@@ -50,6 +50,10 @@ extension MirageHostService {
 
     func sendPendingHostSoftwareUpdateStatusRequestIfPossible() {
         guard let pending = pendingHostSoftwareUpdateStatusRequest else { return }
+        guard !isInteractiveWorkloadActiveForAppListRequests() else {
+            MirageLogger.host("Deferring host software update status while interactive workload is active")
+            return
+        }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
             pendingHostSoftwareUpdateStatusRequest = nil
             return

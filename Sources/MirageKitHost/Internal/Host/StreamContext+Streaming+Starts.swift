@@ -187,7 +187,7 @@ extension StreamContext {
             display: display,
             resolution: captureSizeForSCK,
             excludedWindows: resolvedExcludedWindows,
-            showsCursor: false,
+            showsCursor: captureShowsCursor,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },

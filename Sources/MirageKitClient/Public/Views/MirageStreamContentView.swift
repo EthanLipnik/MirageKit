@@ -41,6 +41,7 @@ public struct MirageStreamContentView: View {
     public let clientService: MirageClientService
     public let isDesktopStream: Bool
     public let desktopStreamMode: MirageDesktopStreamMode
+    public let desktopCursorPresentation: MirageDesktopCursorPresentation
     public let onExitDesktopStream: (() -> Void)?
     public let onToggleDictationShortcut: (() -> Void)?
     public let desktopExitShortcut: MirageClientShortcut
@@ -120,6 +121,7 @@ public struct MirageStreamContentView: View {
         clientService: MirageClientService,
         isDesktopStream: Bool = false,
         desktopStreamMode: MirageDesktopStreamMode = .mirrored,
+        desktopCursorPresentation: MirageDesktopCursorPresentation = .clientCursor,
         onExitDesktopStream: (() -> Void)? = nil,
         onToggleDictationShortcut: (() -> Void)? = nil,
         desktopExitShortcut: MirageClientShortcut = .defaultDesktopExit,
@@ -144,6 +146,7 @@ public struct MirageStreamContentView: View {
         self.clientService = clientService
         self.isDesktopStream = isDesktopStream
         self.desktopStreamMode = desktopStreamMode
+        self.desktopCursorPresentation = desktopCursorPresentation
         self.onExitDesktopStream = onExitDesktopStream
         self.onToggleDictationShortcut = onToggleDictationShortcut
         self.desktopExitShortcut = desktopExitShortcut
@@ -165,6 +168,11 @@ public struct MirageStreamContentView: View {
     }
 
     public var body: some View {
+        let desktopCursorLockEnabled = isDesktopStream &&
+            desktopCursorPresentation.locksClientCursor(for: desktopStreamMode)
+        let syntheticCursorEnabled = !isDesktopStream ||
+            desktopCursorPresentation.rendersSyntheticClientCursor
+
         Group {
             #if os(iOS) || os(visionOS)
             MirageStreamViewRepresentable(
@@ -205,7 +213,8 @@ public struct MirageStreamContentView: View {
                 onDictationError: onDictationError,
                 dictationMode: dictationMode,
                 dictationLocalePreference: dictationLocalePreference,
-                cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
+                cursorLockEnabled: desktopCursorLockEnabled,
+                syntheticCursorEnabled: syntheticCursorEnabled,
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize
             )
@@ -236,13 +245,15 @@ public struct MirageStreamContentView: View {
                 },
                 cursorStore: clientService.cursorStore,
                 cursorPositionStore: clientService.cursorPositionStore,
-                cursorLockEnabled: isDesktopStream && desktopStreamMode == .secondary,
+                cursorLockEnabled: desktopCursorLockEnabled,
+                syntheticCursorEnabled: syntheticCursorEnabled,
                 inputEnabled: macOSInputEnabled,
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize,
                 clientShortcuts: [desktopExitShortcut, dictationShortcut].compactMap { $0 },
                 onClientShortcut: { shortcut in
                     if shortcut == desktopExitShortcut {
+                        logDesktopExitShortcutTriggered()
                         onExitDesktopStream?()
                     } else if shortcut == dictationShortcut {
                         onToggleDictationShortcut?()
@@ -399,6 +410,7 @@ public struct MirageStreamContentView: View {
     private func sendInputEvent(_ event: MirageInputEvent) {
         if case let .keyDown(keyEvent) = event {
             if desktopExitShortcut.matches(keyEvent), let onExitDesktopStream {
+                logDesktopExitShortcutTriggered()
                 onExitDesktopStream()
                 return
             }
@@ -428,6 +440,11 @@ public struct MirageStreamContentView: View {
         #endif
 
         clientService.sendInputFireAndForget(event, forStream: session.streamID)
+    }
+
+    private func logDesktopExitShortcutTriggered() {
+        guard isDesktopStream else { return }
+        MirageLogger.client("Desktop exit shortcut triggered for stream \(session.streamID)")
     }
 
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {

@@ -16,6 +16,7 @@ struct StandardTemporaryDegradationPolicyTests {
     func offKeepsRequestedBitrate() async {
         let context = makeContext(mode: .off)
         let settings = await context.getEncoderSettings()
+
         #expect(settings.bitrate == 120_000_000)
         #expect(settings.bitDepth == .tenBit)
     }
@@ -24,6 +25,7 @@ struct StandardTemporaryDegradationPolicyTests {
     func prioritizeFramerateStartsLower() async {
         let context = makeContext(mode: .prioritizeFramerate)
         let settings = await context.getEncoderSettings()
+
         #expect(settings.bitrate == 102_000_000)
         #expect(settings.bitDepth == .tenBit)
     }
@@ -32,117 +34,107 @@ struct StandardTemporaryDegradationPolicyTests {
     func prioritizeVisualsStartsLower() async {
         let context = makeContext(mode: .prioritizeVisuals)
         let settings = await context.getEncoderSettings()
+
         #expect(settings.bitrate == 110_400_000)
         #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Prioritize framerate keeps bit depth fixed and reduces bitrate under overload")
-    func prioritizeFramerateDropsBitrateOnly() async {
-        let context = makeContext(mode: .prioritizeFramerate)
+    @Test("Adaptive sessions start at requested bitrate and canonicalize to framerate-first relief")
+    func adaptiveSessionsStartAtRequestedBitrateAndCanonicalizeMode() async {
+        let context = makeContext(
+            mode: .prioritizeVisuals,
+            bitrateAdaptationCeiling: 120_000_000
+        )
+        let settings = await context.getEncoderSettings()
+
+        #expect(settings.bitrate == 120_000_000)
+        #expect(settings.temporaryDegradationMode == .prioritizeFramerate)
+        #expect(settings.bitDepth == .tenBit)
+    }
+
+    @Test("Adaptive sessions ignore encode-only overload")
+    func adaptiveSessionsIgnoreEncodeOnlyOverload() async {
+        let context = makeContext(
+            mode: .prioritizeFramerate,
+            bitrateAdaptationCeiling: 120_000_000
+        )
+
         await context.evaluateStandardTemporaryDegradationIfNeeded(
             encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
             backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
+            captureDroppedFrames: 20,
             at: 10
         )
 
         let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(102_000_000) * 0.85).rounded(.down))
+        #expect(settings.bitrate == 120_000_000)
+        #expect(await context.getTargetFrameRate() == 60)
         #expect(settings.bitDepth == .tenBit)
-        #expect(settings.bitrate == expectedBitrate)
     }
 
-    @Test("Prioritize framerate continues bitrate relief when already at eight bit")
-    func prioritizeFramerateDropsBitrateWhenAlreadyEightBit() async {
-        let context = makeContext(mode: .prioritizeFramerate, bitDepth: .eightBit)
+    @Test("Adaptive sessions relieve on real transport pressure")
+    func adaptiveSessionsRelieveOnRealTransportPressure() async {
+        let context = makeContext(
+            mode: .prioritizeVisuals,
+            bitrateAdaptationCeiling: 120_000_000
+        )
+
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 24,
-            queueBytes: 0,
+            encodedFPS: 60,
+            averageEncodeMs: 10,
+            queueBytes: 4_000_000,
             backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
 
         let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(102_000_000) * 0.85).rounded(.down))
-        #expect(settings.bitDepth == .eightBit)
-        #expect(settings.bitrate == expectedBitrate)
-    }
-
-    @Test("Prioritize visuals reduces bitrate before dropping bit depth")
-    func prioritizeVisualsDropsBitrateFirst() async {
-        let context = makeContext(mode: .prioritizeVisuals)
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 24,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.bitDepth == .tenBit)
-        #expect(settings.bitrate == 99_360_000)
-    }
-
-    @Test("Forty FPS does not trigger temporary degradation by itself")
-    func fortyFPSDoesNotTriggerReliefWithoutOtherPressure() async {
-        let context = makeContext(mode: .prioritizeFramerate)
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 40,
-            averageEncodeMs: 14,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.bitDepth == .tenBit)
+        #expect(settings.temporaryDegradationMode == .prioritizeFramerate)
         #expect(settings.bitrate == 102_000_000)
+        #expect(await context.getTargetFrameRate() == 60)
+        #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Prioritize visuals keeps bit depth fixed after repeated severe overload")
-    func prioritizeVisualsKeepsBitDepthAfterSevereOverload() async {
-        let context = makeContext(mode: .prioritizeVisuals)
+    @Test("Adaptive sessions do not ramp bitrate back toward the ceiling")
+    func adaptiveSessionsDoNotRampBitrateBackTowardTheCeiling() async {
+        let context = makeContext(
+            mode: .prioritizeFramerate,
+            bitrateAdaptationCeiling: 120_000_000
+        )
 
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 30,
+            encodedFPS: 60,
+            averageEncodeMs: 10,
             queueBytes: 4_000_000,
             backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 20,
+            captureDroppedFrames: 0,
             at: 10
         )
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 30,
-            queueBytes: 4_000_000,
+            encodedFPS: 60,
+            averageEncodeMs: 10,
+            queueBytes: 0,
             backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 20,
+            captureDroppedFrames: 0,
             at: 12
         )
         await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 30,
-            queueBytes: 4_000_000,
+            encodedFPS: 60,
+            averageEncodeMs: 10,
+            queueBytes: 0,
             backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 20,
+            captureDroppedFrames: 0,
             at: 14
         )
 
         let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(110_400_000) * 0.90 * 0.90 * 0.90).rounded(.down))
-        #expect(settings.bitDepth == .tenBit)
-        #expect(settings.bitrate == expectedBitrate)
+        #expect(settings.bitrate == 102_000_000)
     }
 
-    @Test("Stable windows ramp bitrate back toward target")
-    func stableWindowsRestoreBitrate() async {
+    @Test("Stable windows still restore bitrate for legacy host-owned temporary degradation")
+    func stableWindowsStillRestoreBitrateForLegacyTemporaryDegradation() async {
         let context = makeContext(
             mode: .prioritizeFramerate,
             bitDepth: .eightBit,
@@ -169,104 +161,6 @@ struct StandardTemporaryDegradationPolicyTests {
         let settings = await context.getEncoderSettings()
         #expect(settings.bitrate == 60_000_000)
         #expect(settings.bitDepth == .eightBit)
-    }
-
-    @Test("App-owned visual-priority adaptation does not ramp bitrate back toward the ceiling")
-    func appOwnedVisualPriorityAdaptationDoesNotRestoreBitrate() async {
-        let context = makeContext(
-            mode: .prioritizeVisuals,
-            bitDepth: .eightBit,
-            bitrate: 60_000_000,
-            bitrateAdaptationCeiling: 120_000_000
-        )
-
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 12
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 55_200_000)
-        #expect(settings.bitDepth == .eightBit)
-    }
-
-    @Test("App-owned visual-priority adaptation drops frame rate before bitrate")
-    func appOwnedVisualPriorityAdaptationDropsFrameRateBeforeBitrate() async {
-        let context = makeContext(
-            mode: .prioritizeVisuals,
-            bitrate: 60_000_000,
-            bitrateAdaptationCeiling: 120_000_000
-        )
-
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 24,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        let settings = await context.getEncoderSettings()
-        let targetFrameRate = await context.getTargetFrameRate()
-        #expect(targetFrameRate == 45)
-        #expect(settings.bitrate == 55_200_000)
-        #expect(settings.bitDepth == .tenBit)
-    }
-
-    @Test("App-owned framerate-priority adaptation keeps frame rate fixed while dropping bitrate")
-    func appOwnedFrameratePriorityAdaptationKeepsFrameRateFixed() async {
-        let context = makeContext(
-            mode: .prioritizeFramerate,
-            bitrate: 60_000_000,
-            bitrateAdaptationCeiling: 120_000_000
-        )
-
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 30,
-            averageEncodeMs: 24,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        let settings = await context.getEncoderSettings()
-        let targetFrameRate = await context.getTargetFrameRate()
-        let expectedBitrate = Int((Double(60_000_000) * 0.85 * 0.85).rounded(.down))
-        #expect(targetFrameRate == 60)
-        #expect(settings.bitrate == expectedBitrate)
-        #expect(settings.bitDepth == .tenBit)
-    }
-
-    @Test("Backpressure drops trigger framerate-first bitrate relief even after queue drains")
-    func backpressureDropsTriggerRelief() async {
-        let context = makeContext(mode: .prioritizeFramerate)
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 3,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        let settings = await context.getEncoderSettings()
-        let expectedBitrate = Int((Double(102_000_000) * 0.85).rounded(.down))
-        #expect(settings.bitDepth == .tenBit)
-        #expect(settings.bitrate == expectedBitrate)
     }
 
     private func makeContext(

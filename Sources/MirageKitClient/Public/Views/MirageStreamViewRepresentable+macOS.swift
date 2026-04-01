@@ -30,6 +30,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
+    /// Whether Mirage should render its synthetic local cursor presentation.
+    public var syntheticCursorEnabled: Bool
+
     /// Whether input capture should actively process mouse/keyboard events.
     public var inputEnabled: Bool
 
@@ -53,6 +56,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
+        syntheticCursorEnabled: Bool = true,
         inputEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil,
@@ -66,6 +70,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
+        self.syntheticCursorEnabled = syntheticCursorEnabled
         self.inputEnabled = inputEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
@@ -107,6 +112,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
         wrapper.cursorLockEnabled = cursorLockEnabled
+        wrapper.syntheticCursorEnabled = syntheticCursorEnabled
         wrapper.inputEnabled = inputEnabled
         wrapper.streamID = streamID
 
@@ -150,6 +156,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
             wrapper.cursorLockEnabled = cursorLockEnabled
+            wrapper.syntheticCursorEnabled = syntheticCursorEnabled
             wrapper.inputEnabled = inputEnabled
             wrapper.streamID = streamID
             wrapper.clientShortcuts = clientShortcuts

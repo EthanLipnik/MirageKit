@@ -85,6 +85,7 @@ extension InputCapturingView: UIPointerInteractionDelegate {
         if cursorLockEnabled || cursorHiddenForTyping {
             return .hidden()
         }
+        guard syntheticCursorEnabled else { return nil }
         guard cursorIsVisible else {
             // Cursor is outside the host window, use default pointer
             return nil

@@ -107,6 +107,17 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Whether Mirage should render its synthetic local cursor presentation.
+    public var syntheticCursorEnabled: Bool = true {
+        didSet {
+            guard syntheticCursorEnabled != oldValue else { return }
+            updateVirtualTrackpadMode()
+            updateLockedCursorViewVisibility()
+            pointerInteraction?.invalidate()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
     /// Callback when app becomes active (returns from background).
     /// Used to trigger stream recovery after app switching.
     public var onBecomeActive: (() -> Void)?
@@ -207,7 +218,12 @@ public class InputCapturingView: UIView {
     var lockedCursorDisplayLink: CADisplayLink?
     var lockedPointerLastHoverLocation: CGPoint?
     var usesMouseInputDeltas: Bool = false
-    var pointerLockActive: Bool = false
+    var pointerLockActive: Bool = false {
+        didSet {
+            guard pointerLockActive != oldValue else { return }
+            handlePointerLockStateChange()
+        }
+    }
     #if canImport(GameController)
     private var mouseInput: GCMouseInput?
     #endif
@@ -845,7 +861,7 @@ public class InputCapturingView: UIView {
             virtualCursorView.isHidden = true
             return
         }
-        virtualCursorView.isHidden = !isVisible
+        virtualCursorView.isHidden = !syntheticCursorEnabled || !isVisible
         updateVirtualCursorViewPosition()
     }
 
@@ -883,6 +899,15 @@ public class InputCapturingView: UIView {
         }
     }
 
+    func handlePointerLockStateChange() {
+        guard cursorLockEnabled else { return }
+        updateMouseInputHandler()
+        hoverGesture.isEnabled = !usesMouseInputDeltas
+        lockedPointerPanGesture.isEnabled = !usesMouseInputDeltas
+        refreshLockedCursorIfNeeded(force: true)
+        updateLockedCursorViewVisibility()
+    }
+
     func setLockedCursorVisible(_ isVisible: Bool) {
         lockedCursorVisible = isVisible
         updateLockedCursorViewVisibility()
@@ -890,7 +915,7 @@ public class InputCapturingView: UIView {
     }
 
     func updateLockedCursorViewVisibility() {
-        let shouldShow = cursorLockEnabled && lockedCursorVisible && !cursorHiddenForTyping
+        let shouldShow = cursorLockEnabled && syntheticCursorEnabled && lockedCursorVisible && !cursorHiddenForTyping
         lockedCursorView.isHidden = !shouldShow
     }
 
@@ -1007,7 +1032,7 @@ public class InputCapturingView: UIView {
 
     private func updateMouseInputHandler() {
         #if canImport(GameController)
-        if cursorLockEnabled,
+        if cursorLockEnabled, pointerLockActive,
            let mouse = GCMouse.mice().first,
            let input = mouse.mouseInput {
             if mouseInput !== input {

@@ -361,7 +361,9 @@ extension StreamController {
         )
     }
 
-    func handleFrameLossSignal() async {
+    func handleFrameLossSignal(
+        reason: FrameReassembler.FrameLossReason = .timeout
+    ) async {
         if !hasDecodedFirstFrame || !hasPresentedFirstFrame {
             if presentationTier == .activeLive, !awaitingFirstPresentedFrame {
                 armFirstPresentedFrameAwaiter(reason: "frame-loss-bootstrap")
@@ -370,7 +372,7 @@ extension StreamController {
             firstPresentedFrameLastRecoveryRequestTime = now
             firstPresentedFrameRecoveryAttemptCount = max(1, firstPresentedFrameRecoveryAttemptCount)
             MirageLogger.client(
-                "Frame loss detected before first frame for stream \(streamID); requesting bootstrap recovery keyframe"
+                "Frame loss detected before first frame for stream \(streamID) reason=\(reason.rawValue); requesting bootstrap recovery keyframe"
             )
             await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
             return
@@ -384,13 +386,22 @@ extension StreamController {
             return
         }
 
+        if reason.requestsImmediateActiveRecovery {
+            reassembler.enterKeyframeOnlyMode()
+            MirageLogger.client(
+                "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); requesting immediate recovery keyframe"
+            )
+            await requestKeyframeRecovery(reason: .frameLoss)
+            return
+        }
+
         // For active streams, frame loss from network congestion must NOT
         // trigger keyframe requests.  Keyframes are 100-150x larger than
         // P-frames and make congestion worse, creating a spiral.  Instead,
         // freeze on the last decoded frame and let the periodic keyframe
         // interval (or an actual decode error) provide natural recovery.
         MirageLogger.client(
-            "Frame loss detected for stream \(streamID); waiting for natural keyframe or decode error"
+            "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); waiting for natural keyframe or decode error"
         )
     }
 

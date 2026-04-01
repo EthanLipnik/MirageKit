@@ -23,6 +23,7 @@ extension MirageHostService {
         displayResolution: CGSize,
         clientScaleFactor: CGFloat? = nil,
         mode: MirageDesktopStreamMode,
+        cursorPresentation: MirageDesktopCursorPresentation = .clientCursor,
         keyFrameInterval: Int?,
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
@@ -57,6 +58,11 @@ extension MirageHostService {
         func logDesktopStartStep(_ step: String) {
             let deltaMs = Int((CFAbsoluteTimeGetCurrent() - desktopStartTime) * 1000)
             MirageLogger.host("Desktop start: \(step) (+\(deltaMs)ms)")
+        }
+
+        let resolvedAudioConfiguration = audioConfiguration.resolvedForDesktopStreamMode(mode)
+        if resolvedAudioConfiguration != audioConfiguration {
+            MirageLogger.host("Desktop stream audio disabled for secondary display mode")
         }
 
         let resolvedClientScaleFactor: CGFloat? = if let clientScaleFactor, clientScaleFactor > 0 {
@@ -119,6 +125,7 @@ extension MirageHostService {
         // Clear any stuck modifiers from previous streams
         inputController.clearAllModifiers()
         desktopStreamMode = mode
+        desktopCursorPresentation = cursorPresentation
         resetDesktopResizeTransactionState()
 
         // Configure encoder with optional overrides
@@ -410,7 +417,7 @@ extension MirageHostService {
             streamKind: .desktop,
             encoderConfig: config,
             streamScale: computedStreamScale,
-            requestedAudioChannelCount: audioConfiguration.channelLayout.channelCount,
+            requestedAudioChannelCount: resolvedAudioConfiguration.channelLayout.channelCount,
             maxPacketSize: mediaMaxPacketSize,
             mediaSecurityContext: nil,
             additionalFrameFlags: [.desktopStream],
@@ -424,7 +431,8 @@ extension MirageHostService {
             performanceMode: performanceMode,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
-            encoderMaxHeight: encoderMaxHeight
+            encoderMaxHeight: encoderMaxHeight,
+            captureShowsCursor: cursorPresentation.capturesHostCursor
         )
         await streamContext.setStartupBaseTime(desktopStartTime, label: "desktop stream \(streamID)")
         if let captureDisplayP3CoverageStatus {
@@ -473,7 +481,7 @@ extension MirageHostService {
         await activateAudioForClient(
             clientID: clientContext.client.id,
             sourceStreamID: streamID,
-            configuration: audioConfiguration
+            configuration: resolvedAudioConfiguration
         )
 
         syncSharedClipboardState(reason: "desktop_stream_started")
@@ -661,6 +669,7 @@ extension MirageHostService {
         desktopRequestedScaleFactor = nil
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .mirrored
+        desktopCursorPresentation = .clientCursor
         streamsByID.removeValue(forKey: streamID)
         unregisterTypingBurstRoute(streamID: streamID)
         unregisterStallWindowPointerRoute(streamID: streamID)

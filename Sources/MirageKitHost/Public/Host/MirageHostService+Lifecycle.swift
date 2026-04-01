@@ -104,7 +104,8 @@ public extension MirageHostService {
 
             state = .advertising(controlPort: controlPort)
             MirageLogger.host("Now advertising on control:\(controlPort)")
-            await loomNode.updateAdvertisement(advertisedPeerAdvertisement)
+            await publishCurrentAdvertisement()
+            startAdvertisementRefreshLoop()
 
             // Set up app streaming callbacks
             setupAppStreamManagerCallbacks()
@@ -125,6 +126,7 @@ public extension MirageHostService {
     }
 
     func stop() async {
+        stopAdvertisementRefreshLoop()
         sessionRefreshTask?.cancel()
         sessionRefreshTask = nil
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()

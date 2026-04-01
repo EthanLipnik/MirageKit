@@ -610,10 +610,10 @@ actor StreamController {
                 }
             }
         reassembler.setFrameHandler(reassemblerHandler)
-        reassembler.setFrameLossHandler { [weak self] _ in
+        reassembler.setFrameLossHandler { [weak self] _, reason in
             guard let self else { return }
             Task {
-                await self.handleFrameLossSignal()
+                await self.handleFrameLossSignal(reason: reason)
             }
         }
     }

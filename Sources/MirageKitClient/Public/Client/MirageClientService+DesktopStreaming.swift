@@ -25,6 +25,7 @@ public extension MirageClientService {
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         mode: MirageDesktopStreamMode = .mirrored,
+        cursorPresentation: MirageDesktopCursorPresentation = .clientCursor,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -42,6 +43,10 @@ public extension MirageClientService {
             throw MirageError.protocolError("Invalid display resolution")
         }
         desktopStreamMode = mode
+        desktopCursorPresentation = cursorPresentation
+
+        let resolvedAudioConfiguration = (audioConfiguration ?? self.audioConfiguration)
+            .resolvedForDesktopStreamMode(mode)
 
         var encoderRequest = StartDesktopStreamMessage(
             scaleFactor: nil,
@@ -49,9 +54,10 @@ public extension MirageClientService {
             displayHeight: Int(effectiveDisplayResolution.height),
             keyFrameInterval: nil,
             mode: mode,
+            cursorPresentation: cursorPresentation,
             bitrate: nil,
             streamScale: nil,
-            audioConfiguration: audioConfiguration ?? self.audioConfiguration,
+            audioConfiguration: resolvedAudioConfiguration,
             dataPort: nil,
             useHostResolution: useHostResolution ? true : nil,
             maxRefreshRate: getScreenMaxRefreshRate(),
@@ -100,6 +106,7 @@ public extension MirageClientService {
         request.captureQueueDepth = encoderRequest.captureQueueDepth
         request.colorDepth = encoderRequest.colorDepth
         request.mode = encoderRequest.mode
+        request.cursorPresentation = encoderRequest.cursorPresentation
         request.bitrate = scaledBitrate
         request.latencyMode = encoderRequest.latencyMode
         request.performanceMode = encoderRequest.performanceMode
@@ -113,8 +120,7 @@ public extension MirageClientService {
         request.mediaMaxPacketSize = encoderRequest.mediaMaxPacketSize
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
-        pendingDesktopAdaptiveFallbackBitrate = request.bitrate
-        pendingDesktopAdaptiveFallbackColorDepth = request.colorDepth
+        pendingDesktopRequestedColorDepth = request.colorDepth
 
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
         MirageLogger.client("Desktop start: request sent")
@@ -134,6 +140,20 @@ public extension MirageClientService {
                     "scale \(String(format: "%.3f", geometry.displayScaleFactor))x, " +
                     "stream \(String(format: "%.3f", geometry.resolvedStreamScale)))"
             )
+    }
+
+    func sendDesktopCursorPresentationChange(
+        streamID: StreamID,
+        cursorPresentation: MirageDesktopCursorPresentation
+    )
+    async throws {
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        let request = DesktopCursorPresentationChangeMessage(
+            streamID: streamID,
+            cursorPresentation: cursorPresentation
+        )
+        try await sendControlMessage(.desktopCursorPresentationChange, content: request)
+        desktopCursorPresentation = cursorPresentation
     }
 
     private static let desktopStreamStartTimeoutSeconds: Double = 75

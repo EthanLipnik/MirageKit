@@ -64,6 +64,9 @@ public final class MirageHostService {
     /// Whether the host encoder is currently using low-power mode.
     public internal(set) var isEncoderLowPowerModeActive: Bool = false
 
+    /// Effective cursor presentation for the active desktop stream.
+    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .clientCursor
+
     /// Callback fired when host battery-policy support changes.
     public var onEncoderLowPowerBatteryPolicySupportChanged: ((Bool) -> Void)?
 
@@ -123,6 +126,14 @@ public final class MirageHostService {
     /// Whether the remote QUIC control listener is currently ready to accept connections.
     public internal(set) var remoteControlListenerReady = false
 
+    /// Whether the host can currently accept a new client session.
+    public var allowsNewClientConnections: Bool {
+        singleClientSessionID == nil
+    }
+
+    /// Callback fired when host connection availability changes.
+    public var onConnectionAvailabilityChanged: (@MainActor @Sendable (Bool) -> Void)?
+
     /// STUN keepalive that refreshes the NAT mapping for the QUIC listener port.
     var stunKeepalive: LoomSTUNKeepalive?
 
@@ -136,6 +147,7 @@ public final class MirageHostService {
 
     public let loomNode: LoomNode
     var advertisedPeerAdvertisement: LoomPeerAdvertisement
+    var advertisementRefreshTask: Task<Void, Never>?
     var remoteControlListener: NWListener?
     var remoteRelayPublicationState = MirageRemoteRelayPublicationState()
     let encoderConfig: MirageEncoderConfiguration
@@ -167,7 +179,13 @@ public final class MirageHostService {
     var clientsByID: [UUID: ClientContext] = [:]
     var disconnectingClientIDs: Set<UUID> = []
     var peerIdentityByClientID: [UUID: LoomPeerIdentity] = [:]
-    var singleClientSessionID: UUID?
+    var singleClientSessionID: UUID? {
+        didSet {
+            guard oldValue != singleClientSessionID else { return }
+            updateAdvertisedConnectionAvailability()
+            onConnectionAvailabilityChanged?(allowsNewClientConnections)
+        }
+    }
     nonisolated let transportRegistry = HostTransportRegistry()
     nonisolated let streamRegistry = HostStreamRegistry()
     nonisolated let receiveLoopsBySessionID = Locked<[UUID: HostReceiveLoop]>([:])
@@ -628,7 +646,9 @@ public final class MirageHostService {
             machineFamily: advertisedPeerAdvertisement.machineFamily,
             metadata: advertisedPeerAdvertisement.metadata
         )
-        Task { await loomNode.updateAdvertisement(advertisedPeerAdvertisement) }
+        Task { @MainActor [weak self] in
+            await self?.publishCurrentAdvertisement()
+        }
     }
 
     private static func hardwareModelIdentifier() -> String? {

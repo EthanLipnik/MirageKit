@@ -52,8 +52,7 @@ public final class MirageClientService {
 
     public enum AdaptiveFallbackMode: Equatable, Sendable {
         case disabled
-        case automatic
-        case customTemporary
+        case adaptive
     }
 
     public enum StreamStopOrigin: Sendable {
@@ -262,6 +261,9 @@ public final class MirageClientService {
 
     /// Desktop stream mode (mirrored vs secondary display)
     public internal(set) var desktopStreamMode: MirageDesktopStreamMode?
+
+    /// Effective desktop cursor presentation for the active or pending desktop stream.
+    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation?
     /// Last seen desktop dimension token per stream. Used to detect host-side hard resets.
     var desktopDimensionTokenByStream: [StreamID: UInt16] = [:]
     /// Last seen app/window stream dimension token per stream.
@@ -273,11 +275,8 @@ public final class MirageClientService {
     /// 1.0 = native resolution, lower values reduce encoded size
     public var resolutionScale: CGFloat = 1.0
 
-    /// Enables automatic stream fallback when decode overload persists.
-    public var adaptiveFallbackEnabled: Bool = true
-    public var adaptiveFallbackMode: AdaptiveFallbackMode = .automatic
-    /// Policy lock for decode-storm signaling without automatic quality mutation.
-    let adaptiveFallbackMutationsEnabled: Bool = false
+    /// Whether stream recovery is app-owned (`.adaptive`) or disabled.
+    public var adaptiveFallbackMode: AdaptiveFallbackMode = .adaptive
 
     /// Optional refresh rate override sent to the host.
     public var maxRefreshRateOverride: Int?
@@ -679,34 +678,13 @@ public final class MirageClientService {
     var refreshRateMismatchCounts: [StreamID: Int] = [:]
     var refreshRateFallbackTargets: [StreamID: Int] = [:]
 
-    var adaptiveFallbackBitrateByStream: [StreamID: Int] = [:]
-    var adaptiveFallbackBaselineBitrateByStream: [StreamID: Int] = [:]
-    var adaptiveFallbackColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
-    var adaptiveFallbackBaselineColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
-    var adaptiveFallbackCollapseTimestampsByStream: [StreamID: [CFAbsoluteTime]] = [:]
-    var adaptiveFallbackPressureCountByStream: [StreamID: Int] = [:]
-    var adaptiveFallbackLastPressureTriggerTimeByStream: [StreamID: CFAbsoluteTime] = [:]
-    var adaptiveFallbackStableSinceByStream: [StreamID: CFAbsoluteTime] = [:]
-    var adaptiveFallbackLastRestoreTimeByStream: [StreamID: CFAbsoluteTime] = [:]
-    var adaptiveFallbackLastCollapseTimeByStream: [StreamID: CFAbsoluteTime] = [:]
-    var adaptiveFallbackLastAppliedTime: [StreamID: CFAbsoluteTime] = [:]
-    var pendingAdaptiveFallbackBitrateByWindowID: [WindowID: Int] = [:]
-    var pendingAdaptiveFallbackColorDepthByWindowID: [WindowID: MirageStreamColorDepth] = [:]
-    var pendingDesktopAdaptiveFallbackBitrate: Int?
-    var pendingDesktopAdaptiveFallbackColorDepth: MirageStreamColorDepth?
-    var pendingAppAdaptiveFallbackBitrate: Int?
-    var pendingAppAdaptiveFallbackColorDepth: MirageStreamColorDepth?
-    let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
-    let customAdaptiveFallbackCollapseWindow: CFAbsoluteTime = 20.0
-    let customAdaptiveFallbackCollapseThreshold: Int = 2
-    let customAdaptiveFallbackRestoreWindow: CFAbsoluteTime = 20.0
-    let adaptiveFallbackPressureUnderTargetRatio: Double = 0.90
-    let adaptiveFallbackPressureHeadroomFPS: Double = 4.0
-    let adaptiveFallbackPressureTriggerCount: Int = 2
-    let adaptiveFallbackPressureTriggerCooldown: CFAbsoluteTime = 2.0
-    let adaptiveFallbackBitrateStep: Double = 0.85
-    let adaptiveRestoreBitrateStep: Double = 1.10
-    let adaptiveFallbackBitrateFloorBps: Int = 2_000_000
+    var decoderCompatibilityCurrentColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
+    var decoderCompatibilityBaselineColorDepthByStream: [StreamID: MirageStreamColorDepth] = [:]
+    var decoderCompatibilityFallbackLastAppliedTime: [StreamID: CFAbsoluteTime] = [:]
+    var pendingRequestedColorDepthByWindowID: [WindowID: MirageStreamColorDepth] = [:]
+    var pendingDesktopRequestedColorDepth: MirageStreamColorDepth?
+    var pendingAppRequestedColorDepth: MirageStreamColorDepth?
+    let decoderCompatibilityFallbackCooldown: CFAbsoluteTime = 15.0
     @ObservationIgnored nonisolated(unsafe) var diagnosticsContextProviderToken: LoomDiagnosticsContextProviderToken?
     // Internal for low-power policy extension.
     let decoderPowerStateMonitor = MiragePowerStateMonitor()
@@ -882,10 +860,8 @@ public final class MirageClientService {
         switch mode {
         case .disabled:
             return "disabled"
-        case .automatic:
-            return "automatic"
-        case .customTemporary:
-            return "customTemporary"
+        case .adaptive:
+            return "adaptive"
         }
     }
 

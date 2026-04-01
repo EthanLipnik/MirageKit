@@ -66,8 +66,8 @@ public extension MirageClientService {
     ///   - preferredMaxPixelWidth: Preferred maximum wallpaper width in pixels.
     ///   - preferredMaxPixelHeight: Preferred maximum wallpaper height in pixels.
     func requestHostWallpaper(
-        preferredMaxPixelWidth: Int = 1_280,
-        preferredMaxPixelHeight: Int = 720
+        preferredMaxPixelWidth: Int = 854,
+        preferredMaxPixelHeight: Int = 480
     ) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
         guard hostWallpaperContinuation == nil else {
@@ -217,8 +217,7 @@ public extension MirageClientService {
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
-        pendingAppAdaptiveFallbackBitrate = request.bitrate
-        pendingAppAdaptiveFallbackColorDepth = request.colorDepth
+        pendingAppRequestedColorDepth = request.colorDepth
 
         try await sendControlMessage(.selectApp, content: request)
 

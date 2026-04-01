@@ -4,84 +4,14 @@
 //
 //  Created by Ethan Lipnik on 2/9/26.
 //
-//  Coverage for bitrate-step adaptive fallback behavior.
-//
 
 @testable import MirageKitClient
 import Foundation
 import Testing
 
 #if os(macOS)
-@Suite("Adaptive Fallback Bitrate")
+@Suite("Adaptive Recovery Mode")
 struct AdaptiveFallbackBitrateTests {
-    @Test("Bitrate step reduces by fifteen percent")
-    func bitrateStepReduction() {
-        let next = MirageClientService.nextAdaptiveFallbackBitrate(
-            currentBitrate: 20_000_000,
-            step: 0.85,
-            floor: 8_000_000
-        )
-
-        #expect(next == 17_000_000)
-    }
-
-    @Test("Bitrate step clamps at floor")
-    func bitrateFloorClamp() {
-        let next = MirageClientService.nextAdaptiveFallbackBitrate(
-            currentBitrate: 8_500_000,
-            step: 0.85,
-            floor: 8_000_000
-        )
-
-        #expect(next == 8_000_000)
-    }
-
-    @Test("Bitrate step stops at floor")
-    func bitrateStepStopsAtFloor() {
-        let next = MirageClientService.nextAdaptiveFallbackBitrate(
-            currentBitrate: 8_000_000,
-            step: 0.85,
-            floor: 8_000_000
-        )
-
-        #expect(next == nil)
-    }
-
-    @Test("Disabled adaptive fallback does not apply a bitrate step")
-    @MainActor
-    func disabledAdaptiveFallbackSkipsUpdates() async throws {
-        let service = MirageClientService(deviceName: "Unit Test")
-        let streamID: StreamID = 42
-        service.adaptiveFallbackEnabled = false
-        service.adaptiveFallbackBitrateByStream[streamID] = 20_000_000
-        service.adaptiveFallbackLastAppliedTime[streamID] = 0
-
-        service.handleAdaptiveFallbackTrigger(for: streamID)
-        try await Task.sleep(for: .milliseconds(50))
-
-        #expect(service.adaptiveFallbackBitrateByStream[streamID] == 20_000_000)
-        #expect(service.adaptiveFallbackLastAppliedTime[streamID] == 0)
-    }
-
-    @Test("Signal-only adaptive fallback policy does not mutate encoder settings")
-    @MainActor
-    func signalOnlyPolicySkipsMutation() async throws {
-        let service = MirageClientService(deviceName: "Unit Test")
-        let streamID: StreamID = 43
-        service.adaptiveFallbackEnabled = true
-        service.adaptiveFallbackMode = .automatic
-        service.adaptiveFallbackBitrateByStream[streamID] = 20_000_000
-        service.adaptiveFallbackColorDepthByStream[streamID] = .pro
-        service.adaptiveFallbackLastAppliedTime[streamID] = 0
-
-        service.handleAdaptiveFallbackTrigger(for: streamID)
-        try await Task.sleep(for: .milliseconds(50))
-
-        #expect(service.adaptiveFallbackBitrateByStream[streamID] == 20_000_000)
-        #expect(service.adaptiveFallbackColorDepthByStream[streamID] == .pro)
-        #expect(service.adaptiveFallbackLastAppliedTime[streamID] == 0)
-    }
-
     @Test("Disabled mode applies decoder compatibility fallback for ten-bit streams")
     func disabledModeAppliesDecoderCompatibilityFallbackForTenBitStreams() {
         #expect(
@@ -102,12 +32,25 @@ struct AdaptiveFallbackBitrateTests {
                 cooldown: 15
             ) == false
         )
+    }
+
+    @Test("Adaptive mode never applies decoder compatibility fallback")
+    func adaptiveModeNeverAppliesDecoderCompatibilityFallback() {
         #expect(
             MirageClientService.shouldApplyDecoderCompatibilityFallback(
-                mode: .automatic,
+                mode: .adaptive,
                 resolvedBitDepth: .tenBit,
                 lastAppliedTime: nil,
                 now: 20,
+                cooldown: 15
+            ) == false
+        )
+        #expect(
+            MirageClientService.shouldApplyDecoderCompatibilityFallback(
+                mode: .adaptive,
+                resolvedBitDepth: .eightBit,
+                lastAppliedTime: 10,
+                now: 40,
                 cooldown: 15
             ) == false
         )
@@ -133,6 +76,36 @@ struct AdaptiveFallbackBitrateTests {
                 cooldown: 15
             )
         )
+    }
+
+    @Test("Adaptive mode leaves decoder compatibility state unchanged")
+    @MainActor
+    func adaptiveModeLeavesDecoderCompatibilityStateUnchanged() async throws {
+        let service = MirageClientService(deviceName: "Unit Test")
+        let streamID: StreamID = 43
+        service.adaptiveFallbackMode = .adaptive
+        service.configureDecoderColorDepthBaseline(for: streamID, colorDepth: .pro)
+
+        service.handleAdaptiveFallbackTrigger(for: streamID)
+        try await Task.sleep(for: .milliseconds(50))
+
+        #expect(service.decoderCompatibilityCurrentColorDepthByStream[streamID] == .pro)
+        #expect(service.decoderCompatibilityBaselineColorDepthByStream[streamID] == .pro)
+        #expect(service.decoderCompatibilityFallbackLastAppliedTime[streamID] == 0)
+    }
+
+    @Test("Clearing decoder compatibility state removes stored baseline")
+    @MainActor
+    func clearingDecoderCompatibilityStateRemovesStoredBaseline() {
+        let service = MirageClientService(deviceName: "Unit Test")
+        let streamID: StreamID = 44
+        service.configureDecoderColorDepthBaseline(for: streamID, colorDepth: .ultra)
+
+        service.clearDecoderColorDepthState(for: streamID)
+
+        #expect(service.decoderCompatibilityCurrentColorDepthByStream[streamID] == nil)
+        #expect(service.decoderCompatibilityBaselineColorDepthByStream[streamID] == nil)
+        #expect(service.decoderCompatibilityFallbackLastAppliedTime[streamID] == nil)
     }
 }
 #endif

@@ -30,6 +30,8 @@ final class MirageClientFastPathState: @unchecked Sendable {
         var activeStreamIDs: Set<StreamID> = []
         var startupPacketPending: Set<StreamID> = []
         var reassemblersByStream: [StreamID: FrameReassembler] = [:]
+        var observedMediaStreamLabels: Set<String> = []
+        var firstVideoPacketRejectionReasonByStream: [StreamID: IncomingVideoPacketRejectionReason] = [:]
     }
 
     private let lock = NSLock()
@@ -114,6 +116,32 @@ final class MirageClientFastPathState: @unchecked Sendable {
 
     func isStartupPacketPending(_ streamID: StreamID) -> Bool {
         withLock { $0.startupPacketPending.contains(streamID) }
+    }
+
+    func markObservedMediaStreamLabel(_ label: String) -> Bool {
+        withLock { state in
+            state.observedMediaStreamLabels.insert(label).inserted
+        }
+    }
+
+    func markFirstVideoPacketRejectionReason(
+        _ reason: IncomingVideoPacketRejectionReason,
+        for streamID: StreamID
+    ) -> Bool {
+        withLock { state in
+            guard state.firstVideoPacketRejectionReasonByStream[streamID] == nil else {
+                return false
+            }
+            state.firstVideoPacketRejectionReasonByStream[streamID] = reason
+            return true
+        }
+    }
+
+    func clearDiagnostics() {
+        withLock { state in
+            state.observedMediaStreamLabels.removeAll()
+            state.firstVideoPacketRejectionReasonByStream.removeAll()
+        }
     }
 
     func qualityTestContext() -> (accumulator: QualityTestAccumulator?, testID: UUID?) {

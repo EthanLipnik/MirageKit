@@ -66,7 +66,7 @@ extension WindowCaptureEngine {
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = false
+        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
             streamConfig.sourceRect = sourceRect
@@ -119,7 +119,7 @@ extension WindowCaptureEngine {
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = false
+        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
             streamConfig.sourceRect = sourceRect
@@ -178,7 +178,7 @@ extension WindowCaptureEngine {
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = false
+        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = captureQueueDepth
         if let resolvedSourceRect, !resolvedSourceRect.isEmpty {
             streamConfig.sourceRect = resolvedSourceRect
@@ -251,7 +251,7 @@ extension WindowCaptureEngine {
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
-        streamConfig.showsCursor = false
+        streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
         streamConfig.queueDepth = captureQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
             streamConfig.sourceRect = sourceRect
@@ -276,6 +276,43 @@ extension WindowCaptureEngine {
             targetFrameRate: currentFrameRate
         )
         MirageLogger.capture("Frame rate updated to \(fps) fps")
+    }
+
+    func updateShowsCursor(_ showsCursor: Bool) async throws {
+        if captureSessionConfig?.showsCursor == showsCursor { return }
+
+        if let config = captureSessionConfig {
+            captureSessionConfig = CaptureSessionConfiguration(
+                windowID: config.windowID,
+                applicationPID: config.applicationPID,
+                displayID: config.displayID,
+                window: config.window,
+                application: config.application,
+                display: config.display,
+                outputScale: config.outputScale,
+                resolution: config.resolution,
+                sourceRect: config.sourceRect,
+                showsCursor: showsCursor,
+                audioChannelCount: config.audioChannelCount,
+                excludedWindows: config.excludedWindows
+            )
+        }
+
+        guard isCapturing, let stream else { return }
+
+        let streamConfig = SCStreamConfiguration()
+        applyResolutionSettings(to: streamConfig)
+        streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
+        streamConfig.pixelFormat = pixelFormatType
+        streamConfig.colorSpaceName = captureColorSpaceName
+        streamConfig.showsCursor = showsCursor
+        streamConfig.queueDepth = captureQueueDepth
+        if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
+        }
+
+        try await stream.updateConfiguration(streamConfig)
+        MirageLogger.capture("Capture cursor visibility updated: showsCursor=\(showsCursor)")
     }
 
     func getCurrentDimensions() -> (width: Int, height: Int) {

@@ -92,6 +92,7 @@ package enum ControlMessageType: UInt8, Codable {
     case desktopStreamStarted = 0xA2 // Host → Client: Desktop stream is active
     case desktopStreamStopped = 0xA3 // Host → Client: Desktop stream ended
     case desktopStreamFailed = 0xA6 // Host → Client: Desktop stream start failed
+    case desktopCursorPresentationChange = 0xA7 // Client → Host: Update desktop cursor mode
     case qualityTestRequest = 0xA4 // Client → Host: Run quality test
     case qualityTestResult = 0xA5 // Host → Client: Quality test metadata/result
 

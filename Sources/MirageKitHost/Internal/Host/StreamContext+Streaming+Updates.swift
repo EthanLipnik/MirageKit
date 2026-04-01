@@ -139,6 +139,13 @@ extension StreamContext {
         MirageLogger.stream("Stream \(streamID) frame rate updated to \(clamped) fps (capture \(captureFrameRate) fps)")
     }
 
+    func updateCaptureShowsCursor(_ showsCursor: Bool) async throws {
+        guard captureShowsCursor != showsCursor else { return }
+        captureShowsCursor = showsCursor
+        try await captureEngine?.updateShowsCursor(showsCursor)
+        MirageLogger.stream("Stream \(streamID) capture cursor visibility updated: showsCursor=\(showsCursor)")
+    }
+
     @discardableResult
     func applyGameModeStage1FrameRateOverride() async -> Bool {
         guard currentFrameRate >= 120 || encoderConfig.targetFrameRate >= 120 else { return false }
@@ -738,7 +745,7 @@ extension StreamContext {
         try await restartCaptureEngine.startDisplayCapture(
             display: displayWrapper.display,
             resolution: outputSize,
-            showsCursor: false,
+            showsCursor: captureShowsCursor,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },

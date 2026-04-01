@@ -12,6 +12,10 @@ public extension LoomPeerAdvertisement {
         MiragePeerAdvertisementMetadata.maxStreams(from: self)
     }
 
+    var mirageAcceptingConnections: Bool {
+        MiragePeerAdvertisementMetadata.acceptingConnections(in: self)
+    }
+
     var mirageSupportsHEVC: Bool {
         MiragePeerAdvertisementMetadata.supportsHEVC(in: self)
     }

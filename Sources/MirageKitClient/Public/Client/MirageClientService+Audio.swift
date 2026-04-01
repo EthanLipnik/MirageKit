@@ -33,17 +33,14 @@ extension MirageClientService {
     func startAudioStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
         audioStreamReceiveTask?.cancel()
         audioRegisteredStreamID = streamID
-        let service = self
-        audioStreamReceiveTask = Task { [weak service] in
-            guard let service else { return }
+        let serviceBox = WeakSendableBox(self)
+        audioStreamReceiveTask = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
             for await data in stream.incomingBytes {
                 guard !Task.isCancelled else { break }
-                service.handleIncomingAudioData(data, expectedStreamID: streamID)
+                serviceBox.value?.handleIncomingAudioData(data, expectedStreamID: streamID)
             }
-            await MainActor.run {
-                service.activeMediaStreams.removeValue(forKey: "audio/\(streamID)")
-                MirageLogger.client("Audio stream receive loop ended for stream \(streamID)")
-            }
+            guard let service = serviceBox.value else { return }
+            await service.finishAudioStreamReceiveLoop(streamID: streamID)
         }
     }
 
@@ -110,6 +107,14 @@ extension MirageClientService {
             isEncrypted: flags.contains(.encryptedPayload),
             checksum: checksum
         )
+    }
+
+    private func finishAudioStreamReceiveLoop(streamID: StreamID) {
+        if audioRegisteredStreamID == streamID {
+            audioStreamReceiveTask = nil
+        }
+        activeMediaStreams.removeValue(forKey: "audio/\(streamID)")
+        MirageLogger.client("Audio stream receive loop ended for stream \(streamID)")
     }
 
     func handleAudioStreamStarted(_ message: ControlMessage) {

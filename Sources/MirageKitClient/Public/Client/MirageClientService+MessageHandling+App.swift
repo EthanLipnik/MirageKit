@@ -317,8 +317,7 @@ extension MirageClientService {
             if streamingAppBundleID == terminated.bundleIdentifier {
                 streamingAppBundleID = nil
                 appWindowInventory = nil
-                pendingAppAdaptiveFallbackBitrate = nil
-                pendingAppAdaptiveFallbackColorDepth = nil
+                pendingAppRequestedColorDepth = nil
             }
             onAppTerminated?(terminated)
         } catch {

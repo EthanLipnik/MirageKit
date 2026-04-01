@@ -405,7 +405,7 @@ extension MirageClientService {
             registeredStreamIDs.remove(streamID)
             clearStreamRefreshRateOverride(streamID: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
-            clearAdaptiveFallbackState(for: streamID)
+            clearDecoderColorDepthState(for: streamID)
             mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
             clearStartupAttempt(for: streamID)
             appDimensionTokenByStream.removeValue(forKey: streamID)
@@ -494,15 +494,6 @@ extension MirageClientService {
                 generationAbortDrops: metrics.generationAbortDrops,
                 nonKeyframeHoldDrops: metrics.nonKeyframeHoldDrops
             )
-            updateAdaptiveFallbackPressure(
-                streamID: metrics.streamID,
-                targetFrameRate: metrics.targetFrameRate
-            )
-            updateAdaptiveFallbackRecovery(
-                streamID: metrics.streamID,
-                targetFrameRate: metrics.targetFrameRate
-            )
-
             if let requested = refreshRateOverridesByStream[metrics.streamID] {
                 guard metrics.streamID == desktopStreamID else {
                     refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)

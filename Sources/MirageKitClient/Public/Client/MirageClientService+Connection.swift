@@ -345,26 +345,16 @@ extension MirageClientService {
         streamStartupFirstPacketReceived.removeAll()
         controlPathSnapshot = nil
         activeJitterHoldMs = 0
-        adaptiveFallbackBitrateByStream.removeAll()
-        adaptiveFallbackBaselineBitrateByStream.removeAll()
-        adaptiveFallbackColorDepthByStream.removeAll()
-        adaptiveFallbackBaselineColorDepthByStream.removeAll()
-        adaptiveFallbackCollapseTimestampsByStream.removeAll()
-        adaptiveFallbackPressureCountByStream.removeAll()
-        adaptiveFallbackLastPressureTriggerTimeByStream.removeAll()
-        adaptiveFallbackStableSinceByStream.removeAll()
-        adaptiveFallbackLastRestoreTimeByStream.removeAll()
-        adaptiveFallbackLastCollapseTimeByStream.removeAll()
-        adaptiveFallbackLastAppliedTime.removeAll()
-        pendingAdaptiveFallbackBitrateByWindowID.removeAll()
-        pendingAdaptiveFallbackColorDepthByWindowID.removeAll()
-        pendingDesktopAdaptiveFallbackBitrate = nil
-        pendingDesktopAdaptiveFallbackColorDepth = nil
-        pendingAppAdaptiveFallbackBitrate = nil
-        pendingAppAdaptiveFallbackColorDepth = nil
+        decoderCompatibilityCurrentColorDepthByStream.removeAll()
+        decoderCompatibilityBaselineColorDepthByStream.removeAll()
+        decoderCompatibilityFallbackLastAppliedTime.removeAll()
+        pendingRequestedColorDepthByWindowID.removeAll()
+        pendingDesktopRequestedColorDepth = nil
+        pendingAppRequestedColorDepth = nil
         desktopDimensionTokenByStream.removeAll()
         appStreamStartAcknowledgementByStreamID.removeAll()
         fastPathState.clearAllStartupPacketPending()
+        fastPathState.clearDiagnostics()
         for task in startupRegistrationRetryTasks.values {
             task.cancel()
         }
@@ -411,6 +401,7 @@ extension MirageClientService {
         desktopStreamID = nil
         desktopStreamResolution = nil
         desktopStreamMode = nil
+        desktopCursorPresentation = nil
         connectionState = state
         refreshSharedClipboardBridgeState()
 
@@ -941,23 +932,26 @@ extension MirageClientService {
 
     private func installControlSessionObservers(_ session: LoomAuthenticatedSession) {
         controlSessionStateObserverTask?.cancel()
-        controlSessionStateObserverTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        let serviceBox = WeakSendableBox(self)
+        controlSessionStateObserverTask = Task.detached(priority: .userInitiated) { [session, serviceBox] in
             let observer = await session.makeStateObserver()
             for await state in observer {
-                guard self.loomSession?.id == session.id else { break }
+                guard !Task.isCancelled else { break }
+                guard let service = serviceBox.value else { break }
+                guard await service.isCurrentLoomSession(sessionID: session.id) else { break }
+                await service.logObservedControlSessionState(state, sessionID: session.id)
                 switch state {
                 case let .failed(reason):
-                    await self.handleDisconnect(
+                    await service.handleDisconnect(
                         reason: reason,
                         state: .error(reason),
-                        notifyDelegate: self.hasCompletedBootstrap
+                        notifyDelegate: service.hasCompletedBootstrap
                     )
                 case .cancelled:
-                    await self.handleDisconnect(
+                    await service.handleDisconnect(
                         reason: "Connection cancelled",
                         state: .disconnected,
-                        notifyDelegate: self.hasCompletedBootstrap
+                        notifyDelegate: service.hasCompletedBootstrap
                     )
                 default:
                     continue
@@ -967,16 +961,33 @@ extension MirageClientService {
         }
 
         controlSessionPathObserverTask?.cancel()
-        controlSessionPathObserverTask = Task { @MainActor [weak self] in
-            guard let self else { return }
+        controlSessionPathObserverTask = Task.detached(priority: .userInitiated) { [session, serviceBox] in
             let observer = await session.makePathObserver()
             for await pathSnapshot in observer {
-                guard self.loomSession?.id == session.id else { break }
+                guard !Task.isCancelled else { break }
+                guard let service = serviceBox.value else { break }
+                guard await service.isCurrentLoomSession(sessionID: session.id) else { break }
                 let snapshot = MirageNetworkPathClassifier.classify(pathSnapshot)
-                MirageLogger.client("Control path updated: \(snapshot.signature)")
-                self.handleControlPathUpdate(snapshot)
+                await service.logObservedControlPathUpdate(snapshot, sessionID: session.id)
+                await service.handleControlPathUpdate(snapshot)
             }
         }
+    }
+
+    private func logObservedControlSessionState(
+        _ state: LoomAuthenticatedSessionState,
+        sessionID: UUID
+    ) {
+        MirageLogger.client("Control session state observed: session=\(sessionID.uuidString) state=\(state)")
+    }
+
+    private func logObservedControlPathUpdate(
+        _ snapshot: MirageNetworkPathSnapshot,
+        sessionID: UUID
+    ) {
+        MirageLogger.client(
+            "Control path updated: session=\(sessionID.uuidString) \(snapshot.signature)"
+        )
     }
 
     private func requiresDisconnectCleanupAfterFailedConnect() -> Bool {

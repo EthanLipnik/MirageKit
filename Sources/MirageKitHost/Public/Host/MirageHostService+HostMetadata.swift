@@ -54,6 +54,10 @@ extension MirageHostService {
 
     func sendPendingHostHardwareIconRequestIfPossible() {
         guard let pending = pendingHostHardwareIconRequest else { return }
+        guard !isInteractiveWorkloadActiveForAppListRequests() else {
+            MirageLogger.host("Deferring host hardware icon response while interactive workload is active")
+            return
+        }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
             pendingHostHardwareIconRequest = nil
             return
@@ -140,8 +144,12 @@ extension MirageHostService {
         preferredMaxPixelWidth: Int,
         preferredMaxPixelHeight: Int
     ) {
-        let clampedWidth = min(max(preferredMaxPixelWidth, 640), 1_280)
-        let clampedHeight = min(max(preferredMaxPixelHeight, 360), 720)
+        let clampedSize = MirageHostWallpaperResolver.clampedRequestedOutputSize(
+            preferredMaxPixelWidth: preferredMaxPixelWidth,
+            preferredMaxPixelHeight: preferredMaxPixelHeight
+        )
+        let clampedWidth = Int(clampedSize.width)
+        let clampedHeight = Int(clampedSize.height)
         if var pending = pendingHostWallpaperRequest,
            pending.clientID == clientID {
             pending.preferredMaxPixelWidth = max(pending.preferredMaxPixelWidth, clampedWidth)
@@ -159,6 +167,10 @@ extension MirageHostService {
 
     func sendPendingHostWallpaperRequestIfPossible() {
         guard let pending = pendingHostWallpaperRequest else { return }
+        guard !isInteractiveWorkloadActiveForAppListRequests() else {
+            MirageLogger.host("Deferring host wallpaper response while interactive workload is active")
+            return
+        }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
             pendingHostWallpaperRequest = nil
             return

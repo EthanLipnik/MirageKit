@@ -894,6 +894,48 @@ struct MirageKitTests {
         #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
     }
 
+    @Test("Start desktop request cursor presentation serialization")
+    func startDesktopCursorPresentationSerialization() throws {
+        let request = StartDesktopStreamMessage(
+            scaleFactor: 2.0,
+            displayWidth: 3008,
+            displayHeight: 1692,
+            mode: .secondary,
+            cursorPresentation: MirageDesktopCursorPresentation(
+                source: .host,
+                lockClientCursorWhenUsingHostCursor: false
+            ),
+            audioConfiguration: .default,
+            dataPort: 63220,
+            maxRefreshRate: 120
+        )
+
+        let envelope = try ControlMessage(type: .startDesktopStream, content: request)
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decoded.cursorPresentation?.source == .host)
+        #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingHostCursor == false)
+    }
+
+    @Test("Desktop cursor presentation change message serialization")
+    func desktopCursorPresentationChangeSerialization() throws {
+        let request = DesktopCursorPresentationChangeMessage(
+            streamID: 42,
+            cursorPresentation: MirageDesktopCursorPresentation(
+                source: .host,
+                lockClientCursorWhenUsingHostCursor: true
+            )
+        )
+
+        let envelope = try ControlMessage(type: .desktopCursorPresentationChange, content: request)
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        let decoded = try decodedEnvelope.decode(DesktopCursorPresentationChangeMessage.self)
+        #expect(decoded.streamID == 42)
+        #expect(decoded.cursorPresentation.source == .host)
+        #expect(decoded.cursorPresentation.lockClientCursorWhenUsingHostCursor)
+    }
+
     @Test("Start stream request omits performance mode when unset")
     func startStreamPerformanceModeDefaultSerialization() throws {
         let request = StartStreamMessage(
@@ -1046,10 +1088,37 @@ struct MirageKitTests {
         #expect(decoded.identityKeyID == "test-key-id")
         #expect(decoded.deviceType == .mac)
         #expect(MiragePeerAdvertisementMetadata.maxStreams(from: decoded) == 4)
+        #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportsHEVC(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportsP3ColorSpace(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportedColorDepths(in: decoded) == [.standard, .pro])
         #expect(MiragePeerAdvertisementMetadata.maxFrameRate(from: decoded) == 120)
+        #expect(decoded.mirageAcceptingConnections == true)
+    }
+
+    @Test("Peer advertisement busy flag round trips")
+    func peerAdvertisementBusyFlagRoundTrips() {
+        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
+            deviceID: UUID(),
+            identityKeyID: "test-key-id",
+            modelIdentifier: "Mac16,1",
+            iconName: "desktopcomputer",
+            machineFamily: "Mac",
+            acceptingConnections: false,
+            supportedColorDepths: [.standard]
+        )
+
+        let txtRecord = advertisement.toTXTRecord()
+        let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
+        #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == false)
+        #expect(decoded.mirageAcceptingConnections == false)
+    }
+
+    @Test("Peer advertisement busy flag defaults to available")
+    func peerAdvertisementBusyFlagDefaultsToAvailable() {
+        let advertisement = LoomPeerAdvertisement(deviceType: .mac)
+        #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: advertisement) == true)
+        #expect(advertisement.mirageAcceptingConnections == true)
     }
 
     @Test("Stream statistics formatting")

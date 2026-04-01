@@ -29,6 +29,8 @@ package struct StartDesktopStreamMessage: Codable {
     package var colorDepth: MirageStreamColorDepth?
     /// Desktop stream mode (mirrored vs secondary display)
     package var mode: MirageDesktopStreamMode?
+    /// Desktop cursor presentation requested by the client.
+    package var cursorPresentation: MirageDesktopCursorPresentation?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
@@ -75,6 +77,7 @@ package struct StartDesktopStreamMessage: Codable {
         case captureQueueDepth
         case colorDepth
         case mode
+        case cursorPresentation
         case bitrate
         case latencyMode
         case performanceMode
@@ -103,6 +106,7 @@ package struct StartDesktopStreamMessage: Codable {
         captureQueueDepth: Int? = nil,
         colorDepth: MirageStreamColorDepth? = nil,
         mode: MirageDesktopStreamMode? = nil,
+        cursorPresentation: MirageDesktopCursorPresentation? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         performanceMode: MirageStreamPerformanceMode? = nil,
@@ -124,6 +128,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.captureQueueDepth = captureQueueDepth
         self.colorDepth = colorDepth
         self.mode = mode
+        self.cursorPresentation = cursorPresentation
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode
@@ -137,6 +142,20 @@ package struct StartDesktopStreamMessage: Codable {
         self.useHostResolution = useHostResolution
         self.maxRefreshRate = maxRefreshRate
         self.mediaMaxPacketSize = mediaMaxPacketSize
+    }
+}
+
+/// Runtime desktop cursor presentation update (Client → Host).
+package struct DesktopCursorPresentationChangeMessage: Codable {
+    package let streamID: StreamID
+    package let cursorPresentation: MirageDesktopCursorPresentation
+
+    package init(
+        streamID: StreamID,
+        cursorPresentation: MirageDesktopCursorPresentation
+    ) {
+        self.streamID = streamID
+        self.cursorPresentation = cursorPresentation
     }
 }
 

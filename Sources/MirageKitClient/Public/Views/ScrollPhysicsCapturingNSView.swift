@@ -48,6 +48,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
+    /// Whether Mirage should render its synthetic locked-cursor overlay.
+    var syntheticCursorEnabled: Bool = true {
+        didSet {
+            guard syntheticCursorEnabled != oldValue else { return }
+            updateLockedCursorViewVisibility()
+            updateLockedCursorViewPosition()
+        }
+    }
+
     /// Whether event handling is enabled for this capture view.
     var inputEnabled: Bool = true {
         didSet {
@@ -240,7 +249,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func updateLockedCursorViewVisibility() {
-        let shouldShow = cursorLockEnabled && !cursorHiddenForTyping
+        let shouldShow = cursorLockEnabled && syntheticCursorEnabled && !cursorHiddenForTyping
         lockedCursorView.isHidden = !shouldShow
     }
 

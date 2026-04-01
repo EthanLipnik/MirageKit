@@ -33,7 +33,7 @@ extension FrameReassembler {
         lock.unlock()
     }
 
-    func setFrameLossHandler(_ handler: @escaping @Sendable (StreamID) -> Void) {
+    func setFrameLossHandler(_ handler: @escaping @Sendable (StreamID, FrameLossReason) -> Void) {
         lock.lock()
         onFrameLoss = handler
         lock.unlock()
@@ -52,6 +52,7 @@ extension FrameReassembler {
         var completionHandler: (@Sendable (StreamID, Data, Bool, UInt64, CGRect, @escaping @Sendable () -> Void)
             -> Void)?
         var shouldSignalFrameLoss = false
+        var frameLossReason: FrameLossReason?
 
         let frameNumber = header.frameNumber
         let isKeyframePacket = header.flags.contains(.keyframe)
@@ -255,12 +256,14 @@ extension FrameReassembler {
                 if !drainResult.frames.isEmpty {
                     completedFrames.append(contentsOf: drainResult.frames)
                 }
-                if drainResult.shouldSignalFrameLoss {
+                if let drainLossReason = drainResult.frameLossReason {
                     shouldSignalFrameLoss = true
+                    frameLossReason = frameLossReason ?? drainLossReason
                 }
             }
-            if completionResult.shouldSignalFrameLoss {
+            if let completionLossReason = completionResult.frameLossReason {
                 shouldSignalFrameLoss = true
+                frameLossReason = frameLossReason ?? completionLossReason
             }
             completionHandler = onFrameComplete
         }
@@ -276,10 +279,12 @@ extension FrameReassembler {
         }
         if timeoutResult.timedOutPFrames + timeoutResult.timedOutKeyframes > 0 {
             shouldSignalFrameLoss = true
+            frameLossReason = frameLossReason ?? timeoutResult.frameLossReason
         }
         if timeoutResult.missingExpectedPFrameGapTimedOut, !hasSignaledGapFrameLoss {
             shouldSignalFrameLoss = true
             hasSignaledGapFrameLoss = true
+            frameLossReason = frameLossReason ?? .forwardGapTimeout
         }
         if !awaitingKeyframe,
            shouldPromotePendingKeyframeLocked(now: packetReceivedAt) {
@@ -295,7 +300,9 @@ extension FrameReassembler {
         lock.unlock()
 
         if shouldSignalFrameLoss {
-            if let onFrameLoss { onFrameLoss(streamID) }
+            if let onFrameLoss {
+                onFrameLoss(streamID, frameLossReason ?? .timeout)
+            }
         }
 
         if !completedFrames.isEmpty, let completionHandler {
@@ -322,13 +329,13 @@ extension FrameReassembler {
 
     private struct FrameCompletionResult {
         let frame: CompletedFrame?
-        let shouldSignalFrameLoss: Bool
+        let frameLossReason: FrameLossReason?
         let retainedForInOrderDelivery: Bool
     }
 
     private struct DrainCompletionResult {
         let frames: [CompletedFrame]
-        let shouldSignalFrameLoss: Bool
+        let frameLossReason: FrameLossReason?
     }
 
     private struct TimeoutCleanupResult {
@@ -338,6 +345,16 @@ extension FrameReassembler {
         let missingExpectedPFrameGapTimedOut: Bool
         let shouldEnterAwaitingKeyframe: Bool
 
+        var frameLossReason: FrameLossReason? {
+            if missingExpectedPFrameGapTimedOut {
+                return .forwardGapTimeout
+            }
+            if timedOutPFrames + timedOutKeyframes > 0 {
+                return .timeout
+            }
+            return nil
+        }
+
         var shouldSignalFrameLoss: Bool {
             timedOutPFrames + timedOutKeyframes > 0 || missingExpectedPFrameGapTimedOut
         }
@@ -346,7 +363,6 @@ extension FrameReassembler {
     private func completeFrameLocked(frameNumber: UInt32, frame: PendingFrame) -> FrameCompletionResult {
         // Frame skipping logic: determine if we should deliver this frame
         let shouldDeliver: Bool
-        let shouldSignalFrameLoss = false
         var retainedForInOrderDelivery = false
 
         if frame.isKeyframe {
@@ -366,7 +382,7 @@ extension FrameReassembler {
                 droppedFrameCount += 1
                 return FrameCompletionResult(
                     frame: nil,
-                    shouldSignalFrameLoss: false,
+                    frameLossReason: nil,
                     retainedForInOrderDelivery: false
                 )
             }
@@ -376,9 +392,23 @@ extension FrameReassembler {
             let hasForwardGap = isForwardFrame && isFrameNewer(frameNumber, than: expectedNextFrame)
 
             if hasForwardGap {
+                let gapFrames = frameNumber &- expectedNextFrame
+                if gapFrames >= severeForwardGapFrameThreshold {
+                    shouldDeliver = false
+                    enterKeyframeOnlyModeLocked()
+                    hasSignaledGapFrameLoss = true
+                    MirageLogger.log(
+                        .frameAssembly,
+                        "Severe forward gap detected: expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames); entering keyframe-only mode"
+                    )
+                    return FrameCompletionResult(
+                        frame: nil,
+                        frameLossReason: .severeForwardGap,
+                        retainedForInOrderDelivery: false
+                    )
+                }
                 shouldDeliver = false
                 retainedForInOrderDelivery = true
-                let gapFrames = frameNumber &- expectedNextFrame
                 MirageLogger.log(
                     .frameAssembly,
                     "gap_buffered_for_ordering expected=\(expectedNextFrame) received=\(frameNumber) gapFrames=\(gapFrames)"
@@ -433,14 +463,14 @@ extension FrameReassembler {
                     contentRect: frame.contentRect,
                     releaseBuffer: releaseBuffer
                 ),
-                shouldSignalFrameLoss: shouldSignalFrameLoss,
+                frameLossReason: nil,
                 retainedForInOrderDelivery: false
             )
         } else {
             if retainedForInOrderDelivery {
                 return FrameCompletionResult(
                     frame: nil,
-                    shouldSignalFrameLoss: shouldSignalFrameLoss,
+                    frameLossReason: nil,
                     retainedForInOrderDelivery: true
                 )
             }
@@ -457,7 +487,7 @@ extension FrameReassembler {
             droppedFrameCount += 1
             return FrameCompletionResult(
                 frame: nil,
-                shouldSignalFrameLoss: shouldSignalFrameLoss,
+                frameLossReason: nil,
                 retainedForInOrderDelivery: false
             )
         }
@@ -465,7 +495,7 @@ extension FrameReassembler {
 
     private func drainDeliverableFramesLocked() -> DrainCompletionResult {
         var drainedFrames: [CompletedFrame] = []
-        var shouldSignalFrameLoss = false
+        var frameLossReason: FrameLossReason?
 
         while hasDeliveredKeyframeAnchor {
             let expectedFrameNumber = lastCompletedFrame &+ 1
@@ -478,8 +508,8 @@ extension FrameReassembler {
             if let completedFrame = completionResult.frame {
                 drainedFrames.append(completedFrame)
             }
-            if completionResult.shouldSignalFrameLoss {
-                shouldSignalFrameLoss = true
+            if let completionLossReason = completionResult.frameLossReason {
+                frameLossReason = completionLossReason
             }
             if completionResult.retainedForInOrderDelivery {
                 break
@@ -488,7 +518,7 @@ extension FrameReassembler {
 
         return DrainCompletionResult(
             frames: drainedFrames,
-            shouldSignalFrameLoss: shouldSignalFrameLoss
+            frameLossReason: frameLossReason
         )
     }
 
@@ -630,6 +660,21 @@ extension FrameReassembler {
         )
     }
 
+    private func enterKeyframeOnlyModeLocked() {
+        beginAwaitingKeyframe()
+        let framesToRelease = pendingFrames.filter { entry in
+            let frame = entry.value
+            if frame.isKeyframe { return isStaleKeyframeLocked(entry.key) }
+            return true
+        }
+        for frame in framesToRelease.values {
+            frame.buffer.release()
+        }
+        pendingFrames = pendingFrames.filter { entry in
+            entry.value.isKeyframe && !isStaleKeyframeLocked(entry.key)
+        }
+    }
+
     private func hasTimedOutBufferedForwardGapLocked(
         now: Date,
         timeout: TimeInterval
@@ -721,18 +766,7 @@ extension FrameReassembler {
 
     func enterKeyframeOnlyMode() {
         lock.lock()
-        beginAwaitingKeyframe()
-        let framesToRelease = pendingFrames.filter { entry in
-            let frame = entry.value
-            if frame.isKeyframe { return isStaleKeyframeLocked(entry.key) }
-            return true
-        }
-        for frame in framesToRelease.values {
-            frame.buffer.release()
-        }
-        pendingFrames = pendingFrames.filter { entry in
-            entry.value.isKeyframe && !isStaleKeyframeLocked(entry.key)
-        }
+        enterKeyframeOnlyModeLocked()
         lock.unlock()
         MirageLogger.log(.frameAssembly, "Entering keyframe-only mode for stream \(streamID)")
     }

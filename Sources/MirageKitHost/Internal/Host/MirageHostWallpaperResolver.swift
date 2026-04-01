@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 3/29/26.
 //
-//  Resolves the host's primary display wallpaper into a high-quality inline payload.
+//  Resolves the host's primary display wallpaper into a compressed transfer payload.
 //
 
 #if os(macOS)
@@ -59,8 +59,13 @@ enum MirageHostWallpaperResolver {
         }
     }
 
-    nonisolated private static let hardMaxPixelWidth = 1_280
-    nonisolated private static let hardMaxPixelHeight = 720
+    nonisolated package static let requestedMaxPixelWidth = 854
+    nonisolated package static let requestedMaxPixelHeight = 480
+    nonisolated package static let minimumRequestPixelWidth = 427
+    nonisolated package static let minimumRequestPixelHeight = 240
+    nonisolated package static let encodedFileExtension = "jpg"
+    nonisolated package static let encodedContentType = "image/jpeg"
+    nonisolated package static let encodedCompressionQuality: CGFloat = 0.5
     nonisolated private static let minEncodedMaxDimension = 360
 
     static func payload(
@@ -168,8 +173,8 @@ enum MirageHostWallpaperResolver {
             if let encoded = encodedData(for: cgImage) {
                 return Payload(
                     imageData: encoded,
-                    fileExtension: "heic",
-                    contentType: "image/heic",
+                    fileExtension: encodedFileExtension,
+                    contentType: encodedContentType,
                     pixelWidth: cgImage.width,
                     pixelHeight: cgImage.height,
                     bytesPerPixelEstimate: 4
@@ -203,12 +208,12 @@ enum MirageHostWallpaperResolver {
     ) -> CGSize {
         let boundedWidth = min(
             max(1, preferredMaxPixelWidth),
-            hardMaxPixelWidth,
+            requestedMaxPixelWidth,
             sourcePixelWidth
         )
         let boundedHeight = min(
             max(1, preferredMaxPixelHeight),
-            hardMaxPixelHeight,
+            requestedMaxPixelHeight,
             sourcePixelHeight
         )
 
@@ -223,6 +228,22 @@ enum MirageHostWallpaperResolver {
         return CGSize(
             width: max(1, floor(sourceWidth * scale)),
             height: max(1, floor(sourceHeight * scale))
+        )
+    }
+
+    nonisolated package static func clampedRequestedOutputSize(
+        preferredMaxPixelWidth: Int,
+        preferredMaxPixelHeight: Int
+    ) -> CGSize {
+        CGSize(
+            width: min(
+                max(preferredMaxPixelWidth, minimumRequestPixelWidth),
+                requestedMaxPixelWidth
+            ),
+            height: min(
+                max(preferredMaxPixelHeight, minimumRequestPixelHeight),
+                requestedMaxPixelHeight
+            )
         )
     }
 
@@ -288,24 +309,24 @@ enum MirageHostWallpaperResolver {
 
     private static func encodedData(for image: CGImage) -> Data? {
         let payloadLimit = LoomMessageLimits.maxInlineAssetPayloadBytes
-        let heicCompatibleImage = opaqueEncodedImage(from: image) ?? image
+        let encodedImage = opaqueEncodedImage(from: image) ?? image
 
-        if let heicData = encodeHEIC(heicCompatibleImage, quality: 0.7),
-           heicData.count <= payloadLimit {
-            return heicData
+        if let jpegData = encodeJPEG(encodedImage, quality: encodedCompressionQuality),
+           jpegData.count <= payloadLimit {
+            return jpegData
         }
 
         return nil
     }
 
-    private static func encodeHEIC(
+    private static func encodeJPEG(
         _ image: CGImage,
         quality: CGFloat
     ) -> Data? {
         let mutableData = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(
             mutableData,
-            UTType.heic.identifier as CFString,
+            UTType.jpeg.identifier as CFString,
             1,
             nil
         ) else {

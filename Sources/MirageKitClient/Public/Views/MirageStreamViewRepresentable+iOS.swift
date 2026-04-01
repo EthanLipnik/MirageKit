@@ -69,6 +69,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
+    /// Whether Mirage should render its synthetic local cursor presentation.
+    public var syntheticCursorEnabled: Bool
+
     /// Active vs passive presentation tier.
     public var presentationTier: StreamPresentationTier
 
@@ -95,6 +98,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
         cursorLockEnabled: Bool = false,
+        syntheticCursorEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil
     ) {
@@ -117,6 +121,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
         self.cursorLockEnabled = cursorLockEnabled
+        self.syntheticCursorEnabled = syntheticCursorEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
     }
@@ -159,6 +164,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
         )
@@ -189,6 +195,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
         )
@@ -235,7 +242,6 @@ public final class MirageStreamViewController: UIViewController {
             setNeedsUpdateOfPrefersPointerLocked()
         }
     }
-
     private var pointerLockObserver: NSObjectProtocol?
     private var lastPointerLockActive: Bool?
 
@@ -256,6 +262,8 @@ public final class MirageStreamViewController: UIViewController {
     override public func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopPointerLockObserver()
+        lastPointerLockActive = nil
+        captureView.pointerLockActive = false
     }
 
     func configureCallbacks(
@@ -291,6 +299,7 @@ public final class MirageStreamViewController: UIViewController {
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
+        syntheticCursorEnabled: Bool,
         presentationTier: StreamPresentationTier,
         maxDrawableSize: CGSize?
     ) {
@@ -307,6 +316,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
         captureView.cursorLockEnabled = cursorLockEnabled
+        captureView.syntheticCursorEnabled = syntheticCursorEnabled
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
 
@@ -341,12 +351,15 @@ public final class MirageStreamViewController: UIViewController {
     }
 
     private func updatePointerLockState() {
-        let isLocked = view.window?.windowScene?.pointerLockState?.isLocked ?? false
+        let isLocked = pointerLockRequested &&
+            (view.window?.windowScene?.pointerLockState?.isLocked ?? false)
         captureView.pointerLockActive = isLocked
         if lastPointerLockActive != isLocked {
             lastPointerLockActive = isLocked
             if pointerLockRequested, !isLocked {
                 MirageLogger.client("Pointer lock not active for scene.")
+            } else if isLocked {
+                MirageLogger.client("Pointer lock active for scene.")
             }
         }
     }

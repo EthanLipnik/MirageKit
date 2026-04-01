@@ -19,8 +19,7 @@ struct DesktopStreamStartFailureDispositionTests {
         service.connectionState = .connected(host: "Host")
         service.desktopStreamMode = .mirrored
         service.desktopStreamRequestStartTime = 42
-        service.pendingDesktopAdaptiveFallbackBitrate = 12_000_000
-        service.pendingDesktopAdaptiveFallbackColorDepth = .pro
+        service.pendingDesktopRequestedColorDepth = .pro
 
         let error = ErrorMessage(
             code: .virtualDisplayStartFailed,
@@ -32,8 +31,7 @@ struct DesktopStreamStartFailureDispositionTests {
         #expect(service.connectionState == .connected(host: "Host"))
         #expect(service.desktopStreamMode == nil)
         #expect(service.desktopStreamRequestStartTime == 0)
-        #expect(service.pendingDesktopAdaptiveFallbackBitrate == nil)
-        #expect(service.pendingDesktopAdaptiveFallbackColorDepth == nil)
+        #expect(service.pendingDesktopRequestedColorDepth == nil)
     }
 
     @Test("Unrelated control errors keep active desktop state intact")

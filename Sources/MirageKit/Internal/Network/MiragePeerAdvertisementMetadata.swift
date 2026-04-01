@@ -10,6 +10,7 @@ import Loom
 
 package enum MiragePeerAdvertisementMetadata {
     private static let maxStreamsKey = "mirage.max-streams"
+    private static let acceptingConnectionsKey = "mirage.accepting-connections"
     private static let supportsHEVCKey = "mirage.supports-hevc"
     private static let supportsP3Key = "mirage.supports-p3"
     private static let supportedColorDepthsKey = "mirage.color-depths"
@@ -21,6 +22,7 @@ package enum MiragePeerAdvertisementMetadata {
         modelIdentifier: String?,
         iconName: String?,
         machineFamily: String?,
+        acceptingConnections: Bool = true,
         supportedColorDepths: [MirageStreamColorDepth]
     ) -> LoomPeerAdvertisement {
         let normalizedColorDepths = supportedColorDepths.sorted { lhs, rhs in
@@ -36,6 +38,7 @@ package enum MiragePeerAdvertisementMetadata {
             machineFamily: machineFamily,
             metadata: [
                 maxStreamsKey: "4",
+                acceptingConnectionsKey: acceptingConnections ? "1" : "0",
                 supportsHEVCKey: "1",
                 supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
                 supportedColorDepthsKey: normalizedColorDepths.map(\.rawValue).joined(separator: ","),
@@ -61,6 +64,10 @@ package enum MiragePeerAdvertisementMetadata {
 
     package static func maxStreams(from advertisement: LoomPeerAdvertisement) -> Int {
         intValue(maxStreamsKey, from: advertisement, defaultValue: 4)
+    }
+
+    package static func acceptingConnections(in advertisement: LoomPeerAdvertisement) -> Bool {
+        boolValue(acceptingConnectionsKey, in: advertisement, defaultValue: true)
     }
 
     package static func supportsHEVC(in advertisement: LoomPeerAdvertisement) -> Bool {
@@ -93,6 +100,24 @@ package enum MiragePeerAdvertisementMetadata {
 
     package static func maxFrameRate(from advertisement: LoomPeerAdvertisement) -> Int {
         intValue(maxFrameRateKey, from: advertisement, defaultValue: 120)
+    }
+
+    package static func updatingAcceptingConnections(
+        _ acceptingConnections: Bool,
+        in advertisement: LoomPeerAdvertisement
+    ) -> LoomPeerAdvertisement {
+        var metadata = advertisement.metadata
+        metadata[acceptingConnectionsKey] = acceptingConnections ? "1" : "0"
+        return LoomPeerAdvertisement(
+            protocolVersion: advertisement.protocolVersion,
+            deviceID: advertisement.deviceID,
+            identityKeyID: advertisement.identityKeyID,
+            deviceType: advertisement.deviceType,
+            modelIdentifier: advertisement.modelIdentifier,
+            iconName: advertisement.iconName,
+            machineFamily: advertisement.machineFamily,
+            metadata: metadata
+        )
     }
 
     private static func intValue(

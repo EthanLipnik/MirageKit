@@ -47,6 +47,9 @@ extension MirageHostService {
             .streamEncoderSettingsChange: { [weak self] message, _ in
                 await self?.handleStreamEncoderSettingsChangeMessage(message)
             },
+            .desktopCursorPresentationChange: { [weak self] message, _ in
+                await self?.handleDesktopCursorPresentationChangeMessage(message)
+            },
             .stopStream: { [weak self] message, _ in
                 await self?.handleStopStreamMessage(message)
             },
@@ -302,6 +305,20 @@ extension MirageHostService {
             await handleStreamEncoderSettingsChange(request)
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle streamEncoderSettingsChange: ")
+        }
+    }
+
+    private func handleDesktopCursorPresentationChangeMessage(_ message: ControlMessage) async {
+        do {
+            let request = try message.decode(DesktopCursorPresentationChangeMessage.self)
+            MirageLogger.host(
+                "Client requested desktop cursor presentation change for stream \(request.streamID): " +
+                    "source=\(request.cursorPresentation.source.rawValue), " +
+                    "lockClientCursor=\(request.cursorPresentation.lockClientCursorWhenUsingHostCursor)"
+            )
+            await handleDesktopCursorPresentationChange(request)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to handle desktopCursorPresentationChange: ")
         }
     }
 

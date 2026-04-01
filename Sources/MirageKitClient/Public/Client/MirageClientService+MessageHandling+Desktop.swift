@@ -67,10 +67,9 @@ extension MirageClientService {
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
             let desiredRefreshRate = max(existingRefreshRate, screenMaxRefreshRate)
             refreshRateOverridesByStream[streamID] = desiredRefreshRate >= 120 ? 120 : 60
-            configureAdaptiveFallbackBaseline(
+            configureDecoderColorDepthBaseline(
                 for: streamID,
-                bitrate: pendingDesktopAdaptiveFallbackBitrate,
-                colorDepth: pendingDesktopAdaptiveFallbackColorDepth
+                colorDepth: pendingDesktopRequestedColorDepth
             )
             desktopStreamStartTimeoutTask?.cancel()
             desktopStreamStartTimeoutTask = nil
@@ -171,6 +170,7 @@ extension MirageClientService {
             desktopStreamID = nil
             desktopStreamResolution = nil
             desktopStreamMode = nil
+            desktopCursorPresentation = nil
             desktopDimensionTokenByStream.removeValue(forKey: streamID)
             clearStartupAttempt(for: streamID)
             sessionStore.clearPostResizeTransition(for: streamID)
@@ -187,10 +187,9 @@ extension MirageClientService {
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
             cancelRecoveryKeyframeRetry(for: streamID)
-            clearAdaptiveFallbackState(for: streamID)
+            clearDecoderColorDepthState(for: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
-            pendingDesktopAdaptiveFallbackBitrate = nil
-            pendingDesktopAdaptiveFallbackColorDepth = nil
+            pendingDesktopRequestedColorDepth = nil
             activeJitterHoldMs = 0
 
             Task {

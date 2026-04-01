@@ -62,7 +62,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -121,7 +121,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -180,7 +180,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -258,6 +258,53 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("Severe forward gap immediately enters keyframe wait")
+    func severeForwardGapImmediatelyRequestsRecovery() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = LockedCounter()
+        let lossCounter = LockedCounter()
+        let lossReason = LockedValue<FrameReassembler.FrameLossReason?>(nil)
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, reason in
+            lossCounter.increment()
+            lossReason.value = reason
+        }
+
+        let keyframe0 = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x00])
+        reassembler.processPacket(
+            keyframe0,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 0,
+                payload: keyframe0,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let severeGapPFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x28])
+        reassembler.processPacket(
+            severeGapPFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 40,
+                payload: severeGapPFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(lossCounter.value == 1)
+        #expect(lossReason.value == .severeForwardGap)
+        #expect(reassembler.isAwaitingKeyframe() == true)
+    }
+
     @Test("P-frame timeout enters keyframe wait until new anchor arrives")
     func pFrameTimeoutEntersKeyframeWait() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
@@ -268,7 +315,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -353,7 +400,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -429,7 +476,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -529,7 +576,7 @@ struct FrameReassemblerStaleKeyframeTests {
             deliveredCounter.increment()
             release()
         }
-        reassembler.setFrameLossHandler { _ in
+        reassembler.setFrameLossHandler { _, _ in
             lossCounter.increment()
         }
 
@@ -738,6 +785,28 @@ private final class LockedOptionalData: @unchecked Sendable {
         lock.lock()
         storage = data
         lock.unlock()
+    }
+}
+
+private final class LockedValue<Value>: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: Value
+
+    init(_ value: Value) {
+        storage = value
+    }
+
+    var value: Value {
+        get {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+        set {
+            lock.lock()
+            storage = newValue
+            lock.unlock()
+        }
     }
 }
 #endif

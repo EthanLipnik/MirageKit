@@ -75,6 +75,7 @@ actor StreamContext {
     var virtualDisplayVisiblePixelResolution: CGSize = .zero
     var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true
+    var captureShowsCursor: Bool = false
 
     var encoder: VideoEncoder?
     var isRunning = false
@@ -426,7 +427,8 @@ actor StreamContext {
         performanceMode: MirageStreamPerformanceMode = .standard,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
-        encoderMaxHeight: Int? = nil
+        encoderMaxHeight: Int? = nil,
+        captureShowsCursor: Bool = false
     ) {
         var resolvedEncoderConfig = encoderConfig
         var resolvedLatencyMode = latencyMode
@@ -434,10 +436,18 @@ actor StreamContext {
         var resolvedLowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
         var resolvedCapturePressureProfile = capturePressureProfile
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
+        let usesAppOwnedBitrateAdaptation = bitrateAdaptationCeiling != nil
+        let resolvedTemporaryDegradationMode: MirageTemporaryDegradationMode =
+            if usesAppOwnedBitrateAdaptation, temporaryDegradationMode != .off {
+                .prioritizeFramerate
+            } else {
+                temporaryDegradationMode
+            }
         let initialTemporaryBitrate = Self.initialTemporaryDegradationBitrate(
-            mode: temporaryDegradationMode,
+            mode: resolvedTemporaryDegradationMode,
             requestedBitrate: requestedTargetBitrate,
-            floor: Self.temporaryDegradationBitrateFloorBpsDefault
+            floor: Self.temporaryDegradationBitrateFloorBpsDefault,
+            appOwnedBitrateAdaptation: usesAppOwnedBitrateAdaptation
         )
         if performanceMode == .game {
             resolvedLatencyMode = .lowestLatency
@@ -468,6 +478,7 @@ actor StreamContext {
         let clampedScale = StreamContext.clampStreamScale(streamScale)
         self.streamScale = clampedScale
         requestedStreamScale = clampedScale
+        self.captureShowsCursor = captureShowsCursor
         baseFrameFlags = resolvedEncoderConfig.codec == .proRes4444
             ? additionalFrameFlags.union(.proResCodec)
             : additionalFrameFlags
@@ -480,7 +491,7 @@ actor StreamContext {
         self.runtimeQualityAdjustmentEnabled = resolvedRuntimeQualityAdjustmentEnabled
         self.lowLatencyHighResolutionCompressionBoostEnabled =
             resolvedLowLatencyHighResolutionCompressionBoostEnabled
-        self.temporaryDegradationMode = temporaryDegradationMode
+        self.temporaryDegradationMode = resolvedTemporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
@@ -554,7 +565,8 @@ actor StreamContext {
         startupBitrate = initialTemporaryBitrate
         temporaryDegradationCurrentBitrate = resolvedEncoderConfig.bitrate
         temporaryDegradationCurrentColorDepth = resolvedEncoderConfig.colorDepth
-        if let requestedTargetBitrate,
+        if !usesAppOwnedBitrateAdaptation,
+           let requestedTargetBitrate,
            let currentBitrate = resolvedEncoderConfig.bitrate,
            currentBitrate < requestedTargetBitrate {
             temporaryDegradationBelowTargetSince = gameModeStreamStartTime
@@ -597,9 +609,11 @@ actor StreamContext {
     static func initialTemporaryDegradationBitrate(
         mode: MirageTemporaryDegradationMode,
         requestedBitrate: Int?,
-        floor: Int
+        floor: Int,
+        appOwnedBitrateAdaptation: Bool
     ) -> Int? {
         guard let requestedBitrate, requestedBitrate > 0 else { return nil }
+        if appOwnedBitrateAdaptation { return requestedBitrate }
         let scale: Double = switch mode {
         case .off:
             1.0

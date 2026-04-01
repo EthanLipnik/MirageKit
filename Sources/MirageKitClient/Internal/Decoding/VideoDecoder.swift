@@ -375,6 +375,22 @@ final class DecodePerformanceTracker: @unchecked Sendable {
 /// Reassembles video frames from network packets.
 /// Uses lock-based synchronization to avoid per-packet Task overhead.
 final class FrameReassembler: @unchecked Sendable {
+    enum FrameLossReason: String, Sendable, Equatable {
+        case timeout
+        case forwardGapTimeout
+        case severeForwardGap
+
+        var requestsImmediateActiveRecovery: Bool {
+            switch self {
+            case .timeout:
+                false
+            case .forwardGapTimeout,
+                 .severeForwardGap:
+                true
+            }
+        }
+    }
+
     struct Metrics: Sendable {
         let framesDelivered: UInt64
         let droppedFrames: UInt64
@@ -400,6 +416,7 @@ final class FrameReassembler: @unchecked Sendable {
     let startupKeyframeTimeout: TimeInterval = 5.0
     let pendingKeyframePromotionDelay: TimeInterval = 0.15
     let pendingKeyframePromotionProgressThreshold: Double = 0.25
+    let severeForwardGapFrameThreshold: UInt32 = 24
     var startupKeyframeTimeoutOverrideEnabled = false
 
     /// Expected dimension token - frames with mismatched tokens are silently discarded.
@@ -428,8 +445,8 @@ final class FrameReassembler: @unchecked Sendable {
     let keyframeFECBlockSize: Int = 8
     let pFrameFECBlockSize: Int = 16
 
-    /// Callback for loss events (frame timeouts).
-    var onFrameLoss: (@Sendable (StreamID) -> Void)?
+    /// Callback for loss events (frame timeouts / pathological forward gaps).
+    var onFrameLoss: (@Sendable (StreamID, FrameLossReason) -> Void)?
 
     /// Prevents repeated frame-loss signals for the same forward gap.
     /// Set when a gap timeout fires; reset when `lastCompletedFrame` advances or on `reset()`.

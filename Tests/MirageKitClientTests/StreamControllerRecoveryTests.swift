@@ -748,6 +748,28 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Gap-related active-stream frame loss requests immediate keyframe")
+    func gapRelatedFrameLossAfterFirstDecodeRequestsImmediateKeyframe() async throws {
+        let keyframeCounter = LockedCounter()
+        let controller = StreamController(streamID: 149, maxPayloadSize: 1200)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFramePresented()
+        await controller.handleFrameLossSignal(reason: .severeForwardGap)
+        try await waitUntil("gap-related keyframe request") {
+            keyframeCounter.value == 1
+        }
+        #expect(keyframeCounter.value == 1)
+
+        await controller.stop()
+    }
+
     @Test("Frame-loss after first decode while keyframe-starved defers immediate keyframe request")
     func frameLossAfterFirstDecodeWithStarvationDefersImmediateKeyframeRequest() async throws {
         let keyframeCounter = LockedCounter()

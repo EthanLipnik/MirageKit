@@ -24,10 +24,14 @@ struct HostSingleClientTests {
 
         #expect(host.reserveSingleClientSlot(for: sessionIDA))
         #expect(host.singleClientSessionID == sessionIDA)
+        #expect(host.allowsNewClientConnections == false)
+        #expect(host.currentPeerAdvertisement.mirageAcceptingConnections == false)
         #expect(!host.reserveSingleClientSlot(for: sessionIDB))
 
         host.releaseSingleClientSlot(for: sessionIDA)
         #expect(host.singleClientSessionID == nil)
+        #expect(host.allowsNewClientConnections == true)
+        #expect(host.currentPeerAdvertisement.mirageAcceptingConnections == true)
         #expect(host.reserveSingleClientSlot(for: sessionIDB))
     }
 

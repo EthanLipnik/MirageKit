@@ -484,6 +484,26 @@ extension MirageHostService {
         }
     }
 
+    func handleDesktopCursorPresentationChange(_ request: DesktopCursorPresentationChangeMessage) async {
+        guard request.streamID == desktopStreamID,
+              let context = desktopStreamContext else {
+            MirageLogger.debug(.host, "Ignoring desktop cursor presentation update for inactive stream: \(request.streamID)")
+            return
+        }
+
+        desktopCursorPresentation = request.cursorPresentation
+
+        do {
+            try await context.updateCaptureShowsCursor(request.cursorPresentation.capturesHostCursor)
+            MirageLogger.host(
+                "Desktop cursor presentation updated: source=\(request.cursorPresentation.source.rawValue), " +
+                    "lockWhenHost=\(request.cursorPresentation.lockClientCursorWhenUsingHostCursor)"
+            )
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to update desktop cursor presentation: ")
+        }
+    }
+
     func refreshWindowVirtualDisplayState(
         streamID: StreamID,
         context: StreamContext,

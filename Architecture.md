@@ -70,6 +70,7 @@ Core wire definitions live under `Internal/Protocol`:
 - `ControlMessage` is the framed envelope used on the control plane.
 - `FrameHeader`, `AudioPacketHeader`, and `QualityTestPacketHeader` define the media-plane packet formats.
 - Desktop stream startup uses explicit `desktopStreamStarted`, `desktopStreamFailed`, and `desktopStreamStopped` control messages so startup rejection is distinguishable from later transport loss.
+- Desktop cursor presentation is negotiated per desktop stream with `StartDesktopStreamMessage.cursorPresentation` and updated in place at runtime with `desktopCursorPresentationChange`.
 
 The shared target also owns:
 
@@ -120,7 +121,7 @@ Instrumentation is intentionally cross-target so handshake, approval, capture, r
 Its responsibilities include:
 
 - advertising host availability and accepting control connections
-- tracking connected clients and enforcing the single-client policy
+- tracking connected clients, surfacing availability through discovery metadata, and enforcing the single-client policy
 - enumerating windows, apps, desktops, and login-display state
 - starting and stopping stream sessions
 - managing capture, encode, and packet send pipelines
@@ -146,6 +147,15 @@ Gross Retina activation mismatches, such as a requested ~`3008x1688` logical mod
 Desktop virtual-display startup is session-owned rather than manager-owned. `DesktopVirtualDisplayStartupSession` plans preferred, descriptor-fallback, and conservative attempts up front, classifies failures by activation vs readiness/Space binding, and decides which rung is eligible next. `SharedVirtualDisplayManager` still owns the OS object lifecycle, but the desktop path now asks it to execute one explicit creation attempt at a time instead of letting the manager silently walk a fallback ladder.
 
 The host keeps stream-specific policy local to the host runtime. That includes frame rate, bitrate, performance mode, window/app routing, virtual display ownership, and session-state behavior.
+
+Desktop cursor presentation is also session-owned host policy for desktop streams. The client chooses between:
+
+- `Mirage Cursor`
+  the host keeps `ScreenCaptureKit` cursor capture disabled and the client renders its local Mirage cursor presentation
+- `Real Mac Cursor`
+  the host sets `showsCursor = true` on desktop display capture and keeps that value sticky across resize, refresh-rate, display-switch, and encoder reconfiguration updates
+
+Runtime cursor-presentation overrides do not restart the desktop stream. The host updates the active desktop stream context's `captureShowsCursor` state and applies the new `ScreenCaptureKit` configuration in place.
 
 App-stream visible slots are lifecycle-bound to the app session rather than permanently bound to the first discovered host window ID. During initial startup, the host keeps trying to fill each visible slot until the startup deadline expires, re-evaluating the app's current eligible primary windows after launcher, document-picker, or first-window churn. After startup, the host preserves the current streamed primary window until that window closes or otherwise fails out of the slot lifecycle, at which point the existing slot-replacement path can rebind the same stream identity to another eligible primary window from the same app.
 
@@ -181,7 +191,7 @@ QUIC connections require ALPN negotiation. Both host and client set `quicALPN` o
 
 Peer-to-peer (AWDL) transport is available on all client platforms (macOS, iOS, visionOS) and gated by the Mirage Pro subscription. When enabled, `includePeerToPeer = true` is set on `NWParameters` so the system can use AWDL/Wi-Fi Direct when a conventional infrastructure path is unavailable.
 
-Remote signaling remains a direct-QUIC reachability system. Mirage does not forward control traffic through the signaling service; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts.
+Remote signaling remains a direct-QUIC reachability system. Mirage does not forward control traffic through the signaling service; instead, the host publishes its reachable QUIC candidate and clients connect to that endpoint directly. Host-side publication now keeps the last successfully published QUIC candidate sticky across transient STUN probe failures or listener startup delays, and only clears that candidate when hosting stops, remote access is disabled, or the process restarts. The same publication also carries whether the host is currently accepting a new client session, matching the Bonjour advertisement metadata so occupied hosts surface as busy before a second client retries the bootstrap path.
 
 When the host accepts a Loom-authenticated control session, the bootstrap response includes whether that client is currently allowed to reconnect remotely. Clients cache that remote capability only after Loom has authenticated the peer identity and Mirage has accepted the bootstrap request.
 
@@ -208,6 +218,15 @@ Client presentation is split from transport:
 
 That split keeps high-frequency media state out of SwiftUI update paths.
 
+Desktop cursor presentation is resolved on the client from a shared `MirageDesktopCursorPresentation` value:
+
+- `source = client`
+  render Mirage's synthetic client cursor and only lock the local cursor for secondary-display desktop streams
+- `source = host`
+  suppress Mirage's synthetic cursor presentation, rely on the captured host cursor in the video stream, and use `lockClientCursorWhenUsingHostCursor` as the client-lock policy
+
+Desktop startup carries that value in `startDesktopStream(...)`, and active desktop sessions can update it without reconnecting. The client render layer keeps cursor lock, local cursor hiding, and synthetic cursor drawing as separate switches so pointer lock can remain active even when the synthetic cursor is disabled.
+
 Stream sizing is also package-owned through a single canonical resolver. `MirageStreamGeometry` is the shared internal contract used by client startup, host startup, and live resize to resolve logical size, backing scale, encoded size, and capped stream scale from the same inputs. That keeps requested, visible, and encoded geometry from diverging across the client and host codepaths.
 
 Media packet sizing is negotiated per quality test and per stream startup. Clients request a preferred maximum packet size based on the current control-path safety profile, the host clamps that request against its current path classification, and the accepted value is echoed back in startup replies so packetization, reassembly, quality tests, and in-stream probes all use the same payload budget. Direct local paths such as AWDL and wired can use `1400`-byte media packets; all other paths stay on the conservative `1200`-byte profile until explicit MTU probing exists.
@@ -227,12 +246,11 @@ Recovery policy is package-owned inside `MirageKitClient`:
 - freeze detection distinguishes keyframe-starved stalls from packet-starved stalls
 - the first active-stream freeze uses bounded recovery, while repeated freezes escalate to the existing hard reset path
 - activation and hard-recovery resets now use a short first-frame watchdog and resend bounded keyframe requests until packet flow resumes
-- adaptive color-depth fallback for custom quality mode steps `ultra -> pro -> standard` and restores in the reverse order
-- automatic-quality bitrate control is app-owned through a receiver-health controller that reads client metrics snapshots, applies the existing 15%/25% backoff rules under loss or stalls, and probes back upward after sustained healthy windows until the stream reaches its geometry-driven saturation ceiling or the host reports `activeQuality >= 0.80`
+- app-owned adaptive bitrate recovery is shared by automatic quality mode and custom recovery mode; the receiver-health controller reads client metrics snapshots, applies the existing 15%/25% backoff rules from pre-decode transport stress, and probes back upward after sustained healthy windows until the stream reaches its configured ceiling or the host reports `activeQuality >= 0.80`
 - automatic-mode bitrate ceilings are geometry-driven rather than path-gated: preset resolution, color depth, and target FPS stay fixed, while bitrate ramps toward the visually saturated HEVC target for that geometry instead of collapsing to a lower preset because the current link is not direct-local
-- host temporary degradation still protects encode stability under overload, but low-latency automatic sessions now bias toward faster encoder-quality relief under send-queue pressure so large P-frames fit inside the active transport budget without dragging interaction latency upward
-- automatic mode keeps its preset FPS and spends bitrate plus encoder-quality relief before any frame-rate fallback; client-side adaptive fallback remains reserved for custom temporary degradation paths
-- client-side adaptive fallback remains available for custom temporary degradation, but automatic-quality mode no longer uses the client fallback path directly
+- host temporary degradation still protects encode stability under overload, but any session with app-owned adaptive recovery now ignores encode-only pressure and only applies host-side relief when sender queue or packet transport telemetry shows real transport pressure
+- adaptive sessions keep their requested FPS and color depth fixed on the client side; custom recovery now shares the same client-owned bitrate loop as automatic mode, bounded by the user-configured custom bitrate ceiling
+- host-side adaptive recovery is canonicalized to framerate-first bitrate relief internally, so visuals-first behavior remains a low-level legacy mode rather than an app-facing custom recovery option
 
 Client connection establishment tries UDP first when the peer advertises it, then falls back to the advertised TCP endpoint when the UDP control path times out or fails with a retryable pre-bootstrap transport classification. The client resolves endpoints through Bonjour service discovery and connects using the Loom node's `connect()` method, which handles transport parameter construction including ALPN for QUIC. Direct UDP control attempts treat the advertised `hostName` as an explicit mDNS hostname when present, and otherwise derive a `.local` Bonjour host from the discovered peer name instead of treating the UI service name as a routable hostname. UDP control attempts no longer treat the entire pre-bootstrap period as a blind five-second race: Mirage observes Loom's authenticated-session bootstrap phases and keeps the attempt alive while transport and hello exchange continue making forward progress, still bounded by an absolute startup ceiling.
 

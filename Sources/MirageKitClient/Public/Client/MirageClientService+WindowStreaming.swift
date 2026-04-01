@@ -64,15 +64,10 @@ public extension MirageClientService {
         var overrides = encoderOverrides ?? MirageEncoderOverrides()
         if overrides.keyFrameInterval == nil { overrides.keyFrameInterval = keyFrameInterval }
         applyEncoderOverrides(overrides, to: &request)
-        if let bitrate = request.bitrate, bitrate > 0 {
-            pendingAdaptiveFallbackBitrateByWindowID[window.id] = bitrate
-        } else {
-            pendingAdaptiveFallbackBitrateByWindowID.removeValue(forKey: window.id)
-        }
         if let colorDepth = request.colorDepth {
-            pendingAdaptiveFallbackColorDepthByWindowID[window.id] = colorDepth
+            pendingRequestedColorDepthByWindowID[window.id] = colorDepth
         } else {
-            pendingAdaptiveFallbackColorDepthByWindowID.removeValue(forKey: window.id)
+            pendingRequestedColorDepthByWindowID.removeValue(forKey: window.id)
         }
 
         request.audioConfiguration = audioConfiguration ?? self.audioConfiguration
@@ -104,13 +99,8 @@ public extension MirageClientService {
         >) in
             self.streamStartedContinuation = continuation
         }
-        let pendingBitrate = pendingAdaptiveFallbackBitrateByWindowID.removeValue(forKey: window.id)
-        let pendingColorDepth = pendingAdaptiveFallbackColorDepthByWindowID.removeValue(forKey: window.id)
-        configureAdaptiveFallbackBaseline(
-            for: realStreamID,
-            bitrate: pendingBitrate,
-            colorDepth: pendingColorDepth
-        )
+        let pendingColorDepth = pendingRequestedColorDepthByWindowID.removeValue(forKey: window.id)
+        configureDecoderColorDepthBaseline(for: realStreamID, colorDepth: pendingColorDepth)
 
         MirageLogger.client("Stream started with ID \(realStreamID)")
 
@@ -164,7 +154,7 @@ public extension MirageClientService {
             }
             let tier = sessionStore.presentationTier(for: streamID)
             await existingController.updatePresentationTier(tier)
-            adaptiveFallbackLastAppliedTime[streamID] = 0
+            decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
             mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
             MirageLogger
                 .client(
@@ -176,17 +166,14 @@ public extension MirageClientService {
         let controller = StreamController(streamID: streamID, maxPayloadSize: payloadSize)
         controllersByStream[streamID] = controller
         mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
-        if adaptiveFallbackBaselineBitrateByStream[streamID] == nil,
-           adaptiveFallbackBaselineColorDepthByStream[streamID] == nil,
-           (pendingAppAdaptiveFallbackBitrate != nil ||
-                pendingAppAdaptiveFallbackColorDepth != nil) {
-            configureAdaptiveFallbackBaseline(
+        if decoderCompatibilityBaselineColorDepthByStream[streamID] == nil,
+           pendingAppRequestedColorDepth != nil {
+            configureDecoderColorDepthBaseline(
                 for: streamID,
-                bitrate: pendingAppAdaptiveFallbackBitrate,
-                colorDepth: pendingAppAdaptiveFallbackColorDepth
+                colorDepth: pendingAppRequestedColorDepth
             )
         }
-        adaptiveFallbackLastAppliedTime[streamID] = 0
+        decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
 
         await controller.setDecoderCodec(codec, streamDimensions: streamDimensions)
         await controller.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
@@ -270,8 +257,8 @@ public extension MirageClientService {
     }
 
     package func resolvedDecoderColorDepth(for streamID: StreamID) -> MirageStreamColorDepth {
-        adaptiveFallbackColorDepthByStream[streamID] ??
-            adaptiveFallbackBaselineColorDepthByStream[streamID] ??
+        decoderCompatibilityCurrentColorDepthByStream[streamID] ??
+            decoderCompatibilityBaselineColorDepthByStream[streamID] ??
             .standard
     }
 
@@ -339,7 +326,7 @@ public extension MirageClientService {
             controllersByStream.removeValue(forKey: streamID)
             heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         }
-        clearAdaptiveFallbackState(for: streamID)
+        clearDecoderColorDepthState(for: streamID)
 
         await updateReassemblerSnapshot()
     }
