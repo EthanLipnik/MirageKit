@@ -45,6 +45,7 @@ public struct MirageStreamContentView: View {
     public let onExitDesktopStream: (() -> Void)?
     public let onToggleDictationShortcut: (() -> Void)?
     public let desktopExitShortcut: MirageClientShortcut
+    public let escapeRemapShortcut: MirageClientShortcut
     public let dictationShortcut: MirageClientShortcut
     public let onInputActivity: ((MirageInputEvent) -> Void)?
     public let onDirectTouchActivity: (() -> Void)?
@@ -63,6 +64,7 @@ public struct MirageStreamContentView: View {
     public let desktopCursorLockCanRecapture: Bool
     public let onCursorLockEscapeRequested: (() -> Void)?
     public let onCursorLockRecaptureRequested: (() -> Void)?
+    public let useHostResolution: Bool
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
     private let desktopResizeAckTimeout: Duration = .seconds(3)
@@ -131,6 +133,7 @@ public struct MirageStreamContentView: View {
         onExitDesktopStream: (() -> Void)? = nil,
         onToggleDictationShortcut: (() -> Void)? = nil,
         desktopExitShortcut: MirageClientShortcut = .defaultDesktopExit,
+        escapeRemapShortcut: MirageClientShortcut = .defaultEscapeRemap,
         dictationShortcut: MirageClientShortcut = .defaultDictationToggle,
         onInputActivity: ((MirageInputEvent) -> Void)? = nil,
         onDirectTouchActivity: (() -> Void)? = nil,
@@ -149,6 +152,7 @@ public struct MirageStreamContentView: View {
         desktopCursorLockCanRecapture: Bool = false,
         onCursorLockEscapeRequested: (() -> Void)? = nil,
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
+        useHostResolution: Bool = false,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil
     ) {
@@ -161,6 +165,7 @@ public struct MirageStreamContentView: View {
         self.onExitDesktopStream = onExitDesktopStream
         self.onToggleDictationShortcut = onToggleDictationShortcut
         self.desktopExitShortcut = desktopExitShortcut
+        self.escapeRemapShortcut = escapeRemapShortcut
         self.dictationShortcut = dictationShortcut
         self.onInputActivity = onInputActivity
         self.onDirectTouchActivity = onDirectTouchActivity
@@ -179,17 +184,48 @@ public struct MirageStreamContentView: View {
         self.desktopCursorLockCanRecapture = desktopCursorLockCanRecapture
         self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
+        self.useHostResolution = useHostResolution
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
     }
 
-    public var body: some View {
-        let desktopCursorLockEnabled = desktopCursorLockEnabledOverride ??
+    private var desktopCursorLockEnabled: Bool {
+        desktopCursorLockEnabledOverride ??
             (isDesktopStream && desktopCursorPresentation.locksClientCursor(for: desktopStreamMode))
-        let syntheticCursorEnabled = !isDesktopStream ||
-            desktopCursorPresentation.rendersSyntheticClientCursor
+    }
 
-        Group {
+    private var syntheticCursorEnabled: Bool {
+        !isDesktopStream || desktopCursorPresentation.rendersSyntheticClientCursor
+    }
+
+    private var streamContentAspectRatio: CGFloat? {
+        let windowSize = session.window.frame.size
+        if windowSize.width > 0, windowSize.height > 0 {
+            return windowSize.width / windowSize.height
+        }
+
+        if let minSize = sessionStore.sessionMinSizes[session.id],
+           minSize.width > 0,
+           minSize.height > 0 {
+            return minSize.width / minSize.height
+        }
+
+        if let desktopResolution = clientService.desktopStreamResolution,
+           desktopResolution.width > 0,
+           desktopResolution.height > 0 {
+            return desktopResolution.width / desktopResolution.height
+        }
+
+        return nil
+    }
+
+    public var body: some View {
+        ZStack {
+            Rectangle()
+                .fill(.black)
+                .ignoresSafeArea()
+
+            Group {
             #if os(iOS) || os(visionOS)
             MirageStreamViewRepresentable(
                 streamID: session.streamID,
@@ -238,7 +274,6 @@ public struct MirageStreamContentView: View {
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize
             )
-            .ignoresSafeArea()
             .blur(radius: resizeBlurRadius)
             #else
             MirageStreamViewRepresentable(
@@ -273,19 +308,27 @@ public struct MirageStreamContentView: View {
                 inputEnabled: macOSInputEnabled,
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize,
-                clientShortcuts: [desktopExitShortcut, dictationShortcut].compactMap { $0 },
+                clientShortcuts: [desktopExitShortcut, escapeRemapShortcut, dictationShortcut].compactMap { $0 },
                 onClientShortcut: { shortcut in
-                    if shortcut == desktopExitShortcut {
-                        logDesktopExitShortcutTriggered()
-                        onExitDesktopStream?()
-                    } else if shortcut == dictationShortcut {
-                        onToggleDictationShortcut?()
+                    if shortcut == escapeRemapShortcut {
+                        if desktopCursorLockEnabled {
+                            onCursorLockEscapeRequested?()
+                        } else {
+                            let escapeEvent = remappedEscapeKeyEvent()
+                            forwardInputEventToHost(.keyDown(escapeEvent))
+                            forwardInputEventToHost(.keyUp(escapeEvent))
+                        }
+                        return
                     }
+                    handleReservedShortcut(shortcut)
                 }
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .blur(radius: resizeBlurRadius)
             #endif
+            }
+            .aspectRatio(streamContentAspectRatio, contentMode: .fit)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .overlay {
             if !isReadyForInitialPresentation {
@@ -441,6 +484,14 @@ public struct MirageStreamContentView: View {
                 onToggleDictationShortcut?()
                 return
             }
+            if escapeRemapShortcut.matches(keyEvent) {
+                if desktopCursorLockEnabled {
+                    onCursorLockEscapeRequested?()
+                    return
+                }
+                forwardInputEventToHost(.keyDown(remappedEscapeKeyEvent(isRepeat: keyEvent.isRepeat)))
+                return
+            }
 
             // Intercept Cmd+V on iOS to sync clipboard to host before the paste keypress arrives.
             #if canImport(UIKit)
@@ -448,8 +499,17 @@ public struct MirageStreamContentView: View {
                 clientService.syncLocalClipboardToHost()
             }
             #endif
+        } else if case let .keyUp(keyEvent) = event,
+                  escapeRemapShortcut.matches(keyEvent) {
+            guard !desktopCursorLockEnabled else { return }
+            forwardInputEventToHost(.keyUp(remappedEscapeKeyEvent()))
+            return
         }
 
+        forwardInputEventToHost(event)
+    }
+
+    private func forwardInputEventToHost(_ event: MirageInputEvent) {
         guard canSendInputToHost else { return }
         onInputActivity?(event)
 
@@ -463,6 +523,25 @@ public struct MirageStreamContentView: View {
         #endif
 
         clientService.sendInputFireAndForget(event, forStream: session.streamID)
+    }
+
+    private func remappedEscapeKeyEvent(isRepeat: Bool = false) -> MirageKeyEvent {
+        MirageKeyEvent(
+            keyCode: 0x35,
+            characters: "\u{1b}",
+            charactersIgnoringModifiers: "\u{1b}",
+            modifiers: [],
+            isRepeat: isRepeat
+        )
+    }
+
+    private func handleReservedShortcut(_ shortcut: MirageClientShortcut) {
+        if shortcut == desktopExitShortcut {
+            logDesktopExitShortcutTriggered()
+            onExitDesktopStream?()
+        } else if shortcut == dictationShortcut {
+            onToggleDictationShortcut?()
+        }
     }
 
     private func logDesktopExitShortcutTriggered() {
@@ -639,6 +718,23 @@ public struct MirageStreamContentView: View {
             }
             latestDrawableDisplaySize = preferredDisplaySize
 
+            if useHostResolution {
+                displayResolutionTask?.cancel()
+                displayResolutionTask = nil
+                pendingDisplayResolutionDispatchTarget = .zero
+                pendingDesktopDisplayResolutionAfterAck = .zero
+                streamScaleTask?.cancel()
+                streamScaleTask = nil
+                setLocalResizeDecodePause(false, requestRecoveryKeyframeOnResume: false)
+                if awaitingDesktopResizeAck {
+                    finishDesktopResizeAwaitingAck()
+                } else {
+                    if isResizing { isResizing = false }
+                    desktopResizeMaskActive = false
+                }
+                return
+            }
+
             if desktopResizeStartupDecision(hasPresentedFrame: session.hasPresentedFrame) == .deferUntilFirstPresentation {
                 if !awaitingDesktopResizeAck, isResizing { isResizing = false }
                 desktopResizeMaskActive = false
@@ -776,6 +872,7 @@ public struct MirageStreamContentView: View {
     }
 
     private func flushCoalescedDesktopResizeIfNeeded(targetDisplaySize: CGSize) -> Bool {
+        guard !useHostResolution else { return false }
         guard targetDisplaySize.width > 0, targetDisplaySize.height > 0 else { return false }
         guard !awaitingDesktopResizeAck else { return false }
 
@@ -990,6 +1087,11 @@ public struct MirageStreamContentView: View {
     }
 
     private func scheduleStreamScaleUpdate(for displaySize: CGSize) {
+        guard !useHostResolution else {
+            streamScaleTask?.cancel()
+            streamScaleTask = nil
+            return
+        }
         guard let maxDrawableSize,
               maxDrawableSize.width > 0,
               maxDrawableSize.height > 0,

@@ -249,6 +249,61 @@ actor WindowSpaceManager {
     /// Saved window states keyed by window ID
     private var savedStates: [WindowID: SavedWindowState] = [:]
 
+    private func prepareSavedStateIfNeeded(
+        for windowID: WindowID,
+        originalFrame: CGRect,
+        owner: WindowBindingOwner?
+    ) throws {
+        if savedStates[windowID] == nil {
+            let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+            let axWindow = resolveAXWindow(for: windowID)
+            let trafficLightVisibilitySnapshot = hideTrafficLightsIfSupported(
+                windowID: windowID,
+                axWindow: axWindow
+            )
+            let savedState = SavedWindowState(
+                windowID: windowID,
+                originalFrame: originalFrame,
+                originalSpaceIDs: currentSpaces,
+                trafficLightVisibilitySnapshot: trafficLightVisibilitySnapshot,
+                owner: owner,
+                savedAt: Date()
+            )
+            savedStates[windowID] = savedState
+            MirageLogger.host(
+                "Saving window \(windowID) state: frame=\(originalFrame), spaces=\(currentSpaces)"
+            )
+            return
+        }
+
+        if let owner,
+           let existingOwner = savedStates[windowID]?.owner,
+           existingOwner.streamID != owner.streamID {
+            throw WindowSpaceError.ownerConflict(
+                windowID,
+                existingStreamID: existingOwner.streamID,
+                requestedStreamID: owner.streamID
+            )
+        }
+
+        if let owner,
+           let existing = savedStates[windowID],
+           existing.owner == nil {
+            savedStates[windowID] = SavedWindowState(
+                windowID: existing.windowID,
+                originalFrame: existing.originalFrame,
+                originalSpaceIDs: existing.originalSpaceIDs,
+                trafficLightVisibilitySnapshot: existing.trafficLightVisibilitySnapshot,
+                owner: owner,
+                savedAt: existing.savedAt
+            )
+        }
+
+        MirageLogger.host(
+            "Window \(windowID) already has saved state; preserving original state during move"
+        )
+    }
+
     // MARK: - Window Movement
 
     /// Move a window to a virtual display's space
@@ -269,48 +324,11 @@ actor WindowSpaceManager {
     async throws {
         // Get current window info
         guard let windowInfo = getWindowInfo(windowID) else { throw WindowSpaceError.windowNotFound(windowID) }
-
-        if savedStates[windowID] == nil {
-            let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-            let axWindow = resolveAXWindow(for: windowID)
-            let trafficLightVisibilitySnapshot = hideTrafficLightsIfSupported(
-                windowID: windowID,
-                axWindow: axWindow
-            )
-            let savedState = SavedWindowState(
-                windowID: windowID,
-                originalFrame: windowInfo.frame,
-                originalSpaceIDs: currentSpaces,
-                trafficLightVisibilitySnapshot: trafficLightVisibilitySnapshot,
-                owner: owner,
-                savedAt: Date()
-            )
-            savedStates[windowID] = savedState
-            MirageLogger.host("Saving window \(windowID) state: frame=\(windowInfo.frame), spaces=\(currentSpaces)")
-        } else {
-            if let owner,
-               let existingOwner = savedStates[windowID]?.owner,
-               existingOwner.streamID != owner.streamID {
-                throw WindowSpaceError.ownerConflict(
-                    windowID,
-                    existingStreamID: existingOwner.streamID,
-                    requestedStreamID: owner.streamID
-                )
-            }
-            if let owner,
-               let existing = savedStates[windowID],
-               existing.owner == nil {
-                savedStates[windowID] = SavedWindowState(
-                    windowID: existing.windowID,
-                    originalFrame: existing.originalFrame,
-                    originalSpaceIDs: existing.originalSpaceIDs,
-                    trafficLightVisibilitySnapshot: existing.trafficLightVisibilitySnapshot,
-                    owner: owner,
-                    savedAt: existing.savedAt
-                )
-            }
-            MirageLogger.host("Window \(windowID) already has saved state; preserving original state during move")
-        }
+        try prepareSavedStateIfNeeded(
+            for: windowID,
+            originalFrame: windowInfo.frame,
+            owner: owner
+        )
 
         let resolvedDisplayBounds = resolvePlacementDisplayBounds(
             displayID: displayID,
@@ -399,6 +417,78 @@ actor WindowSpaceManager {
         throw WindowSpaceError.moveFailed(
             windowID,
             "Placement verification failed for space \(currentSpaceID) on display \(displayID) (original space \(spaceID))"
+        )
+    }
+
+    func bindWindowToSpaceOnly(
+        _ windowID: WindowID,
+        toSpaceID spaceID: CGSSpaceID,
+        displayID: CGDirectDisplayID,
+        owner: WindowBindingOwner? = nil
+    )
+    async throws {
+        guard let windowInfo = getWindowInfo(windowID) else {
+            throw WindowSpaceError.windowNotFound(windowID)
+        }
+        try prepareSavedStateIfNeeded(
+            for: windowID,
+            originalFrame: windowInfo.frame,
+            owner: owner
+        )
+
+        let resolvedAXWindow = resolveAXWindow(for: windowID)
+        ensureTrafficLightsHidden(windowID: windowID)
+
+        var currentSpaceID = spaceID
+        let maxAttempts = 4
+        for attempt in 1 ... maxAttempts {
+            if attempt > 1 {
+                let refreshedSpaceID = CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
+                if refreshedSpaceID != 0, refreshedSpaceID != currentSpaceID {
+                    MirageLogger.host(
+                        "Display \(displayID) space changed from \(currentSpaceID) to \(refreshedSpaceID) on space-only attempt \(attempt); adopting new space"
+                    )
+                    currentSpaceID = refreshedSpaceID
+                }
+            }
+
+            let didActivateSpaceBeforeMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(
+                displayID,
+                spaceID: currentSpaceID
+            )
+            if !didActivateSpaceBeforeMove {
+                MirageLogger.host(
+                    "Failed to set current space \(currentSpaceID) for display \(displayID) before space-only move attempt \(attempt)"
+                )
+            }
+
+            CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: currentSpaceID)
+            if !raiseWindow(windowID, axWindow: resolvedAXWindow) {
+                MirageLogger.debug(
+                    .host,
+                    "Failed to raise window \(windowID) on space-only move attempt \(attempt)"
+                )
+            }
+
+            let didActivateSpaceAfterMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(
+                displayID,
+                spaceID: currentSpaceID
+            )
+            if !didActivateSpaceAfterMove {
+                MirageLogger.host(
+                    "Failed to set current space \(currentSpaceID) for display \(displayID) after space-only move attempt \(attempt)"
+                )
+            }
+
+            let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
+            if currentSpaces.contains(currentSpaceID) {
+                return
+            }
+        }
+
+        throw WindowSpaceError.moveFailed(
+            windowID,
+            "Failed to bind window to target space \(currentSpaceID); actual spaces=\(CGSWindowSpaceBridge.getSpacesForWindow(windowID))"
         )
     }
 

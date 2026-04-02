@@ -131,6 +131,8 @@ extension StreamContext {
         lastEncodeActivityTime = 0
         isKeyframeEncoding = false
         needsEncoderReset = false
+        encoderResetRetryTask?.cancel()
+        encoderResetRetryTask = nil
         pendingKeyframeReason = nil
         pendingKeyframeDeadline = 0
         pendingKeyframeRequiresFlush = false
@@ -207,6 +209,32 @@ extension StreamContext {
             urgent: true
         )
         return true
+    }
+
+    private func scheduleEncoderResetRetry(after delaySeconds: Double, reason: String) {
+        guard shouldEncodeFrames else { return }
+        guard delaySeconds > 0 else {
+            scheduleProcessingIfNeeded()
+            return
+        }
+
+        encoderResetRetryTask?.cancel()
+        encoderResetRetryTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: .seconds(delaySeconds))
+            } catch {
+                return
+            }
+            await self.retryEncoderResetIfStillNeeded(reason: reason)
+        }
+    }
+
+    private func retryEncoderResetIfStillNeeded(reason: String) async {
+        guard needsEncoderReset, shouldEncodeFrames, !isResizing else { return }
+        encoderResetRetryTask = nil
+        MirageLogger.stream("Retrying deferred encoder reset for stream \(streamID) (\(reason))")
+        scheduleProcessingIfNeeded()
     }
 
     /// Process pending frames (encodes using HEVC and can switch to freshest-frame delivery).
@@ -306,15 +334,25 @@ extension StreamContext {
                         }
                         didResetEncoder = true
                         lastEncoderResetTime = now
+                        needsEncoderReset = false
+                        encoderResetRetryTask?.cancel()
+                        encoderResetRetryTask = nil
                     } catch {
                         MirageLogger.error(.stream, error: error, message: "Encoder reset failed: ")
+                        scheduleEncoderResetRetry(
+                            after: max(encoderResetCooldown * 0.5, 0.25),
+                            reason: "reset failed"
+                        )
+                        return
                     }
                 } else {
-                    let remainingSeconds = (encoderResetCooldown - (now - lastEncoderResetTime))
+                    let remainingDelay = max(0, encoderResetCooldown - (now - lastEncoderResetTime))
+                    let remainingSeconds = remainingDelay
                         .formatted(.number.precision(.fractionLength(1)))
                     MirageLogger.stream("Encoder reset skipped (cooldown active, \(remainingSeconds)s remaining)")
+                    scheduleEncoderResetRetry(after: remainingDelay, reason: "cooldown active")
+                    return
                 }
-                needsEncoderReset = false
             }
 
             let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0

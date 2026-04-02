@@ -230,6 +230,7 @@ actor StreamContext {
 
     /// Timestamp of last encoder reset (for cooldown)
     var lastEncoderResetTime: CFAbsoluteTime = 0
+    var encoderResetRetryTask: Task<Void, Never>?
 
     /// Minimum time between encoder resets (seconds)
     /// Prevents cascading resets during SCK pauses which cause multiple keyframes

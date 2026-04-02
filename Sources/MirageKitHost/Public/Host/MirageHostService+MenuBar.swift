@@ -132,6 +132,7 @@ extension MirageHostService {
             }
 
             desktopStreamMode = request.mode ?? .mirrored
+            desktopUsesHostResolution = request.useHostResolution == true
             desktopCursorPresentation = request.cursorPresentation ?? .clientCursor
             pendingLightsOutSetup = true
             await beginPendingDesktopStreamLightsOutSetup()
@@ -212,6 +213,9 @@ extension MirageHostService {
     private nonisolated static func isExpectedDesktopStartRejection(_ error: Error) -> Bool {
         if error is MirageRuntimeConditionError { return true }
         if case let MirageError.protocolError(message) = error {
+            if message.contains("Desktop stream already active") {
+                return true
+            }
             return message.contains("Virtual display acquisition failed for desktop stream:") ||
                 message.contains("client disconnected during startup")
         }

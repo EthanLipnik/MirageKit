@@ -351,6 +351,13 @@ extension MirageHostService {
     func handleStreamScaleChange(streamID: StreamID, streamScale: CGFloat) async {
         let clampedScale = max(0.1, min(1.0, streamScale))
 
+        if streamID == desktopStreamID, desktopUsesHostResolution {
+            MirageLogger.host(
+                "Ignoring stream scale change for host-resolution desktop stream \(streamID): \(clampedScale)"
+            )
+            return
+        }
+
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale change: \(streamID)")
             return
@@ -1275,6 +1282,13 @@ extension MirageHostService {
     /// Handle display resolution change from client
     func handleDisplayResolutionChange(streamID: StreamID, newResolution: CGSize) async {
         if streamID == desktopStreamID {
+            if desktopUsesHostResolution {
+                MirageLogger.host(
+                    "Ignoring display resolution change for host-resolution desktop stream \(streamID): " +
+                        "\(Int(newResolution.width))x\(Int(newResolution.height)) pts"
+                )
+                return
+            }
             await enqueueDesktopResolutionChange(streamID: streamID, logicalResolution: newResolution)
             return
         }

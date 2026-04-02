@@ -2,15 +2,14 @@
 //  MirageBitrateQualityMapper.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 2/2/26.
+//  Created by Ethan Lipnik on 4/1/26.
 //
 //  Maps target bitrate to derived encoder quality settings.
 //
 
 import Foundation
-import MirageKit
 
-enum MirageBitrateQualityMapper {
+public enum MirageBitrateQualityMapper {
     private static let highBitrateBoostStartBps = 400_000_000
     private static let highBitrateBoostFullBps = 700_000_000
     private static let highBitrateProgressExponent: Float = 0.55
@@ -18,7 +17,7 @@ enum MirageBitrateQualityMapper {
     private static let standardCeiling: Float = 0.80
     private static let highBitrateCeiling: Float = 0.94
 
-    static let frameQualityCeiling: Float = highBitrateCeiling
+    public static let frameQualityCeiling: Float = highBitrateCeiling
     private static let minimumFrameQuality: Double = 0.06
     private static let defaultKeyframeQualityMultiplier: Double = 0.72
     private static let minimumKeyframeQualityMultiplier: Double = 0.58
@@ -45,12 +44,12 @@ enum MirageBitrateQualityMapper {
         Point(bpp: 0.25, quality: 0.80),
     ]
 
-    static func normalizedTargetBitrate(bitrate: Int?) -> Int? {
+    public static func normalizedTargetBitrate(bitrate: Int?) -> Int? {
         guard let bitrate, bitrate > 0 else { return nil }
         return bitrate
     }
 
-    static func derivedQualities(
+    public static func derivedQualities(
         targetBitrateBps: Int,
         width: Int,
         height: Int,
@@ -94,7 +93,7 @@ enum MirageBitrateQualityMapper {
         return (frameQuality, keyframeQuality)
     }
 
-    static func targetBitrateBps(
+    public static func targetBitrateBps(
         forFrameQuality desiredFrameQuality: Float,
         width: Int,
         height: Int,
@@ -138,7 +137,7 @@ enum MirageBitrateQualityMapper {
         return best
     }
 
-    static func bitsPerPixelPerFrame(
+    public static func bitsPerPixelPerFrame(
         targetBitrateBps: Int,
         width: Int,
         height: Int,
@@ -150,12 +149,12 @@ enum MirageBitrateQualityMapper {
         return Double(targetBitrateBps) / pixelsPerSecond
     }
 
-    static func frameRateScale(frameRate: Int, bpp: Double? = nil) -> Double {
+    public static func frameRateScale(frameRate: Int, bpp: Double? = nil) -> Double {
         let pressure = bpp.map { compressionPressure(for: $0) } ?? 1.0
         return frameRateCompressionScale(for: frameRate, compressionPressure: pressure)
     }
 
-    static func compressionPressure(for bpp: Double) -> Double {
+    public static func compressionPressure(for bpp: Double) -> Double {
         guard bpp > constrainedBPPThreshold else { return 1.0 }
         guard bpp < unconstrainedBPPThreshold else { return 0.0 }
         let range = max(0.0001, unconstrainedBPPThreshold - constrainedBPPThreshold)

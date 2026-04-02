@@ -712,7 +712,7 @@ public extension MirageHostService {
         // For window capture, only ensure the window is on the correct space.
         // Do NOT resize or reposition — the window is aspect-fit to the client's
         // resolution and the full moveWindow flow fights that sizing.
-        for (_, context) in streamsByID {
+        for (streamID, context) in streamsByID {
             let wID = await context.windowID
             guard wID == windowID else { continue }
             let mode = await context.captureMode
@@ -721,9 +721,77 @@ public extension MirageHostService {
                 let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(vdContext.displayID)
                 guard spaceID != 0 else { return }
                 let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-                if !currentSpaces.contains(spaceID) {
-                    CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: spaceID)
-                    MirageLogger.host("Window capture: reasserted window \(windowID) to space \(spaceID)")
+                let driftReason = currentSpaces.contains(spaceID)
+                    ? nil
+                    : "space drift expected=\(spaceID) actual=\(currentSpaces)"
+                guard force || driftReason != nil else { return }
+
+                let now = CFAbsoluteTimeGetCurrent()
+                if !force,
+                   let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
+                   now < backoffState.nextRetryAt {
+                    return
+                }
+
+                let cooldown: CFAbsoluteTime = 0.20
+                if !force,
+                   let lastAppliedAt = lastWindowPlacementRepairAtByWindowID[windowID],
+                   now - lastAppliedAt < cooldown {
+                    return
+                }
+                lastWindowPlacementRepairAtByWindowID[windowID] = now
+
+                do {
+                    try await WindowSpaceManager.shared.bindWindowToSpaceOnly(
+                        windowID,
+                        toSpaceID: spaceID,
+                        displayID: vdContext.displayID,
+                        owner: WindowSpaceManager.WindowBindingOwner(
+                            streamID: streamID,
+                            windowID: windowID,
+                            displayID: vdContext.displayID,
+                            generation: vdContext.generation
+                        )
+                    )
+                    let reasonText = driftReason ?? "forced reassert"
+                    MirageLogger.host(
+                        "Window capture: reasserted window \(windowID) to space \(spaceID) (\(reasonText))"
+                    )
+                    if let previousBackoff = windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID) {
+                        let resetStep = windowPlacementRepairBackoffStep(
+                            currentFailureCount: previousBackoff.failureCount,
+                            didSucceed: true
+                        )
+                        MirageLogger.host(
+                            "event=placement_repair_backoff reset_on_success=true " +
+                                "previous_failure_count=\(previousBackoff.failureCount) " +
+                                "failure_count=\(resetStep.failureCount) window=\(windowID) stream=\(streamID)"
+                        )
+                    }
+                } catch {
+                    if !force {
+                        let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
+                        let nextStep = windowPlacementRepairBackoffStep(
+                            currentFailureCount: currentFailureCount,
+                            didSucceed: false
+                        )
+                        if let retryDelaySeconds = nextStep.retryDelaySeconds {
+                            windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
+                                failureCount: nextStep.failureCount,
+                                nextRetryAt: now + retryDelaySeconds
+                            )
+                            let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
+                            MirageLogger.host(
+                                "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
+                                    "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(streamID)"
+                            )
+                        }
+                    }
+                    MirageLogger.error(
+                        .host,
+                        error: error,
+                        message: "Failed to reassert window-capture placement for window \(windowID): "
+                    )
                 }
                 return
             }

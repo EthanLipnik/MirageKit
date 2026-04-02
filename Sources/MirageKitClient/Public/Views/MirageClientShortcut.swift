@@ -29,6 +29,11 @@ public struct MirageClientShortcut: Codable, Sendable, Hashable {
         modifiers: [.control, .option]
     )
 
+    public static let defaultEscapeRemap = MirageClientShortcut(
+        keyCode: 0x21, // [
+        modifiers: [.control]
+    )
+
     public func matches(_ keyEvent: MirageKeyEvent) -> Bool {
         keyEvent.keyCode == keyCode &&
             Self.normalizedShortcutModifiers(keyEvent.modifiers) == Self.normalizedShortcutModifiers(modifiers)

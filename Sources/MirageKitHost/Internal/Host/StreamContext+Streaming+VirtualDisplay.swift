@@ -14,6 +14,81 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
+    struct WindowCaptureDisplaySelection: Equatable {
+        let captureDisplayID: CGDirectDisplayID
+        let usesDisplayRefreshCadence: Bool
+    }
+
+    nonisolated static func windowCaptureDisplaySelection(
+        sourceDisplayID: CGDirectDisplayID,
+        mirroredDisplayID: CGDirectDisplayID?,
+        captureDisplayIsMirage: Bool
+    )
+    -> WindowCaptureDisplaySelection {
+        let captureDisplayID = mirroredDisplayID ?? sourceDisplayID
+        return WindowCaptureDisplaySelection(
+            captureDisplayID: captureDisplayID,
+            usesDisplayRefreshCadence: mirroredDisplayID != nil || captureDisplayIsMirage
+        )
+    }
+
+    func updateWindowCaptureVirtualDisplayState(_ snapshot: SharedVirtualDisplayManager.DisplaySnapshot?) {
+        guard let snapshot else {
+            virtualDisplayVisibleBounds = .zero
+            virtualDisplayCaptureSourceRect = .zero
+            virtualDisplayVisiblePixelResolution = .zero
+            return
+        }
+
+        let scaleFactor = max(1.0, snapshot.scaleFactor)
+        let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+            for: snapshot.resolution,
+            scaleFactor: scaleFactor
+        )
+        var displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+            snapshot.displayID,
+            knownResolution: logicalResolution
+        )
+        if displayBounds.isEmpty {
+            displayBounds = CGRect(origin: .zero, size: logicalResolution)
+        }
+        var visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            snapshot.displayID,
+            knownBounds: displayBounds
+        )
+        visibleBounds = visibleBounds.intersection(displayBounds)
+        if visibleBounds.isEmpty {
+            visibleBounds = displayBounds
+        }
+
+        virtualDisplayVisibleBounds = visibleBounds
+        let captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
+            snapshot.displayID,
+            knownBounds: displayBounds
+        )
+        virtualDisplayCaptureSourceRect = captureSourceRect.isEmpty ? displayBounds : captureSourceRect
+        virtualDisplayVisiblePixelResolution = CGSize(
+            width: max(1, ceil(visibleBounds.width * scaleFactor)),
+            height: max(1, ceil(visibleBounds.height * scaleFactor))
+        )
+    }
+
+    func resolveWindowCaptureDisplayWrapper(
+        sourceDisplayWrapper: SCDisplayWrapper,
+        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
+        label: String
+    )
+    async throws -> SCDisplayWrapper {
+        guard let mirroredDisplaySnapshot else { return sourceDisplayWrapper }
+        if mirroredDisplaySnapshot.displayID == sourceDisplayWrapper.display.displayID {
+            return sourceDisplayWrapper
+        }
+        return try await resolveSCDisplayWrapper(
+            displayID: mirroredDisplaySnapshot.displayID,
+            label: label
+        )
+    }
+
     /// Starts window capture on the shared app-stream virtual display.
     ///
     /// The shared display provides a known-good Retina backing at a fixed resolution.
@@ -55,6 +130,7 @@ extension StreamContext {
             colorSpace: colorSpace
         )
         virtualDisplayContext = vdSnapshot
+        updateWindowCaptureVirtualDisplayState(vdSnapshot)
 
         MirageLogger.stream(
             "Stream \(streamID) acquired shared app-stream display \(vdSnapshot.displayID) " +
@@ -162,7 +238,14 @@ extension StreamContext {
         )
         await startEncoderWithSharedCallback(pinnedContentRect: nil, logPrefix: "Frame")
 
-        let captureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: false)
+        let captureDisplaySelection = Self.windowCaptureDisplaySelection(
+            sourceDisplayID: resolvedDisplayWrapper.display.displayID,
+            mirroredDisplayID: vdSnapshot.displayID,
+            captureDisplayIsMirage: CGVirtualDisplayBridge.isMirageDisplay(vdSnapshot.displayID)
+        )
+        let captureEngine = await setupAndStartCaptureEngine(
+            usesDisplayRefreshCadence: captureDisplaySelection.usesDisplayRefreshCadence
+        )
         try await captureEngine.startCapture(
             window: settledWindowWrapper.window,
             application: applicationWrapper.application,

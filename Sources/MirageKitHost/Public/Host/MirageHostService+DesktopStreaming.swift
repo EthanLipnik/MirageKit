@@ -47,8 +47,7 @@ extension MirageHostService {
     async throws {
         // Check if desktop stream is already active
         guard desktopStreamContext == nil else {
-            MirageLogger.host("Desktop stream already active")
-            return
+            throw MirageError.protocolError("Desktop stream already active")
         }
         guard mediaSecurityByClientID[clientContext.client.id] != nil else {
             throw MirageError.protocolError("Missing media security context for desktop stream client")
@@ -324,6 +323,7 @@ extension MirageHostService {
                 sharedVirtualDisplayGeneration = 0
                 sharedVirtualDisplayScaleFactor = 1.0
                 desktopDisplayBounds = nil
+                desktopUsesHostResolution = false
                 lastVirtualDisplayError = error
 
                 if attempt.isCachedTarget {
@@ -598,8 +598,10 @@ extension MirageHostService {
             logDesktopStartStep("desktopStreamStarted sent")
         } catch {
             cancelPendingStartupAttempt(streamID: streamID)
+            await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
             MirageLogger.error(.host, error: error, message: "Failed to send desktopStreamStarted: ")
             logDesktopStartStep("desktopStreamStarted send failed")
+            throw MirageError.protocolError("Desktop stream startup acknowledgement could not be delivered to the client")
         }
 
         MirageLogger
@@ -627,6 +629,7 @@ extension MirageHostService {
         desktopPrimaryPhysicalBounds = nil
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = 1.0
+        desktopUsesHostResolution = false
         mirroredDesktopDisplayIDs.removeAll()
         desktopMirroringSnapshot.removeAll()
     }
@@ -670,6 +673,7 @@ extension MirageHostService {
         desktopPrimaryPhysicalDisplayID = nil
         desktopPrimaryPhysicalBounds = nil
         desktopRequestedScaleFactor = nil
+        desktopUsesHostResolution = false
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .mirrored
         desktopCursorPresentation = .clientCursor

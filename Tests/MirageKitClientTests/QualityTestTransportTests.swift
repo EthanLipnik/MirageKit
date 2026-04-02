@@ -220,4 +220,152 @@ struct QualityTestTransportTests {
         #expect(resolved.transportHeadroomBps == 31_000_000)
         #expect(resolved.streamingSafeBitrateBps == 0)
     }
+
+    @Test("Automatic startup probe plan uses the fixed four-stage replay sweep")
+    func automaticStartupProbePlanUsesFixedReplaySweep() throws {
+        let desiredBitrateBps = 200_000_000
+        let plan = MirageClientService.automaticStartupProbePlan(desiredBitrateBps: desiredBitrateBps)
+
+        #expect(plan.stages.count == 4)
+        #expect(plan.stages.map(\.probeKind) == [.streamingReplay, .streamingReplay, .streamingReplay, .streamingReplay])
+        #expect(plan.stages.map(\.durationMs) == [500, 900, 1_100, 1_300])
+        #expect(plan.stages.map(\.targetBitrateBps) == [100_000_000, 140_000_000, 170_000_000, 200_000_000])
+    }
+
+    @Test("Automatic startup probe configuration uses the shared bitrate-quality mapper")
+    func automaticStartupProbeConfigurationUsesSharedQualityMapper() throws {
+        let configuration = try #require(
+            MirageClientService.automaticStartupProbeConfiguration(
+                encodedWidth: 5_120,
+                encodedHeight: 2_880,
+                targetFrameRate: 60
+            )
+        )
+        let expectedBitrate = try #require(
+            MirageBitrateQualityMapper.targetBitrateBps(
+                forFrameQuality: 0.75,
+                width: 5_120,
+                height: 2_880,
+                frameRate: 60
+            )
+        )
+
+        #expect(configuration.desiredBitrateBps == expectedBitrate)
+    }
+
+    @Test("Automatic startup probe picks the highest stable measured throughput")
+    func automaticStartupProbePicksHighestStableMeasuredThroughput() {
+        let payloadBytes = 1_322
+        let stageResults = [
+            MirageQualityTestSummary.StageResult(
+                stageID: 0,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 100_000_000,
+                durationMs: 500,
+                throughputBps: 96_000_000,
+                lossPercent: 0.2,
+                sentPacketCount: 10_000,
+                receivedPacketCount: 9_980,
+                sentPayloadBytes: 6_250_000,
+                receivedPayloadBytes: 6_000_000
+            ),
+            MirageQualityTestSummary.StageResult(
+                stageID: 1,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 140_000_000,
+                durationMs: 900,
+                throughputBps: 132_000_000,
+                lossPercent: 0.5,
+                sentPacketCount: 14_000,
+                receivedPacketCount: 13_930,
+                sentPayloadBytes: 15_750_000,
+                receivedPayloadBytes: 14_850_000
+            ),
+            MirageQualityTestSummary.StageResult(
+                stageID: 2,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 170_000_000,
+                durationMs: 1_100,
+                throughputBps: 168_000_000,
+                lossPercent: 0.7,
+                sentPacketCount: 17_000,
+                receivedPacketCount: 16_880,
+                sentPayloadBytes: 23_375_000,
+                receivedPayloadBytes: 23_100_000
+            ),
+            MirageQualityTestSummary.StageResult(
+                stageID: 3,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 200_000_000,
+                durationMs: 1_300,
+                throughputBps: 188_000_000,
+                lossPercent: 1.4,
+                sentPacketCount: 20_000,
+                receivedPacketCount: 19_720,
+                sentPayloadBytes: 32_500_000,
+                receivedPayloadBytes: 30_550_000
+            ),
+        ]
+
+        let resolved = MirageClientService.resolvedAutomaticStartupProbeBitrate(
+            stageResults: stageResults,
+            payloadBytes: payloadBytes
+        )
+
+        #expect(resolved.startupBitrateBps == 168_000_000)
+        #expect(resolved.selectedStageResult?.stageID == 2)
+        #expect(resolved.peakMeasuredBitrateBps == 188_000_000)
+    }
+
+    @Test("Automatic startup probe falls back to the highest measured throughput when no stage is stable")
+    func automaticStartupProbeFallsBackToHighestMeasuredThroughput() {
+        let payloadBytes = 1_322
+        let stageResults = [
+            MirageQualityTestSummary.StageResult(
+                stageID: 0,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 100_000_000,
+                durationMs: 500,
+                throughputBps: 82_000_000,
+                lossPercent: 1.3,
+                sentPacketCount: 10_000,
+                receivedPacketCount: 9_840,
+                sentPayloadBytes: 6_250_000,
+                receivedPayloadBytes: 5_125_000
+            ),
+            MirageQualityTestSummary.StageResult(
+                stageID: 1,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 140_000_000,
+                durationMs: 900,
+                throughputBps: 121_000_000,
+                lossPercent: 1.5,
+                sentPacketCount: 14_000,
+                receivedPacketCount: 13_790,
+                sentPayloadBytes: 15_750_000,
+                receivedPayloadBytes: 13_612_500
+            ),
+            MirageQualityTestSummary.StageResult(
+                stageID: 2,
+                probeKind: .streamingReplay,
+                targetBitrateBps: 170_000_000,
+                durationMs: 1_100,
+                throughputBps: 152_000_000,
+                lossPercent: 1.2,
+                sentPacketCount: 17_000,
+                receivedPacketCount: 16_796,
+                sentPayloadBytes: 23_375_000,
+                receivedPayloadBytes: 20_900_000
+            ),
+        ]
+
+        let resolved = MirageClientService.resolvedAutomaticStartupProbeBitrate(
+            stageResults: stageResults,
+            payloadBytes: payloadBytes
+        )
+
+        #expect(resolved.startupBitrateBps == 152_000_000)
+        #expect(resolved.selectedStageResult?.stageID == 2)
+        #expect(resolved.peakMeasuredBitrateBps == 152_000_000)
+    }
 }

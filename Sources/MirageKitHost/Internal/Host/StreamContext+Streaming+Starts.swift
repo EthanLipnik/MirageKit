@@ -65,15 +65,25 @@ extension StreamContext {
         isRunning = true
         useVirtualDisplay = mirroredDisplaySnapshot != nil
         virtualDisplayContext = mirroredDisplaySnapshot
-        virtualDisplayVisibleBounds = .zero
-        virtualDisplayCaptureSourceRect = .zero
-        virtualDisplayVisiblePixelResolution = .zero
+        updateWindowCaptureVirtualDisplayState(mirroredDisplaySnapshot)
         captureFrameRateOverride = currentFrameRate
         captureFrameRate = currentFrameRate
 
         let window = windowWrapper.window
         let application = applicationWrapper.application
         let display = displayWrapper.display
+        let captureDisplaySelection = Self.windowCaptureDisplaySelection(
+            sourceDisplayID: display.displayID,
+            mirroredDisplayID: mirroredDisplaySnapshot?.displayID,
+            captureDisplayIsMirage: CGVirtualDisplayBridge.isMirageDisplay(
+                mirroredDisplaySnapshot?.displayID ?? display.displayID
+            )
+        )
+        let captureDisplayWrapper = try await resolveWindowCaptureDisplayWrapper(
+            sourceDisplayWrapper: displayWrapper,
+            mirroredDisplaySnapshot: mirroredDisplaySnapshot,
+            label: "window capture start"
+        )
         isAppStream = true
         applicationProcessID = application.processID
         trafficLightMaskGeometryCache = nil
@@ -107,11 +117,13 @@ extension StreamContext {
 
         await startEncoderWithSharedCallback(pinnedContentRect: nil, logPrefix: "Frame")
 
-        let captureEngine = await setupAndStartCaptureEngine(usesDisplayRefreshCadence: false)
+        let captureEngine = await setupAndStartCaptureEngine(
+            usesDisplayRefreshCadence: captureDisplaySelection.usesDisplayRefreshCadence
+        )
         try await captureEngine.startCapture(
             window: window,
             application: application,
-            display: display,
+            display: captureDisplayWrapper.display,
             outputScale: streamScale,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)

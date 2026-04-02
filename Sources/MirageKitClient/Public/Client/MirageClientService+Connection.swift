@@ -869,8 +869,9 @@ extension MirageClientService {
         switch error {
         case let .posix(code):
             return classifyPOSIXError(code)
-        case .dns,
-             .tls:
+        case .dns:
+            return .addressUnavailable
+        case .tls:
             return .other
         @unknown default:
             return .other
