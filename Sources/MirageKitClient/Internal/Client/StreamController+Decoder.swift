@@ -29,7 +29,7 @@ extension StreamController {
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.
-        stopTierPromotionProbe()
+        await stopTierPromotionProbe()
         stopFirstPresentedFrameMonitor()
         MirageFrameCache.shared.clear(for: streamID)
         stopFrameProcessingPipeline()
@@ -47,7 +47,7 @@ extension StreamController {
         stopFreezeMonitor()
         await startFrameProcessingPipeline()
         if presentationTier == .activeLive {
-            armFirstPresentedFrameAwaiter(reason: "session-reset")
+            await armFirstPresentedFrameAwaiter(reason: "session-reset")
         } else {
             stopFirstPresentedFrameMonitor()
         }
@@ -70,17 +70,18 @@ extension StreamController {
         }
 
         guard requestRecoveryKeyframe else { return }
-        beginPostResizeTransition()
+        await beginPostResizeTransition()
         await requestKeyframeRecovery(reason: .manualRecovery)
     }
 
     /// Enter keyframe-only decode admission until a post-resize first frame is decoded.
-    func beginPostResizeTransition() {
+    func beginPostResizeTransition() async {
         guard !awaitingFirstFrameAfterResize else { return }
         awaitingFirstFrameAfterResize = true
         clearQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
-        armFirstPresentedFrameAwaiter(reason: "post-resize")
+        await setClientRecoveryStatus(.postResizeAwaitingFirstFrame)
+        await armFirstPresentedFrameAwaiter(reason: "post-resize")
         MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-only decode admission)")
     }
 
@@ -155,14 +156,14 @@ extension StreamController {
         switch tier {
         case .activeLive:
             if !hasPresentedFirstFrame, !awaitingFirstPresentedFrame {
-                armFirstPresentedFrameAwaiter(reason: "tier-promotion")
+                await armFirstPresentedFrameAwaiter(reason: "tier-promotion")
             }
             if previousTier == .passiveSnapshot {
                 await handlePassiveToActivePromotion()
             }
         case .passiveSnapshot:
-            stopTierPromotionProbe()
-            stopKeyframeRecoveryLoop()
+            await stopTierPromotionProbe()
+            await stopKeyframeRecoveryLoop()
             stopFreezeMonitor()
             consecutiveFreezeRecoveries = 0
             if !hasPresentedFirstFrame {
@@ -180,16 +181,17 @@ extension StreamController {
 
         switch decision {
         case let .forceImmediateKeyframe(reason):
-            stopTierPromotionProbe()
+            await stopTierPromotionProbe()
             reassembler.enterKeyframeOnlyMode()
-            startKeyframeRecoveryLoopIfNeeded()
+            await setClientRecoveryStatus(.keyframeRecovery)
+            await startKeyframeRecoveryLoopIfNeeded()
             MirageLogger.client(
                 "Tier promotion forcing keyframe for stream \(streamID) (reason: \(tierPromotionReasonText(reason)))"
             )
             await requestKeyframeRecovery(reason: .manualRecovery)
         case .pFrameFirst:
             MirageLogger.client("Tier promotion using P-frame-first for stream \(streamID)")
-            startTierPromotionProbe()
+            await startTierPromotionProbe()
         }
     }
 
@@ -204,17 +206,21 @@ extension StreamController {
         }
     }
 
-    private func startTierPromotionProbe() {
-        stopTierPromotionProbe()
+    private func startTierPromotionProbe() async {
+        await stopTierPromotionProbe()
         let baselineSequence = MirageFrameCache.shared.presentationSnapshot(for: streamID).sequence
+        await setClientRecoveryStatus(.tierPromotionProbe)
         tierPromotionProbeTask = Task { [weak self] in
             await self?.runTierPromotionProbe(baselineSequence: baselineSequence)
         }
     }
 
-    private func stopTierPromotionProbe() {
+    private func stopTierPromotionProbe() async {
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
+        if clientRecoveryStatus == .tierPromotionProbe {
+            await setClientRecoveryStatus(.idle)
+        }
     }
 
     private func runTierPromotionProbe(baselineSequence: UInt64) async {
@@ -233,6 +239,7 @@ extension StreamController {
             MirageLogger.client(
                 "Tier promotion probe progressed for stream \(streamID) (baseline=\(baselineSequence), latest=\(snapshot.sequence))"
             )
+            await setClientRecoveryStatus(.idle)
             return
         }
 
@@ -242,7 +249,8 @@ extension StreamController {
                 "Tier promotion probe requesting keyframe-only recovery for stream \(streamID) (no progress)"
             )
             reassembler.enterKeyframeOnlyMode()
-            startKeyframeRecoveryLoopIfNeeded()
+            await setClientRecoveryStatus(.keyframeRecovery)
+            await startKeyframeRecoveryLoopIfNeeded()
             await requestKeyframeRecovery(reason: .manualRecovery)
             return
         }
@@ -250,6 +258,7 @@ extension StreamController {
         MirageLogger.client(
             "Tier promotion probe requesting single recovery keyframe for stream \(streamID) (no progress)"
         )
+        await setClientRecoveryStatus(.keyframeRecovery)
         await requestKeyframeRecovery(reason: .manualRecovery)
     }
 

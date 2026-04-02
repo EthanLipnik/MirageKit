@@ -119,7 +119,7 @@ extension StreamController {
     func armFirstPresentedFrameAwaiter(
         reason: String,
         mode: FirstPresentedFrameAwaitMode = .startup
-    ) {
+    ) async {
         let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
         awaitingFirstPresentedFrame = true
         firstPresentedFrameAwaitMode = mode
@@ -130,6 +130,9 @@ extension StreamController {
         firstPresentedFrameLastRecoveryRequestTime = 0
         firstPresentedFrameRecoveryAttemptCount = 0
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(true)
+        if reason != "post-resize", mode == .startup {
+            await setClientRecoveryStatus(.startup)
+        }
 
         MirageLogger
             .client(
@@ -202,6 +205,7 @@ extension StreamController {
             hasDecodedFirstFrame = true
         }
         syncPresentationProgressFromFrameCache(now: now)
+        await setClientRecoveryStatus(.idle)
         guard shouldNotify, let handler = onFirstFramePresented else { return }
         await MainActor.run {
             handler()
@@ -313,7 +317,7 @@ extension StreamController {
         await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
     }
 
-    func recordDecodedFrame() {
+    func recordDecodedFrame() async {
         lastDecodedFrameTime = currentTime()
         if !decodeRecoveryEscalationTimestamps.isEmpty {
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
@@ -321,7 +325,7 @@ extension StreamController {
         if presentationTier == .activeLive,
            !hasPresentedFirstFrame,
            !awaitingFirstPresentedFrame {
-            armFirstPresentedFrameAwaiter(reason: "decode-without-presentation")
+            await armFirstPresentedFrameAwaiter(reason: "decode-without-presentation")
         }
         if presentationTier == .activeLive {
             startFreezeMonitorIfNeeded()
@@ -366,7 +370,7 @@ extension StreamController {
     ) async {
         if !hasDecodedFirstFrame || !hasPresentedFirstFrame {
             if presentationTier == .activeLive, !awaitingFirstPresentedFrame {
-                armFirstPresentedFrameAwaiter(reason: "frame-loss-bootstrap")
+                await armFirstPresentedFrameAwaiter(reason: "frame-loss-bootstrap")
             }
             let now = currentTime()
             firstPresentedFrameLastRecoveryRequestTime = now
@@ -528,18 +532,22 @@ extension StreamController {
                     "Soft recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
                 )
             if presentationTier == .activeLive {
-                startKeyframeRecoveryLoopIfNeeded()
+                await startKeyframeRecoveryLoopIfNeeded()
             }
             return
         }
         lastSoftRecoveryRequestTime = now
 
         MirageLogger.client("Starting soft stream recovery (\(reason.logLabel)) for stream \(streamID)")
+        if clientRecoveryStatus != .postResizeAwaitingFirstFrame,
+           clientRecoveryStatus != .hardRecovery {
+            await setClientRecoveryStatus(.keyframeRecovery)
+        }
         await clearResizeState()
         clearQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
         if presentationTier == .activeLive {
-            startKeyframeRecoveryLoopIfNeeded()
+            await startKeyframeRecoveryLoopIfNeeded()
         }
         await requestKeyframeRecovery(reason: reason)
     }
@@ -574,21 +582,28 @@ extension StreamController {
         }
     }
 
-    func startKeyframeRecoveryLoopIfNeeded() {
+    func startKeyframeRecoveryLoopIfNeeded() async {
         guard presentationTier == .activeLive else { return }
         guard keyframeRecoveryTask == nil else { return }
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        if clientRecoveryStatus != .postResizeAwaitingFirstFrame,
+           clientRecoveryStatus != .hardRecovery {
+            await setClientRecoveryStatus(.keyframeRecovery)
+        }
         keyframeRecoveryTask = Task { [weak self] in
             await self?.runKeyframeRecoveryLoop()
         }
     }
 
-    func stopKeyframeRecoveryLoop() {
+    func stopKeyframeRecoveryLoop() async {
         keyframeRecoveryTask?.cancel()
         keyframeRecoveryTask = nil
         keyframeRecoveryAttempt = 0
         lastRecoveryRequestTime = 0
+        if clientRecoveryStatus == .keyframeRecovery {
+            await setClientRecoveryStatus(.idle)
+        }
     }
 
     private func runKeyframeRecoveryLoop() async {

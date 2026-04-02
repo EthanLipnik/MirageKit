@@ -404,6 +404,11 @@ actor StreamController {
     private(set) var onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)?
     /// Called when freeze monitoring records a stall event.
     private(set) var onStallEvent: (@MainActor @Sendable () -> Void)?
+    /// Called when client recovery state changes.
+    private(set) var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
+
+    /// Last recovery status delivered to the app layer.
+    var clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle
 
     /// Set callbacks for stream events
     func setCallbacks(
@@ -414,7 +419,8 @@ actor StreamController {
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
-        onStallEvent: (@MainActor @Sendable () -> Void)? = nil
+        onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
+        onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeEvent = onResizeEvent
@@ -424,6 +430,16 @@ actor StreamController {
         self.onFirstFramePresented = onFirstFramePresented
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
         self.onStallEvent = onStallEvent
+        self.onRecoveryStatusChanged = onRecoveryStatusChanged
+    }
+
+    func setClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) async {
+        guard clientRecoveryStatus != status else { return }
+        clientRecoveryStatus = status
+        guard let onRecoveryStatusChanged else { return }
+        await MainActor.run {
+            onRecoveryStatusChanged(status)
+        }
     }
 
     // MARK: - Initialization
@@ -468,6 +484,7 @@ actor StreamController {
         lastRecoveryRequestDispatchTime = 0
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        await setClientRecoveryStatus(.idle)
         stopFreezeMonitor()
         let presentationSnapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
         lastPresentedSequenceObserved = presentationSnapshot.sequence
@@ -518,7 +535,7 @@ actor StreamController {
 
         await startFrameProcessingPipeline()
         if presentationTier == .activeLive {
-            armFirstPresentedFrameAwaiter(reason: "stream-start")
+            await armFirstPresentedFrameAwaiter(reason: "stream-start")
         } else {
             stopFirstPresentedFrameMonitor()
         }
@@ -927,6 +944,7 @@ actor StreamController {
         onFirstFramePresented = nil
         onAdaptiveFallbackNeeded = nil
         onStallEvent = nil
+        onRecoveryStatusChanged = nil
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil

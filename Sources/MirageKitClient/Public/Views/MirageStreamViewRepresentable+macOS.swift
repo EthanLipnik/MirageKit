@@ -24,11 +24,20 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Cursor store for pointer updates.
     public var cursorStore: MirageClientCursorStore?
 
-    /// Cursor position store for secondary display sync.
+    /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore?
 
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
+
+    /// Whether the stream can recapture cursor lock after a temporary local unlock.
+    public var cursorLockCanRecapture: Bool
+
+    /// Callback when the client should temporarily unlock cursor capture.
+    public var onCursorLockEscapeRequested: (() -> Void)?
+
+    /// Callback when the client should recapture cursor lock after a temporary unlock.
+    public var onCursorLockRecaptureRequested: (() -> Void)?
 
     /// Whether Mirage should render its synthetic local cursor presentation.
     public var syntheticCursorEnabled: Bool
@@ -56,6 +65,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
+        cursorLockCanRecapture: Bool = false,
+        onCursorLockEscapeRequested: (() -> Void)? = nil,
+        onCursorLockRecaptureRequested: (() -> Void)? = nil,
         syntheticCursorEnabled: Bool = true,
         inputEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
@@ -70,6 +82,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
+        self.cursorLockCanRecapture = cursorLockCanRecapture
+        self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
+        self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.syntheticCursorEnabled = syntheticCursorEnabled
         self.inputEnabled = inputEnabled
         self.presentationTier = presentationTier
@@ -112,6 +127,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
         wrapper.cursorLockEnabled = cursorLockEnabled
+        wrapper.canRecaptureCursorLock = cursorLockCanRecapture
+        wrapper.onCursorLockEscapeRequested = onCursorLockEscapeRequested
+        wrapper.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         wrapper.syntheticCursorEnabled = syntheticCursorEnabled
         wrapper.inputEnabled = inputEnabled
         wrapper.streamID = streamID
@@ -156,6 +174,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
             wrapper.cursorLockEnabled = cursorLockEnabled
+            wrapper.canRecaptureCursorLock = cursorLockCanRecapture
+            wrapper.onCursorLockEscapeRequested = onCursorLockEscapeRequested
+            wrapper.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
             wrapper.syntheticCursorEnabled = syntheticCursorEnabled
             wrapper.inputEnabled = inputEnabled
             wrapper.streamID = streamID

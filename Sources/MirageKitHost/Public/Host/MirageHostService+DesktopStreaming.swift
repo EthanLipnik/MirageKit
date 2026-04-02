@@ -632,7 +632,10 @@ extension MirageHostService {
     }
 
     /// Stop the desktop stream
-    func stopDesktopStream(reason: DesktopStreamStopReason = .clientRequested) async {
+    func stopDesktopStream(
+        reason: DesktopStreamStopReason = .clientRequested,
+        triggeredByExplicitStreamStop: Bool = true
+    ) async {
         // Clear any stuck modifiers before stopping
         inputController.clearAllModifiers()
 
@@ -692,6 +695,7 @@ extension MirageHostService {
 
         syncSharedClipboardState(reason: "desktop_stream_stopped")
         await updateLightsOutState()
+        lockHostIfStreamingStopped(triggeredByExplicitStreamStop: triggeredByExplicitStreamStop)
 
         MirageLogger.host("Desktop stream stopped")
     }

@@ -100,6 +100,19 @@ struct MirageKitTests {
         }
     }
 
+    @Test("Quality-test cancel control type is recognized")
+    func qualityTestCancelControlTypeIsRecognized() throws {
+        let payload = QualityTestCancelMessage(testID: UUID())
+        let envelope = try ControlMessage(type: .qualityTestCancel, content: payload)
+
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        #expect(decodedEnvelope.type == .qualityTestCancel)
+
+        let decodedPayload = try decodedEnvelope.decode(QualityTestCancelMessage.self)
+        #expect(decodedPayload.testID == payload.testID)
+    }
+
     @Test("Control parser returns needMoreData for truncated payload")
     func controlParserReturnsNeedMoreDataForTruncatedPayload() {
         var data = Data([ControlMessageType.sessionBootstrapRequest.rawValue])
@@ -686,12 +699,14 @@ struct MirageKitTests {
             testID: UUID(),
             plan: MirageQualityTestPlan(stages: []),
             payloadBytes: 1188,
-            mediaMaxPacketSize: 1400
+            mediaMaxPacketSize: 1400,
+            stopAfterFirstBreach: true
         )
         let qualityEnvelope = try ControlMessage(type: .qualityTestRequest, content: qualityRequest)
         let (decodedQualityEnvelope, _) = try requireParsedControlMessage(from: qualityEnvelope.serialize())
         let decodedQualityRequest = try decodedQualityEnvelope.decode(QualityTestRequestMessage.self)
         #expect(decodedQualityRequest.mediaMaxPacketSize == 1400)
+        #expect(decodedQualityRequest.stopAfterFirstBreach)
 
         let started = StreamStartedMessage(
             streamID: 42,
@@ -903,6 +918,7 @@ struct MirageKitTests {
             mode: .secondary,
             cursorPresentation: MirageDesktopCursorPresentation(
                 source: .host,
+                lockClientCursorWhenUsingMirageCursor: true,
                 lockClientCursorWhenUsingHostCursor: false
             ),
             audioConfiguration: .default,
@@ -914,6 +930,7 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
         #expect(decoded.cursorPresentation?.source == .host)
+        #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingMirageCursor == true)
         #expect(decoded.cursorPresentation?.lockClientCursorWhenUsingHostCursor == false)
     }
 
@@ -923,6 +940,7 @@ struct MirageKitTests {
             streamID: 42,
             cursorPresentation: MirageDesktopCursorPresentation(
                 source: .host,
+                lockClientCursorWhenUsingMirageCursor: false,
                 lockClientCursorWhenUsingHostCursor: true
             )
         )
@@ -933,6 +951,7 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(DesktopCursorPresentationChangeMessage.self)
         #expect(decoded.streamID == 42)
         #expect(decoded.cursorPresentation.source == .host)
+        #expect(decoded.cursorPresentation.lockClientCursorWhenUsingMirageCursor == false)
         #expect(decoded.cursorPresentation.lockClientCursorWhenUsingHostCursor)
     }
 
@@ -1119,6 +1138,42 @@ struct MirageKitTests {
         let advertisement = LoomPeerAdvertisement(deviceType: .mac)
         #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: advertisement) == true)
         #expect(advertisement.mirageAcceptingConnections == true)
+    }
+
+    @Test("Peer advertisement local network context round trips and preserves host fields")
+    func peerAdvertisementLocalNetworkContextRoundTrips() {
+        let advertisement = LoomPeerAdvertisement(
+            protocolVersion: Int(Loom.protocolVersion),
+            deviceID: UUID(),
+            identityKeyID: "host-key",
+            deviceType: .mac,
+            modelIdentifier: "Mac16,1",
+            iconName: "desktopcomputer",
+            machineFamily: "Mac",
+            hostName: "Altair.local",
+            directTransports: [
+                LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
+            ],
+            metadata: [
+                "mirage.accepting-connections": "1",
+            ]
+        )
+
+        let updated = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
+            MirageLocalNetworkSnapshot(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:wifi-a", "24:wifi-b"],
+                wiredSubnetSignatures: ["24:wired-a"]
+            ),
+            in: advertisement
+        )
+        let decoded = LoomPeerAdvertisement.from(txtRecord: updated.toTXTRecord())
+        let networkContext = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(from: decoded)
+
+        #expect(decoded.hostName == "Altair.local")
+        #expect(decoded.directTransports == advertisement.directTransports)
+        #expect(networkContext.wifiSubnetSignatures == ["24:wifi-a", "24:wifi-b"])
+        #expect(networkContext.wiredSubnetSignatures == ["24:wired-a"])
     }
 
     @Test("Stream statistics formatting")

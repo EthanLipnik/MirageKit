@@ -61,6 +61,8 @@ public extension MirageHostService {
             MirageLogger.host("Initial window refresh failed (screen recording permission may be needed): \(error)")
         }
 
+        ensureScreenParametersObserver()
+
         // Start cursor monitoring for active streams
         startCursorMonitoring()
 
@@ -132,6 +134,7 @@ public extension MirageHostService {
         await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
         clearAllPendingAppWindowCloseAlertTokens()
         await SharedVirtualDisplayManager.shared.setGenerationChangeHandler(nil)
+        removeScreenParametersObserver()
 
         // Stop cursor monitoring
         await cursorMonitor?.stop()

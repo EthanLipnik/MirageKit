@@ -23,8 +23,9 @@ extension InputCapturingView {
         // Handle key-up first so gcClaimedKeyCodes is cleaned up even when
         // modifiers have already been released by the time the key-up arrives.
         if !isPressed {
-            guard gcClaimedKeyCodes.remove(keyCode) != nil else { return }
             guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return }
+            guard gcClaimedKeyCodes.remove(keyCode) != nil else { return }
+            if passthroughClaimedKeyCodes.remove(hidUsage) != nil { return }
             let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
             let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
             let keyEvent = MirageKeyEvent(
@@ -43,6 +44,16 @@ extension InputCapturingView {
         else { return }
 
         let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let eventModifiers = keyboardModifiers
+        if let shortcut = MirageInterceptedShortcutPolicy.shortcut(
+            keyCode: macKeyCode,
+            modifiers: eventModifiers
+        ) {
+            gcClaimedKeyCodes.insert(keyCode)
+            passthroughClaimedKeyCodes.insert(hidUsage)
+            performPassthroughShortcut(shortcut, source: .hardwareKey)
+            return
+        }
         let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
 
         gcClaimedKeyCodes.insert(keyCode)
@@ -51,7 +62,7 @@ extension InputCapturingView {
             keyCode: macKeyCode,
             characters: character,
             charactersIgnoringModifiers: character,
-            modifiers: keyboardModifiers
+            modifiers: eventModifiers
         )
         hideCursorForTypingUntilPointerMovement()
         onInputEvent?(.keyDown(keyEvent))
@@ -119,6 +130,32 @@ extension InputCapturingView {
         }
     }
 
+    private static func uiKeyModifierFlags(
+        from modifiers: MirageModifierFlags
+    ) -> UIKeyModifierFlags {
+        var result: UIKeyModifierFlags = []
+        if modifiers.contains(.capsLock) { result.insert(.alphaShift) }
+        if modifiers.contains(.shift) { result.insert(.shift) }
+        if modifiers.contains(.control) { result.insert(.control) }
+        if modifiers.contains(.option) { result.insert(.alternate) }
+        if modifiers.contains(.command) { result.insert(.command) }
+        if modifiers.contains(.numericPad) { result.insert(.numericPad) }
+        return result
+    }
+
+    private func interceptedShortcut(
+        for keyCode: UIKeyboardHIDUsage,
+        modifierFlags: UIKeyModifierFlags?
+    ) -> MirageInterceptedShortcut? {
+        let fallbackModifiers = modifierFlags.map(MirageModifierFlags.init(uiKeyModifierFlags:))
+        let eventModifiers = fallbackModifiers ?? keyboardModifiers
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(keyCode)
+        return MirageInterceptedShortcutPolicy.shortcut(
+            keyCode: macKeyCode,
+            modifiers: eventModifiers
+        )
+    }
+
     override public func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         updateHardwareKeyboardPresence(true)
         let hardwareAvailable = refreshModifiersForInput()
@@ -132,6 +169,11 @@ extension InputCapturingView {
             // Escape without modifiers clears any stuck modifier state as a recovery mechanism
             if key.keyCode == .keyboardEscape {
                 let flags = modifierSnapshot(from: event, fallbackFlags: fallbackFlags, allowFallback: true) ?? []
+                if flags.isEmpty, requestCursorLockEscapeIfNeeded() {
+                    resetAllModifiers()
+                    suppressEscapeKeyUpForCursorUnlock = true
+                    continue
+                }
                 if flags.isEmpty { resetAllModifiers() }
             }
 
@@ -151,9 +193,24 @@ extension InputCapturingView {
                 }
             } else {
                 #if canImport(GameController)
+                if passthroughClaimedKeyCodes.contains(key.keyCode) { continue }
                 // Skip if GCKeyboard already claimed this key (modifier+key combo)
                 if gcClaimedKeyCodes.contains(GCKeyCode(rawValue: key.keyCode.rawValue)) { continue }
                 #endif
+                if let shortcut = interceptedShortcut(
+                    for: key.keyCode,
+                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                ) {
+                    if allowFallback {
+                        resyncModifiers(
+                            using: event,
+                            fallbackFlags: fallbackFlags,
+                            allowFallback: true
+                        )
+                    }
+                    performPassthroughShortcut(shortcut, source: .hardwareKey)
+                    continue
+                }
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if !keyboardModifiers.contains(.command) { startKeyRepeat(for: press) }
                 hideCursorForTypingUntilPointerMovement()
@@ -173,6 +230,11 @@ extension InputCapturingView {
             let isCapsLockKey = key.keyCode == .keyboardCapsLock
             let fallbackFlags = key.modifierFlags
 
+            if key.keyCode == .keyboardEscape, suppressEscapeKeyUpForCursorUnlock {
+                suppressEscapeKeyUpForCursorUnlock = false
+                continue
+            }
+
             if isCapsLockKey { continue }
 
             let isModifier = Self.modifierKeyMap[key.keyCode] != nil
@@ -190,12 +252,21 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
+                let shortcut = interceptedShortcut(
+                    for: key.keyCode,
+                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                )
                 #if canImport(GameController)
+                if passthroughClaimedKeyCodes.remove(key.keyCode) != nil {
+                    gcClaimedKeyCodes.remove(GCKeyCode(rawValue: key.keyCode.rawValue))
+                    continue
+                }
                 // Skip if GCKeyboard already claimed this key (modifier+key combo).
                 // Use remove so cleanup happens from both paths.
                 let gcKey = GCKeyCode(rawValue: key.keyCode.rawValue)
                 if gcClaimedKeyCodes.remove(gcKey) != nil { continue }
                 #endif
+                if shortcut != nil { continue }
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyUp(keyEvent)) }
@@ -213,6 +284,11 @@ extension InputCapturingView {
             let isCapsLockKey = key.keyCode == .keyboardCapsLock
             let fallbackFlags = key.modifierFlags
 
+            if key.keyCode == .keyboardEscape, suppressEscapeKeyUpForCursorUnlock {
+                suppressEscapeKeyUpForCursorUnlock = false
+                continue
+            }
+
             if isCapsLockKey { continue }
 
             let isModifier = Self.modifierKeyMap[key.keyCode] != nil
@@ -230,12 +306,21 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
+                let shortcut = interceptedShortcut(
+                    for: key.keyCode,
+                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                )
                 #if canImport(GameController)
+                if passthroughClaimedKeyCodes.remove(key.keyCode) != nil {
+                    gcClaimedKeyCodes.remove(GCKeyCode(rawValue: key.keyCode.rawValue))
+                    continue
+                }
                 // Skip if GCKeyboard already claimed this key (modifier+key combo).
                 // Use remove so cleanup happens from both paths.
                 let gcKey = GCKeyCode(rawValue: key.keyCode.rawValue)
                 if gcClaimedKeyCodes.remove(gcKey) != nil { continue }
                 #endif
+                if shortcut != nil { continue }
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
                 if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyUp(keyEvent)) }
@@ -310,91 +395,69 @@ extension InputCapturingView {
         keyRepeatTimers.removeAll()
         heldKeyPresses.removeAll()
         stopPassthroughShortcutRepeat(sendKeyUp: true)
+        lastPassthroughShortcutDispatch = nil
     }
 
     // MARK: - Intercepted Shortcut Repeat
 
     private func shouldRepeatPassthroughShortcut(
-        input: String,
-        modifiers: MirageModifierFlags
+        shortcut: MirageInterceptedShortcut
     ) -> Bool {
-        guard input.lowercased() == "z" else { return false }
-        var normalized = modifiers
-        normalized.remove(.capsLock)
-        guard normalized.contains(.command) else { return false }
-        let allowedModifiers: MirageModifierFlags = [.command, .shift]
-        return normalized.subtracting(allowedModifiers).isEmpty
+        shortcut.allowsRepeat
     }
 
     private func sendPassthroughShortcutKeyDown(
-        keyCode: UInt16,
-        input: String,
-        modifiers: MirageModifierFlags,
+        shortcut: MirageInterceptedShortcut,
+        baseModifiers: MirageModifierFlags,
         isRepeat: Bool
     ) {
-        let keyDownEvent = MirageKeyEvent(
-            keyCode: keyCode,
-            characters: input,
-            charactersIgnoringModifiers: input,
-            modifiers: modifiers,
-            isRepeat: isRepeat
-        )
         hideCursorForTypingUntilPointerMovement()
-        onInputEvent?(.keyDown(keyDownEvent))
+        onInputEvent?(.keyDown(shortcut.keyDownEvent(baseModifiers: baseModifiers, isRepeat: isRepeat)))
     }
 
     private func sendPassthroughShortcutKeyUp(
-        keyCode: UInt16,
-        input: String,
-        modifiers: MirageModifierFlags
+        shortcut: MirageInterceptedShortcut,
+        baseModifiers: MirageModifierFlags
     ) {
-        let keyUpEvent = MirageKeyEvent(
-            keyCode: keyCode,
-            characters: input,
-            charactersIgnoringModifiers: input,
-            modifiers: modifiers
-        )
-        onInputEvent?(.keyUp(keyUpEvent))
+        onInputEvent?(.keyUp(shortcut.keyUpEvent(baseModifiers: baseModifiers)))
     }
 
     @discardableResult
     private func startPassthroughShortcutRepeatIfNeeded(
-        input: String,
-        keyCode: UInt16,
-        modifiers: MirageModifierFlags
+        shortcut: MirageInterceptedShortcut,
+        baseModifiers: MirageModifierFlags
     ) -> Bool {
-        guard shouldRepeatPassthroughShortcut(input: input, modifiers: modifiers) else { return false }
+        guard shouldRepeatPassthroughShortcut(shortcut: shortcut) else { return false }
+        let eventModifiers = shortcut.forwardedModifiers(baseModifiers: baseModifiers)
 
         if let existing = passthroughShortcutRepeatState {
-            if existing.keyCode == keyCode,
-               existing.input == input,
-               existing.modifiers == modifiers {
+            if existing.keyCode == shortcut.keyCode,
+               existing.input == shortcut.input,
+               existing.modifiers == eventModifiers {
                 return true
             }
             stopPassthroughShortcutRepeat(sendKeyUp: true)
         }
 
-        let requiresShift = modifiers.contains(.shift)
+        let requiresShift = shortcut.modifiers.contains(.shift)
         sendPassthroughShortcutKeyDown(
-            keyCode: keyCode,
-            input: input,
-            modifiers: modifiers,
+            shortcut: shortcut,
+            baseModifiers: baseModifiers,
             isRepeat: false
         )
 
         guard isPassthroughShortcutHeld(requiresShift: requiresShift) else {
             sendPassthroughShortcutKeyUp(
-                keyCode: keyCode,
-                input: input,
-                modifiers: modifiers
+                shortcut: shortcut,
+                baseModifiers: baseModifiers
             )
             return true
         }
 
         passthroughShortcutRepeatState = PassthroughShortcutRepeatState(
-            keyCode: keyCode,
-            input: input,
-            modifiers: modifiers,
+            keyCode: shortcut.keyCode,
+            input: shortcut.input,
+            modifiers: eventModifiers,
             requiresShift: requiresShift,
             nextRepeatDeadline: Date.timeIntervalSinceReferenceDate + Self.keyRepeatInitialDelay
         )
@@ -427,10 +490,15 @@ extension InputCapturingView {
         let now = Date.timeIntervalSinceReferenceDate
         guard now >= state.nextRepeatDeadline else { return }
 
-        sendPassthroughShortcutKeyDown(
-            keyCode: state.keyCode,
+        let shortcut = MirageInterceptedShortcut(
             input: state.input,
-            modifiers: state.modifiers,
+            keyCode: state.keyCode,
+            modifiers: MirageInterceptedShortcutPolicy.normalizedShortcutModifiers(state.modifiers),
+            deliveryBehavior: .repeatable
+        )
+        sendPassthroughShortcutKeyDown(
+            shortcut: shortcut,
+            baseModifiers: state.modifiers.subtracting(shortcut.modifiers),
             isRepeat: true
         )
         state.nextRepeatDeadline = now + Self.keyRepeatInterval
@@ -439,10 +507,15 @@ extension InputCapturingView {
 
     private func stopPassthroughShortcutRepeat(sendKeyUp: Bool) {
         if sendKeyUp, let state = passthroughShortcutRepeatState {
-            sendPassthroughShortcutKeyUp(
-                keyCode: state.keyCode,
+            let shortcut = MirageInterceptedShortcut(
                 input: state.input,
-                modifiers: state.modifiers
+                keyCode: state.keyCode,
+                modifiers: MirageInterceptedShortcutPolicy.normalizedShortcutModifiers(state.modifiers),
+                deliveryBehavior: .repeatable
+            )
+            sendPassthroughShortcutKeyUp(
+                shortcut: shortcut,
+                baseModifiers: state.modifiers.subtracting(shortcut.modifiers)
             )
         }
 
@@ -472,86 +545,132 @@ extension InputCapturingView {
 
     // MARK: - System Shortcut Interception
 
-    /// Override keyCommands to suppress iOS system-level actions (Stage Manager close,
-    /// quit, hide, minimize, settings) that would otherwise steal focus or dismiss the app.
-    /// When GCKeyboard is available, it handles the actual key forwarding — these commands
-    /// only need to exist to block iOS from acting on them. Without GCKeyboard, the
-    /// handler falls back to sending key events directly.
-    override public var keyCommands: [UIKeyCommand]? {
-        let passthroughShortcuts: [(String, UIKeyModifierFlags)] = [
-            ("w", .command), // Stage Manager window close
-            ("q", .command), // Quit
-            ("h", .command), // Hide
-            ("m", .command), // Minimize
-            (",", .command), // Settings
-            ("w", [.command, .shift]), // Close all
-            ("z", .command), // Undo (needed for key repeat)
-            ("z", [.command, .shift]), // Redo (needed for key repeat)
-            ("b", .command), // Bold (system text formatting)
-            ("i", .command), // Italic (system text formatting)
-            ("u", .command), // Underline (system text formatting)
-        ]
+    private func editActionShortcut(
+        for action: Selector
+    ) -> MirageInterceptedShortcut? {
+        MirageInterceptedShortcutPolicy.shortcut(
+            actionName: NSStringFromSelector(action)
+        )
+    }
 
-        return passthroughShortcuts.map { key, modifiers in
+    private func shouldSuppressPassthroughShortcutDispatch(
+        _ shortcut: MirageInterceptedShortcut,
+        source: PassthroughShortcutDispatchSource
+    ) -> Bool {
+        guard let lastDispatch = lastPassthroughShortcutDispatch else { return false }
+        guard lastDispatch.shortcut == shortcut else { return false }
+        guard lastDispatch.source != source else { return false }
+        return CFAbsoluteTimeGetCurrent() - lastDispatch.timestamp
+            <= Self.passthroughShortcutDuplicateSuppressionWindow
+    }
+
+    private func notePassthroughShortcutDispatch(
+        _ shortcut: MirageInterceptedShortcut,
+        source: PassthroughShortcutDispatchSource
+    ) {
+        lastPassthroughShortcutDispatch = PassthroughShortcutDispatch(
+            shortcut: shortcut,
+            source: source,
+            timestamp: CFAbsoluteTimeGetCurrent()
+        )
+    }
+
+    private func performPassthroughShortcut(
+        _ shortcut: MirageInterceptedShortcut,
+        source: PassthroughShortcutDispatchSource
+    ) {
+        guard onInputEvent != nil else { return }
+        guard !shouldSuppressPassthroughShortcutDispatch(shortcut, source: source) else {
+            return
+        }
+        notePassthroughShortcutDispatch(shortcut, source: source)
+        refreshModifiersForInput()
+
+        if !startPassthroughShortcutRepeatIfNeeded(
+            shortcut: shortcut,
+            baseModifiers: keyboardModifiers
+        ) {
+            sendPassthroughShortcutKeyDown(
+                shortcut: shortcut,
+                baseModifiers: keyboardModifiers,
+                isRepeat: false
+            )
+            sendPassthroughShortcutKeyUp(
+                shortcut: shortcut,
+                baseModifiers: keyboardModifiers
+            )
+        }
+
+        refreshModifiersForInput()
+        updateModifierRefreshTimer()
+    }
+
+    /// Override keyCommands to claim iPadOS system shortcuts that would otherwise be
+    /// handled locally instead of reaching the remote host.
+    override public var keyCommands: [UIKeyCommand]? {
+        MirageInterceptedShortcutPolicy.shortcuts.map { shortcut in
             let command = UIKeyCommand(
                 action: #selector(handlePassthroughShortcut(_:)),
-                input: key,
-                modifierFlags: modifiers
+                input: shortcut.input,
+                modifierFlags: Self.uiKeyModifierFlags(from: shortcut.modifiers)
             )
             command.wantsPriorityOverSystemBehavior = true
             return command
         }
     }
 
+    override public func target(forAction action: Selector, withSender sender: Any?) -> Any? {
+        if onInputEvent != nil, editActionShortcut(for: action) != nil {
+            return self
+        }
+        return super.target(forAction: action, withSender: sender)
+    }
+
+    override public func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+        if editActionShortcut(for: action) != nil {
+            return onInputEvent != nil
+        }
+        return super.canPerformAction(action, withSender: sender)
+    }
+
     @objc
     func handlePassthroughShortcut(_ command: UIKeyCommand) {
         guard let input = command.input else { return }
-
-        refreshModifiersForInput()
-
-        #if canImport(GameController)
-        // When GCKeyboard is available, it already forwarded the key event.
-        // We only need to handle undo/redo repeat and keep modifiers synced.
-        if GCKeyboard.coalesced != nil {
-            let macKeyCode = Self.characterToMacKeyCode(input)
-            let commandModifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
-            let eventModifiers = keyboardModifiers.union(commandModifiers)
-            startPassthroughShortcutRepeatIfNeeded(
-                input: input,
-                keyCode: macKeyCode,
-                modifiers: eventModifiers
-            )
-            refreshModifiersForInput()
-            updateModifierRefreshTimer()
+        guard let shortcut = MirageInterceptedShortcutPolicy.shortcut(
+            input: input,
+            modifiers: MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
+        ) else {
             return
         }
-        #endif
 
-        // Fallback: no GCKeyboard — send key events directly
-        let macKeyCode = Self.characterToMacKeyCode(input)
-        let commandModifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
-        let eventModifiers = keyboardModifiers.union(commandModifiers)
+        performPassthroughShortcut(shortcut, source: .keyCommand)
+    }
 
-        if !startPassthroughShortcutRepeatIfNeeded(
-            input: input,
-            keyCode: macKeyCode,
-            modifiers: eventModifiers
-        ) {
-            sendPassthroughShortcutKeyDown(
-                keyCode: macKeyCode,
-                input: input,
-                modifiers: eventModifiers,
-                isRepeat: false
-            )
-            sendPassthroughShortcutKeyUp(
-                keyCode: macKeyCode,
-                input: input,
-                modifiers: eventModifiers
-            )
-        }
+    override public func toggleBoldface(_: Any?) {
+        guard let shortcut = editActionShortcut(for: #selector(toggleBoldface(_:))) else { return }
+        performPassthroughShortcut(shortcut, source: .responderAction)
+    }
 
-        refreshModifiersForInput()
-        updateModifierRefreshTimer()
+    @objc
+    public func undo(_: Any?) {
+        guard let shortcut = editActionShortcut(for: #selector(undo(_:))) else { return }
+        performPassthroughShortcut(shortcut, source: .responderAction)
+    }
+
+    @objc
+    public func redo(_: Any?) {
+        guard let shortcut = editActionShortcut(for: #selector(redo(_:))) else { return }
+        performPassthroughShortcut(shortcut, source: .responderAction)
+    }
+
+    override public func toggleItalics(_: Any?) {
+        guard let shortcut = editActionShortcut(for: #selector(toggleItalics(_:))) else { return }
+        performPassthroughShortcut(shortcut, source: .responderAction)
+    }
+
+    override public func toggleUnderline(_: Any?) {
+        guard let shortcut = editActionShortcut(for: #selector(toggleUnderline(_:))) else { return }
+        performPassthroughShortcut(shortcut, source: .responderAction)
     }
 
     /// Convert a character to macOS virtual key code

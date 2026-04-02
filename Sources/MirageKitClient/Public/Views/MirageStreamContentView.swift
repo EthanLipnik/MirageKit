@@ -56,8 +56,13 @@ public struct MirageStreamContentView: View {
     public let dictationToggleRequestID: UInt64
     public let onDictationStateChanged: ((Bool) -> Void)?
     public let onDictationError: ((String) -> Void)?
+    public let onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
     public let dictationMode: MirageDictationMode
     public let dictationLocalePreference: MirageDictationLocalePreference
+    public let desktopCursorLockEnabledOverride: Bool?
+    public let desktopCursorLockCanRecapture: Bool
+    public let onCursorLockEscapeRequested: (() -> Void)?
+    public let onCursorLockRecaptureRequested: (() -> Void)?
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
     private let desktopResizeAckTimeout: Duration = .seconds(3)
@@ -112,6 +117,7 @@ public struct MirageStreamContentView: View {
     ///   - dictationToggleRequestID: Increments to request a dictation toggle on iOS/visionOS.
     ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
     ///   - onDictationError: Optional callback for user-facing dictation errors.
+    ///   - onResolvedPointerLockStateChanged: Optional callback when UIKit resolves pointer lock.
     ///   - dictationMode: Dictation behavior for realtime versus finalized output.
     ///   - dictationLocalePreference: Dictation language selection.
     ///   - onWindowWillClose: Optional macOS callback when the host window is closing.
@@ -136,8 +142,13 @@ public struct MirageStreamContentView: View {
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
+        onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
+        desktopCursorLockEnabledOverride: Bool? = nil,
+        desktopCursorLockCanRecapture: Bool = false,
+        onCursorLockEscapeRequested: (() -> Void)? = nil,
+        onCursorLockRecaptureRequested: (() -> Void)? = nil,
         maxDrawableSize: CGSize? = nil,
         onWindowWillClose: (() -> Void)? = nil
     ) {
@@ -161,15 +172,20 @@ public struct MirageStreamContentView: View {
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
+        self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
+        self.desktopCursorLockEnabledOverride = desktopCursorLockEnabledOverride
+        self.desktopCursorLockCanRecapture = desktopCursorLockCanRecapture
+        self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
+        self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
     }
 
     public var body: some View {
-        let desktopCursorLockEnabled = isDesktopStream &&
-            desktopCursorPresentation.locksClientCursor(for: desktopStreamMode)
+        let desktopCursorLockEnabled = desktopCursorLockEnabledOverride ??
+            (isDesktopStream && desktopCursorPresentation.locksClientCursor(for: desktopStreamMode))
         let syntheticCursorEnabled = !isDesktopStream ||
             desktopCursorPresentation.rendersSyntheticClientCursor
 
@@ -211,9 +227,13 @@ public struct MirageStreamContentView: View {
                 dictationToggleRequestID: dictationToggleRequestID,
                 onDictationStateChanged: onDictationStateChanged,
                 onDictationError: onDictationError,
+                onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
                 dictationMode: dictationMode,
                 dictationLocalePreference: dictationLocalePreference,
                 cursorLockEnabled: desktopCursorLockEnabled,
+                cursorLockCanRecapture: desktopCursorLockCanRecapture,
+                onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+                onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
                 syntheticCursorEnabled: syntheticCursorEnabled,
                 presentationTier: streamPresentationTier,
                 maxDrawableSize: maxDrawableSize
@@ -246,6 +266,9 @@ public struct MirageStreamContentView: View {
                 cursorStore: clientService.cursorStore,
                 cursorPositionStore: clientService.cursorPositionStore,
                 cursorLockEnabled: desktopCursorLockEnabled,
+                cursorLockCanRecapture: desktopCursorLockCanRecapture,
+                onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+                onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
                 syntheticCursorEnabled: syntheticCursorEnabled,
                 inputEnabled: macOSInputEnabled,
                 presentationTier: streamPresentationTier,

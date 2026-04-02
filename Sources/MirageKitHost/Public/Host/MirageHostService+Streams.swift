@@ -1006,7 +1006,8 @@ public extension MirageHostService {
     func stopStream(
         _ session: MirageStreamSession,
         minimizeWindow: Bool = false,
-        updateAppSession: Bool = true
+        updateAppSession: Bool = true,
+        triggeredByExplicitStreamStop: Bool = true
     )
     async {
         clearPendingAppWindowReplacement(streamID: session.id)
@@ -1071,7 +1072,7 @@ public extension MirageHostService {
         }
 
         await updateLightsOutState()
-        lockHostIfStreamingStopped()
+        lockHostIfStreamingStopped(triggeredByExplicitStreamStop: triggeredByExplicitStreamStop)
 
         if activeStreams.isEmpty {
             await PowerAssertionManager.shared.disable()

@@ -310,7 +310,7 @@ public final class MirageClientService {
     /// Handler for cursor updates from the host
     public var onCursorUpdate: ((StreamID, MirageCursorType, Bool) -> Void)?
 
-    /// Thread-safe cursor position store for secondary display cursor sync
+    /// Thread-safe cursor position store for desktop cursor sync
     public let cursorPositionStore = MirageClientCursorPositionStore()
 
     /// Callback for content bounds updates (when menus, sheets appear on virtual display)
@@ -470,6 +470,7 @@ public final class MirageClientService {
     nonisolated let fastPathState = MirageClientFastPathState()
 
     public let loomNode: LoomNode
+    let localNetworkMonitor = MirageLocalNetworkMonitor(label: "client")
     var networkConfig: LoomNetworkConfiguration
     var controlChannel: MirageControlChannel?
     public internal(set) var loomSession: LoomAuthenticatedSession?
@@ -497,6 +498,11 @@ public final class MirageClientService {
     let awdlExperimentEnabled: Bool = true
     public var currentControlPathKind: MirageNetworkPathKind? {
         controlPathSnapshot?.kind
+    }
+    public var currentControlPathStatus: MirageClientNetworkPathStatus? {
+        controlPathSnapshot.map { snapshot in
+            MirageClientNetworkPathStatus(snapshot: snapshot)
+        }
     }
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
@@ -564,10 +570,14 @@ public final class MirageClientService {
 
     // MARK: - Quality Test State
 
-    var qualityTestResultContinuation: CheckedContinuation<QualityTestResultMessage?, Never>?
+    var qualityTestBenchmarkContinuation: CheckedContinuation<QualityTestBenchmarkMessage?, Never>?
+    var qualityTestStageCompletionContinuation: CheckedContinuation<QualityTestStageCompleteMessage?, Never>?
+    var qualityTestStageCompletionBuffer: [QualityTestStageCompleteMessage] = []
     var qualityTestPendingTestID: UUID?
-    var qualityTestWaiterID: UInt64 = 0
-    var qualityTestTimeoutTask: Task<Void, Never>?
+    var qualityTestBenchmarkWaiterID: UInt64 = 0
+    var qualityTestStageCompletionWaiterID: UInt64 = 0
+    var qualityTestBenchmarkTimeoutTask: Task<Void, Never>?
+    var qualityTestStageCompletionTimeoutTask: Task<Void, Never>?
     var hostSupportLogArchiveContinuation: CheckedContinuation<URL, Error>?
     var hostSupportLogArchiveRequestID: UUID?
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?

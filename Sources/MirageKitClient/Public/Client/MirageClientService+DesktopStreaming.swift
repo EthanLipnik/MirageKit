@@ -33,6 +33,10 @@ public extension MirageClientService {
     )
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        await cancelActiveQualityTest(
+            reason: "interactive desktop stream startup",
+            notifyHost: true
+        )
 
         let baseResolution = displayResolution ?? getMainDisplayResolution()
         guard baseResolution.width > 0, baseResolution.height > 0 else {

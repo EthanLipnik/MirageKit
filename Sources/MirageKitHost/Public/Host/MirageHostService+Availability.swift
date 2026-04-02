@@ -31,7 +31,17 @@ extension MirageHostService {
 
     func publishCurrentAdvertisement() async {
         guard case .advertising = state else { return }
-        await loomNode.updateAdvertisement(advertisedPeerAdvertisement)
+
+        let localNetworkSnapshot = localNetworkMonitor.snapshot()
+        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
+            localNetworkSnapshot,
+            in: advertisedPeerAdvertisement
+        )
+        if updatedAdvertisement != advertisedPeerAdvertisement {
+            advertisedPeerAdvertisement = updatedAdvertisement
+        }
+
+        await loomNode.updateAdvertisement(updatedAdvertisement)
     }
 
     func startAdvertisementRefreshLoop() {

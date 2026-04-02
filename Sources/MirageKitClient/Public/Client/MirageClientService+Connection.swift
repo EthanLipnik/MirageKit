@@ -376,7 +376,19 @@ extension MirageClientService {
             self.pingContinuation = nil
             pingContinuation.resume(throwing: MirageError.protocolError(reason))
         }
-        completeQualityTestWaiter(result: nil)
+        qualityTestPendingTestID = nil
+        qualityTestBenchmarkTimeoutTask?.cancel()
+        qualityTestBenchmarkTimeoutTask = nil
+        qualityTestStageCompletionTimeoutTask?.cancel()
+        qualityTestStageCompletionTimeoutTask = nil
+        completeQualityTestBenchmarkWaiter(result: nil)
+        completeQualityTestStageCompletionWaiter(result: nil)
+        qualityTestStageCompletionBuffer.removeAll()
+        clearQualityTestAccumulator()
+        for task in qualityTestStreamReceiveTasks.values {
+            task.cancel()
+        }
+        qualityTestStreamReceiveTasks.removeAll()
         if let hostSupportLogArchiveContinuation {
             self.hostSupportLogArchiveContinuation = nil
             hostSupportLogArchiveRequestID = nil
@@ -446,6 +458,17 @@ extension MirageClientService {
                    attempts.contains(where: { $0.transportKind == .tcp }) {
                     MirageLogger.client("\(failureReason); retrying over advertised TCP")
                     continue
+                }
+
+                if let networkMismatchReason = Self.localNetworkMismatchReason(
+                    for: host,
+                    classification: classification,
+                    localNetwork: localNetworkMonitor.snapshot()
+                ) {
+                    MirageLogger.client(
+                        "Control session failure diagnosed as local-network mismatch: \(failureReason)"
+                    )
+                    throw MirageError.protocolError(networkMismatchReason)
                 }
 
                 throw MirageError.protocolError(failureReason)
@@ -677,6 +700,16 @@ extension MirageClientService {
         }
     }
 
+    internal struct ControlSessionNetworkDiagnostics: Sendable, Equatable {
+        let currentPathKind: MirageNetworkPathKind
+        let wifiSubnetSignatures: [String]
+        let wiredSubnetSignatures: [String]
+
+        var allSubnetSignatures: Set<String> {
+            Set(wifiSubnetSignatures).union(wiredSubnetSignatures)
+        }
+    }
+
     internal enum ControlSessionFailureClassification: String {
         case timeout
         case transportLoss
@@ -765,6 +798,71 @@ extension MirageClientService {
         "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed for " +
             "\(attempt.hostName) endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription) " +
             "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
+    }
+
+    internal static func localNetworkMismatchReason(
+        for host: LoomPeer,
+        classification: ControlSessionFailureClassification,
+        localNetwork: MirageLocalNetworkSnapshot
+    ) -> String? {
+        localNetworkMismatchReason(
+            for: host,
+            classification: classification,
+            localNetwork: ControlSessionNetworkDiagnostics(
+                currentPathKind: localNetwork.currentPathKind,
+                wifiSubnetSignatures: localNetwork.wifiSubnetSignatures,
+                wiredSubnetSignatures: localNetwork.wiredSubnetSignatures
+            )
+        )
+    }
+
+    internal static func localNetworkMismatchReason(
+        for host: LoomPeer,
+        classification: ControlSessionFailureClassification,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> String? {
+        switch classification {
+        case .timeout, .transportLoss, .addressUnavailable:
+            break
+        case .connectionRefused, .cancelled, .other:
+            return nil
+        }
+
+        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+            from: host.advertisement
+        )
+        guard localNetwork.currentPathKind != .awdl,
+              !localNetwork.allSubnetSignatures.isEmpty,
+              !hostNetwork.allSubnetSignatures.isEmpty else {
+            return nil
+        }
+
+        let localWiFi = Set(localNetwork.wifiSubnetSignatures)
+        let localWired = Set(localNetwork.wiredSubnetSignatures)
+        let hostWiFi = Set(hostNetwork.wifiSubnetSignatures)
+        let hostWired = Set(hostNetwork.wiredSubnetSignatures)
+        let anyOverlap = !localNetwork.allSubnetSignatures.intersection(hostNetwork.allSubnetSignatures).isEmpty
+
+        switch localNetwork.currentPathKind {
+        case .wifi:
+            if !localWiFi.isEmpty,
+               !hostWiFi.isEmpty,
+               localWiFi.intersection(hostWiFi).isEmpty {
+                return "The host and client appear to be on different Wi-Fi networks. Connect both devices to the same Wi-Fi network or re-enable peer-to-peer."
+            }
+            if !anyOverlap {
+                return "The host and client appear to be on different local networks. Connect both devices to the same LAN or re-enable peer-to-peer."
+            }
+        case .wired:
+            if !localWired.isEmpty,
+               localWired.intersection(hostNetwork.allSubnetSignatures).isEmpty {
+                return "The host and client do not appear to be on the same Ethernet network. Check that both devices are on the same subnet or VLAN."
+            }
+        case .cellular, .loopback, .other, .unknown, .awdl:
+            break
+        }
+
+        return nil
     }
 
     private static func classifyNetworkFailure(_ error: NWError) -> ControlSessionFailureClassification {

@@ -15,6 +15,17 @@ package enum MiragePeerAdvertisementMetadata {
     private static let supportsP3Key = "mirage.supports-p3"
     private static let supportedColorDepthsKey = "mirage.color-depths"
     private static let maxFrameRateKey = "mirage.max-frame-rate"
+    private static let wifiSubnetSignaturesKey = "mirage.net.wifi"
+    private static let wiredSubnetSignaturesKey = "mirage.net.wired"
+
+    package struct AdvertisedLocalNetworkContext: Sendable, Equatable {
+        package let wifiSubnetSignatures: [String]
+        package let wiredSubnetSignatures: [String]
+
+        package var allSubnetSignatures: Set<String> {
+            Set(wifiSubnetSignatures).union(wiredSubnetSignatures)
+        }
+    }
 
     package static func makeHostAdvertisement(
         deviceID: UUID?,
@@ -108,15 +119,39 @@ package enum MiragePeerAdvertisementMetadata {
     ) -> LoomPeerAdvertisement {
         var metadata = advertisement.metadata
         metadata[acceptingConnectionsKey] = acceptingConnections ? "1" : "0"
-        return LoomPeerAdvertisement(
-            protocolVersion: advertisement.protocolVersion,
-            deviceID: advertisement.deviceID,
-            identityKeyID: advertisement.identityKeyID,
-            deviceType: advertisement.deviceType,
-            modelIdentifier: advertisement.modelIdentifier,
-            iconName: advertisement.iconName,
-            machineFamily: advertisement.machineFamily,
-            metadata: metadata
+        return rebuildingAdvertisement(advertisement, metadata: metadata)
+    }
+
+    package static func updatingLocalNetworkContext(
+        _ context: MirageLocalNetworkSnapshot,
+        in advertisement: LoomPeerAdvertisement
+    ) -> LoomPeerAdvertisement {
+        var metadata = advertisement.metadata
+        updateMetadataValue(
+            context.wifiSubnetSignatures,
+            for: wifiSubnetSignaturesKey,
+            in: &metadata
+        )
+        updateMetadataValue(
+            context.wiredSubnetSignatures,
+            for: wiredSubnetSignaturesKey,
+            in: &metadata
+        )
+        return rebuildingAdvertisement(advertisement, metadata: metadata)
+    }
+
+    package static func advertisedLocalNetworkContext(
+        from advertisement: LoomPeerAdvertisement
+    ) -> AdvertisedLocalNetworkContext {
+        AdvertisedLocalNetworkContext(
+            wifiSubnetSignatures: metadataValues(
+                for: wifiSubnetSignaturesKey,
+                in: advertisement.metadata
+            ),
+            wiredSubnetSignatures: metadataValues(
+                for: wiredSubnetSignaturesKey,
+                in: advertisement.metadata
+            )
         )
     }
 
@@ -148,5 +183,51 @@ package enum MiragePeerAdvertisementMetadata {
         default:
             return defaultValue
         }
+    }
+
+    private static func rebuildingAdvertisement(
+        _ advertisement: LoomPeerAdvertisement,
+        metadata: [String: String]
+    ) -> LoomPeerAdvertisement {
+        LoomPeerAdvertisement(
+            protocolVersion: advertisement.protocolVersion,
+            deviceID: advertisement.deviceID,
+            identityKeyID: advertisement.identityKeyID,
+            deviceType: advertisement.deviceType,
+            modelIdentifier: advertisement.modelIdentifier,
+            iconName: advertisement.iconName,
+            machineFamily: advertisement.machineFamily,
+            hostName: advertisement.hostName,
+            directTransports: advertisement.directTransports,
+            metadata: metadata
+        )
+    }
+
+    private static func updateMetadataValue(
+        _ values: [String],
+        for key: String,
+        in metadata: inout [String: String]
+    ) {
+        if values.isEmpty {
+            metadata.removeValue(forKey: key)
+        } else {
+            metadata[key] = values.joined(separator: ",")
+        }
+    }
+
+    private static func metadataValues(
+        for key: String,
+        in metadata: [String: String]
+    ) -> [String] {
+        guard let rawValue = metadata[key]?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawValue.isEmpty else {
+            return []
+        }
+
+        return rawValue
+            .split(separator: ",")
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .sorted()
     }
 }

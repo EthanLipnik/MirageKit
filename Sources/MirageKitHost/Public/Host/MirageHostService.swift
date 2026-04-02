@@ -156,6 +156,7 @@ public final class MirageHostService {
     var hostID: UUID = .init()
     public internal(set) var supportedColorDepths: [MirageStreamColorDepth] = [.standard, .pro]
     let handshakeReplayProtector = LoomReplayProtector()
+    let localNetworkMonitor = MirageLocalNetworkMonitor(label: "host")
     // Internal for low-power policy extension.
     let encoderPowerStateMonitor = MiragePowerStateMonitor()
     var encoderPowerStateSnapshot = MiragePowerStateSnapshot(
@@ -228,7 +229,9 @@ public final class MirageHostService {
 
     // Quality test tasks
     var qualityTestTasksByClientID: [UUID: Task<Void, Never>] = [:]
-    var qualityTestBenchmarkIDsByClientID: [UUID: UUID] = [:]
+    var qualityTestSessionTokensByClientID: [UUID: UUID] = [:]
+    var qualityTestIDsByClientID: [UUID: UUID] = [:]
+    var qualityTestStreamsByClientID: [UUID: LoomMultiplexedStream] = [:]
 
     let clientErrorTimeoutSeconds: CFAbsoluteTime = 2.0
 
@@ -449,6 +452,7 @@ public final class MirageHostService {
     @ObservationIgnored let lightsOutController = HostLightsOutController()
     @ObservationIgnored let hostAudioMuteController = HostAudioMuteController()
     @ObservationIgnored var stageManagerController = HostStageManagerController()
+    @ObservationIgnored nonisolated(unsafe) var screenParametersObserver: NSObjectProtocol?
     var appStreamingStageManagerNeedsRestore: Bool = false
     var appStreamingStageManagerPreparationInProgress: Bool = false
 
@@ -571,6 +575,9 @@ public final class MirageHostService {
     }
 
     deinit {
+        if let screenParametersObserver {
+            NotificationCenter.default.removeObserver(screenParametersObserver)
+        }
         let powerStateMonitor = encoderPowerStateMonitor
         Task { @MainActor in
             powerStateMonitor.stop()
@@ -644,6 +651,8 @@ public final class MirageHostService {
             modelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
             iconName: advertisedPeerAdvertisement.iconName,
             machineFamily: advertisedPeerAdvertisement.machineFamily,
+            hostName: advertisedPeerAdvertisement.hostName,
+            directTransports: advertisedPeerAdvertisement.directTransports,
             metadata: advertisedPeerAdvertisement.metadata
         )
         Task { @MainActor [weak self] in
@@ -1366,18 +1375,27 @@ public final class MirageHostService {
     /// Resolve the current virtual display bounds for secondary desktop streaming.
     /// Uses CoreGraphics coordinates for input injection.
     func resolveDesktopDisplayBounds() -> CGRect? {
-        if let cached = desktopDisplayBounds, cached.width > 0, cached.height > 0 {
-            return cached
+        guard let displayID = desktopVirtualDisplayID else {
+            return resolvedDesktopDisplayBounds(
+                cachedBounds: desktopDisplayBounds,
+                liveBounds: nil,
+                displayModeSize: nil,
+                displayOrigin: desktopDisplayBounds?.origin ?? .zero
+            )
         }
 
-        guard let displayID = desktopVirtualDisplayID else { return desktopDisplayBounds }
         let bounds = CGDisplayBounds(displayID)
-        if bounds.width > 0, bounds.height > 0 { return bounds }
-        if let mode = CGDisplayCopyDisplayMode(displayID) {
-            let size = CGSize(width: CGFloat(mode.width), height: CGFloat(mode.height))
-            return CGRect(origin: bounds.origin, size: size)
+        let displayModeSize = CGDisplayCopyDisplayMode(displayID).map {
+            CGSize(width: CGFloat($0.width), height: CGFloat($0.height))
         }
-        return desktopDisplayBounds
+        let resolvedBounds = resolvedDesktopDisplayBounds(
+            cachedBounds: desktopDisplayBounds,
+            liveBounds: bounds,
+            displayModeSize: displayModeSize,
+            displayOrigin: bounds.origin
+        )
+        if let resolvedBounds { desktopDisplayBounds = resolvedBounds }
+        return resolvedBounds
     }
 
     /// Resolve the current virtual display bounds for cursor monitoring (Cocoa coordinates).
@@ -1388,15 +1406,22 @@ public final class MirageHostService {
            }) {
             return screen.frame
         }
-        let bounds: CGRect?
+
         if let displayID = desktopVirtualDisplayID {
             let cgBounds = CGDisplayBounds(displayID)
-            bounds = (cgBounds.width > 0 && cgBounds.height > 0) ? cgBounds : nil
-        } else {
-            bounds = desktopDisplayBounds
+            return resolvedDesktopDisplayBounds(
+                cachedBounds: desktopDisplayBounds,
+                liveBounds: cgBounds,
+                displayModeSize: nil,
+                displayOrigin: cgBounds.origin
+            )
         }
-        guard let bounds else { return nil }
-        return bounds
+        return resolvedDesktopDisplayBounds(
+            cachedBounds: desktopDisplayBounds,
+            liveBounds: nil,
+            displayModeSize: nil,
+            displayOrigin: desktopDisplayBounds?.origin ?? .zero
+        )
     }
 
     /// Refresh cached physical display bounds after mirroring changes.

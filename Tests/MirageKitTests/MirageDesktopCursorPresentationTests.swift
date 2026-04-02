@@ -14,16 +14,29 @@ struct MirageDesktopCursorPresentationTests {
     func syntheticCursorMirroredDesktopDoesNotLock() {
         let presentation = MirageDesktopCursorPresentation(
             source: .client,
+            lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: true
         )
 
         #expect(presentation.locksClientCursor(for: .mirrored) == false)
     }
 
+    @Test("Synthetic client cursor honors mirrored desktop lock preference")
+    func syntheticCursorMirroredDesktopHonorsLockPreference() {
+        let presentation = MirageDesktopCursorPresentation(
+            source: .client,
+            lockClientCursorWhenUsingMirageCursor: true,
+            lockClientCursorWhenUsingHostCursor: true
+        )
+
+        #expect(presentation.locksClientCursor(for: .mirrored))
+    }
+
     @Test("Synthetic client cursor always locks for secondary desktop")
     func syntheticCursorSecondaryDesktopLocks() {
         let presentation = MirageDesktopCursorPresentation(
             source: .client,
+            lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: false
         )
 
@@ -34,6 +47,7 @@ struct MirageDesktopCursorPresentationTests {
     func hostCursorWithLockEnabledLocksClientCursor() {
         let presentation = MirageDesktopCursorPresentation(
             source: .host,
+            lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: true
         )
 
@@ -44,6 +58,7 @@ struct MirageDesktopCursorPresentationTests {
     func hostCursorWithLockDisabledLeavesClientCursorUnlocked() {
         let presentation = MirageDesktopCursorPresentation(
             source: .host,
+            lockClientCursorWhenUsingMirageCursor: true,
             lockClientCursorWhenUsingHostCursor: false
         )
 

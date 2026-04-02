@@ -63,10 +63,7 @@ extension MirageHostService {
         mediaSecurityByClientID.removeValue(forKey: client.id)
         mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
         sharedClipboardStatusByClientID.removeValue(forKey: client.id)
-        qualityTestBenchmarkIDsByClientID.removeValue(forKey: client.id)
-        if let task = qualityTestTasksByClientID.removeValue(forKey: client.id) {
-            task.cancel()
-        }
+        await cancelQualityTest(for: client.id, reason: "client disconnected")
 
         if let removedSessionID, singleClientSessionID == removedSessionID { singleClientSessionID = nil }
         removeControlWorker(clientID: client.id)
@@ -82,13 +79,18 @@ extension MirageHostService {
         // are also torn down before disconnect completes.
         let minimizeOnDisconnect = !appStreamingStageManagerNeedsRestore
         while let stream = activeStreams.first(where: { $0.client.id == client.id }) {
-            await stopStream(stream, minimizeWindow: minimizeOnDisconnect, updateAppSession: false)
+            await stopStream(
+                stream,
+                minimizeWindow: minimizeOnDisconnect,
+                updateAppSession: false,
+                triggeredByExplicitStreamStop: false
+            )
         }
 
         // Stop desktop stream if owned by this client.
         if let desktopClient = desktopStreamClientContext, desktopClient.client.id == client.id {
             MirageLogger.host("Stopping desktop stream for disconnected client: \(client.name)")
-            await stopDesktopStream(reason: .clientRequested)
+            await stopDesktopStream(reason: .clientRequested, triggeredByExplicitStreamStop: false)
         }
 
         await stopAudioForDisconnectedClient(client.id)
@@ -116,11 +118,6 @@ extension MirageHostService {
 
         await restoreStageManagerAfterAppStreamingIfNeeded()
         syncSharedClipboardState(reason: "client_disconnected")
-
-        // Final lock attempt after all cleanup (including Stage Manager restore
-        // and virtual display teardown) to avoid interference from Dock restart
-        // or display reconfiguration.
-        lockHostIfStreamingStopped()
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {

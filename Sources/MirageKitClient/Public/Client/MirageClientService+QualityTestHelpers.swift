@@ -15,9 +15,17 @@ import Network
 extension MirageClientService {
     nonisolated static func validatedQualityTestStageResult(
         _ stageResult: MirageQualityTestSummary.StageResult,
-        metrics: (expectedBytes: Int, receivedBytes: Int, packetCount: Int)
+        metrics: (
+            sentPayloadBytes: Int,
+            receivedPayloadBytes: Int,
+            sentPacketCount: Int,
+            receivedPacketCount: Int
+        )
     ) throws -> MirageQualityTestSummary.StageResult {
-        guard metrics.packetCount > 0, metrics.receivedBytes > 0 else {
+        guard metrics.sentPacketCount > 0, metrics.sentPayloadBytes > 0 else {
+            throw MirageError.protocolError("Connection test failed: the host did not send any quality-test packets.")
+        }
+        guard metrics.receivedPacketCount > 0, metrics.receivedPayloadBytes > 0 else {
             throw MirageError.protocolError("Connection test failed: no quality-test packets were received.")
         }
         return stageResult
@@ -63,11 +71,11 @@ extension MirageClientService {
             pingTimeoutTask?.cancel()
             pingTimeoutTask = Task { @MainActor [weak self] in
                 guard let self else { return }
-                // Allow enough time for the control channel to drain under
-                // load.  The previous 1-second timeout caused false positives
-                // when the Loom session actor was contended during stream
-                // start or heavy metadata transfers.
-                try? await Task.sleep(for: .seconds(5))
+                do {
+                    try await Task.sleep(for: .seconds(5))
+                } catch {
+                    return
+                }
                 self.completePingRequest(
                     expectedRequestID: requestID,
                     result: .failure(MirageError.protocolError("Ping timed out"))
@@ -86,22 +94,112 @@ extension MirageClientService {
         }
     }
 
-    func awaitQualityTestResult(testID: UUID, timeout: Duration) async -> QualityTestResultMessage? {
-        if let pending = qualityTestPendingTestID, pending != testID {
-            completeQualityTestWaiter(result: nil)
+    /// Cancel the current quality test, if one is active.
+    public func cancelActiveQualityTest(
+        reason: String,
+        notifyHost: Bool = true
+    ) async {
+        guard let testID = qualityTestPendingTestID else { return }
+
+        MirageLogger.client(
+            "Cancelling quality test \(testID.uuidString) reason=\(reason)"
+        )
+
+        if notifyHost {
+            try? await sendControlMessage(
+                .qualityTestCancel,
+                content: QualityTestCancelMessage(testID: testID)
+            )
         }
 
-        qualityTestWaiterID &+= 1
-        let waiterID = qualityTestWaiterID
+        qualityTestPendingTestID = nil
+        qualityTestBenchmarkTimeoutTask?.cancel()
+        qualityTestBenchmarkTimeoutTask = nil
+        qualityTestStageCompletionTimeoutTask?.cancel()
+        qualityTestStageCompletionTimeoutTask = nil
+        qualityTestStageCompletionBuffer.removeAll()
+        clearQualityTestAccumulator()
+
+        if pingContinuation != nil {
+            completePingRequest(
+                expectedRequestID: pingRequestID,
+                result: .failure(CancellationError())
+            )
+        }
+
+        completeQualityTestBenchmarkWaiter(result: nil)
+        completeQualityTestStageCompletionWaiter(result: nil)
+
+        if let task = qualityTestStreamReceiveTasks.removeValue(forKey: testID) {
+            task.cancel()
+        }
+        activeMediaStreams.removeValue(forKey: "quality-test/\(testID.uuidString)")
+    }
+
+    func awaitQualityTestBenchmark(
+        testID: UUID,
+        timeout: Duration
+    ) async -> QualityTestBenchmarkMessage? {
+        if let pending = qualityTestPendingTestID, pending != testID {
+            completeQualityTestBenchmarkWaiter(result: nil)
+            completeQualityTestStageCompletionWaiter(result: nil)
+            qualityTestStageCompletionBuffer.removeAll()
+        }
+
+        qualityTestBenchmarkWaiterID &+= 1
+        let waiterID = qualityTestBenchmarkWaiterID
         qualityTestPendingTestID = testID
 
         return await withCheckedContinuation { continuation in
-            qualityTestResultContinuation = continuation
-            qualityTestTimeoutTask?.cancel()
-            qualityTestTimeoutTask = Task { @MainActor [weak self] in
+            qualityTestBenchmarkContinuation = continuation
+            qualityTestBenchmarkTimeoutTask?.cancel()
+            qualityTestBenchmarkTimeoutTask = Task { @MainActor [weak self] in
                 guard let self else { return }
-                try? await Task.sleep(for: timeout)
-                self.completeQualityTestWaiter(
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                self.completeQualityTestBenchmarkWaiter(
+                    expectedWaiterID: waiterID,
+                    expectedTestID: testID,
+                    result: nil
+                )
+            }
+        }
+    }
+
+    func awaitQualityTestStageCompletion(
+        testID: UUID,
+        stageID: Int,
+        timeout: Duration
+    ) async -> QualityTestStageCompleteMessage? {
+        if let pending = qualityTestPendingTestID, pending != testID {
+            completeQualityTestBenchmarkWaiter(result: nil)
+            completeQualityTestStageCompletionWaiter(result: nil)
+            qualityTestStageCompletionBuffer.removeAll()
+        }
+
+        qualityTestPendingTestID = testID
+        if let bufferedIndex = qualityTestStageCompletionBuffer.firstIndex(where: { completion in
+            completion.testID == testID && completion.stageID == stageID
+        }) {
+            return qualityTestStageCompletionBuffer.remove(at: bufferedIndex)
+        }
+
+        qualityTestStageCompletionWaiterID &+= 1
+        let waiterID = qualityTestStageCompletionWaiterID
+        return await withCheckedContinuation { continuation in
+            qualityTestStageCompletionContinuation = continuation
+            qualityTestStageCompletionTimeoutTask?.cancel()
+            qualityTestStageCompletionTimeoutTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                do {
+                    try await Task.sleep(for: timeout)
+                } catch {
+                    return
+                }
+                self.completeQualityTestStageCompletionWaiter(
                     expectedWaiterID: waiterID,
                     expectedTestID: testID,
                     result: nil
@@ -111,7 +209,6 @@ extension MirageClientService {
     }
 
     func sendQualityTestRegistration() async throws {
-        // Quality test registration is no longer needed; media flows through Loom session streams.
         MirageLogger.client("Quality-test registration skipped (media via Loom session)")
     }
 
@@ -131,6 +228,125 @@ extension MirageClientService {
         return record
     }
 
+    func runQualityTestSession(
+        testID: UUID,
+        plan: MirageQualityTestPlan,
+        payloadBytes: Int,
+        mediaMaxPacketSize: Int,
+        mode: MirageQualityTestMode,
+        stopAfterFirstBreach: Bool,
+        onStageUpdate: (@MainActor (MirageQualityTestProgressUpdate) -> Void)? = nil
+    ) async throws -> [MirageQualityTestSummary.StageResult] {
+        let accumulator = QualityTestAccumulator(testID: testID)
+        setQualityTestAccumulator(accumulator, testID: testID)
+        qualityTestPendingTestID = testID
+        qualityTestStageCompletionBuffer.removeAll()
+        defer {
+            clearQualityTestAccumulator()
+            completeQualityTestStageCompletionWaiter(result: nil)
+            qualityTestStageCompletionBuffer.removeAll()
+        }
+
+        let request = QualityTestRequestMessage(
+            testID: testID,
+            plan: plan,
+            payloadBytes: payloadBytes,
+            mediaMaxPacketSize: mediaMaxPacketSize,
+            stopAfterFirstBreach: stopAfterFirstBreach
+        )
+        try await sendControlMessage(.qualityTestRequest, content: request)
+
+        var results: [MirageQualityTestSummary.StageResult] = []
+        for (index, stage) in plan.stages.enumerated() {
+            onStageUpdate?(
+                MirageQualityTestProgressUpdate(
+                    currentStage: index + 1,
+                    totalStages: plan.stages.count,
+                    completedStages: results.count,
+                    probeKind: stage.probeKind,
+                    targetBitrateBps: stage.targetBitrateBps,
+                    latestCompletedStageResult: results.last
+                )
+            )
+            let timeout = Duration.milliseconds(
+                Self.qualityTestStageCompletionTimeoutMs(for: stage)
+            )
+            guard let completion = await awaitQualityTestStageCompletion(
+                testID: testID,
+                stageID: stage.id,
+                timeout: timeout
+            ) else {
+                if Task.isCancelled || qualityTestPendingTestID != testID {
+                    throw CancellationError()
+                }
+                await cancelActiveQualityTest(
+                    reason: "stage \(stage.id) timed out",
+                    notifyHost: true
+                )
+                throw MirageError.protocolError("Connection test failed: timed out waiting for stage \(stage.id) to finish.")
+            }
+            let stageResult: MirageQualityTestSummary.StageResult
+            do {
+                stageResult = try buildQualityTestStageResult(
+                    stage,
+                    completion: completion,
+                    accumulator: accumulator
+                )
+            } catch {
+                await cancelActiveQualityTest(
+                    reason: "protocol failure while decoding stage \(stage.id)",
+                    notifyHost: true
+                )
+                throw error
+            }
+            results.append(stageResult)
+            onStageUpdate?(
+                MirageQualityTestProgressUpdate(
+                    currentStage: index + 1,
+                    totalStages: plan.stages.count,
+                    completedStages: results.count,
+                    probeKind: stage.probeKind,
+                    targetBitrateBps: stage.targetBitrateBps,
+                    latestCompletedStageResult: stageResult
+                )
+            )
+
+            let throughputMbps = Double(stageResult.throughputBps) / 1_000_000.0
+            let sentMbps = stageResult.durationMs > 0
+                ? Double(stageResult.sentPayloadBytes * 8) / (Double(stageResult.durationMs) / 1000.0) / 1_000_000.0
+                : 0
+            let lossText = stageResult.lossPercent.formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.client(
+                "Quality test stage \(stage.id) result kind=\(stage.probeKind.rawValue) target \((Double(stage.targetBitrateBps) / 1_000_000.0).formatted(.number.precision(.fractionLength(1)))) Mbps, sent \(sentMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, received \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, packets \(stageResult.receivedPacketCount)/\(stageResult.sentPacketCount)"
+            )
+
+            guard stopAfterFirstBreach else { continue }
+            let stabilityConstraints = Self.qualityTestStabilityConstraints(
+                for: mode,
+                probeKind: stage.probeKind
+            )
+            let stageStable = stageIsStable(
+                stageResult,
+                targetBitrate: stage.targetBitrateBps,
+                payloadBytes: payloadBytes,
+                throughputFloor: stabilityConstraints.throughputFloor,
+                lossCeiling: stabilityConstraints.lossCeiling
+            )
+            guard !stageStable else { continue }
+
+            MirageLogger.client(
+                "Quality test crossed overload boundary at stage \(stage.id); cancelling remaining probe stages"
+            )
+            await cancelActiveQualityTest(
+                reason: "connection-limit overload boundary reached at stage \(stage.id)",
+                notifyHost: true
+            )
+            break
+        }
+
+        return results
+    }
+
     func runQualityTestStage(
         testID: UUID,
         stageID: Int,
@@ -141,67 +357,106 @@ extension MirageClientService {
     ) async throws -> MirageQualityTestSummary.StageResult {
         let stage = MirageQualityTestPlan.Stage(
             id: stageID,
+            probeKind: .transport,
             targetBitrateBps: targetBitrateBps,
             durationMs: durationMs
         )
-        let plan = MirageQualityTestPlan(stages: [stage])
-        let accumulator = QualityTestAccumulator(testID: testID, plan: plan, payloadBytes: payloadBytes)
-        setQualityTestAccumulator(accumulator, testID: testID)
-        defer { clearQualityTestAccumulator() }
-
         let targetMbps = Double(targetBitrateBps) / 1_000_000.0
         MirageLogger.client(
             "Quality test stage \(stageID) start: target \(targetMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, duration \(durationMs)ms, payload \(payloadBytes)B"
         )
-
-        let request = QualityTestRequestMessage(
+        let results = try await runQualityTestSession(
             testID: testID,
-            plan: plan,
+            plan: MirageQualityTestPlan(stages: [stage]),
             payloadBytes: payloadBytes,
-            mediaMaxPacketSize: mediaMaxPacketSize
+            mediaMaxPacketSize: mediaMaxPacketSize,
+            mode: .automaticSelection,
+            stopAfterFirstBreach: false
         )
-        try await sendControlMessage(.qualityTestRequest, content: request)
+        guard let result = results.first else {
+            throw MirageError.protocolError("Connection test failed: no quality-test results were produced.")
+        }
+        return result
+    }
 
-        try await Task.sleep(for: .milliseconds(durationMs + 400))
-        try Task.checkCancellation()
-
-        let results = accumulator.makeStageResults()
-        if let stageResult = results.first {
-            let metrics = accumulator.stageMetrics(for: stage)
-            let validatedStageResult = try Self.validatedQualityTestStageResult(
-                stageResult,
-                metrics: metrics
-            )
-            let throughputMbps = Double(stageResult.throughputBps) / 1_000_000.0
-            let lossText = stageResult.lossPercent.formatted(.number.precision(.fractionLength(1)))
-            MirageLogger.client(
-                "Quality test stage \(stageID) result: throughput \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, received \(metrics.receivedBytes)B, expected \(metrics.expectedBytes)B, packets \(metrics.packetCount)"
-            )
-            return validatedStageResult
+    func buildQualityTestStageResult(
+        _ stage: MirageQualityTestPlan.Stage,
+        completion: QualityTestStageCompleteMessage,
+        accumulator: QualityTestAccumulator
+    ) throws -> MirageQualityTestSummary.StageResult {
+        guard completion.testID == accumulator.testID else {
+            throw MirageError.protocolError("Connection test failed: received stage completion for the wrong test.")
+        }
+        guard completion.stageID == stage.id else {
+            throw MirageError.protocolError("Connection test failed: received stage completion for stage \(completion.stageID) while waiting for \(stage.id).")
+        }
+        guard completion.probeKind == stage.probeKind else {
+            throw MirageError.protocolError("Connection test failed: stage \(stage.id) changed probe kinds mid-session.")
         }
 
-        throw MirageError.protocolError("Connection test failed: no quality-test results were produced.")
+        let receivedMetrics = accumulator.receivedMetrics(for: stage.id)
+        let actualDurationMs = max(
+            1,
+            Int((completion.measurementEndedAtTimestampNs &- completion.startedAtTimestampNs) / 1_000_000)
+        )
+        let throughputBps = Int(
+            Double(receivedMetrics.receivedPayloadBytes * 8) / (Double(actualDurationMs) / 1000.0)
+        )
+        let lossPercent = completion.sentPacketCount > 0
+            ? max(
+                0,
+                (1 - Double(receivedMetrics.receivedPacketCount) / Double(completion.sentPacketCount)) * 100
+            )
+            : 0
+
+        let result = MirageQualityTestSummary.StageResult(
+            stageID: stage.id,
+            probeKind: stage.probeKind,
+            targetBitrateBps: stage.targetBitrateBps,
+            durationMs: actualDurationMs,
+            throughputBps: throughputBps,
+            lossPercent: lossPercent,
+            sentPacketCount: completion.sentPacketCount,
+            receivedPacketCount: receivedMetrics.receivedPacketCount,
+            sentPayloadBytes: completion.sentPayloadBytes,
+            receivedPayloadBytes: receivedMetrics.receivedPayloadBytes,
+            deliveryWindowMissed: completion.deliveryWindowMissed
+        )
+        return try Self.validatedQualityTestStageResult(
+            result,
+            metrics: (
+                sentPayloadBytes: completion.sentPayloadBytes,
+                receivedPayloadBytes: receivedMetrics.receivedPayloadBytes,
+                sentPacketCount: completion.sentPacketCount,
+                receivedPacketCount: receivedMetrics.receivedPacketCount
+            )
+        )
     }
 
     func stageIsStable(
         _ stage: MirageQualityTestSummary.StageResult,
         targetBitrate: Int,
         payloadBytes: Int,
-        throughputFloor: Double,
+        throughputFloor: Double?,
         lossCeiling: Double
     ) -> Bool {
-        let packetBytes = payloadBytes + mirageQualityTestHeaderSize
-        let payloadRatio = packetBytes > 0
-            ? Double(payloadBytes) / Double(packetBytes)
-            : 1.0
-        let targetPayloadBps = Double(targetBitrate) * payloadRatio
-        let throughputOk = Double(stage.throughputBps) >= targetPayloadBps * throughputFloor
-        let lossOk = stage.lossPercent <= lossCeiling
-        return throughputOk && lossOk
+        Self.qualityTestStageIsStable(
+            stage,
+            targetBitrate: targetBitrate,
+            payloadBytes: payloadBytes,
+            throughputFloor: throughputFloor,
+            lossCeiling: lossCeiling
+        )
     }
 
     nonisolated func setQualityTestAccumulator(_ accumulator: QualityTestAccumulator, testID: UUID) {
         fastPathState.setQualityTestAccumulator(accumulator, testID: testID)
+    }
+
+    nonisolated static func qualityTestStageCompletionTimeoutMs(
+        for stage: MirageQualityTestPlan.Stage
+    ) -> Int {
+        stage.totalCompletionBudgetMs + qualityTestControlMessageMarginMs
     }
 
     func clearQualityTestAccumulator() {
@@ -224,18 +479,31 @@ extension MirageClientService {
         }
     }
 
-    func completeQualityTestWaiter(
+    func completeQualityTestBenchmarkWaiter(
         expectedWaiterID: UInt64? = nil,
         expectedTestID: UUID? = nil,
-        result: QualityTestResultMessage?
+        result: QualityTestBenchmarkMessage?
     ) {
-        if let expectedWaiterID, qualityTestWaiterID != expectedWaiterID { return }
+        if let expectedWaiterID, qualityTestBenchmarkWaiterID != expectedWaiterID { return }
         if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }
-        qualityTestPendingTestID = nil
-        qualityTestTimeoutTask?.cancel()
-        qualityTestTimeoutTask = nil
-        guard let continuation = qualityTestResultContinuation else { return }
-        qualityTestResultContinuation = nil
+        qualityTestBenchmarkTimeoutTask?.cancel()
+        qualityTestBenchmarkTimeoutTask = nil
+        guard let continuation = qualityTestBenchmarkContinuation else { return }
+        qualityTestBenchmarkContinuation = nil
+        continuation.resume(returning: result)
+    }
+
+    func completeQualityTestStageCompletionWaiter(
+        expectedWaiterID: UInt64? = nil,
+        expectedTestID: UUID? = nil,
+        result: QualityTestStageCompleteMessage?
+    ) {
+        if let expectedWaiterID, qualityTestStageCompletionWaiterID != expectedWaiterID { return }
+        if let expectedTestID, qualityTestPendingTestID != expectedTestID { return }
+        qualityTestStageCompletionTimeoutTask?.cancel()
+        qualityTestStageCompletionTimeoutTask = nil
+        guard let continuation = qualityTestStageCompletionContinuation else { return }
+        qualityTestStageCompletionContinuation = nil
         continuation.resume(returning: result)
     }
 }

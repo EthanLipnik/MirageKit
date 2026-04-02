@@ -26,14 +26,16 @@ extension MirageHostService {
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool,
+        desktopStreamMode: MirageDesktopStreamMode = .mirrored,
         lightsOutEnabled: Bool,
         lightsOutDisabledByEnvironment: Bool = false
     ) -> Bool {
         guard !lightsOutDisabledByEnvironment, lightsOutEnabled else { return false }
+        let hasMirroredDesktopWorkload = (hasDesktopStream || hasPendingDesktopStreamStart) &&
+            desktopStreamMode == .mirrored
         return hasAppStreams ||
-            hasDesktopStream ||
-            hasPendingAppStreamStart ||
-            hasPendingDesktopStreamStart
+            hasMirroredDesktopWorkload ||
+            hasPendingAppStreamStart
     }
 
     /// Emergency recovery path for stuck Lights Out states.
@@ -112,6 +114,7 @@ extension MirageHostService {
             hasDesktopStream: hasDesktopStream,
             hasPendingAppStreamStart: hasPendingAppStreamStart,
             hasPendingDesktopStreamStart: hasPendingDesktopStreamStart,
+            desktopStreamMode: desktopStreamMode,
             lightsOutEnabled: lightsOutEnabled,
             lightsOutDisabledByEnvironment: lightsOutDisabledByEnvironment
         )
@@ -245,23 +248,25 @@ extension MirageHostService {
         hasAppStreams: Bool,
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
-        hasPendingDesktopStreamStart: Bool
+        hasPendingDesktopStreamStart: Bool,
+        triggeredByExplicitStreamStop: Bool = true
     ) -> Bool {
-        guard lockHostWhenStreamingStops, sessionState == .ready else { return false }
+        guard triggeredByExplicitStreamStop, lockHostWhenStreamingStops, sessionState == .ready else { return false }
         return !hasAppStreams &&
             !hasDesktopStream &&
             !hasPendingAppStreamStart &&
             !hasPendingDesktopStreamStart
     }
 
-    func lockHostIfStreamingStopped() {
+    func lockHostIfStreamingStopped(triggeredByExplicitStreamStop: Bool = true) {
         guard Self.shouldLockHostWhenStreamingStops(
             lockHostWhenStreamingStops: lockHostWhenStreamingStops,
             sessionState: sessionState,
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamContext != nil,
             hasPendingAppStreamStart: pendingAppStreamStartCount > 0,
-            hasPendingDesktopStreamStart: pendingDesktopStreamStartCount > 0
+            hasPendingDesktopStreamStart: pendingDesktopStreamStartCount > 0,
+            triggeredByExplicitStreamStop: triggeredByExplicitStreamStop
         ) else { return }
 
         if let lockHostHandler {

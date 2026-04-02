@@ -98,6 +98,9 @@ extension MirageHostService {
             .qualityTestRequest: { [weak self] message, clientContext in
                 await self?.handleQualityTestRequest(message, from: clientContext)
             },
+            .qualityTestCancel: { [weak self] message, clientContext in
+                await self?.handleQualityTestCancel(message, from: clientContext)
+            },
             .hostSoftwareUpdateStatusRequest: { [weak self] message, clientContext in
                 await self?.handleHostSoftwareUpdateStatusRequest(message, from: clientContext)
             },
@@ -141,6 +144,10 @@ extension MirageHostService {
                 MirageLogger.host("Ignoring startStream from disconnected client \(clientContext.client.name)")
                 return
             }
+            await cancelQualityTest(
+                for: clientContext.client.id,
+                reason: "app stream startup"
+            )
             MirageLogger.host("Client requested stream for window \(request.windowID)")
 
             await refreshSessionStateIfNeeded()

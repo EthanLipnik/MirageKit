@@ -26,7 +26,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Cursor store for pointer updates (decoupled from SwiftUI observation).
     public var cursorStore: MirageClientCursorStore?
 
-    /// Cursor position store for secondary display sync.
+    /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore?
 
     /// Callback when app becomes active (returns from background).
@@ -60,6 +60,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Callback when dictation fails with a user-facing message.
     public var onDictationError: ((String) -> Void)?
 
+    /// Callback when UIKit resolves pointer-lock availability for the current scene.
+    public var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
+
     /// Dictation behavior selection for latency vs finalization quality.
     public var dictationMode: MirageDictationMode
 
@@ -68,6 +71,15 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
 
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
+
+    /// Whether the stream can recapture cursor lock after a temporary local unlock.
+    public var cursorLockCanRecapture: Bool
+
+    /// Callback when the client should temporarily unlock cursor capture.
+    public var onCursorLockEscapeRequested: (() -> Void)?
+
+    /// Callback when the client should recapture cursor lock after a temporary unlock.
+    public var onCursorLockRecaptureRequested: (() -> Void)?
 
     /// Whether Mirage should render its synthetic local cursor presentation.
     public var syntheticCursorEnabled: Bool
@@ -95,9 +107,13 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
+        onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
         cursorLockEnabled: Bool = false,
+        cursorLockCanRecapture: Bool = false,
+        onCursorLockEscapeRequested: (() -> Void)? = nil,
+        onCursorLockRecaptureRequested: (() -> Void)? = nil,
         syntheticCursorEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil
@@ -118,9 +134,13 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
+        self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
         self.cursorLockEnabled = cursorLockEnabled
+        self.cursorLockCanRecapture = cursorLockCanRecapture
+        self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
+        self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         self.syntheticCursorEnabled = syntheticCursorEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
@@ -136,7 +156,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: onDirectTouchActivity,
             onDictationStateChanged: onDictationStateChanged,
-            onDictationError: onDictationError
+            onDictationError: onDictationError,
+            onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged
         )
     }
 
@@ -151,7 +172,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
-            onDictationError: context.coordinator.handleDictationError
+            onDictationError: context.coordinator.handleDictationError,
+            onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
         )
         controller.updateState(
             streamID: streamID,
@@ -164,6 +186,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            cursorLockCanRecapture: cursorLockCanRecapture,
+            onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+            onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
@@ -182,6 +207,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.onDirectTouchActivity = onDirectTouchActivity
         context.coordinator.onDictationStateChanged = onDictationStateChanged
         context.coordinator.onDictationError = onDictationError
+        context.coordinator.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         context.coordinator.noteRepresentableUpdate(for: streamID)
 
         uiViewController.updateState(
@@ -195,6 +221,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            cursorLockCanRecapture: cursorLockCanRecapture,
+            onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+            onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize
@@ -236,33 +265,34 @@ private final class MirageStreamViewControllerCache {
 public final class MirageStreamViewController: UIViewController {
     var currentStreamID: StreamID?
     private let captureView = InputCapturingView(frame: .zero)
-    private var pointerLockRequested: Bool = false {
-        didSet {
-            guard pointerLockRequested != oldValue else { return }
-            setNeedsUpdateOfPrefersPointerLocked()
-        }
-    }
+    private var pointerLockRequested: Bool = false
     private var pointerLockObserver: NSObjectProtocol?
-    private var lastPointerLockActive: Bool?
+    private var lastResolvedPointerLockState: MirageResolvedPointerLockState?
 
     override public func loadView() {
         view = captureView
     }
 
-    override public var prefersPointerLocked: Bool {
-        pointerLockRequested
-    }
-
     override public func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        setNeedsUpdateOfPrefersPointerLocked()
         startPointerLockObserverIfNeeded()
+    }
+
+    override public func target(forAction action: Selector, withSender sender: Any?) -> Any? {
+        if captureView.onInputEvent != nil,
+           MirageInterceptedShortcutPolicy.shortcut(
+               actionName: NSStringFromSelector(action)
+           ) != nil {
+            return captureView
+        }
+        return super.target(forAction: action, withSender: sender)
     }
 
     override public func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
         stopPointerLockObserver()
-        lastPointerLockActive = nil
+        lastResolvedPointerLockState = nil
+        captureView.onResolvedPointerLockStateChanged?(.unavailable)
         captureView.pointerLockActive = false
     }
 
@@ -275,7 +305,8 @@ public final class MirageStreamViewController: UIViewController {
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
         onDictationStateChanged: ((Bool) -> Void)?,
-        onDictationError: ((String) -> Void)?
+        onDictationError: ((String) -> Void)?,
+        onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
     ) {
         captureView.onInputEvent = onInputEvent
         captureView.onDrawableMetricsChanged = onDrawableMetricsChanged
@@ -286,6 +317,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onDirectTouchActivity = onDirectTouchActivity
         captureView.onDictationStateChanged = onDictationStateChanged
         captureView.onDictationError = onDictationError
+        captureView.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
     }
 
     func updateState(
@@ -299,6 +331,9 @@ public final class MirageStreamViewController: UIViewController {
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
+        cursorLockCanRecapture: Bool,
+        onCursorLockEscapeRequested: (() -> Void)?,
+        onCursorLockRecaptureRequested: (() -> Void)?,
         syntheticCursorEnabled: Bool,
         presentationTier: StreamPresentationTier,
         maxDrawableSize: CGSize?
@@ -316,6 +351,9 @@ public final class MirageStreamViewController: UIViewController {
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
         captureView.cursorLockEnabled = cursorLockEnabled
+        captureView.canRecaptureCursorLock = cursorLockCanRecapture
+        captureView.onCursorLockEscapeRequested = onCursorLockEscapeRequested
+        captureView.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
         captureView.syntheticCursorEnabled = syntheticCursorEnabled
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
@@ -351,14 +389,18 @@ public final class MirageStreamViewController: UIViewController {
     }
 
     private func updatePointerLockState() {
-        let isLocked = pointerLockRequested &&
-            (view.window?.windowScene?.pointerLockState?.isLocked ?? false)
-        captureView.pointerLockActive = isLocked
-        if lastPointerLockActive != isLocked {
-            lastPointerLockActive = isLocked
-            if pointerLockRequested, !isLocked {
+        let resolvedState = MirageResolvedPointerLockState(
+            isSupported: view.window?.windowScene?.pointerLockState != nil,
+            isLocked: pointerLockRequested &&
+                (view.window?.windowScene?.pointerLockState?.isLocked ?? false)
+        )
+        captureView.pointerLockActive = resolvedState.isLocked
+        if lastResolvedPointerLockState != resolvedState {
+            lastResolvedPointerLockState = resolvedState
+            captureView.onResolvedPointerLockStateChanged?(resolvedState)
+            if pointerLockRequested, !resolvedState.isLocked {
                 MirageLogger.client("Pointer lock not active for scene.")
-            } else if isLocked {
+            } else if resolvedState.isLocked {
                 MirageLogger.client("Pointer lock active for scene.")
             }
         }

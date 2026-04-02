@@ -22,6 +22,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: true
             )
         )
@@ -35,6 +36,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: false
             )
         )
@@ -48,6 +50,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: true
             )
         )
@@ -61,6 +64,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: false
             )
         )
@@ -74,6 +78,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: true,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: true
             )
         )
@@ -87,6 +92,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: true,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: false
             )
         )
@@ -100,6 +106,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: true,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: true
             )
         )
@@ -113,7 +120,36 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: true,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: false
+            )
+        )
+    }
+
+    @Test
+    func staysOffForActiveSecondaryDesktopStreamEvenWhenToggleIsOn() {
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: false,
+                hasDesktopStream: true,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .secondary,
+                lightsOutEnabled: true
+            )
+        )
+    }
+
+    @Test
+    func staysOffForPendingSecondaryDesktopSetupEvenWhenToggleIsOn() {
+        #expect(
+            !MirageHostService.shouldEnableLightsOut(
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: true,
+                desktopStreamMode: .secondary,
+                lightsOutEnabled: true
             )
         )
     }
@@ -126,6 +162,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: true
             )
         )
@@ -139,6 +176,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: true,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: true,
+                desktopStreamMode: .mirrored,
                 lightsOutEnabled: true,
                 lightsOutDisabledByEnvironment: true
             )
@@ -231,6 +269,21 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false
+            )
+        )
+    }
+
+    @Test
+    func doesNotLockHostForDisconnectDrivenIdleTransition() {
+        #expect(
+            !MirageHostService.shouldLockHostWhenStreamingStops(
+                lockHostWhenStreamingStops: true,
+                sessionState: .ready,
+                hasAppStreams: false,
+                hasDesktopStream: false,
+                hasPendingAppStreamStart: false,
+                hasPendingDesktopStreamStart: false,
+                triggeredByExplicitStreamStop: false
             )
         )
     }

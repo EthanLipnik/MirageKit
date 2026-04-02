@@ -156,7 +156,7 @@ For ColorSync cleanup guidance, see [If-Your-Computer-Feels-Stuttery.md](If-Your
 
 Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe interval, bit depth, capture queue depth, and bitrate). The host applies overrides on top of its `MirageEncoderConfiguration`.
 
-`MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` that can be used to choose bitrate, bit depth, and resolution limits for your UX.
+`MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` with separate transport headroom and streaming-safe bitrate estimates, plus packet loss and RTT, so your UX can choose bitrate, bit depth, and resolution limits without conflating raw path capacity with stream-safe operation.
 
 ### Encoder Settings
 

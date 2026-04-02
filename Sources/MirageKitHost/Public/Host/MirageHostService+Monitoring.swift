@@ -58,7 +58,12 @@ extension MirageHostService {
                 onCursorPosition: { [weak self] streamID, position, isVisible in
                     await MainActor.run { [weak self] in
                         guard let self else { return }
-                        guard streamID == self.desktopStreamID, self.desktopStreamMode == .secondary else { return }
+                        guard Self.shouldSendCursorPositionUpdate(
+                            streamID: streamID,
+                            desktopStreamID: self.desktopStreamID,
+                            desktopStreamMode: self.desktopStreamMode,
+                            desktopCursorPresentation: self.desktopCursorPresentation
+                        ) else { return }
                         self.sendCursorPositionUpdate(streamID: streamID, position: position, isVisible: isVisible)
                     }
                 }
@@ -165,6 +170,15 @@ extension MirageHostService {
         )
     }
 
+    nonisolated static func shouldSendCursorPositionUpdate(
+        streamID: StreamID,
+        desktopStreamID: StreamID?,
+        desktopStreamMode: MirageDesktopStreamMode?,
+        desktopCursorPresentation: MirageDesktopCursorPresentation
+    ) -> Bool {
+        guard streamID == desktopStreamID else { return false }
+        return desktopStreamMode == .secondary || desktopCursorPresentation.source == .host
+    }
 }
 
 #endif

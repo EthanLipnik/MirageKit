@@ -37,6 +37,8 @@ public final class MirageClientSessionStore {
     private var pendingFirstPresentedFrameStreamIDs: Set<StreamID> = []
     /// Streams currently waiting for the first presented frame after a desktop resize reset.
     public var postResizeAwaitingFirstFrameStreamIDs: Set<StreamID> = []
+    /// Recovery states reported before a session entry existed.
+    private var pendingClientRecoveryStatusByStreamID: [StreamID: MirageStreamClientRecoveryStatus] = [:]
 
     // MARK: - Focus State
 
@@ -94,11 +96,13 @@ public final class MirageClientSessionStore {
             streamID: streamID,
             window: window,
             hostName: hostName,
+            clientRecoveryStatus: pendingClientRecoveryStatusByStreamID[streamID] ?? .idle,
             hasDecodedFrame: pendingFirstDecodedFrameStreamIDs.contains(streamID),
             hasPresentedFrame: pendingFirstPresentedFrameStreamIDs.contains(streamID)
         )
         pendingFirstDecodedFrameStreamIDs.remove(streamID)
         pendingFirstPresentedFrameStreamIDs.remove(streamID)
+        pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
 
         if let minSize {
             state.minWidth = CGFloat(minSize.width)
@@ -116,6 +120,7 @@ public final class MirageClientSessionStore {
         if let streamID = streamSessions[sessionID]?.streamID {
             postResizeAwaitingFirstFrameStreamIDs.remove(streamID)
             presentationTierByStreamID.removeValue(forKey: streamID)
+            pendingClientRecoveryStatusByStreamID.removeValue(forKey: streamID)
         }
         streamSessions.removeValue(forKey: sessionID)
         sessionMinSizes.removeValue(forKey: sessionID)
@@ -208,6 +213,21 @@ public final class MirageClientSessionStore {
         }
     }
 
+    /// Updates client-side recovery status for an active stream.
+    /// If the session has not been created yet, the status is applied once the session appears.
+    public func setClientRecoveryStatus(
+        for streamID: StreamID,
+        status: MirageStreamClientRecoveryStatus
+    ) {
+        if let session = streamSessions.values.first(where: { $0.streamID == streamID }) {
+            if session.clientRecoveryStatus != status {
+                session.clientRecoveryStatus = status
+            }
+        } else {
+            pendingClientRecoveryStatusByStreamID[streamID] = status
+        }
+    }
+
     /// Marks that a stream should remain in resize-transition UI until a new presented frame arrives.
     public func beginPostResizeTransition(for streamID: StreamID) {
         postResizeAwaitingFirstFrameStreamIDs.insert(streamID)
@@ -257,6 +277,7 @@ public final class MirageStreamSessionState: Identifiable {
     public var window: MirageWindow
     public let hostName: String
     public var statistics: MirageStreamStatistics?
+    public var clientRecoveryStatus: MirageStreamClientRecoveryStatus
     public var hasDecodedFrame: Bool
     public var hasPresentedFrame: Bool
     /// Minimum window size in points (from host).
@@ -269,6 +290,7 @@ public final class MirageStreamSessionState: Identifiable {
         window: MirageWindow,
         hostName: String,
         statistics: MirageStreamStatistics? = nil,
+        clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
         hasDecodedFrame: Bool = false,
         hasPresentedFrame: Bool = false,
         minWidth: CGFloat = 400,
@@ -279,6 +301,7 @@ public final class MirageStreamSessionState: Identifiable {
         self.window = window
         self.hostName = hostName
         self.statistics = statistics
+        self.clientRecoveryStatus = clientRecoveryStatus
         self.hasDecodedFrame = hasDecodedFrame
         self.hasPresentedFrame = hasPresentedFrame
         self.minWidth = minWidth

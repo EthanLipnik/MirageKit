@@ -99,7 +99,7 @@ extension StreamController {
                     "Hard recovery throttled (\(reason.logLabel), \(max(0, remainingMs))ms remaining) for stream \(streamID)"
                 )
             if restartRecoveryLoop, presentationTier == .activeLive {
-                startKeyframeRecoveryLoopIfNeeded()
+                await startKeyframeRecoveryLoopIfNeeded()
             }
             await requestKeyframeRecovery(reason: reason)
             return
@@ -107,6 +107,7 @@ extension StreamController {
         lastHardRecoveryStartTime = now
 
         MirageLogger.client("Starting stream recovery (\(reason.logLabel)) for stream \(streamID)")
+        await setClientRecoveryStatus(.hardRecovery)
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         MirageFrameCache.shared.clear(for: streamID)
@@ -127,14 +128,14 @@ extension StreamController {
         }
         reassembler.enterKeyframeOnlyMode()
         if restartRecoveryLoop, presentationTier == .activeLive {
-            startKeyframeRecoveryLoopIfNeeded()
+            await startKeyframeRecoveryLoopIfNeeded()
         } else {
-            stopKeyframeRecoveryLoop()
+            await stopKeyframeRecoveryLoop()
         }
         await startFrameProcessingPipeline()
         if shouldAwaitNextPresentedFrame, presentationTier == .activeLive {
             let awaitMode: FirstPresentedFrameAwaitMode = shouldRestartStartupBootstrap ? .startup : .recovery
-            armFirstPresentedFrameAwaiter(
+            await armFirstPresentedFrameAwaiter(
                 reason: firstPresentedFrameWaitReason ?? "hard-recovery",
                 mode: awaitMode
             )

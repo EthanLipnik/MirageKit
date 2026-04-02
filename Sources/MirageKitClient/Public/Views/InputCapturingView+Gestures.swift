@@ -158,6 +158,18 @@ extension InputCapturingView {
 
     @objc
     func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        if swallowingLongPressForCursorRecapture {
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                swallowingLongPressForCursorRecapture = false
+            }
+            return
+        }
+
+        if gesture.state == .began, requestCursorLockRecaptureIfNeeded() {
+            swallowingLongPressForCursorRecapture = true
+            return
+        }
+
         let rawLocation = gesture.location(in: self)
         let location = normalizedLocation(rawLocation)
         let eventModifiers = modifiers(from: gesture)
@@ -264,6 +276,8 @@ extension InputCapturingView {
 
     @objc
     func handleRightClick(_ gesture: UITapGestureRecognizer) {
+        if requestCursorLockRecaptureIfNeeded() { return }
+
         let location: CGPoint
         if cursorLockEnabled {
             setLockedCursorVisible(true)
@@ -504,6 +518,16 @@ extension InputCapturingView {
     @objc
     func handleVirtualCursorLongPress(_ gesture: UILongPressGestureRecognizer) {
         guard usesVirtualTrackpad else { return }
+        if swallowingVirtualCursorLongPressForCursorRecapture {
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                swallowingVirtualCursorLongPressForCursorRecapture = false
+            }
+            return
+        }
+        if gesture.state == .began, requestCursorLockRecaptureIfNeeded() {
+            swallowingVirtualCursorLongPressForCursorRecapture = true
+            return
+        }
         setVirtualCursorVisible(true)
         if gesture.state == .began { stopVirtualCursorDeceleration() }
         let location = normalizedLocation(gesture.location(in: self))
@@ -539,6 +563,7 @@ extension InputCapturingView {
     @objc
     func handleVirtualCursorTap(_ gesture: UITapGestureRecognizer) {
         guard usesVirtualTrackpad else { return }
+        if requestCursorLockRecaptureIfNeeded() { return }
         stopVirtualCursorDeceleration()
         setVirtualCursorVisible(true)
 
@@ -562,6 +587,7 @@ extension InputCapturingView {
     @objc
     func handleVirtualCursorRightTap(_ gesture: UITapGestureRecognizer) {
         guard usesVirtualTrackpad else { return }
+        if requestCursorLockRecaptureIfNeeded() { return }
         stopVirtualCursorDeceleration()
         setVirtualCursorVisible(true)
 

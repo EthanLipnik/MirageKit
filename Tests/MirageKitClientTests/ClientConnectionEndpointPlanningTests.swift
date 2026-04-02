@@ -207,4 +207,94 @@ struct ClientConnectionEndpointPlanningTests {
         #expect(reason.contains("wifi"))
         #expect(reason.contains("connectionRefused"))
     }
+
+    @MainActor
+    @Test("Client diagnoses different Wi-Fi networks for local failures")
+    func localNetworkMismatchReasonDiagnosesDifferentWiFiNetworks() {
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: "altair.local", port: 6100),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                metadata: [
+                    "mirage.net.wifi": "24:hostwifi",
+                ]
+            )
+        )
+
+        let reason = MirageClientService.localNetworkMismatchReason(
+            for: host,
+            classification: .timeout,
+            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:clientwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(reason?.contains("different Wi-Fi networks") == true)
+    }
+
+    @MainActor
+    @Test("Client diagnoses different Ethernet networks for local failures")
+    func localNetworkMismatchReasonDiagnosesDifferentEthernetNetworks() {
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: "altair.local", port: 6100),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                metadata: [
+                    "mirage.net.wired": "24:hostwired",
+                ]
+            )
+        )
+
+        let reason = MirageClientService.localNetworkMismatchReason(
+            for: host,
+            classification: .transportLoss,
+            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
+                currentPathKind: .wired,
+                wifiSubnetSignatures: [],
+                wiredSubnetSignatures: ["24:clientwired"]
+            )
+        )
+
+        #expect(reason?.contains("same Ethernet network") == true)
+    }
+
+    @MainActor
+    @Test("Client skips local network mismatch diagnosis on AWDL")
+    func localNetworkMismatchReasonSkipsAwdl() {
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: "altair.local", port: 6100),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                metadata: [
+                    "mirage.net.wifi": "24:hostwifi",
+                ]
+            )
+        )
+
+        let reason = MirageClientService.localNetworkMismatchReason(
+            for: host,
+            classification: .timeout,
+            localNetwork: MirageClientService.ControlSessionNetworkDiagnostics(
+                currentPathKind: .awdl,
+                wifiSubnetSignatures: ["24:clientwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+
+        #expect(reason == nil)
+    }
 }

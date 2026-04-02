@@ -91,6 +91,10 @@ extension MirageHostService {
         var pendingLightsOutSetup = false
         do {
             let request = try message.decode(StartDesktopStreamMessage.self)
+            await cancelQualityTest(
+                for: clientContext.client.id,
+                reason: "desktop stream startup"
+            )
             MirageLogger
                 .host(
                     "Client \(clientContext.client.name) requested desktop stream: " +

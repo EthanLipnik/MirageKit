@@ -30,14 +30,19 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
     /// Which cursor source should be visible to the user.
     public var source: MirageDesktopCursorSource
 
+    /// Whether the client should lock and hide its local cursor when Mirage renders the local cursor.
+    public var lockClientCursorWhenUsingMirageCursor: Bool
+
     /// Whether the client should lock and hide its local cursor when the host cursor is captured.
     public var lockClientCursorWhenUsingHostCursor: Bool
 
     public init(
         source: MirageDesktopCursorSource = .client,
+        lockClientCursorWhenUsingMirageCursor: Bool = false,
         lockClientCursorWhenUsingHostCursor: Bool = true
     ) {
         self.source = source
+        self.lockClientCursorWhenUsingMirageCursor = lockClientCursorWhenUsingMirageCursor
         self.lockClientCursorWhenUsingHostCursor = lockClientCursorWhenUsingHostCursor
     }
 
@@ -52,10 +57,40 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
         source == .client
     }
 
+    public func lockClientCursorPreference(for source: MirageDesktopCursorSource? = nil) -> Bool {
+        switch source ?? self.source {
+        case .client:
+            lockClientCursorWhenUsingMirageCursor
+        case .host:
+            lockClientCursorWhenUsingHostCursor
+        }
+    }
+
+    public mutating func setLockClientCursorPreference(
+        _ isEnabled: Bool,
+        for source: MirageDesktopCursorSource? = nil
+    ) {
+        switch source ?? self.source {
+        case .client:
+            lockClientCursorWhenUsingMirageCursor = isEnabled
+        case .host:
+            lockClientCursorWhenUsingHostCursor = isEnabled
+        }
+    }
+
+    public func canToggleLockClientCursor(for mode: MirageDesktopStreamMode) -> Bool {
+        switch source {
+        case .client:
+            mode != .secondary
+        case .host:
+            true
+        }
+    }
+
     public func locksClientCursor(for mode: MirageDesktopStreamMode) -> Bool {
         switch source {
         case .client:
-            mode == .secondary
+            mode == .secondary || lockClientCursorWhenUsingMirageCursor
         case .host:
             lockClientCursorWhenUsingHostCursor
         }

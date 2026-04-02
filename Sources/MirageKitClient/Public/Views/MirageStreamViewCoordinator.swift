@@ -19,6 +19,7 @@ public final class MirageStreamViewCoordinator {
     var onDirectTouchActivity: (() -> Void)?
     var onDictationStateChanged: ((Bool) -> Void)?
     var onDictationError: ((String) -> Void)?
+    var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
     weak var metalView: MirageMetalView?
     private var representableUpdateCount: UInt64 = 0
     private var representableUpdateLogStreamID: StreamID?
@@ -34,7 +35,8 @@ public final class MirageStreamViewCoordinator {
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         onDirectTouchActivity: (() -> Void)? = nil,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
-        onDictationError: ((String) -> Void)? = nil
+        onDictationError: ((String) -> Void)? = nil,
+        onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil
     ) {
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
@@ -45,6 +47,7 @@ public final class MirageStreamViewCoordinator {
         self.onDirectTouchActivity = onDirectTouchActivity
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
+        self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
     }
 
     func handleInputEvent(_ event: MirageInputEvent) {
@@ -81,6 +84,10 @@ public final class MirageStreamViewCoordinator {
 
     func handleDictationError(_ message: String) {
         onDictationError?(message)
+    }
+
+    func handleResolvedPointerLockStateChanged(_ state: MirageResolvedPointerLockState) {
+        onResolvedPointerLockStateChanged?(state)
     }
 
     func noteRepresentableUpdate(for streamID: StreamID) {

@@ -91,7 +91,7 @@ public class InputCapturingView: UIView {
         }
     }
 
-    /// Cursor position store for secondary display sync.
+    /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore? {
         didSet {
             lockedCursorSequence = 0
@@ -106,6 +106,15 @@ public class InputCapturingView: UIView {
             updateCursorLockMode()
         }
     }
+
+    /// Whether cursor lock can be recaptured after a temporary local unlock.
+    public var canRecaptureCursorLock: Bool = false
+
+    /// Callback when unmodified Escape should temporarily unlock cursor capture.
+    public var onCursorLockEscapeRequested: (() -> Void)?
+
+    /// Callback when the next click/tap should recapture cursor capture.
+    public var onCursorLockRecaptureRequested: (() -> Void)?
 
     /// Whether Mirage should render its synthetic local cursor presentation.
     public var syntheticCursorEnabled: Bool = true {
@@ -158,6 +167,9 @@ public class InputCapturingView: UIView {
 
     /// Callback when dictation fails with a user-facing message.
     public var onDictationError: ((String) -> Void)?
+
+    /// Callback when UIKit resolves pointer-lock availability for the current scene.
+    public var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
 
     /// Dictation behavior selection for latency vs finalization quality.
     public var dictationMode: MirageDictationMode = .best
@@ -217,6 +229,9 @@ public class InputCapturingView: UIView {
     private let lockedCursorStopThreshold: CGFloat = 0.002
     var lockedCursorDisplayLink: CADisplayLink?
     var lockedPointerLastHoverLocation: CGPoint?
+    var suppressEscapeKeyUpForCursorUnlock = false
+    var swallowingLongPressForCursorRecapture = false
+    var swallowingVirtualCursorLongPressForCursorRecapture = false
     var usesMouseInputDeltas: Bool = false
     var pointerLockActive: Bool = false {
         didSet {
@@ -308,6 +323,9 @@ public class InputCapturingView: UIView {
     /// Key codes currently claimed by GCKeyboard (modifier+key combos).
     /// Used to deduplicate against pressesBegan/pressesEnded which may fire for the same event.
     var gcClaimedKeyCodes: Set<GCKeyCode> = []
+    /// HID key codes currently owned by the synthesized intercepted-shortcut path.
+    /// These key releases should not emit an additional raw key-up event.
+    var passthroughClaimedKeyCodes: Set<UIKeyboardHIDUsage> = []
     #endif
 
     /// Get current modifier state from held keyboard keys
@@ -425,6 +443,7 @@ public class InputCapturingView: UIView {
         capsLockEnabled = false
         #if canImport(GameController)
         gcClaimedKeyCodes.removeAll()
+        passthroughClaimedKeyCodes.removeAll()
         #endif
         updateSoftwareModifierButtons()
         sendModifierStateIfNeeded(force: true)
@@ -637,8 +656,13 @@ public class InputCapturingView: UIView {
     var passthroughShortcutRepeatState: PassthroughShortcutRepeatState?
     /// Timer that polls physical key state for intercepted shortcut repeats.
     var passthroughShortcutRepeatTimer: Timer?
+    /// Most recent intercepted shortcut forwarded through a UIKit command/action path.
+    var lastPassthroughShortcutDispatch: PassthroughShortcutDispatch?
     /// Polling interval for intercepted shortcut repeat sessions.
     static let passthroughShortcutRepeatPollInterval: TimeInterval = 1.0 / 60.0
+    /// Window for suppressing duplicate delivery when UIKit invokes both keyCommand and
+    /// responder edit-action paths for the same physical shortcut press.
+    static let passthroughShortcutDuplicateSuppressionWindow: CFTimeInterval = 0.05
     /// Polling cadence for hardware modifier reconciliation while modifiers are held.
     static let modifierRefreshPollInterval: Duration = .milliseconds(100)
 
@@ -648,6 +672,18 @@ public class InputCapturingView: UIView {
         let modifiers: MirageModifierFlags
         let requiresShift: Bool
         var nextRepeatDeadline: TimeInterval
+    }
+
+    enum PassthroughShortcutDispatchSource {
+        case hardwareKey
+        case keyCommand
+        case responderAction
+    }
+
+    struct PassthroughShortcutDispatch {
+        let shortcut: MirageInterceptedShortcut
+        let source: PassthroughShortcutDispatchSource
+        let timestamp: CFAbsoluteTime
     }
 
     override public init(frame: CGRect) {
@@ -906,6 +942,20 @@ public class InputCapturingView: UIView {
         lockedPointerPanGesture.isEnabled = !usesMouseInputDeltas
         refreshLockedCursorIfNeeded(force: true)
         updateLockedCursorViewVisibility()
+    }
+
+    @discardableResult
+    func requestCursorLockRecaptureIfNeeded() -> Bool {
+        guard canRecaptureCursorLock else { return false }
+        onCursorLockRecaptureRequested?()
+        return true
+    }
+
+    @discardableResult
+    func requestCursorLockEscapeIfNeeded() -> Bool {
+        guard cursorLockEnabled else { return false }
+        onCursorLockEscapeRequested?()
+        return true
     }
 
     func setLockedCursorVisible(_ isVisible: Bool) {
