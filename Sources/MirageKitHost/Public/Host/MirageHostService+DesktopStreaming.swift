@@ -27,6 +27,7 @@ extension MirageHostService {
         keyFrameInterval: Int?,
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
+        enteredBitrate: Int?,
         bitrate: Int?,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
@@ -429,6 +430,7 @@ extension MirageHostService {
             capturePressureProfile: capturePressureProfile,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
+            enteredBitrate: enteredBitrate,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling,
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight,
@@ -438,6 +440,7 @@ extension MirageHostService {
         if let captureDisplayP3CoverageStatus {
             await streamContext.setDisplayP3CoverageStatusOverride(captureDisplayP3CoverageStatus)
         }
+        await streamContext.logBitrateContract(event: "start")
         logDesktopStartStep("stream context created (\(streamID))")
         MirageLogger.host("Desktop stream performance mode: \(performanceMode.displayName)")
         if performanceMode != .game, allowRuntimeQualityAdjustment == false {

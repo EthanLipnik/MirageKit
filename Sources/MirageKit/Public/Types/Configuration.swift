@@ -330,6 +330,11 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var keyFrameInterval: Int?
     public var colorDepth: MirageStreamColorDepth?
     public var captureQueueDepth: Int?
+    /// Client-entered bitrate budget before any desktop geometry scaling.
+    /// For custom desktop streaming this remains the user-facing value shown in
+    /// settings, while `bitrate` carries the effective target actually sent to
+    /// the host.
+    public var enteredBitrate: Int?
     public var bitrate: Int?
     public var latencyMode: MirageStreamLatencyMode?
     public var performanceMode: MirageStreamPerformanceMode?
@@ -339,8 +344,9 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var disableResolutionCap: Bool
     /// Maximum bitrate budget supplied by the client for app-owned adaptation.
     /// When set, the host may temporarily shed bitrate below the initial
-    /// `bitrate` value to protect encode stability, but it does not
-    /// autonomously ramp back toward this ceiling.
+    /// `bitrate` value to protect source or transport stability, and it may
+    /// ramp back toward the latest client-requested target without exceeding
+    /// this ceiling.
     public var bitrateAdaptationCeiling: Int?
     /// Maximum encoded width in pixels. When set, the host computes the stream
     /// scale from these dimensions and the actual capture resolution instead of
@@ -356,6 +362,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         keyFrameInterval: Int? = nil,
         colorDepth: MirageStreamColorDepth? = nil,
         captureQueueDepth: Int? = nil,
+        enteredBitrate: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         performanceMode: MirageStreamPerformanceMode? = nil,
@@ -372,6 +379,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.keyFrameInterval = keyFrameInterval
         self.colorDepth = colorDepth
         self.captureQueueDepth = captureQueueDepth
+        self.enteredBitrate = enteredBitrate
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode
@@ -401,6 +409,7 @@ public struct MirageEncoderOverrides: Sendable, Codable {
             keyFrameInterval: keyFrameInterval,
             colorDepth: MirageEncoderConfiguration.defaultColorDepth(for: bitDepth),
             captureQueueDepth: captureQueueDepth,
+            enteredBitrate: bitrate,
             bitrate: bitrate,
             latencyMode: latencyMode,
             performanceMode: performanceMode,

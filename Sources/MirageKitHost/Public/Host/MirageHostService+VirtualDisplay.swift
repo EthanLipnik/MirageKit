@@ -469,7 +469,8 @@ extension MirageHostService {
             if hasColorDepthChange || hasBitrateChange {
                 try await context.updateEncoderSettings(
                     colorDepth: request.colorDepth,
-                    bitrate: normalizedBitrate
+                    bitrate: normalizedBitrate,
+                    updateRequestedTargetBitrate: hasBitrateChange
                 )
             }
             if let streamScale = request.streamScale {

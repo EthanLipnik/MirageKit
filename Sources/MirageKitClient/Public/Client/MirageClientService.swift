@@ -504,6 +504,7 @@ public final class MirageClientService {
             MirageClientNetworkPathStatus(snapshot: snapshot)
         }
     }
+    public internal(set) var controlPathHistory: [MirageClientNetworkPathHistoryEntry] = []
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
     var awdlPathSwitches: UInt64 = 0

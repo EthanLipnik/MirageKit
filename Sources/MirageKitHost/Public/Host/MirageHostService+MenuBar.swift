@@ -100,6 +100,12 @@ extension MirageHostService {
                     "Client \(clientContext.client.name) requested desktop stream: " +
                         "\(request.displayWidth)x\(request.displayHeight) pts, mode=\(request.mode?.displayName ?? "Full Desktop")"
                 )
+            let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
+            let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
+            let ceilingText = request.bitrateAdaptationCeiling.map(Self.formatBitrateForLogging) ?? "none"
+            MirageLogger.host(
+                "Desktop bitrate contract received: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText)"
+            )
 
             // Determine target frame rate based on client capability
             let clientMaxRefreshRate = request.maxRefreshRate
@@ -145,6 +151,7 @@ extension MirageHostService {
                 keyFrameInterval: request.keyFrameInterval,
                 colorDepth: request.colorDepth,
                 captureQueueDepth: request.captureQueueDepth,
+                enteredBitrate: request.enteredBitrate,
                 bitrate: request.bitrate,
                 latencyMode: latencyMode,
                 performanceMode: performanceMode,
@@ -220,6 +227,10 @@ extension MirageHostService {
                 message.contains("client disconnected during startup")
         }
         return false
+    }
+
+    private nonisolated static func formatBitrateForLogging(_ bitrate: Int) -> String {
+        (Double(bitrate) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))) + "Mbps"
     }
 
     private nonisolated static func desktopStartErrorPayload(for error: Error) -> ErrorMessage {

@@ -27,7 +27,10 @@ struct EncoderSettingsSnapshot: Sendable {
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     let captureQueueDepth: Int?
+    let enteredBitrate: Int?
     let bitrate: Int?
+    let requestedTargetBitrate: Int?
+    let bitrateAdaptationCeiling: Int?
 }
 
 extension StreamContext {
@@ -134,6 +137,18 @@ extension StreamContext {
         encoderConfig.targetFrameRate
     }
 
+    func getRequestedTargetBitrate() -> Int? {
+        requestedTargetBitrate
+    }
+
+    func setRequestedTargetBitrate(_ bitrate: Int?) {
+        if let bitrate {
+            requestedTargetBitrate = min(bitrate, bitrateAdaptationCeiling ?? bitrate)
+        } else {
+            requestedTargetBitrate = nil
+        }
+    }
+
     func getInFlightPolicy() -> (
         minInFlightFrames: Int,
         maxInFlightFrames: Int,
@@ -180,12 +195,26 @@ extension StreamContext {
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             capturePressureProfile: capturePressureProfile,
             captureQueueDepth: encoderConfig.captureQueueDepth,
-            bitrate: encoderConfig.bitrate
+            enteredBitrate: enteredTargetBitrate,
+            bitrate: encoderConfig.bitrate,
+            requestedTargetBitrate: requestedTargetBitrate,
+            bitrateAdaptationCeiling: bitrateAdaptationCeiling
         )
     }
 
     func getPerformanceMode() -> MirageStreamPerformanceMode {
         performanceMode
+    }
+
+    func logBitrateContract(event: String) {
+        let enteredText = enteredTargetBitrate.map(String.init) ?? "nil"
+        let requestedText = requestedTargetBitrate.map(String.init) ?? "nil"
+        let currentText = (temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate).map(String.init) ?? "nil"
+        let ceilingText = bitrateAdaptationCeiling.map(String.init) ?? "nil"
+        let startupText = startupBitrate.map(String.init) ?? "nil"
+        MirageLogger.metrics(
+            "event=bitrate_contract stream=\(streamID) phase=\(event) entered=\(enteredText) requested=\(requestedText) current=\(currentText) startup=\(startupText) ceiling=\(ceilingText)"
+        )
     }
 
     func getGameModeStage() -> GameModeStage {

@@ -83,6 +83,10 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         return interfaceNames.joined(separator: ", ")
     }
 
+    public var primaryInterfaceName: String? {
+        interfaceNames.first
+    }
+
     public var protocolSummary: String {
         switch (supportsIPv4, supportsIPv6) {
         case (true, true):
@@ -117,5 +121,24 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
         let normalized = name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !normalized.isEmpty else { return false }
         return normalized.contains("thunderbolt") || normalized.contains("bridge")
+    }
+}
+
+public struct MirageClientNetworkPathHistoryEntry: Sendable, Equatable, Identifiable {
+    public let observedAt: Date
+    public let status: MirageClientNetworkPathStatus
+
+    public var id: String {
+        let timestamp = Int(observedAt.timeIntervalSince1970 * 1000)
+        let interfaceText = status.interfaceNames.joined(separator: ",")
+        return "\(timestamp)|\(status.kind.rawValue)|\(status.status)|\(interfaceText)"
+    }
+
+    public init(
+        observedAt: Date,
+        status: MirageClientNetworkPathStatus
+    ) {
+        self.observedAt = observedAt
+        self.status = status
     }
 }

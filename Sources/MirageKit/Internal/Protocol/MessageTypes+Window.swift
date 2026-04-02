@@ -271,8 +271,10 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let droppedFrames: UInt64
     package let activeQuality: Float
     package let targetFrameRate: Int
+    package let enteredBitrate: Int?
     package let currentBitrate: Int?
     package let requestedTargetBitrate: Int?
+    package let bitrateAdaptationCeiling: Int?
     package let startupBitrate: Int?
     package let temporaryDegradationMode: MirageTemporaryDegradationMode?
     package let temporaryDegradationColorDepth: MirageStreamColorDepth?
@@ -280,6 +282,9 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let captureAdmissionDrops: UInt64?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
+    package let captureIngressFPS: Double?
+    package let captureFPS: Double?
+    package let encodeAttemptFPS: Double?
     package let captureIngressAverageMs: Double?
     package let captureIngressMaxMs: Double?
     package let preEncodeWaitAverageMs: Double?
@@ -323,8 +328,10 @@ package struct StreamMetricsMessage: Codable, Sendable {
         droppedFrames: UInt64,
         activeQuality: Float,
         targetFrameRate: Int,
+        enteredBitrate: Int? = nil,
         currentBitrate: Int? = nil,
         requestedTargetBitrate: Int? = nil,
+        bitrateAdaptationCeiling: Int? = nil,
         startupBitrate: Int? = nil,
         temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         temporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
@@ -332,6 +339,9 @@ package struct StreamMetricsMessage: Codable, Sendable {
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
+        captureIngressFPS: Double? = nil,
+        captureFPS: Double? = nil,
+        encodeAttemptFPS: Double? = nil,
         captureIngressAverageMs: Double? = nil,
         captureIngressMaxMs: Double? = nil,
         preEncodeWaitAverageMs: Double? = nil,
@@ -374,8 +384,10 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.droppedFrames = droppedFrames
         self.activeQuality = activeQuality
         self.targetFrameRate = targetFrameRate
+        self.enteredBitrate = enteredBitrate
         self.currentBitrate = currentBitrate
         self.requestedTargetBitrate = requestedTargetBitrate
+        self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.startupBitrate = startupBitrate
         self.temporaryDegradationMode = temporaryDegradationMode
         self.temporaryDegradationColorDepth = temporaryDegradationColorDepth
@@ -383,6 +395,9 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.captureAdmissionDrops = captureAdmissionDrops
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs
+        self.captureIngressFPS = captureIngressFPS
+        self.captureFPS = captureFPS
+        self.encodeAttemptFPS = encodeAttemptFPS
         self.captureIngressAverageMs = captureIngressAverageMs
         self.captureIngressMaxMs = captureIngressMaxMs
         self.preEncodeWaitAverageMs = preEncodeWaitAverageMs

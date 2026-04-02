@@ -161,30 +161,11 @@ extension MirageClientService {
             request.colorDepth = colorDepth
             MirageLogger.client("Requesting color depth: \(colorDepth.displayName)")
         }
+        if let enteredBitrate = overrides.enteredBitrate, enteredBitrate > 0 {
+            request.enteredBitrate = enteredBitrate
+        }
         if let bitrate = overrides.bitrate, bitrate > 0 {
-            if overrides.bitrateAdaptationCeiling != nil {
-                request.bitrate = bitrate
-                let mbps = Double(bitrate) / 1_000_000.0
-                MirageLogger.client(
-                    "Requesting bitrate: \(mbps.formatted(.number.precision(.fractionLength(1)))) Mbps"
-                )
-            } else {
-                // Scale bitrate proportionally to pixel count.  Desktop streams
-                // at 6016x3384 have ~4x the pixels of a typical app window at
-                // 2560x1440 and need proportionally more bits-per-pixel.
-                let baselinePixels: Double = 2560.0 * 1440.0
-                let scaleFactor: Double = if let sf = request.scaleFactor, sf > 0 {
-                    min(max(Double(request.displayWidth) * Double(sf) * Double(request.displayHeight) * Double(sf) / baselinePixels, 1.0), 2.0)
-                } else {
-                    min(max(Double(request.displayWidth) * Double(request.displayHeight) / baselinePixels, 1.0), 2.0)
-                }
-                let scaledBitrate = Int(Double(bitrate) * scaleFactor)
-                request.bitrate = scaledBitrate
-                let mbps = Double(scaledBitrate) / 1_000_000.0
-                MirageLogger.client(
-                    "Requesting bitrate: \(String(format: "%.1f", mbps)) Mbps (scaled \(String(format: "%.1f", scaleFactor))x for \(request.displayWidth)x\(request.displayHeight))"
-                )
-            }
+            request.bitrate = bitrate
         }
         if let latencyMode = overrides.latencyMode {
             request.latencyMode = latencyMode

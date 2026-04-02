@@ -31,6 +31,8 @@ package struct StartDesktopStreamMessage: Codable {
     package var mode: MirageDesktopStreamMode?
     /// Desktop cursor presentation requested by the client.
     package var cursorPresentation: MirageDesktopCursorPresentation?
+    /// Client-entered bitrate budget before any desktop geometry scaling.
+    package var enteredBitrate: Int?
     /// Client-requested target bitrate (bits per second)
     package var bitrate: Int?
     /// Client-requested latency preference for host buffering and render behavior.
@@ -78,6 +80,7 @@ package struct StartDesktopStreamMessage: Codable {
         case colorDepth
         case mode
         case cursorPresentation
+        case enteredBitrate
         case bitrate
         case latencyMode
         case performanceMode
@@ -107,6 +110,7 @@ package struct StartDesktopStreamMessage: Codable {
         colorDepth: MirageStreamColorDepth? = nil,
         mode: MirageDesktopStreamMode? = nil,
         cursorPresentation: MirageDesktopCursorPresentation? = nil,
+        enteredBitrate: Int? = nil,
         bitrate: Int? = nil,
         latencyMode: MirageStreamLatencyMode? = nil,
         performanceMode: MirageStreamPerformanceMode? = nil,
@@ -129,6 +133,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.colorDepth = colorDepth
         self.mode = mode
         self.cursorPresentation = cursorPresentation
+        self.enteredBitrate = enteredBitrate
         self.bitrate = bitrate
         self.latencyMode = latencyMode
         self.performanceMode = performanceMode

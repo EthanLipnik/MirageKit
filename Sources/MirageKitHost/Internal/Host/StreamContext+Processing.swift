@@ -700,8 +700,10 @@ extension StreamContext {
                 droppedFrames: droppedFrameCount,
                 activeQuality: activeQuality,
                 targetFrameRate: currentFrameRate,
+                enteredBitrate: enteredTargetBitrate,
                 currentBitrate: currentBitrate,
                 requestedTargetBitrate: requestedTargetBitrate,
+                bitrateAdaptationCeiling: bitrateAdaptationCeiling,
                 startupBitrate: startupBitrate,
                 temporaryDegradationMode: temporaryDegradationMode,
                 temporaryDegradationColorDepth: temporaryDegradationCurrentColorDepth,
@@ -709,6 +711,9 @@ extension StreamContext {
                 captureAdmissionDrops: captureDroppedIntervalCount,
                 frameBudgetMs: frameBudgetMs,
                 averageEncodeMs: resolvedAverageEncodeMs,
+                captureIngressFPS: lastCaptureIngressFPS,
+                captureFPS: lastCaptureFPS,
+                encodeAttemptFPS: lastEncodeAttemptFPS,
                 captureIngressAverageMs: captureIngressAverageMs,
                 captureIngressMaxMs: captureIngressDelayCount > 0 ? captureIngressDelayMaxMs : nil,
                 preEncodeWaitAverageMs: preEncodeWaitAverageMs,
@@ -916,6 +921,9 @@ extension StreamContext {
         let captureFPS = Double(captureIntervalCount) / elapsed
         let encodeAttemptFPS = Double(encodeAttemptIntervalCount) / elapsed
         let encodeFPS = Double(encodeAcceptedIntervalCount) / elapsed
+        lastCaptureIngressFPS = captureIngressFPS
+        lastCaptureFPS = captureFPS
+        lastEncodeAttemptFPS = encodeAttemptFPS
         let encodeAvgMs = await encoder?.getAverageEncodeTimeMs() ?? 0
         let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
         let pendingCount = frameInbox.pendingCount()
@@ -956,6 +964,9 @@ extension StreamContext {
             at: now
         )
         await evaluateStandardTemporaryDegradationIfNeeded(
+            captureIngressFPS: captureIngressFPS,
+            captureFPS: captureFPS,
+            encodeAttemptFPS: encodeAttemptFPS,
             encodedFPS: encodeFPS,
             averageEncodeMs: encodeAvgMs,
             queueBytes: queueBytes,
@@ -1153,7 +1164,27 @@ extension StreamContext {
         bitrateAdaptationCeiling != nil
     }
 
+    private enum TemporaryDegradationOverloadKind {
+        case source
+        case transport
+        case mixed
+
+        var logName: String {
+            switch self {
+            case .source:
+                "source"
+            case .transport:
+                "transport"
+            case .mixed:
+                "mixed"
+            }
+        }
+    }
+
     func evaluateStandardTemporaryDegradationIfNeeded(
+        captureIngressFPS: Double,
+        captureFPS: Double,
+        encodeAttemptFPS: Double,
         encodedFPS: Double,
         averageEncodeMs: Double,
         queueBytes: Int,
@@ -1170,22 +1201,65 @@ extension StreamContext {
             return
         }
 
-        let currentBitrate = temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate ?? requestedTargetBitrate
+        let effectiveRequestedTargetBitrate = min(
+            requestedTargetBitrate,
+            bitrateAdaptationCeiling ?? requestedTargetBitrate
+        )
+        let currentBitrate = temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate ?? effectiveRequestedTargetBitrate
         updateTemporaryDegradationBelowTargetState(
             now: now,
             currentBitrate: currentBitrate,
-            requestedBitrate: requestedTargetBitrate
+            requestedBitrate: effectiveRequestedTargetBitrate
         )
 
         let targetFPS = Double(max(1, currentFrameRate))
         let frameBudgetMs = 1000.0 / targetFPS
         let fpsRatio = encodedFPS / targetFPS
+        let captureIngressRatio = captureIngressFPS > 0 ? captureIngressFPS / targetFPS : 1
+        let captureRatio = captureFPS > 0 ? captureFPS / targetFPS : 1
+        let encodeAttemptRatio = encodeAttemptFPS > 0 ? encodeAttemptFPS / targetFPS : 1
         let sawBackpressureDrops = backpressureDropIntervalCount > 0
         let queuePressured = queueBytes > queuePressureBytes
         let queueSeverelyPressured = queueBytes > maxQueuedBytes
+        let transportStable = !sawBackpressureDrops && !queuePressured && !queueSeverelyPressured
+        let transportOverloaded = sawBackpressureDrops || queuePressured
+        let transportSeverelyOverloaded = sawBackpressureDrops || queueSeverelyPressured
+        let encodeBudgetHealthy = averageEncodeMs <= 0 ||
+            averageEncodeMs <= frameBudgetMs * temporaryDegradationStableEncodeBudgetRatio
+        let encodeBudgetOverloaded = averageEncodeMs > 0 &&
+            averageEncodeMs > frameBudgetMs * temporaryDegradationOverBudgetRatio
+        let encodeBudgetSeverelyOverloaded = averageEncodeMs > 0 &&
+            averageEncodeMs > frameBudgetMs * temporaryDegradationSevereEncodeBudgetRatio
+        let captureSourceStable = captureDroppedFrames == 0 &&
+            (captureIngressFPS <= 0 || captureIngressRatio >= temporaryDegradationRestoreThresholdRatio) &&
+            (captureFPS <= 0 || captureRatio >= temporaryDegradationRestoreThresholdRatio)
+        let encodeSourceStable = (encodeAttemptFPS <= 0 || encodeAttemptRatio >= temporaryDegradationRestoreThresholdRatio) &&
+            fpsRatio >= temporaryDegradationRestoreThresholdRatio &&
+            encodeBudgetHealthy
+        let captureSourceOverloaded = captureDroppedFrames > 0 ||
+            (captureIngressFPS > 0 && captureIngressRatio < temporaryDegradationReliefThresholdRatio) ||
+            (captureFPS > 0 && captureRatio < temporaryDegradationReliefThresholdRatio)
+        let captureSourceSeverelyOverloaded = captureDroppedFrames >= 12 ||
+            (captureIngressFPS > 0 && captureIngressRatio < temporaryDegradationSevereThresholdRatio) ||
+            (captureFPS > 0 && captureRatio < temporaryDegradationSevereThresholdRatio)
+        let encodeSourceOverloaded = if encodeAttemptFPS > 0 {
+            encodeAttemptRatio >= temporaryDegradationRestoreThresholdRatio &&
+                (fpsRatio < temporaryDegradationReliefThresholdRatio || encodeBudgetOverloaded)
+        } else {
+            fpsRatio < temporaryDegradationReliefThresholdRatio || encodeBudgetOverloaded
+        }
+        let encodeSourceSeverelyOverloaded = if encodeAttemptFPS > 0 {
+            encodeAttemptRatio >= temporaryDegradationRestoreThresholdRatio &&
+                (fpsRatio < temporaryDegradationSevereThresholdRatio || encodeBudgetSeverelyOverloaded)
+        } else {
+            fpsRatio < temporaryDegradationSevereThresholdRatio || encodeBudgetSeverelyOverloaded
+        }
+        let sourceStable = captureSourceStable && encodeSourceStable
+        let sourceOverloaded = captureSourceOverloaded || encodeSourceOverloaded
+        let sourceSeverelyOverloaded = captureSourceSeverelyOverloaded || encodeSourceSeverelyOverloaded
         let adaptiveSession = usesAppOwnedBitrateAdaptation
         let isStable = if adaptiveSession {
-            !sawBackpressureDrops && !queuePressured && !queueSeverelyPressured
+            transportStable && sourceStable
         } else {
             averageEncodeMs > 0 &&
                 fpsRatio >= temporaryDegradationRestoreThresholdRatio &&
@@ -1195,7 +1269,7 @@ extension StreamContext {
                 !queuePressured
         }
         let isOverloaded = if adaptiveSession {
-            sawBackpressureDrops || queuePressured
+            sourceOverloaded || transportOverloaded
         } else {
             fpsRatio < temporaryDegradationReliefThresholdRatio ||
                 averageEncodeMs > frameBudgetMs * temporaryDegradationOverBudgetRatio ||
@@ -1204,23 +1278,31 @@ extension StreamContext {
                 queuePressured
         }
         let isSeverelyOverloaded = if adaptiveSession {
-            sawBackpressureDrops || queueSeverelyPressured
+            sourceSeverelyOverloaded || transportSeverelyOverloaded
         } else {
             fpsRatio < temporaryDegradationSevereThresholdRatio ||
                 averageEncodeMs > frameBudgetMs * temporaryDegradationSevereEncodeBudgetRatio ||
                 captureDroppedFrames >= 12 ||
                 queueSeverelyPressured
         }
+        let overloadKind: TemporaryDegradationOverloadKind? = if sourceOverloaded && transportOverloaded {
+            .mixed
+        } else if sourceOverloaded {
+            .source
+        } else if transportOverloaded {
+            .transport
+        } else {
+            nil
+        }
 
         if isStable {
             temporaryDegradationOverloadWindows = 0
             temporaryDegradationSevereOverloadWindows = 0
             temporaryDegradationStableWindows += 1
-            guard !usesAppOwnedBitrateAdaptation else { return }
             guard temporaryDegradationStableWindows >= temporaryDegradationStableWindowsThreshold else { return }
             if await attemptTemporaryDegradationRestore(
                 currentBitrate: currentBitrate,
-                requestedBitrate: bitrateAdaptationCeiling ?? requestedTargetBitrate,
+                requestedBitrate: effectiveRequestedTargetBitrate,
                 at: now
             ) {
                 temporaryDegradationStableWindows = 0
@@ -1244,7 +1326,8 @@ extension StreamContext {
 
         if await attemptTemporaryDegradationRelief(
             currentBitrate: currentBitrate,
-            requestedBitrate: requestedTargetBitrate,
+            requestedBitrate: effectiveRequestedTargetBitrate,
+            overloadKind: overloadKind ?? .transport,
             severe: isSeverelyOverloaded,
             at: now
         ) {
@@ -1282,10 +1365,12 @@ extension StreamContext {
     private func attemptTemporaryDegradationRelief(
         currentBitrate: Int,
         requestedBitrate: Int,
+        overloadKind: TemporaryDegradationOverloadKind,
         severe _: Bool,
         at now: CFAbsoluteTime
     ) async -> Bool {
         let floor = min(requestedBitrate, temporaryDegradationBitrateFloorBps)
+        let reasonPrefix = "temporary degradation \(overloadKind.logName)"
 
         switch temporaryDegradationMode {
         case .off:
@@ -1300,7 +1385,7 @@ extension StreamContext {
             return await applyTemporaryDegradationAdjustment(
                 colorDepth: nil,
                 bitrate: nextBitrate,
-                reason: "temporary degradation framerate-first bitrate drop",
+                reason: "\(reasonPrefix) framerate-first bitrate drop",
                 now: now
                 )
 
@@ -1313,7 +1398,7 @@ extension StreamContext {
                 return await applyTemporaryDegradationAdjustment(
                     colorDepth: nil,
                     bitrate: nextBitrate,
-                    reason: "temporary degradation visuals-first bitrate drop",
+                    reason: "\(reasonPrefix) visuals-first bitrate drop",
                     now: now
                 )
             }
@@ -1365,6 +1450,7 @@ extension StreamContext {
             MirageLogger.metrics(
                 "event=temporary_degradation_adjustment stream=\(streamID) mode=\(temporaryDegradationMode.rawValue) reason=\(reason) colorDepth=\(temporaryDegradationCurrentColorDepth.displayName) bitrate=\(bitrateText)"
             )
+            logBitrateContract(event: reason.replacingOccurrences(of: " ", with: "_"))
             return true
         } catch {
             MirageLogger.error(.stream, error: error, message: "Temporary degradation adjustment failed: ")

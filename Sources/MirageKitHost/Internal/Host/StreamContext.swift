@@ -180,6 +180,7 @@ actor StreamContext {
     let temporaryDegradationOverBudgetRatio: Double = 1.05
     let temporaryDegradationSevereEncodeBudgetRatio: Double = 1.35
     let temporaryDegradationStableWindowsThreshold: Int = 2
+    var enteredTargetBitrate: Int?
     var bitrateAdaptationCeiling: Int?
     var requestedTargetBitrate: Int?
     var startupBitrate: Int?
@@ -207,6 +208,9 @@ actor StreamContext {
     var encodeSkipNoSessionIntervalCount: UInt64 = 0
     var lastPipelineStatsLogTime: CFAbsoluteTime = 0
     let pipelineStatsInterval: CFAbsoluteTime = 2.0
+    var lastCaptureIngressFPS: Double?
+    var lastCaptureFPS: Double?
+    var lastEncodeAttemptFPS: Double?
     var lastCapturedFrameTime: CFAbsoluteTime = 0
     var captureIngressDelayTotalMs: Double = 0
     var captureIngressDelayMaxMs: Double = 0
@@ -426,6 +430,7 @@ actor StreamContext {
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
+        enteredBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
         encoderMaxHeight: Int? = nil,
@@ -436,6 +441,11 @@ actor StreamContext {
         var resolvedRuntimeQualityAdjustmentEnabled = runtimeQualityAdjustmentEnabled
         var resolvedLowLatencyHighResolutionCompressionBoostEnabled = lowLatencyHighResolutionCompressionBoostEnabled
         var resolvedCapturePressureProfile = capturePressureProfile
+        if let bitrateAdaptationCeiling,
+           let requestedBitrate = resolvedEncoderConfig.bitrate,
+           requestedBitrate > bitrateAdaptationCeiling {
+            resolvedEncoderConfig.bitrate = bitrateAdaptationCeiling
+        }
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
         let usesAppOwnedBitrateAdaptation = bitrateAdaptationCeiling != nil
         let resolvedTemporaryDegradationMode: MirageTemporaryDegradationMode =
@@ -561,6 +571,7 @@ actor StreamContext {
         gameModeBaselineColorDepth = resolvedEncoderConfig.colorDepth
         gameModeBaselineBitrate = resolvedEncoderConfig.bitrate
         gameModeBaselineStreamScale = clampedScale
+        self.enteredTargetBitrate = enteredBitrate ?? requestedTargetBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
         startupBitrate = initialTemporaryBitrate

@@ -80,22 +80,12 @@ public extension MirageClientService {
             disableResolutionCap: encoderRequest.disableResolutionCap == true
         )
         resolutionScale = geometry.resolvedStreamScale
-        let scaledBitrate: Int?
-        if encoderRequest.bitrateAdaptationCeiling != nil {
-            scaledBitrate = encoderRequest.bitrate
-        } else if let bitrate = encoderRequest.bitrate, bitrate > 0 {
-            let baselinePixels: Double = 2560.0 * 1440.0
-            let scaleFactor = min(
-                max(
-                    Double(geometry.displayPixelSize.width) * Double(geometry.displayPixelSize.height) / baselinePixels,
-                    1.0
-                ),
-                2.0
-            )
-            scaledBitrate = Int(Double(bitrate) * scaleFactor)
-        } else {
-            scaledBitrate = nil
-        }
+        let bitrateSemantics = MirageDesktopBitrateRequestSemantics.resolve(
+            enteredBitrateBps: encoderRequest.enteredBitrate,
+            requestedTargetBitrateBps: encoderRequest.bitrate,
+            bitrateAdaptationCeilingBps: encoderRequest.bitrateAdaptationCeiling,
+            displayResolution: effectiveDisplayResolution
+        )
         var request = StartDesktopStreamMessage(
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: encoderRequest.displayWidth,
@@ -111,20 +101,29 @@ public extension MirageClientService {
         request.colorDepth = encoderRequest.colorDepth
         request.mode = encoderRequest.mode
         request.cursorPresentation = encoderRequest.cursorPresentation
-        request.bitrate = scaledBitrate
+        request.enteredBitrate = bitrateSemantics.enteredBitrateBps
+        request.bitrate = bitrateSemantics.requestedTargetBitrateBps
         request.latencyMode = encoderRequest.latencyMode
         request.performanceMode = encoderRequest.performanceMode
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
         request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
         request.temporaryDegradationMode = encoderRequest.temporaryDegradationMode
         request.disableResolutionCap = encoderRequest.disableResolutionCap
-        request.bitrateAdaptationCeiling = encoderRequest.bitrateAdaptationCeiling
+        request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight
         request.mediaMaxPacketSize = encoderRequest.mediaMaxPacketSize
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
         pendingDesktopRequestedColorDepth = request.colorDepth
+
+        let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
+        let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
+        let ceilingText = request.bitrateAdaptationCeiling.map(Self.formatBitrateForLogging) ?? "none"
+        MirageLogger.client(
+            "Desktop bitrate contract requested: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText) " +
+                "scale=\(String(format: "%.3f", bitrateSemantics.geometryScaleFactor)) display=\(Int(effectiveDisplayResolution.width))x\(Int(effectiveDisplayResolution.height))"
+        )
 
         desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
         MirageLogger.client("Desktop start: request sent")
@@ -144,6 +143,10 @@ public extension MirageClientService {
                     "scale \(String(format: "%.3f", geometry.displayScaleFactor))x, " +
                     "stream \(String(format: "%.3f", geometry.resolvedStreamScale)))"
             )
+    }
+
+    private static func formatBitrateForLogging(_ bitrate: Int) -> String {
+        (Double(bitrate) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))) + "Mbps"
     }
 
     func sendDesktopCursorPresentationChange(

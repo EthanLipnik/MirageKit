@@ -83,6 +83,7 @@ extension MirageClientService {
         isAwaitingManualApproval = false
         hasCompletedBootstrap = false
         connectedHost = host
+        resetControlPathHistory()
 
         var pendingChannel: MirageControlChannel?
 
@@ -164,6 +165,7 @@ extension MirageClientService {
         isAwaitingManualApproval = false
         hasCompletedBootstrap = false
         connectedHost = host
+        resetControlPathHistory()
 
         var pendingChannel: MirageControlChannel?
         let helloRequest = try makeSessionHelloRequest()
@@ -344,6 +346,7 @@ extension MirageClientService {
         streamStartupFirstRegistrationSent.removeAll()
         streamStartupFirstPacketReceived.removeAll()
         controlPathSnapshot = nil
+        resetControlPathHistory()
         activeJitterHoldMs = 0
         decoderCompatibilityCurrentColorDepthByStream.removeAll()
         decoderCompatibilityBaselineColorDepthByStream.removeAll()

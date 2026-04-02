@@ -24,7 +24,15 @@ struct ClientMetricsStoreTests {
             droppedFrames: 12,
             activeQuality: 0.72,
             targetFrameRate: 60,
+            enteredBitrate: 300_000_000,
+            currentBitrate: 380_000_000,
+            requestedTargetBitrate: 414_187_500,
+            bitrateAdaptationCeiling: 414_187_500,
+            startupBitrate: 414_187_500,
             averageEncodeMs: 14.6,
+            captureIngressFPS: 58.8,
+            captureFPS: 57.9,
+            encodeAttemptFPS: 57.4,
             usingHardwareEncoder: true,
             encoderGPURegistryID: 123_456,
             encodedWidth: 2_732,
@@ -72,6 +80,14 @@ struct ClientMetricsStoreTests {
 
         let snapshot = store.snapshot(for: 7)
         #expect(snapshot?.hostAverageEncodeMs == 14.6)
+        #expect(snapshot?.hostEnteredBitrate == 300_000_000)
+        #expect(snapshot?.hostCurrentBitrate == 380_000_000)
+        #expect(snapshot?.hostRequestedTargetBitrate == 414_187_500)
+        #expect(snapshot?.hostBitrateAdaptationCeiling == 414_187_500)
+        #expect(snapshot?.hostStartupBitrate == 414_187_500)
+        #expect(snapshot?.hostCaptureIngressFPS == 58.8)
+        #expect(snapshot?.hostCaptureFPS == 57.9)
+        #expect(snapshot?.hostEncodeAttemptFPS == 57.4)
         #expect(snapshot?.hostUsingHardwareEncoder == true)
         #expect(snapshot?.hostEncoderGPURegistryID == 123_456)
         #expect(snapshot?.hostEncodedWidth == 2_732)

@@ -91,6 +91,8 @@ enum IncomingMediaStreamKind: Equatable {
 
 @MainActor
 extension MirageClientService {
+    nonisolated private static let controlPathHistoryLimit = 8
+
     // MARK: - Loom Media Stream Listener
 
     /// Start listening for incoming media streams on the authenticated Loom session.
@@ -350,6 +352,7 @@ extension MirageClientService {
     func handleControlPathUpdate(_ snapshot: MirageNetworkPathSnapshot) {
         let previous = controlPathSnapshot
         controlPathSnapshot = snapshot
+        recordControlPathHistory(snapshot)
         guard awdlExperimentEnabled else { return }
         guard let previous, previous.signature != snapshot.signature else { return }
         if previous.kind != snapshot.kind {
@@ -368,6 +371,46 @@ extension MirageClientService {
         MirageLogger.metrics(
             "AWDL telemetry: stalls=\(stallEvents), pathSwitches=\(awdlPathSwitches), registrationRefresh=\(registrationRefreshCount), hostRefreshReq=\(transportRefreshRequests), activeJitterHoldMs=\(activeJitterHoldMs)"
         )
+    }
+
+    func resetControlPathHistory() {
+        controlPathHistory.removeAll(keepingCapacity: false)
+    }
+
+    func recordControlPathHistory(
+        _ snapshot: MirageNetworkPathSnapshot,
+        observedAt: Date = Date()
+    ) {
+        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
+        controlPathHistory = Self.appendedControlPathHistory(
+            controlPathHistory,
+            status: status,
+            observedAt: observedAt
+        )
+    }
+
+    nonisolated static func appendedControlPathHistory(
+        _ history: [MirageClientNetworkPathHistoryEntry],
+        status: MirageClientNetworkPathStatus,
+        observedAt: Date,
+        maxCount: Int = controlPathHistoryLimit
+    ) -> [MirageClientNetworkPathHistoryEntry] {
+        guard maxCount > 0 else { return [] }
+        if history.last?.status == status {
+            return history
+        }
+
+        var updated = history
+        updated.append(
+            MirageClientNetworkPathHistoryEntry(
+                observedAt: observedAt,
+                status: status
+            )
+        )
+        if updated.count > maxCount {
+            updated.removeFirst(updated.count - maxCount)
+        }
+        return updated
     }
 
     // MARK: - Keyframe Requests
@@ -542,6 +585,13 @@ extension MirageClientService {
             bitrate: bitrate,
             streamScale: clampedScale
         )
+        if let bitrate {
+            let bitrateText = (Double(bitrate) / 1_000_000.0)
+                .formatted(.number.precision(.fractionLength(1)))
+            MirageLogger.client(
+                "Requesting encoder bitrate update for stream \(streamID): \(bitrateText) Mbps"
+            )
+        }
         try await sendControlMessage(.streamEncoderSettingsChange, content: request)
     }
 

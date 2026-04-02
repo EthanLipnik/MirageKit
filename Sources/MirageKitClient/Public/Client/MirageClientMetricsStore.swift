@@ -22,8 +22,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostDroppedFrames: UInt64
     public var hostActiveQuality: Double
     public var hostTargetFrameRate: Int
+    public var hostEnteredBitrate: Int?
     public var hostCurrentBitrate: Int?
     public var hostRequestedTargetBitrate: Int?
+    public var hostBitrateAdaptationCeiling: Int?
     public var hostStartupBitrate: Int?
     public var hostTemporaryDegradationMode: MirageTemporaryDegradationMode?
     public var hostTemporaryDegradationColorDepth: MirageStreamColorDepth?
@@ -31,6 +33,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var hostCaptureAdmissionDrops: UInt64?
     public var hostFrameBudgetMs: Double?
     public var hostAverageEncodeMs: Double?
+    public var hostCaptureIngressFPS: Double?
+    public var hostCaptureFPS: Double?
+    public var hostEncodeAttemptFPS: Double?
     public var hostUsingHardwareEncoder: Bool?
     public var hostEncoderGPURegistryID: UInt64?
     public var hostEncodedWidth: Int?
@@ -83,8 +88,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostDroppedFrames: UInt64 = 0,
         hostActiveQuality: Double = 0,
         hostTargetFrameRate: Int = 0,
+        hostEnteredBitrate: Int? = nil,
         hostCurrentBitrate: Int? = nil,
         hostRequestedTargetBitrate: Int? = nil,
+        hostBitrateAdaptationCeiling: Int? = nil,
         hostStartupBitrate: Int? = nil,
         hostTemporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         hostTemporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
@@ -92,6 +99,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         hostCaptureAdmissionDrops: UInt64? = nil,
         hostFrameBudgetMs: Double? = nil,
         hostAverageEncodeMs: Double? = nil,
+        hostCaptureIngressFPS: Double? = nil,
+        hostCaptureFPS: Double? = nil,
+        hostEncodeAttemptFPS: Double? = nil,
         hostUsingHardwareEncoder: Bool? = nil,
         hostEncoderGPURegistryID: UInt64? = nil,
         hostEncodedWidth: Int? = nil,
@@ -123,8 +133,10 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostDroppedFrames = hostDroppedFrames
         self.hostActiveQuality = hostActiveQuality
         self.hostTargetFrameRate = hostTargetFrameRate
+        self.hostEnteredBitrate = hostEnteredBitrate
         self.hostCurrentBitrate = hostCurrentBitrate
         self.hostRequestedTargetBitrate = hostRequestedTargetBitrate
+        self.hostBitrateAdaptationCeiling = hostBitrateAdaptationCeiling
         self.hostStartupBitrate = hostStartupBitrate
         self.hostTemporaryDegradationMode = hostTemporaryDegradationMode
         self.hostTemporaryDegradationColorDepth = hostTemporaryDegradationColorDepth
@@ -132,6 +144,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.hostCaptureAdmissionDrops = hostCaptureAdmissionDrops
         self.hostFrameBudgetMs = hostFrameBudgetMs
         self.hostAverageEncodeMs = hostAverageEncodeMs
+        self.hostCaptureIngressFPS = hostCaptureIngressFPS
+        self.hostCaptureFPS = hostCaptureFPS
+        self.hostEncodeAttemptFPS = hostEncodeAttemptFPS
         self.hostUsingHardwareEncoder = hostUsingHardwareEncoder
         self.hostEncoderGPURegistryID = hostEncoderGPURegistryID
         self.hostEncodedWidth = hostEncodedWidth
@@ -189,8 +204,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         droppedFrames: UInt64,
         activeQuality: Double,
         targetFrameRate: Int,
+        enteredBitrate: Int? = nil,
         currentBitrate: Int? = nil,
         requestedTargetBitrate: Int? = nil,
+        bitrateAdaptationCeiling: Int? = nil,
         startupBitrate: Int? = nil,
         temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         temporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
@@ -198,6 +215,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double?,
+        captureIngressFPS: Double? = nil,
+        captureFPS: Double? = nil,
+        encodeAttemptFPS: Double? = nil,
         usingHardwareEncoder: Bool?,
         encoderGPURegistryID: UInt64?,
         encodedWidth: Int?,
@@ -221,8 +241,10 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostDroppedFrames = droppedFrames
         snapshot.hostActiveQuality = activeQuality
         snapshot.hostTargetFrameRate = targetFrameRate
+        snapshot.hostEnteredBitrate = enteredBitrate
         snapshot.hostCurrentBitrate = currentBitrate
         snapshot.hostRequestedTargetBitrate = requestedTargetBitrate
+        snapshot.hostBitrateAdaptationCeiling = bitrateAdaptationCeiling
         snapshot.hostStartupBitrate = startupBitrate
         snapshot.hostTemporaryDegradationMode = temporaryDegradationMode
         snapshot.hostTemporaryDegradationColorDepth = temporaryDegradationColorDepth
@@ -230,6 +252,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostCaptureAdmissionDrops = captureAdmissionDrops
         snapshot.hostFrameBudgetMs = frameBudgetMs
         snapshot.hostAverageEncodeMs = averageEncodeMs
+        snapshot.hostCaptureIngressFPS = captureIngressFPS
+        snapshot.hostCaptureFPS = captureFPS
+        snapshot.hostEncodeAttemptFPS = encodeAttemptFPS
         snapshot.hostUsingHardwareEncoder = usingHardwareEncoder
         snapshot.hostEncoderGPURegistryID = encoderGPURegistryID
         snapshot.hostEncodedWidth = encodedWidth

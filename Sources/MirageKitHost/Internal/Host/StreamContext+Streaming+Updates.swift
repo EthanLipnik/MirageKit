@@ -39,7 +39,8 @@ extension StreamContext {
 
     func updateEncoderSettings(
         colorDepth: MirageStreamColorDepth?,
-        bitrate: Int?
+        bitrate: Int?,
+        updateRequestedTargetBitrate: Bool = false
     ) async throws {
         guard isRunning else { return }
 
@@ -52,15 +53,28 @@ extension StreamContext {
         ) {
             updatedConfig.bitrate = normalizedBitrate
         }
+        if let bitrateAdaptationCeiling,
+           let updatedBitrate = updatedConfig.bitrate,
+           updatedBitrate > bitrateAdaptationCeiling {
+            updatedConfig.bitrate = bitrateAdaptationCeiling
+        }
 
         let updateMode = Self.encoderSettingsUpdateMode(
             current: encoderConfig,
             updated: updatedConfig
         )
         guard updateMode != .noChange else { return }
+        let updatedRequestedTargetBitrate: Int? = if updateRequestedTargetBitrate,
+            bitrate != nil,
+            let updatedBitrate = updatedConfig.bitrate {
+            min(updatedBitrate, bitrateAdaptationCeiling ?? updatedBitrate)
+        } else {
+            requestedTargetBitrate
+        }
 
         if updateMode == .bitrateOnly {
             encoderConfig = updatedConfig
+            requestedTargetBitrate = updatedRequestedTargetBitrate
             temporaryDegradationCurrentBitrate = encoderConfig.bitrate
             temporaryDegradationCurrentColorDepth = encoderConfig.colorDepth
             await packetSender?.setTargetBitrateBps(encoderConfig.bitrate)
@@ -70,6 +84,7 @@ extension StreamContext {
             }
             let bitrateText = encoderConfig.bitrate.map(String.init) ?? "auto"
             MirageLogger.stream("Encoder bitrate update applied: bitrate=\(bitrateText)")
+            logBitrateContract(event: "bitrate_update")
             return
         }
 
@@ -84,6 +99,7 @@ extension StreamContext {
         resetPipelineStateForReconfiguration(reason: "encoder settings update")
 
         encoderConfig = updatedConfig
+        requestedTargetBitrate = updatedRequestedTargetBitrate
         ultraValidationFailureHandled = false
         ultraValidationSuccessLogged = false
 
@@ -119,6 +135,7 @@ extension StreamContext {
             .stream(
                 "Encoder settings update applied: colorDepth=\(encoderConfig.colorDepth.displayName), bitrate=\(bitrateText)"
             )
+        logBitrateContract(event: "encoder_settings_update")
     }
 
     func updateFrameRate(_ fps: Int) async throws {

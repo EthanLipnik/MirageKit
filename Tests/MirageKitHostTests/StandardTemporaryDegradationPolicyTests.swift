@@ -6,6 +6,7 @@
 //
 
 @testable import MirageKitHost
+import Foundation
 import MirageKit
 import Testing
 
@@ -48,28 +49,34 @@ struct StandardTemporaryDegradationPolicyTests {
         let settings = await context.getEncoderSettings()
 
         #expect(settings.bitrate == 120_000_000)
+        #expect(settings.requestedTargetBitrate == 120_000_000)
         #expect(settings.temporaryDegradationMode == .prioritizeFramerate)
         #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Adaptive sessions ignore encode-only overload")
-    func adaptiveSessionsIgnoreEncodeOnlyOverload() async {
+    @Test("Adaptive sessions relieve on source overload even when transport is clean")
+    func adaptiveSessionsRelieveOnSourceOverload() async {
         let context = makeContext(
             mode: .prioritizeFramerate,
             bitrateAdaptationCeiling: 120_000_000
         )
 
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
             encodedFPS: 30,
             averageEncodeMs: 24,
             queueBytes: 0,
             backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 20,
+            captureDroppedFrames: 0,
             at: 10
         )
 
         let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 120_000_000)
+        #expect(settings.bitrate == 102_000_000)
+        #expect(settings.requestedTargetBitrate == 120_000_000)
         #expect(await context.getTargetFrameRate() == 60)
         #expect(settings.bitDepth == .tenBit)
     }
@@ -81,7 +88,11 @@ struct StandardTemporaryDegradationPolicyTests {
             bitrateAdaptationCeiling: 120_000_000
         )
 
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 4_000_000,
@@ -93,26 +104,43 @@ struct StandardTemporaryDegradationPolicyTests {
         let settings = await context.getEncoderSettings()
         #expect(settings.temporaryDegradationMode == .prioritizeFramerate)
         #expect(settings.bitrate == 102_000_000)
+        #expect(settings.requestedTargetBitrate == 120_000_000)
         #expect(await context.getTargetFrameRate() == 60)
         #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Adaptive sessions do not ramp bitrate back toward the ceiling")
-    func adaptiveSessionsDoNotRampBitrateBackTowardTheCeiling() async {
+    @Test("Adaptive sessions ramp bitrate back toward the latest requested target")
+    func adaptiveSessionsRampBitrateBackTowardLatestRequestedTarget() async throws {
         let context = makeContext(
             mode: .prioritizeFramerate,
-            bitrateAdaptationCeiling: 120_000_000
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 150_000_000
         )
 
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 4_000_000,
+        await context.setRequestedTargetBitrate(130_000_000)
+
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
+            encodedFPS: 30,
+            averageEncodeMs: 24,
+            queueBytes: 0,
             backpressureDropIntervalCount: 0,
             captureDroppedFrames: 0,
             at: 10
         )
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
+
+        var settings = await context.getEncoderSettings()
+        #expect(settings.bitrate == 102_000_000)
+        #expect(settings.requestedTargetBitrate == 130_000_000)
+
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 0,
@@ -120,7 +148,11 @@ struct StandardTemporaryDegradationPolicyTests {
             captureDroppedFrames: 0,
             at: 12
         )
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 0,
@@ -129,8 +161,9 @@ struct StandardTemporaryDegradationPolicyTests {
             at: 14
         )
 
-        let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 102_000_000)
+        settings = await context.getEncoderSettings()
+        #expect(settings.bitrate == 130_000_000)
+        #expect(settings.requestedTargetBitrate == 130_000_000)
     }
 
     @Test("Stable windows still restore bitrate for legacy host-owned temporary degradation")
@@ -141,7 +174,11 @@ struct StandardTemporaryDegradationPolicyTests {
             bitrate: 60_000_000
         )
 
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 0,
@@ -149,7 +186,11 @@ struct StandardTemporaryDegradationPolicyTests {
             captureDroppedFrames: 0,
             at: 10
         )
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
+        await evaluate(
+            context,
+            captureIngressFPS: 60,
+            captureFPS: 60,
+            encodeAttemptFPS: 60,
             encodedFPS: 60,
             averageEncodeMs: 10,
             queueBytes: 0,
@@ -186,6 +227,31 @@ struct StandardTemporaryDegradationPolicyTests {
             latencyMode: .lowestLatency,
             performanceMode: .standard,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
+        )
+    }
+
+    private func evaluate(
+        _ context: StreamContext,
+        captureIngressFPS: Double,
+        captureFPS: Double,
+        encodeAttemptFPS: Double,
+        encodedFPS: Double,
+        averageEncodeMs: Double,
+        queueBytes: Int,
+        backpressureDropIntervalCount: UInt64,
+        captureDroppedFrames: UInt64,
+        at now: CFAbsoluteTime
+    ) async {
+        await context.evaluateStandardTemporaryDegradationIfNeeded(
+            captureIngressFPS: captureIngressFPS,
+            captureFPS: captureFPS,
+            encodeAttemptFPS: encodeAttemptFPS,
+            encodedFPS: encodedFPS,
+            averageEncodeMs: averageEncodeMs,
+            queueBytes: queueBytes,
+            backpressureDropIntervalCount: backpressureDropIntervalCount,
+            captureDroppedFrames: captureDroppedFrames,
+            at: now
         )
     }
 }
