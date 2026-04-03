@@ -11,7 +11,7 @@ import Foundation
 
 /// Determines how direct screen touches are translated into host input.
 public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable {
-    /// Direct touches move/click/drag the pointer.
+    /// Single-finger touches scroll natively; taps click; long press and two-finger drag perform left drag.
     case normal
 
     /// Direct touches move a virtual cursor (trackpad-style).

@@ -10,6 +10,7 @@
 import MirageKit
 #if os(iOS) || os(visionOS)
 import AVFAudio
+import CoreMedia
 import Speech
 import UIKit
 
@@ -28,6 +29,7 @@ extension InputCapturingView {
     func startDictation() {
         guard !isDictationActive else { return }
         MirageLogger.client("Dictation start requested mode=\(dictationMode.rawValue)")
+        dictationResultBuffer.reset()
 
         dictationFinalizeTask?.cancel()
         dictationFinalizeTask = nil
@@ -91,7 +93,10 @@ extension InputCapturingView {
                    let analyzer = analyzerObject as? SpeechAnalyzer {
                     try? await analyzer.finalizeAndFinishThroughEndOfInput()
                 }
-                self?.dictationResultTask?.cancel()
+                if let resultTask = self?.dictationResultTask {
+                    await resultTask.value
+                }
+                self?.flushBufferedDictationFinalSegments()
                 self?.dictationResultTask = nil
                 activeDictationTask?.cancel()
                 if #available(iOS 26.0, visionOS 26.0, *), let reservedLocale {
@@ -132,7 +137,9 @@ extension InputCapturingView {
         }
         dictationAudioEngine = nil
 
-        dictationLastCommittedText = ""
+        if !(dictationMode == .best && hasModernAnalyzer) {
+            dictationResultBuffer.reset()
+        }
 
         if isDictationActive {
             isDictationActive = false
@@ -174,7 +181,7 @@ extension InputCapturingView {
     private func startSpeechAnalyzerDictationModern(locale: Locale) async throws {
         let moduleChoice = DictationModuleChoice(locale: locale, mode: dictationMode)
         MirageLogger.client("Dictation analyzer module=\(String(describing: moduleChoice)) locale=\(locale.identifier)")
-        dictationLastCommittedText = ""
+        dictationResultBuffer.reset()
         if let selectedLocale = moduleChoice.selectedLocale {
             do {
                 let reserved = try await AssetInventory.reserve(locale: selectedLocale)
@@ -234,12 +241,20 @@ extension InputCapturingView {
                 case let .speechTranscriber(transcriber):
                     for try await result in transcriber.results {
                         if dictationMode == .best, !result.isFinal { continue }
-                        handleDictationResultText(String(result.text.characters))
+                        if dictationMode == .best {
+                            bufferDictationFinalResult(String(result.text.characters), range: result.range)
+                        } else {
+                            handleDictationResultText(String(result.text.characters))
+                        }
                     }
                 case let .dictationTranscriber(transcriber):
                     for try await result in transcriber.results {
                         if dictationMode == .best, !result.isFinal { continue }
-                        handleDictationResultText(String(result.text.characters))
+                        if dictationMode == .best {
+                            bufferDictationFinalResult(String(result.text.characters), range: result.range)
+                        } else {
+                            handleDictationResultText(String(result.text.characters))
+                        }
                     }
                 }
             } catch {
@@ -264,7 +279,7 @@ extension InputCapturingView {
     }
 
     private func startSpeechRecognizerDictationLegacy(locale: Locale) throws {
-        dictationLastCommittedText = ""
+        dictationResultBuffer.reset()
 
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
             MirageLogger.client("Legacy dictation recognizer unavailable locale=\(locale.identifier)")
@@ -313,19 +328,19 @@ extension InputCapturingView {
     }
 
     private func handleDictationResultText(_ fullText: String) {
-        guard !fullText.isEmpty else { return }
+        guard let delta = dictationResultBuffer.delta(forCumulativeText: fullText) else { return }
+        sendDictationText(delta)
+    }
 
-        if fullText.hasPrefix(dictationLastCommittedText) {
-            let delta = String(fullText.dropFirst(dictationLastCommittedText.count))
-            if !delta.isEmpty {
-                sendDictationText(delta)
-                dictationLastCommittedText = fullText
-            }
-            return
+    private func bufferDictationFinalResult(_ text: String, range: CMTimeRange) {
+        dictationResultBuffer.bufferFinalSegment(text: text, range: range)
+    }
+
+    private func flushBufferedDictationFinalSegments() {
+        let orderedSegments = dictationResultBuffer.drainFinalSegments()
+        for segment in orderedSegments {
+            sendDictationText(segment)
         }
-
-        sendDictationText(fullText)
-        dictationLastCommittedText = fullText
     }
 
     private func sendDictationText(_ text: String) {

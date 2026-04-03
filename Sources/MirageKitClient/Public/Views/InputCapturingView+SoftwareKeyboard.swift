@@ -38,6 +38,9 @@ extension InputCapturingView {
         accessoryView.onModifierToggle = { [weak self] key, isSelected in
             self?.toggleSoftwareModifier(key, isSelected: isSelected)
         }
+        accessoryView.onDismissKeyboard = { [weak self] in
+            self?.softwareKeyboardVisible = false
+        }
         #if os(visionOS)
         accessoryView.translatesAutoresizingMaskIntoConstraints = false
         accessoryView.isHidden = true
@@ -212,9 +215,11 @@ final class SoftwareKeyboardTextField: UITextField {
 
 final class SoftwareKeyboardAccessoryView: UIView {
     var onModifierToggle: ((SoftwareModifierKey, Bool) -> Void)?
+    var onDismissKeyboard: (() -> Void)?
 
     private let stackView = UIStackView()
     private let spacerView = UIView()
+    private let doneButton = UIButton(type: .system)
     private let keys: [SoftwareModifierKey] = [
         SoftwareModifierKey(title: "Cmd", modifier: .command),
         SoftwareModifierKey(title: "Option", modifier: .option),
@@ -266,20 +271,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
         for key in keys {
             let button = UIButton(type: .system)
             button.titleLabel?.font = .systemFont(ofSize: 15, weight: .semibold)
-            #if os(visionOS)
-            var configuration = UIButton.Configuration.bordered()
-            #else
-            var configuration: UIButton.Configuration
-            if #available(iOS 26.0, *) {
-                configuration = .glass()
-            } else {
-                configuration = .bordered()
-            }
-            #endif
-            configuration.title = key.title
-            configuration.cornerStyle = .capsule
-            configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
-            button.configuration = configuration
+            button.configuration = buttonConfiguration(title: key.title, isSelected: false)
             button.addAction(UIAction { [weak self] _ in
                 guard let self else { return }
                 let isSelected = !(button.isSelected)
@@ -296,6 +288,12 @@ final class SoftwareKeyboardAccessoryView: UIView {
         spacerView.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         stackView.addArrangedSubview(spacerView)
 
+        doneButton.configuration = buttonConfiguration(title: "Done", isSelected: false)
+        doneButton.addAction(UIAction { [weak self] _ in
+            self?.onDismissKeyboard?()
+        }, for: .touchUpInside)
+        stackView.addArrangedSubview(doneButton)
+
         addSubview(stackView)
         NSLayoutConstraint.activate([
             stackView.leadingAnchor.constraint(equalTo: leadingAnchor),
@@ -307,6 +305,13 @@ final class SoftwareKeyboardAccessoryView: UIView {
 
     private func updateButton(_ button: UIButton, isSelected: Bool) {
         button.isSelected = isSelected
+        button.configuration = buttonConfiguration(
+            title: button.configuration?.title ?? button.titleLabel?.text,
+            isSelected: isSelected
+        )
+    }
+
+    private func buttonConfiguration(title: String?, isSelected: Bool) -> UIButton.Configuration {
         #if os(visionOS)
         var configuration = isSelected ? UIButton.Configuration.borderedProminent() : UIButton.Configuration.bordered()
         #else
@@ -317,7 +322,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
             configuration = isSelected ? .borderedProminent() : .bordered()
         }
         #endif
-        configuration.title = button.configuration?.title ?? button.titleLabel?.text
+        configuration.title = title
         configuration.cornerStyle = .capsule
         configuration.contentInsets = NSDirectionalEdgeInsets(top: 6, leading: 10, bottom: 6, trailing: 10)
         configuration.titleTextAttributesTransformer = UIConfigurationTextAttributesTransformer { attributes in
@@ -325,7 +330,7 @@ final class SoftwareKeyboardAccessoryView: UIView {
             updated.font = .systemFont(ofSize: 15, weight: .semibold)
             return updated
         }
-        button.configuration = configuration
+        return configuration
     }
 }
 #endif

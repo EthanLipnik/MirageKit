@@ -152,7 +152,7 @@ public class InputCapturingView: UIView {
     var usesVirtualTrackpad: Bool { directTouchInputMode == .dragCursor }
 
     /// Apple Pencil behavior mode.
-    public var pencilInputMode: MiragePencilInputMode = .drawingTablet
+    public var pencilInputMode: MiragePencilInputMode = .mouse
 
     /// Monotonic toggle token for dictation requests.
     public var dictationToggleRequestID: UInt64 = 0 {
@@ -188,7 +188,7 @@ public class InputCapturingView: UIView {
     var dictationRecognitionRequest: SFSpeechAudioBufferRecognitionRequest?
     var dictationRecognitionTask: SFSpeechRecognitionTask?
     var dictationReservedLocale: Locale?
-    var dictationLastCommittedText: String = ""
+    var dictationResultBuffer = MirageDictationResultBuffer()
 
     // Cursor state from host
     var currentCursorType: MirageCursorType = .arrow
@@ -246,6 +246,12 @@ public class InputCapturingView: UIView {
     var touchScrollDecelerationLink: CADisplayLink?
     var touchScrollDecelerationLocation: CGPoint = .zero
     var activePencilTouchID: ObjectIdentifier?
+    var pencilButtonDown = false
+    var pencilTapEligible = false
+    var pencilTouchStartLocation: CGPoint = .zero
+    var pencilCurrentLocation: CGPoint = .zero
+    var pencilCurrentStylus: MirageStylusEvent?
+    var pencilLongPressTask: Task<Void, Never>?
     var lastPencilPressure: CGFloat = 0
     #if os(iOS)
     private var pencilInteraction: UIPencilInteraction?
@@ -285,6 +291,10 @@ public class InputCapturingView: UIView {
     var scrollGesture: UIPanGestureRecognizer!
     var hoverGesture: UIHoverGestureRecognizer!
     var rightClickGesture: UITapGestureRecognizer!
+    var directTapGesture: UITapGestureRecognizer!
+    var directLongPressGesture: UILongPressGestureRecognizer!
+    var directTwoFingerTapGesture: UITapGestureRecognizer!
+    var directTwoFingerDragGesture: UIPanGestureRecognizer!
     var virtualCursorPanGesture: UIPanGestureRecognizer!
     var virtualCursorTapGesture: UITapGestureRecognizer!
     var virtualCursorRightTapGesture: UITapGestureRecognizer!
@@ -297,6 +307,10 @@ public class InputCapturingView: UIView {
     var lastPanLocation: CGPoint = .zero
     var longPressButtonDown = false
     var longPressCancelledForMultiTouch = false
+    var directLongPressButtonDown = false
+    var directTwoFingerDragButtonDown = false
+    var swallowingDirectLongPressForCursorRecapture = false
+    var swallowingDirectTwoFingerDragForCursorRecapture = false
 
     /// Track last cursor position for scroll events (normalized 0-1)
     var lastCursorPosition: CGPoint?
@@ -612,6 +626,10 @@ public class InputCapturingView: UIView {
     static let multiClickTimeThreshold: TimeInterval = 0.5
     /// Maximum distance between taps to count as multi-click (in view points)
     static let multiClickDistanceThresholdPoints: CGFloat = 12
+    /// Hold duration before direct touch or Pencil contact becomes a drag.
+    static let dragActivationDuration: Duration = .milliseconds(250)
+    /// Maximum drift allowed before long-press drag activation cancels.
+    static let dragActivationMovementThresholdPoints: CGFloat = 10
 
     /// Scroll physics capturing view for native trackpad momentum/bounce
     var scrollPhysicsView: ScrollPhysicsCapturingView?
@@ -738,7 +756,7 @@ public class InputCapturingView: UIView {
             let scrollEvent = MirageScrollEvent(
                 deltaX: deltaX,
                 deltaY: deltaY,
-                location: lastCursorPosition,
+                location: cursorLockEnabled ? lockedCursorPosition : lastCursorPosition,
                 phase: phase,
                 momentumPhase: momentumPhase,
                 modifiers: modifiers,
@@ -768,6 +786,10 @@ public class InputCapturingView: UIView {
         }
         scrollPhysicsView!.onDirectTouchActivity = { [weak self] in
             self?.onDirectTouchActivity?()
+        }
+        scrollPhysicsView!.onDirectTouchLocationChanged = { [weak self] rawLocation in
+            guard let self else { return }
+            updatePointerLocationForLocalContact(normalizedLocation(rawLocation))
         }
 
         // Enable user interaction
@@ -833,17 +855,20 @@ public class InputCapturingView: UIView {
     }
 
     func updateVirtualTrackpadMode() {
-        let directTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         let indirectTouchTypes = [
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
             NSNumber(value: UITouch.TouchType.indirect.rawValue),
         ]
 
         if cursorLockEnabled {
-            longPressGesture.allowedTouchTypes = directTouchTypes
-            scrollGesture.isEnabled = true
-            directRotationGesture.isEnabled = true
-            scrollPhysicsView?.directTouchScrollEnabled = false
+            longPressGesture.allowedTouchTypes = indirectTouchTypes
+            scrollGesture.isEnabled = false
+            directRotationGesture.isEnabled = false
+            scrollPhysicsView?.directTouchScrollEnabled = true
+            directTapGesture.isEnabled = true
+            directLongPressGesture.isEnabled = true
+            directTwoFingerTapGesture.isEnabled = true
+            directTwoFingerDragGesture.isEnabled = true
             virtualCursorPanGesture.isEnabled = false
             virtualCursorTapGesture.isEnabled = false
             virtualCursorRightTapGesture.isEnabled = false
@@ -858,6 +883,10 @@ public class InputCapturingView: UIView {
                 scrollGesture.isEnabled = true
                 directRotationGesture.isEnabled = true
                 scrollPhysicsView?.directTouchScrollEnabled = false
+                directTapGesture.isEnabled = false
+                directLongPressGesture.isEnabled = false
+                directTwoFingerTapGesture.isEnabled = false
+                directTwoFingerDragGesture.isEnabled = false
                 virtualCursorPanGesture.isEnabled = true
                 virtualCursorTapGesture.isEnabled = true
                 virtualCursorRightTapGesture.isEnabled = true
@@ -865,10 +894,14 @@ public class InputCapturingView: UIView {
                 lastCursorPosition = virtualCursorPosition
                 setVirtualCursorVisible(true)
             case .normal:
-                longPressGesture.allowedTouchTypes = directTouchTypes + indirectTouchTypes
-                scrollGesture.isEnabled = true
-                directRotationGesture.isEnabled = true
-                scrollPhysicsView?.directTouchScrollEnabled = false
+                longPressGesture.allowedTouchTypes = indirectTouchTypes
+                scrollGesture.isEnabled = false
+                directRotationGesture.isEnabled = false
+                scrollPhysicsView?.directTouchScrollEnabled = true
+                directTapGesture.isEnabled = true
+                directLongPressGesture.isEnabled = true
+                directTwoFingerTapGesture.isEnabled = true
+                directTwoFingerDragGesture.isEnabled = true
                 virtualCursorPanGesture.isEnabled = false
                 virtualCursorTapGesture.isEnabled = false
                 virtualCursorRightTapGesture.isEnabled = false
@@ -881,6 +914,10 @@ public class InputCapturingView: UIView {
                 scrollGesture.isEnabled = false
                 directRotationGesture.isEnabled = false
                 scrollPhysicsView?.directTouchScrollEnabled = true
+                directTapGesture.isEnabled = false
+                directLongPressGesture.isEnabled = false
+                directTwoFingerTapGesture.isEnabled = false
+                directTwoFingerDragGesture.isEnabled = false
                 virtualCursorPanGesture.isEnabled = false
                 virtualCursorTapGesture.isEnabled = false
                 virtualCursorRightTapGesture.isEnabled = false
@@ -912,9 +949,7 @@ public class InputCapturingView: UIView {
 
     func updateCursorLockMode() {
         updateVirtualTrackpadMode()
-        let directTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
         if cursorLockEnabled {
-            longPressGesture.allowedTouchTypes = directTouchTypes
             updateMouseInputHandler()
             hoverGesture.isEnabled = !usesMouseInputDeltas
             lockedPointerPanGesture.isEnabled = !usesMouseInputDeltas
@@ -956,6 +991,38 @@ public class InputCapturingView: UIView {
         guard cursorLockEnabled else { return false }
         onCursorLockEscapeRequested?()
         return true
+    }
+
+    func updatePointerLocationForLocalContact(_ location: CGPoint) {
+        if cursorLockEnabled {
+            lockedCursorPosition = location
+            noteLockedCursorLocalInput()
+            setLockedCursorVisible(true)
+            updateLockedCursorViewPosition()
+        }
+
+        if usesVirtualTrackpad {
+            setVirtualCursorVisible(false)
+            updateVirtualCursorPosition(location, updateVisibility: false)
+        }
+
+        lastCursorPosition = location
+    }
+
+    func cancelPendingPencilLongPress() {
+        pencilLongPressTask?.cancel()
+        pencilLongPressTask = nil
+    }
+
+    func resetPencilGestureState() {
+        cancelPendingPencilLongPress()
+        activePencilTouchID = nil
+        pencilButtonDown = false
+        pencilTapEligible = false
+        pencilTouchStartLocation = .zero
+        pencilCurrentLocation = .zero
+        pencilCurrentStylus = nil
+        lastPencilPressure = 0
     }
 
     func setLockedCursorVisible(_ isVisible: Bool) {
@@ -1193,9 +1260,8 @@ public class InputCapturingView: UIView {
         resetAllModifiers()
         resetPrimaryClickTracking()
         resetSecondaryClickTracking()
-        activePencilTouchID = nil
+        resetPencilGestureState()
         isDragging = false
-        lastPencilPressure = 0
         clearSoftwareKeyboardState()
         stopDictation()
         stopTouchScrollDeceleration()
@@ -1297,9 +1363,8 @@ public class InputCapturingView: UIView {
         resetAllModifiers()
         resetPrimaryClickTracking()
         resetSecondaryClickTracking()
-        activePencilTouchID = nil
+        resetPencilGestureState()
         isDragging = false
-        lastPencilPressure = 0
         return super.resignFirstResponder()
     }
 
@@ -1381,7 +1446,7 @@ public class InputCapturingView: UIView {
         guard !touches.isEmpty else { return }
         if let touch = touches.first, activePencilTouchID == nil {
             activePencilTouchID = ObjectIdentifier(touch)
-            sendPencilDown(for: touch)
+            beginPencilInteraction(for: touch)
         }
     }
 
@@ -1389,7 +1454,7 @@ public class InputCapturingView: UIView {
         guard !touches.isEmpty else { return }
         guard let activePencilTouchID else { return }
         if let touch = touches.first(where: { ObjectIdentifier($0) == activePencilTouchID }) {
-            sendPencilMovedSamples(for: touch, event: event)
+            updatePencilInteraction(for: touch, event: event)
         }
     }
 
@@ -1397,8 +1462,7 @@ public class InputCapturingView: UIView {
         guard !touches.isEmpty else { return }
         if let activePencilTouchID,
            let touch = touches.first(where: { ObjectIdentifier($0) == activePencilTouchID }) {
-            sendPencilUp(for: touch)
-            self.activePencilTouchID = nil
+            endPencilInteraction(for: touch)
         }
     }
 
@@ -1406,69 +1470,47 @@ public class InputCapturingView: UIView {
         guard !touches.isEmpty else { return }
         if let activePencilTouchID,
            let touch = touches.first(where: { ObjectIdentifier($0) == activePencilTouchID }) {
-            sendPencilUp(for: touch)
-            self.activePencilTouchID = nil
+            cancelPencilInteraction(for: touch)
         }
     }
 
-    func sendPencilDown(for touch: UITouch) {
+    func beginPencilInteraction(for touch: UITouch) {
         let rawLocation = touch.preciseLocation(in: self)
         let location = normalizedLocation(rawLocation)
-        let modifiers = currentPencilModifiers()
-
-        if cursorLockEnabled {
-            lockedCursorPosition = location
-            noteLockedCursorLocalInput()
-            setLockedCursorVisible(true)
-            updateLockedCursorViewPosition()
-        }
-
-        if usesVirtualTrackpad {
-            setVirtualCursorVisible(false)
-            updateVirtualCursorPosition(location, updateVisibility: false)
-        }
-
-        lastCursorPosition = location
-        isDragging = true
-
-        let pressure = normalizedPencilPressure(for: touch)
-        let stylus = stylusEvent(from: touch)
-        let mouseEvent = pointerEventForPencil(
-            location: location,
-            modifiers: modifiers,
-            pressure: pressure,
-            stylus: stylus,
-            clickCount: 1
-        )
-        onInputEvent?(.mouseDown(mouseEvent))
+        pencilTouchStartLocation = location
+        pencilCurrentLocation = location
+        pencilCurrentStylus = stylusEvent(from: touch)
+        lastPencilPressure = normalizedPencilPressure(for: touch)
+        pencilTapEligible = true
+        pencilButtonDown = false
+        updatePointerLocationForLocalContact(location)
+        schedulePencilLongPressActivation()
     }
 
-    func sendPencilMovedSamples(for touch: UITouch, event: UIEvent?) {
-        let modifiers = currentPencilModifiers()
+    func updatePencilInteraction(for touch: UITouch, event: UIEvent?) {
         let samples = event?.coalescedTouches(for: touch) ?? [touch]
 
         for sample in samples {
             let rawLocation = sample.preciseLocation(in: self)
             let location = normalizedLocation(rawLocation)
-
-            if cursorLockEnabled {
-                lockedCursorPosition = location
-                noteLockedCursorLocalInput()
-                setLockedCursorVisible(true)
-                updateLockedCursorViewPosition()
-            }
-
-            if usesVirtualTrackpad {
-                setVirtualCursorVisible(false)
-                updateVirtualCursorPosition(location, updateVisibility: false)
-            }
-
-            lastCursorPosition = location
             let pressure = normalizedPencilPressure(for: sample)
             let stylus = stylusEvent(from: sample)
+            pencilCurrentLocation = location
+            pencilCurrentStylus = stylus
+            updatePointerLocationForLocalContact(location)
+
+            if !pencilButtonDown {
+                let drift = clickDistanceInPoints(from: location, to: pencilTouchStartLocation)
+                if drift > Self.dragActivationMovementThresholdPoints {
+                    pencilTapEligible = false
+                    cancelPendingPencilLongPress()
+                }
+                continue
+            }
+
             let mouseEvent = pointerEventForPencil(
                 location: location,
-                modifiers: modifiers,
+                modifiers: currentPencilModifiers(),
                 pressure: pressure,
                 stylus: stylus
             )
@@ -1476,21 +1518,105 @@ public class InputCapturingView: UIView {
         }
     }
 
-    func sendPencilUp(for touch: UITouch) {
+    func endPencilInteraction(for touch: UITouch) {
         let rawLocation = touch.preciseLocation(in: self)
         let location = normalizedLocation(rawLocation)
-        let modifiers = currentPencilModifiers()
         let stylus = stylusEvent(from: touch)
-        let mouseEvent = pointerEventForPencil(
-            location: location,
-            modifiers: modifiers,
-            pressure: 0,
-            stylus: stylus,
-            clickCount: 1
-        )
-        onInputEvent?(.mouseUp(mouseEvent))
+        pencilCurrentLocation = location
+        pencilCurrentStylus = stylus
+        updatePointerLocationForLocalContact(location)
+        cancelPendingPencilLongPress()
+
+        let modifiers = currentPencilModifiers()
+        if pencilButtonDown {
+            let mouseEvent = pointerEventForPencil(
+                location: location,
+                modifiers: modifiers,
+                pressure: 0,
+                stylus: stylus,
+                clickCount: 1
+            )
+            onInputEvent?(.mouseUp(mouseEvent))
+        } else if pencilTapEligible {
+            let now = CACurrentMediaTime()
+            let clickCount = nextPrimaryClickCount(at: location, timestamp: now)
+            currentClickCount = clickCount
+
+            let downEvent = pointerEventForPencil(
+                location: location,
+                modifiers: modifiers,
+                pressure: max(lastPencilPressure, 0.01),
+                stylus: stylus,
+                clickCount: clickCount
+            )
+            let upEvent = pointerEventForPencil(
+                location: location,
+                modifiers: modifiers,
+                pressure: 0,
+                stylus: stylus,
+                clickCount: clickCount
+            )
+            onInputEvent?(.mouseDown(downEvent))
+            onInputEvent?(.mouseUp(upEvent))
+            commitPrimaryClick(at: location, timestamp: now, clickCount: clickCount)
+        }
+
         isDragging = false
-        lastPencilPressure = 0
+        resetPencilGestureState()
+    }
+
+    func cancelPencilInteraction(for touch: UITouch) {
+        let rawLocation = touch.preciseLocation(in: self)
+        let location = normalizedLocation(rawLocation)
+        let stylus = stylusEvent(from: touch)
+        pencilCurrentLocation = location
+        pencilCurrentStylus = stylus
+        updatePointerLocationForLocalContact(location)
+        cancelPendingPencilLongPress()
+
+        if pencilButtonDown {
+            let mouseEvent = pointerEventForPencil(
+                location: location,
+                modifiers: currentPencilModifiers(),
+                pressure: 0,
+                stylus: stylus,
+                clickCount: 1
+            )
+            onInputEvent?(.mouseUp(mouseEvent))
+        }
+
+        isDragging = false
+        resetPencilGestureState()
+    }
+
+    func schedulePencilLongPressActivation() {
+        cancelPendingPencilLongPress()
+        guard activePencilTouchID != nil else { return }
+
+        pencilLongPressTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: Self.dragActivationDuration)
+            } catch {
+                return
+            }
+
+            guard activePencilTouchID != nil, pencilTapEligible, !pencilButtonDown else { return }
+
+            let mouseEvent = pointerEventForPencil(
+                location: pencilCurrentLocation,
+                modifiers: currentPencilModifiers(),
+                pressure: max(lastPencilPressure, 0.01),
+                stylus: pencilCurrentStylus,
+                clickCount: 1
+            )
+            onInputEvent?(.mouseDown(mouseEvent))
+            pencilButtonDown = true
+            isDragging = true
+            resetPrimaryClickTracking()
+            lastPanLocation = pencilCurrentLocation
+            pencilLongPressTask = nil
+        }
     }
 
     func resolvedPencilSecondaryClickLocation(hoverLocation: CGPoint?) -> CGPoint {
@@ -1623,6 +1749,14 @@ public class InputCapturingView: UIView {
         stylus: MirageStylusEvent?,
         clickCount: Int = 1
     ) -> MirageMouseEvent {
+        guard pencilInputMode == .drawingTablet else {
+            return MirageMouseEvent(
+                button: .left,
+                location: location,
+                clickCount: clickCount,
+                modifiers: modifiers
+            )
+        }
         return MirageMouseEvent(
             button: .left,
             location: location,
@@ -1639,6 +1773,7 @@ public class InputCapturingView: UIView {
         stopVirtualCursorDeceleration()
         stopTouchScrollDeceleration()
         stopLockedCursorSmoothing()
+        cancelPendingPencilLongPress()
         #if canImport(GameController)
         MainActor.assumeIsolated {
             mouseInput?.mouseMovedHandler = nil

@@ -103,7 +103,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onDirectTouchActivity: (() -> Void)? = nil,
         directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
-        pencilInputMode: MiragePencilInputMode = .drawingTablet,
+        pencilInputMode: MiragePencilInputMode = .mouse,
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,

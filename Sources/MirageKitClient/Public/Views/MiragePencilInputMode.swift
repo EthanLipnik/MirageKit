@@ -11,7 +11,7 @@ import Foundation
 
 /// Determines how Apple Pencil input is translated into host pointer input.
 public enum MiragePencilInputMode: String, CaseIterable, Codable, Sendable {
-    /// Pencil acts as a standard mouse pointer.
+    /// Pencil follows touch-style mouse semantics (tap click, hold drag, squeeze secondary click).
     case mouse
 
     /// Pencil forwards tablet-style pressure and orientation metadata.

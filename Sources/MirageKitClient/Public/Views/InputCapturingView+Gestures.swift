@@ -11,14 +11,10 @@ import UIKit
 
 extension InputCapturingView {
     func setupGestureRecognizers() {
-        // Long press gesture for immediate click detection
-        // minimumPressDuration=0 fires immediately on touch down
-        // allowableMovement is ignored after recognition, so .changed fires for all movement
-        // This replaces both tap and pan gestures for unified mouse handling
+        // Immediate press/drag for indirect pointer input.
         longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
         longPressGesture.minimumPressDuration = 0
         longPressGesture.allowedTouchTypes = [
-            NSNumber(value: UITouch.TouchType.direct.rawValue),
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
             NSNumber(value: UITouch.TouchType.indirect.rawValue),
         ]
@@ -34,8 +30,40 @@ extension InputCapturingView {
         ]
         addGestureRecognizer(rightClickGesture)
 
-        // Scroll gesture - ONLY for direct touch (2-finger pan on screen)
-        // Trackpad scrolling uses ScrollPhysicsCapturingView for native momentum/bounce
+        directTapGesture = UITapGestureRecognizer(target: self, action: #selector(handleDirectTap(_:)))
+        directTapGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        directTapGesture.delegate = self
+        addGestureRecognizer(directTapGesture)
+
+        directLongPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleDirectLongPress(_:)))
+        directLongPressGesture.minimumPressDuration = 0.25
+        directLongPressGesture.allowableMovement = Self.dragActivationMovementThresholdPoints
+        directLongPressGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        directLongPressGesture.delegate = self
+        addGestureRecognizer(directLongPressGesture)
+
+        directTapGesture.require(toFail: directLongPressGesture)
+
+        directTwoFingerTapGesture = UITapGestureRecognizer(target: self, action: #selector(handleDirectTwoFingerTap(_:)))
+        directTwoFingerTapGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        directTwoFingerTapGesture.numberOfTouchesRequired = 2
+        directTwoFingerTapGesture.delegate = self
+        addGestureRecognizer(directTwoFingerTapGesture)
+
+        directTwoFingerDragGesture = UIPanGestureRecognizer(
+            target: self,
+            action: #selector(handleDirectTwoFingerDrag(_:))
+        )
+        directTwoFingerDragGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        directTwoFingerDragGesture.minimumNumberOfTouches = 2
+        directTwoFingerDragGesture.maximumNumberOfTouches = 2
+        directTwoFingerDragGesture.delegate = self
+        addGestureRecognizer(directTwoFingerDragGesture)
+
+        directTwoFingerTapGesture.require(toFail: directTwoFingerDragGesture)
+
+        // Legacy direct-touch scrolling for virtual trackpad mode.
+        // Native one-finger scrolling uses ScrollPhysicsCapturingView instead.
         scrollGesture = UIPanGestureRecognizer(target: self, action: #selector(handleScroll(_:)))
         scrollGesture.allowedScrollTypesMask = [] // Disable trackpad scroll handling
         scrollGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
@@ -155,6 +183,196 @@ extension InputCapturingView {
     }
 
     // MARK: - Gesture Handlers
+
+    func updatePointerLocationForDirectInteraction(_ location: CGPoint) {
+        updatePointerLocationForLocalContact(location)
+    }
+
+    @objc
+    func handleDirectTap(_ gesture: UITapGestureRecognizer) {
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return }
+        if requestCursorLockRecaptureIfNeeded() { return }
+        stopTouchScrollDeceleration()
+
+        let location = normalizedLocation(gesture.location(in: self))
+        updatePointerLocationForDirectInteraction(location)
+
+        let now = CACurrentMediaTime()
+        let clickCount = nextPrimaryClickCount(at: location, timestamp: now)
+        currentClickCount = clickCount
+
+        let eventModifiers = modifiers(from: gesture)
+        let mouseEvent = MirageMouseEvent(
+            button: .left,
+            location: location,
+            clickCount: clickCount,
+            modifiers: eventModifiers
+        )
+
+        onInputEvent?(.mouseDown(mouseEvent))
+        onInputEvent?(.mouseUp(mouseEvent))
+        commitPrimaryClick(at: location, timestamp: now, clickCount: clickCount)
+    }
+
+    @objc
+    func handleDirectLongPress(_ gesture: UILongPressGestureRecognizer) {
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return }
+        if swallowingDirectLongPressForCursorRecapture {
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                swallowingDirectLongPressForCursorRecapture = false
+            }
+            return
+        }
+        if gesture.state == .began, requestCursorLockRecaptureIfNeeded() {
+            swallowingDirectLongPressForCursorRecapture = true
+            return
+        }
+
+        let location = normalizedLocation(gesture.location(in: self))
+        updatePointerLocationForDirectInteraction(location)
+        let eventModifiers = modifiers(from: gesture)
+
+        switch gesture.state {
+        case .began:
+            stopTouchScrollDeceleration()
+            resetPrimaryClickTracking()
+            isDragging = false
+            directLongPressButtonDown = false
+            lastPanLocation = location
+
+        case .changed:
+            if !directLongPressButtonDown {
+                let mouseEvent = MirageMouseEvent(
+                    button: .left,
+                    location: location,
+                    clickCount: 1,
+                    modifiers: eventModifiers
+                )
+                onInputEvent?(.mouseDown(mouseEvent))
+                directLongPressButtonDown = true
+            }
+            if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
+                revealCursorAfterPointerMovement()
+                isDragging = true
+                let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
+                onInputEvent?(.mouseDragged(mouseEvent))
+                lastPanLocation = location
+            }
+
+        case .ended,
+             .cancelled,
+             .failed:
+            guard directLongPressButtonDown else {
+                isDragging = false
+                return
+            }
+
+            let mouseEvent = MirageMouseEvent(
+                button: .left,
+                location: location,
+                clickCount: 1,
+                modifiers: eventModifiers
+            )
+            onInputEvent?(.mouseUp(mouseEvent))
+            directLongPressButtonDown = false
+            isDragging = false
+
+        default:
+            break
+        }
+    }
+
+    @objc
+    func handleDirectTwoFingerTap(_ gesture: UITapGestureRecognizer) {
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return }
+        if requestCursorLockRecaptureIfNeeded() { return }
+        stopTouchScrollDeceleration()
+
+        let location = normalizedLocation(gesture.location(in: self))
+        updatePointerLocationForDirectInteraction(location)
+
+        let now = CACurrentMediaTime()
+        let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
+        currentRightClickCount = clickCount
+
+        let eventModifiers = modifiers(from: gesture)
+        let mouseEvent = MirageMouseEvent(
+            button: .right,
+            location: location,
+            clickCount: clickCount,
+            modifiers: eventModifiers
+        )
+
+        onInputEvent?(.rightMouseDown(mouseEvent))
+        onInputEvent?(.rightMouseUp(mouseEvent))
+        commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
+    }
+
+    @objc
+    func handleDirectTwoFingerDrag(_ gesture: UIPanGestureRecognizer) {
+        guard cursorLockEnabled || directTouchInputMode == .normal else { return }
+        if swallowingDirectTwoFingerDragForCursorRecapture {
+            if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                swallowingDirectTwoFingerDragForCursorRecapture = false
+            }
+            return
+        }
+        if gesture.state == .began, requestCursorLockRecaptureIfNeeded() {
+            swallowingDirectTwoFingerDragForCursorRecapture = true
+            return
+        }
+
+        let location = normalizedLocation(gesture.location(in: self))
+        updatePointerLocationForDirectInteraction(location)
+        let eventModifiers = modifiers(from: gesture)
+
+        switch gesture.state {
+        case .began:
+            stopTouchScrollDeceleration()
+            resetPrimaryClickTracking()
+            isDragging = true
+            directTwoFingerDragButtonDown = true
+            lastPanLocation = location
+
+            let mouseEvent = MirageMouseEvent(
+                button: .left,
+                location: location,
+                clickCount: 1,
+                modifiers: eventModifiers
+            )
+            onInputEvent?(.mouseDown(mouseEvent))
+
+        case .changed:
+            guard directTwoFingerDragButtonDown else { return }
+            if hypot(location.x - lastPanLocation.x, location.y - lastPanLocation.y) > 0.0001 {
+                revealCursorAfterPointerMovement()
+                let mouseEvent = MirageMouseEvent(button: .left, location: location, modifiers: eventModifiers)
+                onInputEvent?(.mouseDragged(mouseEvent))
+                lastPanLocation = location
+            }
+
+        case .ended,
+             .cancelled,
+             .failed:
+            guard directTwoFingerDragButtonDown else {
+                isDragging = false
+                return
+            }
+
+            let mouseEvent = MirageMouseEvent(
+                button: .left,
+                location: location,
+                clickCount: 1,
+                modifiers: eventModifiers
+            )
+            onInputEvent?(.mouseUp(mouseEvent))
+            directTwoFingerDragButtonDown = false
+            isDragging = false
+
+        default:
+            break
+        }
+    }
 
     @objc
     func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
@@ -305,7 +523,9 @@ extension InputCapturingView {
     @objc
     func handleScroll(_ gesture: UIPanGestureRecognizer) {
         let translation = gesture.translation(in: self)
-        let location: CGPoint = if usesVirtualTrackpad {
+        let location: CGPoint = if cursorLockEnabled {
+            lockedCursorPosition
+        } else if usesVirtualTrackpad {
             virtualCursorPosition
         } else {
             // For touch scrolling, use the gesture location (center of two fingers)
@@ -344,7 +564,7 @@ extension InputCapturingView {
 
     @objc
     func handleHover(_ gesture: UIHoverGestureRecognizer) {
-        let hoverStylus = stylusHoverEvent(from: gesture)
+        let hoverStylus = pencilInputMode == .drawingTablet ? stylusHoverEvent(from: gesture) : nil
         let stylusPayload = hoverStylus
         let hoverPressure: CGFloat = stylusPayload == nil ? 1.0 : 0.0
         let location = gesture.location(in: self)
@@ -812,8 +1032,7 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
         if touch.type == .direct, !isStylus { onDirectTouchActivity?() }
         guard isStylus else { return true }
 
-        // Route Pencil contact through dedicated touch handlers only.
-        // This prevents fallback long-press/pan gestures from flattening stylus data.
+        // Route Pencil contact through the dedicated touch handlers only.
         if gestureRecognizer is UIHoverGestureRecognizer { return true }
         return false
     }
