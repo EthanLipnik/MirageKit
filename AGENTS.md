@@ -12,6 +12,7 @@
 - Target latest supported OS releases; avoid availability checks.
 - Keep public API additions minimal, intentional, and documented.
 - Do not add third-party dependencies without explicit approval.
+- When releasing MirageKit, make the git tag match `MirageKit.version` exactly.
 - Never increase inflight for low latency mode.
 - Comments and README text should be static descriptions of current behavior.
 - When architecture, message flow, transport behavior, or subsystem boundaries change, update `Architecture.md` in the same change so diagrams and descriptions match current code.
