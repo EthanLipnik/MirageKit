@@ -73,11 +73,11 @@ public final class MirageHostService {
     /// Host delegate for events
     public weak var delegate: MirageHostDelegate?
 
-    /// Trust provider for custom connection approval logic.
-    /// When set, the provider is consulted before the delegate for connection approval.
-    /// If the provider returns `.trusted`, the connection is auto-approved.
-    /// If the provider returns `.requiresApproval` or `.unavailable`, the delegate is consulted.
-    /// If the provider returns `.denied`, the connection is rejected immediately.
+    /// Trust provider consulted during the authenticated Loom session handshake.
+    ///
+    /// The provider must resolve to a final trust decision before Mirage bootstrap continues.
+    /// Product-specific approval UX should therefore live inside the provider or the higher-level
+    /// owner that wraps it, not in the host delegate.
     public weak var trustProvider: (any LoomTrustProvider)? {
         didSet {
             loomNode.trustProvider = trustProvider

@@ -165,6 +165,13 @@ extension MirageHostService {
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
         )
+        MirageLogger.host(
+            "Incoming authenticated session trustDecision=\(String(describing: context.trustEvaluation.decision)) "
+                + "autoTrustNotice=\(context.trustEvaluation.shouldShowAutoTrustNotice) "
+                + "deviceID=\(peerIdentity.deviceID.uuidString.lowercased()) "
+                + "keyID=\(peerIdentity.identityKeyID?.lowercased() ?? "nil") "
+                + "name=\(peerIdentity.name) origin=\(origin)"
+        )
 
         await preemptExistingClientIfSuperseded(by: peerIdentity)
 

@@ -26,7 +26,8 @@ struct ClientLoomControlPlaneTests {
         )
         async let serverContext = pair.server.start(
             localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager
+            identityManager: pair.serverIdentityManager,
+            trustProvider: pair.serverTrustProvider
         )
         _ = try await (clientContext, serverContext)
 
@@ -129,7 +130,8 @@ struct ClientLoomControlPlaneTests {
         )
         async let serverContext = pair.server.start(
             localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager
+            identityManager: pair.serverIdentityManager,
+            trustProvider: pair.serverTrustProvider
         )
         _ = try await (clientContext, serverContext)
 
@@ -191,7 +193,8 @@ struct ClientLoomControlPlaneTests {
         )
         async let serverContext = pair.server.start(
             localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager
+            identityManager: pair.serverIdentityManager,
+            trustProvider: pair.serverTrustProvider
         )
         _ = try await (clientContext, serverContext)
 
@@ -297,7 +300,8 @@ struct ClientLoomControlPlaneTests {
         )
         async let serverContext = pair.server.start(
             localHello: pair.serverHello,
-            identityManager: pair.serverIdentityManager
+            identityManager: pair.serverIdentityManager,
+            trustProvider: pair.serverTrustProvider
         )
         _ = try await (clientContext, serverContext)
 
@@ -364,6 +368,7 @@ private struct LoopbackControlPair {
     let listener: NWListener
     let clientIdentityManager: LoomIdentityManager
     let serverIdentityManager: LoomIdentityManager
+    let serverTrustProvider: AllowAllTrustProvider
     let clientHello: LoomSessionHelloRequest
     let serverHello: LoomSessionHelloRequest
     let client: LoomAuthenticatedSession
@@ -441,11 +446,13 @@ private func makeLoopbackControlPair() async throws -> LoopbackControlPair {
         deviceType: .mac,
         advertisement: LoomPeerAdvertisement(deviceType: .mac)
     )
+    let serverTrustProvider = AllowAllTrustProvider()
 
     return LoopbackControlPair(
         listener: listener,
         clientIdentityManager: clientIdentityManager,
         serverIdentityManager: serverIdentityManager,
+        serverTrustProvider: serverTrustProvider,
         clientHello: clientHello,
         serverHello: serverHello,
         client: client,
@@ -503,5 +510,20 @@ private actor AsyncBox<Value: Sendable> {
             continuations.append(continuation)
         }
     }
+}
+
+@MainActor
+private final class AllowAllTrustProvider: LoomTrustProvider {
+    func evaluateTrust(for peer: LoomPeerIdentity) async -> LoomTrustDecision {
+        .trusted
+    }
+
+    func evaluateTrustOutcome(for peer: LoomPeerIdentity) async -> LoomTrustEvaluation {
+        LoomTrustEvaluation(decision: .trusted, shouldShowAutoTrustNotice: false)
+    }
+
+    func grantTrust(to peer: LoomPeerIdentity) async throws {}
+
+    func revokeTrust(for deviceID: UUID) async throws {}
 }
 #endif
