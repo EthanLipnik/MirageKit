@@ -140,12 +140,14 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
 
         directTouchScrollView.panGestureRecognizer.allowedTouchTypes = [
             NSNumber(value: UITouch.TouchType.direct.rawValue),
-            NSNumber(value: UITouch.TouchType.pencil.rawValue),
         ]
         directTouchScrollView.panGestureRecognizer.minimumNumberOfTouches = 1
         directTouchScrollView.panGestureRecognizer.maximumNumberOfTouches = 1
         directTouchScrollView.isUserInteractionEnabled = false
         directTouchScrollView.isHidden = true
+        directTouchScrollView.onDirectTouchActivity = { [weak self] in
+            self?.onDirectTouchActivity?()
+        }
         directTouchScrollView.onTouchLocationChanged = { [weak self] rawLocation in
             self?.onDirectTouchLocationChanged?(rawLocation)
         }
@@ -201,7 +203,6 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .clear
         scrollView.isOpaque = false
-        scrollView.panGestureRecognizer.delegate = self
     }
 
     private func setupScrollContent(_ scrollContent: UIView, in scrollView: UIScrollView) {
@@ -301,22 +302,6 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
             (gestureRecognizer == rotationGesture && otherGestureRecognizer == indirectPan)
     }
 
-    func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
-        if gestureRecognizer == indirectScrollView.panGestureRecognizer {
-            return touch.type == .indirectPointer || touch.type == .indirect
-        }
-
-        if gestureRecognizer == directTouchScrollView.panGestureRecognizer {
-            if touch.type == .direct, !isStylusLikeTouch(touch) {
-                onDirectTouchActivity?()
-            }
-            guard directTouchScrollEnabled else { return false }
-            return touch.type == .direct && !isStylusLikeTouch(touch)
-        }
-
-        return true
-    }
-
     // MARK: - Trackpad Gesture Handlers
 
     @objc
@@ -409,6 +394,7 @@ private func isStylusLikeTouch(_ touch: UITouch) -> Bool {
 }
 
 private final class LocationReportingScrollView: UIScrollView {
+    var onDirectTouchActivity: (() -> Void)?
     var onTouchLocationChanged: ((CGPoint) -> Void)?
     var onPencilTouchesBegan: ((Set<UITouch>, UIEvent?) -> Void)?
     var onPencilTouchesMoved: ((Set<UITouch>, UIEvent?) -> Void)?
@@ -422,6 +408,9 @@ private final class LocationReportingScrollView: UIScrollView {
         }
 
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
+        if !nonPencilTouches.isEmpty {
+            onDirectTouchActivity?()
+        }
         reportLocation(for: Set(nonPencilTouches))
         if !nonPencilTouches.isEmpty {
             super.touchesBegan(Set(nonPencilTouches), with: event)
