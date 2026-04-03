@@ -59,6 +59,26 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
     /// Callback when direct-touch contact location changes.
     var onDirectTouchLocationChanged: ((CGPoint) -> Void)?
 
+    var onPencilTouchesBegan: ((Set<UITouch>, UIEvent?) -> Void)? {
+        get { directTouchScrollView.onPencilTouchesBegan }
+        set { directTouchScrollView.onPencilTouchesBegan = newValue }
+    }
+
+    var onPencilTouchesMoved: ((Set<UITouch>, UIEvent?) -> Void)? {
+        get { directTouchScrollView.onPencilTouchesMoved }
+        set { directTouchScrollView.onPencilTouchesMoved = newValue }
+    }
+
+    var onPencilTouchesEnded: ((Set<UITouch>, UIEvent?) -> Void)? {
+        get { directTouchScrollView.onPencilTouchesEnded }
+        set { directTouchScrollView.onPencilTouchesEnded = newValue }
+    }
+
+    var onPencilTouchesCancelled: ((Set<UITouch>, UIEvent?) -> Void)? {
+        get { directTouchScrollView.onPencilTouchesCancelled }
+        set { directTouchScrollView.onPencilTouchesCancelled = newValue }
+    }
+
     /// Size of scrollable area - large enough for extended scrolling before recenter
     private let scrollableSize: CGFloat = 100_000
 
