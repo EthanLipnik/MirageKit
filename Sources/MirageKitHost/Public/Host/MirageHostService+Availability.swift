@@ -17,6 +17,8 @@ extension MirageHostService {
     private static let advertisementRefreshInterval: Duration = .seconds(2)
 
     func updateAdvertisedConnectionAvailability() {
+        expireStaleSingleClientReservationIfNeeded()
+
         let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAcceptingConnections(
             allowsNewClientConnections,
             in: advertisedPeerAdvertisement

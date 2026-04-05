@@ -208,6 +208,8 @@ extension MirageHostService {
             deadline: Date().addingTimeInterval(5)
         )
         beginPendingAppWindowReplacement(replacement)
+        lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
+        windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
         await sendAppWindowInventoryUpdate(bundleIdentifier: bundleID, clientID: session.clientID)
         await recomputeAppSessionBitrateBudget(bundleIdentifier: bundleID, reason: "window closed cooldown")
         MirageLogger.host(

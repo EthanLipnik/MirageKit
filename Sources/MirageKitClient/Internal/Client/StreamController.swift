@@ -988,7 +988,10 @@ actor StreamController {
 
     private func dispatchMetrics() async {
         let now = currentTime()
-        syncPresentationProgressFromFrameCache(now: now)
+        let presentationProgressed = syncPresentationProgressFromFrameCache(now: now)
+        if presentationProgressed, hasPresentedFirstFrame {
+            await clearTransientRecoveryStateAfterPresentationProgress()
+        }
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
         let renderTelemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)

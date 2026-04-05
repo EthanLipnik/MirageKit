@@ -2,7 +2,7 @@
 //  StandardTemporaryDegradationPolicyTests.swift
 //  MirageKit
 //
-//  Created by Ethan Lipnik on 3/5/26.
+//  Created by Ethan Lipnik on 4/4/26.
 //
 
 @testable import MirageKitHost
@@ -11,209 +11,51 @@ import MirageKit
 import Testing
 
 #if os(macOS)
-@Suite("Standard Temporary Degradation Policy")
-struct StandardTemporaryDegradationPolicyTests {
-    @Test("Off keeps requested bitrate without startup reduction")
-    func offKeepsRequestedBitrate() async {
-        let context = makeContext(mode: .off)
-        let settings = await context.getEncoderSettings()
-
-        #expect(settings.bitrate == 120_000_000)
-        #expect(settings.bitDepth == .tenBit)
-    }
-
-    @Test("Prioritize framerate starts at eighty five percent of target bitrate")
-    func prioritizeFramerateStartsLower() async {
-        let context = makeContext(mode: .prioritizeFramerate)
-        let settings = await context.getEncoderSettings()
-
-        #expect(settings.bitrate == 102_000_000)
-        #expect(settings.bitDepth == .tenBit)
-    }
-
-    @Test("Prioritize visuals starts at ninety two percent of target bitrate")
-    func prioritizeVisualsStartsLower() async {
-        let context = makeContext(mode: .prioritizeVisuals)
-        let settings = await context.getEncoderSettings()
-
-        #expect(settings.bitrate == 110_400_000)
-        #expect(settings.bitDepth == .tenBit)
-    }
-
-    @Test("Adaptive sessions start at requested bitrate and canonicalize to framerate-first relief")
-    func adaptiveSessionsStartAtRequestedBitrateAndCanonicalizeMode() async {
-        let context = makeContext(
-            mode: .prioritizeVisuals,
-            bitrateAdaptationCeiling: 120_000_000
-        )
+@Suite("Stream Bitrate Contract")
+struct StreamBitrateContractTests {
+    @Test("Standard streams keep the requested bitrate at startup")
+    func standardStreamsKeepRequestedBitrateAtStartup() async {
+        let context = makeContext(bitrate: 120_000_000)
         let settings = await context.getEncoderSettings()
 
         #expect(settings.bitrate == 120_000_000)
         #expect(settings.requestedTargetBitrate == 120_000_000)
-        #expect(settings.temporaryDegradationMode == .prioritizeFramerate)
-        #expect(settings.bitDepth == .tenBit)
     }
 
-    @Test("Adaptive sessions relieve on source overload even when transport is clean")
-    func adaptiveSessionsRelieveOnSourceOverload() async {
+    @Test("Adaptation ceilings clamp startup bitrate without host-side degradation")
+    func adaptationCeilingsClampStartupBitrateWithoutHostSideDegradation() async {
         let context = makeContext(
-            mode: .prioritizeFramerate,
-            bitrateAdaptationCeiling: 120_000_000
+            bitrate: 120_000_000,
+            bitrateAdaptationCeiling: 100_000_000
         )
-
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 30,
-            averageEncodeMs: 24,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
         let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 102_000_000)
-        #expect(settings.requestedTargetBitrate == 120_000_000)
-        #expect(await context.getTargetFrameRate() == 60)
-        #expect(settings.bitDepth == .tenBit)
+
+        #expect(settings.bitrate == 100_000_000)
+        #expect(settings.requestedTargetBitrate == 100_000_000)
     }
 
-    @Test("Adaptive sessions relieve on real transport pressure")
-    func adaptiveSessionsRelieveOnRealTransportPressure() async {
+    @Test("Requested target bitrate remains client-owned and ceiling bounded")
+    func requestedTargetBitrateRemainsClientOwnedAndCeilingBounded() async {
         let context = makeContext(
-            mode: .prioritizeVisuals,
-            bitrateAdaptationCeiling: 120_000_000
-        )
-
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 4_000_000,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.temporaryDegradationMode == .prioritizeFramerate)
-        #expect(settings.bitrate == 102_000_000)
-        #expect(settings.requestedTargetBitrate == 120_000_000)
-        #expect(await context.getTargetFrameRate() == 60)
-        #expect(settings.bitDepth == .tenBit)
-    }
-
-    @Test("Adaptive sessions ramp bitrate back toward the latest requested target")
-    func adaptiveSessionsRampBitrateBackTowardLatestRequestedTarget() async throws {
-        let context = makeContext(
-            mode: .prioritizeFramerate,
             bitrate: 120_000_000,
             bitrateAdaptationCeiling: 150_000_000
         )
 
         await context.setRequestedTargetBitrate(130_000_000)
+        #expect(await context.getRequestedTargetBitrate() == 130_000_000)
 
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 30,
-            averageEncodeMs: 24,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-
-        var settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 102_000_000)
-        #expect(settings.requestedTargetBitrate == 130_000_000)
-
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 12
-        )
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 14
-        )
-
-        settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 130_000_000)
-        #expect(settings.requestedTargetBitrate == 130_000_000)
-    }
-
-    @Test("Stable windows still restore bitrate for legacy host-owned temporary degradation")
-    func stableWindowsStillRestoreBitrateForLegacyTemporaryDegradation() async {
-        let context = makeContext(
-            mode: .prioritizeFramerate,
-            bitDepth: .eightBit,
-            bitrate: 60_000_000
-        )
-
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 10
-        )
-        await evaluate(
-            context,
-            captureIngressFPS: 60,
-            captureFPS: 60,
-            encodeAttemptFPS: 60,
-            encodedFPS: 60,
-            averageEncodeMs: 10,
-            queueBytes: 0,
-            backpressureDropIntervalCount: 0,
-            captureDroppedFrames: 0,
-            at: 12
-        )
-
-        let settings = await context.getEncoderSettings()
-        #expect(settings.bitrate == 60_000_000)
-        #expect(settings.bitDepth == .eightBit)
+        await context.setRequestedTargetBitrate(180_000_000)
+        #expect(await context.getRequestedTargetBitrate() == 150_000_000)
     }
 
     private func makeContext(
-        mode: MirageTemporaryDegradationMode,
-        bitDepth: MirageVideoBitDepth = .tenBit,
-        bitrate: Int = 120_000_000,
+        bitrate: Int,
         bitrateAdaptationCeiling: Int? = nil
     ) -> StreamContext {
         let config = MirageEncoderConfiguration(
             targetFrameRate: 60,
             keyFrameInterval: 1800,
-            bitDepth: bitDepth,
+            bitDepth: .tenBit,
             bitrate: bitrate
         )
         return StreamContext(
@@ -221,37 +63,11 @@ struct StandardTemporaryDegradationPolicyTests {
             windowID: 0,
             streamKind: .desktop,
             encoderConfig: config,
-            runtimeQualityAdjustmentEnabled: mode != .off,
-            temporaryDegradationMode: mode,
+            runtimeQualityAdjustmentEnabled: true,
             capturePressureProfile: .tuned,
             latencyMode: .lowestLatency,
             performanceMode: .standard,
             bitrateAdaptationCeiling: bitrateAdaptationCeiling
-        )
-    }
-
-    private func evaluate(
-        _ context: StreamContext,
-        captureIngressFPS: Double,
-        captureFPS: Double,
-        encodeAttemptFPS: Double,
-        encodedFPS: Double,
-        averageEncodeMs: Double,
-        queueBytes: Int,
-        backpressureDropIntervalCount: UInt64,
-        captureDroppedFrames: UInt64,
-        at now: CFAbsoluteTime
-    ) async {
-        await context.evaluateStandardTemporaryDegradationIfNeeded(
-            captureIngressFPS: captureIngressFPS,
-            captureFPS: captureFPS,
-            encodeAttemptFPS: encodeAttemptFPS,
-            encodedFPS: encodedFPS,
-            averageEncodeMs: averageEncodeMs,
-            queueBytes: queueBytes,
-            backpressureDropIntervalCount: backpressureDropIntervalCount,
-            captureDroppedFrames: captureDroppedFrames,
-            at: now
         )
     }
 }

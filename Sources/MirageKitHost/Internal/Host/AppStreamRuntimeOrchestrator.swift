@@ -35,7 +35,6 @@ actor AppStreamRuntimeOrchestrator {
     nonisolated static let passiveTargetFPS = 1
     nonisolated static let defaultActiveTargetFPS = 60
     nonisolated static let highRefreshActiveTargetFPS = 120
-    nonisolated static let activeBitrateWeight = 0.85
     nonisolated static let passiveBitrateFloorBps = 1_000_000
 
     private var streamToBundle: [StreamID: String] = [:]
@@ -165,13 +164,18 @@ actor AppStreamRuntimeOrchestrator {
         if state.activeStreamID == nil {
             state.activeStreamID = visibleOrdered.first
         }
-        state.demotionGraceDeadlineByStreamID = Self.trimDemotionGraceDeadlines(
-            state.demotionGraceDeadlineByStreamID,
-            validStreamIDs: state.streamIDs,
-            now: now
-        )
-        if let activeStreamID = state.activeStreamID {
-            state.demotionGraceDeadlineByStreamID.removeValue(forKey: activeStreamID)
+        if visibleOrdered.count <= 1 {
+            state.activeStreamID = visibleOrdered.first
+            state.demotionGraceDeadlineByStreamID.removeAll()
+        } else {
+            state.demotionGraceDeadlineByStreamID = Self.trimDemotionGraceDeadlines(
+                state.demotionGraceDeadlineByStreamID,
+                validStreamIDs: state.streamIDs,
+                now: now
+            )
+            if let activeStreamID = state.activeStreamID {
+                state.demotionGraceDeadlineByStreamID.removeValue(forKey: activeStreamID)
+            }
         }
 
         let resolvedActiveFPS = if (activeTargetFPS ?? Self.defaultActiveTargetFPS) >= Self.highRefreshActiveTargetFPS {
@@ -180,23 +184,24 @@ actor AppStreamRuntimeOrchestrator {
             Self.defaultActiveTargetFPS
         }
         let graceLiveStreamIDs = Set(state.demotionGraceDeadlineByStreamID.keys)
+        let allowsPassiveSnapshots = visibleOrdered.count > 1
 
         let bitrateTargets = Self.allocateBitrateTargets(
             streamIDs: visibleOrdered,
             activeStreamID: state.activeStreamID,
-            budgetBps: bitrateBudgetBps
+            budgetBps: bitrateBudgetBps,
+            activeTargetFPS: resolvedActiveFPS
         )
 
         let policies = visibleOrdered.map { streamID in
             let isPrimaryActive = streamID == state.activeStreamID
-            let isGraceActive = graceLiveStreamIDs.contains(streamID)
+            let isGraceActive = allowsPassiveSnapshots && graceLiveStreamIDs.contains(streamID)
             let isLive = isPrimaryActive || isGraceActive
             return MirageStreamPolicy(
                 streamID: streamID,
                 tier: isLive ? .activeLive : .passiveSnapshot,
                 targetFPS: isLive ? resolvedActiveFPS : Self.passiveTargetFPS,
-                targetBitrateBps: bitrateTargets[streamID],
-                recoveryProfile: isPrimaryActive ? .activeAggressive : .passiveBounded
+                targetBitrateBps: bitrateTargets[streamID]
             )
         }
         let nextPolicyTransitionAt = state.demotionGraceDeadlineByStreamID.values.min()
@@ -226,7 +231,7 @@ actor AppStreamRuntimeOrchestrator {
         let activeText = activeStreamID.map(String.init) ?? "-"
         let streamText = policies.map { policy in
             let bitrate = policy.targetBitrateBps.map(String.init) ?? "auto"
-            return "\(policy.streamID):\(policy.tier.rawValue):\(policy.targetFPS):\(bitrate):\(policy.recoveryProfile.rawValue)"
+            return "\(policy.streamID):\(policy.tier.rawValue):\(policy.targetFPS):\(bitrate)"
         }.joined(separator: "|")
         return "\(activeText)#\(streamText)"
     }
@@ -234,7 +239,8 @@ actor AppStreamRuntimeOrchestrator {
     private nonisolated static func allocateBitrateTargets(
         streamIDs: [StreamID],
         activeStreamID: StreamID?,
-        budgetBps: Int?
+        budgetBps: Int?,
+        activeTargetFPS: Int
     ) -> [StreamID: Int] {
         guard let budgetBps, budgetBps > 0 else { return [:] }
         guard !streamIDs.isEmpty else { return [:] }
@@ -249,28 +255,22 @@ actor AppStreamRuntimeOrchestrator {
         }
 
         let passiveStreamIDs = streamIDs.filter { $0 != activeStreamID }
-        let passiveFloorTotal = Self.passiveBitrateFloorBps * passiveStreamIDs.count
-        let weightedActive = Int(Double(budgetBps) * Self.activeBitrateWeight)
-        var activeTarget = max(Self.passiveBitrateFloorBps, weightedActive)
-        if activeTarget + passiveFloorTotal > budgetBps {
-            activeTarget = max(Self.passiveBitrateFloorBps, budgetBps - passiveFloorTotal)
+        let passiveMinimum = max(1, min(Self.passiveBitrateFloorBps, budgetBps / streamIDs.count))
+        let activeWeight = Double(max(Self.defaultActiveTargetFPS, activeTargetFPS))
+        let passiveWeight = Double(Self.passiveTargetFPS)
+        let totalWeight = activeWeight + (passiveWeight * Double(passiveStreamIDs.count))
+        let weightedPassive = Int((Double(budgetBps) * passiveWeight / totalWeight).rounded(.down))
+        var passiveTarget = max(passiveMinimum, weightedPassive)
+        let maxPassiveTarget = max(1, (budgetBps - 1) / max(1, passiveStreamIDs.count))
+        if passiveTarget > maxPassiveTarget {
+            passiveTarget = maxPassiveTarget
         }
 
-        var remaining = max(0, budgetBps - activeTarget)
-        let passiveShare = passiveStreamIDs.isEmpty ? 0 : max(
-            Self.passiveBitrateFloorBps,
-            remaining / passiveStreamIDs.count
-        )
-        remaining = max(0, remaining - (passiveShare * passiveStreamIDs.count))
+        let activeTarget = max(1, budgetBps - (passiveTarget * passiveStreamIDs.count))
 
         var targets: [StreamID: Int] = [activeStreamID: activeTarget]
         for streamID in passiveStreamIDs {
-            var target = passiveShare
-            if remaining > 0 {
-                target += 1
-                remaining -= 1
-            }
-            targets[streamID] = max(Self.passiveBitrateFloorBps, target)
+            targets[streamID] = passiveTarget
         }
         return targets
     }

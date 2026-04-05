@@ -243,7 +243,7 @@ extension StreamContext {
             mirroredDisplayID: vdSnapshot.displayID,
             captureDisplayIsMirage: CGVirtualDisplayBridge.isMirageDisplay(vdSnapshot.displayID)
         )
-        let captureEngine = await setupAndStartCaptureEngine(
+        let captureEngine = try await setupAndStartCaptureEngine(
             usesDisplayRefreshCadence: captureDisplaySelection.usesDisplayRefreshCadence
         )
         try await captureEngine.startCapture(

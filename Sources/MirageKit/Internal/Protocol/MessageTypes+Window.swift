@@ -70,8 +70,6 @@ package struct StartStreamMessage: Codable {
     package var allowRuntimeQualityAdjustment: Bool?
     /// Client-requested compression boost for highest-resolution lowest-latency streams.
     package var lowLatencyHighResolutionCompressionBoost: Bool?
-    /// Client-requested temporary degradation policy.
-    package var temporaryDegradationMode: MirageTemporaryDegradationMode?
     /// Client-requested override to bypass host/client resolution caps.
     package var disableResolutionCap: Bool?
     /// Client-requested stream scale (0.1-1.0)
@@ -110,7 +108,6 @@ package struct StartStreamMessage: Codable {
         case performanceMode
         case allowRuntimeQualityAdjustment
         case lowLatencyHighResolutionCompressionBoost
-        case temporaryDegradationMode
         case disableResolutionCap
         case streamScale
         case audioConfiguration
@@ -139,7 +136,6 @@ package struct StartStreamMessage: Codable {
         performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
-        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
@@ -161,7 +157,6 @@ package struct StartStreamMessage: Codable {
         self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
-        self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
@@ -173,6 +168,7 @@ package struct StartStreamMessage: Codable {
 package struct StopStreamMessage: Codable {
     package enum Origin: String, Codable, Sendable {
         case clientWindowClosed
+        case remoteCommand
     }
 
     package let streamID: StreamID
@@ -276,9 +272,6 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let requestedTargetBitrate: Int?
     package let bitrateAdaptationCeiling: Int?
     package let startupBitrate: Int?
-    package let temporaryDegradationMode: MirageTemporaryDegradationMode?
-    package let temporaryDegradationColorDepth: MirageStreamColorDepth?
-    package let timeBelowTargetBitrateMs: Int?
     package let captureAdmissionDrops: UInt64?
     package let frameBudgetMs: Double?
     package let averageEncodeMs: Double?
@@ -333,9 +326,6 @@ package struct StreamMetricsMessage: Codable, Sendable {
         requestedTargetBitrate: Int? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         startupBitrate: Int? = nil,
-        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
-        temporaryDegradationColorDepth: MirageStreamColorDepth? = nil,
-        timeBelowTargetBitrateMs: Int? = nil,
         captureAdmissionDrops: UInt64? = nil,
         frameBudgetMs: Double? = nil,
         averageEncodeMs: Double? = nil,
@@ -389,9 +379,6 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.requestedTargetBitrate = requestedTargetBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.startupBitrate = startupBitrate
-        self.temporaryDegradationMode = temporaryDegradationMode
-        self.temporaryDegradationColorDepth = temporaryDegradationColorDepth
-        self.timeBelowTargetBitrateMs = timeBelowTargetBitrateMs
         self.captureAdmissionDrops = captureAdmissionDrops
         self.frameBudgetMs = frameBudgetMs
         self.averageEncodeMs = averageEncodeMs

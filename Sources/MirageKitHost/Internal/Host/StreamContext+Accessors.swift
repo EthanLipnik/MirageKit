@@ -22,7 +22,6 @@ struct EncoderSettingsSnapshot: Sendable {
     let colorSpace: MirageColorSpace
     let latencyMode: MirageStreamLatencyMode
     let performanceMode: MirageStreamPerformanceMode
-    let temporaryDegradationMode: MirageTemporaryDegradationMode
     let runtimeQualityAdjustmentEnabled: Bool
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
     let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
@@ -190,7 +189,6 @@ extension StreamContext {
             colorSpace: encoderConfig.colorSpace,
             latencyMode: latencyMode,
             performanceMode: performanceMode,
-            temporaryDegradationMode: temporaryDegradationMode,
             runtimeQualityAdjustmentEnabled: runtimeQualityAdjustmentEnabled,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoostEnabled,
             capturePressureProfile: capturePressureProfile,
@@ -209,7 +207,7 @@ extension StreamContext {
     func logBitrateContract(event: String) {
         let enteredText = enteredTargetBitrate.map(String.init) ?? "nil"
         let requestedText = requestedTargetBitrate.map(String.init) ?? "nil"
-        let currentText = (temporaryDegradationCurrentBitrate ?? encoderConfig.bitrate).map(String.init) ?? "nil"
+        let currentText = encoderConfig.bitrate.map(String.init) ?? "nil"
         let ceilingText = bitrateAdaptationCeiling.map(String.init) ?? "nil"
         let startupText = startupBitrate.map(String.init) ?? "nil"
         MirageLogger.metrics(

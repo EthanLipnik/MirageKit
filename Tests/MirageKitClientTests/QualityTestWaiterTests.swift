@@ -13,6 +13,73 @@ import Testing
 @Suite("Quality Test Waiters", .serialized)
 struct QualityTestWaiterTests {
     @MainActor
+    @Test("Concurrent ping callers share a single in-flight wire ping")
+    func concurrentPingCallersShareInFlightRequest() async throws {
+        let service = MirageClientService(deviceName: "Test Device")
+        service.connectionState = .connected(host: "Host")
+
+        let sendCounter = PingSendCounter()
+        let sendPing: @MainActor @Sendable () async throws -> Void = {
+            sendCounter.value += 1
+        }
+
+        let firstWaiter = Task {
+            try await service.sendPingAndAwaitPong(sendPing: sendPing)
+        }
+        try await Task.sleep(for: .milliseconds(10))
+
+        let secondWaiter = Task {
+            try await service.sendPingAndAwaitPong(sendPing: sendPing)
+        }
+        try await Task.sleep(for: .milliseconds(10))
+
+        #expect(sendCounter.value == 1)
+        service.completePingRequest(
+            expectedRequestID: service.pingRequestID,
+            result: .success(())
+        )
+
+        try await firstWaiter.value
+        try await secondWaiter.value
+        #expect(sendCounter.value == 1)
+    }
+
+    @MainActor
+    @Test("RTT sampling shares a heartbeat ping already in flight")
+    func measureRTTSharesExistingInFlightPing() async throws {
+        let service = MirageClientService(deviceName: "Test Device")
+        service.connectionState = .connected(host: "Host")
+
+        let sendCounter = PingSendCounter()
+        let sendPing: @MainActor @Sendable () async throws -> Void = {
+            sendCounter.value += 1
+            let requestID = service.pingRequestID
+            Task { @MainActor in
+                try? await Task.sleep(for: .milliseconds(20))
+                service.completePingRequest(
+                    expectedRequestID: requestID,
+                    result: .success(())
+                )
+            }
+        }
+
+        let heartbeatPing = Task {
+            try await service.sendPingAndAwaitPong(sendPing: sendPing)
+        }
+        try await Task.sleep(for: .milliseconds(5))
+
+        let rttTask = Task {
+            try await service.measureRTT(sendPing: sendPing)
+        }
+
+        try await heartbeatPing.value
+        let rttMs = try await rttTask.value
+
+        #expect(sendCounter.value == 3)
+        #expect(rttMs >= 0)
+    }
+
+    @MainActor
     @Test("Stale quality-test timeout does not cancel a newer waiter")
     func staleQualityTestTimeoutDoesNotCancelNewerWaiter() async throws {
         let service = MirageClientService(deviceName: "Test Device")
@@ -218,4 +285,9 @@ struct QualityTestWaiterTests {
                 == stage.durationMs + stage.settleGraceMs + MirageClientService.qualityTestControlMessageMarginMs
         )
     }
+}
+
+@MainActor
+private final class PingSendCounter {
+    var value = 0
 }

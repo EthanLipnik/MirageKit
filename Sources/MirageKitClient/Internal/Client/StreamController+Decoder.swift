@@ -215,7 +215,7 @@ extension StreamController {
         }
     }
 
-    private func stopTierPromotionProbe() async {
+    func stopTierPromotionProbe() async {
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
         if clientRecoveryStatus == .tierPromotionProbe {

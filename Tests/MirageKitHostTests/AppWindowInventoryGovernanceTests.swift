@@ -84,6 +84,31 @@ struct AppWindowInventoryGovernanceTests {
         #expect(afterGraceStreamTwo.tier == .activeLive)
     }
 
+    @Test("Single visible app stream always stays live")
+    func singleVisibleStreamAlwaysStaysLive() async throws {
+        let orchestrator = AppStreamRuntimeOrchestrator()
+        await orchestrator.registerStream(bundleIdentifier: "com.example.app", streamID: 1)
+        await orchestrator.registerStream(bundleIdentifier: "com.example.app", streamID: 2)
+
+        await orchestrator.forceOwnership(streamID: 2, now: 1.0)
+
+        let snapshot = await orchestrator.makeRuntimePolicySnapshot(
+            bundleIdentifier: "com.example.app",
+            visibleStreamIDs: [1],
+            bitrateBudgetBps: 8_000_000,
+            activeTargetFPS: 60,
+            now: 1.1
+        )
+        let policy = try #require(snapshot.policies.first)
+
+        #expect(snapshot.activeStreamID == 1)
+        #expect(snapshot.nextPolicyTransitionAt == nil)
+        #expect(policy.streamID == 1)
+        #expect(policy.tier == .activeLive)
+        #expect(policy.targetFPS == 60)
+        #expect(policy.targetBitrateBps == 8_000_000)
+    }
+
     @Test("Bitrate allocation is deterministic with active-first weighting and passive floors")
     func bitrateAllocationDeterministic() async throws {
         let orchestrator = AppStreamRuntimeOrchestrator()
@@ -125,15 +150,13 @@ struct AppWindowInventoryGovernanceTests {
             streamID: 101,
             tier: .activeLive,
             targetFPS: 60,
-            targetBitrateBps: 24_000_000,
-            recoveryProfile: .activeAggressive
+            targetBitrateBps: 24_000_000
         )
         let second = MirageStreamPolicy(
             streamID: 101,
             tier: .activeLive,
             targetFPS: 120,
-            targetBitrateBps: 28_000_000,
-            recoveryProfile: .activeAggressive
+            targetBitrateBps: 28_000_000
         )
 
         await applier.apply(policy: first, context: context, requestRecoveryKeyframe: false)

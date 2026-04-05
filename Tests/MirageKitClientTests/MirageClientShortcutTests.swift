@@ -47,4 +47,17 @@ struct MirageClientShortcutTests {
         #expect(shortcut.displayString.contains("⌥"))
         #expect(shortcut.displayString.contains("D"))
     }
+
+    @Test("Shortcut key event helpers preserve key code and normalized modifiers")
+    func keyEventHelpersPreserveShortcutComponents() {
+        let shortcut = MirageClientShortcut(keyCode: 0x15, modifiers: [.command, .shift, .capsLock])
+
+        let keyDownEvent = shortcut.keyDownEvent()
+        let keyUpEvent = shortcut.keyUpEvent()
+
+        #expect(keyDownEvent.keyCode == 0x15)
+        #expect(keyUpEvent.keyCode == 0x15)
+        #expect(keyDownEvent.modifiers == [.command, .shift])
+        #expect(keyUpEvent.modifiers == [.command, .shift])
+    }
 }

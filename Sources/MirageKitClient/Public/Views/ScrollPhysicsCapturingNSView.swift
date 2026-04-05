@@ -48,6 +48,17 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
+    /// Whether locked desktop cursor input may move beyond the streamed view bounds.
+    var allowsExtendedCursorBounds: Bool = false {
+        didSet {
+            guard allowsExtendedCursorBounds != oldValue else { return }
+            lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
+            lockedCursorTargetPosition = resolvedLockedCursorEventPosition(lockedCursorTargetPosition)
+            updateLockedCursorViewPosition()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
     /// Whether cursor lock can be recaptured after a temporary local unlock.
     var canRecaptureCursorLock: Bool = false
 
@@ -79,7 +90,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     let contentView: NSView
 
     /// Callback for scroll events: (deltaX, deltaY, location, phase, momentumPhase, modifiers, isPrecise)
-    /// Location is in normalized coordinates (0-1 within view bounds)
+    /// Location is normalized in stream space and may exceed 0...1 for secondary desktop travel.
     var onScroll: ((CGFloat, CGFloat, CGPoint?, MirageScrollPhase, MirageScrollPhase, MirageModifierFlags, Bool) -> Void)?
 
     /// Callback for mouse events - used for forwarding clicks to host
@@ -97,7 +108,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var modifierPollTimer: Timer?
     private let modifierPollInterval: TimeInterval = 0.1
 
-    /// Last known mouse location (normalized) for scroll events
+    /// Last known mouse location in stream space for scroll events.
+    /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
     private var lastMouseLocation: CGPoint?
 
     /// Locked cursor view for secondary display mode
@@ -413,6 +425,14 @@ final class ScrollPhysicsCapturingNSView: NSView {
         )
     }
 
+    nonisolated static func normalizedCursorPosition(
+        _ position: CGPoint,
+        allowsExtendedBounds: Bool
+    )
+    -> CGPoint {
+        LockedCursorPositionResolver.resolve(position, allowsExtendedBounds: allowsExtendedBounds)
+    }
+
     nonisolated static func localPoint(forNormalizedCursorPosition position: CGPoint, in bounds: CGRect) -> CGPoint {
         let clampedPosition = clampedNormalizedCursorPosition(position)
         return CGPoint(
@@ -444,8 +464,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
         updateLockedCursorViewPosition()
     }
 
-    private func clampedLockedCursorPosition() -> CGPoint {
-        Self.clampedNormalizedCursorPosition(lockedCursorPosition)
+    private func resolvedLockedCursorEventPosition(_ position: CGPoint) -> CGPoint {
+        Self.normalizedCursorPosition(position, allowsExtendedBounds: allowsExtendedCursorBounds)
+    }
+
+    private func lockedCursorActionPosition() -> CGPoint {
+        resolvedLockedCursorEventPosition(lockedCursorPosition)
     }
 
     private func updateLockedCursorViewPosition() {
@@ -462,14 +486,14 @@ final class ScrollPhysicsCapturingNSView: NSView {
         guard bounds.width > 0, bounds.height > 0 else { return }
         lockedCursorPosition.x += dx / bounds.width
         lockedCursorPosition.y -= dy / bounds.height
-        lockedCursorPosition = clampedLockedCursorPosition()
+        lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
         noteCursorLocalInput()
         setLockedCursorVisible(true)
-        lastMouseLocation = clampedLockedCursorPosition()
+        lastMouseLocation = lockedCursorPosition
     }
 
     private func applyLockedCursorHostUpdate(position: CGPoint, isVisible: Bool) {
-        lockedCursorTargetPosition = position
+        lockedCursorTargetPosition = resolvedLockedCursorEventPosition(position)
         lockedCursorTargetVisible = isVisible
         guard cursorLockEnabled else { return }
         guard !isCursorLocalInputActive() else { return }
@@ -491,7 +515,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
                 y: lockedCursorPosition.y + deltaY * lockedCursorLerpAlpha
             )
         }
-        lastMouseLocation = clampedLockedCursorPosition()
+        lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
+        lastMouseLocation = lockedCursorPosition
         updateLockedCursorViewPosition()
     }
 
@@ -563,7 +588,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         let isPrecise = event.hasPreciseScrollingDeltas
 
         if cursorLockEnabled {
-            lastMouseLocation = clampedLockedCursorPosition()
+            lastMouseLocation = lockedCursorPosition
         } else {
             let locationInView = convert(event.locationInWindow, from: nil)
             if bounds.width > 0, bounds.height > 0 {
@@ -591,7 +616,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             noteCursorLocalInput()
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
         }
@@ -610,7 +635,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             noteCursorLocalInput()
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
         }
@@ -629,7 +654,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
             let movedByDelta = event.deltaX != 0 || event.deltaY != 0
@@ -694,7 +719,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             noteCursorLocalInput()
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
         }
@@ -713,7 +738,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             noteCursorLocalInput()
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
         }
@@ -732,7 +757,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
             let movedByDelta = event.deltaX != 0 || event.deltaY != 0
@@ -763,7 +788,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             noteCursorLocalInput()
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
         }
@@ -782,7 +807,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             noteCursorLocalInput()
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
         }
@@ -801,7 +826,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled {
             if event.deltaX != 0 || event.deltaY != 0 { revealCursorAfterPointerMovement() }
             applyLockedCursorDelta(dx: event.deltaX, dy: event.deltaY)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(from: event)
             let movedByDelta = event.deltaX != 0 || event.deltaY != 0

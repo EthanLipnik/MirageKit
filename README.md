@@ -156,7 +156,7 @@ For ColorSync cleanup guidance, see [If-Your-Computer-Feels-Stuttery.md](If-Your
 
 Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe interval, bit depth, capture queue depth, and bitrate). The host applies overrides on top of its `MirageEncoderConfiguration`.
 
-`MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` with separate transport headroom and streaming-safe bitrate estimates, plus packet loss and RTT, so your UX can choose bitrate, bit depth, and resolution limits without conflating raw path capacity with stream-safe operation.
+`MirageClientService.runQualityTest()` returns a `MirageQualityTestSummary` with streaming-safe bitrate, packet loss, RTT, and optional transport headroom details. Automatic selection uses replay-shaped stages only, while connection-limit probes can still include a separate raw transport sweep.
 
 ### Encoder Settings
 
@@ -189,9 +189,9 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 ### Input + UI
 
 - Input events are forwarded via `MirageInputEvent` types (mouse, key, scroll, magnify, rotate).
-- Apple Pencil defaults to touch-style mouse semantics (`tap` click, `hold` drag, squeeze secondary click). `MiragePencilInputMode.drawingTablet` preserves pressure and stylus orientation metadata for tablet-aware host apps.
+- Apple Pencil supports configurable `Double Tap` and `Squeeze` gesture mappings, plus `mouse` and `drawingTablet` input modes. `MiragePencilInputMode.drawingTablet` preserves pressure and stylus orientation metadata for tablet-aware host apps.
 - Direct touch supports `normal` and `dragCursor` modes. Normal mode uses one-finger native scroll physics, tap-to-click, long-press drag, two-finger secondary click, and two-finger click-drag.
-- Apple Pencil squeeze emits a secondary click at the hover location when available, or the latest pointer location.
+- Pencil hardware gestures can trigger `Secondary Click`, `Toggle Dictation`, or a configured remote Mac shortcut at the hover location when available, or the latest pointer location.
 - `MirageStreamViewRepresentable` renders streams through `AVSampleBufferDisplayLayer` and exposes drawable size callbacks for resolution sync.
 - `MirageStreamContentView` and `MirageClientSessionStore` coordinate input, focus, and resize UI.
 - The host uses `MirageHostDelegate` and the client uses `MirageClientDelegate` for approvals and state updates.

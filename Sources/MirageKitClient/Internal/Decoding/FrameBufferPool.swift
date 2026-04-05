@@ -42,8 +42,16 @@ final class FrameBufferPool: @unchecked Sendable {
 
         func finalize(length: Int) -> Data {
             let clampedLength = min(max(0, length), capacity)
-            data.count = clampedLength
-            return data
+            guard clampedLength > 0 else {
+                return Data()
+            }
+
+            return data.withUnsafeBytes { buffer in
+                guard let baseAddress = buffer.baseAddress else {
+                    return Data()
+                }
+                return Data(bytes: baseAddress, count: clampedLength)
+            }
         }
 
         func withUnsafeBytes(_ body: (UnsafeRawBufferPointer) -> Void) {

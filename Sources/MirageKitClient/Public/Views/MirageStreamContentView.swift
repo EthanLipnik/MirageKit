@@ -35,6 +35,7 @@ func isMeaningfulAppResizeAcknowledgement(
 ///
 /// This view bridges `MirageStreamViewRepresentable` with a `MirageClientSessionStore`
 /// to coordinate focus, resize events, and input forwarding.
+@MainActor
 public struct MirageStreamContentView: View {
     public let session: MirageStreamSessionState
     public let sessionStore: MirageClientSessionStore
@@ -54,6 +55,7 @@ public struct MirageStreamContentView: View {
     public let directTouchInputMode: MirageDirectTouchInputMode
     public let softwareKeyboardVisible: Bool
     public let pencilInputMode: MiragePencilInputMode
+    public let pencilGestureConfiguration: MiragePencilGestureConfiguration
     public let dictationToggleRequestID: UInt64
     public let onDictationStateChanged: ((Bool) -> Void)?
     public let onDictationError: ((String) -> Void)?
@@ -116,6 +118,7 @@ public struct MirageStreamContentView: View {
     ///   - directTouchInputMode: Direct-touch behavior mode for iPad and visionOS clients.
     ///   - softwareKeyboardVisible: Whether the software keyboard should be visible.
     ///   - pencilInputMode: Apple Pencil behavior mode for iPad clients.
+    ///   - pencilGestureConfiguration: Apple Pencil hardware gesture mapping.
     ///   - dictationToggleRequestID: Increments to request a dictation toggle on iOS/visionOS.
     ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
     ///   - onDictationError: Optional callback for user-facing dictation errors.
@@ -142,6 +145,7 @@ public struct MirageStreamContentView: View {
         directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
         pencilInputMode: MiragePencilInputMode = .mouse,
+        pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
@@ -174,6 +178,7 @@ public struct MirageStreamContentView: View {
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilInputMode = pencilInputMode
+        self.pencilGestureConfiguration = pencilGestureConfiguration
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
@@ -198,22 +203,35 @@ public struct MirageStreamContentView: View {
         !isDesktopStream || desktopCursorPresentation.rendersSyntheticClientCursor
     }
 
+    private var allowsExtendedDesktopCursorBounds: Bool {
+        isDesktopStream && desktopStreamMode == .secondary
+    }
+
     private var streamContentAspectRatio: CGFloat? {
+        if isDesktopStream {
+            if let minSize = sessionStore.sessionMinSizes[session.id],
+               minSize.width > 0,
+               minSize.height > 0 {
+                return minSize.width / minSize.height
+            }
+
+            if let desktopResolution = clientService.desktopStreamResolution,
+               desktopResolution.width > 0,
+               desktopResolution.height > 0 {
+                return desktopResolution.width / desktopResolution.height
+            }
+        }
+
         let windowSize = session.window.frame.size
         if windowSize.width > 0, windowSize.height > 0 {
             return windowSize.width / windowSize.height
         }
 
-        if let minSize = sessionStore.sessionMinSizes[session.id],
+        if !isDesktopStream,
+           let minSize = sessionStore.sessionMinSizes[session.id],
            minSize.width > 0,
            minSize.height > 0 {
             return minSize.width / minSize.height
-        }
-
-        if let desktopResolution = clientService.desktopStreamResolution,
-           desktopResolution.width > 0,
-           desktopResolution.height > 0 {
-            return desktopResolution.width / desktopResolution.height
         }
 
         return nil
@@ -226,106 +244,100 @@ public struct MirageStreamContentView: View {
                 .ignoresSafeArea()
 
             Group {
-            #if os(iOS) || os(visionOS)
-            MirageStreamViewRepresentable(
-                streamID: session.streamID,
-                onInputEvent: { event in
-                    sendInputEvent(event)
-                },
-                onDrawableMetricsChanged: { metrics in
-                    handleDrawableMetricsChanged(metrics)
-                },
-                onRefreshRateOverrideChange: { override in
-                    Task { @MainActor [clientService] in
-                        await Task.yield()
-                        do {
-                            try await Task.sleep(for: .milliseconds(1))
-                        } catch {
-                            return
+#if os(iOS) || os(visionOS)
+                MirageStreamViewRepresentable(
+                    streamID: session.streamID,
+                    onInputEvent: { event in
+                        sendInputEvent(event)
+                    },
+                    onDrawableMetricsChanged: { metrics in
+                        handleDrawableMetricsChanged(metrics)
+                    },
+                    onRefreshRateOverrideChange: { override in
+                        Task { @MainActor [clientService] in
+                            await Task.yield()
+                            do {
+                                try await Task.sleep(for: .milliseconds(1))
+                            } catch {
+                                return
+                            }
+                            clientService.updateStreamRefreshRateOverride(
+                                streamID: session.streamID,
+                                maxRefreshRate: override
+                            )
                         }
-                        clientService.updateStreamRefreshRateOverride(
-                            streamID: session.streamID,
-                            maxRefreshRate: override
-                        )
-                    }
-                },
-                cursorStore: clientService.cursorStore,
-                cursorPositionStore: clientService.cursorPositionStore,
-                onBecomeActive: {
-                    handleForegroundRecovery()
-                },
-                onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
-                onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
-                onDirectTouchActivity: onDirectTouchActivity,
-                directTouchInputMode: directTouchInputMode,
-                softwareKeyboardVisible: softwareKeyboardVisible,
-                pencilInputMode: pencilInputMode,
-                dictationToggleRequestID: dictationToggleRequestID,
-                onDictationStateChanged: onDictationStateChanged,
-                onDictationError: onDictationError,
-                onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
-                dictationMode: dictationMode,
-                dictationLocalePreference: dictationLocalePreference,
-                cursorLockEnabled: desktopCursorLockEnabled,
-                cursorLockCanRecapture: desktopCursorLockCanRecapture,
-                onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-                onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-                syntheticCursorEnabled: syntheticCursorEnabled,
-                presentationTier: streamPresentationTier,
-                maxDrawableSize: maxDrawableSize
-            )
-            .blur(radius: resizeBlurRadius)
-            #else
-            MirageStreamViewRepresentable(
-                streamID: session.streamID,
-                onInputEvent: { event in
-                    sendInputEvent(event)
-                },
-                onDrawableMetricsChanged: { metrics in
-                    handleDrawableMetricsChanged(metrics)
-                },
-                onRefreshRateOverrideChange: { override in
-                    Task { @MainActor [clientService] in
-                        await Task.yield()
-                        do {
-                            try await Task.sleep(for: .milliseconds(1))
-                        } catch {
-                            return
+                    },
+                    cursorStore: clientService.cursorStore,
+                    cursorPositionStore: clientService.cursorPositionStore,
+                    onBecomeActive: {
+                        handleForegroundRecovery()
+                    },
+                    onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
+                    onSoftwareKeyboardVisibilityChanged: onSoftwareKeyboardVisibilityChanged,
+                    onDirectTouchActivity: onDirectTouchActivity,
+                    directTouchInputMode: directTouchInputMode,
+                    softwareKeyboardVisible: softwareKeyboardVisible,
+                    pencilInputMode: pencilInputMode,
+                    pencilGestureConfiguration: pencilGestureConfiguration,
+                    clientShortcuts: clientReservedShortcuts,
+                    onClientShortcut: handleReservedShortcut,
+                    onPencilGestureAction: handlePencilGestureAction,
+                    dictationToggleRequestID: dictationToggleRequestID,
+                    onDictationStateChanged: onDictationStateChanged,
+                    onDictationError: onDictationError,
+                    onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
+                    dictationMode: dictationMode,
+                    dictationLocalePreference: dictationLocalePreference,
+                    cursorLockEnabled: desktopCursorLockEnabled,
+                    allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
+                    cursorLockCanRecapture: desktopCursorLockCanRecapture,
+                    onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+                    onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
+                    syntheticCursorEnabled: syntheticCursorEnabled,
+                    presentationTier: streamPresentationTier,
+                    maxDrawableSize: maxDrawableSize
+                )
+                .blur(radius: resizeBlurRadius)
+#else
+                MirageStreamViewRepresentable(
+                    streamID: session.streamID,
+                    onInputEvent: { event in
+                        sendInputEvent(event)
+                    },
+                    onDrawableMetricsChanged: { metrics in
+                        handleDrawableMetricsChanged(metrics)
+                    },
+                    onRefreshRateOverrideChange: { override in
+                        Task { @MainActor [clientService] in
+                            await Task.yield()
+                            do {
+                                try await Task.sleep(for: .milliseconds(1))
+                            } catch {
+                                return
+                            }
+                            clientService.updateStreamRefreshRateOverride(
+                                streamID: session.streamID,
+                                maxRefreshRate: override
+                            )
                         }
-                        clientService.updateStreamRefreshRateOverride(
-                            streamID: session.streamID,
-                            maxRefreshRate: override
-                        )
-                    }
-                },
-                cursorStore: clientService.cursorStore,
-                cursorPositionStore: clientService.cursorPositionStore,
-                cursorLockEnabled: desktopCursorLockEnabled,
-                cursorLockCanRecapture: desktopCursorLockCanRecapture,
-                onCursorLockEscapeRequested: onCursorLockEscapeRequested,
-                onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
-                syntheticCursorEnabled: syntheticCursorEnabled,
-                inputEnabled: macOSInputEnabled,
-                presentationTier: streamPresentationTier,
-                maxDrawableSize: maxDrawableSize,
-                clientShortcuts: [desktopExitShortcut, escapeRemapShortcut, dictationShortcut].compactMap { $0 },
-                onClientShortcut: { shortcut in
-                    if shortcut == escapeRemapShortcut {
-                        if desktopCursorLockEnabled {
-                            onCursorLockEscapeRequested?()
-                        } else {
-                            let escapeEvent = remappedEscapeKeyEvent()
-                            forwardInputEventToHost(.keyDown(escapeEvent))
-                            forwardInputEventToHost(.keyUp(escapeEvent))
-                        }
-                        return
-                    }
-                    handleReservedShortcut(shortcut)
-                }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .blur(radius: resizeBlurRadius)
-            #endif
+                    },
+                    cursorStore: clientService.cursorStore,
+                    cursorPositionStore: clientService.cursorPositionStore,
+                    cursorLockEnabled: desktopCursorLockEnabled,
+                    allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
+                    cursorLockCanRecapture: desktopCursorLockCanRecapture,
+                    onCursorLockEscapeRequested: onCursorLockEscapeRequested,
+                    onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
+                    syntheticCursorEnabled: syntheticCursorEnabled,
+                    inputEnabled: macOSInputEnabled,
+                    presentationTier: streamPresentationTier,
+                    maxDrawableSize: maxDrawableSize,
+                    clientShortcuts: clientReservedShortcuts,
+                    onClientShortcut: handleReservedShortcut
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .blur(radius: resizeBlurRadius)
+#endif
             }
             .aspectRatio(streamContentAspectRatio, contentMode: .fit)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -454,6 +466,10 @@ public struct MirageStreamContentView: View {
         sessionStore.presentationTier(for: session.streamID)
     }
 
+    private var clientReservedShortcuts: [MirageClientShortcut] {
+        [desktopExitShortcut, escapeRemapShortcut, dictationShortcut]
+    }
+
     private var isReadyForInitialPresentation: Bool {
         switch streamPresentationTier {
         case .activeLive:
@@ -539,8 +555,25 @@ public struct MirageStreamContentView: View {
         if shortcut == desktopExitShortcut {
             logDesktopExitShortcutTriggered()
             onExitDesktopStream?()
+        } else if shortcut == escapeRemapShortcut {
+            if desktopCursorLockEnabled {
+                onCursorLockEscapeRequested?()
+            } else {
+                let escapeEvent = remappedEscapeKeyEvent()
+                forwardInputEventToHost(.keyDown(escapeEvent))
+                forwardInputEventToHost(.keyUp(escapeEvent))
+            }
         } else if shortcut == dictationShortcut {
             onToggleDictationShortcut?()
+        }
+    }
+
+    private func handlePencilGestureAction(_ action: MiragePencilGestureAction) {
+        if action == .toggleDictation {
+            onToggleDictationShortcut?()
+        } else if case let .remoteShortcut(shortcut) = action {
+            forwardInputEventToHost(.keyDown(shortcut.keyDownEvent()))
+            forwardInputEventToHost(.keyUp(shortcut.keyUpEvent()))
         }
     }
 

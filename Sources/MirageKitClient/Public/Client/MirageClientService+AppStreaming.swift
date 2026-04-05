@@ -203,7 +203,6 @@ public extension MirageClientService {
             performanceMode: encoderRequest.performanceMode,
             allowRuntimeQualityAdjustment: encoderRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: encoderRequest.lowLatencyHighResolutionCompressionBoost,
-            temporaryDegradationMode: encoderRequest.temporaryDegradationMode,
             disableResolutionCap: encoderRequest.disableResolutionCap,
             streamScale: geometry.resolvedStreamScale,
             audioConfiguration: encoderRequest.audioConfiguration,

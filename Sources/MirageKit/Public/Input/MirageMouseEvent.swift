@@ -13,7 +13,9 @@ public struct MirageMouseEvent: Codable, Sendable, Hashable {
     /// Mouse button involved
     public let button: MirageMouseButton
 
-    /// Location in normalized coordinates (0-1 within window)
+    /// Location in normalized stream coordinates.
+    /// Secondary desktop cursor-lock input may temporarily exceed `0...1`
+    /// while the host cursor travels onto another display.
     public let location: CGPoint
 
     /// Click count for multi-click detection
@@ -35,7 +37,8 @@ public struct MirageMouseEvent: Codable, Sendable, Hashable {
     ///
     /// - Parameters:
     ///   - button: Logical button associated with the event.
-    ///   - location: Normalized coordinates in host stream space (`0...1`).
+    ///   - location: Normalized coordinates in host stream space.
+    ///     Secondary desktop cursor-lock input may temporarily exceed `0...1`.
     ///   - clickCount: Click sequence count for multi-click interactions.
     ///   - modifiers: Active keyboard modifiers.
     ///   - pressure: Pressure scalar used by force/stylus paths.
@@ -68,8 +71,9 @@ public struct MirageScrollEvent: Codable, Sendable, Hashable {
     /// Vertical scroll delta
     public let deltaY: CGFloat
 
-    /// Location in normalized coordinates (0-1 within window)
-    /// Used to inject scroll at cursor position rather than window center
+    /// Location in normalized stream coordinates.
+    /// Secondary desktop cursor-lock input may temporarily exceed `0...1`.
+    /// Used to inject scroll at cursor position rather than window center.
     public let location: CGPoint?
 
     /// Scroll phase (for trackpad gestures)

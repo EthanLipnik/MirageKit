@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/2/26.
 //
-//  Summary output for automatic quality tests.
+//  Summary output for connection quality tests.
 //
 
 import Foundation

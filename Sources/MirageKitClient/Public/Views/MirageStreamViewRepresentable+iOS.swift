@@ -51,6 +51,18 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Apple Pencil behavior mode.
     public var pencilInputMode: MiragePencilInputMode
 
+    /// Apple Pencil hardware gesture mapping.
+    public var pencilGestureConfiguration: MiragePencilGestureConfiguration
+
+    /// Client-reserved shortcuts that should be handled locally instead of forwarded.
+    public var clientShortcuts: [MirageClientShortcut]
+
+    /// Callback when a client-reserved shortcut is triggered.
+    public var onClientShortcut: ((MirageClientShortcut) -> Void)?
+
+    /// Callback when a Pencil gesture maps to a client-side action.
+    public var onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?
+
     /// Monotonic toggle token for dictation requests.
     public var dictationToggleRequestID: UInt64
 
@@ -71,6 +83,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
 
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
+
+    /// Whether locked desktop cursor input may move beyond the streamed view bounds.
+    public var allowsExtendedDesktopCursorBounds: Bool
 
     /// Whether the stream can recapture cursor lock after a temporary local unlock.
     public var cursorLockCanRecapture: Bool
@@ -104,6 +119,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
         pencilInputMode: MiragePencilInputMode = .mouse,
+        pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
+        clientShortcuts: [MirageClientShortcut] = [],
+        onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
+        onPencilGestureAction: ((MiragePencilGestureAction) -> Void)? = nil,
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
@@ -111,6 +130,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
         cursorLockEnabled: Bool = false,
+        allowsExtendedDesktopCursorBounds: Bool = false,
         cursorLockCanRecapture: Bool = false,
         onCursorLockEscapeRequested: (() -> Void)? = nil,
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
@@ -131,6 +151,10 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
         self.pencilInputMode = pencilInputMode
+        self.pencilGestureConfiguration = pencilGestureConfiguration
+        self.clientShortcuts = clientShortcuts
+        self.onClientShortcut = onClientShortcut
+        self.onPencilGestureAction = onPencilGestureAction
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
@@ -138,6 +162,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
         self.cursorLockEnabled = cursorLockEnabled
+        self.allowsExtendedDesktopCursorBounds = allowsExtendedDesktopCursorBounds
         self.cursorLockCanRecapture = cursorLockCanRecapture
         self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
@@ -171,6 +196,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
             onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
+            onClientShortcut: onClientShortcut,
+            onPencilGestureAction: onPencilGestureAction,
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError,
             onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
@@ -180,12 +207,15 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
+            pencilGestureConfiguration: pencilGestureConfiguration,
+            clientShortcuts: clientShortcuts,
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
             dictationLocalePreference: dictationLocalePreference,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
             cursorLockCanRecapture: cursorLockCanRecapture,
             onCursorLockEscapeRequested: onCursorLockEscapeRequested,
             onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
@@ -210,17 +240,35 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         context.coordinator.noteRepresentableUpdate(for: streamID)
 
+        uiViewController.configureCallbacks(
+            onInputEvent: context.coordinator.handleInputEvent,
+            onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
+            onRefreshRateOverrideChange: context.coordinator.handleRefreshRateOverrideChange,
+            onBecomeActive: context.coordinator.handleBecomeActive,
+            onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
+            onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
+            onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
+            onClientShortcut: onClientShortcut,
+            onPencilGestureAction: onPencilGestureAction,
+            onDictationStateChanged: context.coordinator.handleDictationStateChanged,
+            onDictationError: context.coordinator.handleDictationError,
+            onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
+        )
+
         uiViewController.updateState(
             streamID: streamID,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
             pencilInputMode: pencilInputMode,
+            pencilGestureConfiguration: pencilGestureConfiguration,
+            clientShortcuts: clientShortcuts,
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
             dictationLocalePreference: dictationLocalePreference,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
+            allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
             cursorLockCanRecapture: cursorLockCanRecapture,
             onCursorLockEscapeRequested: onCursorLockEscapeRequested,
             onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
@@ -279,10 +327,7 @@ public final class MirageStreamViewController: UIViewController {
     }
 
     override public func target(forAction action: Selector, withSender sender: Any?) -> Any? {
-        if captureView.onInputEvent != nil,
-           MirageInterceptedShortcutPolicy.shortcut(
-               actionName: NSStringFromSelector(action)
-           ) != nil {
+        if captureView.shouldHandleResponderAction(action) {
             return captureView
         }
         return super.target(forAction: action, withSender: sender)
@@ -304,6 +349,8 @@ public final class MirageStreamViewController: UIViewController {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
+        onClientShortcut: ((MirageClientShortcut) -> Void)?,
+        onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?,
         onDictationStateChanged: ((Bool) -> Void)?,
         onDictationError: ((String) -> Void)?,
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
@@ -315,6 +362,8 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         captureView.onDirectTouchActivity = onDirectTouchActivity
+        captureView.onClientShortcut = onClientShortcut
+        captureView.onPencilGestureAction = onPencilGestureAction
         captureView.onDictationStateChanged = onDictationStateChanged
         captureView.onDictationError = onDictationError
         captureView.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
@@ -325,12 +374,15 @@ public final class MirageStreamViewController: UIViewController {
         directTouchInputMode: MirageDirectTouchInputMode,
         softwareKeyboardVisible: Bool,
         pencilInputMode: MiragePencilInputMode,
+        pencilGestureConfiguration: MiragePencilGestureConfiguration,
+        clientShortcuts: [MirageClientShortcut],
         dictationToggleRequestID: UInt64,
         dictationMode: MirageDictationMode,
         dictationLocalePreference: MirageDictationLocalePreference,
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
+        allowsExtendedDesktopCursorBounds: Bool,
         cursorLockCanRecapture: Bool,
         onCursorLockEscapeRequested: (() -> Void)?,
         onCursorLockRecaptureRequested: (() -> Void)?,
@@ -345,11 +397,14 @@ public final class MirageStreamViewController: UIViewController {
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
         captureView.pencilInputMode = pencilInputMode
+        captureView.pencilGestureConfiguration = pencilGestureConfiguration
+        captureView.clientShortcuts = clientShortcuts
         captureView.dictationToggleRequestID = dictationToggleRequestID
         captureView.dictationMode = dictationMode
         captureView.dictationLocalePreference = dictationLocalePreference
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
+        captureView.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
         captureView.cursorLockEnabled = cursorLockEnabled
         captureView.canRecaptureCursorLock = cursorLockCanRecapture
         captureView.onCursorLockEscapeRequested = onCursorLockEscapeRequested

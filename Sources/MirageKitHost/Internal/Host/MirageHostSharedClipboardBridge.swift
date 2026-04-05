@@ -9,6 +9,29 @@ import AppKit
 import Foundation
 import MirageKit
 
+private struct HostClipboardSnapshot: Sendable {
+    let changeCount: Int
+    let text: String?
+}
+
+private actor HostClipboardSnapshotReader {
+    static let shared = HostClipboardSnapshotReader()
+
+    func snapshot() -> HostClipboardSnapshot {
+        let pasteboard = NSPasteboard.general
+        let text: String?
+        if pasteboard.availableType(from: [.string]) != nil {
+            text = pasteboard.string(forType: .string)
+        } else {
+            text = nil
+        }
+        return HostClipboardSnapshot(
+            changeCount: pasteboard.changeCount,
+            text: text
+        )
+    }
+}
+
 @MainActor
 final class MirageHostSharedClipboardBridge {
     private let pasteboard: NSPasteboard
@@ -66,7 +89,9 @@ final class MirageHostSharedClipboardBridge {
             while !Task.isCancelled {
                 try? await Task.sleep(for: pollInterval)
                 if Task.isCancelled { return }
-                await pollPasteboard()
+                let snapshot = await HostClipboardSnapshotReader.shared.snapshot()
+                if Task.isCancelled { return }
+                await consumePolledSnapshot(snapshot)
             }
         }
     }
@@ -77,10 +102,9 @@ final class MirageHostSharedClipboardBridge {
         clipboardState.deactivate()
     }
 
-    private func pollPasteboard() {
-        let changeCount = pasteboard.changeCount
-        guard changeCount != clipboardState.lastObservedChangeCount else { return }
-        completePollPasteboard(text: pasteboard.string(forType: .string), changeCount: changeCount)
+    private func consumePolledSnapshot(_ snapshot: HostClipboardSnapshot) {
+        guard snapshot.changeCount != clipboardState.lastObservedChangeCount else { return }
+        completePollPasteboard(text: snapshot.text, changeCount: snapshot.changeCount)
     }
 
     private func completePollPasteboard(text: String?, changeCount: Int) {

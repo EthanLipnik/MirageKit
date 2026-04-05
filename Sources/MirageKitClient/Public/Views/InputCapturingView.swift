@@ -107,6 +107,17 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Whether locked desktop cursor input may move beyond the streamed view bounds.
+    public var allowsExtendedCursorBounds: Bool = false {
+        didSet {
+            guard allowsExtendedCursorBounds != oldValue else { return }
+            lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
+            lockedCursorTargetPosition = resolvedLockedCursorEventPosition(lockedCursorTargetPosition)
+            updateLockedCursorViewPosition()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
     /// Whether cursor lock can be recaptured after a temporary local unlock.
     public var canRecaptureCursorLock: Bool = false
 
@@ -150,9 +161,23 @@ public class InputCapturingView: UIView {
     }
 
     var usesVirtualTrackpad: Bool { directTouchInputMode == .dragCursor }
+    var usesVisibleVirtualCursor: Bool { usesVirtualTrackpad && !cursorLockEnabled }
+    var usesLockedTrackpadCursor: Bool { usesVirtualTrackpad && cursorLockEnabled }
 
     /// Apple Pencil behavior mode.
     public var pencilInputMode: MiragePencilInputMode = .mouse
+
+    /// Configured actions for Apple Pencil hardware gestures.
+    public var pencilGestureConfiguration: MiragePencilGestureConfiguration = .default
+
+    /// Client-reserved shortcuts handled locally instead of being forwarded to the host.
+    public var clientShortcuts: [MirageClientShortcut] = []
+
+    /// Callback when a client-reserved shortcut is triggered.
+    public var onClientShortcut: ((MirageClientShortcut) -> Void)?
+
+    /// Callback when a Pencil gesture maps to a client-side action.
+    public var onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?
 
     /// Monotonic toggle token for dictation requests.
     public var dictationToggleRequestID: UInt64 = 0 {
@@ -312,7 +337,8 @@ public class InputCapturingView: UIView {
     var swallowingDirectLongPressForCursorRecapture = false
     var swallowingDirectTwoFingerDragForCursorRecapture = false
 
-    /// Track last cursor position for scroll events (normalized 0-1)
+    /// Track last cursor position for scroll events in stream space.
+    /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
     var lastCursorPosition: CGPoint?
 
     // Track keyboard modifier state - single source of truth
@@ -337,6 +363,9 @@ public class InputCapturingView: UIView {
     /// Key codes currently claimed by GCKeyboard (modifier+key combos).
     /// Used to deduplicate against pressesBegan/pressesEnded which may fire for the same event.
     var gcClaimedKeyCodes: Set<GCKeyCode> = []
+    /// HID key codes currently owned by a client-reserved shortcut path.
+    /// These key releases should not emit an additional raw key-up event.
+    var clientShortcutClaimedKeyCodes: Set<UIKeyboardHIDUsage> = []
     /// HID key codes currently owned by the synthesized intercepted-shortcut path.
     /// These key releases should not emit an additional raw key-up event.
     var passthroughClaimedKeyCodes: Set<UIKeyboardHIDUsage> = []
@@ -457,6 +486,7 @@ public class InputCapturingView: UIView {
         capsLockEnabled = false
         #if canImport(GameController)
         gcClaimedKeyCodes.removeAll()
+        clientShortcutClaimedKeyCodes.removeAll()
         passthroughClaimedKeyCodes.removeAll()
         #endif
         updateSoftwareModifierButtons()
@@ -674,6 +704,8 @@ public class InputCapturingView: UIView {
     var passthroughShortcutRepeatState: PassthroughShortcutRepeatState?
     /// Timer that polls physical key state for intercepted shortcut repeats.
     var passthroughShortcutRepeatTimer: Timer?
+    /// Most recent client-reserved shortcut dispatched through a UIKit command/action path.
+    var lastClientShortcutDispatch: ClientShortcutDispatch?
     /// Most recent intercepted shortcut forwarded through a UIKit command/action path.
     var lastPassthroughShortcutDispatch: PassthroughShortcutDispatch?
     /// Polling interval for intercepted shortcut repeat sessions.
@@ -690,6 +722,18 @@ public class InputCapturingView: UIView {
         let modifiers: MirageModifierFlags
         let requiresShift: Bool
         var nextRepeatDeadline: TimeInterval
+    }
+
+    enum ClientShortcutDispatchSource {
+        case hardwareKey
+        case keyCommand
+        case responderAction
+    }
+
+    struct ClientShortcutDispatch {
+        let shortcut: MirageClientShortcut
+        let source: ClientShortcutDispatchSource
+        let timestamp: CFAbsoluteTime
     }
 
     enum PassthroughShortcutDispatchSource {
@@ -788,8 +832,7 @@ public class InputCapturingView: UIView {
             self?.onDirectTouchActivity?()
         }
         scrollPhysicsView!.onDirectTouchLocationChanged = { [weak self] rawLocation in
-            guard let self else { return }
-            updatePointerLocationForLocalContact(normalizedLocation(rawLocation))
+            self?.handleDirectTouchLocationChange(rawLocation)
         }
 
         // Enable user interaction
@@ -860,7 +903,24 @@ public class InputCapturingView: UIView {
             NSNumber(value: UITouch.TouchType.indirect.rawValue),
         ]
 
-        if cursorLockEnabled {
+        if usesLockedTrackpadCursor {
+            longPressGesture.allowedTouchTypes = indirectTouchTypes
+            scrollGesture.isEnabled = true
+            directRotationGesture.isEnabled = true
+            scrollPhysicsView?.directTouchScrollEnabled = false
+            directTapGesture.isEnabled = false
+            directLongPressGesture.isEnabled = false
+            directTwoFingerTapGesture.isEnabled = false
+            directTwoFingerDragGesture.isEnabled = false
+            virtualCursorPanGesture.isEnabled = true
+            virtualCursorTapGesture.isEnabled = true
+            virtualCursorRightTapGesture.isEnabled = true
+            virtualCursorLongPressGesture.isEnabled = true
+            virtualDragActive = false
+            stopVirtualCursorDeceleration()
+            lastCursorPosition = lockedCursorPosition
+            setVirtualCursorVisible(false)
+        } else if cursorLockEnabled {
             longPressGesture.allowedTouchTypes = indirectTouchTypes
             scrollGesture.isEnabled = false
             directRotationGesture.isEnabled = false
@@ -914,7 +974,7 @@ public class InputCapturingView: UIView {
     }
 
     func setVirtualCursorVisible(_ isVisible: Bool) {
-        guard usesVirtualTrackpad else {
+        guard usesVisibleVirtualCursor else {
             virtualCursorView.isHidden = true
             return
         }
@@ -933,6 +993,10 @@ public class InputCapturingView: UIView {
 
     func updateCursorLockMode() {
         updateVirtualTrackpadMode()
+        // Locked cursor mode uses the dedicated locked-pointer recognizers.
+        // The generic indirect long-press recognizer can still receive absolute
+        // pointer coordinates from UIKit, which can yank the locked cursor to an edge.
+        longPressGesture.isEnabled = !cursorLockEnabled
         if cursorLockEnabled {
             updateMouseInputHandler()
             hoverGesture.isEnabled = !usesMouseInputDeltas
@@ -948,6 +1012,7 @@ public class InputCapturingView: UIView {
             lockedPointerPanGesture.isEnabled = false
             lockedPointerPressGesture.isEnabled = false
             lockedPointerButtonDown = false
+            lockedPointerDraggedSinceDown = false
             lockedPointerLastHoverLocation = nil
             stopLockedCursorSmoothing()
             setLockedCursorVisible(false)
@@ -985,12 +1050,111 @@ public class InputCapturingView: UIView {
             updateLockedCursorViewPosition()
         }
 
-        if usesVirtualTrackpad {
+        if usesVisibleVirtualCursor {
             setVirtualCursorVisible(false)
             updateVirtualCursorPosition(location, updateVisibility: false)
         }
 
-        lastCursorPosition = location
+        lastCursorPosition = cursorLockEnabled ? lockedCursorPosition : location
+    }
+
+    func handleDirectTouchLocationChange(_ rawLocation: CGPoint) {
+        let location = normalizedLocation(rawLocation)
+        let pointerMoved = lastCursorPosition.map { previousLocation in
+            hypot(location.x - previousLocation.x, location.y - previousLocation.y) > 0.0001
+        } ?? true
+
+        updatePointerLocationForLocalContact(location)
+
+        let pointerButtonActive = longPressButtonDown ||
+            directLongPressButtonDown ||
+            directTwoFingerDragButtonDown ||
+            lockedPointerButtonDown ||
+            virtualDragActive ||
+            pencilButtonDown
+        guard directTouchInputMode == .normal,
+              !cursorLockEnabled,
+              !pointerButtonActive,
+              !isDragging,
+              pointerMoved else { return }
+
+        revealCursorAfterPointerMovement()
+        refreshModifiersForInput()
+        let modifiers = keyboardModifiers
+        sendModifierSnapshotIfNeeded(modifiers)
+
+        let mouseEvent = MirageMouseEvent(
+            button: .left,
+            location: location,
+            modifiers: modifiers
+        )
+        onInputEvent?(.mouseMoved(mouseEvent))
+    }
+
+    func setTrackpadCursorVisible(_ isVisible: Bool) {
+        if usesLockedTrackpadCursor {
+            setLockedCursorVisible(isVisible)
+        } else {
+            setVirtualCursorVisible(isVisible)
+        }
+    }
+
+    func trackpadCursorPosition() -> CGPoint {
+        if usesLockedTrackpadCursor {
+            lockedCursorPosition
+        } else {
+            virtualCursorPosition
+        }
+    }
+
+    func trackpadCursorActionPosition() -> CGPoint {
+        if usesLockedTrackpadCursor {
+            lockedCursorActionPosition()
+        } else {
+            virtualCursorPosition
+        }
+    }
+
+    func updateTrackpadCursorPosition(_ position: CGPoint, updateVisibility: Bool) {
+        if usesLockedTrackpadCursor {
+            lockedCursorPosition = resolvedLockedCursorEventPosition(position)
+            noteLockedCursorLocalInput()
+            if updateVisibility {
+                setLockedCursorVisible(true)
+            } else {
+                updateLockedCursorViewPosition()
+            }
+            lastCursorPosition = lockedCursorPosition
+        } else {
+            updateVirtualCursorPosition(position, updateVisibility: updateVisibility)
+        }
+    }
+
+    func moveTrackpadCursor(by translation: CGPoint) {
+        if usesLockedTrackpadCursor {
+            applyLockedCursorDelta(translation)
+        } else {
+            moveVirtualCursor(by: translation)
+        }
+    }
+
+    func sendTrackpadMovementEvent(modifiers: MirageModifierFlags) {
+        let location = if virtualDragActive {
+            trackpadCursorActionPosition()
+        } else {
+            trackpadCursorPosition()
+        }
+        let mouseEvent = MirageMouseEvent(
+            button: .left,
+            location: location,
+            modifiers: modifiers
+        )
+
+        if virtualDragActive {
+            onInputEvent?(.mouseDragged(mouseEvent))
+        } else {
+            onInputEvent?(.mouseMoved(mouseEvent))
+        }
     }
 
     func cancelPendingPencilLongPress() {
@@ -1020,6 +1184,29 @@ public class InputCapturingView: UIView {
         lockedCursorView.isHidden = !shouldShow
     }
 
+    func resolvedLockedCursorEventPosition(_ position: CGPoint) -> CGPoint {
+        LockedCursorPositionResolver.resolve(position, allowsExtendedBounds: allowsExtendedCursorBounds)
+    }
+
+    func lockedCursorActionPosition() -> CGPoint {
+        resolvedLockedCursorEventPosition(lockedCursorPosition)
+    }
+
+    func shouldIgnoreLockedPointerHoverJump(from lastLocation: CGPoint, to location: CGPoint) -> Bool {
+        guard bounds.width > 0, bounds.height > 0 else { return false }
+
+        let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
+        let distance = hypot(translation.x, translation.y)
+        let jumpThreshold = max(bounds.width, bounds.height) * 0.35
+        let edgeInset: CGFloat = 2
+        let landsOnEdge = location.x <= edgeInset ||
+            location.x >= bounds.width - edgeInset ||
+            location.y <= edgeInset ||
+            location.y >= bounds.height - edgeInset
+
+        return landsOnEdge && distance >= jumpThreshold
+    }
+
     func updateLockedCursorViewPosition() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard !lockedCursorView.isHidden else { return }
@@ -1037,20 +1224,14 @@ public class InputCapturingView: UIView {
         guard bounds.width > 0, bounds.height > 0 else { return }
         lockedCursorPosition.x += translation.x / bounds.width
         lockedCursorPosition.y += translation.y / bounds.height
-        lockedCursorPosition = CGPoint(
-            x: min(max(lockedCursorPosition.x, 0), 1),
-            y: min(max(lockedCursorPosition.y, 0), 1)
-        )
+        lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
         noteLockedCursorLocalInput()
         setLockedCursorVisible(true)
-        lastCursorPosition = CGPoint(
-            x: min(max(lockedCursorPosition.x, 0), 1),
-            y: min(max(lockedCursorPosition.y, 0), 1)
-        )
+        lastCursorPosition = lockedCursorPosition
     }
 
     func applyLockedCursorHostUpdate(position: CGPoint, isVisible: Bool) {
-        lockedCursorTargetPosition = position
+        lockedCursorTargetPosition = resolvedLockedCursorEventPosition(position)
         lockedCursorTargetVisible = isVisible
         guard cursorLockEnabled else { return }
         guard !isLockedCursorLocalInputActive() else { return }
@@ -1072,10 +1253,8 @@ public class InputCapturingView: UIView {
                 y: lockedCursorPosition.y + deltaY * lockedCursorLerpAlpha
             )
         }
-        lastCursorPosition = CGPoint(
-            x: min(max(lockedCursorPosition.x, 0), 1),
-            y: min(max(lockedCursorPosition.y, 0), 1)
-        )
+        lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
+        lastCursorPosition = lockedCursorPosition
         updateLockedCursorViewPosition()
     }
 
@@ -1167,12 +1346,39 @@ public class InputCapturingView: UIView {
         revealCursorAfterPointerMovement()
         refreshModifiersForInput()
         let translation = CGPoint(x: CGFloat(deltaX), y: CGFloat(-deltaY))
+        noteLockedPointerDragIfNeeded(for: translation)
         applyLockedCursorDelta(translation)
+        sendLockedPointerMovementEvent(location: lockedCursorPosition, modifiers: keyboardModifiers)
+    }
+
+    func noteLockedPointerDragIfNeeded(for translation: CGPoint) {
+        guard translation != .zero else { return }
+
+        if lockedPointerButtonDown, !lockedPointerDraggedSinceDown {
+            lockedPointerDraggedSinceDown = true
+            resetPrimaryClickTracking()
+        }
+    }
+
+    func sendLockedPointerMovementEvent(
+        location: CGPoint,
+        modifiers: MirageModifierFlags,
+        pressure: CGFloat = 1.0,
+        stylus: MirageStylusEvent? = nil
+    ) {
+        let eventLocation = if lockedPointerButtonDown {
+            lockedCursorActionPosition()
+        } else {
+            location
+        }
         let mouseEvent = MirageMouseEvent(
             button: .left,
-            location: lockedCursorPosition,
-            modifiers: keyboardModifiers
+            location: eventLocation,
+            modifiers: modifiers,
+            pressure: pressure,
+            stylus: stylus
         )
+
         if lockedPointerButtonDown {
             onInputEvent?(.mouseDragged(mouseEvent))
         } else {
@@ -1612,7 +1818,7 @@ public class InputCapturingView: UIView {
                 setLockedCursorVisible(true)
                 updateLockedCursorViewPosition()
             }
-            if usesVirtualTrackpad {
+            if usesVisibleVirtualCursor {
                 setVirtualCursorVisible(false)
                 updateVirtualCursorPosition(location, updateVisibility: false)
             }
@@ -1620,7 +1826,7 @@ public class InputCapturingView: UIView {
             return location
         }
 
-        if cursorLockEnabled { return lockedCursorPosition }
+        if cursorLockEnabled { return lockedCursorActionPosition() }
         if let lastCursorPosition { return lastCursorPosition }
         if usesVirtualTrackpad { return virtualCursorPosition }
         return CGPoint(x: 0.5, y: 0.5)
@@ -1642,6 +1848,30 @@ public class InputCapturingView: UIView {
         onInputEvent?(.rightMouseDown(mouseEvent))
         onInputEvent?(.rightMouseUp(mouseEvent))
         commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
+    }
+
+    func performPencilGesture(
+        _ kind: MiragePencilGestureKind,
+        hoverLocation: CGPoint?
+    ) {
+        let action = pencilGestureConfiguration.action(for: kind)
+        performPencilGestureAction(action, hoverLocation: hoverLocation)
+    }
+
+    func performPencilGestureAction(
+        _ action: MiragePencilGestureAction,
+        hoverLocation: CGPoint?
+    ) {
+        switch action {
+        case .none:
+            return
+        case .secondaryClick:
+            let location = resolvedPencilSecondaryClickLocation(hoverLocation: hoverLocation)
+            sendPencilSecondaryClick(at: location)
+        case .toggleDictation,
+             .remoteShortcut:
+            onPencilGestureAction?(action)
+        }
     }
 
     func currentPencilModifiers() -> MirageModifierFlags {
@@ -1774,11 +2004,18 @@ extension InputCapturingView: UIPencilInteractionDelegate {
     @available(iOS 17.5, *)
     public func pencilInteraction(
         _: UIPencilInteraction,
+        didReceiveTap tap: UIPencilInteraction.Tap
+    ) {
+        performPencilGesture(.doubleTap, hoverLocation: tap.hoverPose?.location)
+    }
+
+    @available(iOS 17.5, *)
+    public func pencilInteraction(
+        _: UIPencilInteraction,
         didReceiveSqueeze squeeze: UIPencilInteraction.Squeeze
     ) {
         guard squeeze.phase == .ended else { return }
-        let location = resolvedPencilSecondaryClickLocation(hoverLocation: squeeze.hoverPose?.location)
-        sendPencilSecondaryClick(at: location)
+        performPencilGesture(.squeeze, hoverLocation: squeeze.hoverPose?.location)
     }
 }
 #endif

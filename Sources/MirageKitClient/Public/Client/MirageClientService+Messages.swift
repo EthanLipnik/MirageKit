@@ -41,6 +41,9 @@ extension MirageClientService {
             .streamPolicyUpdate: { [weak self] in self?.handleStreamPolicyUpdate($0) },
             .menuBarUpdate: { [weak self] in self?.handleMenuBarUpdate($0) },
             .menuActionResult: { [weak self] in self?.handleMenuActionResult($0) },
+            .remoteClientStreamOptionsCommand: { [weak self] in
+                self?.handleRemoteClientStreamOptionsCommand($0)
+            },
             .hostHardwareIcon: { [weak self] in self?.handleHostHardwareIcon($0) },
             .hostWallpaper: { [weak self] in self?.handleHostWallpaper($0) },
             .hostSupportLogArchive: { [weak self] in self?.handleHostSupportLogArchive($0) },

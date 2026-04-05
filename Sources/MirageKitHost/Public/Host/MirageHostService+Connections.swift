@@ -517,7 +517,25 @@ extension MirageHostService {
         await disconnectClient(existingClient)
     }
 
+    func expireStaleSingleClientReservationIfNeeded(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        guard let reservedSessionID = singleClientSessionID,
+              clientsBySessionID.isEmpty,
+              connectedClients.isEmpty,
+              disconnectingClientIDs.isEmpty,
+              let reservationStartedAt = singleClientReservationStartedAt,
+              now - reservationStartedAt >= connectionApprovalTimeoutSeconds else {
+            return
+        }
+
+        MirageLogger.host(
+            "Expiring stale client slot reservation \(reservedSessionID.uuidString) after \(now - reservationStartedAt)s"
+        )
+        singleClientSessionID = nil
+    }
+
     func reserveSingleClientSlot(for sessionID: UUID) -> Bool {
+        expireStaleSingleClientReservationIfNeeded()
+
         if let reservedID = singleClientSessionID, reservedID != sessionID { return false }
 
         if let existingSessionID = clientsBySessionID.keys.first, existingSessionID != sessionID {

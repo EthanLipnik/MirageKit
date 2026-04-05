@@ -55,7 +55,9 @@ package final class MiragePowerStateMonitor {
             registerLowPowerModeObserver()
             registerPlatformPowerObservers()
         }
-        dispatchCurrentSnapshot()
+        Task { @MainActor [weak self] in
+            await self?.dispatchCurrentSnapshot()
+        }
     }
 
     package func stop() {
@@ -65,15 +67,15 @@ package final class MiragePowerStateMonitor {
         unregisterPlatformPowerObservers()
     }
 
-    package func currentSnapshot() -> MiragePowerStateSnapshot {
+    package func currentSnapshot() async -> MiragePowerStateSnapshot {
         MiragePowerStateSnapshot(
             isSystemLowPowerModeEnabled: ProcessInfo.processInfo.isLowPowerModeEnabled,
-            isOnBattery: currentBatteryState()
+            isOnBattery: await currentBatteryState()
         )
     }
 
-    private func dispatchCurrentSnapshot() {
-        updateHandler?(currentSnapshot())
+    private func dispatchCurrentSnapshot() async {
+        updateHandler?(await currentSnapshot())
     }
 
     private func registerLowPowerModeObserver() {
@@ -84,7 +86,7 @@ package final class MiragePowerStateMonitor {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.dispatchCurrentSnapshot()
+                await self?.dispatchCurrentSnapshot()
             }
         }
     }
@@ -111,9 +113,9 @@ package final class MiragePowerStateMonitor {
         #endif
     }
 
-    private func currentBatteryState() -> Bool? {
+    private func currentBatteryState() async -> Bool? {
         #if os(macOS)
-        Self.readMacBatteryState()
+        await Self.readMacBatteryState()
         #elseif canImport(UIKit)
         readDeviceBatteryState()
         #else
@@ -127,7 +129,7 @@ private func miragePowerSourceDidChange(_ context: UnsafeMutableRawPointer?) {
     guard let context else { return }
     let monitor = Unmanaged<MiragePowerStateMonitor>.fromOpaque(context).takeUnretainedValue()
     Task { @MainActor in
-        monitor.handlePowerSourceDidChange()
+        await monitor.handlePowerSourceDidChange()
     }
 }
 
@@ -152,35 +154,38 @@ private extension MiragePowerStateMonitor {
         powerSourceRunLoopSource = nil
     }
 
-    func handlePowerSourceDidChange() {
-        dispatchCurrentSnapshot()
+    func handlePowerSourceDidChange() async {
+        await dispatchCurrentSnapshot()
     }
 
-    nonisolated static func readMacBatteryState() -> Bool? {
-        let info = IOPSCopyPowerSourcesInfo().takeRetainedValue()
-        let sources = IOPSCopyPowerSourcesList(info).takeRetainedValue() as [CFTypeRef]
-        guard !sources.isEmpty else { return nil }
+    nonisolated static func readMacBatteryState() async -> Bool? {
+        await Task.detached(priority: .utility) {
+            let info = IOPSCopyPowerSourcesInfo().takeRetainedValue()
+            let sources = IOPSCopyPowerSourcesList(info).takeRetainedValue() as [CFTypeRef]
+            guard !sources.isEmpty else { return nil }
 
-        var sawAC = false
-        var sawBattery = false
+            var sawAC = false
+            var sawBattery = false
 
-        for source in sources {
-            guard let descriptionRef = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue(),
-                  let description = descriptionRef as? [String: Any],
-                  let state = description[kIOPSPowerSourceStateKey as String] as? String else {
-                continue
+            for source in sources {
+                guard let descriptionRef = IOPSGetPowerSourceDescription(info, source)?.takeUnretainedValue(),
+                      let description = descriptionRef as? [String: Any],
+                      let state = description[kIOPSPowerSourceStateKey as String] as? String else {
+                    continue
+                }
+
+                if state == kIOPSBatteryPowerValue {
+                    sawBattery = true
+                } else if state == kIOPSACPowerValue {
+                    sawAC = true
+                }
             }
 
-            if state == kIOPSBatteryPowerValue {
-                sawBattery = true
-            } else if state == kIOPSACPowerValue {
-                sawAC = true
-            }
+            if sawBattery { return true }
+            if sawAC { return false }
+            return nil
         }
-
-        if sawBattery { return true }
-        if sawAC { return false }
-        return nil
+        .value
     }
 }
 #elseif canImport(UIKit)
@@ -201,7 +206,7 @@ private extension MiragePowerStateMonitor {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.dispatchCurrentSnapshot()
+                await self?.dispatchCurrentSnapshot()
             }
         }
 
@@ -211,7 +216,7 @@ private extension MiragePowerStateMonitor {
             queue: .main
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.dispatchCurrentSnapshot()
+                await self?.dispatchCurrentSnapshot()
             }
         }
     }

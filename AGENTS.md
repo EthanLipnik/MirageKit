@@ -14,6 +14,7 @@
 - Do not add third-party dependencies without explicit approval.
 - When releasing MirageKit, make the git tag match `MirageKit.version` exactly.
 - Never increase inflight for low latency mode.
+- In Network.framework, enabling peer-to-peer transport also allows AWDL paths over wired USB-C links when the system exposes them that way; account for that when reasoning about path selection and diagnostics.
 - Comments and README text should be static descriptions of current behavior.
 - When architecture, message flow, transport behavior, or subsystem boundaries change, update `Architecture.md` in the same change so diagrams and descriptions match current code.
 

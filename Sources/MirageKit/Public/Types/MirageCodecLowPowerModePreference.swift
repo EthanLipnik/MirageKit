@@ -24,9 +24,9 @@ public enum MirageCodecLowPowerModePreference: String, Sendable, Codable, CaseIt
         case .auto:
             "Auto"
         case .on:
-            "On"
+            "Always"
         case .onlyOnBattery:
-            "Only on Battery"
+            "On Battery"
         }
     }
 

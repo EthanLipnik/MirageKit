@@ -21,7 +21,7 @@ struct MirageMediaPathProberTests {
                 interfaceType: .wifi
             ),
             MediaPathProbeResult(
-                interfaceLabel: "ethernet",
+                interfaceLabel: "wired",
                 rttMs: 1.2,
                 includePeerToPeer: false,
                 interfaceType: .wiredEthernet
@@ -36,7 +36,7 @@ struct MirageMediaPathProberTests {
 
         let best = MediaPathProbeResult.bestCandidate(from: results)
         #expect(best != nil)
-        #expect(best?.interfaceLabel == "ethernet")
+        #expect(best?.interfaceLabel == "wired")
         #expect(best?.rttMs == 1.2)
     }
 
@@ -55,7 +55,7 @@ struct MirageMediaPathProberTests {
             interfaceType: .wifi
         )
         let candidate = MediaPathProbeResult(
-            interfaceLabel: "ethernet",
+            interfaceLabel: "wired",
             rttMs: 1.5,
             includePeerToPeer: false,
             interfaceType: .wiredEthernet
@@ -74,7 +74,7 @@ struct MirageMediaPathProberTests {
             interfaceType: .wifi
         )
         let candidate = MediaPathProbeResult(
-            interfaceLabel: "ethernet",
+            interfaceLabel: "wired",
             rttMs: 1.0,
             includePeerToPeer: false,
             interfaceType: .wiredEthernet

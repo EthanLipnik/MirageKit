@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/4/26.
 //
-//  Helper routines for automatic quality tests.
+//  Helper routines for connection quality tests.
 //
 
 import Foundation
@@ -13,6 +13,11 @@ import Network
 
 @MainActor
 extension MirageClientService {
+    struct PingWaiterRegistration {
+        let requestID: UInt64
+        let startedNewRequest: Bool
+    }
+
     nonisolated static func validatedQualityTestStageResult(
         _ stageResult: MirageQualityTestSummary.StageResult,
         metrics: (
@@ -40,12 +45,14 @@ extension MirageClientService {
         accumulator.record(header: header, payloadBytes: payloadBytes)
     }
 
-    func measureRTT() async throws -> Double {
+    func measureRTT(
+        sendPing: (@MainActor @Sendable () async throws -> Void)? = nil
+    ) async throws -> Double {
         var samples: [Double] = []
 
         for _ in 0 ..< 3 {
             let start = CFAbsoluteTimeGetCurrent()
-            try await sendPingAndAwaitPong()
+            try await sendPingAndAwaitPong(sendPing: sendPing)
             let delta = (CFAbsoluteTimeGetCurrent() - start) * 1000
             samples.append(delta)
         }
@@ -55,38 +62,26 @@ extension MirageClientService {
         return sorted[sorted.count / 2]
     }
 
-    func sendPingAndAwaitPong() async throws {
+    func sendPingAndAwaitPong(
+        sendPing: (@MainActor @Sendable () async throws -> Void)? = nil
+    ) async throws {
         guard case .connected = connectionState else {
             throw MirageError.protocolError("Not connected")
         }
-        guard pingContinuation == nil else {
-            throw MirageError.protocolError("Ping already in flight")
-        }
-
-        pingRequestID &+= 1
-        let requestID = pingRequestID
         let message = ControlMessage(type: .ping)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            pingContinuation = continuation
-            pingTimeoutTask?.cancel()
-            pingTimeoutTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                do {
-                    try await Task.sleep(for: .seconds(5))
-                } catch {
-                    return
-                }
-                self.completePingRequest(
-                    expectedRequestID: requestID,
-                    result: .failure(MirageError.protocolError("Ping timed out"))
-                )
-            }
+            let registration = registerPingWaiter(continuation)
+            guard registration.startedNewRequest else { return }
             Task { @MainActor [weak self] in
                 do {
-                    try await self?.sendControlMessage(message)
+                    if let sendPing {
+                        try await sendPing()
+                    } else {
+                        try await self?.sendControlMessage(message)
+                    }
                 } catch {
                     self?.completePingRequest(
-                        expectedRequestID: requestID,
+                        expectedRequestID: registration.requestID,
                         result: .failure(error)
                     )
                 }
@@ -120,12 +115,7 @@ extension MirageClientService {
         qualityTestStageCompletionBuffer.removeAll()
         clearQualityTestAccumulator()
 
-        if pingContinuation != nil {
-            completePingRequest(
-                expectedRequestID: pingRequestID,
-                result: .failure(CancellationError())
-            )
-        }
+        failActivePingRequests(with: CancellationError())
 
         completeQualityTestBenchmarkWaiter(result: nil)
         completeQualityTestStageCompletionWaiter(result: nil)
@@ -320,6 +310,24 @@ extension MirageClientService {
                 "Quality test stage \(stage.id) result kind=\(stage.probeKind.rawValue) target \((Double(stage.targetBitrateBps) / 1_000_000.0).formatted(.number.precision(.fractionLength(1)))) Mbps, sent \(sentMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, received \(throughputMbps.formatted(.number.precision(.fractionLength(1)))) Mbps, loss \(lossText)%, packets \(stageResult.receivedPacketCount)/\(stageResult.sentPacketCount)"
             )
 
+            if mode == .connectionLimit,
+               Self.qualityTestShouldStopConnectionLimitSweep(stageResult) {
+                if index < plan.stages.count - 1 {
+                    MirageLogger.client(
+                        "Quality test reached \(lossText)% loss at stage \(stage.id); cancelling remaining probe stages"
+                    )
+                    await cancelActiveQualityTest(
+                        reason: "connection-limit loss threshold reached at stage \(stage.id)",
+                        notifyHost: true
+                    )
+                } else {
+                    MirageLogger.client(
+                        "Quality test reached \(lossText)% loss at final stage \(stage.id)"
+                    )
+                }
+                break
+            }
+
             guard stopAfterFirstBreach else { continue }
             let stabilityConstraints = Self.qualityTestStabilityConstraints(
                 for: mode,
@@ -438,14 +446,16 @@ extension MirageClientService {
         targetBitrate: Int,
         payloadBytes: Int,
         throughputFloor: Double?,
-        lossCeiling: Double
+        lossCeiling: Double,
+        requiresLossBelowCeiling: Bool = false
     ) -> Bool {
         Self.qualityTestStageIsStable(
             stage,
             targetBitrate: targetBitrate,
             payloadBytes: payloadBytes,
             throughputFloor: throughputFloor,
-            lossCeiling: lossCeiling
+            lossCeiling: lossCeiling,
+            requiresLossBelowCeiling: requiresLossBelowCeiling
         )
     }
 
@@ -463,19 +473,68 @@ extension MirageClientService {
         fastPathState.clearQualityTestAccumulator()
     }
 
+    func registerPingWaiter(
+        _ continuation: CheckedContinuation<Void, Error>,
+        timeout: Duration = .seconds(5)
+    ) -> PingWaiterRegistration {
+        pingContinuations.append(continuation)
+        if pingContinuations.count > 1 {
+            return PingWaiterRegistration(
+                requestID: pingRequestID,
+                startedNewRequest: false
+            )
+        }
+
+        pingRequestID &+= 1
+        let requestID = pingRequestID
+        pingTimeoutTask?.cancel()
+        pingTimeoutTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: timeout)
+            } catch {
+                return
+            }
+            self.completePingRequest(
+                expectedRequestID: requestID,
+                result: .failure(MirageError.protocolError("Ping timed out"))
+            )
+        }
+
+        return PingWaiterRegistration(
+            requestID: requestID,
+            startedNewRequest: true
+        )
+    }
+
+    func failActivePingRequests(with error: Error) {
+        guard !pingContinuations.isEmpty else {
+            pingTimeoutTask?.cancel()
+            pingTimeoutTask = nil
+            return
+        }
+        completePingRequest(
+            expectedRequestID: pingRequestID,
+            result: .failure(error)
+        )
+    }
+
     func completePingRequest(
         expectedRequestID: UInt64,
         result: Result<Void, Error>
     ) {
-        guard pingRequestID == expectedRequestID, let continuation = pingContinuation else { return }
-        pingContinuation = nil
+        guard pingRequestID == expectedRequestID, !pingContinuations.isEmpty else { return }
+        let continuations = pingContinuations
+        pingContinuations.removeAll(keepingCapacity: false)
         pingTimeoutTask?.cancel()
         pingTimeoutTask = nil
-        switch result {
-        case .success:
-            continuation.resume()
-        case let .failure(error):
-            continuation.resume(throwing: error)
+        for continuation in continuations {
+            switch result {
+            case .success:
+                continuation.resume()
+            case let .failure(error):
+                continuation.resume(throwing: error)
+            }
         }
     }
 

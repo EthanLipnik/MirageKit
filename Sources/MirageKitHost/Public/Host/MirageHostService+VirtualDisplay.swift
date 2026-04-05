@@ -337,7 +337,6 @@ extension MirageHostService {
                 performanceMode: encoderSettings.performanceMode,
                 lowLatencyHighResolutionCompressionBoost: encoderSettings
                     .lowLatencyHighResolutionCompressionBoostEnabled,
-                temporaryDegradationMode: encoderSettings.temporaryDegradationMode,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration,
                 mediaMaxPacketSize: mediaMaxPacketSize

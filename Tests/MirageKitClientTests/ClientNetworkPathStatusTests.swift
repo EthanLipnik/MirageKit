@@ -20,11 +20,96 @@ struct ClientNetworkPathStatusTests {
         #expect(status.displayName == "AWDL")
     }
 
+    @Test("AWDL interface names win over Wi-Fi path flags")
+    func awdlClassifierWinsOverWiFiFlags() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en0", "awdl0"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+
+        #expect(snapshot.kind == .awdl)
+        #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "AWDL")
+    }
+
     @Test("Bridge interfaces surface as Thunderbolt Bridge")
     func thunderboltBridgeDisplayName() {
         let status = makeStatus(kind: .wired, interfaceNames: ["bridge0"], usesWired: true)
 
         #expect(status.displayName == "Thunderbolt Bridge")
+    }
+
+    @Test("Generic wired paths do not assume Ethernet")
+    func wiredDisplayName() {
+        let status = makeStatus(kind: .wired, interfaceNames: ["en7"], usesWired: true)
+
+        #expect(status.displayName == "Wired")
+    }
+
+    @Test("Tunnel interfaces surface as overlay paths")
+    func overlayDisplayName() {
+        let status = makeStatus(kind: .other, interfaceNames: ["utun4"], usesOther: true)
+
+        #expect(status.displayName == "VPN / Overlay")
+    }
+
+    @Test("Interface type summary combines active flags")
+    func interfaceTypeSummary() {
+        let status = MirageClientNetworkPathStatus(
+            kind: .other,
+            status: "satisfied",
+            interfaceNames: ["en7", "utun4"],
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true,
+            usesWiFi: false,
+            usesWired: true,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true
+        )
+
+        #expect(status.interfaceTypeSummary == "Wired + Other")
+    }
+
+    @Test("Generic wired paths explain that classification is broad")
+    func wiredDiagnosticNote() {
+        let status = makeStatus(kind: .wired, interfaceNames: ["en7"], usesWired: true)
+
+        #expect(status.transportDiagnosticNote?.contains("generic wired path") == true)
+    }
+
+    @Test("Snapshot endpoint descriptions carry through to public status")
+    func endpointDescriptionsCarryThrough() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en7"],
+            usesWiFi: false,
+            usesWired: true,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: false,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true,
+            localEndpointDescription: "192.168.1.10:54321",
+            remoteEndpointDescription: "192.168.1.20:51024"
+        )
+
+        let status = MirageClientNetworkPathStatus(snapshot: snapshot)
+
+        #expect(status.localEndpointDescription == "192.168.1.10:54321")
+        #expect(status.remoteEndpointDescription == "192.168.1.20:51024")
     }
 
     @Test("Protocol summary reflects the available IP families")

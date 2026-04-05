@@ -37,13 +37,8 @@ public struct MirageReceiverHealthController: Sendable {
     private static let fastStartSuccessfulProbeCooldownSeconds: CFAbsoluteTime = 4
     private static let fastStartFailedProbeCooldownSeconds: CFAbsoluteTime = 6
     private static let fastStartDurationSeconds: CFAbsoluteTime = 12
-    private static let probeEncodeBudgetRatio = 0.92
-    private static let probeSourceFPSHealthyRatio = 0.95
-    private static let probeEncodedFPSHealthyRatio = 0.95
-    private static let probeDecodeFPSHealthyRatio = 0.95
-    private static let receivedFPSStressRatio = 0.92
-    private static let receivedFPSSevereRatio = 0.75
-    private static let receivedFPSHealthyRatio = 0.97
+    private static let encodedDeliveryStressRatio = 0.92
+    private static let encodedDeliverySevereRatio = 0.75
     private static let sendQueueStressBytes = 800_000
     private static let sendQueueSevereBytes = 2_000_000
     private static let sendStartDelayStressMs = 2.0
@@ -135,12 +130,12 @@ public struct MirageReceiverHealthController: Sendable {
             from: snapshot
         )
 
-        if sample.isHealthy {
-            healthySampleCount += 1
-            stressSampleCount = 0
-        } else {
+        if sample.isStress {
             healthySampleCount = 0
             stressSampleCount += 1
+        } else {
+            healthySampleCount += 1
+            stressSampleCount = 0
         }
 
         switch state {
@@ -260,83 +255,44 @@ public struct MirageReceiverHealthController: Sendable {
     private static func sample(
         from snapshot: MirageClientMetricsSnapshot
     ) -> Sample {
-        let targetFPS = max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60)
+        let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
         let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
         let packetPacerAverageSleepMs = max(0, snapshot.hostPacketPacerAverageSleepMs ?? 0)
+        let captureIngressFPS = max(0, snapshot.hostCaptureIngressFPS ?? 0)
+        let captureFPS = max(0, snapshot.hostCaptureFPS ?? 0)
+        let encodeAttemptFPS = max(0, snapshot.hostEncodeAttemptFPS ?? 0)
         let transportDropCount = (snapshot.hostStalePacketDrops ?? 0) +
             (snapshot.hostGenerationAbortDrops ?? 0) +
             (snapshot.hostNonKeyframeHoldDrops ?? 0)
-
-        let severe = receivedFPS < Double(targetFPS) * Self.receivedFPSSevereRatio ||
+        let streamIsActive = max(
+            hostEncodedFPS,
+            max(receivedFPS, max(captureIngressFPS, max(captureFPS, encodeAttemptFPS)))
+        ) > 0.5
+        let deliverySevere = hostEncodedFPS > 0 &&
+            receivedFPS < hostEncodedFPS * Self.encodedDeliverySevereRatio
+        let deliveryStress = hostEncodedFPS > 0 &&
+            receivedFPS < hostEncodedFPS * Self.encodedDeliveryStressRatio
+        let severe = deliverySevere ||
             queueBytes >= Self.sendQueueSevereBytes ||
             sendStartDelayAverageMs >= Self.sendStartDelaySevereMs ||
             sendCompletionAverageMs >= Self.sendCompletionSevereMs ||
             packetPacerAverageSleepMs >= Self.packetPacerSevereMs ||
             transportDropCount >= Self.transportDropSevereCount
-        let sustainedLoss = receivedFPS < Double(targetFPS) * Self.receivedFPSStressRatio ||
+        let sustainedLoss = deliveryStress ||
             queueBytes >= Self.sendQueueStressBytes ||
             sendStartDelayAverageMs >= Self.sendStartDelayStressMs ||
             sendCompletionAverageMs >= Self.sendCompletionStressMs ||
             packetPacerAverageSleepMs >= Self.packetPacerStressMs ||
             transportDropCount > 0
-        let healthy = !severe &&
-            receivedFPS >= Double(targetFPS) * Self.receivedFPSHealthyRatio &&
-            queueBytes < Self.sendQueueStressBytes &&
-            sendStartDelayAverageMs < Self.sendStartDelayStressMs &&
-            sendCompletionAverageMs < Self.sendCompletionStressMs &&
-            packetPacerAverageSleepMs < Self.packetPacerStressMs &&
-            transportDropCount == 0
-        let captureIngressHasHeadroom: Bool = if let captureIngressFPS = snapshot.hostCaptureIngressFPS,
-            captureIngressFPS > 0 {
-            captureIngressFPS >= Double(targetFPS) * Self.probeSourceFPSHealthyRatio
-        } else {
-            true
-        }
-        let captureFPSHasHeadroom: Bool = if let captureFPS = snapshot.hostCaptureFPS,
-            captureFPS > 0 {
-            captureFPS >= Double(targetFPS) * Self.probeSourceFPSHealthyRatio
-        } else {
-            true
-        }
-        let encodeAttemptFPSHasHeadroom: Bool = if let encodeAttemptFPS = snapshot.hostEncodeAttemptFPS,
-            encodeAttemptFPS > 0 {
-            encodeAttemptFPS >= Double(targetFPS) * Self.probeSourceFPSHealthyRatio
-        } else {
-            true
-        }
-        let encodeHasHeadroom: Bool = if let frameBudgetMs = snapshot.hostFrameBudgetMs,
-                                          frameBudgetMs > 0,
-                                          let averageEncodeMs = snapshot.hostAverageEncodeMs,
-                                          averageEncodeMs > 0 {
-            averageEncodeMs <= frameBudgetMs * Self.probeEncodeBudgetRatio
-        } else {
-            true
-        }
-        let encodedFPSHasHeadroom: Bool = if snapshot.hostEncodedFPS > 0 {
-            snapshot.hostEncodedFPS >= Double(targetFPS) * Self.probeEncodedFPSHealthyRatio
-        } else {
-            true
-        }
-        let decodeHasHeadroom: Bool = {
-            guard snapshot.decodeHealthy else { return false }
-            guard receivedFPS > 0 else { return true }
-            let requiredDecodedFPS = receivedFPS * Self.probeDecodeFPSHealthyRatio
-            return snapshot.decodedFPS >= requiredDecodedFPS
-        }()
-
+        let healthy = !severe && !sustainedLoss
         return Sample(
             isSevere: severe,
             isStress: severe || sustainedLoss,
             isHealthy: healthy,
-            allowsProbePromotion: captureIngressHasHeadroom &&
-                captureFPSHasHeadroom &&
-                encodeAttemptFPSHasHeadroom &&
-                encodeHasHeadroom &&
-                encodedFPSHasHeadroom &&
-                decodeHasHeadroom
+            allowsProbePromotion: streamIsActive
         )
     }
 
@@ -366,7 +322,7 @@ public struct MirageReceiverHealthController: Sendable {
     }
 
     private static func healthPriority(for snapshot: MirageClientMetricsSnapshot) -> Int {
-        let targetFPS = max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60)
+        let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
         let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
@@ -377,7 +333,8 @@ public struct MirageReceiverHealthController: Sendable {
             (snapshot.hostNonKeyframeHoldDrops ?? 0)
         var score = 0
 
-        if receivedFPS < Double(targetFPS) * Self.receivedFPSSevereRatio {
+        if hostEncodedFPS > 0,
+           receivedFPS < hostEncodedFPS * Self.encodedDeliverySevereRatio {
             score += 900
         }
         if queueBytes >= Self.sendQueueSevereBytes {
@@ -393,7 +350,8 @@ public struct MirageReceiverHealthController: Sendable {
         if transportDropCount >= Self.transportDropSevereCount {
             score += 600
         }
-        if receivedFPS < Double(targetFPS) * Self.receivedFPSStressRatio {
+        if hostEncodedFPS > 0,
+           receivedFPS < hostEncodedFPS * Self.encodedDeliveryStressRatio {
             score += 500
         }
         if queueBytes >= Self.sendQueueStressBytes {

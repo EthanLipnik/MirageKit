@@ -35,8 +35,6 @@ struct ReceiverHealthControllerTests {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostCurrentBitrate = 8_000_000
         snapshot.hostRequestedTargetBitrate = 80_000_000
-        snapshot.hostTemporaryDegradationMode = .prioritizeFramerate
-        snapshot.hostTimeBelowTargetBitrateMs = 8_000
 
         let action = controller.advance(
             snapshots: [snapshot],
@@ -65,8 +63,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Decode stalls do not trigger upward probing")
-    func decodeStallsDoNotTriggerUpwardProbing() {
+    @Test("Decode stalls do not block upward probing when transport is healthy")
+    func decodeStallsDoNotBlockUpwardProbingWhenTransportIsHealthy() {
         var controller = MirageReceiverHealthController()
         let snapshot = decodeStalledButTransportHealthySnapshot()
 
@@ -83,7 +81,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .none)
+        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
     }
 
     @Test("Healthy fast-start windows probe upward after two clean samples")
@@ -157,8 +155,8 @@ struct ReceiverHealthControllerTests {
         #expect(probe == .probe(targetBitrateBps: 472_500_000))
     }
 
-    @Test("Healthy transport does not probe upward when host encode is already over budget")
-    func healthyTransportDoesNotProbeWhenHostEncodeIsOverBudget() {
+    @Test("Healthy transport still probes upward when host encode is already over budget")
+    func healthyTransportStillProbesWhenHostEncodeIsOverBudget() {
         var controller = MirageReceiverHealthController()
         var snapshot = healthySnapshot(activeQuality: 0.70)
         snapshot.hostCaptureIngressFPS = 60
@@ -181,32 +179,62 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .none)
+        #expect(action == .probe(targetBitrateBps: 300_000_000))
     }
 
-    @Test("Healthy transport does not probe upward when capture cadence is already below target")
-    func healthyTransportDoesNotProbeWhenCaptureCadenceIsBelowTarget() {
+    @Test("Source-paced low cadence still probes upward when transport is healthy")
+    func sourcePacedLowCadenceStillProbesUpwardWhenTransportIsHealthy() {
         var controller = MirageReceiverHealthController()
         var snapshot = healthySnapshot(activeQuality: 0.70)
         snapshot.hostCaptureIngressFPS = 44
         snapshot.hostCaptureFPS = 43
         snapshot.hostEncodeAttemptFPS = 43
         snapshot.hostEncodedFPS = 43
+        snapshot.receivedFPS = 43
+        snapshot.decodedFPS = 43
+        snapshot.presentedFPS = 43
+        snapshot.uniquePresentedFPS = 43
 
         _ = controller.advance(
             snapshots: [snapshot],
-            currentBitrateBps: 220_000_000,
-            ceilingBps: 500_000_000,
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
             now: 0
         )
         let action = controller.advance(
             snapshots: [snapshot],
-            currentBitrateBps: 220_000_000,
-            ceilingBps: 500_000_000,
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
             now: 2
         )
 
-        #expect(action == .none)
+        #expect(action == .probe(targetBitrateBps: 128_000_000))
+    }
+
+    @Test("Minor delivery drift still probes upward when transport is otherwise clean")
+    func minorDeliveryDriftStillProbesUpwardWhenTransportIsOtherwiseClean() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.70)
+        snapshot.hostEncodedFPS = 60
+        snapshot.receivedFPS = 58
+        snapshot.decodedFPS = 58
+        snapshot.presentedFPS = 58
+        snapshot.uniquePresentedFPS = 58
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 24_000_000,
+            ceilingBps: 136_000_000,
+            now: 0
+        )
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 24_000_000,
+            ceilingBps: 136_000_000,
+            now: 2
+        )
+
+        #expect(action == .probe(targetBitrateBps: 104_000_000))
     }
 
     @Test("Transport drops trigger backoff even when decode metrics look healthy")

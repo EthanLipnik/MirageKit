@@ -81,15 +81,18 @@ extension VideoEncoder {
         streamKind: StreamKind
     ) -> Bool {
         guard performanceMode == .standard, latencyMode == .lowestLatency else { return false }
-        return !shouldSuppressStandardDesktopLowLatencyTuning(
+        return !shouldSuppressStandardLowLatencyRateControl(
             streamKind: streamKind
         )
     }
 
-    nonisolated static func shouldSuppressStandardDesktopLowLatencyTuning(
+    nonisolated static func shouldSuppressStandardLowLatencyRateControl(
         streamKind: StreamKind
     ) -> Bool {
-        streamKind == .desktop
+        switch streamKind {
+        case .desktop, .window:
+            true
+        }
     }
 
     nonisolated static func shouldApplySuppressedStandardLowLatencyThroughputTuning(
@@ -101,7 +104,7 @@ extension VideoEncoder {
     ) -> Bool {
         performanceMode == .standard &&
             latencyMode == .lowestLatency &&
-            shouldSuppressStandardDesktopLowLatencyTuning(
+            shouldSuppressStandardLowLatencyRateControl(
                 streamKind: streamKind
             )
     }
@@ -313,11 +316,11 @@ extension VideoEncoder {
         if performanceMode == .game {
             MirageLogger.encoder("Encoder spec: game mode low-latency rate control requested")
         } else if resolvedSessionLatencyMode() == .lowestLatency {
-            if Self.shouldSuppressStandardDesktopLowLatencyTuning(
+            if Self.shouldSuppressStandardLowLatencyRateControl(
                 streamKind: streamKind
             ) {
                 MirageLogger.encoder(
-                    "Encoder spec: standard low-latency rate control suppressed for desktop \(width)x\(height)"
+                    "Encoder spec: standard low-latency rate control suppressed for \(streamKind.rawValue) \(width)x\(height)"
                 )
             } else if Self.standardLowLatencyVTTuningEnabled(
                 performanceMode: performanceMode,

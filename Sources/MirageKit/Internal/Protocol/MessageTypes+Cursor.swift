@@ -31,7 +31,9 @@ package struct CursorUpdateMessage: Codable {
 package struct CursorPositionUpdateMessage: Codable {
     /// The stream this cursor position applies to
     package let streamID: StreamID
-    /// Normalized cursor position (0-1, top-left origin)
+    /// Normalized cursor position in top-left-origin stream space.
+    /// Secondary desktop streams may temporarily exceed `0...1`
+    /// when the host cursor crosses onto another display.
     package let normalizedX: Float
     package let normalizedY: Float
     /// Whether the cursor is currently within the streamed window bounds

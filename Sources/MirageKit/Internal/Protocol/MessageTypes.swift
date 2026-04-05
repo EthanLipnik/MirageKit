@@ -85,6 +85,8 @@ package enum ControlMessageType: UInt8, Codable {
     case auxiliaryWindowUpdate = 0x99 // Host -> Client: Auxiliary window position/visibility update
     case hostWallpaperRequest = 0x9A // Client -> Host: Request host wallpaper payload
     case hostWallpaper = 0x9B // Host -> Client: Host wallpaper payload
+    case remoteClientStreamOptionsState = 0x9C // Client -> Host: Sync client stream-option state
+    case remoteClientStreamOptionsCommand = 0x9D // Host -> Client: Execute a client stream-option action
 
     // Desktop streaming (full virtual display mirroring)
     case startDesktopStream = 0xA0 // Client → Host: Start full desktop stream

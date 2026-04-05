@@ -322,6 +322,9 @@ extension MirageClientService {
         activeAppListRequestID = nil
         appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
         pendingForceIconResetForNextAppListRequest = false
+        deferredControlRefreshRequirements = .none
+        droppedAppIconUpdateMessagesWhileSuppressed = 0
+        setControlUpdatePolicy(.normal)
         streamingAppBundleID = nil
         for session in sessions {
             await stopViewing(session)
@@ -375,10 +378,7 @@ extension MirageClientService {
         isAwaitingManualApproval = false
         pingTimeoutTask?.cancel()
         pingTimeoutTask = nil
-        if let pingContinuation {
-            self.pingContinuation = nil
-            pingContinuation.resume(throwing: MirageError.protocolError(reason))
-        }
+        failActivePingRequests(with: MirageError.protocolError(reason))
         qualityTestPendingTestID = nil
         qualityTestBenchmarkTimeoutTask?.cancel()
         qualityTestBenchmarkTimeoutTask = nil
@@ -794,6 +794,10 @@ extension MirageClientService {
             switch mirageError {
             case .timeout:
                 return .timeout
+            case let .protocolError(reason):
+                if looksLikeAddressResolutionFailure(reason) {
+                    return .addressUnavailable
+                }
             case let .connectionFailed(underlyingError):
                 return classifyControlSessionFailure(underlyingError)
             default:
@@ -826,6 +830,13 @@ extension MirageClientService {
         }
 
         return .other
+    }
+
+    private static func looksLikeAddressResolutionFailure(_ reason: String) -> Bool {
+        let normalized = reason.lowercased()
+        return normalized.contains("failed to resolve") ||
+            normalized.contains("nodename nor servname provided") ||
+            normalized.contains("name or service not known")
     }
 
     private static func classifyLoomConnectionFailure(
@@ -913,7 +924,7 @@ extension MirageClientService {
         case .wired:
             if !localWired.isEmpty,
                localWired.intersection(hostNetwork.allSubnetSignatures).isEmpty {
-                return "The host and client do not appear to be on the same Ethernet network. Check that both devices are on the same subnet or VLAN."
+                return "The host and client do not appear to be on the same wired network. Check that both devices are on the same subnet or VLAN."
             }
         case .cellular, .loopback, .other, .unknown, .awdl:
             break

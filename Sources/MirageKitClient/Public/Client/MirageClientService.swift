@@ -57,6 +57,7 @@ public final class MirageClientService {
 
     public enum StreamStopOrigin: Sendable {
         case clientWindowClosed
+        case remoteCommand
     }
 
     public enum HostSoftwareUpdateChannel: String, Sendable, Codable {
@@ -430,6 +431,21 @@ public final class MirageClientService {
     /// Callback when menu action result is received
     public var onMenuActionResult: ((StreamID, Bool, String?) -> Void)?
 
+    /// Callback when the host requests a status-overlay change on the client.
+    public var onRemoteClientStreamStatusOverlayCommand: ((Bool) -> Void)?
+
+    /// Callback when the host requests a stream-options display-mode change on the client.
+    public var onRemoteClientStreamOptionsDisplayModeCommand: ((MirageStreamOptionsDisplayMode) -> Void)?
+
+    /// Callback when the host requests a desktop cursor presentation change on the client.
+    public var onRemoteClientDesktopCursorPresentationCommand: ((MirageDesktopCursorPresentation) -> Void)?
+
+    /// Callback when the host requests the client stop a specific app stream.
+    public var onRemoteClientStopAppStreamCommand: ((String) -> Void)?
+
+    /// Callback when the host requests the client stop its active desktop stream.
+    public var onRemoteClientStopDesktopStreamCommand: (() -> Void)?
+
     /// Client delegate for events
     public weak var delegate: MirageClientDelegate?
 
@@ -589,7 +605,7 @@ public final class MirageClientService {
     var hostWallpaperTransferTask: Task<Void, Never>?
     var hostWallpaperTimeoutTask: Task<Void, Never>?
     let hostWallpaperTimeout: Duration = .seconds(45)
-    var pingContinuation: CheckedContinuation<Void, Error>?
+    var pingContinuations: [CheckedContinuation<Void, Error>] = []
     var pingRequestID: UInt64 = 0
     var pingTimeoutTask: Task<Void, Never>?
 
@@ -736,7 +752,7 @@ public final class MirageClientService {
 
     /// Client protocol version used for hello negotiation.
     public static var clientProtocolVersion: Int {
-        Int(Loom.protocolVersion)
+        Int(MirageKit.protocolVersion)
     }
 
     public init(

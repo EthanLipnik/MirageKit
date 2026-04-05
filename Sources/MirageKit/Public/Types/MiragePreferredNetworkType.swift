@@ -25,7 +25,7 @@ public enum MiragePreferredNetworkType: String, Sendable, Codable, CaseIterable,
         case .automatic:
             "Automatic"
         case .ethernet:
-            "Ethernet"
+            "Wired"
         case .thunderbolt:
             "Thunderbolt Bridge"
         case .wifi:

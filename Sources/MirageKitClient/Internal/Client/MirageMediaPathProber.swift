@@ -97,7 +97,7 @@ final class MirageMediaPathProber {
             requiredInterface: NWInterface?,
             includePeerToPeer: Bool
         )] = [
-            ("ethernet", .wiredEthernet, nil, false),
+            ("wired", .wiredEthernet, nil, false),
             ("wifi", .wifi, nil, false),
         ]
         if let thunderboltInterface = availableInterfaces.first(where: Self.isThunderboltInterface(_:)) {

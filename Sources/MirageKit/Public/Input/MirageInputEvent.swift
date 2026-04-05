@@ -60,8 +60,9 @@ public enum MirageInputEvent: Codable, Sendable {
         }
     }
 
-    /// Mouse location for events that have cursor position (normalized 0-1)
-    /// Used to track last cursor position for graceful input release during decode errors
+    /// Mouse location for events that have cursor position in normalized stream space.
+    /// Secondary desktop cursor-lock input may temporarily exceed `0...1`.
+    /// Used to track last cursor position for graceful input release during decode errors.
     public var mouseLocation: CGPoint? {
         switch self {
         case let .mouseDown(e),

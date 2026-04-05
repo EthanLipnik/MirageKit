@@ -67,6 +67,12 @@ public final class MirageHostService {
     /// Effective cursor presentation for the active desktop stream.
     public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .clientCursor
 
+    /// Latest client-owned stream-option state mirrored back to the host UI.
+    public internal(set) var remoteClientStreamStatusOverlayEnabled = false
+
+    /// Latest client-owned stream-options display mode mirrored back to the host UI.
+    public internal(set) var remoteClientStreamOptionsDisplayMode: MirageStreamOptionsDisplayMode = .inStream
+
     /// Callback fired when host battery-policy support changes.
     public var onEncoderLowPowerBatteryPolicySupportChanged: ((Bool) -> Void)?
 
@@ -180,9 +186,15 @@ public final class MirageHostService {
     var clientsByID: [UUID: ClientContext] = [:]
     var disconnectingClientIDs: Set<UUID> = []
     var peerIdentityByClientID: [UUID: LoomPeerIdentity] = [:]
+    var singleClientReservationStartedAt: CFAbsoluteTime?
     var singleClientSessionID: UUID? {
         didSet {
             guard oldValue != singleClientSessionID else { return }
+            singleClientReservationStartedAt = if singleClientSessionID == nil {
+                nil
+            } else {
+                CFAbsoluteTimeGetCurrent()
+            }
             updateAdvertisedConnectionAvailability()
             onConnectionAvailabilityChanged?(allowsNewClientConnections)
         }

@@ -12,7 +12,7 @@ import UIKit
 /// Invisible scroll views that capture native scroll physics.
 /// The actual content (Metal view) stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
-final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
     // MARK: - Safe Area Override
 
     /// Override safe area insets to ensure content fills entire screen
@@ -105,6 +105,7 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
 
     /// Gesture recognizers for trackpad pinch/rotation
     private var rotationGesture: UIRotationGestureRecognizer!
+    private let rotationGestureDelegate = RotationGestureDelegate()
 
     /// State tracking for incremental gesture deltas
     private var lastRotationAngle: CGFloat = 0.0
@@ -190,7 +191,9 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
             NSNumber(value: UITouch.TouchType.indirectPointer.rawValue),
             NSNumber(value: UITouch.TouchType.indirect.rawValue),
         ]
-        rotationGesture.delegate = self
+        rotationGestureDelegate.indirectPanGestureRecognizer = indirectScrollView.panGestureRecognizer
+        rotationGestureDelegate.rotationGestureRecognizer = rotationGesture
+        rotationGesture.delegate = rotationGestureDelegate
         addGestureRecognizer(rotationGesture)
     }
 
@@ -293,18 +296,6 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
         recenterIfNeeded(for: scrollView)
     }
 
-    // MARK: - UIGestureRecognizerDelegate
-
-    func gestureRecognizer(
-        _ gestureRecognizer: UIGestureRecognizer,
-        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
-    )
-    -> Bool {
-        let indirectPan = indirectScrollView.panGestureRecognizer
-        return (gestureRecognizer == indirectPan && otherGestureRecognizer == rotationGesture) ||
-            (gestureRecognizer == rotationGesture && otherGestureRecognizer == indirectPan)
-    }
-
     // MARK: - Trackpad Gesture Handlers
 
     @objc
@@ -375,6 +366,22 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
         } else {
             isRecenteringDirect = isRecentering
         }
+    }
+}
+
+private final class RotationGestureDelegate: NSObject, UIGestureRecognizerDelegate {
+    weak var indirectPanGestureRecognizer: UIGestureRecognizer?
+    weak var rotationGestureRecognizer: UIGestureRecognizer?
+
+    func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
+    ) -> Bool {
+        guard let indirectPanGestureRecognizer, let rotationGestureRecognizer else {
+            return false
+        }
+        return (gestureRecognizer == indirectPanGestureRecognizer && otherGestureRecognizer == rotationGestureRecognizer) ||
+            (gestureRecognizer == rotationGestureRecognizer && otherGestureRecognizer == indirectPanGestureRecognizer)
     }
 }
 

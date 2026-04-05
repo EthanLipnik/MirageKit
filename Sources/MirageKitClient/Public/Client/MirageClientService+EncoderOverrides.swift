@@ -53,10 +53,6 @@ extension MirageClientService {
                     "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
                 )
         }
-        if let temporaryDegradationMode = overrides.temporaryDegradationMode {
-            request.temporaryDegradationMode = temporaryDegradationMode
-            MirageLogger.client("Requesting temporary degradation mode: \(temporaryDegradationMode.displayName)")
-        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -121,10 +117,6 @@ extension MirageClientService {
                     "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
                 )
         }
-        if let temporaryDegradationMode = overrides.temporaryDegradationMode {
-            request.temporaryDegradationMode = temporaryDegradationMode
-            MirageLogger.client("Requesting temporary degradation mode: \(temporaryDegradationMode.displayName)")
-        }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true
             MirageLogger.client("Requesting uncapped resolution pipeline")
@@ -188,10 +180,6 @@ extension MirageClientService {
                 .client(
                     "Requesting low-latency high-res compression boost: \(lowLatencyHighResolutionCompressionBoost ? "enabled" : "disabled")"
                 )
-        }
-        if let temporaryDegradationMode = overrides.temporaryDegradationMode {
-            request.temporaryDegradationMode = temporaryDegradationMode
-            MirageLogger.client("Requesting temporary degradation mode: \(temporaryDegradationMode.displayName)")
         }
         if overrides.disableResolutionCap {
             request.disableResolutionCap = true

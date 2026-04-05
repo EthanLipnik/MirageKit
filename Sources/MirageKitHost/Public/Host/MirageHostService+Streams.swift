@@ -195,7 +195,6 @@ public extension MirageHostService {
         performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool = true,
-        temporaryDegradationMode: MirageTemporaryDegradationMode = .off,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
         allowDirectCaptureFallback: Bool = false,
@@ -306,7 +305,6 @@ public extension MirageHostService {
             mediaSecurityContext: nil,
             runtimeQualityAdjustmentEnabled: allowRuntimeQualityAdjustment ?? true,
             lowLatencyHighResolutionCompressionBoostEnabled: lowLatencyHighResolutionCompressionBoost,
-            temporaryDegradationMode: temporaryDegradationMode,
             disableResolutionCap: disableResolutionCap,
             encoderLowPowerEnabled: isEncoderLowPowerModeActive,
             capturePressureProfile: capturePressureProfile,
@@ -669,14 +667,32 @@ public extension MirageHostService {
             state.bounds,
             targetAspectRatio: state.targetContentAspectRatio
         )
-        let originTolerance: CGFloat = 8
-        let sizeTolerance: CGFloat = 8
+        if Self.windowFrameMatchesExpectedPlacement(
+            currentFrame: currentFrame,
+            expectedFrame: expectedFrame,
+            currentSpaceMembership: currentSpaceMembership,
+            expectedSpaceID: expectedSpaceID
+        ) {
+            return nil
+        }
+
+        return "frame drift expected=\(expectedFrame) observed=\(currentFrame)"
+    }
+
+    nonisolated internal static func windowFrameMatchesExpectedPlacement(
+        currentFrame: CGRect,
+        expectedFrame: CGRect,
+        currentSpaceMembership: [CGSSpaceID],
+        expectedSpaceID: CGSSpaceID,
+        originTolerance: CGFloat = 8,
+        sizeTolerance: CGFloat = 8
+    ) -> Bool {
         let originMatches = abs(currentFrame.minX - expectedFrame.minX) <= originTolerance &&
             abs(currentFrame.minY - expectedFrame.minY) <= originTolerance
         let sizeMatches = abs(currentFrame.width - expectedFrame.width) <= sizeTolerance &&
             abs(currentFrame.height - expectedFrame.height) <= sizeTolerance
         if originMatches, sizeMatches {
-            return nil
+            return true
         }
 
         let intersectsExpected = currentFrame.intersects(
@@ -691,24 +707,54 @@ public extension MirageHostService {
             currentFrame.width <= maximumExpectedWidth &&
             currentFrame.height <= maximumExpectedHeight
         if intersectsExpected, sizeWithinExpectedRange {
-            return nil
+            return true
         }
 
         if currentSpaceMembership.contains(expectedSpaceID) {
             let localExpected = CGRect(origin: .zero, size: expectedFrame.size)
                 .insetBy(dx: -originTolerance, dy: -originTolerance)
             if currentFrame.intersects(localExpected), sizeWithinExpectedRange {
-                return nil
+                return true
             }
         }
 
-        return "frame drift expected=\(expectedFrame) observed=\(currentFrame)"
+        return false
+    }
+
+    nonisolated internal static func windowCapturePlacementDriftReason(
+        currentSpaceMembership: [CGSSpaceID],
+        expectedSpaceID: CGSSpaceID,
+        currentFrame: CGRect?,
+        expectedFrame: CGRect?
+    ) -> String? {
+        if currentSpaceMembership.contains(expectedSpaceID) {
+            return nil
+        }
+
+        if let currentFrame,
+           let expectedFrame,
+           windowFrameMatchesExpectedPlacement(
+               currentFrame: currentFrame,
+               expectedFrame: expectedFrame,
+               currentSpaceMembership: currentSpaceMembership,
+               expectedSpaceID: expectedSpaceID
+           ) {
+            return nil
+        }
+
+        return "space drift expected=\(expectedSpaceID) actual=\(currentSpaceMembership)"
     }
 
     func enforceVirtualDisplayPlacementAfterActivation(
         windowID: WindowID,
         force: Bool = false
     ) async {
+        if shouldSkipPlacementRepair(for: windowID) {
+            lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
+            windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
+            return
+        }
+
         // For window capture, only ensure the window is on the correct space.
         // Do NOT resize or reposition — the window is aspect-fit to the client's
         // resolution and the full moveWindow flow fights that sizing.
@@ -721,9 +767,12 @@ public extension MirageHostService {
                 let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(vdContext.displayID)
                 guard spaceID != 0 else { return }
                 let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-                let driftReason = currentSpaces.contains(spaceID)
-                    ? nil
-                    : "space drift expected=\(spaceID) actual=\(currentSpaces)"
+                let driftReason = Self.windowCapturePlacementDriftReason(
+                    currentSpaceMembership: currentSpaces,
+                    expectedSpaceID: spaceID,
+                    currentFrame: currentWindowFrame(for: windowID),
+                    expectedFrame: getVirtualDisplayState(windowID: windowID)?.bounds
+                )
                 guard force || driftReason != nil else { return }
 
                 let now = CFAbsoluteTimeGetCurrent()
@@ -902,9 +951,26 @@ public extension MirageHostService {
             for delay in retryDelays {
                 try? await Task.sleep(for: delay)
                 guard isStreamUsingVirtualDisplay(windowID: windowID) else { return }
+                guard !shouldSkipPlacementRepair(for: windowID) else { return }
                 await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
             }
         }
+    }
+
+    nonisolated static func shouldSkipPlacementRepair(
+        windowID: WindowID,
+        pendingReplacementClosedWindowIDs: Set<WindowID>
+    ) -> Bool {
+        pendingReplacementClosedWindowIDs.contains(windowID)
+    }
+
+    private func shouldSkipPlacementRepair(for windowID: WindowID) -> Bool {
+        Self.shouldSkipPlacementRepair(
+            windowID: windowID,
+            pendingReplacementClosedWindowIDs: Set(
+                pendingAppWindowReplacementsByStreamID.values.map(\.closedWindowID)
+            )
+        )
     }
 
     private struct StreamCaptureSource {

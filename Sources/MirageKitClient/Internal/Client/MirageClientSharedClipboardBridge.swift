@@ -147,16 +147,6 @@ final class MirageClientSharedClipboardBridge {
             }
         }
 
-        // Polling fallback — slower than macOS since notifications are the primary path.
-        // UIPasteboard.changeCount is lightweight and does not trigger the paste banner.
-        pollTask = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { return }
-                observeOrTrackClipboard()
-            }
-        }
         #endif
     }
 
@@ -194,7 +184,8 @@ final class MirageClientSharedClipboardBridge {
         #if os(macOS)
         NSPasteboard.general.string(forType: .string)
         #elseif canImport(UIKit)
-        UIPasteboard.general.string
+        guard UIPasteboard.general.hasStrings else { return nil }
+        return UIPasteboard.general.string
         #else
         nil
         #endif

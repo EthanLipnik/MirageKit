@@ -102,7 +102,7 @@ actor StreamContext {
     let trafficLightMaskGeometryFrameTolerance: CGFloat = 6
     var lastTrafficLightMaskLogTime: CFAbsoluteTime = 0
     let trafficLightMaskLogInterval: CFAbsoluteTime = 1.0
-    let trafficLightCloneStampCompositor = HostTrafficLightCloneStampCompositor()
+    lazy var trafficLightCloneStampCompositor = HostTrafficLightCloneStampCompositor()
 
     // Bounded frame inbox to decouple capture from encode with low latency.
     nonisolated let frameInbox: StreamFrameInbox
@@ -169,27 +169,10 @@ actor StreamContext {
     var latencyBurstDrainsNewestFrames = false
     var latencyBurstCaptureQueueDepthOverride: Int?
     var preLatencyBurstCaptureQueueDepthOverride: Int?
-    let temporaryDegradationBitrateFloorBps: Int = 8_000_000
-    let temporaryDegradationRampStep: Double = 1.30
-    let temporaryDegradationBitrateStepFramerate: Double = 0.85
-    let temporaryDegradationBitrateStepVisuals: Double = 0.90
-    let temporaryDegradationRestoreThresholdRatio: Double = 0.85
-    let temporaryDegradationReliefThresholdRatio: Double = 0.60
-    let temporaryDegradationSevereThresholdRatio: Double = 0.45
-    let temporaryDegradationStableEncodeBudgetRatio: Double = 0.85
-    let temporaryDegradationOverBudgetRatio: Double = 1.05
-    let temporaryDegradationSevereEncodeBudgetRatio: Double = 1.35
-    let temporaryDegradationStableWindowsThreshold: Int = 2
     var enteredTargetBitrate: Int?
     var bitrateAdaptationCeiling: Int?
     var requestedTargetBitrate: Int?
     var startupBitrate: Int?
-    var temporaryDegradationCurrentBitrate: Int?
-    var temporaryDegradationCurrentColorDepth: MirageStreamColorDepth
-    var temporaryDegradationBelowTargetSince: CFAbsoluteTime = 0
-    var temporaryDegradationStableWindows: Int = 0
-    var temporaryDegradationOverloadWindows: Int = 0
-    var temporaryDegradationSevereOverloadWindows: Int = 0
     var ultraValidationFailureHandled = false
     var ultraValidationSuccessLogged = false
 
@@ -361,8 +344,6 @@ actor StreamContext {
     let runtimeQualityAdjustmentEnabled: Bool
     /// When true, lowest-latency high-resolution streams use stronger compression.
     let lowLatencyHighResolutionCompressionBoostEnabled: Bool
-    /// Policy for temporary bitrate/bit-depth degradation and recovery.
-    let temporaryDegradationMode: MirageTemporaryDegradationMode
     /// When true, bypasses the host-side encoded-dimension cap.
     let disableResolutionCap: Bool
     /// Maximum encoded width in pixels for host-computed stream scaling.
@@ -402,7 +383,6 @@ actor StreamContext {
     nonisolated static let gameModeQueueCapBytes: Int = 12_000_000
     nonisolated static let gameModeBackpressureTriggerBytes: Int = 6_000_000
     nonisolated static let gameModeQueuePressureRatio: Double = 0.80
-    nonisolated static let temporaryDegradationBitrateFloorBpsDefault: Int = 8_000_000
     nonisolated static let canonical6KWidth: Int = 6_016
     nonisolated static let canonical6KHeight: Int = 3_384
     nonisolated static let minAudioCaptureChannelCount: Int = 1
@@ -424,7 +404,6 @@ actor StreamContext {
         additionalFrameFlags: FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
         lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
-        temporaryDegradationMode: MirageTemporaryDegradationMode = .off,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,
@@ -447,19 +426,6 @@ actor StreamContext {
             resolvedEncoderConfig.bitrate = bitrateAdaptationCeiling
         }
         let requestedTargetBitrate = resolvedEncoderConfig.bitrate
-        let usesAppOwnedBitrateAdaptation = bitrateAdaptationCeiling != nil
-        let resolvedTemporaryDegradationMode: MirageTemporaryDegradationMode =
-            if usesAppOwnedBitrateAdaptation, temporaryDegradationMode != .off {
-                .prioritizeFramerate
-            } else {
-                temporaryDegradationMode
-            }
-        let initialTemporaryBitrate = Self.initialTemporaryDegradationBitrate(
-            mode: resolvedTemporaryDegradationMode,
-            requestedBitrate: requestedTargetBitrate,
-            floor: Self.temporaryDegradationBitrateFloorBpsDefault,
-            appOwnedBitrateAdaptation: usesAppOwnedBitrateAdaptation
-        )
         if performanceMode == .game {
             resolvedLatencyMode = .lowestLatency
             // Sunshine-style game mode keeps latency-first VT policy but avoids
@@ -475,8 +441,6 @@ actor StreamContext {
             ) {
                 resolvedEncoderConfig.bitrate = normalizedBitrate
             }
-        } else if let initialTemporaryBitrate {
-            resolvedEncoderConfig.bitrate = initialTemporaryBitrate
         }
 
         self.streamID = streamID
@@ -502,7 +466,6 @@ actor StreamContext {
         self.runtimeQualityAdjustmentEnabled = resolvedRuntimeQualityAdjustmentEnabled
         self.lowLatencyHighResolutionCompressionBoostEnabled =
             resolvedLowLatencyHighResolutionCompressionBoostEnabled
-        self.temporaryDegradationMode = resolvedTemporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.encoderMaxWidth = encoderMaxWidth
         self.encoderMaxHeight = encoderMaxHeight
@@ -574,15 +537,7 @@ actor StreamContext {
         self.enteredTargetBitrate = enteredBitrate ?? requestedTargetBitrate
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.requestedTargetBitrate = requestedTargetBitrate
-        startupBitrate = initialTemporaryBitrate
-        temporaryDegradationCurrentBitrate = resolvedEncoderConfig.bitrate
-        temporaryDegradationCurrentColorDepth = resolvedEncoderConfig.colorDepth
-        if !usesAppOwnedBitrateAdaptation,
-           let requestedTargetBitrate,
-           let currentBitrate = resolvedEncoderConfig.bitrate,
-           currentBitrate < requestedTargetBitrate {
-            temporaryDegradationBelowTargetSince = gameModeStreamStartTime
-        }
+        startupBitrate = resolvedEncoderConfig.bitrate
 
         if performanceMode == .game {
             let bitrateText = String(resolvedEncoderConfig.bitrate ?? 0)
@@ -616,28 +571,6 @@ actor StreamContext {
     static func clampStreamScale(_ scale: CGFloat) -> CGFloat {
         guard scale > 0 else { return 1.0 }
         return max(0.1, min(1.0, scale))
-    }
-
-    static func initialTemporaryDegradationBitrate(
-        mode: MirageTemporaryDegradationMode,
-        requestedBitrate: Int?,
-        floor: Int,
-        appOwnedBitrateAdaptation: Bool
-    ) -> Int? {
-        guard let requestedBitrate, requestedBitrate > 0 else { return nil }
-        if appOwnedBitrateAdaptation { return requestedBitrate }
-        let scale: Double = switch mode {
-        case .off:
-            1.0
-        case .prioritizeFramerate:
-            0.85
-        case .prioritizeVisuals:
-            0.92
-        }
-        let scaled = Int((Double(requestedBitrate) * scale).rounded(.down))
-        let clampedFloor = max(1, floor)
-        let result = max(clampedFloor, scaled)
-        return min(requestedBitrate, result)
     }
 
     func resolvedCaptureFrameRate(for targetFrameRate: Int) -> Int {

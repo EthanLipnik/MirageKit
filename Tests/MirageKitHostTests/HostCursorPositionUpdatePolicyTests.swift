@@ -6,6 +6,7 @@
 //
 
 @testable import MirageKitHost
+import CoreGraphics
 import MirageKit
 import Testing
 
@@ -52,6 +53,75 @@ struct HostCursorPositionUpdatePolicyTests {
         )
 
         #expect(shouldSend == false)
+    }
+
+    @Test("Secondary desktop cursor positions preserve off-display travel")
+    func secondaryDesktopCursorPositionPreservesOffDisplayTravel() {
+        let position = MirageHostService.resolvedClientCursorPosition(
+            CGPoint(x: 1.2, y: -0.1),
+            desktopStreamMode: .secondary
+        )
+
+        #expect(position == CGPoint(x: 1.2, y: -0.1))
+    }
+
+    @Test("Mirrored desktop cursor positions clamp into stream bounds")
+    func mirroredDesktopCursorPositionClampsIntoBounds() {
+        let position = MirageHostService.resolvedClientCursorPosition(
+            CGPoint(x: 1.2, y: -0.1),
+            desktopStreamMode: .mirrored
+        )
+
+        #expect(position == CGPoint(x: 1, y: 0))
+    }
+
+    @Test("Desktop pointer warps stay enabled for move and drag events")
+    func desktopMoveAndDragEventsRequireWarp() {
+        #expect(MirageHostInputController.shouldWarpDesktopPointerEvent(.mouseMoved))
+        #expect(MirageHostInputController.shouldWarpDesktopPointerEvent(.leftMouseDragged))
+        #expect(MirageHostInputController.shouldWarpDesktopPointerEvent(.rightMouseDragged))
+        #expect(MirageHostInputController.shouldWarpDesktopPointerEvent(.otherMouseDragged))
+    }
+
+    @Test("Desktop pointer warp is skipped for release, scroll, and key events")
+    func desktopReleaseScrollAndKeyEventsSkipWarp() {
+        #expect(!MirageHostInputController.shouldWarpDesktopPointerEvent(.rightMouseUp))
+        #expect(!MirageHostInputController.shouldWarpDesktopPointerEvent(.scrollWheel))
+        #expect(!MirageHostInputController.shouldWarpDesktopPointerEvent(.keyDown))
+    }
+
+    @Test("Desktop right-click events reuse the current host cursor position")
+    func desktopRightClickUsesCurrentHostCursorPosition() {
+        let requestedPoint = CGPoint(x: 300, y: 200)
+        let currentCursorPosition = CGPoint(x: -120, y: 880)
+
+        let downPoint = MirageHostInputController.resolvedDesktopPointerEventPoint(
+            .rightMouseDown,
+            requestedPoint: requestedPoint,
+            currentCursorPosition: currentCursorPosition
+        )
+        let upPoint = MirageHostInputController.resolvedDesktopPointerEventPoint(
+            .rightMouseUp,
+            requestedPoint: requestedPoint,
+            currentCursorPosition: currentCursorPosition
+        )
+
+        #expect(downPoint == currentCursorPosition)
+        #expect(upPoint == currentCursorPosition)
+    }
+
+    @Test("Desktop left-click events still use the incoming event location")
+    func desktopLeftClickUsesRequestedPoint() {
+        let requestedPoint = CGPoint(x: 300, y: 200)
+        let currentCursorPosition = CGPoint(x: -120, y: 880)
+
+        let downPoint = MirageHostInputController.resolvedDesktopPointerEventPoint(
+            .leftMouseDown,
+            requestedPoint: requestedPoint,
+            currentCursorPosition: currentCursorPosition
+        )
+
+        #expect(downPoint == requestedPoint)
     }
 }
 #endif

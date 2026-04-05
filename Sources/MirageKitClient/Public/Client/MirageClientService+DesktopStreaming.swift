@@ -107,7 +107,6 @@ public extension MirageClientService {
         request.performanceMode = encoderRequest.performanceMode
         request.allowRuntimeQualityAdjustment = encoderRequest.allowRuntimeQualityAdjustment
         request.lowLatencyHighResolutionCompressionBoost = encoderRequest.lowLatencyHighResolutionCompressionBoost
-        request.temporaryDegradationMode = encoderRequest.temporaryDegradationMode
         request.disableResolutionCap = encoderRequest.disableResolutionCap
         request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth

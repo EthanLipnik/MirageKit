@@ -234,6 +234,18 @@ struct ClientConnectionEndpointPlanningTests {
         #expect(
             MirageClientService.classifyControlSessionFailure(MirageError.timeout) == .timeout
         )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
+                MirageError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
+            ) == .addressUnavailable
+        )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
+                MirageError.protocolError(
+                    "Pre-bootstrap udp control session failed for zephir-m3 endpoint=zephir-m3.local:51024 interface=wifi classification=other error=Protocol error: Failed to resolve zephir-m3.local: nodename nor servname provided, or not known"
+                )
+            ) == .addressUnavailable
+        )
     }
 
     @MainActor
@@ -291,8 +303,8 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
-    @Test("Client diagnoses different Ethernet networks for local failures")
-    func localNetworkMismatchReasonDiagnosesDifferentEthernetNetworks() {
+    @Test("Client diagnoses different wired networks for local failures")
+    func localNetworkMismatchReasonDiagnosesDifferentWiredNetworks() {
         let host = LoomPeer(
             id: UUID(),
             name: "Altair",
@@ -317,7 +329,7 @@ struct ClientConnectionEndpointPlanningTests {
             )
         )
 
-        #expect(reason?.contains("same Ethernet network") == true)
+        #expect(reason?.contains("same wired network") == true)
     }
 
     @MainActor

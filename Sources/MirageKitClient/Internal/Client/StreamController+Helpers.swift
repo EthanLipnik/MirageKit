@@ -116,6 +116,48 @@ extension StreamController {
         return false
     }
 
+    nonisolated static func shouldClearRecoveryStatusOnPresentationProgress(
+        _ status: MirageStreamClientRecoveryStatus
+    ) -> Bool {
+        switch status {
+        case .tierPromotionProbe,
+             .keyframeRecovery,
+             .hardRecovery:
+            true
+        case .idle,
+             .startup,
+             .postResizeAwaitingFirstFrame:
+            false
+        }
+    }
+
+    func clearTransientRecoveryStateAfterPresentationProgress() async {
+        guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
+
+        switch clientRecoveryStatus {
+        case .keyframeRecovery:
+            MirageLogger.client(
+                "Presentation progress resumed for stream \(streamID); ending keyframe recovery"
+            )
+            await stopKeyframeRecoveryLoop()
+        case .hardRecovery:
+            MirageLogger.client(
+                "Presentation progress resumed for stream \(streamID); ending hard recovery"
+            )
+            await stopKeyframeRecoveryLoop()
+            await setClientRecoveryStatus(.idle)
+        case .tierPromotionProbe:
+            MirageLogger.client(
+                "Presentation progress resumed for stream \(streamID); ending tier-promotion probe"
+            )
+            await stopTierPromotionProbe()
+        case .idle,
+             .startup,
+             .postResizeAwaitingFirstFrame:
+            break
+        }
+    }
+
     func armFirstPresentedFrameAwaiter(
         reason: String,
         mode: FirstPresentedFrameAwaitMode = .startup

@@ -128,15 +128,13 @@ struct SessionMinimumSizeGenerationTests {
                 streamID: 31,
                 tier: .activeLive,
                 targetFPS: 60,
-                targetBitrateBps: 12_000_000,
-                recoveryProfile: .activeAggressive
+                targetBitrateBps: 12_000_000
             ),
             MirageStreamPolicy(
                 streamID: 32,
                 tier: .passiveSnapshot,
                 targetFPS: 1,
-                targetBitrateBps: 1_000_000,
-                recoveryProfile: .passiveBounded
+                targetBitrateBps: 1_000_000
             )
         ])
 

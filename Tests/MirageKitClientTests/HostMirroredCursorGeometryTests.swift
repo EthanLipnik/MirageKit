@@ -11,15 +11,46 @@ import Testing
 
 #if os(macOS)
 @MainActor
-@Suite("Host Mirrored Cursor Geometry")
+@Suite("Host Cursor Geometry")
 struct HostMirroredCursorGeometryTests {
-    @Test("Normalized host cursor positions are clamped into view bounds")
-    func normalizedPositionsClampIntoViewBounds() {
-        let clamped = ScrollPhysicsCapturingNSView.clampedNormalizedCursorPosition(
-            CGPoint(x: -0.25, y: 1.75)
+    @Test("Mirrored desktop cursor positions clamp into view bounds")
+    func mirroredPositionsClampIntoViewBounds() {
+        let clamped = ScrollPhysicsCapturingNSView.normalizedCursorPosition(
+            CGPoint(x: -0.25, y: 1.75),
+            allowsExtendedBounds: false
         )
 
         #expect(clamped == CGPoint(x: 0, y: 1))
+    }
+
+    @Test("Secondary desktop cursor positions preserve off-display travel")
+    func secondaryPositionsPreserveOffDisplayTravel() {
+        let position = ScrollPhysicsCapturingNSView.normalizedCursorPosition(
+            CGPoint(x: 1.35, y: -0.2),
+            allowsExtendedBounds: true
+        )
+
+        #expect(position == CGPoint(x: 1.35, y: -0.2))
+    }
+
+    @Test("Locked cursor button events clamp into bounds for mirrored display mode")
+    func lockedCursorButtonEventsClampIntoBounds() {
+        let clamped = LockedCursorPositionResolver.resolve(
+            CGPoint(x: 1.35, y: -0.2),
+            allowsExtendedBounds: false
+        )
+
+        #expect(clamped == CGPoint(x: 1, y: 0))
+    }
+
+    @Test("Locked cursor button events preserve off-display travel for secondary display mode")
+    func lockedCursorButtonEventsPreserveOffDisplayTravel() {
+        let position = LockedCursorPositionResolver.resolve(
+            CGPoint(x: 1.35, y: -0.2),
+            allowsExtendedBounds: true
+        )
+
+        #expect(position == CGPoint(x: 1.35, y: -0.2))
     }
 
     @Test("Normalized host cursor positions map into local view coordinates")

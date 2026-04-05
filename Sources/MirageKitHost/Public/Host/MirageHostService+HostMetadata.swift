@@ -71,12 +71,19 @@ extension MirageHostService {
         hostHardwareIconRequestTask = Task { @MainActor [weak self] in
             guard let self else { return }
 
-            guard let payload = MirageHostHardwareIconResolver.payload(
-                preferredIconName: advertisedPeerAdvertisement.iconName,
-                hardwareMachineFamily: advertisedPeerAdvertisement.machineFamily,
-                hardwareModelIdentifier: advertisedPeerAdvertisement.modelIdentifier,
-                maxPixelSize: maxPixelSize
-            ) else {
+            let preferredIconName = advertisedPeerAdvertisement.iconName
+            let hardwareMachineFamily = advertisedPeerAdvertisement.machineFamily
+            let hardwareModelIdentifier = advertisedPeerAdvertisement.modelIdentifier
+            let payload = await Task.detached(priority: .userInitiated) {
+                MirageHostHardwareIconResolver.payload(
+                    preferredIconName: preferredIconName,
+                    hardwareMachineFamily: hardwareMachineFamily,
+                    hardwareModelIdentifier: hardwareModelIdentifier,
+                    maxPixelSize: maxPixelSize
+                )
+            }.value
+
+            guard let payload else {
                 MirageLogger.host("Host hardware icon request failed: no icon payload")
                 if hostHardwareIconRequestToken == token,
                    pendingHostHardwareIconRequest?.clientID == clientID {

@@ -595,7 +595,6 @@ struct MirageKitTests {
             performanceMode: .game,
             allowRuntimeQualityAdjustment: true,
             lowLatencyHighResolutionCompressionBoost: false,
-            temporaryDegradationMode: .prioritizeFramerate,
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
@@ -610,7 +609,6 @@ struct MirageKitTests {
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.bitrate == 150_000_000)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
-        #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
     }
 
     @Test("Select app request latency mode serialization")
@@ -630,7 +628,6 @@ struct MirageKitTests {
             performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: true,
-            temporaryDegradationMode: .prioritizeVisuals,
             disableResolutionCap: false,
             streamScale: 0.9,
             audioConfiguration: .default
@@ -644,7 +641,6 @@ struct MirageKitTests {
         #expect(decoded.maxRefreshRate == 120)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
-        #expect(decoded.temporaryDegradationMode == .prioritizeVisuals)
     }
 
     @Test("Media packet size helpers prefer direct local paths")
@@ -889,7 +885,6 @@ struct MirageKitTests {
             performanceMode: .game,
             allowRuntimeQualityAdjustment: false,
             lowLatencyHighResolutionCompressionBoost: false,
-            temporaryDegradationMode: .prioritizeFramerate,
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
@@ -906,7 +901,6 @@ struct MirageKitTests {
         #expect(decoded.displayHeight == 1692)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == false)
-        #expect(decoded.temporaryDegradationMode == .prioritizeFramerate)
     }
 
     @Test("Start desktop request cursor presentation serialization")
@@ -1094,7 +1088,7 @@ struct MirageKitTests {
         )
 
         let txtRecord = advertisement.toTXTRecord()
-        #expect(txtRecord["proto"] == String(Int(Loom.protocolVersion)))
+        #expect(txtRecord["proto"] == String(Int(MirageKit.protocolVersion)))
         #expect(txtRecord["did"] == deviceID.uuidString)
         #expect(txtRecord["ikid"] == "test-key-id")
         #expect(txtRecord["dt"] == DeviceType.mac.rawValue)
@@ -1103,7 +1097,7 @@ struct MirageKitTests {
         #expect(txtRecord["family"] == "Mac")
 
         let decoded = LoomPeerAdvertisement.from(txtRecord: txtRecord)
-        #expect(decoded.protocolVersion == Int(Loom.protocolVersion))
+        #expect(decoded.protocolVersion == Int(MirageKit.protocolVersion))
         #expect(decoded.deviceID == deviceID)
         #expect(decoded.identityKeyID == "test-key-id")
         #expect(decoded.deviceType == .mac)

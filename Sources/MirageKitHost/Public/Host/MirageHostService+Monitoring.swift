@@ -103,12 +103,14 @@ extension MirageHostService {
         guard streamID == desktopStreamID else { return }
         guard let clientContext = desktopStreamClientContext else { return }
 
-        let clampedX = Float(min(max(position.x, 0), 1))
-        let clampedY = Float(min(max(position.y, 0), 1))
+        let resolvedPosition = Self.resolvedClientCursorPosition(
+            position,
+            desktopStreamMode: desktopStreamMode
+        )
         let message = CursorPositionUpdateMessage(
             streamID: streamID,
-            normalizedX: clampedX,
-            normalizedY: clampedY,
+            normalizedX: Float(resolvedPosition.x),
+            normalizedY: Float(resolvedPosition.y),
             isVisible: isVisible
         )
 
@@ -178,6 +180,18 @@ extension MirageHostService {
     ) -> Bool {
         guard streamID == desktopStreamID else { return false }
         return desktopStreamMode == .secondary || desktopCursorPresentation.source == .host
+    }
+
+    nonisolated static func resolvedClientCursorPosition(
+        _ position: CGPoint,
+        desktopStreamMode: MirageDesktopStreamMode?
+    )
+    -> CGPoint {
+        if desktopStreamMode == .secondary { return position }
+        return CGPoint(
+            x: min(max(position.x, 0), 1),
+            y: min(max(position.y, 0), 1)
+        )
     }
 }
 

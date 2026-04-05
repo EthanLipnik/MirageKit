@@ -11,10 +11,10 @@ import Testing
 import VideoToolbox
 
 #if os(macOS)
-@Suite("Standard Desktop Low Latency Tuning")
+@Suite("Standard Low Latency Tuning")
 struct StandardDesktopLowLatencyTuningTests {
-    @Test("Standard desktop lowest latency suppresses VT low-latency rate control at 6K and 720p")
-    func standardDesktopLowestLatencySuppressesForAllDesktopSizes() {
+    @Test("Standard lowest latency suppresses VT low-latency rate control for desktop and window streams")
+    func standardLowestLatencySuppressesRateControlForDesktopAndWindowStreams() {
         #expect(!VideoEncoder.standardLowLatencyVTTuningEnabled(
             performanceMode: .standard,
             latencyMode: .lowestLatency,
@@ -42,26 +42,25 @@ struct StandardDesktopLowLatencyTuningTests {
             width: 1280,
             height: 720,
             streamKind: .desktop
+        ))
+        #expect(!VideoEncoder.standardLowLatencyVTTuningEnabled(
+            performanceMode: .standard,
+            latencyMode: .lowestLatency,
+            width: 1280,
+            height: 720,
+            streamKind: .window
+        ))
+        #expect(VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
+            performanceMode: .standard,
+            latencyMode: .lowestLatency,
+            width: 1280,
+            height: 720,
+            streamKind: .window
         ))
     }
 
-    @Test("Non-desktop standard lowest latency and game mode still request VT low-latency rate control")
-    func nonDesktopAndGameModeStillRequestLowLatencyRateControl() {
-        #expect(VideoEncoder.standardLowLatencyVTTuningEnabled(
-            performanceMode: .standard,
-            latencyMode: .lowestLatency,
-            width: 1280,
-            height: 720,
-            streamKind: .window
-        ))
-        #expect(!VideoEncoder.shouldApplySuppressedStandardLowLatencyThroughputTuning(
-            performanceMode: .standard,
-            latencyMode: .lowestLatency,
-            width: 1280,
-            height: 720,
-            streamKind: .window
-        ))
-
+    @Test("Game mode still requests VT low-latency rate control")
+    func gameModeStillRequestsLowLatencyRateControl() {
         let spec = VideoEncoder.encoderSpecification(
             for: .game,
             latencyMode: .lowestLatency,

@@ -30,6 +30,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
+    /// Whether locked desktop cursor input may move beyond the streamed view bounds.
+    public var allowsExtendedDesktopCursorBounds: Bool
+
     /// Whether the stream can recapture cursor lock after a temporary local unlock.
     public var cursorLockCanRecapture: Bool
 
@@ -65,6 +68,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         cursorLockEnabled: Bool = false,
+        allowsExtendedDesktopCursorBounds: Bool = false,
         cursorLockCanRecapture: Bool = false,
         onCursorLockEscapeRequested: (() -> Void)? = nil,
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
@@ -82,6 +86,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
         self.cursorLockEnabled = cursorLockEnabled
+        self.allowsExtendedDesktopCursorBounds = allowsExtendedDesktopCursorBounds
         self.cursorLockCanRecapture = cursorLockCanRecapture
         self.onCursorLockEscapeRequested = onCursorLockEscapeRequested
         self.onCursorLockRecaptureRequested = onCursorLockRecaptureRequested
@@ -126,6 +131,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
+        wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
         wrapper.cursorLockEnabled = cursorLockEnabled
         wrapper.canRecaptureCursorLock = cursorLockCanRecapture
         wrapper.onCursorLockEscapeRequested = onCursorLockEscapeRequested
@@ -173,6 +179,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
+            wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
             wrapper.cursorLockEnabled = cursorLockEnabled
             wrapper.canRecaptureCursorLock = cursorLockCanRecapture
             wrapper.onCursorLockEscapeRequested = onCursorLockEscapeRequested

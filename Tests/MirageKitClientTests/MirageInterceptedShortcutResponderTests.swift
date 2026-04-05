@@ -58,5 +58,46 @@ struct MirageInterceptedShortcutResponderTests {
         #expect(keyUpEvents.first?.characters == "b")
         #expect(keyUpEvents.first?.modifiers == [.command])
     }
+
+    @Test("Client shortcut overrides conflicting Cmd+B responder routing")
+    func clientShortcutOverridesConflictingCmdBResponderRouting() throws {
+        let view = InputCapturingView(frame: .zero)
+        let shortcut = MirageClientShortcut(keyCode: 0x0B, modifiers: [.command])
+        var triggeredShortcuts: [MirageClientShortcut] = []
+        var keyDownEvents: [MirageKeyEvent] = []
+        var keyUpEvents: [MirageKeyEvent] = []
+
+        view.clientShortcuts = [shortcut]
+        view.onClientShortcut = { triggeredShortcuts.append($0) }
+        view.onInputEvent = { event in
+            switch event {
+            case .keyDown(let keyEvent):
+                keyDownEvents.append(keyEvent)
+            case .keyUp(let keyEvent):
+                keyUpEvents.append(keyEvent)
+            default:
+                break
+            }
+        }
+
+        let matchingCommands = try #require(view.keyCommands?.filter { command in
+            command.input == "b" && command.modifierFlags == .command
+        })
+        #expect(matchingCommands.count == 1)
+        #expect(matchingCommands.first?.action == Selector(("handleClientShortcutCommand:")))
+
+        let command = UIKeyCommand(
+            action: Selector(("handleClientShortcutCommand:")),
+            input: "b",
+            modifierFlags: .command
+        )
+
+        view.handleClientShortcutCommand(command)
+        view.toggleBoldface(nil)
+
+        #expect(triggeredShortcuts == [shortcut])
+        #expect(keyDownEvents.isEmpty)
+        #expect(keyUpEvents.isEmpty)
+    }
 }
 #endif

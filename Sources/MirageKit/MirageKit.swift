@@ -17,8 +17,8 @@ public typealias StreamSessionID = UUID
 // MARK: - Version
 
 public enum MirageKit {
-    public static let version = "0.15.5"
-    public static let protocolVersion: UInt8 = Loom.protocolVersion
+    public static let version = "0.15.6"
+    public static let protocolVersion: UInt8 = mirageProtocolVersion
     public static let serviceType = "_mirage._tcp"
     public static let relayHeaderPrefix = "x-mirage"
     public static let legacyIdentityService = "com.mirage.identity.account.v2"

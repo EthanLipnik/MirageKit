@@ -43,7 +43,7 @@ package enum MiragePeerAdvertisementMetadata {
             lhs.sortRank < rhs.sortRank
         }
         return LoomPeerAdvertisement(
-            protocolVersion: Int(Loom.protocolVersion),
+            protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: deviceID,
             identityKeyID: identityKeyID,
             deviceType: .mac,
@@ -70,7 +70,7 @@ package enum MiragePeerAdvertisementMetadata {
         additionalMetadata: [String: String] = [:]
     ) -> LoomPeerAdvertisement {
         LoomPeerAdvertisement(
-            protocolVersion: Int(Loom.protocolVersion),
+            protocolVersion: Int(MirageKit.protocolVersion),
             deviceID: deviceID,
             identityKeyID: identityKeyID,
             deviceType: deviceType,

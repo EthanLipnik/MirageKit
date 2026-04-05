@@ -188,6 +188,29 @@ extension InputCapturingView {
         updatePointerLocationForLocalContact(location)
     }
 
+    @discardableResult
+    func updatePointerLocationForScrollInteraction(_ rawLocation: CGPoint) -> CGPoint {
+        let location = normalizedLocation(rawLocation)
+
+        if usesLockedTrackpadCursor {
+            setLockedCursorVisible(true)
+            return trackpadCursorActionPosition()
+        }
+
+        if cursorLockEnabled {
+            updatePointerLocationForLocalContact(location)
+            return lockedCursorPosition
+        }
+
+        if usesVirtualTrackpad {
+            updateTrackpadCursorPosition(location, updateVisibility: true)
+            return trackpadCursorPosition()
+        }
+
+        lastCursorPosition = location
+        return location
+    }
+
     @objc
     func handleDirectTap(_ gesture: UITapGestureRecognizer) {
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
@@ -499,7 +522,7 @@ extension InputCapturingView {
         let location: CGPoint
         if cursorLockEnabled {
             setLockedCursorVisible(true)
-            location = lockedCursorPosition
+            location = lockedCursorActionPosition()
         } else {
             location = normalizedLocation(gesture.location(in: self))
         }
@@ -523,14 +546,7 @@ extension InputCapturingView {
     @objc
     func handleScroll(_ gesture: UIPanGestureRecognizer) {
         let translation = gesture.translation(in: self)
-        let location: CGPoint = if cursorLockEnabled {
-            lockedCursorPosition
-        } else if usesVirtualTrackpad {
-            virtualCursorPosition
-        } else {
-            // For touch scrolling, use the gesture location (center of two fingers)
-            normalizedLocation(gesture.location(in: self))
-        }
+        let location = updatePointerLocationForScrollInteraction(gesture.location(in: self))
 
         if gesture.state == .began { stopTouchScrollDeceleration() }
 
@@ -580,23 +596,26 @@ extension InputCapturingView {
                 return
             case .changed:
                 if lockedPointerButtonDown {
-                    lockedPointerLastHoverLocation = location
+                    lockedPointerLastHoverLocation = nil
                     return
                 }
                 if let lastLocation = lockedPointerLastHoverLocation {
+                    if shouldIgnoreLockedPointerHoverJump(from: lastLocation, to: location) {
+                        lockedPointerLastHoverLocation = nil
+                        return
+                    }
                     let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
                     if translation != .zero {
                         if stylusPayload == nil { revealCursorAfterPointerMovement() }
+                        noteLockedPointerDragIfNeeded(for: translation)
                         applyLockedCursorDelta(translation)
                         let eventModifiers = modifiers(from: gesture)
-                        let mouseEvent = MirageMouseEvent(
-                            button: .left,
+                        sendLockedPointerMovementEvent(
                             location: lockedCursorPosition,
                             modifiers: eventModifiers,
                             pressure: hoverPressure,
                             stylus: stylusPayload
                         )
-                        onInputEvent?(.mouseMoved(mouseEvent))
                     }
                 }
                 lockedPointerLastHoverLocation = location
@@ -653,16 +672,10 @@ extension InputCapturingView {
         case .began,
              .changed:
             if translation != .zero { revealCursorAfterPointerMovement() }
-            if translation != .zero, lockedPointerButtonDown, !lockedPointerDraggedSinceDown {
-                lockedPointerDraggedSinceDown = true
-                resetPrimaryClickTracking()
-            }
+            noteLockedPointerDragIfNeeded(for: translation)
             applyLockedCursorDelta(translation)
             let eventModifiers = modifiers(from: gesture)
-            let mouseEvent = MirageMouseEvent(button: .left, location: lockedCursorPosition, modifiers: eventModifiers)
-            if lockedPointerButtonDown { onInputEvent?(.mouseDragged(mouseEvent)) } else {
-                onInputEvent?(.mouseMoved(mouseEvent))
-            }
+            sendLockedPointerMovementEvent(location: lockedCursorPosition, modifiers: eventModifiers)
         default:
             break
         }
@@ -672,7 +685,7 @@ extension InputCapturingView {
     func handleLockedPointerPress(_ gesture: UILongPressGestureRecognizer) {
         guard cursorLockEnabled else { return }
         setLockedCursorVisible(true)
-        let location = lockedCursorPosition
+        let location = lockedCursorActionPosition()
         let eventModifiers = modifiers(from: gesture)
 
         switch gesture.state {
@@ -682,6 +695,7 @@ extension InputCapturingView {
             currentClickCount = nextPrimaryClickCount(at: location, timestamp: now)
             lockedPointerButtonDown = true
             lockedPointerDraggedSinceDown = false
+            lockedPointerLastHoverLocation = nil
 
             let mouseEvent = MirageMouseEvent(
                 button: .left,
@@ -704,6 +718,7 @@ extension InputCapturingView {
             }
             lockedPointerButtonDown = false
             lockedPointerDraggedSinceDown = false
+            lockedPointerLastHoverLocation = nil
         default:
             break
         }
@@ -714,7 +729,7 @@ extension InputCapturingView {
     @objc
     func handleVirtualCursorPan(_ gesture: UIPanGestureRecognizer) {
         guard usesVirtualTrackpad else { return }
-        setVirtualCursorVisible(true)
+        setTrackpadCursorVisible(true)
         if gesture.state == .began { stopVirtualCursorDeceleration() }
         let translation = gesture.translation(in: self)
         gesture.setTranslation(.zero, in: self)
@@ -722,12 +737,9 @@ extension InputCapturingView {
         switch gesture.state {
         case .began,
              .changed:
-            moveVirtualCursor(by: translation)
+            moveTrackpadCursor(by: translation)
             let eventModifiers = modifiers(from: gesture)
-            let mouseEvent = MirageMouseEvent(button: .left, location: virtualCursorPosition, modifiers: eventModifiers)
-            if virtualDragActive { onInputEvent?(.mouseDragged(mouseEvent)) } else {
-                onInputEvent?(.mouseMoved(mouseEvent))
-            }
+            sendTrackpadMovementEvent(modifiers: eventModifiers)
         case .ended:
             if !virtualDragActive { startVirtualCursorDeceleration(with: gesture.velocity(in: self)) }
         default:
@@ -748,10 +760,10 @@ extension InputCapturingView {
             swallowingVirtualCursorLongPressForCursorRecapture = true
             return
         }
-        setVirtualCursorVisible(true)
+        setTrackpadCursorVisible(true)
         if gesture.state == .began { stopVirtualCursorDeceleration() }
         let location = normalizedLocation(gesture.location(in: self))
-        updateVirtualCursorPosition(location, updateVisibility: false)
+        updateTrackpadCursorPosition(location, updateVisibility: false)
         let eventModifiers = modifiers(from: gesture)
 
         switch gesture.state {
@@ -760,7 +772,7 @@ extension InputCapturingView {
             resetPrimaryClickTracking()
             let mouseEvent = MirageMouseEvent(
                 button: .left,
-                location: virtualCursorPosition,
+                location: trackpadCursorActionPosition(),
                 clickCount: 1,
                 modifiers: eventModifiers
             )
@@ -769,7 +781,7 @@ extension InputCapturingView {
              .ended:
             let mouseEvent = MirageMouseEvent(
                 button: .left,
-                location: virtualCursorPosition,
+                location: trackpadCursorActionPosition(),
                 clickCount: 1,
                 modifiers: eventModifiers
             )
@@ -785,23 +797,24 @@ extension InputCapturingView {
         guard usesVirtualTrackpad else { return }
         if requestCursorLockRecaptureIfNeeded() { return }
         stopVirtualCursorDeceleration()
-        setVirtualCursorVisible(true)
+        setTrackpadCursorVisible(true)
+        let location = trackpadCursorActionPosition()
 
         let now = CACurrentMediaTime()
-        let clickCount = nextPrimaryClickCount(at: virtualCursorPosition, timestamp: now)
+        let clickCount = nextPrimaryClickCount(at: location, timestamp: now)
         currentClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
         let mouseEvent = MirageMouseEvent(
             button: .left,
-            location: virtualCursorPosition,
+            location: location,
             clickCount: clickCount,
             modifiers: eventModifiers
         )
 
         onInputEvent?(.mouseDown(mouseEvent))
         onInputEvent?(.mouseUp(mouseEvent))
-        commitPrimaryClick(at: virtualCursorPosition, timestamp: now, clickCount: clickCount)
+        commitPrimaryClick(at: location, timestamp: now, clickCount: clickCount)
     }
 
     @objc
@@ -809,23 +822,24 @@ extension InputCapturingView {
         guard usesVirtualTrackpad else { return }
         if requestCursorLockRecaptureIfNeeded() { return }
         stopVirtualCursorDeceleration()
-        setVirtualCursorVisible(true)
+        setTrackpadCursorVisible(true)
+        let location = trackpadCursorActionPosition()
 
         let now = CACurrentMediaTime()
-        let clickCount = nextSecondaryClickCount(at: virtualCursorPosition, timestamp: now)
+        let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
         currentRightClickCount = clickCount
 
         let eventModifiers = modifiers(from: gesture)
         let mouseEvent = MirageMouseEvent(
             button: .right,
-            location: virtualCursorPosition,
+            location: location,
             clickCount: clickCount,
             modifiers: eventModifiers
         )
 
         onInputEvent?(.rightMouseDown(mouseEvent))
         onInputEvent?(.rightMouseUp(mouseEvent))
-        commitSecondaryClick(at: virtualCursorPosition, timestamp: now, clickCount: clickCount)
+        commitSecondaryClick(at: location, timestamp: now, clickCount: clickCount)
     }
 
     // MARK: - Direct Touch Gesture Handlers
@@ -1007,13 +1021,8 @@ extension InputCapturingView {
             y: virtualCursorVelocity.y * dt
         )
         if translation != .zero {
-            moveVirtualCursor(by: translation)
-            let mouseEvent = MirageMouseEvent(
-                button: .left,
-                location: virtualCursorPosition,
-                modifiers: keyboardModifiers
-            )
-            onInputEvent?(.mouseMoved(mouseEvent))
+            moveTrackpadCursor(by: translation)
+            sendTrackpadMovementEvent(modifiers: keyboardModifiers)
         }
 
         let decay = CGFloat(pow(Double(decelerationRate), dt * 60))

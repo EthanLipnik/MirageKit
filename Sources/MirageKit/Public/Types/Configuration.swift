@@ -340,13 +340,9 @@ public struct MirageEncoderOverrides: Sendable, Codable {
     public var performanceMode: MirageStreamPerformanceMode?
     public var allowRuntimeQualityAdjustment: Bool?
     public var lowLatencyHighResolutionCompressionBoost: Bool?
-    public var temporaryDegradationMode: MirageTemporaryDegradationMode?
     public var disableResolutionCap: Bool
-    /// Maximum bitrate budget supplied by the client for app-owned adaptation.
-    /// When set, the host may temporarily shed bitrate below the initial
-    /// `bitrate` value to protect source or transport stability, and it may
-    /// ramp back toward the latest client-requested target without exceeding
-    /// this ceiling.
+    /// Maximum bitrate budget the client-owned adaptation loop may request for
+    /// this stream.
     public var bitrateAdaptationCeiling: Int?
     /// Maximum encoded width in pixels. When set, the host computes the stream
     /// scale from these dimensions and the actual capture resolution instead of
@@ -368,7 +364,6 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
-        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         disableResolutionCap: Bool = false,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -385,7 +380,6 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         self.performanceMode = performanceMode
         self.allowRuntimeQualityAdjustment = allowRuntimeQualityAdjustment
         self.lowLatencyHighResolutionCompressionBoost = lowLatencyHighResolutionCompressionBoost
-        self.temporaryDegradationMode = temporaryDegradationMode
         self.disableResolutionCap = disableResolutionCap
         self.bitrateAdaptationCeiling = bitrateAdaptationCeiling
         self.encoderMaxWidth = encoderMaxWidth
@@ -402,7 +396,6 @@ public struct MirageEncoderOverrides: Sendable, Codable {
         performanceMode: MirageStreamPerformanceMode? = nil,
         allowRuntimeQualityAdjustment: Bool? = nil,
         lowLatencyHighResolutionCompressionBoost: Bool? = nil,
-        temporaryDegradationMode: MirageTemporaryDegradationMode? = nil,
         disableResolutionCap: Bool = false
     ) {
         self.init(
@@ -415,7 +408,6 @@ public struct MirageEncoderOverrides: Sendable, Codable {
             performanceMode: performanceMode,
             allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
-            temporaryDegradationMode: temporaryDegradationMode,
             disableResolutionCap: disableResolutionCap
         )
     }
@@ -707,22 +699,6 @@ public enum MirageStreamPerformanceMode: String, Sendable, CaseIterable, Codable
         switch self {
         case .standard: "Standard"
         case .game: "Game Mode"
-        }
-    }
-}
-
-/// Policy for temporary host-side degradation and recovery when a stream cannot
-/// sustain its requested bitrate, frame rate, and visual settings simultaneously.
-public enum MirageTemporaryDegradationMode: String, Sendable, CaseIterable, Codable {
-    case off
-    case prioritizeFramerate
-    case prioritizeVisuals
-
-    public var displayName: String {
-        switch self {
-        case .off: "Off"
-        case .prioritizeFramerate: "Prioritize Framerate"
-        case .prioritizeVisuals: "Prioritize Visuals"
         }
     }
 }

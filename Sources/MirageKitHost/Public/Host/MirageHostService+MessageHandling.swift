@@ -86,6 +86,9 @@ extension MirageHostService {
             .hostWallpaperRequest: { [weak self] message, clientContext in
                 await self?.handleHostWallpaperRequest(message, from: clientContext)
             },
+            .remoteClientStreamOptionsState: { [weak self] message, clientContext in
+                await self?.handleRemoteClientStreamOptionsState(message, from: clientContext)
+            },
             .hostSupportLogArchiveRequest: { [weak self] message, clientContext in
                 await self?.handleHostSupportLogArchiveRequest(message, from: clientContext)
             },
@@ -192,7 +195,6 @@ extension MirageHostService {
             let performanceMode = request.performanceMode ?? .standard
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
             let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? true
-            let temporaryDegradationMode = request.temporaryDegradationMode ?? .off
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
             let audioConfiguration = request.audioConfiguration ?? .default
@@ -222,7 +224,6 @@ extension MirageHostService {
                 performanceMode: performanceMode,
                 allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
                 lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
-                temporaryDegradationMode: temporaryDegradationMode,
                 disableResolutionCap: disableResolutionCap,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,

@@ -11,8 +11,9 @@ import Foundation
 /// Magic number for packet validation
 package let mirageProtocolMagic: UInt32 = 0x4D49_5247 // "MIRG"
 
-/// Protocol version
-package let mirageProtocolVersion: UInt8 = 2
+/// Mirage wire-contract version for bootstrap negotiation and media packets.
+/// Increment when Mirage control/media semantics change independently of Loom.
+package let mirageProtocolVersion: UInt8 = 3
 package let mirageSupportedFeatures: MirageFeatureSet = [
     .controlMessageRouting,
     .protocolNegotiation,

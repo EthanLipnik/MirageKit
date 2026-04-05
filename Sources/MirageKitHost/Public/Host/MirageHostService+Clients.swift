@@ -112,6 +112,8 @@ extension MirageHostService {
             // Force local output unmute when the host no longer has any active clients.
             hostAudioMuteController.setMuted(false)
             singleClientSessionID = nil
+            remoteClientStreamStatusOverlayEnabled = false
+            remoteClientStreamOptionsDisplayMode = .inStream
             await cleanupSharedVirtualDisplayIfIdle()
             await forceDisableLightsOut(reason: "last client disconnected")
         }

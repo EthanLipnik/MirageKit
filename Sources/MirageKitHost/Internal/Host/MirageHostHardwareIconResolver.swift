@@ -6,7 +6,7 @@
 //
 
 #if os(macOS)
-import AppKit
+import CoreGraphics
 import Foundation
 import ImageIO
 import MirageKit
@@ -44,8 +44,11 @@ enum MirageHostHardwareIconResolver {
             hardwareMachineFamily: hardwareMachineFamily,
             hardwareModelIdentifier: hardwareModelIdentifier
         ),
-        let image = NSImage(contentsOfFile: resolvedAsset.path),
-        let pngData = pngData(for: image, maxPixelSize: maxPixelSize) else {
+        let cgImage = thumbnailCGImage(
+            at: resolvedAsset.path,
+            maxPixelSize: maxPixelSize
+        ),
+        let pngData = pngData(for: cgImage) else {
             return nil
         }
 
@@ -67,13 +70,15 @@ enum MirageHostHardwareIconResolver {
             hardwareMachineFamily: hardwareMachineFamily,
             hardwareModelIdentifier: hardwareModelIdentifier
         ),
-        let image = NSImage(contentsOfFile: resolvedAsset.path) else {
+        let cgImage = thumbnailCGImage(
+            at: resolvedAsset.path,
+            maxPixelSize: maxPixelSize
+        ) else {
             return nil
         }
 
         return heifOrPNGData(
-            for: image,
-            maxPixelSize: maxPixelSize,
+            for: cgImage,
             compressionQuality: compressionQuality
         )
     }
@@ -192,86 +197,68 @@ enum MirageHostHardwareIconResolver {
         return nil
     }
 
-    private static func pngData(for image: NSImage, maxPixelSize: Int) -> Data? {
-        guard let bitmap = rasterizedBitmapImageRep(for: image, maxPixelSize: maxPixelSize) else {
+    private static func thumbnailCGImage(at path: String, maxPixelSize: Int) -> CGImage? {
+        let url = URL(fileURLWithPath: path)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
             return nil
         }
 
-        return bitmap.representation(using: .png, properties: [:])
+        let clampedPixelSize = min(max(maxPixelSize, 128), 1024)
+        let options: CFDictionary = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceShouldCacheImmediately: true,
+            kCGImageSourceThumbnailMaxPixelSize: clampedPixelSize,
+        ] as CFDictionary
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options)
+    }
+
+    private static func pngData(for image: CGImage) -> Data? {
+        encodeImage(
+            image,
+            type: UTType.png,
+            properties: nil
+        )
     }
 
     private static func heifOrPNGData(
-        for image: NSImage,
-        maxPixelSize: Int,
+        for image: CGImage,
         compressionQuality: Double
     ) -> Data? {
-        guard let bitmap = rasterizedBitmapImageRep(for: image, maxPixelSize: maxPixelSize) else {
-            return nil
+        if let heifData = encodeImage(
+            image,
+            type: .heic,
+            properties: [
+                kCGImageDestinationLossyCompressionQuality: max(0.1, min(1.0, compressionQuality)),
+            ] as CFDictionary
+        ),
+        !heifData.isEmpty {
+            return heifData
         }
 
-        if let cgImage = bitmap.cgImage {
-            let mutableData = NSMutableData()
-            if let destination = CGImageDestinationCreateWithData(
-                mutableData,
-                UTType.heic.identifier as CFString,
-                1,
-                nil
-            ) {
-                let options: CFDictionary = [
-                    kCGImageDestinationLossyCompressionQuality: max(0.1, min(1.0, compressionQuality)),
-                ] as CFDictionary
-                CGImageDestinationAddImage(destination, cgImage, options)
-                if CGImageDestinationFinalize(destination) {
-                    let heifData = mutableData as Data
-                    if !heifData.isEmpty {
-                        return heifData
-                    }
-                }
-            }
-        }
-
-        return bitmap.representation(using: .png, properties: [:])
+        return pngData(for: image)
     }
 
-    private static func rasterizedBitmapImageRep(
-        for image: NSImage,
-        maxPixelSize: Int
-    ) -> NSBitmapImageRep? {
-        let sourceSize = image.size
-        guard sourceSize.width > 0, sourceSize.height > 0 else {
+    private static func encodeImage(
+        _ image: CGImage,
+        type: UTType,
+        properties: CFDictionary?
+    ) -> Data? {
+        let mutableData = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(
+            mutableData,
+            type.identifier as CFString,
+            1,
+            nil
+        ) else {
             return nil
         }
 
-        let targetDimension = CGFloat(min(max(maxPixelSize, 128), 1024))
-        let scale = min(targetDimension / sourceSize.width, targetDimension / sourceSize.height)
-        let drawSize = CGSize(width: sourceSize.width * scale, height: sourceSize.height * scale)
-        let drawOrigin = CGPoint(
-            x: (targetDimension - drawSize.width) * 0.5,
-            y: (targetDimension - drawSize.height) * 0.5
-        )
-        let drawRect = CGRect(origin: drawOrigin, size: drawSize)
-
-        let rendered = NSImage(size: NSSize(width: targetDimension, height: targetDimension))
-        rendered.lockFocus()
-        NSGraphicsContext.current?.imageInterpolation = .high
-        image.draw(
-            in: drawRect,
-            from: .zero,
-            operation: .copy,
-            fraction: 1,
-            respectFlipped: true,
-            hints: [.interpolation: NSImageInterpolation.high]
-        )
-        rendered.unlockFocus()
-
-        guard
-            let tiffData = rendered.tiffRepresentation,
-            let bitmap = NSBitmapImageRep(data: tiffData)
-        else {
+        CGImageDestinationAddImage(destination, image, properties)
+        guard CGImageDestinationFinalize(destination) else {
             return nil
         }
-
-        return bitmap
+        return mutableData as Data
     }
 
     private static func isMacHardwareIconFilename(_ lowercasedFilename: String) -> Bool {

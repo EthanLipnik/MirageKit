@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 2/2/26.
 //
-//  Local codec benchmarking helpers for automatic quality.
+//  Local codec benchmarking helpers for connection quality diagnostics.
 //
 
 import CoreMedia

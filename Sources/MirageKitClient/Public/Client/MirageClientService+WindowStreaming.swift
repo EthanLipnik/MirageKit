@@ -366,6 +366,8 @@ private extension MirageClientService.StreamStopOrigin {
         switch self {
         case .clientWindowClosed:
             .clientWindowClosed
+        case .remoteCommand:
+            .remoteCommand
         }
     }
 }

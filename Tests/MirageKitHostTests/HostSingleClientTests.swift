@@ -35,6 +35,24 @@ struct HostSingleClientTests {
         #expect(host.reserveSingleClientSlot(for: sessionIDB))
     }
 
+    @Test("Stale slot reservation expires and reopens availability")
+    @MainActor
+    func staleSlotReservationExpiresAndReopensAvailability() {
+        let host = MirageHostService()
+        let staleSessionID = UUID()
+        let replacementSessionID = UUID()
+
+        #expect(host.reserveSingleClientSlot(for: staleSessionID))
+        host.singleClientReservationStartedAt = CFAbsoluteTimeGetCurrent() - (host.connectionApprovalTimeoutSeconds + 1)
+
+        host.updateAdvertisedConnectionAvailability()
+
+        #expect(host.singleClientSessionID == nil)
+        #expect(host.allowsNewClientConnections)
+        #expect(host.currentPeerAdvertisement.mirageAcceptingConnections)
+        #expect(host.reserveSingleClientSlot(for: replacementSessionID))
+    }
+
     @Test("Reconnect preemption matches same device ID")
     @MainActor
     func reconnectPreemptionMatchesSameDeviceID() {

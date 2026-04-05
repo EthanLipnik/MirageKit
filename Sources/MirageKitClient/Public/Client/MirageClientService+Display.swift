@@ -199,10 +199,17 @@ extension MirageClientService {
     /// Get the maximum refresh rate requested by the client.
     public func getScreenMaxRefreshRate() -> Int {
         #if os(iOS)
-        let knownMax = MirageClientService.lastKnownScreenMaxFPS
-        let screenMax = knownMax > 0 ? knownMax : 60
-        if let override = maxRefreshRateOverride { return min(override, screenMax) }
-        return screenMax
+        let liveScreenMax = liveScreenMaxRefreshRate()
+        if liveScreenMax > 0 {
+            MirageClientService.lastKnownScreenMaxFPS = liveScreenMax
+        }
+        let cachedScreenMax = MirageClientService.lastKnownScreenMaxFPS
+        return Self.resolvedScreenMaxRefreshRate(
+            override: maxRefreshRateOverride,
+            liveScreenMax: liveScreenMax > 0 ? liveScreenMax : nil,
+            cachedScreenMax: cachedScreenMax > 0 ? cachedScreenMax : nil,
+            defaultScreenMax: 60
+        )
         #else
         let screenMax: Int
         #if os(macOS)
@@ -216,6 +223,24 @@ extension MirageClientService {
         if let override = maxRefreshRateOverride { return override }
         return screenMax
         #endif
+    }
+
+    nonisolated static func resolvedScreenMaxRefreshRate(
+        override: Int?,
+        liveScreenMax: Int?,
+        cachedScreenMax: Int?,
+        defaultScreenMax: Int
+    ) -> Int {
+        var resolvedScreenMax = max(1, defaultScreenMax)
+        for candidate in [liveScreenMax, cachedScreenMax] {
+            guard let candidate, candidate > 0 else { continue }
+            resolvedScreenMax = candidate
+            break
+        }
+        if let override {
+            return min(max(1, override), resolvedScreenMax)
+        }
+        return resolvedScreenMax
     }
 
     public func updateMaxRefreshRateOverride(_ newValue: Int) {
@@ -378,6 +403,25 @@ extension MirageClientService {
             nativePixelSize: nativePixelSize,
             nativeScale: max(1.0, nativeScale)
         )
+    }
+
+    private func liveScreenMaxRefreshRate() -> Int {
+        #if os(iOS)
+        if let screen = UIWindow.current?.windowScene?.screen ?? UIWindow.current?.screen {
+            return screen.maximumFramesPerSecond
+        }
+
+        let connectedSceneMax = UIApplication.shared.connectedScenes
+            .compactMap { scene in
+                (scene as? UIWindowScene)?.screen.maximumFramesPerSecond
+            }
+            .max() ?? 0
+        if connectedSceneMax > 0 { return connectedSceneMax }
+
+        return UIScreen.main.maximumFramesPerSecond
+        #else
+        return 0
+        #endif
     }
 
     private func liveScreenMetrics() -> ScreenMetrics {

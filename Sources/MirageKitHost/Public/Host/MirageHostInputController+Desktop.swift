@@ -18,6 +18,35 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Desktop Input Handling
 
+    nonisolated static func shouldWarpDesktopPointerEvent(_ type: CGEventType) -> Bool {
+        switch type {
+        case .leftMouseDown,
+             .rightMouseDown,
+             .otherMouseDown,
+             .mouseMoved,
+             .leftMouseDragged,
+             .rightMouseDragged,
+             .otherMouseDragged:
+            true
+        default:
+            false
+        }
+    }
+
+    nonisolated static func resolvedDesktopPointerEventPoint(
+        _ type: CGEventType,
+        requestedPoint: CGPoint,
+        currentCursorPosition: CGPoint
+    )
+    -> CGPoint {
+        switch type {
+        case .rightMouseDown, .rightMouseUp:
+            currentCursorPosition
+        default:
+            requestedPoint
+        }
+    }
+
     /// Handle input events for desktop streaming.
     /// - Parameters:
     ///   - event: The input event received from the client.
@@ -30,43 +59,36 @@ extension MirageHostInputController {
             case let .mouseDown(e):
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.leftMouseDown, e, at: point)
+                injectDesktopPointerEvent(.leftMouseDown, e, requestedPoint: point)
             case let .mouseUp(e):
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.leftMouseUp, e, at: point)
             case let .rightMouseDown(e):
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.rightMouseDown, e, at: point)
+                injectDesktopPointerEvent(.rightMouseDown, e, requestedPoint: point)
             case let .rightMouseUp(e):
                 let point = screenPoint(e.location, in: bounds)
-                injectDesktopMouseEvent(.rightMouseUp, e, at: point)
+                injectDesktopPointerEvent(.rightMouseUp, e, requestedPoint: point)
             case let .otherMouseDown(e):
                 clearUnexpectedSystemModifiers(domain: .hid)
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.otherMouseDown, e, at: point)
+                injectDesktopPointerEvent(.otherMouseDown, e, requestedPoint: point)
             case let .otherMouseUp(e):
                 let point = screenPoint(e.location, in: bounds)
                 injectDesktopMouseEvent(.otherMouseUp, e, at: point)
             case let .mouseMoved(e):
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.mouseMoved, e, at: point)
+                injectDesktopPointerEvent(.mouseMoved, e, requestedPoint: point)
             case let .mouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.leftMouseDragged, e, at: point)
+                injectDesktopPointerEvent(.leftMouseDragged, e, requestedPoint: point)
             case let .rightMouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.rightMouseDragged, e, at: point)
+                injectDesktopPointerEvent(.rightMouseDragged, e, requestedPoint: point)
             case let .otherMouseDragged(e):
                 let point = screenPoint(e.location, in: bounds)
-                CGWarpMouseCursorPosition(point)
-                injectDesktopMouseEvent(.otherMouseDragged, e, at: point)
+                injectDesktopPointerEvent(.otherMouseDragged, e, requestedPoint: point)
             case let .scrollWheel(e):
                 injectDesktopScrollEvent(e, bounds: bounds)
             case let .keyDown(e):
@@ -87,12 +109,29 @@ extension MirageHostInputController {
         }
     }
 
-    /// Convert normalized coordinates (0-1) to screen coordinates using display bounds.
+    /// Convert normalized stream coordinates to screen coordinates using display bounds.
+    /// Secondary desktop cursor-lock travel may temporarily exceed `0...1`.
     func screenPoint(_ normalized: CGPoint, in bounds: CGRect) -> CGPoint {
         CGPoint(
             x: bounds.origin.x + normalized.x * bounds.width,
             y: bounds.origin.y + normalized.y * bounds.height
         )
+    }
+
+    private func injectDesktopPointerEvent(
+        _ type: CGEventType,
+        _ event: MirageMouseEvent,
+        requestedPoint: CGPoint
+    ) {
+        let point = Self.resolvedDesktopPointerEventPoint(
+            type,
+            requestedPoint: requestedPoint,
+            currentCursorPosition: NSEvent.mouseLocation
+        )
+        if Self.shouldWarpDesktopPointerEvent(type) {
+            CGWarpMouseCursorPosition(point)
+        }
+        injectDesktopMouseEvent(type, event, at: point)
     }
 
     /// Inject mouse event at a specific screen point (for desktop streaming).

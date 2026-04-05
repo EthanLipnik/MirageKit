@@ -10,6 +10,9 @@
 import MirageKit
 #if os(iOS) || os(visionOS)
 import QuartzCore
+#if os(iOS)
+import UIKit
+#endif
 
 @MainActor
 final class MirageRefreshRateMonitor: NSObject {
@@ -83,7 +86,8 @@ final class MirageRefreshRateMonitor: NSObject {
     private func evaluateScreenMaxFPS() {
         let maxFPS = resolveScreenMaxFPS()
         if maxFPS != lastScreenMaxFPS { lastScreenMaxFPS = maxFPS }
-        if maxFPS > 0 { MirageClientService.lastKnownScreenMaxFPS = maxFPS }
+        guard maxFPS > 0 else { return }
+        MirageClientService.lastKnownScreenMaxFPS = maxFPS
         let target = maxFPS >= 120 ? 120 : 60
         setOverride(target)
     }
@@ -92,7 +96,10 @@ final class MirageRefreshRateMonitor: NSObject {
         #if os(iOS)
         if let screen = view?.window?.windowScene?.screen { return screen.maximumFramesPerSecond }
         if let screen = view?.window?.screen { return screen.maximumFramesPerSecond }
-        return 60
+        if let screen = UIWindow.current?.windowScene?.screen ?? UIWindow.current?.screen {
+            return screen.maximumFramesPerSecond
+        }
+        return 0
         #else
         // visionOS doesn't have UIScreen; use 90 fps (Vision Pro native rate)
         // TODO: Support 120fps on M5 Vision Pro when Apple provides API to detect display capabilities

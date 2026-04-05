@@ -16,6 +16,20 @@ import ScreenCaptureKit
 
 // MARK: - Shared Pipeline Setup
 
+enum StreamCaptureEngineSetupError: Error, LocalizedError {
+    case encoderUnavailable
+    case streamStoppedDuringSetup
+
+    var errorDescription: String? {
+        switch self {
+        case .encoderUnavailable:
+            "Encoder became unavailable during capture-engine setup"
+        case .streamStoppedDuringSetup:
+            "Stream stopped during capture-engine setup"
+        }
+    }
+}
+
 extension StreamContext {
 
     /// Configures the packet sender for encoded frame output.
@@ -151,8 +165,15 @@ extension StreamContext {
     /// Creates and starts the capture engine with admission dropping.
     func setupAndStartCaptureEngine(
         usesDisplayRefreshCadence: Bool
-    ) async -> WindowCaptureEngine {
-        let resolvedPixelFormat = await encoder!.getActivePixelFormat()
+    ) async throws -> WindowCaptureEngine {
+        guard let encoder else {
+            throw StreamCaptureEngineSetupError.encoderUnavailable
+        }
+
+        let resolvedPixelFormat = await encoder.getActivePixelFormat()
+        guard isRunning, self.encoder != nil else {
+            throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
+        }
         activePixelFormat = resolvedPixelFormat
         let captureConfig = encoderConfig.withInternalOverrides(pixelFormat: resolvedPixelFormat)
         let engine = WindowCaptureEngine(
@@ -164,9 +185,17 @@ extension StreamContext {
         )
         self.captureEngine = engine
         if let captureStallStageHandler {
+            guard isRunning, self.encoder != nil else {
+                self.captureEngine = nil
+                throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
+            }
             await engine.setCaptureStallStageHandler(captureStallStageHandler)
         }
         let frameInbox = self.frameInbox
+        guard isRunning, self.encoder != nil else {
+            self.captureEngine = nil
+            throw StreamCaptureEngineSetupError.streamStoppedDuringSetup
+        }
         await engine.setAdmissionDropper { [weak self] in
             let snapshot = frameInbox.pendingSnapshot()
             let backpressure = self?.backpressureActiveSnapshot ?? false
