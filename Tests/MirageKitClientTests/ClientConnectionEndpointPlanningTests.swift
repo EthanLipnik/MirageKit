@@ -152,6 +152,51 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Overlay peers use overlay endpoint hosts and advertised transport ports")
+    func controlSessionAttemptsPreferOverlayEndpointHostAndPorts() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 65_139))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 57_210))
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Ethan's Mac Studio",
+            deviceType: .mac,
+            endpoint: .hostPort(host: NWEndpoint.Host("100.65.199.51"), port: udpPort),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                hostName: "Ethan's Mac Studio",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                ]
+            )
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("100.65.199.51"),
+            port: udpPort
+        )
+        let expectedQUICEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("100.65.199.51"),
+            port: quicPort
+        )
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("100.65.199.51"),
+            port: udpPort
+        )
+
+        #expect(attempts.count == 3)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .quic)
+        #expect(attempts[1].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
+        #expect(attempts[2].transportKind == .tcp)
+        #expect(attempts[2].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+    }
+
+    @MainActor
     @Test("Client control session failures classify retryable transport errors")
     func controlSessionFailureClassificationRecognizesRetryableTransportErrors() throws {
         #expect(

@@ -29,6 +29,19 @@ extension MirageHostService {
         }
     }
 
+    public func updateAdvertisedVPNAccessEnabled(_ enabled: Bool) {
+        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingVPNAccessEnabled(
+            enabled,
+            in: advertisedPeerAdvertisement
+        )
+        guard updatedAdvertisement != advertisedPeerAdvertisement else { return }
+
+        advertisedPeerAdvertisement = updatedAdvertisement
+        Task { @MainActor [weak self] in
+            await self?.publishCurrentAdvertisement()
+        }
+    }
+
     func publishCurrentAdvertisement() async {
         guard case .advertising = state else { return }
 

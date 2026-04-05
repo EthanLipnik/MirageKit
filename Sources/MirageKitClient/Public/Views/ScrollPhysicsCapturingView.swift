@@ -33,6 +33,9 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate, UIGestureR
     /// The actual content we display (stays pinned to bounds)
     let contentView: UIView
 
+    /// The pan recognizer that drives native one-finger direct-touch scrolling.
+    var directTouchPanGestureRecognizer: UIPanGestureRecognizer { directTouchScrollView.panGestureRecognizer }
+
     /// Callback for scroll events: (deltaX, deltaY, phase, momentumPhase)
     var onScroll: ((CGFloat, CGFloat, MirageScrollPhase, MirageScrollPhase) -> Void)?
 

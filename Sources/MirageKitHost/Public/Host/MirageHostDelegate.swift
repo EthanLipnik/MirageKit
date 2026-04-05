@@ -50,7 +50,7 @@ public protocol MirageHostDelegate: AnyObject, Sendable {
     func hostService(_ service: MirageHostService, didDiscoverPeerWithAdvertisement advertisement: LoomPeerAdvertisement)
 
     /// Called after an authenticated hello is accepted so the host can advertise whether
-    /// this client should remember remote signaling access for future sessions.
+    /// this client may reuse host-published off-LAN access metadata for future sessions.
     @MainActor
     func hostService(_ service: MirageHostService, remoteAccessAllowedFor deviceInfo: LoomPeerDeviceInfo)
         -> Bool

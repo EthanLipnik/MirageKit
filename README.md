@@ -190,7 +190,7 @@ Host runtime supports an AWDL transport stabilization experiment behind an envir
 
 - Input events are forwarded via `MirageInputEvent` types (mouse, key, scroll, magnify, rotate).
 - Apple Pencil defaults to touch-style mouse semantics (`tap` click, `hold` drag, squeeze secondary click). `MiragePencilInputMode.drawingTablet` preserves pressure and stylus orientation metadata for tablet-aware host apps.
-- Direct touch supports `normal`, `dragCursor`, and `pencilBased` modes. Normal mode uses one-finger native scroll physics, tap-to-click, long-press drag, two-finger secondary click, and two-finger click-drag. Pencil-based mode keeps direct touch in scroll-only mode.
+- Direct touch supports `normal` and `dragCursor` modes. Normal mode uses one-finger native scroll physics, tap-to-click, long-press drag, two-finger secondary click, and two-finger click-drag.
 - Apple Pencil squeeze emits a secondary click at the hover location when available, or the latest pointer location.
 - `MirageStreamViewRepresentable` renders streams through `AVSampleBufferDisplayLayer` and exposes drawable size callbacks for resolution sync.
 - `MirageStreamContentView` and `MirageClientSessionStore` coordinate input, focus, and resize UI.

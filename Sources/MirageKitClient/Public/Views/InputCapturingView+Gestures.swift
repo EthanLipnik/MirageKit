@@ -1042,6 +1042,8 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
         shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer
     )
     -> Bool {
+        let directTouchScrollPanGesture = scrollPhysicsView?.directTouchPanGestureRecognizer
+
         // Allow hover to work with other gestures
         if gestureRecognizer is UIHoverGestureRecognizer || otherGestureRecognizer is UIHoverGestureRecognizer { return true }
 
@@ -1056,6 +1058,11 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
             return true
         }
 
+        if (gestureRecognizer == directLongPressGesture && otherGestureRecognizer == directTouchScrollPanGesture) ||
+            (gestureRecognizer == directTouchScrollPanGesture && otherGestureRecognizer == directLongPressGesture) {
+            return true
+        }
+
         if (gestureRecognizer == longPressGesture && otherGestureRecognizer == scrollGesture) ||
             (gestureRecognizer == scrollGesture && otherGestureRecognizer == longPressGesture) {
             return true
@@ -1063,6 +1070,20 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
 
         if (gestureRecognizer == lockedPointerPanGesture && otherGestureRecognizer == lockedPointerPressGesture) ||
             (gestureRecognizer == lockedPointerPressGesture && otherGestureRecognizer == lockedPointerPanGesture) {
+            return true
+        }
+
+        return false
+    }
+
+    public func gestureRecognizer(
+        _ gestureRecognizer: UIGestureRecognizer,
+        shouldRequireFailureOf otherGestureRecognizer: UIGestureRecognizer
+    )
+    -> Bool {
+        if gestureRecognizer == directTapGesture,
+           let directTouchScrollPanGesture = scrollPhysicsView?.directTouchPanGestureRecognizer,
+           otherGestureRecognizer == directTouchScrollPanGesture {
             return true
         }
 

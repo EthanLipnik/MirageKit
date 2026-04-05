@@ -17,7 +17,7 @@ public typealias StreamSessionID = UUID
 // MARK: - Version
 
 public enum MirageKit {
-    public static let version = "0.15.4"
+    public static let version = "0.15.5"
     public static let protocolVersion: UInt8 = Loom.protocolVersion
     public static let serviceType = "_mirage._tcp"
     public static let relayHeaderPrefix = "x-mirage"
@@ -41,7 +41,6 @@ public enum MirageKit {
             peerRecordType: "MiragePeer",
             peerZoneName: "MiragePeerZone",
             participantIdentityRecordType: "MirageParticipantIdentity",
-            shareTitle: "Mirage Access",
             deviceIDKey: sharedDeviceIDKey,
             deviceIDSuiteName: sharedDeviceIDSuiteName
         )

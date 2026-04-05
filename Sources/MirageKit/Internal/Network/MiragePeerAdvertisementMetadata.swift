@@ -11,6 +11,7 @@ import Loom
 package enum MiragePeerAdvertisementMetadata {
     private static let maxStreamsKey = "mirage.max-streams"
     private static let acceptingConnectionsKey = "mirage.accepting-connections"
+    private static let vpnAccessEnabledKey = "mirage.vpn-access"
     private static let supportsHEVCKey = "mirage.supports-hevc"
     private static let supportsP3Key = "mirage.supports-p3"
     private static let supportedColorDepthsKey = "mirage.color-depths"
@@ -33,7 +34,9 @@ package enum MiragePeerAdvertisementMetadata {
         modelIdentifier: String?,
         iconName: String?,
         machineFamily: String?,
+        hostName: String? = nil,
         acceptingConnections: Bool = true,
+        vpnAccessEnabled: Bool = false,
         supportedColorDepths: [MirageStreamColorDepth]
     ) -> LoomPeerAdvertisement {
         let normalizedColorDepths = supportedColorDepths.sorted { lhs, rhs in
@@ -47,9 +50,11 @@ package enum MiragePeerAdvertisementMetadata {
             modelIdentifier: modelIdentifier,
             iconName: iconName,
             machineFamily: machineFamily,
+            hostName: hostName,
             metadata: [
                 maxStreamsKey: "4",
                 acceptingConnectionsKey: acceptingConnections ? "1" : "0",
+                vpnAccessEnabledKey: vpnAccessEnabled ? "1" : "0",
                 supportsHEVCKey: "1",
                 supportsP3Key: normalizedColorDepths.contains { $0 != .standard } ? "1" : "0",
                 supportedColorDepthsKey: normalizedColorDepths.map(\.rawValue).joined(separator: ","),
@@ -85,6 +90,10 @@ package enum MiragePeerAdvertisementMetadata {
         boolValue(supportsHEVCKey, in: advertisement, defaultValue: true)
     }
 
+    package static func vpnAccessEnabled(in advertisement: LoomPeerAdvertisement) -> Bool {
+        boolValue(vpnAccessEnabledKey, in: advertisement, defaultValue: false)
+    }
+
     package static func supportsP3ColorSpace(in advertisement: LoomPeerAdvertisement) -> Bool {
         boolValue(supportsP3Key, in: advertisement, defaultValue: true)
     }
@@ -109,6 +118,22 @@ package enum MiragePeerAdvertisementMetadata {
         return [.standard]
     }
 
+    package static func advertisedBonjourHostName(
+        processHostName: String = ProcessInfo.processInfo.hostName
+    ) -> String? {
+        let trimmedHostName = processHostName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmedHostName.isEmpty == false else {
+            return nil
+        }
+
+        let normalizedHostName = trimmedHostName.replacingOccurrences(of: " ", with: "-")
+        if normalizedHostName.contains(".") {
+            return normalizedHostName
+        }
+
+        return "\(normalizedHostName).local"
+    }
+
     package static func maxFrameRate(from advertisement: LoomPeerAdvertisement) -> Int {
         intValue(maxFrameRateKey, from: advertisement, defaultValue: 120)
     }
@@ -119,6 +144,15 @@ package enum MiragePeerAdvertisementMetadata {
     ) -> LoomPeerAdvertisement {
         var metadata = advertisement.metadata
         metadata[acceptingConnectionsKey] = acceptingConnections ? "1" : "0"
+        return rebuildingAdvertisement(advertisement, metadata: metadata)
+    }
+
+    package static func updatingVPNAccessEnabled(
+        _ vpnAccessEnabled: Bool,
+        in advertisement: LoomPeerAdvertisement
+    ) -> LoomPeerAdvertisement {
+        var metadata = advertisement.metadata
+        metadata[vpnAccessEnabledKey] = vpnAccessEnabled ? "1" : "0"
         return rebuildingAdvertisement(advertisement, metadata: metadata)
     }
 

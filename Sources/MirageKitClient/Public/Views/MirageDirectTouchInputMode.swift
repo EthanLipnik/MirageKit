@@ -17,14 +17,10 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
     /// Direct touches move a virtual cursor (trackpad-style).
     case dragCursor
 
-    /// Direct touches only generate smooth native scroll events.
-    case pencilBased
-
     public var displayName: String {
         switch self {
         case .normal: "Normal"
         case .dragCursor: "Drag Cursor"
-        case .pencilBased: "Pencil-based (Scroll Only)"
         }
     }
 

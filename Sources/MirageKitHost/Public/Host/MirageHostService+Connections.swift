@@ -162,6 +162,7 @@ extension MirageHostService {
         let remoteEndpoint = await session.remoteEndpoint
         let pathSnapshot = await session.pathSnapshot
         let origin: MirageHostConnectionOrigin = inferOrigin(
+            peerAdvertisement: context.peerAdvertisement,
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
         )
@@ -258,6 +259,7 @@ extension MirageHostService {
             let responseResult = try await makeBootstrapResponse(
                 for: bootstrap,
                 peerIdentity: peerIdentity,
+                peerAdvertisement: context.peerAdvertisement,
                 remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot,
                 autoTrustGranted: context.trustEvaluation.shouldShowAutoTrustNotice
@@ -338,18 +340,24 @@ extension MirageHostService {
     }
 
     private func inferOrigin(
+        peerAdvertisement: LoomPeerAdvertisement,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
     ) -> MirageHostConnectionOrigin {
-        ClientContext.isPeerToPeerConnection(
+        if let metadataValue = peerAdvertisement.metadata[mirageConnectionOriginMetadataKey],
+           let origin = MirageHostConnectionOrigin(metadataValue: metadataValue) {
+            return origin
+        }
+        return ClientContext.isPeerToPeerConnection(
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
-        ) ? .local : .remote
+        ) ? MirageHostConnectionOrigin.local : MirageHostConnectionOrigin.remote
     }
 
     private func makeBootstrapResponse(
         for request: MirageSessionBootstrapRequest,
         peerIdentity: LoomPeerIdentity,
+        peerAdvertisement: LoomPeerAdvertisement,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?,
         autoTrustGranted: Bool
@@ -406,6 +414,7 @@ extension MirageHostService {
 
         let hostIdentity = try identityManager.currentIdentity()
         let mediaEncryptionEnabled = resolveAcceptedSessionMediaEncryptionPolicy(
+            peerAdvertisement: peerAdvertisement,
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
         )
@@ -439,10 +448,15 @@ extension MirageHostService {
     }
 
     func resolveAcceptedSessionMediaEncryptionPolicy(
+        peerAdvertisement: LoomPeerAdvertisement,
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
     ) -> Bool {
-        mediaEncryptionEnabledForAcceptedSession(
+        if let metadataValue = peerAdvertisement.metadata[mirageConnectionOriginMetadataKey],
+           let origin = MirageHostConnectionOrigin(metadataValue: metadataValue) {
+            return mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: origin == .local)
+        }
+        return mediaEncryptionEnabledForAcceptedSession(
             isPeerToPeer: ClientContext.isPeerToPeerConnection(
                 remoteEndpoint: remoteEndpoint,
                 pathSnapshot: pathSnapshot
@@ -519,6 +533,14 @@ extension MirageHostService {
         if singleClientSessionID == sessionID {
             singleClientSessionID = nil
         }
+    }
+}
+
+private let mirageConnectionOriginMetadataKey = "mirage.connection-origin"
+
+private extension MirageHostConnectionOrigin {
+    init?(metadataValue: String) {
+        self.init(rawValue: metadataValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 }
 

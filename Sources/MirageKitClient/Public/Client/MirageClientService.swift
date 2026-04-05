@@ -457,7 +457,7 @@ public final class MirageClientService {
     /// Last host identity key ID validated by Loom session bootstrap.
     public internal(set) var connectedHostIdentityKeyID: String?
 
-    /// Whether the connected host explicitly allows this client to use remote signaling.
+    /// Whether the connected host explicitly allows this client to use host-published off-LAN reachability.
     public internal(set) var connectedHostAllowsRemoteAccess: Bool?
 
     /// Session store for UI state and stream coordination.
@@ -879,19 +879,22 @@ public final class MirageClientService {
     /// Applies runtime network-policy updates used by discovery and hello validation.
     /// Existing connections keep their current transport/path settings until reconnect.
     public func updateNetworkPolicy(
+        enableBonjour: Bool,
         enablePeerToPeer: Bool,
         requireEncryptedMediaOnLocalNetwork: Bool
     ) {
-        guard networkConfig.enablePeerToPeer != enablePeerToPeer ||
+        guard networkConfig.enableBonjour != enableBonjour ||
+            networkConfig.enablePeerToPeer != enablePeerToPeer ||
             networkConfig.requireEncryptedMediaOnLocalNetwork != requireEncryptedMediaOnLocalNetwork else {
             return
         }
 
+        networkConfig.enableBonjour = enableBonjour
         networkConfig.enablePeerToPeer = enablePeerToPeer
         networkConfig.requireEncryptedMediaOnLocalNetwork = requireEncryptedMediaOnLocalNetwork
         loomNode.configuration = networkConfig
         MirageLogger.client(
-            "Updated network policy (p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
+            "Updated network policy (bonjour=\(enableBonjour), p2p=\(enablePeerToPeer), localMediaEncryptionRequired=\(requireEncryptedMediaOnLocalNetwork))"
         )
     }
 

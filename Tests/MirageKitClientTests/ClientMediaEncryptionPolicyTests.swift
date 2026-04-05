@@ -64,10 +64,12 @@ struct ClientMediaEncryptionPolicyTests {
         )
 
         service.updateNetworkPolicy(
+            enableBonjour: false,
             enablePeerToPeer: false,
             requireEncryptedMediaOnLocalNetwork: false
         )
 
+        #expect(service.networkConfig.enableBonjour == false)
         #expect(service.networkConfig.enablePeerToPeer == false)
         #expect(service.networkConfig.requireEncryptedMediaOnLocalNetwork == false)
     }

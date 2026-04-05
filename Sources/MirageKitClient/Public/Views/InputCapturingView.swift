@@ -909,22 +909,6 @@ public class InputCapturingView: UIView {
                 virtualDragActive = false
                 stopVirtualCursorDeceleration()
                 setVirtualCursorVisible(false)
-            case .pencilBased:
-                longPressGesture.allowedTouchTypes = indirectTouchTypes
-                scrollGesture.isEnabled = false
-                directRotationGesture.isEnabled = false
-                scrollPhysicsView?.directTouchScrollEnabled = true
-                directTapGesture.isEnabled = false
-                directLongPressGesture.isEnabled = false
-                directTwoFingerTapGesture.isEnabled = false
-                directTwoFingerDragGesture.isEnabled = false
-                virtualCursorPanGesture.isEnabled = false
-                virtualCursorTapGesture.isEnabled = false
-                virtualCursorRightTapGesture.isEnabled = false
-                virtualCursorLongPressGesture.isEnabled = false
-                virtualDragActive = false
-                stopVirtualCursorDeceleration()
-                setVirtualCursorVisible(false)
             }
         }
     }

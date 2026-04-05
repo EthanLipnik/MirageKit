@@ -531,6 +531,7 @@ public final class MirageHostService {
             modelIdentifier: hardwareModelIdentifier,
             iconName: hardwareIconName,
             machineFamily: hardwareMachineFamily,
+            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
             supportedColorDepths: supportedColorDepths
         )
         MirageLogger.host(

@@ -649,36 +649,72 @@ extension MirageClientService {
         let requiredInterfaceType = preferredNetworkType.requiredInterfaceType
         var attempts: [ControlSessionAttempt] = []
 
-        if let udpTransport = host.advertisement.directTransports.first(where: { $0.transportKind == .udp }),
-           let port = NWEndpoint.Port(rawValue: udpTransport.port),
-           let udpHost = controlSessionUDPHost(for: host) {
+        for transportKind in [LoomTransportKind.udp, .quic, .tcp] {
+            guard let endpoint = controlSessionEndpoint(for: host, transportKind: transportKind) else {
+                continue
+            }
+
             attempts.append(
                 ControlSessionAttempt(
                     hostName: host.name,
-                    endpoint: .hostPort(host: udpHost, port: port),
-                    transportKind: .udp,
+                    endpoint: endpoint,
+                    transportKind: transportKind,
                     requiredInterfaceType: requiredInterfaceType
                 )
             )
         }
 
-        let tcpAttempt = ControlSessionAttempt(
-            hostName: host.name,
-            endpoint: host.endpoint,
-            transportKind: .tcp,
-            requiredInterfaceType: requiredInterfaceType
-        )
-
         if attempts.isEmpty {
-            attempts.append(tcpAttempt)
-        } else if attempts[0].endpoint.debugDescription != tcpAttempt.endpoint.debugDescription {
-            attempts.append(tcpAttempt)
+            attempts.append(
+                ControlSessionAttempt(
+                    hostName: host.name,
+                    endpoint: host.endpoint,
+                    transportKind: .tcp,
+                    requiredInterfaceType: requiredInterfaceType
+                )
+            )
         }
 
         return attempts
     }
 
+    private func controlSessionEndpoint(
+        for host: LoomPeer,
+        transportKind: LoomTransportKind
+    ) -> NWEndpoint? {
+        guard let transport = host.advertisement.directTransports.first(where: { $0.transportKind == transportKind }),
+              let port = NWEndpoint.Port(rawValue: transport.port) else {
+            if transportKind == .tcp {
+                return host.endpoint
+            }
+            return nil
+        }
+
+        let endpointHost = endpointHost(for: host.endpoint)
+        let selectedHost: NWEndpoint.Host?
+        switch transportKind {
+        case .udp:
+            selectedHost = controlSessionUDPHost(for: host, endpointHost: endpointHost)
+        case .quic, .tcp:
+            selectedHost = endpointHost ?? controlSessionUDPHost(for: host, endpointHost: nil)
+        }
+
+        guard let selectedHost else { return nil }
+        return .hostPort(host: selectedHost, port: port)
+    }
+
     private func controlSessionUDPHost(for host: LoomPeer) -> NWEndpoint.Host? {
+        controlSessionUDPHost(for: host, endpointHost: endpointHost(for: host.endpoint))
+    }
+
+    private func controlSessionUDPHost(
+        for host: LoomPeer,
+        endpointHost: NWEndpoint.Host?
+    ) -> NWEndpoint.Host? {
+        if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
+            return endpointHost
+        }
+
         let advertisedHostName = host.advertisement.hostName?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let advertisedHostName, !advertisedHostName.isEmpty {
             let expandedHosts = Self.expandedBonjourHosts(for: NWEndpoint.Host(advertisedHostName))
@@ -690,6 +726,24 @@ extension MirageClientService {
         let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !peerName.isEmpty else { return nil }
         return Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first
+    }
+
+    private func endpointHost(for endpoint: NWEndpoint) -> NWEndpoint.Host? {
+        guard case let .hostPort(host, _) = endpoint else { return nil }
+        return host
+    }
+
+    private func shouldPreferEndpointHostForDirectConnection(_ host: NWEndpoint.Host) -> Bool {
+        switch host {
+        case .ipv4, .ipv6:
+            return true
+        case .name(let value, _):
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalized.isEmpty else { return false }
+            return normalized.hasSuffix(".local") == false
+        @unknown default:
+            return false
+        }
     }
 
     internal struct ControlSessionAttempt {

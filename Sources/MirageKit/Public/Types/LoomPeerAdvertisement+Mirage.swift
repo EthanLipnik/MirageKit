@@ -16,6 +16,10 @@ public extension LoomPeerAdvertisement {
         MiragePeerAdvertisementMetadata.acceptingConnections(in: self)
     }
 
+    var mirageVPNAccessEnabled: Bool {
+        MiragePeerAdvertisementMetadata.vpnAccessEnabled(in: self)
+    }
+
     var mirageSupportsHEVC: Bool {
         MiragePeerAdvertisementMetadata.supportsHEVC(in: self)
     }

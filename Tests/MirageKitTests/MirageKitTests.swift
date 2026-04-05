@@ -232,7 +232,7 @@ struct MirageKitTests {
         #expect(decoded.protocolMismatchUpdateTriggerMessage == "Update accepted")
     }
 
-    @Test("Accepted bootstrap response remote access metadata serialization")
+    @Test("Accepted bootstrap response off-LAN access metadata serialization")
     func bootstrapResponseRemoteAccessMetadataSerialization() throws {
         let response = MirageSessionBootstrapResponse(
             accepted: true,
@@ -1089,6 +1089,7 @@ struct MirageKitTests {
             modelIdentifier: "Mac16,1",
             iconName: "desktopcomputer",
             machineFamily: "Mac",
+            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
             supportedColorDepths: [.standard, .pro]
         )
 
@@ -1106,6 +1107,7 @@ struct MirageKitTests {
         #expect(decoded.deviceID == deviceID)
         #expect(decoded.identityKeyID == "test-key-id")
         #expect(decoded.deviceType == .mac)
+        #expect(decoded.hostName == MiragePeerAdvertisementMetadata.advertisedBonjourHostName())
         #expect(MiragePeerAdvertisementMetadata.maxStreams(from: decoded) == 4)
         #expect(MiragePeerAdvertisementMetadata.acceptingConnections(in: decoded) == true)
         #expect(MiragePeerAdvertisementMetadata.supportsHEVC(in: decoded) == true)
@@ -1123,6 +1125,7 @@ struct MirageKitTests {
             modelIdentifier: "Mac16,1",
             iconName: "desktopcomputer",
             machineFamily: "Mac",
+            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
             acceptingConnections: false,
             supportedColorDepths: [.standard]
         )
@@ -1174,6 +1177,45 @@ struct MirageKitTests {
         #expect(decoded.directTransports == advertisement.directTransports)
         #expect(networkContext.wifiSubnetSignatures == ["24:wifi-a", "24:wifi-b"])
         #expect(networkContext.wiredSubnetSignatures == ["24:wired-a"])
+    }
+
+    @Test("Host advertisement VPN access metadata serialization")
+    func hostAdvertisementVPNAccessMetadataSerialization() throws {
+        let advertisement = MiragePeerAdvertisementMetadata.makeHostAdvertisement(
+            deviceID: UUID(),
+            identityKeyID: "host-key",
+            modelIdentifier: "Mac16,1",
+            iconName: "desktopcomputer",
+            machineFamily: "Mac",
+            hostName: MiragePeerAdvertisementMetadata.advertisedBonjourHostName(),
+            acceptingConnections: true,
+            vpnAccessEnabled: true,
+            supportedColorDepths: [.standard, .pro]
+        )
+
+        let decoded = LoomPeerAdvertisement.from(txtRecord: advertisement.toTXTRecord())
+
+        #expect(decoded.mirageAcceptingConnections == true)
+        #expect(decoded.mirageVPNAccessEnabled == true)
+    }
+
+    @Test("Advertised Bonjour host name normalizes local host names")
+    func advertisedBonjourHostNameNormalization() {
+        #expect(
+            MiragePeerAdvertisementMetadata.advertisedBonjourHostName(
+                processHostName: "Ethans-Mac-Studio"
+            ) == "Ethans-Mac-Studio.local"
+        )
+        #expect(
+            MiragePeerAdvertisementMetadata.advertisedBonjourHostName(
+                processHostName: "Ethans-Mac-Studio.local"
+            ) == "Ethans-Mac-Studio.local"
+        )
+        #expect(
+            MiragePeerAdvertisementMetadata.advertisedBonjourHostName(
+                processHostName: "Ethan’s Mac Studio"
+            ) == "Ethan’s-Mac-Studio.local"
+        )
     }
 
     @Test("Stream statistics formatting")
