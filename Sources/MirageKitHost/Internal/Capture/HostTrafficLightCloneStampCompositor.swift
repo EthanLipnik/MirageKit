@@ -231,7 +231,7 @@ enum HostTrafficLightCloneStampPlanner {
     }
 }
 
-final class HostTrafficLightCloneStampCompositor {
+final class HostTrafficLightCloneStampCompositor: @unchecked Sendable {
     enum SkipReason: String, Sendable {
         case unsupportedPixelFormat
         case invalidContentRect

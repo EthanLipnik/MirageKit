@@ -63,6 +63,7 @@ extension MirageHostService {
         mediaSecurityByClientID.removeValue(forKey: client.id)
         mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
         sharedClipboardStatusByClientID.removeValue(forKey: client.id)
+        clearClientActivityRecord(clientID: client.id)
         await cancelQualityTest(for: client.id, reason: "client disconnected")
 
         if let removedSessionID, singleClientSessionID == removedSessionID { singleClientSessionID = nil }
@@ -107,6 +108,7 @@ extension MirageHostService {
         }
 
         let hasConnectedClients = !connectedClients.isEmpty
+        stopClientLivenessMonitorIfIdle()
         stopSessionRefreshLoopIfIdle()
         if !hasConnectedClients {
             // Force local output unmute when the host no longer has any active clients.

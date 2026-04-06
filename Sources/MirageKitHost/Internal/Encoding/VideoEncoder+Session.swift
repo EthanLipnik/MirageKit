@@ -491,8 +491,6 @@ extension VideoEncoder {
 
     private func logHardwareStatus(_ session: VTCompressionSession, reason: String) {
         hardwareStatusRefreshAttempts += 1
-        usingHardwareEncoder = nil
-        encoderGPURegistryID = nil
 
         var hw: Unmanaged<CFTypeRef>?
         let hwStatus = VTSessionCopyProperty(

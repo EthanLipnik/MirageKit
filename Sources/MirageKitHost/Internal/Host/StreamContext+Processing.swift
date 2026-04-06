@@ -433,7 +433,7 @@ extension StreamContext {
 
             setContentRect(resolvedOutgoingContentRect(for: frame))
             enforceCaptureColorAttachments(on: frame.pixelBuffer)
-            applyTrafficLightCloneStampIfNeeded(frame: frame)
+            await applyTrafficLightCloneStampIfNeeded(frame: frame)
 
             do {
                 guard let encoder else { continue }
@@ -460,17 +460,27 @@ extension StreamContext {
                     }
                     await encoder.prepareForKeyframe(quality: keyframeQuality(for: queueBytes))
                 }
+                // Pre-increment inFlightCount before the await suspension point.
+                // The VT completion callback can fire during the await and schedule
+                // finishEncoding on the actor; without this, finishEncoding sees
+                // inFlightCount=0, skips its decrement, and the pipeline stalls.
+                if inFlightCount == 0 { lastEncodeActivityTime = encodeStartTime }
+                inFlightCount += 1
+                if forceKeyframe { isKeyframeEncoding = true }
+
                 let result = try await encoder.encodeFrame(frame, forceKeyframe: forceKeyframe)
                 switch result {
                 case .accepted:
                     encodeAcceptedIntervalCount += 1
-                    if inFlightCount == 0 { lastEncodeActivityTime = encodeStartTime }
-                    inFlightCount += 1
                     encodedFrameCount += 1
                     lastEncodedPresentationTime = frame.presentationTime
-                    if forceKeyframe { isKeyframeEncoding = true }
                     if isIdleFrame { idleEncodedCount += 1 }
                 case let .skipped(reason):
+                    inFlightCount -= 1
+                    if inFlightCount == 0 {
+                        lastEncodeActivityTime = 0
+                        if forceKeyframe { isKeyframeEncoding = false }
+                    }
                     encodeRejectedIntervalCount += 1
                     droppedFrameCount += 1
                     recordEncoderSkip(reason)
@@ -481,6 +491,11 @@ extension StreamContext {
                     }
                 }
             } catch {
+                inFlightCount -= 1
+                if inFlightCount == 0 {
+                    lastEncodeActivityTime = 0
+                    if forceKeyframe { isKeyframeEncoding = false }
+                }
                 encodeErrorIntervalCount += 1
                 droppedFrameCount += 1
                 MirageLogger.error(.stream, error: error, message: "Encode error: ")
@@ -503,8 +518,12 @@ extension StreamContext {
         if frameInbox.hasPending(), inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
     }
 
-    func applyTrafficLightCloneStampIfNeeded(frame: CapturedFrame) {
-        guard isAppStream, windowID != 0 else { return }
+    private static let trafficLightCloneStampEnabled: Bool = {
+        ProcessInfo.processInfo.environment["MIRAGE_TRAFFIC_LIGHT_CLONE_STAMP"] == "1"
+    }()
+
+    func applyTrafficLightCloneStampIfNeeded(frame: CapturedFrame) async {
+        guard Self.trafficLightCloneStampEnabled, isAppStream, windowID != 0 else { return }
 
         let windowFramePoints = resolvedWindowFramePointsForTrafficLightMask(frame: frame)
         guard windowFramePoints.width > 0, windowFramePoints.height > 0 else { return }
@@ -512,11 +531,15 @@ extension StreamContext {
         guard contentRect.width > 0, contentRect.height > 0 else { return }
 
         let geometry = resolveTrafficLightMaskGeometry(windowFramePoints: windowFramePoints)
-        let result = trafficLightCloneStampCompositor.apply(
-            to: frame.pixelBuffer,
-            contentRect: contentRect,
-            geometry: geometry
-        )
+        let compositor = trafficLightCloneStampCompositor
+        let pixelBuffer = frame.pixelBuffer
+        let result = await Task.detached(priority: .userInitiated) {
+            compositor.apply(
+                to: pixelBuffer,
+                contentRect: contentRect,
+                geometry: geometry
+            )
+        }.value
         logTrafficLightCloneStampResultIfNeeded(result, geometry: geometry)
     }
 

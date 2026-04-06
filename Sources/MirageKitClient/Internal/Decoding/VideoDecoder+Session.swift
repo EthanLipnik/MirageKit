@@ -188,7 +188,6 @@ extension VideoDecoder {
 
     private func logHardwareDecoderStatus(_ session: VTDecompressionSession, reason: String) {
         decoderHardwareStatusRefreshAttempts += 1
-        usingHardwareDecoder = nil
 
         var hardwareProperty: Unmanaged<CFTypeRef>?
         let hardwareStatus = VTSessionCopyProperty(

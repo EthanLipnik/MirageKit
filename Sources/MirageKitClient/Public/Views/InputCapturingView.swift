@@ -1067,6 +1067,19 @@ public class InputCapturingView: UIView {
 
         updatePointerLocationForLocalContact(location)
 
+        #if os(visionOS)
+        // On visionOS, every direct touch interaction must update the host cursor
+        // position because the user's gaze moves between interactions. Without this,
+        // scroll events arrive at a stale cursor position on the host.
+        guard pointerMoved else { return }
+        let pointerButtonActive = longPressButtonDown ||
+            directLongPressButtonDown ||
+            directTwoFingerDragButtonDown ||
+            lockedPointerButtonDown ||
+            virtualDragActive ||
+            pencilButtonDown
+        guard !pointerButtonActive, !isDragging else { return }
+        #else
         let pointerButtonActive = longPressButtonDown ||
             directLongPressButtonDown ||
             directTwoFingerDragButtonDown ||
@@ -1078,6 +1091,7 @@ public class InputCapturingView: UIView {
               !pointerButtonActive,
               !isDragging,
               pointerMoved else { return }
+        #endif
 
         revealCursorAfterPointerMovement()
         refreshModifiersForInput()

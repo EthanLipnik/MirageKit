@@ -303,6 +303,7 @@ extension MirageHostService {
 
             await activateDeferredAudioIfNeeded(clientID: client.id)
             startReceivingFromClient(clientContext: clientContext)
+            startClientLivenessMonitorIfNeeded()
             delegate?.hostService(self, didConnectClient: client)
         } catch {
             if isFatalConnectionError(error) || LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {

@@ -49,6 +49,7 @@ extension MirageClientService {
             .hostSupportLogArchive: { [weak self] in self?.handleHostSupportLogArchive($0) },
             .appIconUpdate: { [weak self] in self?.handleAppIconUpdate($0) },
             .appIconStreamComplete: { [weak self] in self?.handleAppIconStreamComplete($0) },
+            .ping: { [weak self] in self?.handlePing($0) },
             .pong: { [weak self] in self?.handlePong($0) },
             .qualityTestResult: { [weak self] in self?.handleQualityTestBenchmark($0) },
             .qualityTestStageComplete: { [weak self] in self?.handleQualityTestStageCompletion($0) },

@@ -266,6 +266,16 @@ extension StreamContext {
         isResizing = true
         defer { isResizing = false }
 
+        // Pause encoding and flush pipeline state before reconfiguring the encoder.
+        // This prevents the race where VT callbacks from the old session's invalidation
+        // interleave with new-session encodes via actor suspension points.
+        let wasEncoding = shouldEncodeFrames
+        if wasEncoding {
+            shouldEncodeFrames = false
+            frameInbox.clear()
+            resetPipelineStateForReconfiguration(reason: "window resize")
+        }
+
         currentContentRect = .zero
         dimensionToken &+= 1
         await packetSender?.bumpGeneration(reason: "window resize")
@@ -354,6 +364,12 @@ extension StreamContext {
         await applyDerivedQuality(for: outputSize, logLabel: "Window resize")
         await refreshCaptureCadence()
         await encoder?.forceKeyframe()
+
+        // Resume encoding now that the encoder session, capture engine, and
+        // pipeline state are all consistent.
+        if wasEncoding {
+            shouldEncodeFrames = true
+        }
 
         MirageLogger.stream("Window resize complete in place for stream \(streamID)")
     }

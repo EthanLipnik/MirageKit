@@ -250,6 +250,10 @@ public final class MirageHostService {
     /// Approval timeout to avoid wedging the single-client slot.
     let connectionApprovalTimeoutSeconds: CFAbsoluteTime = 15.0
 
+    // Host-side client liveness monitoring.
+    nonisolated let clientLastActivityByID = Locked<[UUID: CFAbsoluteTime]>([:])
+    var clientLivenessTask: Task<Void, Never>?
+
     struct WindowVirtualDisplayState: Sendable {
         let streamID: StreamID
         let displayID: CGDirectDisplayID
@@ -1412,8 +1416,21 @@ public final class MirageHostService {
         return resolvedBounds
     }
 
+    /// Last successfully resolved cursor-monitor bounds for the virtual display.
+    /// Prevents transient resolution failures from dropping the stream.
+    private var lastResolvedCursorMonitorBounds: CGRect?
+
     /// Resolve the current virtual display bounds for cursor monitoring (Cocoa coordinates).
     func resolveDesktopDisplayBoundsForCursorMonitor() -> CGRect? {
+        if let bounds = resolveDesktopDisplayBoundsForCursorMonitorCore() {
+            lastResolvedCursorMonitorBounds = bounds
+            return bounds
+        }
+        return lastResolvedCursorMonitorBounds
+    }
+
+    private func resolveDesktopDisplayBoundsForCursorMonitorCore() -> CGRect? {
+        // Preferred: NSScreen.frame is already in Cocoa coordinates (bottom-left origin).
         if let displayID = desktopVirtualDisplayID,
            let screen = NSScreen.screens.first(where: {
                ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID) == displayID
@@ -1421,20 +1438,40 @@ public final class MirageHostService {
             return screen.frame
         }
 
+        // Fallback paths use CGDisplayBounds / desktopDisplayBounds which are in CG
+        // coordinates (top-left origin). Convert to Cocoa so the CursorMonitor's
+        // NSEvent.mouseLocation containment check uses a consistent coordinate space.
         if let displayID = desktopVirtualDisplayID {
             let cgBounds = CGDisplayBounds(displayID)
-            return resolvedDesktopDisplayBounds(
+            if let resolved = resolvedDesktopDisplayBounds(
                 cachedBounds: desktopDisplayBounds,
                 liveBounds: cgBounds,
                 displayModeSize: nil,
                 displayOrigin: cgBounds.origin
-            )
+            ) {
+                return cocoaRectFromCGDisplayRect(resolved)
+            }
+            return nil
         }
-        return resolvedDesktopDisplayBounds(
+        if let resolved = resolvedDesktopDisplayBounds(
             cachedBounds: desktopDisplayBounds,
             liveBounds: nil,
             displayModeSize: nil,
             displayOrigin: desktopDisplayBounds?.origin ?? .zero
+        ) {
+            return cocoaRectFromCGDisplayRect(resolved)
+        }
+        return nil
+    }
+
+    /// Convert a CG display rect (top-left origin) to Cocoa screen coordinates (bottom-left origin).
+    private func cocoaRectFromCGDisplayRect(_ cgRect: CGRect) -> CGRect {
+        let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
+        return CGRect(
+            x: cgRect.origin.x,
+            y: primaryHeight - cgRect.origin.y - cgRect.height,
+            width: cgRect.width,
+            height: cgRect.height
         )
     }
 

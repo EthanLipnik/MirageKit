@@ -75,11 +75,22 @@ extension MirageHostService {
     func startReceivingFromClient(clientContext: ClientContext, initialBuffer: Data = Data()) {
         let source = MirageStreamReceiveSource(stream: clientContext.controlChannel.incomingBytes)
 
+        let clientID = clientContext.client.id
+        let activityTracker = clientLastActivityByID
+        recordClientActivity(clientID: clientID)
+
         let receiveLoop = HostReceiveLoop(
             clientName: clientContext.client.name,
             maxControlBacklog: 256,
             errorTimeoutSeconds: clientErrorTimeoutSeconds,
-            receiveChunk: source.receiveNext,
+            receiveChunk: { completion in
+                source.receiveNext { data, context, isComplete, error in
+                    if data != nil {
+                        activityTracker.withLock { $0[clientID] = CFAbsoluteTimeGetCurrent() }
+                    }
+                    completion(data, context, isComplete, error)
+                }
+            },
             onInputMessage: { [weak self] message in
                 guard let self else { return }
                 self.inputQueue.async { [weak self] in

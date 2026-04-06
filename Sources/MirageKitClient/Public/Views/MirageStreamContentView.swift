@@ -646,11 +646,18 @@ public struct MirageStreamContentView: View {
                 }
             }
 
+            #if os(visionOS)
+            let visionOSDisplaySize = clientService.visionOSFixedPixelCountResolution(for: viewSize)
+            #endif
             let desktopDisplaySize = isDesktopStream
                 ? clientService.preferredDesktopDisplayResolution(for: viewSize)
                 : .zero
             if !isDesktopStream {
+                #if os(visionOS)
+                let baseDisplaySize = visionOSDisplaySize
+                #else
                 let baseDisplaySize = clientService.scaledDisplayResolution(viewSize)
+                #endif
                 guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
                     pendingAppDisplayResolutionCandidate = .zero
                     pendingAppDisplayResolutionCandidateSince = .distantPast
@@ -739,7 +746,11 @@ public struct MirageStreamContentView: View {
 
             guard isDesktopStream else { return }
 
+            #if os(visionOS)
+            let preferredDisplaySize = visionOSDisplaySize
+            #else
             let preferredDisplaySize = desktopDisplaySize
+            #endif
             guard preferredDisplaySize.width > 0, preferredDisplaySize.height > 0 else { return }
             let drawableSizeChanged = !approximatelyEqualPixelSizes(
                 preferredDisplaySize,

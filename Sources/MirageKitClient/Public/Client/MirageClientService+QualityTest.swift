@@ -260,6 +260,10 @@ extension MirageClientService {
         return result
     }
 
+    func handlePing(_: ControlMessage) {
+        sendControlMessageBestEffort(ControlMessage(type: .pong))
+    }
+
     func handlePong(_: ControlMessage) {
         completePingRequest(
             expectedRequestID: pingRequestID,

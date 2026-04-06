@@ -21,6 +21,25 @@ import UIKit
 
 @MainActor
 extension MirageClientService {
+    /// Total pixel count equivalent to 4K (3840 x 2160).
+    private static let fixedVisionOSPixelCount: CGFloat = 8_294_400
+
+    /// Compute a display resolution that maintains a fixed 4K pixel budget
+    /// while adapting the aspect ratio to the given view size.
+    /// Used on visionOS where resizing the window changes the aspect ratio
+    /// rather than the resolution.
+    public func visionOSFixedPixelCountResolution(for viewSize: CGSize) -> CGSize {
+        guard viewSize.width > 0, viewSize.height > 0 else {
+            return CGSize(width: 3840, height: 2160)
+        }
+        let aspectRatio = viewSize.width / viewSize.height
+        let height = sqrt(Self.fixedVisionOSPixelCount / aspectRatio)
+        let width = height * aspectRatio
+        let alignedWidth = max(2, floor(width / 2) * 2)
+        let alignedHeight = max(2, floor(height / 2) * 2)
+        return CGSize(width: alignedWidth, height: alignedHeight)
+    }
+
     /// Get the display resolution for the client stream.
     func scaledDisplayResolution(_ resolution: CGSize) -> CGSize {
         MirageStreamGeometry.normalizedLogicalSize(resolution)
