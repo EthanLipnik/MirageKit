@@ -122,11 +122,11 @@ extension MirageHostService {
     }
 
     private func cocoaFrame(fromCGWindowFrame frame: CGRect) -> CGRect? {
-        guard let screen = NSScreen.main else { return nil }
-        let screenHeight = screen.frame.height
+        guard let primaryScreen = NSScreen.screens.first else { return nil }
+        let primaryHeight = primaryScreen.frame.height
         return CGRect(
             x: frame.origin.x,
-            y: screenHeight - frame.origin.y - frame.height,
+            y: primaryHeight - frame.origin.y - frame.height,
             width: frame.width,
             height: frame.height
         )

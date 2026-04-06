@@ -24,11 +24,6 @@ public struct MirageClientShortcut: Codable, Sendable, Hashable {
         modifiers: [.command, .shift, .option]
     )
 
-    public static let defaultDesktopExit = MirageClientShortcut(
-        keyCode: 0x35, // Escape
-        modifiers: [.control, .option]
-    )
-
     public static let defaultEscapeRemap = MirageClientShortcut(
         keyCode: 0x21, // [
         modifiers: [.control]
@@ -85,5 +80,23 @@ public struct MirageClientShortcut: Codable, Sendable, Hashable {
 
     public static func keyName(for keyCode: UInt16) -> String {
         keyNames[keyCode] ?? "Key \(keyCode)"
+    }
+}
+
+// MARK: - MirageClientShortcutBinding Bridge
+
+public extension MirageClientShortcut {
+    init(_ binding: MirageClientShortcutBinding) {
+        self.init(keyCode: binding.keyCode, modifiers: binding.modifiers)
+    }
+
+    var asBinding: MirageClientShortcutBinding {
+        MirageClientShortcutBinding(keyCode: keyCode, modifiers: modifiers)
+    }
+}
+
+public extension MirageClientShortcutBinding {
+    init(_ shortcut: MirageClientShortcut) {
+        self.init(keyCode: shortcut.keyCode, modifiers: shortcut.modifiers)
     }
 }

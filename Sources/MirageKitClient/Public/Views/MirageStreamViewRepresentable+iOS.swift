@@ -60,6 +60,12 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Callback when a client-reserved shortcut is triggered.
     public var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
+    /// Unified actions triggered by shortcuts, gestures, or the control bar.
+    public var actions: [MirageAction]
+
+    /// Callback when a unified action is triggered.
+    public var onActionTriggered: ((MirageAction) -> Void)?
+
     /// Callback when a Pencil gesture maps to a client-side action.
     public var onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?
 
@@ -122,6 +128,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
+        actions: [MirageAction] = [],
+        onActionTriggered: ((MirageAction) -> Void)? = nil,
         onPencilGestureAction: ((MiragePencilGestureAction) -> Void)? = nil,
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
@@ -154,6 +162,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.pencilGestureConfiguration = pencilGestureConfiguration
         self.clientShortcuts = clientShortcuts
         self.onClientShortcut = onClientShortcut
+        self.actions = actions
+        self.onActionTriggered = onActionTriggered
         self.onPencilGestureAction = onPencilGestureAction
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
@@ -209,6 +219,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             pencilInputMode: pencilInputMode,
             pencilGestureConfiguration: pencilGestureConfiguration,
             clientShortcuts: clientShortcuts,
+            actions: actions,
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
             dictationLocalePreference: dictationLocalePreference,
@@ -262,6 +273,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             pencilInputMode: pencilInputMode,
             pencilGestureConfiguration: pencilGestureConfiguration,
             clientShortcuts: clientShortcuts,
+            actions: actions,
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
             dictationLocalePreference: dictationLocalePreference,
@@ -363,6 +375,8 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         captureView.onDirectTouchActivity = onDirectTouchActivity
         captureView.onClientShortcut = onClientShortcut
+        captureView.actions = actions
+        captureView.onActionTriggered = onActionTriggered
         captureView.onPencilGestureAction = onPencilGestureAction
         captureView.onDictationStateChanged = onDictationStateChanged
         captureView.onDictationError = onDictationError
@@ -376,6 +390,7 @@ public final class MirageStreamViewController: UIViewController {
         pencilInputMode: MiragePencilInputMode,
         pencilGestureConfiguration: MiragePencilGestureConfiguration,
         clientShortcuts: [MirageClientShortcut],
+        actions: [MirageAction],
         dictationToggleRequestID: UInt64,
         dictationMode: MirageDictationMode,
         dictationLocalePreference: MirageDictationLocalePreference,
@@ -399,6 +414,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.pencilInputMode = pencilInputMode
         captureView.pencilGestureConfiguration = pencilGestureConfiguration
         captureView.clientShortcuts = clientShortcuts
+        captureView.actions = actions
         captureView.dictationToggleRequestID = dictationToggleRequestID
         captureView.dictationMode = dictationMode
         captureView.dictationLocalePreference = dictationLocalePreference

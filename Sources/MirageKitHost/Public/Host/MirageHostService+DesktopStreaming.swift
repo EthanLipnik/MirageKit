@@ -508,12 +508,12 @@ extension MirageHostService {
         await PowerAssertionManager.shared.enable()
 
         // Open Loom video stream for desktop streaming
-        var videoStream: LoomMultiplexedStream?
+        let activeVideoStream: LoomMultiplexedStream
         do {
             let openedVideoStream = try await clientContext.controlChannel.session.openStream(
                 label: "video/\(streamID)"
             )
-            videoStream = openedVideoStream
+            activeVideoStream = openedVideoStream
             loomVideoStreamsByStreamID[streamID] = openedVideoStream
             transportRegistry.registerVideoStream(openedVideoStream, streamID: streamID)
             MirageLogger.host("Opened Loom video stream for desktop stream \(streamID)")
@@ -523,20 +523,18 @@ extension MirageHostService {
                 error: error,
                 message: "Failed to open Loom video stream for desktop stream \(streamID): "
             )
+            await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
+            throw error
         }
-        let activeVideoStream = videoStream
 
         // Start streaming the display with direct Loom send ownership in StreamPacketSender.
         let firstSuccessfulVideoPacketSent = Locked(false)
-        try await streamContext.startDesktopDisplay(
+        do {
+            try await streamContext.startDesktopDisplay(
             displayWrapper: captureDisplay,
             resolution: captureResolution,
             excludedWindows: excludedWindows,
             sendPacket: { packetData, onComplete in
-                guard let activeVideoStream else {
-                    onComplete(nil)
-                    return
-                }
                 activeVideoStream.sendUnreliableQueued(packetData) { error in
                     if error == nil {
                         let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
@@ -563,6 +561,15 @@ extension MirageHostService {
             }
         )
         logDesktopStartStep("capture and encoder started")
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Desktop display capture start failed; cleaning up stream state: "
+            )
+            await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
+            throw error
+        }
 
         // Send stream-started to client BEFORE enabling encoding so the client's
         // controller/reassembler is ready when video packets arrive.
@@ -1045,8 +1052,11 @@ extension MirageHostService {
         }
 
         if successfullyRestored > 0 {
-            let completeResult = CGCompleteDisplayConfiguration(config, .permanently)
-            if completeResult != .success { MirageLogger.error(.host, "Failed to complete disable mirroring: \(completeResult)") } else {
+            let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
+            if completeResult != .success {
+                MirageLogger.error(.host, "Failed to complete disable mirroring: \(completeResult)")
+                CGCancelDisplayConfiguration(config)
+            } else {
                 MirageLogger.host("Display mirroring disabled for \(successfullyRestored) displays")
             }
         } else {

@@ -232,6 +232,10 @@ public extension MirageClientService {
             },
             onRecoveryStatusChanged: { [weak self] status in
                 self?.sessionStore.setClientRecoveryStatus(for: capturedStreamID, status: status)
+            },
+            onBackgroundDecodeFailure: { [weak self] in
+                MirageLogger.client("Stopping stream \(capturedStreamID) due to background decode failure")
+                Task { try? await self?.stopDesktopStream() }
             }
         )
 

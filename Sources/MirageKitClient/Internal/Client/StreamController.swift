@@ -406,6 +406,8 @@ actor StreamController {
     private(set) var onStallEvent: (@MainActor @Sendable () -> Void)?
     /// Called when client recovery state changes.
     private(set) var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
+    /// Called when decode errors occur while the app is backgrounded, signaling the stream should stop.
+    private(set) var onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)?
 
     /// Last recovery status delivered to the app layer.
     var clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle
@@ -420,7 +422,8 @@ actor StreamController {
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
-        onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil
+        onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
+        onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeEvent = onResizeEvent
@@ -431,6 +434,7 @@ actor StreamController {
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
         self.onStallEvent = onStallEvent
         self.onRecoveryStatusChanged = onRecoveryStatusChanged
+        self.onBackgroundDecodeFailure = onBackgroundDecodeFailure
     }
 
     func setClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) async {
@@ -661,6 +665,13 @@ actor StreamController {
 
     private func recordDecodeFailure(_ error: Error) {
         guard isRunning, !isStopping else { return }
+
+        if let onBackgroundDecodeFailure, !isApplicationForeground() {
+            MirageLogger.client("Decode error while backgrounded; requesting stream stop")
+            Task { @MainActor in onBackgroundDecodeFailure() }
+            return
+        }
+
         let metadata = LoomDiagnosticsErrorMetadata(error: error)
         let signature = "\(metadata.domain):\(metadata.code)"
         let now = currentTime()

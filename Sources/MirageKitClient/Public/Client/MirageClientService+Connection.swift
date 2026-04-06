@@ -307,7 +307,7 @@ extension MirageClientService {
         controlSessionPathObserverTask = nil
         clearStartupCriticalSection()
         sharedClipboardEnabled = false
-        sharedClipboardBridge?.setActive(false)
+        await sharedClipboardBridge?.setActive(false)
         inputEventSender.updateSendHandler(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
@@ -418,7 +418,7 @@ extension MirageClientService {
         desktopStreamMode = nil
         desktopCursorPresentation = nil
         connectionState = state
-        refreshSharedClipboardBridgeState()
+        await refreshSharedClipboardBridgeState()
 
         if notifyDelegate {
             delegate?.clientService(self, didDisconnectFromHost: reason)

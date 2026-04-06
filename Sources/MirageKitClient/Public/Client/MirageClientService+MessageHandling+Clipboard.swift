@@ -19,7 +19,7 @@ extension MirageClientService {
         do {
             let status = try message.decode(SharedClipboardStatusMessage.self)
             sharedClipboardEnabled = status.enabled
-            refreshSharedClipboardBridgeState()
+            Task { await refreshSharedClipboardBridgeState() }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode shared clipboard status: ")
         }

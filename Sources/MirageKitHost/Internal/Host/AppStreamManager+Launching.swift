@@ -27,13 +27,24 @@ public extension AppStreamManager {
             return true
         }
 
+        let url = URL(fileURLWithPath: path)
+
         do {
-            let url = URL(fileURLWithPath: path)
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
-
             _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
             logger.info("Launched app: \(bundleIdentifier)")
+            return true
+        } catch {
+            logger.warning("openApplication failed for \(bundleIdentifier): \(error); trying open(url) fallback")
+        }
+
+        // Fallback for apps with complex launcher architectures (e.g. Docker Desktop, Electron apps)
+        do {
+            let config = NSWorkspace.OpenConfiguration()
+            config.activates = true
+            _ = try await NSWorkspace.shared.open(url, configuration: config)
+            logger.info("Launched app via open(url) fallback: \(bundleIdentifier)")
             return true
         } catch {
             logger.error("Failed to launch app \(bundleIdentifier): \(error)")

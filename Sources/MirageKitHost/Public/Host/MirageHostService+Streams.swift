@@ -65,6 +65,10 @@ func windowPlacementRepairBackoffStep(
 
     let nextFailureCount = max(0, currentFailureCount) + 1
     let retryScheduleSeconds: [CFAbsoluteTime] = [0.5, 1.0, 2.0, 4.0]
+    let maxRetries = retryScheduleSeconds.count + 4
+    if nextFailureCount > maxRetries {
+        return WindowPlacementRepairBackoffStep(failureCount: nextFailureCount, retryDelaySeconds: nil)
+    }
     let retryIndex = min(nextFailureCount - 1, retryScheduleSeconds.count - 1)
     return WindowPlacementRepairBackoffStep(
         failureCount: nextFailureCount,
@@ -844,6 +848,16 @@ public extension MirageHostService {
                                 "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
                                     "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(streamID)"
                             )
+                        } else {
+                            windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
+                                failureCount: nextStep.failureCount,
+                                nextRetryAt: .greatestFiniteMagnitude
+                            )
+                            MirageLogger.host(
+                                "event=placement_repair_abandoned failure_count=\(nextStep.failureCount) " +
+                                    "window=\(windowID) stream=\(streamID)"
+                            )
+                            return
                         }
                     }
                     MirageLogger.error(

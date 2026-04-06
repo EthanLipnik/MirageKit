@@ -434,9 +434,8 @@ extension MirageClientService {
                     heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
                 }
                 await updateReassemblerSnapshot()
+                await refreshSharedClipboardBridgeState()
             }
-
-            refreshSharedClipboardBridgeState()
         }
     }
 
@@ -741,7 +740,7 @@ extension MirageClientService {
         } else {
             activeStreams.append(session)
         }
-        refreshSharedClipboardBridgeState()
+        Task { await refreshSharedClipboardBridgeState() }
     }
 
     private func helloRejectionReason(_ reason: MirageSessionBootstrapRejectionReason?) -> MirageHelloRejectionStepReason {

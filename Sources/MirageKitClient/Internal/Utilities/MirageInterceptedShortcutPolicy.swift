@@ -76,6 +76,17 @@ enum MirageInterceptedShortcutPolicy {
     private static let commandBShortcut = makeShortcut("b", modifiers: [.command])
     private static let commandIShortcut = makeShortcut("i", modifiers: [.command])
     private static let commandUShortcut = makeShortcut("u", modifiers: [.command])
+    private static let commandFShortcut = makeShortcut("f", modifiers: [.command])
+    private static let commandRShortcut = makeShortcut("r", modifiers: [.command])
+    private static let commandGShortcut = makeShortcut("g", modifiers: [.command])
+    private static let commandShiftFShortcut = makeShortcut("f", modifiers: [.command, .shift])
+    private static let commandShiftGShortcut = makeShortcut("g", modifiers: [.command, .shift])
+    private static let commandPShortcut = makeShortcut("p", modifiers: [.command])
+    private static let commandNShortcut = makeShortcut("n", modifiers: [.command])
+    private static let commandTShortcut = makeShortcut("t", modifiers: [.command])
+    private static let commandLShortcut = makeShortcut("l", modifiers: [.command])
+    private static let commandSShortcut = makeShortcut("s", modifiers: [.command])
+    private static let commandAShortcut = makeShortcut("a", modifiers: [.command])
 
     private static let shortcutsByActionName: [String: MirageInterceptedShortcut] = [
         "undo:": undoShortcut,
@@ -97,6 +108,17 @@ enum MirageInterceptedShortcutPolicy {
         commandBShortcut,
         commandIShortcut,
         commandUShortcut,
+        commandFShortcut,
+        commandRShortcut,
+        commandGShortcut,
+        commandShiftFShortcut,
+        commandShiftGShortcut,
+        commandPShortcut,
+        commandNShortcut,
+        commandTShortcut,
+        commandLShortcut,
+        commandSShortcut,
+        commandAShortcut,
     ]
 
     static func shortcut(

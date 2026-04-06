@@ -16,6 +16,15 @@ import MirageKit
 @MainActor
 extension MirageHostService {
     nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case .authenticationFailed, .connectionFailed, .timeout:
+                return true
+            default:
+                break
+            }
+        }
+
         let fatalPosixCodes: Set<POSIXErrorCode> = [
             .ECANCELED, .ECONNRESET, .ENOTCONN, .EPIPE,
             .EADDRNOTAVAIL, // 49 — can't assign requested address (transport gone)

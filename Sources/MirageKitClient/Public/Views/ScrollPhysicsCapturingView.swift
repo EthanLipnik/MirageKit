@@ -434,8 +434,11 @@ private class CallbackScrollView: UIScrollView, UIScrollViewDelegate {
     override var delegate: UIScrollViewDelegate? {
         get { super.delegate }
         set {
-            if let newValue,
-               (newValue as AnyObject) !== self {
+            guard newValue != nil else {
+                super.delegate = nil
+                return
+            }
+            if (newValue as AnyObject) !== self {
                 assertionFailure(
                     "CallbackScrollView must remain its own delegate to preserve UIKit scroll gesture invariants."
                 )

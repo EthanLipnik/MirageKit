@@ -23,7 +23,7 @@ extension MirageClientService {
         return hasAppStreams || hasDesktopStream
     }
 
-    func refreshSharedClipboardBridgeState() {
+    func refreshSharedClipboardBridgeState() async {
         let shouldEnable = Self.shouldEnableSharedClipboard(
             connectionState: connectionState,
             hostSharedClipboardEnabled: sharedClipboardEnabled,
@@ -33,26 +33,26 @@ extension MirageClientService {
         )
 
         if shouldEnable {
-            ensureSharedClipboardBridge().setActive(true, autoSync: clientClipboardAutoSync)
+            await ensureSharedClipboardBridge().setActive(true, autoSync: clientClipboardAutoSync)
         } else {
-            sharedClipboardBridge?.setActive(false)
+            await sharedClipboardBridge?.setActive(false)
         }
     }
 
     /// Updates the client-side clipboard sharing preferences and refreshes bridge state.
-    public func updateClipboardPreferences(enabled: Bool, autoSync: Bool) {
+    public func updateClipboardPreferences(enabled: Bool, autoSync: Bool) async {
         clientClipboardSharingEnabled = enabled
         clientClipboardAutoSync = autoSync
-        refreshSharedClipboardBridgeState()
+        await refreshSharedClipboardBridgeState()
     }
 
     /// Reads the local clipboard and sends it to the host. Called on Cmd+V in on-paste mode.
-    public func syncLocalClipboardToHost() {
+    public func syncLocalClipboardToHost() async {
         guard case .connected = connectionState,
               sharedClipboardEnabled,
               clientClipboardSharingEnabled else { return }
         #if canImport(UIKit)
-        ensureSharedClipboardBridge().syncCurrentClipboardToRemote()
+        await ensureSharedClipboardBridge().syncCurrentClipboardToRemote()
         #endif
     }
 

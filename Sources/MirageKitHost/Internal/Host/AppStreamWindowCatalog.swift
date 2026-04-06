@@ -78,7 +78,6 @@ enum AppStreamWindowCatalog {
         var accessibilityByProcessID: [pid_t: [WindowID: AccessibilityClassification]] = [:]
 
         for window in content.windows {
-            guard window.isOnScreen else { continue }
             guard window.windowLayer == 0 else { continue }
             guard window.frame.width >= minimumWindowSize.width,
                   window.frame.height >= minimumWindowSize.height else { continue }

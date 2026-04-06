@@ -195,7 +195,7 @@ private struct MirageSystemAudioSessionDriver: MirageClientAudioSessionDriving {
         let session = AVAudioSession.sharedInstance()
         switch configuration {
         case .playback:
-            try session.setCategory(.ambient, mode: .default, options: [.mixWithOthers])
+            try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
             try session.setActive(true)
         case .dictation:
             try session.setCategory(.playAndRecord, mode: .measurement, options: [.mixWithOthers, .defaultToSpeaker])

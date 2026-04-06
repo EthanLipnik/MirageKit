@@ -47,7 +47,8 @@ extension InputCapturingView {
         cursorIsVisible = isVisible
 
         if typeChanged {
-            updateLockedCursorImage()
+            updateCursorImage()
+            updateVirtualCursorViewPosition()
             updateLockedCursorViewPosition()
         }
 

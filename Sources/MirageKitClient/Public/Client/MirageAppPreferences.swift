@@ -82,9 +82,17 @@ public struct MirageHostAppPreferences: Codable, Equatable {
     /// Recently used apps: bundle identifier -> last used date.
     public var recentApps: [String: Date] = [:]
 
-    public init(pinnedApps: Set<String> = [], recentApps: [String: Date] = [:]) {
+    /// Whether to show apps installed outside /Applications and ~/Applications.
+    public var showNonStandardApps: Bool = false
+
+    public init(
+        pinnedApps: Set<String> = [],
+        recentApps: [String: Date] = [:],
+        showNonStandardApps: Bool = false
+    ) {
         self.pinnedApps = pinnedApps
         self.recentApps = recentApps
+        self.showNonStandardApps = showNonStandardApps
     }
 }
 

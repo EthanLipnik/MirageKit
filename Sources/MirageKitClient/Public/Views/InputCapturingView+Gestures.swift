@@ -62,6 +62,9 @@ extension InputCapturingView {
 
         directTwoFingerTapGesture.require(toFail: directTwoFingerDragGesture)
 
+        // Two-finger swipe gestures for desktop navigation actions.
+        setupNavigationSwipeGestures()
+
         // Legacy direct-touch scrolling for virtual trackpad mode.
         // Native one-finger scrolling uses ScrollPhysicsCapturingView instead.
         scrollGesture = UIPanGestureRecognizer(target: self, action: #selector(handleScroll(_:)))
@@ -1100,7 +1103,54 @@ extension InputCapturingView: UIGestureRecognizerDelegate {
             return true
         }
 
+        // Allow navigation swipe gestures to recognize alongside two-finger drag
+        if navigationSwipeGestures.contains(where: { $0 === gestureRecognizer }) {
+            return true
+        }
+
         return false
+    }
+}
+
+// MARK: - Navigation Swipe Gestures
+
+extension InputCapturingView {
+    func setupNavigationSwipeGestures() {
+        let directions: [UISwipeGestureRecognizer.Direction] = [.left, .right, .up, .down]
+        for direction in directions {
+            let swipe = UISwipeGestureRecognizer(target: self, action: #selector(handleNavigationSwipe(_:)))
+            swipe.direction = direction
+            swipe.numberOfTouchesRequired = 2
+            swipe.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+            swipe.delegate = self
+            addGestureRecognizer(swipe)
+            navigationSwipeGestures.append(swipe)
+
+            // Swipe should take priority over two-finger drag
+            directTwoFingerDragGesture.require(toFail: swipe)
+        }
+    }
+
+    @objc
+    func handleNavigationSwipe(_ gesture: UISwipeGestureRecognizer) {
+        guard navigationGesturesEnabled, !actions.isEmpty else { return }
+
+        let actionID: String
+        switch gesture.direction {
+        case .left:
+            actionID = MirageAction.spaceRightID // macOS trackpad convention
+        case .right:
+            actionID = MirageAction.spaceLeftID
+        case .up:
+            actionID = MirageAction.missionControlID
+        case .down:
+            actionID = MirageAction.appExposeID
+        default:
+            return
+        }
+
+        guard let action = actions.first(where: { $0.id == actionID }) else { return }
+        onActionTriggered?(action)
     }
 }
 #endif

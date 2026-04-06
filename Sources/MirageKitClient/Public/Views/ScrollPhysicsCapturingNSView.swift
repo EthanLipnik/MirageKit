@@ -103,6 +103,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// Callback for client-reserved shortcut actions (e.g. exit stream).
     var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
+    /// Unified actions that can be triggered by shortcuts.
+    var actions: [MirageAction] = []
+
+    /// Callback when a unified action is triggered.
+    var onActionTriggered: ((MirageAction) -> Void)?
+
     /// Track current modifier state
     private var currentModifiers: MirageModifierFlags = []
     private var modifierPollTimer: Timer?
@@ -873,6 +879,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
             modifiers: MirageModifierFlags(nsEventFlags: event.modifierFlags),
             isRepeat: event.isARepeat
         )
+
+        // Check if this matches a unified action
+        for action in actions {
+            guard let binding = action.shortcut else { continue }
+            if binding.matches(keyEvent) {
+                onActionTriggered?(action)
+                return true
+            }
+        }
 
         // Check if this matches a client-reserved shortcut
         for shortcut in clientShortcuts where shortcut.matches(keyEvent) {

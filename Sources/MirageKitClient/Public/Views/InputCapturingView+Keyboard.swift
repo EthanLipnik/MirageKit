@@ -51,6 +51,12 @@ extension InputCapturingView {
 
         let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
         let eventModifiers = keyboardModifiers
+        if let action = matchingAction(keyCode: macKeyCode, modifiers: eventModifiers) {
+            gcClaimedKeyCodes.insert(keyCode)
+            clientShortcutClaimedKeyCodes.insert(hidUsage)
+            performAction(action, source: .hardwareKey)
+            return
+        }
         if let shortcut = clientShortcut(
             keyCode: macKeyCode,
             modifiers: eventModifiers
@@ -188,6 +194,44 @@ extension InputCapturingView {
         )
     }
 
+    // MARK: - Unified Action Matching
+
+    private func matchingAction(
+        keyCode: UInt16,
+        modifiers: MirageModifierFlags
+    ) -> MirageAction? {
+        let normalized = MirageClientShortcutBinding.normalizedModifiers(modifiers)
+        return actions.first { action in
+            guard let binding = action.shortcut else { return false }
+            return binding.keyCode == keyCode &&
+                MirageClientShortcutBinding.normalizedModifiers(binding.modifiers) == normalized
+        }
+    }
+
+    private func matchingAction(
+        for keyCode: UIKeyboardHIDUsage,
+        modifierFlags: UIKeyModifierFlags?
+    ) -> MirageAction? {
+        let fallbackModifiers = modifierFlags.map(MirageModifierFlags.init(uiKeyModifierFlags:))
+        let eventModifiers = fallbackModifiers ?? keyboardModifiers
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(keyCode)
+        return matchingAction(keyCode: macKeyCode, modifiers: eventModifiers)
+    }
+
+    private func performAction(
+        _ action: MirageAction,
+        source: ClientShortcutDispatchSource
+    ) {
+        guard onActionTriggered != nil else { return }
+        // Reuse the same duplicate suppression logic via the shortcut binding
+        if let binding = action.shortcut {
+            let asClientShortcut = MirageClientShortcut(binding)
+            guard !shouldSuppressClientShortcutDispatch(asClientShortcut, source: source) else { return }
+            noteClientShortcutDispatch(asClientShortcut, source: source)
+        }
+        onActionTriggered?(action)
+    }
+
     private func keyCommandInput(
         for shortcut: MirageClientShortcut
     ) -> String? {
@@ -278,6 +322,23 @@ extension InputCapturingView {
                 // Skip if GCKeyboard already claimed this key (modifier+key combo)
                 if gcClaimedKeyCodes.contains(GCKeyCode(rawValue: key.keyCode.rawValue)) { continue }
                 #endif
+                if let action = matchingAction(
+                    for: key.keyCode,
+                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                ) {
+                    #if canImport(GameController)
+                    clientShortcutClaimedKeyCodes.insert(key.keyCode)
+                    #endif
+                    if allowFallback {
+                        resyncModifiers(
+                            using: event,
+                            fallbackFlags: fallbackFlags,
+                            allowFallback: true
+                        )
+                    }
+                    performAction(action, source: .hardwareKey)
+                    continue
+                }
                 if let shortcut = clientShortcut(
                     for: key.keyCode,
                     modifierFlags: event?.modifierFlags ?? fallbackFlags
@@ -752,6 +813,24 @@ extension InputCapturingView {
         var commands: [UIKeyCommand] = []
         var claimedShortcutCommands: Set<ShortcutCommandIdentity> = []
 
+        for action in actions {
+            guard let binding = action.shortcut else { continue }
+            let asShortcut = MirageClientShortcut(binding)
+            guard let input = keyCommandInput(for: asShortcut) else { continue }
+            let identity = ShortcutCommandIdentity(
+                input: input,
+                modifiers: MirageClientShortcutBinding.normalizedModifiers(binding.modifiers)
+            )
+            guard claimedShortcutCommands.insert(identity).inserted else { continue }
+            let command = UIKeyCommand(
+                action: #selector(handleClientShortcutCommand(_:)),
+                input: input,
+                modifierFlags: Self.uiKeyModifierFlags(from: binding.modifiers)
+            )
+            command.wantsPriorityOverSystemBehavior = true
+            commands.append(command)
+        }
+
         for shortcut in clientShortcuts {
             guard let input = keyCommandInput(for: shortcut) else { continue }
             let identity = ShortcutCommandIdentity(
@@ -808,6 +887,10 @@ extension InputCapturingView {
             return
         }
         let modifiers = MirageModifierFlags(uiKeyModifierFlags: command.modifierFlags)
+        if let action = matchingAction(keyCode: keyCode, modifiers: modifiers) {
+            performAction(action, source: .keyCommand)
+            return
+        }
         guard let shortcut = clientShortcut(keyCode: keyCode, modifiers: modifiers) else {
             return
         }

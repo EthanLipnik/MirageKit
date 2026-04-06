@@ -1381,7 +1381,7 @@ public final class MirageHostService {
         let verticalInset = max(0, physicalBounds.height - fittedSize.height)
         let origin = CGPoint(
             x: physicalBounds.origin.x + horizontalInset * 0.5,
-            y: physicalBounds.origin.y + verticalInset
+            y: physicalBounds.origin.y + verticalInset * 0.5
         )
         return CGRect(origin: origin, size: fittedSize)
     }

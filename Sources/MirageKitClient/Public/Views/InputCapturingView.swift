@@ -176,6 +176,12 @@ public class InputCapturingView: UIView {
     /// Callback when a client-reserved shortcut is triggered.
     public var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
+    /// Unified actions (navigation, local, custom) that can be triggered by shortcuts.
+    public var actions: [MirageAction] = []
+
+    /// Callback when a unified action is triggered (by shortcut, gesture, or control bar).
+    public var onActionTriggered: ((MirageAction) -> Void)?
+
     /// Callback when a Pencil gesture maps to a client-side action.
     public var onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?
 
@@ -233,10 +239,9 @@ public class InputCapturingView: UIView {
     private var didEnterBackgroundSinceLastActive = false
 
     // Virtual cursor state (direct touch trackpad mode)
-    private let virtualCursorView = InputCapturingView.makeCursorEffectView()
+    private let virtualCursorView = UIImageView()
     private let lockedCursorView = UIImageView()
     var virtualCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
-    private let virtualCursorSize: CGFloat = 14
     var virtualCursorVelocity: CGPoint = .zero
     var virtualCursorDecelerationLink: CADisplayLink?
     var virtualDragActive: Bool = false
@@ -282,14 +287,6 @@ public class InputCapturingView: UIView {
     private var pencilInteraction: UIPencilInteraction?
     #endif
 
-    private static func makeCursorEffectView() -> UIVisualEffectView {
-        #if os(iOS)
-        if #available(iOS 26.0, *) {
-            return UIVisualEffectView(effect: UIGlassEffect(style: .regular))
-        }
-        #endif
-        return UIVisualEffectView(effect: UIBlurEffect(style: .systemUltraThinMaterial))
-    }
 
     /// Software keyboard state
     public var softwareKeyboardVisible: Bool = false {
@@ -320,6 +317,10 @@ public class InputCapturingView: UIView {
     var directLongPressGesture: UILongPressGestureRecognizer!
     var directTwoFingerTapGesture: UITapGestureRecognizer!
     var directTwoFingerDragGesture: UIPanGestureRecognizer!
+    var navigationSwipeGestures: [UISwipeGestureRecognizer] = []
+
+    /// Whether two-finger swipe gestures trigger navigation actions.
+    public var navigationGesturesEnabled: Bool = true
     var virtualCursorPanGesture: UIPanGestureRecognizer!
     var virtualCursorTapGesture: UITapGestureRecognizer!
     var virtualCursorRightTapGesture: UITapGestureRecognizer!
@@ -851,21 +852,10 @@ public class InputCapturingView: UIView {
     }
 
     private func setupVirtualCursorView() {
-        virtualCursorView.bounds = CGRect(
-            origin: .zero,
-            size: CGSize(width: virtualCursorSize, height: virtualCursorSize)
-        )
-        virtualCursorView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.2)
-        virtualCursorView.clipsToBounds = true
-        virtualCursorView.layer.cornerRadius = virtualCursorSize / 2
-        virtualCursorView.layer.borderColor = UIColor.black.withAlphaComponent(0.35).cgColor
-        virtualCursorView.layer.borderWidth = 1
-        virtualCursorView.layer.shadowColor = UIColor.black.cgColor
-        virtualCursorView.layer.shadowOpacity = 0.2
-        virtualCursorView.layer.shadowRadius = 2
-        virtualCursorView.layer.shadowOffset = CGSize(width: 0, height: 1)
+        virtualCursorView.contentMode = .scaleAspectFit
         virtualCursorView.isUserInteractionEnabled = false
         virtualCursorView.isHidden = true
+        updateCursorImage()
         addSubview(virtualCursorView)
     }
 
@@ -873,19 +863,21 @@ public class InputCapturingView: UIView {
         lockedCursorView.contentMode = .scaleAspectFit
         lockedCursorView.isUserInteractionEnabled = false
         lockedCursorView.isHidden = true
-        updateLockedCursorImage()
+        updateCursorImage()
         addSubview(lockedCursorView)
     }
 
-    func updateLockedCursorImage() {
+    func updateCursorImage() {
         let cursorType = currentCursorType
         let image = UIImage(named: cursorType.cursorImageName, in: .module, compatibleWith: nil)
-        lockedCursorView.image = image
-        if let image {
-            lockedCursorView.bounds = CGRect(
-                origin: .zero,
-                size: image.size
-            )
+        for view in [virtualCursorView, lockedCursorView] {
+            view.image = image
+            if let image {
+                view.bounds = CGRect(
+                    origin: .zero,
+                    size: image.size
+                )
+            }
         }
     }
 
@@ -986,9 +978,10 @@ public class InputCapturingView: UIView {
     func updateVirtualCursorViewPosition() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard !virtualCursorView.isHidden else { return }
-        virtualCursorView.center = CGPoint(
-            x: virtualCursorPosition.x * bounds.width,
-            y: virtualCursorPosition.y * bounds.height
+        let hotspot = currentCursorType.cursorHotspot
+        virtualCursorView.frame.origin = CGPoint(
+            x: virtualCursorPosition.x * bounds.width - hotspot.x,
+            y: virtualCursorPosition.y * bounds.height - hotspot.y
         )
     }
 

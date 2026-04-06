@@ -483,7 +483,7 @@ public final class MirageClientService {
     public let metricsStore = MirageClientMetricsStore()
     /// Cursor store for pointer updates (decoupled from SwiftUI).
     public let cursorStore = MirageClientCursorStore()
-    nonisolated let inputEventSender = MirageInputEventSender()
+    public nonisolated let inputEventSender = MirageInputEventSender()
     nonisolated let fastPathState = MirageClientFastPathState()
 
     public let loomNode: LoomNode

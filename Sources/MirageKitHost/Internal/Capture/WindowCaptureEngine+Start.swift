@@ -384,8 +384,13 @@ extension WindowCaptureEngine {
         } catch {
             let nsError = error as NSError
             let isStaleWindowOrDisplay = nsError.domain == "CoreGraphicsErrorDomain" && nsError.code == 1003
+            let isTransientSCKitError = nsError.domain == "com.apple.ScreenCaptureKit.SCStreamErrorDomain" && nsError.code == -3818
             if isStaleWindowOrDisplay {
                 MirageLogger.capture("Capture restart aborted (stale window/display ID): \(error)")
+            } else if isTransientSCKitError {
+                MirageLogger.capture("Capture restart deferred (transient SCKit error -3818): \(error)")
+                scheduleCaptureRestart(reason: "sck_transient_retry", debounce: 1.0)
+                return
             } else {
                 MirageLogger.error(.capture, error: error, message: "Capture restart failed: ")
             }

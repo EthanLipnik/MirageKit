@@ -10,7 +10,7 @@
 import Foundation
 import MirageKit
 
-final class MirageInputEventSender: @unchecked Sendable {
+public final class MirageInputEventSender: @unchecked Sendable {
     private struct TemporaryPointerCoalescingState {
         var deadline: CFAbsoluteTime = 0
         var lastForwardedPointerTimestamp: CFAbsoluteTime = 0
@@ -77,7 +77,7 @@ final class MirageInputEventSender: @unchecked Sendable {
         throw MirageError.protocolError("Not connected")
     }
 
-    func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
+    public func sendInputFireAndForget(_ event: MirageInputEvent, streamID: StreamID) {
         if shouldDropInputForTemporaryCoalescing(event, streamID: streamID) {
             return
         }

@@ -134,7 +134,7 @@ extension MirageClientService {
             let desktopMinSize = CGSize(width: started.width, height: started.height)
             sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
             onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
-            refreshSharedClipboardBridgeState()
+            await refreshSharedClipboardBridgeState()
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream started: ")
         }
@@ -203,7 +203,7 @@ extension MirageClientService {
             }
 
             onDesktopStreamStopped?(streamID, stopped.reason)
-            refreshSharedClipboardBridgeState()
+            Task { await self.refreshSharedClipboardBridgeState() }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream stopped: ")
         }

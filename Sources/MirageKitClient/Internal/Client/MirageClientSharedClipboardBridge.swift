@@ -16,6 +16,47 @@ import AppKit
 import UIKit
 #endif
 
+private struct ClientClipboardSnapshot: Sendable {
+    let changeCount: Int
+    let text: String?
+}
+
+private actor ClientClipboardSnapshotReader {
+    static let shared = ClientClipboardSnapshotReader()
+
+    func snapshot() -> ClientClipboardSnapshot {
+        #if os(macOS)
+        let pasteboard = NSPasteboard.general
+        let text: String? = if pasteboard.availableType(from: [.string]) != nil {
+            pasteboard.string(forType: .string)
+        } else {
+            nil
+        }
+        return ClientClipboardSnapshot(changeCount: pasteboard.changeCount, text: text)
+        #elseif canImport(UIKit)
+        let pasteboard = UIPasteboard.general
+        let text: String? = if pasteboard.hasStrings {
+            pasteboard.string
+        } else {
+            nil
+        }
+        return ClientClipboardSnapshot(changeCount: pasteboard.changeCount, text: text)
+        #else
+        return ClientClipboardSnapshot(changeCount: 0, text: nil)
+        #endif
+    }
+
+    func changeCount() -> Int {
+        #if os(macOS)
+        NSPasteboard.general.changeCount
+        #elseif canImport(UIKit)
+        UIPasteboard.general.changeCount
+        #else
+        0
+        #endif
+    }
+}
+
 @MainActor
 final class MirageClientSharedClipboardBridge {
     private let pollInterval: Duration
@@ -35,7 +76,7 @@ final class MirageClientSharedClipboardBridge {
         self.onLocalTextChanged = onLocalTextChanged
     }
 
-    func setActive(_ isActive: Bool, autoSync: Bool = true) {
+    func setActive(_ isActive: Bool, autoSync: Bool = true) async {
         let wasActive = self.isActive
         let wasAutoSync = self.autoSync
         self.autoSync = autoSync
@@ -48,7 +89,7 @@ final class MirageClientSharedClipboardBridge {
                 // Mode changed while active — restart observation.
                 deactivate()
             }
-            activate()
+            await activate()
         } else {
             deactivate()
         }
@@ -81,12 +122,11 @@ final class MirageClientSharedClipboardBridge {
         #endif
     }
 
-    func syncCurrentClipboardToRemote() {
-        let changeCount = currentChangeCount()
-        let currentText = currentClipboardText()
+    func syncCurrentClipboardToRemote() async {
+        let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
         guard let localSend = clipboardState.prepareManualLocalSend(
-            currentText: currentText,
-            changeCount: changeCount
+            currentText: snapshot.text,
+            changeCount: snapshot.changeCount
         ) else {
             return
         }
@@ -95,8 +135,9 @@ final class MirageClientSharedClipboardBridge {
         onLocalTextChanged(localSend, sentAtMs)
     }
 
-    private func activate() {
-        clipboardState.activate(changeCount: currentChangeCount())
+    private func activate() async {
+        let changeCount = await ClientClipboardSnapshotReader.shared.changeCount()
+        clipboardState.activate(changeCount: changeCount)
         // No initial clipboard send — clipboard sharing only applies to changes
         // that happen while a stream is active, not pre-existing clipboard content.
         startObservation()
@@ -123,7 +164,9 @@ final class MirageClientSharedClipboardBridge {
             while !Task.isCancelled {
                 try? await Task.sleep(for: pollInterval)
                 if Task.isCancelled { return }
-                observeLocalClipboardIfNeeded()
+                let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
+                if Task.isCancelled { return }
+                consumePolledSnapshot(snapshot)
             }
         }
         #elseif canImport(UIKit)
@@ -133,7 +176,7 @@ final class MirageClientSharedClipboardBridge {
             queue: nil
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.observeOrTrackClipboard()
+                await self?.observeOrTrackClipboard()
             }
         }
 
@@ -143,29 +186,27 @@ final class MirageClientSharedClipboardBridge {
             queue: nil
         ) { [weak self] _ in
             Task { @MainActor [weak self] in
-                self?.observeOrTrackClipboard()
+                await self?.observeOrTrackClipboard()
             }
         }
 
         #endif
     }
 
-    private func observeOrTrackClipboard() {
+    private func observeOrTrackClipboard() async {
         if autoSync {
-            observeLocalClipboardIfNeeded()
+            let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
+            guard snapshot.changeCount != clipboardState.lastObservedChangeCount else { return }
+            completeClipboardObservation(text: snapshot.text, changeCount: snapshot.changeCount)
         } else {
-            trackChangeCountOnly()
+            let changeCount = await ClientClipboardSnapshotReader.shared.changeCount()
+            clipboardState.recordObservedLocalChangeCount(changeCount)
         }
     }
 
-    private func trackChangeCountOnly() {
-        clipboardState.recordObservedLocalChangeCount(currentChangeCount())
-    }
-
-    private func observeLocalClipboardIfNeeded() {
-        let changeCount = currentChangeCount()
-        guard changeCount != clipboardState.lastObservedChangeCount else { return }
-        completeClipboardObservation(text: currentClipboardText(), changeCount: changeCount)
+    private func consumePolledSnapshot(_ snapshot: ClientClipboardSnapshot) {
+        guard snapshot.changeCount != clipboardState.lastObservedChangeCount else { return }
+        completeClipboardObservation(text: snapshot.text, changeCount: snapshot.changeCount)
     }
 
     @MainActor
@@ -178,26 +219,5 @@ final class MirageClientSharedClipboardBridge {
         case let .send(localSend):
             onLocalTextChanged(localSend, sentAtMs)
         }
-    }
-
-    private func currentClipboardText() -> String? {
-        #if os(macOS)
-        NSPasteboard.general.string(forType: .string)
-        #elseif canImport(UIKit)
-        guard UIPasteboard.general.hasStrings else { return nil }
-        return UIPasteboard.general.string
-        #else
-        nil
-        #endif
-    }
-
-    private func currentChangeCount() -> Int {
-        #if os(macOS)
-        NSPasteboard.general.changeCount
-        #elseif canImport(UIKit)
-        UIPasteboard.general.changeCount
-        #else
-        0
-        #endif
     }
 }

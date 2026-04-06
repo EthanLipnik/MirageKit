@@ -60,6 +60,12 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Callback when a client-reserved shortcut is triggered.
     public var onClientShortcut: ((MirageClientShortcut) -> Void)?
 
+    /// Unified actions triggered by shortcuts, gestures, or the control bar.
+    public var actions: [MirageAction]
+
+    /// Callback when a unified action is triggered.
+    public var onActionTriggered: ((MirageAction) -> Void)?
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -77,7 +83,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil,
         clientShortcuts: [MirageClientShortcut] = [],
-        onClientShortcut: ((MirageClientShortcut) -> Void)? = nil
+        onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
+        actions: [MirageAction] = [],
+        onActionTriggered: ((MirageAction) -> Void)? = nil
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -96,6 +104,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.maxDrawableSize = maxDrawableSize
         self.clientShortcuts = clientShortcuts
         self.onClientShortcut = onClientShortcut
+        self.actions = actions
+        self.onActionTriggered = onActionTriggered
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -163,6 +173,8 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         // Configure client shortcut passthrough
         wrapper.clientShortcuts = clientShortcuts
         wrapper.onClientShortcut = onClientShortcut
+        wrapper.actions = actions
+        wrapper.onActionTriggered = onActionTriggered
 
         return wrapper
     }

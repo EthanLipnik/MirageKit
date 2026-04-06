@@ -28,7 +28,7 @@ struct MirageClientShortcutTests {
 
     @Test("Shortcut matching rejects different key code")
     func shortcutMatchingRejectsDifferentKeyCode() {
-        let shortcut = MirageClientShortcut.defaultDesktopExit
+        let shortcut = MirageClientShortcut(keyCode: 0x35, modifiers: [.control, .option])
         let event = MirageKeyEvent(
             keyCode: 0x24,
             characters: "\n",
