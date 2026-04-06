@@ -38,15 +38,17 @@ extension StreamContext {
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
         mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        clientLogicalSize: CGSize,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
-        try await startWindowCapture(
+        try await startSharedDisplayWindowCapture(
             windowWrapper: windowWrapper,
             applicationWrapper: applicationWrapper,
             displayWrapper: displayWrapper,
             mirroredDisplaySnapshot: mirroredDisplaySnapshot,
+            clientLogicalSize: clientLogicalSize,
             sendPacket: sendPacket,
             onSendError: onSendError
         )

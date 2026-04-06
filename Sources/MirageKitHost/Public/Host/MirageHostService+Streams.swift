@@ -416,8 +416,18 @@ public extension MirageHostService {
                 applicationWrapper: applicationWrapper,
                 displayWrapper: displayWrapper,
                 mirroredDisplaySnapshot: mirroredDisplaySnapshot,
+                clientLogicalSize: clientDisplayResolution,
                 sendPacket: sendPacket,
                 onSendError: onSendError
+            )
+            await refreshWindowVirtualDisplayState(
+                streamID: streamID,
+                context: context,
+                clientScaleFactorOverride: clientScaleFactor,
+                targetContentAspectRatioOverride: clientDisplayResolution.width > 0 &&
+                    clientDisplayResolution.height > 0
+                    ? clientDisplayResolution.width / clientDisplayResolution.height
+                    : nil
             )
         } catch {
             await cleanupFailedStreamStart(

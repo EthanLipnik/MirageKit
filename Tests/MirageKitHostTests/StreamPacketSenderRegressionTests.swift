@@ -124,6 +124,84 @@ struct StreamPacketSenderRegressionTests {
         await sender.stop()
     }
 
+    @Test("Consumed telemetry windows clear send delay aggregates")
+    func consumedTelemetryWindowsClearSendDelayAggregates() async throws {
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { _, onComplete in
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 256),
+                streamID: 43,
+                frameNumber: 101,
+                sequenceNumberStart: 1_010,
+                generation: generation,
+                encodedAt: CFAbsoluteTimeGetCurrent() - 0.02
+            )
+        )
+
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.sendStartDelayAverageMs > 0 &&
+                snapshot.sendCompletionAverageMs > 0
+        }
+
+        let firstWindow = await sender.consumeTelemetrySnapshot()
+        #expect(firstWindow.sendStartDelayAverageMs > 0)
+        #expect(firstWindow.sendCompletionAverageMs > 0)
+
+        let secondWindow = await sender.consumeTelemetrySnapshot()
+        #expect(secondWindow.sendStartDelayAverageMs == 0)
+        #expect(secondWindow.sendCompletionAverageMs == 0)
+
+        await sender.stop()
+    }
+
+    @Test("Consumed telemetry windows clear transient generation-abort drops")
+    func consumedTelemetryWindowsClearTransientGenerationAbortDrops() async throws {
+        let sender = StreamPacketSender(
+            maxPayloadSize: 512,
+            sendPacket: { _, onComplete in
+                onComplete(nil)
+            }
+        )
+
+        await sender.start()
+        let generation = sender.currentGenerationSnapshot()
+        sender.enqueue(
+            makeWorkItem(
+                payload: makePayload(byteCount: 128),
+                streamID: 44,
+                frameNumber: 201,
+                sequenceNumberStart: 2_010,
+                generation: generation &+ 1
+            )
+        )
+
+        _ = try await waitForTelemetry(
+            sender,
+            timeoutSeconds: 2.0
+        ) { snapshot in
+            snapshot.generationAbortDrops == 1
+        }
+
+        let firstWindow = await sender.consumeTelemetrySnapshot()
+        #expect(firstWindow.generationAbortDrops == 1)
+
+        let secondWindow = await sender.consumeTelemetrySnapshot()
+        #expect(secondWindow.generationAbortDrops == 0)
+
+        await sender.stop()
+    }
+
     private func waitForSubmissionCount(
         _ submittedPackets: Locked<[SubmittedPacket]>,
         expectedCount: Int,
@@ -147,6 +225,24 @@ struct StreamPacketSenderRegressionTests {
         #expect(sender.queuedBytesSnapshot() == 0)
     }
 
+    private func waitForTelemetry(
+        _ sender: StreamPacketSender,
+        timeoutSeconds: TimeInterval = 2.0,
+        until predicate: @escaping (StreamPacketSender.TelemetrySnapshot) -> Bool
+    ) async throws -> StreamPacketSender.TelemetrySnapshot {
+        let deadline = CFAbsoluteTimeGetCurrent() + timeoutSeconds
+        while CFAbsoluteTimeGetCurrent() < deadline {
+            let snapshot = await sender.telemetrySnapshot()
+            if predicate(snapshot) {
+                return snapshot
+            }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let snapshot = await sender.telemetrySnapshot()
+        Issue.record("Timed out waiting for telemetry condition")
+        return snapshot
+    }
+
     private func completePendingSends(_ pendingCompletions: Locked<[PendingSendCompletion]>) {
         pendingCompletions.withLock { completions in
             completions.forEach { $0.complete(nil) }
@@ -164,7 +260,8 @@ struct StreamPacketSenderRegressionTests {
         frameNumber: UInt32,
         sequenceNumberStart: UInt32,
         generation: UInt32,
-        isKeyframe: Bool = false
+        isKeyframe: Bool = false,
+        encodedAt: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()
     ) -> StreamPacketSender.WorkItem {
         StreamPacketSender.WorkItem(
             encodedData: payload,
@@ -182,7 +279,7 @@ struct StreamPacketSenderRegressionTests {
             wireBytes: payload.count,
             logPrefix: "test",
             generation: generation,
-            encodedAt: CFAbsoluteTimeGetCurrent(),
+            encodedAt: encodedAt,
             pacingOverride: nil
         )
     }

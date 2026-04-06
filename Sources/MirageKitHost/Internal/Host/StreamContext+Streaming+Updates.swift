@@ -938,8 +938,6 @@ extension StreamContext {
         await encoder?.stopEncoding()
 
         encoder = nil
-        onContentBoundsChanged = nil
-        onNewWindowDetected = nil
         trafficLightMaskGeometryCache = nil
         isAppStream = false
         applicationProcessID = 0

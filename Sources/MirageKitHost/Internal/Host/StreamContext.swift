@@ -314,12 +314,6 @@ actor StreamContext {
     /// Serializes packet fragmentation/sending to preserve frame order
     var packetSender: StreamPacketSender?
 
-    /// Callback for content bounds changes (menus, sheets appearing)
-    var onContentBoundsChanged: (@Sendable (CGRect) -> Void)?
-
-    /// Callback for new independent window detection
-    var onNewWindowDetected: (@Sendable (MirageWindow) -> Void)?
-
     /// Base flags to include on all frames for this stream
     let baseFrameFlags: FrameFlags
 

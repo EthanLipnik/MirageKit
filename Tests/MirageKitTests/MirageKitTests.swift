@@ -171,11 +171,12 @@ struct MirageKitTests {
 
     @Test("Host wallpaper message serialization")
     func hostWallpaperMessageSerialization() throws {
+        let imageData = Data([0xFF, 0xD8, 0xFF, 0xD9])
         let wallpaper = HostWallpaperMessage(
             requestID: UUID(),
-            fileName: "wallpaper.jpg",
-            pixelWidth: 1_280,
-            pixelHeight: 720,
+            imageData: imageData,
+            pixelWidth: 854,
+            pixelHeight: 480,
             bytesPerPixelEstimate: 4
         )
 
@@ -186,9 +187,9 @@ struct MirageKitTests {
 
         let decoded = try decodedEnvelope.decode(HostWallpaperMessage.self)
         #expect(decoded.requestID == wallpaper.requestID)
-        #expect(decoded.fileName == "wallpaper.jpg")
-        #expect(decoded.pixelWidth == 1_280)
-        #expect(decoded.pixelHeight == 720)
+        #expect(decoded.imageData == imageData)
+        #expect(decoded.pixelWidth == 854)
+        #expect(decoded.pixelHeight == 480)
         #expect(decoded.bytesPerPixelEstimate == 4)
     }
 

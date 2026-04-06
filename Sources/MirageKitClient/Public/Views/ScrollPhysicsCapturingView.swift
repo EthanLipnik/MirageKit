@@ -12,14 +12,14 @@ import UIKit
 /// Invisible scroll views that capture native scroll physics.
 /// The actual content (Metal view) stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
-final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
+final class ScrollPhysicsCapturingView: UIView {
     // MARK: - Safe Area Override
 
     /// Override safe area insets to ensure content fills entire screen
     override var safeAreaInsets: UIEdgeInsets { .zero }
 
     /// The invisible scroll view for indirect pointer / trackpad physics
-    private let indirectScrollView: UIScrollView
+    private let indirectScrollView: CallbackScrollView
 
     /// The invisible scroll view for direct-touch physics
     private let directTouchScrollView: LocationReportingScrollView
@@ -54,6 +54,13 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
                 stopTracking(for: directTouchScrollView)
             }
         }
+    }
+
+    /// Stops any in-progress momentum deceleration on the indirect scroll view.
+    func stopIndirectScrollDeceleration() {
+        guard indirectScrollView.isDecelerating else { return }
+        // Setting contentOffset to current offset stops momentum
+        indirectScrollView.setContentOffset(indirectScrollView.contentOffset, animated: false)
     }
 
     /// Callback when a direct non-stylus touch is detected.
@@ -111,7 +118,7 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
     private var lastRotationAngle: CGFloat = 0.0
 
     override init(frame: CGRect) {
-        indirectScrollView = UIScrollView(frame: frame)
+        indirectScrollView = CallbackScrollView(frame: frame)
         directTouchScrollView = LocationReportingScrollView(frame: frame)
         indirectScrollContent = UIView()
         directTouchScrollContent = UIView()
@@ -121,7 +128,7 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
     }
 
     required init?(coder: NSCoder) {
-        indirectScrollView = UIScrollView()
+        indirectScrollView = CallbackScrollView()
         directTouchScrollView = LocationReportingScrollView()
         indirectScrollContent = UIView()
         directTouchScrollContent = UIView()
@@ -134,6 +141,8 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
         // Ensure this view doesn't respect safe area insets
         insetsLayoutMarginsFromSafeArea = false
 
+        bindScrollCallbacks(for: indirectScrollView)
+        bindScrollCallbacks(for: directTouchScrollView)
         configureScrollView(indirectScrollView)
         configureScrollView(directTouchScrollView)
 
@@ -197,8 +206,25 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
         addGestureRecognizer(rotationGesture)
     }
 
+    private func bindScrollCallbacks(for scrollView: CallbackScrollView) {
+        scrollView.onWillBeginDragging = { [weak self] scrollView in
+            self?.handleScrollViewWillBeginDragging(scrollView)
+        }
+        scrollView.onDidScroll = { [weak self] scrollView in
+            self?.handleScrollViewDidScroll(scrollView)
+        }
+        scrollView.onDidEndDragging = { [weak self] scrollView, willDecelerate in
+            self?.handleScrollViewDidEndDragging(scrollView, willDecelerate: willDecelerate)
+        }
+        scrollView.onDidEndDecelerating = { [weak self] scrollView in
+            self?.handleScrollViewDidEndDecelerating(scrollView)
+        }
+        scrollView.onDidEndScrollingAnimation = { [weak self] scrollView in
+            self?.handleScrollViewDidEndScrollingAnimation(scrollView)
+        }
+    }
+
     private func configureScrollView(_ scrollView: UIScrollView) {
-        scrollView.delegate = self
         scrollView.showsVerticalScrollIndicator = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.bounces = true
@@ -251,15 +277,15 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
         }
     }
 
-    // MARK: - UIScrollViewDelegate
+    // MARK: - Scroll Callbacks
 
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+    private func handleScrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         setTracking(true, for: scrollView)
         setLastContentOffset(scrollView.contentOffset, for: scrollView)
         onScroll?(0, 0, .began, .none)
     }
 
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+    private func handleScrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !isRecentering(scrollView) else { return }
 
         let currentOffset = scrollView.contentOffset
@@ -278,7 +304,10 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
         }
     }
 
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+    private func handleScrollViewDidEndDragging(
+        _ scrollView: UIScrollView,
+        willDecelerate decelerate: Bool
+    ) {
         setTracking(false, for: scrollView)
 
         if !decelerate {
@@ -287,12 +316,12 @@ final class ScrollPhysicsCapturingView: UIView, UIScrollViewDelegate {
         }
     }
 
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+    private func handleScrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
         onScroll?(0, 0, .none, .ended)
         recenterIfNeeded(for: scrollView)
     }
 
-    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+    private func handleScrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
         recenterIfNeeded(for: scrollView)
     }
 
@@ -385,6 +414,57 @@ private final class RotationGestureDelegate: NSObject, UIGestureRecognizerDelega
     }
 }
 
+private class CallbackScrollView: UIScrollView, UIScrollViewDelegate {
+    var onWillBeginDragging: ((UIScrollView) -> Void)?
+    var onDidScroll: ((UIScrollView) -> Void)?
+    var onDidEndDragging: ((UIScrollView, Bool) -> Void)?
+    var onDidEndDecelerating: ((UIScrollView) -> Void)?
+    var onDidEndScrollingAnimation: ((UIScrollView) -> Void)?
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        super.delegate = self
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        super.delegate = self
+    }
+
+    override var delegate: UIScrollViewDelegate? {
+        get { super.delegate }
+        set {
+            if let newValue,
+               (newValue as AnyObject) !== self {
+                assertionFailure(
+                    "CallbackScrollView must remain its own delegate to preserve UIKit scroll gesture invariants."
+                )
+            }
+            super.delegate = self
+        }
+    }
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        onWillBeginDragging?(scrollView)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        onDidScroll?(scrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        onDidEndDragging?(scrollView, decelerate)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        onDidEndDecelerating?(scrollView)
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        onDidEndScrollingAnimation?(scrollView)
+    }
+}
+
 private func isStylusLikeTouch(_ touch: UITouch) -> Bool {
     if touch.type == .pencil { return true }
     guard touch.type == .direct else { return false }
@@ -403,7 +483,7 @@ private func isStylusLikeTouch(_ touch: UITouch) -> Bool {
     return false
 }
 
-private final class LocationReportingScrollView: UIScrollView {
+private final class LocationReportingScrollView: CallbackScrollView {
     var onDirectTouchActivity: (() -> Void)?
     var onTouchLocationChanged: ((CGPoint) -> Void)?
     var onPencilTouchesBegan: ((Set<UITouch>, UIEvent?) -> Void)?

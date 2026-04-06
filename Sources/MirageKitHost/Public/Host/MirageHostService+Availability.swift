@@ -47,10 +47,16 @@ extension MirageHostService {
     func publishCurrentAdvertisement() async {
         guard case .advertising = state else { return }
 
-        let localNetworkSnapshot = localNetworkMonitor.snapshot()
-        let updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
-            localNetworkSnapshot,
+        expireStaleSingleClientReservationIfNeeded()
+
+        var updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingAcceptingConnections(
+            allowsNewClientConnections,
             in: advertisedPeerAdvertisement
+        )
+        let localNetworkSnapshot = localNetworkMonitor.snapshot()
+        updatedAdvertisement = MiragePeerAdvertisementMetadata.updatingLocalNetworkContext(
+            localNetworkSnapshot,
+            in: updatedAdvertisement
         )
         if updatedAdvertisement != advertisedPeerAdvertisement {
             advertisedPeerAdvertisement = updatedAdvertisement

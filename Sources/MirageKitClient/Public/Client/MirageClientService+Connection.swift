@@ -96,6 +96,7 @@ extension MirageClientService {
             try throwIfConnectAttemptIsStale(attemptID)
 
             loomSession = session
+            rememberDirectEndpointHost(await session.remoteEndpoint, for: host.deviceID)
             transferEngine = LoomTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
@@ -184,6 +185,7 @@ extension MirageClientService {
             try throwIfConnectAttemptIsStale(attemptID)
 
             loomSession = session
+            rememberDirectEndpointHost(await session.remoteEndpoint, for: host.deviceID)
             transferEngine = LoomTransferEngine(session: session)
             startTransferObserver()
             self.controlChannel = controlChannel
@@ -404,8 +406,6 @@ extension MirageClientService {
         if let hostWallpaperContinuation {
             self.hostWallpaperContinuation = nil
             hostWallpaperRequestID = nil
-            hostWallpaperTransferTask?.cancel()
-            hostWallpaperTransferTask = nil
             hostWallpaperTimeoutTask?.cancel()
             hostWallpaperTimeoutTask = nil
             hostWallpaperContinuation.resume(throwing: CancellationError())
@@ -435,7 +435,7 @@ extension MirageClientService {
         let attempts = controlSessionAttempts(for: host)
         var lastFailureReason: String?
 
-        for attempt in attempts {
+        for (attemptIndex, attempt) in attempts.enumerated() {
             try throwIfConnectAttemptIsStale(attemptID)
             do {
                 return try await establishControlSession(
@@ -456,10 +456,12 @@ extension MirageClientService {
                 )
                 lastFailureReason = failureReason
 
-                if attempt.transportKind == .udp,
-                   classification.shouldRetryOverTCP,
-                   attempts.contains(where: { $0.transportKind == .tcp }) {
-                    MirageLogger.client("\(failureReason); retrying over advertised TCP")
+                if Self.shouldRetryLaterControlSessionAttempt(
+                    classification: classification,
+                    attempts: attempts,
+                    currentAttemptIndex: attemptIndex
+                ) {
+                    MirageLogger.client("\(failureReason); retrying over next advertised transport")
                     continue
                 }
 
@@ -555,7 +557,7 @@ extension MirageClientService {
         attempt: ControlSessionAttempt,
         attemptID: UUID,
         timeout: Duration,
-        bootstrapProgressTracker: ConnectSessionBootstrapProgressTracker?
+        bootstrapProgressTracker: ConnectSessionBootstrapProgressTracker
     ) async throws -> LoomAuthenticatedSession {
         let timeoutError = MirageError.timeout
 
@@ -573,28 +575,27 @@ extension MirageClientService {
                 }
 
                 Task { [timeout, timeoutError] in
-                    if attempt.transportKind == .udp,
-                       let bootstrapProgressTracker {
-                        let absoluteTimeout = absoluteControlSessionConnectTimeout(for: attempt)
-                        while !Task.isCancelled {
-                            try? await Task.sleep(for: .milliseconds(250))
-                            let timedOut = await bootstrapProgressTracker.shouldTimeOut(
-                                now: ContinuousClock.now,
-                                initialTimeout: timeout,
-                                activePhaseIdleTimeout: timeout,
-                                absoluteTimeout: absoluteTimeout
-                            )
-                            guard timedOut else { continue }
-                            connectTask.cancel()
-                            await box.resume(throwing: timeoutError)
-                            return
-                        }
+                    let absoluteTimeout = absoluteControlSessionConnectTimeout(for: attempt)
+                    let trustPendingTimeout = max(
+                        absoluteTimeout,
+                        trustPendingControlSessionConnectTimeout
+                    )
+
+                    while !Task.isCancelled {
+                        try? await Task.sleep(for: .milliseconds(250))
+                        let timedOut = await bootstrapProgressTracker.shouldTimeOut(
+                            now: ContinuousClock.now,
+                            initialTimeout: timeout,
+                            activePhaseIdleTimeout: timeout,
+                            trustPendingIdleTimeout: trustPendingTimeout,
+                            absoluteTimeout: absoluteTimeout,
+                            trustPendingAbsoluteTimeout: trustPendingTimeout
+                        )
+                        guard timedOut else { continue }
+                        connectTask.cancel()
+                        await box.resume(throwing: timeoutError)
                         return
                     }
-
-                    try? await Task.sleep(for: timeout)
-                    connectTask.cancel()
-                    await box.resume(throwing: timeoutError)
                 }
             }
         } catch {
@@ -696,7 +697,11 @@ extension MirageClientService {
         case .udp:
             selectedHost = controlSessionUDPHost(for: host, endpointHost: endpointHost)
         case .quic, .tcp:
-            selectedHost = endpointHost ?? controlSessionUDPHost(for: host, endpointHost: nil)
+            if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
+                selectedHost = endpointHost
+            } else {
+                selectedHost = controlSessionUDPHost(for: host, endpointHost: endpointHost)
+            }
         }
 
         guard let selectedHost else { return nil }
@@ -713,6 +718,11 @@ extension MirageClientService {
     ) -> NWEndpoint.Host? {
         if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
             return endpointHost
+        }
+
+        if let rememberedHost = rememberedDirectEndpointHostByDeviceID[host.deviceID],
+           shouldPreferEndpointHostForDirectConnection(rememberedHost) {
+            return rememberedHost
         }
 
         let advertisedHostName = host.advertisement.hostName?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -775,7 +785,7 @@ extension MirageClientService {
         case cancelled
         case other
 
-        var shouldRetryOverTCP: Bool {
+        var shouldRetryLaterDirectAttempt: Bool {
             switch self {
             case .timeout, .transportLoss, .connectionRefused, .addressUnavailable:
                 true
@@ -809,6 +819,10 @@ extension MirageClientService {
             switch loomError {
             case .timeout:
                 return .timeout
+            case let .protocolError(reason):
+                if looksLikeAddressResolutionFailure(reason) {
+                    return .addressUnavailable
+                }
             case let .connectionFailed(underlyingError):
                 if let failure = underlyingError as? LoomConnectionFailure {
                     return classifyLoomConnectionFailure(failure)
@@ -830,6 +844,17 @@ extension MirageClientService {
         }
 
         return .other
+    }
+
+    internal static func shouldRetryLaterControlSessionAttempt(
+        classification: ControlSessionFailureClassification,
+        attempts: [ControlSessionAttempt],
+        currentAttemptIndex: Int
+    ) -> Bool {
+        guard classification.shouldRetryLaterDirectAttempt else {
+            return false
+        }
+        return attempts.indices.contains(currentAttemptIndex + 1)
     }
 
     private static func looksLikeAddressResolutionFailure(_ reason: String) -> Bool {
@@ -969,6 +994,13 @@ extension MirageClientService {
         default:
             .other
         }
+    }
+
+    private func rememberDirectEndpointHost(_ endpoint: NWEndpoint?, for deviceID: UUID) {
+        guard let endpoint else { return }
+        guard case let .hostPort(host, _) = endpoint else { return }
+        guard shouldPreferEndpointHostForDirectConnection(host) else { return }
+        rememberedDirectEndpointHostByDeviceID[deviceID] = host
     }
 
     private func beginConnectAttempt() -> UUID {
@@ -1190,7 +1222,7 @@ private actor ConnectSessionContinuationBox {
     }
 }
 
-private actor ConnectSessionBootstrapProgressTracker {
+actor ConnectSessionBootstrapProgressTracker {
     private let startedAt = ContinuousClock.now
     private var latestProgress = LoomAuthenticatedSessionBootstrapProgress(phase: .idle)
     private var lastProgressAt = ContinuousClock.now
@@ -1208,17 +1240,36 @@ private actor ConnectSessionBootstrapProgressTracker {
         now: ContinuousClock.Instant,
         initialTimeout: Duration,
         activePhaseIdleTimeout: Duration,
-        absoluteTimeout: Duration
+        trustPendingIdleTimeout: Duration,
+        absoluteTimeout: Duration,
+        trustPendingAbsoluteTimeout: Duration
     ) -> Bool {
-        if now - startedAt >= absoluteTimeout {
-            return true
-        }
         if latestProgress.phase == .ready || latestProgress.isFailure {
             return false
         }
-        if latestProgress.phase == .idle {
-            return now - startedAt >= initialTimeout
+
+        let idleTimeout: Duration
+        let resolvedAbsoluteTimeout: Duration
+
+        switch latestProgress.phase {
+        case .idle:
+            idleTimeout = initialTimeout
+            resolvedAbsoluteTimeout = absoluteTimeout
+        case .trustPendingApproval:
+            idleTimeout = trustPendingIdleTimeout
+            resolvedAbsoluteTimeout = trustPendingAbsoluteTimeout
+        default:
+            idleTimeout = activePhaseIdleTimeout
+            resolvedAbsoluteTimeout = absoluteTimeout
         }
-        return now - lastProgressAt >= activePhaseIdleTimeout
+
+        if now - startedAt >= resolvedAbsoluteTimeout {
+            return true
+        }
+
+        if latestProgress.phase == .idle {
+            return now - startedAt >= idleTimeout
+        }
+        return now - lastProgressAt >= idleTimeout
     }
 }

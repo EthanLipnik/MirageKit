@@ -216,6 +216,68 @@ public extension MirageCursorType {
 }
 #endif
 
+// MARK: - Cursor Image Info
+
+public extension MirageCursorType {
+    /// Asset catalog image name for this cursor type (in MirageKitClient resources).
+    var cursorImageName: String {
+        switch self {
+        case .arrow: "cursor_arrow"
+        case .iBeam: "cursor_iBeam"
+        case .crosshair: "cursor_crosshair"
+        case .closedHand: "cursor_closedHand"
+        case .openHand: "cursor_openHand"
+        case .pointingHand: "cursor_pointingHand"
+        case .resizeLeft: "cursor_resizeLeft"
+        case .resizeRight: "cursor_resizeRight"
+        case .resizeLeftRight: "cursor_resizeLeftRight"
+        case .resizeUp: "cursor_resizeUp"
+        case .resizeDown: "cursor_resizeDown"
+        case .resizeUpDown: "cursor_resizeUpDown"
+        case .disappearingItem: "cursor_disappearingItem"
+        case .operationNotAllowed: "cursor_operationNotAllowed"
+        case .dragLink: "cursor_dragLink"
+        case .dragCopy: "cursor_dragCopy"
+        case .contextualMenu: "cursor_contextualMenu"
+        case .resizeNorthEast: "cursor_resizeNorthEast"
+        case .resizeNorthWest: "cursor_resizeNorthWest"
+        case .resizeSouthEast: "cursor_resizeSouthEast"
+        case .resizeSouthWest: "cursor_resizeSouthWest"
+        case .resizeNESW: "cursor_resizeNESW"
+        case .resizeNWSE: "cursor_resizeNWSE"
+        }
+    }
+
+    /// Hotspot position in points at 1x scale, measured from top-left.
+    var cursorHotspot: CGPoint {
+        switch self {
+        case .arrow: CGPoint(x: 5, y: 5)
+        case .iBeam: CGPoint(x: 11, y: 10)
+        case .crosshair: CGPoint(x: 11, y: 11)
+        case .closedHand: CGPoint(x: 16, y: 17)
+        case .openHand: CGPoint(x: 16, y: 17)
+        case .pointingHand: CGPoint(x: 13, y: 8)
+        case .resizeLeft: CGPoint(x: 12, y: 12)
+        case .resizeRight: CGPoint(x: 12, y: 12)
+        case .resizeLeftRight: CGPoint(x: 15, y: 12)
+        case .resizeUp: CGPoint(x: 12, y: 13)
+        case .resizeDown: CGPoint(x: 12, y: 11)
+        case .resizeUpDown: CGPoint(x: 12, y: 14)
+        case .disappearingItem: CGPoint(x: 5, y: 5)
+        case .operationNotAllowed: CGPoint(x: 5, y: 5)
+        case .dragLink: CGPoint(x: 11, y: 3)
+        case .dragCopy: CGPoint(x: 5, y: 5)
+        case .contextualMenu: CGPoint(x: 5, y: 5)
+        case .resizeNorthEast: CGPoint(x: 11, y: 11)
+        case .resizeNorthWest: CGPoint(x: 11, y: 11)
+        case .resizeSouthEast: CGPoint(x: 11, y: 11)
+        case .resizeSouthWest: CGPoint(x: 11, y: 11)
+        case .resizeNESW: CGPoint(x: 11, y: 11)
+        case .resizeNWSE: CGPoint(x: 11, y: 11)
+        }
+    }
+}
+
 // MARK: - iOS/iPadOS/visionOS UIPointerStyle Conversion
 
 #if os(iOS) || os(visionOS)

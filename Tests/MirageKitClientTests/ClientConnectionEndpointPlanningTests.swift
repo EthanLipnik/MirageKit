@@ -152,6 +152,47 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Client reuses remembered direct endpoint hosts when Bonjour is no longer resolvable")
+    func controlSessionAttemptsPreferRememberedDirectEndpointHost() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_008))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_009))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "Altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ]
+            )
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        service.rememberedDirectEndpointHostByDeviceID[deviceID] = NWEndpoint.Host("100.64.10.2")
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("100.64.10.2"),
+            port: udpPort
+        )
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("100.64.10.2"),
+            port: tcpPort
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+    }
+
+    @MainActor
     @Test("Overlay peers use overlay endpoint hosts and advertised transport ports")
     func controlSessionAttemptsPreferOverlayEndpointHostAndPorts() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 65_139))
@@ -236,6 +277,11 @@ struct ClientConnectionEndpointPlanningTests {
         )
         #expect(
             MirageClientService.classifyControlSessionFailure(
+                LoomError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
+            ) == .addressUnavailable
+        )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
                 MirageError.protocolError("Failed to resolve zephir-m3.local: nodename nor servname provided, or not known")
             ) == .addressUnavailable
         )
@@ -245,6 +291,63 @@ struct ClientConnectionEndpointPlanningTests {
                     "Pre-bootstrap udp control session failed for zephir-m3 endpoint=zephir-m3.local:51024 interface=wifi classification=other error=Protocol error: Failed to resolve zephir-m3.local: nodename nor servname provided, or not known"
                 )
             ) == .addressUnavailable
+        )
+    }
+
+    @MainActor
+    @Test("Client retries later direct transports for retryable failures")
+    func retryPolicyContinuesThroughLaterAdvertisedTransports() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_010))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61_011))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_012))
+        let attempts = [
+            MirageClientService.ControlSessionAttempt(
+                hostName: "Altair",
+                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: udpPort),
+                transportKind: .udp,
+                requiredInterfaceType: nil
+            ),
+            MirageClientService.ControlSessionAttempt(
+                hostName: "Altair",
+                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: quicPort),
+                transportKind: .quic,
+                requiredInterfaceType: nil
+            ),
+            MirageClientService.ControlSessionAttempt(
+                hostName: "Altair",
+                endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
+                transportKind: .tcp,
+                requiredInterfaceType: nil
+            ),
+        ]
+
+        #expect(
+            MirageClientService.shouldRetryLaterControlSessionAttempt(
+                classification: .addressUnavailable,
+                attempts: attempts,
+                currentAttemptIndex: 0
+            )
+        )
+        #expect(
+            MirageClientService.shouldRetryLaterControlSessionAttempt(
+                classification: .timeout,
+                attempts: attempts,
+                currentAttemptIndex: 1
+            )
+        )
+        #expect(
+            !MirageClientService.shouldRetryLaterControlSessionAttempt(
+                classification: .addressUnavailable,
+                attempts: attempts,
+                currentAttemptIndex: 2
+            )
+        )
+        #expect(
+            !MirageClientService.shouldRetryLaterControlSessionAttempt(
+                classification: .other,
+                attempts: attempts,
+                currentAttemptIndex: 0
+            )
         )
     }
 

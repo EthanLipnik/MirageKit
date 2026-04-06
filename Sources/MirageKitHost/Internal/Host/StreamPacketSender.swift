@@ -322,6 +322,16 @@ actor StreamPacketSender {
     }
 
     func telemetrySnapshot() -> TelemetrySnapshot {
+        makeTelemetrySnapshot()
+    }
+
+    func consumeTelemetrySnapshot() -> TelemetrySnapshot {
+        let snapshot = makeTelemetrySnapshot()
+        resetTelemetryWindow()
+        return snapshot
+    }
+
+    private func makeTelemetrySnapshot() -> TelemetrySnapshot {
         let queuedBytesSnapshot = queueLock.withLock { self.queuedBytes }
         let sendStartDelayAverageMs = sendStartDelayCount > 0
             ? sendStartDelayTotalMs / Double(sendStartDelayCount)
@@ -955,6 +965,10 @@ actor StreamPacketSender {
     }
 
     private func resetTelemetry() {
+        resetTelemetryWindow()
+    }
+
+    private func resetTelemetryWindow() {
         sendStartDelayTotalMs = 0
         sendStartDelayMaxMs = 0
         sendStartDelayCount = 0
@@ -964,6 +978,9 @@ actor StreamPacketSender {
         keyframeSendTotalMs = 0
         keyframeSendMaxMs = 0
         keyframeSendCount = 0
+        pacerSleepTotalMs = 0
+        pacerSleepMaxMs = 0
+        pacerSleepPacketCount = 0
         stalePacketDropCount = 0
         generationAbortDropCount = 0
         nonKeyframeHoldDropCount = 0

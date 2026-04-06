@@ -361,15 +361,6 @@ extension MirageHostService {
             MirageLogger.debug(.host, "No stream found for stream scale change: \(streamID)")
             return
         }
-        let usesVirtualDisplay = await context.isUsingVirtualDisplay()
-        let contextWindowID = await context.getWindowID()
-        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && contextWindowID != 0
-        if isDedicatedVirtualDisplayStream {
-            MirageLogger.host(
-                "Ignoring stream scale change for dedicated virtual-display stream \(streamID): \(clampedScale)"
-            )
-            return
-        }
 
         let currentScale = await context.getStreamScale()
         if abs(currentScale - clampedScale) <= 0.001 {
@@ -454,13 +445,11 @@ extension MirageHostService {
             MirageLogger.debug(.host, "No stream found for encoder settings update: \(request.streamID)")
             return
         }
-        let usesVirtualDisplay = await context.isUsingVirtualDisplay()
-        let contextWindowID = await context.getWindowID()
-        let isDedicatedVirtualDisplayStream = usesVirtualDisplay && contextWindowID != 0
+        let isHostResolutionDesktopStream = request.streamID == desktopStreamID && desktopUsesHostResolution
 
         let hasColorDepthChange = request.colorDepth != nil
         let hasBitrateChange = request.bitrate != nil
-        let hasScaleChange = request.streamScale != nil && !isDedicatedVirtualDisplayStream
+        let hasScaleChange = request.streamScale != nil && !isHostResolutionDesktopStream
         let shouldBroadcastStreamUpdate = hasColorDepthChange || hasScaleChange
 
         let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
@@ -473,9 +462,9 @@ extension MirageHostService {
                 )
             }
             if let streamScale = request.streamScale {
-                if isDedicatedVirtualDisplayStream {
+                if isHostResolutionDesktopStream {
                     MirageLogger.host(
-                        "Ignoring encoder settings streamScale for dedicated virtual-display stream \(request.streamID): \(streamScale)"
+                        "Ignoring encoder settings streamScale for host-resolution desktop stream \(request.streamID): \(streamScale)"
                     )
                 } else {
                     try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
@@ -514,7 +503,8 @@ extension MirageHostService {
     func refreshWindowVirtualDisplayState(
         streamID: StreamID,
         context: StreamContext,
-        clientScaleFactorOverride: CGFloat?
+        clientScaleFactorOverride: CGFloat?,
+        targetContentAspectRatioOverride: CGFloat? = nil
     )
     async {
         guard let snapshot = await context.getVirtualDisplaySnapshot() else { return }
@@ -555,17 +545,19 @@ extension MirageHostService {
                 existingState?.clientScaleFactor ??
                 snapshot.scaleFactor
         )
+        let targetContentAspectRatio = existingState?.targetContentAspectRatio ??
+            targetContentAspectRatioOverride
         let windowID = await context.getWindowID()
         let effectiveBounds = aspectFittedWindowBounds(
             bounds,
-            targetAspectRatio: existingState?.targetContentAspectRatio
+            targetAspectRatio: targetContentAspectRatio
         )
         let state = WindowVirtualDisplayState(
             streamID: streamID,
             displayID: snapshot.displayID,
             generation: snapshot.generation,
             bounds: effectiveBounds,
-            targetContentAspectRatio: existingState?.targetContentAspectRatio,
+            targetContentAspectRatio: targetContentAspectRatio,
             captureSourceRect: captureSourceRect,
             visiblePixelResolution: visiblePixelResolution,
             scaleFactor: max(1.0, snapshot.scaleFactor),

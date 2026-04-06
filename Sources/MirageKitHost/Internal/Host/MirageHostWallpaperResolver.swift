@@ -20,8 +20,6 @@ import UniformTypeIdentifiers
 enum MirageHostWallpaperResolver {
     struct Payload: Sendable {
         let imageData: Data
-        let fileExtension: String
-        let contentType: String
         let pixelWidth: Int
         let pixelHeight: Int
         let bytesPerPixelEstimate: Int
@@ -94,7 +92,26 @@ enum MirageHostWallpaperResolver {
         }
 
         let filter = SCContentFilter(desktopIndependentWindow: wallpaperWindow)
-        guard let image = await captureImage(with: filter) else {
+        let captureInfo = SCShareableContent.info(for: filter)
+        let pointPixelScale = max(CGFloat(captureInfo.pointPixelScale), 1)
+        let captureRect = captureInfo.contentRect.integral
+        let sourcePixelWidth = max(1, Int(ceil(captureRect.width * pointPixelScale)))
+        let sourcePixelHeight = max(1, Int(ceil(captureRect.height * pointPixelScale)))
+        let targetSize = resolvedMaxOutputSize(
+            sourcePixelWidth: sourcePixelWidth,
+            sourcePixelHeight: sourcePixelHeight,
+            preferredMaxPixelWidth: preferredMaxPixelWidth,
+            preferredMaxPixelHeight: preferredMaxPixelHeight
+        )
+        let captureEncodeInterval = MirageLogger.beginInterval(.host, "HostWallpaper.CaptureEncode")
+        let image = await captureImage(
+            with: filter,
+            targetPixelWidth: Int(targetSize.width.rounded(.down)),
+            targetPixelHeight: Int(targetSize.height.rounded(.down))
+        )
+        MirageLogger.endInterval(captureEncodeInterval)
+
+        guard let image else {
             return nil
         }
 
@@ -173,8 +190,6 @@ enum MirageHostWallpaperResolver {
             if let encoded = encodedData(for: cgImage) {
                 return Payload(
                     imageData: encoded,
-                    fileExtension: encodedFileExtension,
-                    contentType: encodedContentType,
                     pixelWidth: cgImage.width,
                     pixelHeight: cgImage.height,
                     bytesPerPixelEstimate: 4
@@ -247,16 +262,14 @@ enum MirageHostWallpaperResolver {
         )
     }
 
-    private static func captureImage(with filter: SCContentFilter) async -> CGImage? {
-        let captureInfo = SCShareableContent.info(for: filter)
-        let pointPixelScale = max(CGFloat(captureInfo.pointPixelScale), 1)
-        let captureRect = captureInfo.contentRect.integral
-        let width = max(1, Int(ceil(captureRect.width * pointPixelScale)))
-        let height = max(1, Int(ceil(captureRect.height * pointPixelScale)))
-
+    private static func captureImage(
+        with filter: SCContentFilter,
+        targetPixelWidth: Int,
+        targetPixelHeight: Int
+    ) async -> CGImage? {
         let configuration = SCStreamConfiguration()
-        configuration.width = width
-        configuration.height = height
+        configuration.width = max(1, targetPixelWidth)
+        configuration.height = max(1, targetPixelHeight)
         configuration.showsCursor = false
 
         return try? await withCheckedThrowingContinuation { continuation in
@@ -308,11 +321,15 @@ enum MirageHostWallpaperResolver {
     }
 
     private static func encodedData(for image: CGImage) -> Data? {
-        let payloadLimit = LoomMessageLimits.maxInlineAssetPayloadBytes
         let encodedImage = opaqueEncodedImage(from: image) ?? image
 
         if let jpegData = encodeJPEG(encodedImage, quality: encodedCompressionQuality),
-           jpegData.count <= payloadLimit {
+           fitsInlineControlPayload(
+               imageData: jpegData,
+               pixelWidth: encodedImage.width,
+               pixelHeight: encodedImage.height,
+               bytesPerPixelEstimate: 4
+           ) {
             return jpegData
         }
 
@@ -361,6 +378,25 @@ enum MirageHostWallpaperResolver {
         context.fill(CGRect(x: 0, y: 0, width: image.width, height: image.height))
         context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
         return context.makeImage()
+    }
+
+    private static func fitsInlineControlPayload(
+        imageData: Data,
+        pixelWidth: Int,
+        pixelHeight: Int,
+        bytesPerPixelEstimate: Int
+    ) -> Bool {
+        let message = HostWallpaperMessage(
+            requestID: UUID(),
+            imageData: imageData,
+            pixelWidth: pixelWidth,
+            pixelHeight: pixelHeight,
+            bytesPerPixelEstimate: bytesPerPixelEstimate
+        )
+        guard let encoded = try? JSONEncoder().encode(message) else {
+            return false
+        }
+        return encoded.count <= LoomMessageLimits.maxInlineAssetPayloadBytes
     }
 }
 #endif

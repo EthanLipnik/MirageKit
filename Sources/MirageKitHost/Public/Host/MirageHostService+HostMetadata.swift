@@ -174,10 +174,6 @@ extension MirageHostService {
 
     func sendPendingHostWallpaperRequestIfPossible() {
         guard let pending = pendingHostWallpaperRequest else { return }
-        guard !isInteractiveWorkloadActiveForAppListRequests() else {
-            MirageLogger.host("Deferring host wallpaper response while interactive workload is active")
-            return
-        }
         guard let clientContext = findClientContext(clientID: pending.clientID) else {
             pendingHostWallpaperRequest = nil
             return
@@ -215,38 +211,19 @@ extension MirageHostService {
             }
             guard !Task.isCancelled else { return }
 
-            let wallpaperURL = temporaryWallpaperURL(
-                for: requestID,
-                fileExtension: payload.fileExtension
-            )
-            do {
-                try payload.imageData.write(to: wallpaperURL, options: .atomic)
-            } catch {
-                let response = HostWallpaperMessage(
-                    requestID: requestID,
-                    pixelWidth: payload.pixelWidth,
-                    pixelHeight: payload.pixelHeight,
-                    bytesPerPixelEstimate: payload.bytesPerPixelEstimate,
-                    errorMessage: "Failed to prepare wallpaper transfer."
-                )
-                try? await clientContext.send(.hostWallpaper, content: response)
-                if hostWallpaperRequestToken == token,
-                   pendingHostWallpaperRequest?.clientID == clientID {
-                    pendingHostWallpaperRequest = nil
-                    hostWallpaperRequestTask = nil
-                }
-                return
-            }
-
             let response = HostWallpaperMessage(
                 requestID: requestID,
-                fileName: wallpaperURL.lastPathComponent,
+                imageData: payload.imageData,
                 pixelWidth: payload.pixelWidth,
                 pixelHeight: payload.pixelHeight,
                 bytesPerPixelEstimate: payload.bytesPerPixelEstimate
             )
 
             do {
+                let interval = MirageLogger.beginInterval(.host, "HostWallpaper.Send")
+                defer {
+                    MirageLogger.endInterval(interval)
+                }
                 try await clientContext.send(.hostWallpaper, content: response)
                 MirageLogger.host(
                     "Sent host wallpaper payload bytes=\(payload.imageData.count) size=\(payload.pixelWidth)x\(payload.pixelHeight)"
@@ -259,17 +236,6 @@ extension MirageHostService {
                 )
                 return
             }
-            guard !Task.isCancelled else { return }
-
-            Task { @MainActor [weak self] in
-                await self?.handleHostWallpaperTransfer(
-                    clientContext.controlChannel.session,
-                    requestID: requestID,
-                    wallpaperURL: wallpaperURL,
-                    contentType: payload.contentType,
-                    expectedClient: clientContext.client
-                )
-            }
 
             if hostWallpaperRequestToken == token,
                pendingHostWallpaperRequest?.clientID == clientID {
@@ -277,70 +243,6 @@ extension MirageHostService {
                 hostWallpaperRequestTask = nil
             }
         }
-    }
-
-    private func handleHostWallpaperTransfer(
-        _ session: LoomAuthenticatedSession,
-        requestID: UUID,
-        wallpaperURL: URL,
-        contentType: String,
-        expectedClient: MirageConnectedClient
-    ) async {
-        defer {
-            try? FileManager.default.removeItem(at: wallpaperURL)
-        }
-
-        do {
-            try await validateExistingClientTransferSession(
-                session,
-                expectedClient: expectedClient
-            )
-
-            let source = try LoomFileTransferSource(url: wallpaperURL)
-            let byteLength = await source.byteLength
-            let engine = LoomTransferEngine(session: session)
-            let outgoing = try await engine.offerTransfer(
-                LoomTransferOffer(
-                    logicalName: wallpaperURL.lastPathComponent,
-                    byteLength: byteLength,
-                    contentType: contentType,
-                    metadata: [
-                        "mirage.transfer-kind": "host-wallpaper",
-                        "mirage.request-id": requestID.uuidString.lowercased(),
-                    ]
-                ),
-                source: source
-            )
-
-            let terminalProgress = await terminalProgress(from: outgoing.progressEvents)
-            switch terminalProgress?.state {
-            case .completed:
-                break
-            case .cancelled, .declined:
-                MirageLogger.host(
-                    "Host wallpaper transfer ended before completion requestID=\(requestID.uuidString.lowercased()) " +
-                        "state=\(terminalProgress?.state.rawValue ?? "unknown")"
-                )
-                return
-            default:
-                throw MirageError.protocolError("Host wallpaper Loom transfer did not complete")
-            }
-
-            MirageLogger.host(
-                "Completed host wallpaper Loom transfer requestID=\(requestID.uuidString.lowercased()) bytes=\(byteLength)"
-            )
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed host wallpaper Loom transfer: ")
-        }
-    }
-
-    private func temporaryWallpaperURL(
-        for requestID: UUID,
-        fileExtension: String
-    ) -> URL {
-        FileManager.default.temporaryDirectory.appending(
-            path: "mirage-wallpaper-\(requestID.uuidString.lowercased()).\(fileExtension)"
-        )
     }
 }
 #endif

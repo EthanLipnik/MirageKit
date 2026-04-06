@@ -80,13 +80,17 @@ public extension MirageClientService {
             preferredMaxPixelWidth: preferredMaxPixelWidth,
             preferredMaxPixelHeight: preferredMaxPixelHeight
         )
+        let rid = requestID.uuidString.lowercased()
+        let interval = MirageLogger.beginInterval(.client, "HostWallpaper.Request")
+        defer {
+            MirageLogger.endInterval(interval)
+        }
+
         heartbeatGraceDeadline = ContinuousClock.now + hostWallpaperTimeout
 
         try await withCheckedThrowingContinuation { continuation in
             hostWallpaperRequestID = requestID
             hostWallpaperContinuation = continuation
-            hostWallpaperTransferTask?.cancel()
-            hostWallpaperTransferTask = nil
             hostWallpaperTimeoutTask?.cancel()
             hostWallpaperTimeoutTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(for: self?.hostWallpaperTimeout ?? .seconds(45))
@@ -102,7 +106,7 @@ public extension MirageClientService {
                 do {
                     try await self?.sendControlMessage(.hostWallpaperRequest, content: request)
                     MirageLogger.client(
-                        "Host wallpaper request sent requestID=\(requestID.uuidString.lowercased()) target=\(preferredMaxPixelWidth)x\(preferredMaxPixelHeight)"
+                        "Host wallpaper request sent requestID=\(rid) target=\(preferredMaxPixelWidth)x\(preferredMaxPixelHeight)"
                     )
                 } catch {
                     self?.completeHostWallpaperRequest(.failure(error))

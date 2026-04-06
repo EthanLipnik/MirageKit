@@ -53,6 +53,23 @@ struct HostSingleClientTests {
         #expect(host.reserveSingleClientSlot(for: replacementSessionID))
     }
 
+    @Test("Advertisement refresh loop clears stale busy metadata")
+    @MainActor
+    func publishCurrentAdvertisementExpiresStaleSlotReservation() async {
+        let host = MirageHostService()
+        let staleSessionID = UUID()
+
+        #expect(host.reserveSingleClientSlot(for: staleSessionID))
+        host.singleClientReservationStartedAt = CFAbsoluteTimeGetCurrent() - (host.connectionApprovalTimeoutSeconds + 1)
+        host.state = .advertising(controlPort: 61_000)
+
+        await host.publishCurrentAdvertisement()
+
+        #expect(host.singleClientSessionID == nil)
+        #expect(host.allowsNewClientConnections)
+        #expect(host.currentPeerAdvertisement.mirageAcceptingConnections)
+    }
+
     @Test("Reconnect preemption matches same device ID")
     @MainActor
     func reconnectPreemptionMatchesSameDeviceID() {

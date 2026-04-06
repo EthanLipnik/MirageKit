@@ -8,8 +8,9 @@
 import CoreGraphics
 import Foundation
 import Loom
-import Observation
 import MirageKit
+import Network
+import Observation
 
 #if canImport(UIKit)
 import UIKit
@@ -512,6 +513,9 @@ public final class MirageClientService {
     @ObservationIgnored var sharedClipboardBridge: MirageClientSharedClipboardBridge?
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
     let awdlExperimentEnabled: Bool = true
+    public var currentLocalPathKind: MirageNetworkPathKind {
+        localNetworkMonitor.snapshot().currentPathKind
+    }
     public var currentControlPathKind: MirageNetworkPathKind? {
         controlPathSnapshot?.kind
     }
@@ -523,6 +527,7 @@ public final class MirageClientService {
     public internal(set) var controlPathHistory: [MirageClientNetworkPathHistoryEntry] = []
 
     var controlPathSnapshot: MirageNetworkPathSnapshot?
+    @ObservationIgnored var rememberedDirectEndpointHostByDeviceID: [UUID: NWEndpoint.Host] = [:]
     var awdlPathSwitches: UInt64 = 0
     var registrationRefreshCount: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
@@ -535,6 +540,8 @@ public final class MirageClientService {
     /// User-selected preferred network type for connection racing.
     public var preferredNetworkType: MiragePreferredNetworkType = .automatic
     let controlSessionConnectTimeout: Duration = .seconds(30)
+    /// Manual trust approval happens before the authenticated control session reaches `.ready`.
+    let trustPendingControlSessionConnectTimeout: Duration = .seconds(90)
     /// Manual trust approval requires human response time, so bootstrap must outlive normal network latency budgets.
     let bootstrapResponseTimeout: Duration = .seconds(45)
 
@@ -602,7 +609,6 @@ public final class MirageClientService {
     let hostSupportLogArchiveTimeout: Duration = .seconds(30)
     var hostWallpaperRequestID: UUID?
     var hostWallpaperContinuation: CheckedContinuation<Void, Error>?
-    var hostWallpaperTransferTask: Task<Void, Never>?
     var hostWallpaperTimeoutTask: Task<Void, Never>?
     let hostWallpaperTimeout: Duration = .seconds(45)
     var pingContinuations: [CheckedContinuation<Void, Error>] = []

@@ -40,10 +40,16 @@ extension InputCapturingView {
     ///   - isVisible: Whether the cursor is within the host window bounds
     public func updateCursor(type: MirageCursorType, isVisible: Bool, force: Bool = false) {
         // Only update if something changed
-        guard force || type != currentCursorType || isVisible != cursorIsVisible else { return }
+        let typeChanged = type != currentCursorType
+        guard force || typeChanged || isVisible != cursorIsVisible else { return }
 
         currentCursorType = type
         cursorIsVisible = isVisible
+
+        if typeChanged {
+            updateLockedCursorImage()
+            updateLockedCursorViewPosition()
+        }
 
         // Invalidate the pointer interaction to force it to re-query the style
         // This is required because UIPointerInteraction only calls its delegate

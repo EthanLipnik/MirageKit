@@ -315,11 +315,19 @@ extension MirageClientService {
                 wasRegistered: wasRegistered
             )
             let shouldRegisterVideo = registrationDecision == .refreshRegistration
-            if let previousDimensionToken, let dimensionToken, previousDimensionToken != dimensionToken {
+            let didAdvanceDimensionToken = if let previousDimensionToken, let dimensionToken {
+                previousDimensionToken != dimensionToken
+            } else {
+                false
+            }
+            if didAdvanceDimensionToken,
+               let previousDimensionToken,
+               let dimensionToken {
                 MirageLogger
                     .client(
                         "App stream token advanced \(previousDimensionToken) -> \(dimensionToken); reset=\(shouldResetController)"
                     )
+                beginStreamStartupCriticalSection(streamID: streamID)
             }
             if let dimensionToken {
                 appDimensionTokenByStream[streamID] = dimensionToken

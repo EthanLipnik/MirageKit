@@ -39,7 +39,7 @@ let package = Package(
         ),
     ],
     dependencies: [
-        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "1.6.19"),
+        .package(url: "https://github.com/EthanLipnik/Loom.git", exact: "1.6.20"),
     ],
     targets: [
         .target(
@@ -65,7 +65,8 @@ let package = Package(
         ),
         .target(
             name: "MirageKitClient",
-            dependencies: ["MirageKit"]
+            dependencies: ["MirageKit"],
+            resources: [.process("Resources")]
         ),
         .target(
             name: "MirageKitHost",

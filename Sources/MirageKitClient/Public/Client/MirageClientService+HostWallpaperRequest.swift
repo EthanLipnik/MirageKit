@@ -14,8 +14,6 @@ import MirageKit
 extension MirageClientService {
     func completeHostWallpaperRequest(_ result: Result<Void, Error>) {
         hostWallpaperRequestID = nil
-        hostWallpaperTransferTask?.cancel()
-        hostWallpaperTransferTask = nil
         heartbeatGraceDeadline = nil
         guard let continuation = hostWallpaperContinuation else { return }
         hostWallpaperContinuation = nil

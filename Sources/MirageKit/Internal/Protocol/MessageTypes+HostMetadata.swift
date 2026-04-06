@@ -54,7 +54,7 @@ package struct HostWallpaperRequestMessage: Codable, Sendable {
 
 package struct HostWallpaperMessage: Codable, Sendable {
     package let requestID: UUID?
-    package let fileName: String?
+    package let imageData: Data?
     package let pixelWidth: Int
     package let pixelHeight: Int
     package let bytesPerPixelEstimate: Int
@@ -62,14 +62,14 @@ package struct HostWallpaperMessage: Codable, Sendable {
 
     package init(
         requestID: UUID? = nil,
-        fileName: String? = nil,
+        imageData: Data? = nil,
         pixelWidth: Int,
         pixelHeight: Int,
         bytesPerPixelEstimate: Int,
         errorMessage: String? = nil
     ) {
         self.requestID = requestID
-        self.fileName = fileName
+        self.imageData = imageData
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.bytesPerPixelEstimate = bytesPerPixelEstimate

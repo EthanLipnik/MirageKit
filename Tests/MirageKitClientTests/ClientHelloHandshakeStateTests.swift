@@ -115,5 +115,38 @@ struct ClientHelloHandshakeStateTests {
 
         #expect(service.bootstrapResponseTimeout >= .seconds(30))
         #expect(service.bootstrapResponseTimeout > service.controlSessionConnectTimeout)
+        #expect(service.trustPendingControlSessionConnectTimeout > service.controlSessionConnectTimeout)
+    }
+
+    @MainActor
+    @Test("Trust-pending bootstrap phase extends the control-session timeout budget")
+    func trustPendingBootstrapPhaseExtendsControlSessionTimeoutBudget() async {
+        let tracker = ConnectSessionBootstrapProgressTracker()
+        let base = ContinuousClock.now
+
+        await tracker.record(
+            LoomAuthenticatedSessionBootstrapProgress(phase: .trustPendingApproval),
+            now: base
+        )
+
+        let beforeDeadline = await tracker.shouldTimeOut(
+            now: base + .seconds(40),
+            initialTimeout: .seconds(30),
+            activePhaseIdleTimeout: .seconds(30),
+            trustPendingIdleTimeout: .seconds(90),
+            absoluteTimeout: .seconds(30),
+            trustPendingAbsoluteTimeout: .seconds(90)
+        )
+        let afterDeadline = await tracker.shouldTimeOut(
+            now: base + .seconds(95),
+            initialTimeout: .seconds(30),
+            activePhaseIdleTimeout: .seconds(30),
+            trustPendingIdleTimeout: .seconds(90),
+            absoluteTimeout: .seconds(30),
+            trustPendingAbsoluteTimeout: .seconds(90)
+        )
+
+        #expect(beforeDeadline == false)
+        #expect(afterDeadline == true)
     }
 }

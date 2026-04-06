@@ -44,6 +44,16 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .networkBound)
     }
 
+    @Test("Clean transport window clears prior network-bound classification inputs")
+    func cleanTransportWindowClearsPriorNetworkBoundClassificationInputs() {
+        var stressedSnapshot = baselineSnapshot()
+        stressedSnapshot.hostStalePacketDrops = 12
+        #expect(stressedSnapshot.bottleneckKind == .networkBound)
+
+        let recoveredSnapshot = baselineSnapshot()
+        #expect(recoveredSnapshot.bottleneckKind != .networkBound)
+    }
+
     @Test("Decode-bound classification prefers client decode lag when transport is clean")
     func decodeBoundClassificationPrefersClientDecodeLag() {
         var snapshot = baselineSnapshot()

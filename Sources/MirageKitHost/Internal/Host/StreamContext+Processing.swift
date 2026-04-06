@@ -645,7 +645,7 @@ extension StreamContext {
             let captureValidation = captureValidationSnapshot()
             let encoderValidation = await encoder?.runtimeValidationSnapshot()
             let captureTelemetry = await captureEngine?.captureTelemetrySnapshot()
-            let packetTelemetry = await packetSender?.telemetrySnapshot()
+            let packetTelemetry = await packetSender?.consumeTelemetrySnapshot()
             let displayP3CoverageStatus = resolvedDisplayP3CoverageStatus(
                 capture: captureValidation,
                 encoder: encoderValidation

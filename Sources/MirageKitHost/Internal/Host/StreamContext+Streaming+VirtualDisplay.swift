@@ -89,20 +89,18 @@ extension StreamContext {
         )
     }
 
-    /// Starts window capture on the shared app-stream virtual display.
+    /// Starts window capture on an already-acquired shared app-stream virtual display.
     ///
-    /// The shared display provides a known-good Retina backing at a fixed resolution.
-    /// The window is moved to that display, resized to match the client's requested
-    /// logical size, and captured individually via `desktopIndependentWindow`.
-    func startWithWindowCapture(
+    /// The window is moved to the shared display, resized to match the client's
+    /// requested logical size, and captured individually via `desktopIndependentWindow`.
+    func startSharedDisplayWindowCapture(
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
+        displayWrapper: SCDisplayWrapper,
+        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
         clientLogicalSize: CGSize,
-        sizePreset: MirageDisplaySizePreset,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        onSendError: (@Sendable (Error) -> Void)? = nil,
-        onContentBoundsChanged: @escaping @Sendable (CGRect) -> Void,
-        onNewWindowDetected: @escaping @Sendable (MirageWindow) -> Void
+        onSendError: (@Sendable (Error) -> Void)? = nil
     )
     async throws {
         guard !isRunning else { return }
@@ -117,44 +115,33 @@ extension StreamContext {
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
-        self.onContentBoundsChanged = onContentBoundsChanged
-        self.onNewWindowDetected = onNewWindowDetected
         await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
 
-        // 1. Acquire the shared app-stream virtual display
-        let colorSpace = encoderConfig.colorSpace
-        let refreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: currentFrameRate)
-        let vdSnapshot = try await SharedVirtualDisplayManager.shared.acquireAppStreamDisplay(
-            preset: sizePreset,
-            refreshRate: refreshRate,
-            colorSpace: colorSpace
-        )
-        virtualDisplayContext = vdSnapshot
-        updateWindowCaptureVirtualDisplayState(vdSnapshot)
+        virtualDisplayContext = mirroredDisplaySnapshot
+        updateWindowCaptureVirtualDisplayState(mirroredDisplaySnapshot)
 
         MirageLogger.stream(
-            "Stream \(streamID) acquired shared app-stream display \(vdSnapshot.displayID) " +
-            "(\(sizePreset.displayName), \(Int(vdSnapshot.resolution.width))x\(Int(vdSnapshot.resolution.height)) @\(vdSnapshot.scaleFactor)x)"
+            "Stream \(streamID) using shared app-stream display \(mirroredDisplaySnapshot.displayID) " +
+            "(\(Int(mirroredDisplaySnapshot.resolution.width))x\(Int(mirroredDisplaySnapshot.resolution.height)) @\(mirroredDisplaySnapshot.scaleFactor)x)"
         )
 
-        // 2. Compute window size and resolve visible bounds
-        let scaleFactor = max(1.0, vdSnapshot.scaleFactor)
+        let scaleFactor = max(1.0, mirroredDisplaySnapshot.scaleFactor)
         let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
-            for: vdSnapshot.resolution,
+            for: mirroredDisplaySnapshot.resolution,
             scaleFactor: scaleFactor
         )
         let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
-            vdSnapshot.displayID,
+            mirroredDisplaySnapshot.displayID,
             knownResolution: logicalResolution
         )
         let visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
-            vdSnapshot.displayID,
+            mirroredDisplaySnapshot.displayID,
             knownBounds: displayBounds
         )
         let effectiveVisibleBounds = visibleBounds.isEmpty ? displayBounds : visibleBounds.intersection(displayBounds)
-        let targetWindowSize = Self.aspectFitSize(
-            requested: clientLogicalSize,
-            maxBounds: effectiveVisibleBounds.size
+        let targetWindowSize = Self.startupTargetWindowSize(
+            requestedLogicalSize: clientLogicalSize,
+            visibleBounds: effectiveVisibleBounds
         )
         MirageLogger.stream(
             "Stream \(streamID) window target: \(Int(targetWindowSize.width))x\(Int(targetWindowSize.height)) " +
@@ -162,19 +149,16 @@ extension StreamContext {
             "display visible \(Int(effectiveVisibleBounds.width))x\(Int(effectiveVisibleBounds.height)))"
         )
 
-        // 3. Resolve SCWindow BEFORE moving it to the virtual display.
-        //    After the move, SCK may not immediately see the window in its new space,
-        //    causing resolution failures for Electron apps (Discord, Slack, etc.).
         _ = try await resolveSCWindowWrapper(
             windowID: windowID,
             label: "pre-move window capture"
         )
-        let resolvedDisplayWrapper = try await resolveSCDisplayWrapper(
-            displayID: vdSnapshot.displayID,
+        let resolvedDisplayWrapper = try await resolveWindowCaptureDisplayWrapper(
+            sourceDisplayWrapper: displayWrapper,
+            mirroredDisplaySnapshot: mirroredDisplaySnapshot,
             label: "pre-move display"
         )
 
-        // 4. Move window to the shared display's space.
         let clientAspectRatio = clientLogicalSize.width > 0 && clientLogicalSize.height > 0
             ? clientLogicalSize.width / clientLogicalSize.height
             : nil
@@ -184,19 +168,18 @@ extension StreamContext {
         )
         try await WindowSpaceManager.shared.moveWindow(
             windowID,
-            toSpaceID: vdSnapshot.spaceID,
-            displayID: vdSnapshot.displayID,
+            toSpaceID: mirroredDisplaySnapshot.spaceID,
+            displayID: mirroredDisplaySnapshot.displayID,
             displayBounds: windowPlacementBounds,
             targetContentAspectRatio: clientAspectRatio,
             owner: WindowSpaceManager.WindowBindingOwner(
                 streamID: streamID,
                 windowID: windowID,
-                displayID: vdSnapshot.displayID,
-                generation: vdSnapshot.generation
+                displayID: mirroredDisplaySnapshot.displayID,
+                generation: mirroredDisplaySnapshot.generation
             )
         )
 
-        // 5. Iteratively resize window to match target aspect ratio
         await iterativelyResizeWindow(
             windowID: windowID,
             targetSize: targetWindowSize,
@@ -210,7 +193,6 @@ extension StreamContext {
             label: "post-resize window capture"
         )
 
-        // 6. Configure capture dimensions from actual window frame
         let captureTarget = streamTargetDimensions(windowFrame: settledWindowWrapper.window.frame)
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
@@ -227,10 +209,9 @@ extension StreamContext {
         await applyDerivedQuality(for: outputSize, logLabel: "Window capture init")
         MirageLogger.stream(
             "Window capture init: latency=\(latencyMode.displayName), scale=\(streamScale), " +
-            "encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
+                "encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
         )
 
-        // 6. Create encoder and start capture
         try await createAndPreheatEncoder(
             streamKind: .window,
             width: Int(outputSize.width),
@@ -240,8 +221,8 @@ extension StreamContext {
 
         let captureDisplaySelection = Self.windowCaptureDisplaySelection(
             sourceDisplayID: resolvedDisplayWrapper.display.displayID,
-            mirroredDisplayID: vdSnapshot.displayID,
-            captureDisplayIsMirage: CGVirtualDisplayBridge.isMirageDisplay(vdSnapshot.displayID)
+            mirroredDisplayID: mirroredDisplaySnapshot.displayID,
+            captureDisplayIsMirage: CGVirtualDisplayBridge.isMirageDisplay(mirroredDisplaySnapshot.displayID)
         )
         let captureEngine = try await setupAndStartCaptureEngine(
             usesDisplayRefreshCadence: captureDisplaySelection.usesDisplayRefreshCadence
@@ -260,7 +241,7 @@ extension StreamContext {
         await refreshCaptureCadence()
 
         MirageLogger.stream(
-            "Started stream \(streamID) with window capture on shared display \(vdSnapshot.displayID) for window \(windowID)"
+            "Started stream \(streamID) with window capture on shared display \(mirroredDisplaySnapshot.displayID) for window \(windowID)"
         )
     }
 
@@ -381,6 +362,13 @@ extension StreamContext {
 
     // MARK: - Aspect-Fit Sizing
 
+    static func startupTargetWindowSize(
+        requestedLogicalSize: CGSize,
+        visibleBounds: CGRect
+    ) -> CGSize {
+        aspectFitSize(requested: requestedLogicalSize, maxBounds: visibleBounds.size)
+    }
+
     /// Compute the largest size that fits `maxBounds` while preserving the aspect ratio of `requested`.
     static func aspectFitSize(requested: CGSize, maxBounds: CGSize) -> CGSize {
         let rW = requested.width
@@ -400,7 +388,7 @@ extension StreamContext {
     /// Iteratively resize the window to match the target aspect ratio.
     /// Starts at `targetSize` and shrinks proportionally if the app rejects the size.
     /// Gives up after a few attempts — the window will be whatever the app accepted.
-    private func iterativelyResizeWindow(
+    func iterativelyResizeWindow(
         windowID: WindowID,
         targetSize: CGSize,
         aspectRatio: CGFloat?,

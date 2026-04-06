@@ -284,6 +284,37 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .backingOff)
     }
 
+    @Test("Healthy windows resume probing after a transient severe transport backoff")
+    func healthyWindowsResumeProbingAfterTransientSevereTransportBackoff() {
+        var controller = MirageReceiverHealthController()
+        let stressedSnapshot = severeTransportSnapshot()
+        let healthySnapshot = healthySnapshot(activeQuality: 0.62)
+
+        let firstAction = controller.advance(
+            snapshots: [stressedSnapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 200_000_000,
+            now: 0
+        )
+        let secondAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 15_000_000,
+            ceilingBps: 200_000_000,
+            now: 2
+        )
+        let thirdAction = controller.advance(
+            snapshots: [healthySnapshot],
+            currentBitrateBps: 15_000_000,
+            ceilingBps: 200_000_000,
+            now: 4
+        )
+
+        #expect(firstAction == .backoff(targetBitrateBps: 15_000_000))
+        #expect(secondAction == .none)
+        #expect(thirdAction == .probe(targetBitrateBps: 95_000_000))
+        #expect(controller.state == .stable)
+    }
+
     private func healthySnapshot(activeQuality: Double) -> MirageClientMetricsSnapshot {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: 60,

@@ -606,6 +606,7 @@ extension InputCapturingView {
                     }
                     let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
                     if translation != .zero {
+                        scrollPhysicsView?.stopIndirectScrollDeceleration()
                         if stylusPayload == nil { revealCursorAfterPointerMovement() }
                         noteLockedPointerDragIfNeeded(for: translation)
                         applyLockedCursorDelta(translation)
@@ -671,7 +672,10 @@ extension InputCapturingView {
         switch gesture.state {
         case .began,
              .changed:
-            if translation != .zero { revealCursorAfterPointerMovement() }
+            if translation != .zero {
+                scrollPhysicsView?.stopIndirectScrollDeceleration()
+                revealCursorAfterPointerMovement()
+            }
             noteLockedPointerDragIfNeeded(for: translation)
             applyLockedCursorDelta(translation)
             let eventModifiers = modifiers(from: gesture)

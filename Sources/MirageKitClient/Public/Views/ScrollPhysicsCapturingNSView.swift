@@ -113,7 +113,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var lastMouseLocation: CGPoint?
 
     /// Locked cursor view for secondary display mode
-    private let lockedCursorView = NSView(frame: .zero)
+    private let lockedCursorView = NSImageView(frame: .zero)
     private var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     private var lockedCursorTargetPosition: CGPoint = .init(x: 0.5, y: 0.5)
     private var lockedCursorVisible: Bool = false
@@ -174,18 +174,20 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func setupLockedCursorView() {
-        lockedCursorView.wantsLayer = true
-        lockedCursorView.layer?.backgroundColor = NSColor.white.withAlphaComponent(0.85).cgColor
-        lockedCursorView.layer?.cornerRadius = 8
-        lockedCursorView.layer?.borderWidth = 2
-        lockedCursorView.layer?.borderColor = NSColor.black.withAlphaComponent(0.75).cgColor
-        lockedCursorView.layer?.shadowColor = NSColor.black.cgColor
-        lockedCursorView.layer?.shadowOpacity = 0.35
-        lockedCursorView.layer?.shadowRadius = 4
-        lockedCursorView.layer?.shadowOffset = CGSize(width: 0, height: -1)
-        lockedCursorView.frame = CGRect(x: 0, y: 0, width: 16, height: 16)
+        lockedCursorView.imageScaling = .scaleNone
         lockedCursorView.isHidden = true
+        updateLockedCursorImage()
         contentView.addSubview(lockedCursorView)
+    }
+
+    private func updateLockedCursorImage() {
+        let cursorType = mirroredSystemCursorType
+        let image = NSImage(named: cursorType.cursorImageName)
+            ?? Bundle.module.image(forResource: cursorType.cursorImageName)
+        lockedCursorView.image = image
+        if let image {
+            lockedCursorView.frame.size = image.size
+        }
     }
 
     override func layout() {
@@ -403,7 +405,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
         if let cursorSnapshot, force || cursorSnapshot.sequence != mirroredSystemCursorTypeSequence {
             mirroredSystemCursorTypeSequence = cursorSnapshot.sequence
+            let typeChanged = mirroredSystemCursorType != cursorSnapshot.cursorType
             mirroredSystemCursorType = cursorSnapshot.cursorType
+            if typeChanged {
+                updateLockedCursorImage()
+            }
             didUpdate = true
         }
 
@@ -475,10 +481,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func updateLockedCursorViewPosition() {
         guard cursorLockEnabled, !lockedCursorView.isHidden else { return }
         guard bounds.width > 0, bounds.height > 0 else { return }
-        let center = Self.localPoint(forNormalizedCursorPosition: lockedCursorPosition, in: bounds)
+        let point = Self.localPoint(forNormalizedCursorPosition: lockedCursorPosition, in: bounds)
+        let hotspot = mirroredSystemCursorType.cursorHotspot
+        // macOS uses flipped coordinates for the hotspot Y (bottom-left origin)
         lockedCursorView.frame.origin = CGPoint(
-            x: center.x - lockedCursorView.frame.width * 0.5,
-            y: center.y - lockedCursorView.frame.height * 0.5
+            x: point.x - hotspot.x,
+            y: point.y - (lockedCursorView.frame.height - hotspot.y)
         )
     }
 

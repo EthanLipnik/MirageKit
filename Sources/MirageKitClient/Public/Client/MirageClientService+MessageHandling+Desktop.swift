@@ -50,6 +50,7 @@ extension MirageClientService {
                     .client(
                         "Desktop stream token advanced \(previousDimensionToken) -> \(dimensionToken); resetting controller"
                     )
+                beginStreamStartupCriticalSection(streamID: streamID)
             }
             if isResizeTokenAdvance {
                 sessionStore.beginPostResizeTransition(for: streamID)

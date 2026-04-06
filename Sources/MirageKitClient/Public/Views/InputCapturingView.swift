@@ -234,7 +234,7 @@ public class InputCapturingView: UIView {
 
     // Virtual cursor state (direct touch trackpad mode)
     private let virtualCursorView = InputCapturingView.makeCursorEffectView()
-    private let lockedCursorView = InputCapturingView.makeCursorEffectView()
+    private let lockedCursorView = UIImageView()
     var virtualCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     private let virtualCursorSize: CGFloat = 14
     var virtualCursorVelocity: CGPoint = .zero
@@ -870,22 +870,23 @@ public class InputCapturingView: UIView {
     }
 
     private func setupLockedCursorView() {
-        lockedCursorView.bounds = CGRect(
-            origin: .zero,
-            size: CGSize(width: lockedCursorSize, height: lockedCursorSize)
-        )
-        lockedCursorView.contentView.backgroundColor = UIColor.white.withAlphaComponent(0.2)
-        lockedCursorView.clipsToBounds = true
-        lockedCursorView.layer.cornerRadius = lockedCursorSize / 2
-        lockedCursorView.layer.borderColor = UIColor.black.withAlphaComponent(0.35).cgColor
-        lockedCursorView.layer.borderWidth = 1
-        lockedCursorView.layer.shadowColor = UIColor.black.cgColor
-        lockedCursorView.layer.shadowOpacity = 0.2
-        lockedCursorView.layer.shadowRadius = 2
-        lockedCursorView.layer.shadowOffset = CGSize(width: 0, height: 1)
+        lockedCursorView.contentMode = .scaleAspectFit
         lockedCursorView.isUserInteractionEnabled = false
         lockedCursorView.isHidden = true
+        updateLockedCursorImage()
         addSubview(lockedCursorView)
+    }
+
+    func updateLockedCursorImage() {
+        let cursorType = currentCursorType
+        let image = UIImage(named: cursorType.cursorImageName, in: .module, compatibleWith: nil)
+        lockedCursorView.image = image
+        if let image {
+            lockedCursorView.bounds = CGRect(
+                origin: .zero,
+                size: image.size
+            )
+        }
     }
 
     private func setupPencilInteraction() {
@@ -1214,9 +1215,10 @@ public class InputCapturingView: UIView {
             x: min(max(lockedCursorPosition.x, 0), 1),
             y: min(max(lockedCursorPosition.y, 0), 1)
         )
-        lockedCursorView.center = CGPoint(
-            x: clamped.x * bounds.width,
-            y: clamped.y * bounds.height
+        let hotspot = currentCursorType.cursorHotspot
+        lockedCursorView.frame.origin = CGPoint(
+            x: clamped.x * bounds.width - hotspot.x,
+            y: clamped.y * bounds.height - hotspot.y
         )
     }
 

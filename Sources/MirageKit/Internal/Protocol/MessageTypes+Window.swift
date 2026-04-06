@@ -260,6 +260,7 @@ package struct StreamStoppedMessage: Codable {
     }
 }
 
+/// Host-to-client stream metrics sampled per metrics-update window.
 package struct StreamMetricsMessage: Codable, Sendable {
     package let streamID: StreamID
     package let encodedFPS: Double

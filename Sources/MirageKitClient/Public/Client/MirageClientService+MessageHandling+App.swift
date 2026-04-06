@@ -162,6 +162,11 @@ extension MirageClientService {
     }
 
     func handleHostWallpaper(_ message: ControlMessage) {
+        let interval = MirageLogger.beginInterval(.client, "HostWallpaper.Receive")
+        defer {
+            MirageLogger.endInterval(interval)
+        }
+
         do {
             let wallpaper = try message.decode(HostWallpaperMessage.self)
             guard let requestID = wallpaper.requestID,
@@ -179,43 +184,27 @@ extension MirageClientService {
                 return
             }
 
-            guard let fileName = wallpaper.fileName?.trimmingCharacters(in: .whitespacesAndNewlines),
-                  !fileName.isEmpty,
+            guard let imageData = wallpaper.imageData,
+                  !imageData.isEmpty,
                   let hostID = connectedHost?.deviceID else {
-                MirageLogger.client("Ignoring incomplete host wallpaper transfer metadata")
+                MirageLogger.client("Ignoring incomplete host wallpaper payload")
+                completeHostWallpaperRequest(
+                    .failure(MirageError.protocolError("Host wallpaper payload was empty"))
+                )
                 return
             }
 
-            hostWallpaperTransferTask?.cancel()
-            hostWallpaperTransferTask = Task { @MainActor [weak self] in
-                guard let self else { return }
-                defer {
-                    hostWallpaperTransferTask = nil
-                }
-
-                do {
-                    let wallpaperURL = try await downloadHostWallpaper(
-                        requestID: requestID,
-                        fileName: fileName
-                    )
-                    defer { try? FileManager.default.removeItem(at: wallpaperURL) }
-                    let data = try Data(contentsOf: wallpaperURL)
-                    onHostWallpaperReceived?(
-                        hostID,
-                        data,
-                        wallpaper.pixelWidth,
-                        wallpaper.pixelHeight,
-                        wallpaper.bytesPerPixelEstimate
-                    )
-                    completeHostWallpaperRequest(.success(()))
-                } catch is CancellationError {
-                    MirageLogger.client("Host wallpaper transfer ended after disconnect")
-                    completeHostWallpaperRequest(.failure(CancellationError()))
-                } catch {
-                    MirageLogger.error(.client, error: error, message: "Failed to download host wallpaper: ")
-                    completeHostWallpaperRequest(.failure(error))
-                }
-            }
+            onHostWallpaperReceived?(
+                hostID,
+                imageData,
+                wallpaper.pixelWidth,
+                wallpaper.pixelHeight,
+                wallpaper.bytesPerPixelEstimate
+            )
+            MirageLogger.client(
+                "Received host wallpaper payload requestID=\(requestID.uuidString.lowercased()) bytes=\(imageData.count) size=\(wallpaper.pixelWidth)x\(wallpaper.pixelHeight)"
+            )
+            completeHostWallpaperRequest(.success(()))
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode host wallpaper: ")
             completeHostWallpaperRequest(.failure(error))
