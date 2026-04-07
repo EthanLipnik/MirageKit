@@ -436,6 +436,106 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Client uses Bonjour-resolved IP addresses instead of hostname")
+    func controlSessionAttemptsPreferResolvedAddresses() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_020))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [.ipv4(IPv4Address("192.168.1.50")!)]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedEndpoint: NWEndpoint = .hostPort(
+            host: .ipv4(IPv4Address("192.168.1.50")!),
+            port: udpPort
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Client prefers local addresses over overlay addresses from Bonjour resolution")
+    func controlSessionAttemptsPreferLocalOverOverlayResolvedAddresses() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_021))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(IPv4Address("192.168.1.50")!),
+                .ipv4(IPv4Address("100.65.199.51")!),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedEndpoint: NWEndpoint = .hostPort(
+            host: .ipv4(IPv4Address("192.168.1.50")!),
+            port: udpPort
+        )
+
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Client falls back to overlay resolved address when no local addresses exist")
+    func controlSessionAttemptsFallBackToOverlayResolvedAddress() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_022))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(IPv4Address("100.65.199.51")!),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedEndpoint: NWEndpoint = .hostPort(
+            host: .ipv4(IPv4Address("100.65.199.51")!),
+            port: udpPort
+        )
+
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+    }
+
+    @MainActor
     @Test("Client skips local network mismatch diagnosis on AWDL")
     func localNetworkMismatchReasonSkipsAwdl() {
         let host = LoomPeer(

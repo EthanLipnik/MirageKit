@@ -716,6 +716,22 @@ extension MirageClientService {
         for host: LoomPeer,
         endpointHost: NWEndpoint.Host?
     ) -> NWEndpoint.Host? {
+        // Prefer Bonjour-resolved IP addresses over hostname resolution.
+        // This avoids platform-specific mDNS resolution failures (iOS) and
+        // ensures we don't accidentally route through VPN/overlay interfaces
+        // when a local path exists.
+        if !host.resolvedAddresses.isEmpty {
+            let localAddresses = host.resolvedAddresses.filter { !Self.isOverlayAddress($0) }
+            if let preferred = localAddresses.first {
+                return preferred
+            }
+            // All resolved addresses are overlay — use the first one anyway
+            // since it's still better than an unresolvable hostname.
+            if let fallback = host.resolvedAddresses.first {
+                return fallback
+            }
+        }
+
         if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
             return endpointHost
         }
@@ -736,6 +752,29 @@ extension MirageClientService {
         let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !peerName.isEmpty else { return nil }
         return Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first
+    }
+
+    /// Returns `true` when the host is an overlay/VPN address (e.g. Tailscale CGNAT).
+    private static func isOverlayAddress(_ host: NWEndpoint.Host) -> Bool {
+        switch host {
+        case .ipv4(let addr):
+            // Tailscale uses 100.64.0.0/10 (CGNAT range).
+            let raw = addr.rawValue
+            guard raw.count >= 4 else { return false }
+            return raw[raw.startIndex] == 100 && (raw[raw.startIndex.advanced(by: 1)] & 0xC0) == 64
+        case .ipv6(let addr):
+            // Tailscale IPv6: fd7a:115c:a1e0::/48
+            let raw = addr.rawValue
+            guard raw.count >= 6 else { return false }
+            return raw[raw.startIndex] == 0xfd
+                && raw[raw.startIndex.advanced(by: 1)] == 0x7a
+                && raw[raw.startIndex.advanced(by: 2)] == 0x11
+                && raw[raw.startIndex.advanced(by: 3)] == 0x5c
+                && raw[raw.startIndex.advanced(by: 4)] == 0xa1
+                && raw[raw.startIndex.advanced(by: 5)] == 0xe0
+        default:
+            return false
+        }
     }
 
     private func endpointHost(for endpoint: NWEndpoint) -> NWEndpoint.Host? {
