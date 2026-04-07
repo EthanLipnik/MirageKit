@@ -4,8 +4,6 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Legacy UDP data listener removed. Media now flows through Loom multiplexed streams.
-//
 
 import Foundation
 import MirageKit

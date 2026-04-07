@@ -10,7 +10,7 @@ import MirageKit
 @testable import MirageKitHost
 import Testing
 
-@Suite("Streaming Settings Low-Power Migration")
+@Suite("Streaming Settings Low-Power Defaults")
 struct MirageStreamingSettingsLowPowerTests {
     @Test("Legacy settings decode defaults encoder low-power preference to auto")
     func legacyDecodeDefaultsEncoderLowPowerPreference() throws {

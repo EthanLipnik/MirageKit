@@ -87,8 +87,4 @@ public extension MirageActionPreferences {
         }
     }
 
-    /// Whether saved preferences already exist.
-    static var hasSavedPreferences: Bool {
-        UserDefaults.standard.data(forKey: userDefaultsKey) != nil
-    }
 }

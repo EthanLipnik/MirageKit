@@ -174,7 +174,7 @@ package struct StopStreamMessage: Codable {
     package let streamID: StreamID
     /// Whether to minimize the source window on the host after stopping the stream
     package var minimizeWindow: Bool = false
-    /// Why the stop request was issued. Nil represents legacy/default request paths.
+    /// Why the stop request was issued. Nil represents the default request path.
     package var origin: Origin?
 
     package init(streamID: StreamID, minimizeWindow: Bool = false, origin: Origin? = nil) {

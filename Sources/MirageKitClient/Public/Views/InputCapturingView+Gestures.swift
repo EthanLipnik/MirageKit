@@ -65,7 +65,7 @@ extension InputCapturingView {
         // Two-finger swipe gestures for desktop navigation actions.
         setupNavigationSwipeGestures()
 
-        // Legacy direct-touch scrolling for virtual trackpad mode.
+        // Direct-touch scrolling for virtual trackpad mode.
         // Native one-finger scrolling uses ScrollPhysicsCapturingView instead.
         scrollGesture = UIPanGestureRecognizer(target: self, action: #selector(handleScroll(_:)))
         scrollGesture.allowedScrollTypesMask = [] // Disable trackpad scroll handling
