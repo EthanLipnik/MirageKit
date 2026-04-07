@@ -207,6 +207,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
             onClientShortcut: onClientShortcut,
+            onActionTriggered: onActionTriggered,
             onPencilGestureAction: onPencilGestureAction,
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError,
@@ -260,6 +261,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onSoftwareKeyboardVisibilityChanged: context.coordinator.handleSoftwareKeyboardVisibilityChanged,
             onDirectTouchActivity: context.coordinator.handleDirectTouchActivity,
             onClientShortcut: onClientShortcut,
+            onActionTriggered: onActionTriggered,
             onPencilGestureAction: onPencilGestureAction,
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError,
@@ -362,6 +364,7 @@ public final class MirageStreamViewController: UIViewController {
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?,
         onDirectTouchActivity: (() -> Void)?,
         onClientShortcut: ((MirageClientShortcut) -> Void)?,
+        onActionTriggered: ((MirageAction) -> Void)?,
         onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?,
         onDictationStateChanged: ((Bool) -> Void)?,
         onDictationError: ((String) -> Void)?,
@@ -375,7 +378,6 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         captureView.onDirectTouchActivity = onDirectTouchActivity
         captureView.onClientShortcut = onClientShortcut
-        captureView.actions = actions
         captureView.onActionTriggered = onActionTriggered
         captureView.onPencilGestureAction = onPencilGestureAction
         captureView.onDictationStateChanged = onDictationStateChanged
