@@ -21,7 +21,7 @@ struct ClientConnectionEndpointPlanningTests {
             deviceID: UUID(),
             identityKeyID: "host-key",
             deviceType: .mac,
-            hostName: "Ethans-Mac-Studio.local",
+            hostName: "Vega.local",
             directTransports: [
                 LoomDirectTransportAdvertisement(transportKind: .udp, port: 61001),
             ]
@@ -30,7 +30,7 @@ struct ClientConnectionEndpointPlanningTests {
         let txt = original.toTXTRecord()
         let decoded = LoomPeerAdvertisement.from(txtRecord: txt)
 
-        #expect(decoded.hostName == "Ethans-Mac-Studio.local")
+        #expect(decoded.hostName == "Vega.local")
         #expect(decoded.directTransports.first(where: { $0.transportKind == .udp })?.port == 61001)
     }
 
@@ -199,13 +199,13 @@ struct ClientConnectionEndpointPlanningTests {
         let quicPort = try #require(NWEndpoint.Port(rawValue: 57_210))
         let host = LoomPeer(
             id: UUID(),
-            name: "Ethan's Mac Studio",
+            name: "Vega",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("100.65.199.51"), port: udpPort),
             advertisement: LoomPeerAdvertisement(
                 protocolVersion: Int(Loom.protocolVersion),
                 deviceID: UUID(),
-                hostName: "Ethan's Mac Studio",
+                hostName: "Vega",
                 directTransports: [
                     LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
                     LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
