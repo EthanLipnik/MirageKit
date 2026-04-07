@@ -48,6 +48,12 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
     }
 
+    /// Host display dimensions in points for 1:1 cursor delta normalization.
+    /// When set, locked-cursor deltas are normalized by these dimensions instead
+    /// of the local view bounds, giving native macOS cursor feel regardless of
+    /// the client window size.
+    var hostDisplayPointSize: CGSize?
+
     /// Whether locked desktop cursor input may move beyond the streamed view bounds.
     var allowsExtendedCursorBounds: Bool = false {
         didSet {
@@ -187,13 +193,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func updateLockedCursorImage() {
-        let cursorType = mirroredSystemCursorType
-        let image = NSImage(named: cursorType.cursorImageName)
-            ?? Bundle.module.image(forResource: cursorType.cursorImageName)
-        lockedCursorView.image = image
-        if let image {
-            lockedCursorView.frame.size = image.size
-        }
+        let cursor = mirroredSystemCursorType.nsCursor
+        lockedCursorView.image = cursor.image
+        lockedCursorView.frame.size = cursor.image.size
     }
 
     override func layout() {
@@ -488,7 +490,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         guard cursorLockEnabled, !lockedCursorView.isHidden else { return }
         guard bounds.width > 0, bounds.height > 0 else { return }
         let point = Self.localPoint(forNormalizedCursorPosition: lockedCursorPosition, in: bounds)
-        let hotspot = mirroredSystemCursorType.cursorHotspot
+        let hotspot = mirroredSystemCursorType.nsCursor.hotSpot
         // macOS uses flipped coordinates for the hotspot Y (bottom-left origin)
         lockedCursorView.frame.origin = CGPoint(
             x: point.x - hotspot.x,
@@ -497,9 +499,10 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func applyLockedCursorDelta(dx: CGFloat, dy: CGFloat) {
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        lockedCursorPosition.x += dx / bounds.width
-        lockedCursorPosition.y -= dy / bounds.height
+        let normSize = hostDisplayPointSize ?? bounds.size
+        guard normSize.width > 0, normSize.height > 0 else { return }
+        lockedCursorPosition.x += dx / normSize.width
+        lockedCursorPosition.y -= dy / normSize.height
         lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
         noteCursorLocalInput()
         setLockedCursorVisible(true)

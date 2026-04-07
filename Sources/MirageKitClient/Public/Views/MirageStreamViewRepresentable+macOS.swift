@@ -27,6 +27,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore?
 
+    /// Host display dimensions in points for 1:1 cursor delta normalization.
+    public var hostDisplayPointSize: CGSize?
+
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
@@ -73,6 +76,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
+        hostDisplayPointSize: CGSize? = nil,
         cursorLockEnabled: Bool = false,
         allowsExtendedDesktopCursorBounds: Bool = false,
         cursorLockCanRecapture: Bool = false,
@@ -93,6 +97,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
+        self.hostDisplayPointSize = hostDisplayPointSize
         self.cursorLockEnabled = cursorLockEnabled
         self.allowsExtendedDesktopCursorBounds = allowsExtendedDesktopCursorBounds
         self.cursorLockCanRecapture = cursorLockCanRecapture
@@ -141,6 +146,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
+        wrapper.hostDisplayPointSize = hostDisplayPointSize
         wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
         wrapper.cursorLockEnabled = cursorLockEnabled
         wrapper.canRecaptureCursorLock = cursorLockCanRecapture
@@ -191,6 +197,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
+            wrapper.hostDisplayPointSize = hostDisplayPointSize
             wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
             wrapper.cursorLockEnabled = cursorLockEnabled
             wrapper.canRecaptureCursorLock = cursorLockCanRecapture

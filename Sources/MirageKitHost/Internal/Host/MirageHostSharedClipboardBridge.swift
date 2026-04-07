@@ -30,11 +30,21 @@ private actor HostClipboardSnapshotReader {
             text: text
         )
     }
+
+    func changeCount() -> Int {
+        NSPasteboard.general.changeCount
+    }
+
+    func applyText(_ text: String) -> Int {
+        let pasteboard = NSPasteboard.general
+        _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
+        pasteboard.setString(text, forType: .string)
+        return pasteboard.changeCount
+    }
 }
 
 @MainActor
 final class MirageHostSharedClipboardBridge {
-    private let pasteboard: NSPasteboard
     private let pollInterval: Duration
     private let onLocalTextChanged: @MainActor (MirageSharedClipboardLocalSend, Int64) -> Void
     private var clipboardState = MirageSharedClipboardState()
@@ -42,11 +52,9 @@ final class MirageHostSharedClipboardBridge {
     private var isActive = false
 
     init(
-        pasteboard: NSPasteboard = .general,
         pollInterval: Duration = .milliseconds(250),
         onLocalTextChanged: @escaping @MainActor (MirageSharedClipboardLocalSend, Int64) -> Void
     ) {
-        self.pasteboard = pasteboard
         self.pollInterval = pollInterval
         self.onLocalTextChanged = onLocalTextChanged
     }
@@ -69,29 +77,29 @@ final class MirageHostSharedClipboardBridge {
         _ text: String,
         orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
-    ) {
+    ) async {
         guard let text = MirageSharedClipboard.validatedText(text) else { return }
         guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else { return }
 
-        _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
-        pasteboard.setString(text, forType: .string)
+        let changeCount = await HostClipboardSnapshotReader.shared.applyText(text)
         clipboardState.recordRemoteWrite(
             text: text,
-            changeCount: pasteboard.changeCount,
+            changeCount: changeCount,
             orderingToken: orderingToken
         )
     }
 
     private func activate() {
-        clipboardState.activate(changeCount: pasteboard.changeCount)
         pollTask = Task { [weak self] in
             guard let self else { return }
+            let initialCount = await HostClipboardSnapshotReader.shared.changeCount()
+            clipboardState.activate(changeCount: initialCount)
             while !Task.isCancelled {
                 try? await Task.sleep(for: pollInterval)
                 if Task.isCancelled { return }
                 let snapshot = await HostClipboardSnapshotReader.shared.snapshot()
                 if Task.isCancelled { return }
-                await consumePolledSnapshot(snapshot)
+                consumePolledSnapshot(snapshot)
             }
         }
     }

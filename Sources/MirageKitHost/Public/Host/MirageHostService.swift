@@ -436,14 +436,7 @@ public final class MirageHostService {
     /// Optional override for host lock behavior (defaults to CGSession if nil).
     public var lockHostHandler: (@MainActor () -> Void)?
 
-    /// Local shortcut used to recover from a stuck Lights Out session.
-    public var lightsOutEmergencyShortcut: MirageHostShortcut = .defaultLightsOutRecovery {
-        didSet {
-            lightsOutController.emergencyShortcut = lightsOutEmergencyShortcut
-        }
-    }
-
-    /// Called when the Lights Out emergency shortcut is detected.
+    /// Called when the Lights Out hold-Escape emergency recovery is triggered.
     @ObservationIgnored public var onLightsOutEmergencyShortcut: (@MainActor () async -> Void)? {
         didSet {
             lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
@@ -578,7 +571,6 @@ public final class MirageHostService {
                 await self?.refreshLightsOutCaptureExclusions()
             }
         }
-        lightsOutController.emergencyShortcut = lightsOutEmergencyShortcut
         lightsOutController.onEmergencyShortcut = onLightsOutEmergencyShortcut
         lightsOutController.onScreenshotShortcut = { [weak self] in
             await self?.handleLightsOutScreenshotShortcut()

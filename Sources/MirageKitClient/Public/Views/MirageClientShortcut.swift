@@ -24,6 +24,11 @@ public struct MirageClientShortcut: Codable, Sendable, Hashable {
         modifiers: [.command, .shift, .option]
     )
 
+    public static let defaultDesktopExit = MirageClientShortcut(
+        keyCode: 0x35, // Escape
+        modifiers: [.control, .option]
+    )
+
     public static let defaultEscapeRemap = MirageClientShortcut(
         keyCode: 0x21, // [
         modifiers: [.control]

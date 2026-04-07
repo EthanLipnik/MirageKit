@@ -224,7 +224,7 @@ final class ScrollPhysicsCapturingView: UIView {
         }
     }
 
-    private func configureScrollView(_ scrollView: UIScrollView) {
+    private func configureScrollView(_ scrollView: CallbackScrollView) {
         scrollView.showsVerticalScrollIndicator = false
         scrollView.showsHorizontalScrollIndicator = false
         scrollView.bounces = true
@@ -235,6 +235,7 @@ final class ScrollPhysicsCapturingView: UIView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .clear
         scrollView.isOpaque = false
+        scrollView.panGestureRecognizer.delegate = scrollView
     }
 
     private func setupScrollContent(_ scrollContent: UIView, in scrollView: UIScrollView) {
@@ -282,11 +283,16 @@ final class ScrollPhysicsCapturingView: UIView {
     private func handleScrollViewWillBeginDragging(_ scrollView: UIScrollView) {
         setTracking(true, for: scrollView)
         setLastContentOffset(scrollView.contentOffset, for: scrollView)
+        reportDirectTouchPanLocation(for: scrollView)
         onScroll?(0, 0, .began, .none)
     }
 
     private func handleScrollViewDidScroll(_ scrollView: UIScrollView) {
         guard !isRecentering(scrollView) else { return }
+
+        // Update cursor position from pan gesture during active direct-touch scrolling
+        // so the host cursor follows the finger and scroll events target the right area.
+        reportDirectTouchPanLocation(for: scrollView)
 
         let currentOffset = scrollView.contentOffset
         let lastOffset = lastContentOffset(for: scrollView)
@@ -302,6 +308,13 @@ final class ScrollPhysicsCapturingView: UIView {
         if deltaX != 0 || deltaY != 0 {
             onScroll?(deltaX, deltaY, phase, momentumPhase)
         }
+    }
+
+    private func reportDirectTouchPanLocation(for scrollView: UIScrollView) {
+        guard scrollView === directTouchScrollView, isDirectTracking else { return }
+        let referenceView = superview ?? self
+        let panLocation = directTouchScrollView.panGestureRecognizer.location(in: referenceView)
+        onDirectTouchLocationChanged?(panLocation)
     }
 
     private func handleScrollViewDidEndDragging(
@@ -414,7 +427,7 @@ private final class RotationGestureDelegate: NSObject, UIGestureRecognizerDelega
     }
 }
 
-private class CallbackScrollView: UIScrollView, UIScrollViewDelegate {
+private class CallbackScrollView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
     var onWillBeginDragging: ((UIScrollView) -> Void)?
     var onDidScroll: ((UIScrollView) -> Void)?
     var onDidEndDragging: ((UIScrollView, Bool) -> Void)?
@@ -434,10 +447,7 @@ private class CallbackScrollView: UIScrollView, UIScrollViewDelegate {
     override var delegate: UIScrollViewDelegate? {
         get { super.delegate }
         set {
-            guard newValue != nil else {
-                super.delegate = nil
-                return
-            }
+            guard let newValue else { return }
             if (newValue as AnyObject) !== self {
                 assertionFailure(
                     "CallbackScrollView must remain its own delegate to preserve UIKit scroll gesture invariants."
@@ -543,7 +553,6 @@ private final class LocationReportingScrollView: CallbackScrollView {
         }
 
         let nonPencilTouches = touches.filter { !isStylusLikeTouch($0) }
-        reportLocation(for: Set(nonPencilTouches))
         if !nonPencilTouches.isEmpty {
             super.touchesCancelled(Set(nonPencilTouches), with: event)
         }
@@ -551,7 +560,7 @@ private final class LocationReportingScrollView: CallbackScrollView {
 
     private func reportLocation(for touches: Set<UITouch>) {
         guard let touch = touches.first else { return }
-        onTouchLocationChanged?(touch.preciseLocation(in: self))
+        onTouchLocationChanged?(touch.preciseLocation(in: superview))
     }
 }
 #endif

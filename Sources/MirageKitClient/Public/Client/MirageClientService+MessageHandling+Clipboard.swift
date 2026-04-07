@@ -75,7 +75,7 @@ extension MirageClientService {
         sentAtMs: Int64,
         chunkIndex: Int,
         chunkCount: Int
-    ) {
+    ) async {
         guard let fullText = clipboardChunkBuffer.addChunk(
             changeID: orderingToken.changeID,
             chunkIndex: chunkIndex,
@@ -85,7 +85,7 @@ extension MirageClientService {
 
         guard let validatedText = MirageSharedClipboard.validatedText(fullText) else { return }
 
-        ensureSharedClipboardBridge().applyRemoteText(
+        await ensureSharedClipboardBridge().applyRemoteText(
             validatedText,
             orderingToken: orderingToken,
             sentAtMs: sentAtMs

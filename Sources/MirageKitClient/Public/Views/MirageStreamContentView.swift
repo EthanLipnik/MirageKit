@@ -45,6 +45,7 @@ public struct MirageStreamContentView: View {
     public let desktopCursorPresentation: MirageDesktopCursorPresentation
     public let onExitDesktopStream: (() -> Void)?
     public let onToggleDictationShortcut: (() -> Void)?
+    public let desktopExitShortcut: MirageClientShortcut
     public let escapeRemapShortcut: MirageClientShortcut
     public let dictationShortcut: MirageClientShortcut
     public let actions: [MirageAction]
@@ -55,7 +56,6 @@ public struct MirageStreamContentView: View {
     public let onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
     public let directTouchInputMode: MirageDirectTouchInputMode
     public let softwareKeyboardVisible: Bool
-    public let pencilInputMode: MiragePencilInputMode
     public let pencilGestureConfiguration: MiragePencilGestureConfiguration
     public let dictationToggleRequestID: UInt64
     public let onDictationStateChanged: ((Bool) -> Void)?
@@ -100,12 +100,6 @@ public struct MirageStreamContentView: View {
     @State private var desktopResizeAckTimeoutTask: Task<Void, Never>?
     @State private var pendingDesktopDisplayResolutionAfterAck: CGSize = .zero
 
-    @State private var escapeHoldActive = false
-    @State private var escapeHoldProgress: CGFloat = 0
-    @State private var escapeHoldTask: Task<Void, Never>?
-
-    private let escapeHoldDuration: Duration = .seconds(5)
-
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:
     ///   - session: Session metadata describing the stream.
@@ -122,7 +116,6 @@ public struct MirageStreamContentView: View {
     ///   - onSoftwareKeyboardVisibilityChanged: Optional handler for software keyboard visibility.
     ///   - directTouchInputMode: Direct-touch behavior mode for iPad and visionOS clients.
     ///   - softwareKeyboardVisible: Whether the software keyboard should be visible.
-    ///   - pencilInputMode: Apple Pencil behavior mode for iPad clients.
     ///   - pencilGestureConfiguration: Apple Pencil hardware gesture mapping.
     ///   - dictationToggleRequestID: Increments to request a dictation toggle on iOS/visionOS.
     ///   - onDictationStateChanged: Optional callback for dictation start/stop state.
@@ -140,6 +133,7 @@ public struct MirageStreamContentView: View {
         desktopCursorPresentation: MirageDesktopCursorPresentation = .clientCursor,
         onExitDesktopStream: (() -> Void)? = nil,
         onToggleDictationShortcut: (() -> Void)? = nil,
+        desktopExitShortcut: MirageClientShortcut = .defaultDesktopExit,
         escapeRemapShortcut: MirageClientShortcut = .defaultEscapeRemap,
         dictationShortcut: MirageClientShortcut = .defaultDictationToggle,
         actions: [MirageAction] = [],
@@ -150,7 +144,6 @@ public struct MirageStreamContentView: View {
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
-        pencilInputMode: MiragePencilInputMode = .mouse,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
@@ -174,6 +167,7 @@ public struct MirageStreamContentView: View {
         self.desktopCursorPresentation = desktopCursorPresentation
         self.onExitDesktopStream = onExitDesktopStream
         self.onToggleDictationShortcut = onToggleDictationShortcut
+        self.desktopExitShortcut = desktopExitShortcut
         self.escapeRemapShortcut = escapeRemapShortcut
         self.dictationShortcut = dictationShortcut
         self.actions = actions
@@ -184,7 +178,6 @@ public struct MirageStreamContentView: View {
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
-        self.pencilInputMode = pencilInputMode
         self.pencilGestureConfiguration = pencilGestureConfiguration
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
@@ -214,6 +207,24 @@ public struct MirageStreamContentView: View {
         isDesktopStream && desktopStreamMode == .secondary
     }
 
+    /// Host virtual display dimensions in points for 1:1 cursor delta normalization.
+    /// Derived from the stream pixel resolution divided by the client's backing scale
+    /// (which matches the host's virtual display backing scale since the client
+    /// requested the display at that scale).
+    private var hostDisplayPointSize: CGSize? {
+        #if os(macOS)
+        guard let resolution = clientService.desktopStreamResolution,
+              resolution.width > 0, resolution.height > 0 else { return nil }
+        let scale = NSScreen.main?.backingScaleFactor ?? 2.0
+        return CGSize(
+            width: resolution.width / scale,
+            height: resolution.height / scale
+        )
+        #else
+        return nil
+        #endif
+    }
+
     private var streamContentAspectRatio: CGFloat? {
         if isDesktopStream {
             if let minSize = sessionStore.sessionMinSizes[session.id],
@@ -227,6 +238,19 @@ public struct MirageStreamContentView: View {
                desktopResolution.height > 0 {
                 return desktopResolution.width / desktopResolution.height
             }
+
+            return nil
+        }
+
+        // For app streams, only lock the aspect ratio while the software
+        // keyboard is visible so the content shrinks to fit without
+        // triggering a host resolution change.
+        guard softwareKeyboardVisible else { return nil }
+
+        if let minSize = sessionStore.sessionMinSizes[session.id],
+           minSize.width > 0,
+           minSize.height > 0 {
+            return minSize.width / minSize.height
         }
 
         let windowSize = session.window.frame.size
@@ -234,38 +258,7 @@ public struct MirageStreamContentView: View {
             return windowSize.width / windowSize.height
         }
 
-        if !isDesktopStream,
-           let minSize = sessionStore.sessionMinSizes[session.id],
-           minSize.width > 0,
-           minSize.height > 0 {
-            return minSize.width / minSize.height
-        }
-
         return nil
-    }
-
-    private var escapeHoldOverlay: some View {
-        VStack(spacing: 12) {
-            ZStack {
-                Circle()
-                    .stroke(.white.opacity(0.15), lineWidth: 4)
-                    .frame(width: 56, height: 56)
-                Circle()
-                    .trim(from: 0, to: escapeHoldProgress)
-                    .stroke(.white, style: StrokeStyle(lineWidth: 4, lineCap: .round))
-                    .frame(width: 56, height: 56)
-                    .rotationEffect(.degrees(-90))
-                Text("⎋")
-                    .font(.title2)
-                    .foregroundStyle(.white)
-            }
-            Text("Hold to disconnect")
-                .font(.caption)
-                .foregroundStyle(.white.opacity(0.7))
-        }
-        .padding(20)
-        .background(.ultraThinMaterial)
-        .clipShape(RoundedRectangle(cornerRadius: 16))
     }
 
     public var body: some View {
@@ -308,7 +301,6 @@ public struct MirageStreamContentView: View {
                     onDirectTouchActivity: onDirectTouchActivity,
                     directTouchInputMode: directTouchInputMode,
                     softwareKeyboardVisible: softwareKeyboardVisible,
-                    pencilInputMode: pencilInputMode,
                     pencilGestureConfiguration: pencilGestureConfiguration,
                     clientShortcuts: clientReservedShortcuts,
                     onClientShortcut: handleReservedShortcut,
@@ -356,6 +348,7 @@ public struct MirageStreamContentView: View {
                     },
                     cursorStore: clientService.cursorStore,
                     cursorPositionStore: clientService.cursorPositionStore,
+                    hostDisplayPointSize: hostDisplayPointSize,
                     cursorLockEnabled: desktopCursorLockEnabled,
                     allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
                     cursorLockCanRecapture: desktopCursorLockCanRecapture,
@@ -403,13 +396,6 @@ public struct MirageStreamContentView: View {
                     .allowsHitTesting(false)
             }
         }
-        .overlay {
-            if escapeHoldActive {
-                escapeHoldOverlay
-                    .transition(.opacity)
-                    .allowsHitTesting(false)
-            }
-        }
         .onChange(of: sessionStore.sessionMinSizes[session.id]) { _, minSize in
             Task { @MainActor in
                 await Task.yield()
@@ -437,10 +423,6 @@ public struct MirageStreamContentView: View {
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
         }
         .onDisappear {
-            escapeHoldTask?.cancel()
-            escapeHoldTask = nil
-            escapeHoldActive = false
-            escapeHoldProgress = 0
             resizeHoldoffTask?.cancel()
             resizeHoldoffTask = nil
             resizeFallbackTask?.cancel()
@@ -513,7 +495,7 @@ public struct MirageStreamContentView: View {
     }
 
     private var clientReservedShortcuts: [MirageClientShortcut] {
-        [escapeRemapShortcut, dictationShortcut]
+        [desktopExitShortcut, escapeRemapShortcut, dictationShortcut]
     }
 
     private var isReadyForInitialPresentation: Bool {
@@ -537,11 +519,10 @@ public struct MirageStreamContentView: View {
 
     private func sendInputEvent(_ event: MirageInputEvent) {
         if case let .keyDown(keyEvent) = event {
-            // Bare Escape press starts the hold-to-exit timer.
-            if keyEvent.keyCode == 0x35,
-               !keyEvent.isRepeat,
-               MirageClientShortcut.normalizedShortcutModifiers(keyEvent.modifiers).isEmpty {
-                startEscapeHold()
+            if desktopExitShortcut.matches(keyEvent), let onExitDesktopStream {
+                logDesktopExitShortcutTriggered()
+                onExitDesktopStream()
+                return
             }
 
             if dictationShortcut.matches(keyEvent) {
@@ -549,7 +530,6 @@ public struct MirageStreamContentView: View {
                 return
             }
             if escapeRemapShortcut.matches(keyEvent) {
-                cancelEscapeHold()
                 if desktopCursorLockEnabled {
                     onCursorLockEscapeRequested?()
                     return
@@ -565,9 +545,6 @@ public struct MirageStreamContentView: View {
             }
             #endif
         } else if case let .keyUp(keyEvent) = event {
-            if keyEvent.keyCode == 0x35 {
-                cancelEscapeHold()
-            }
             if escapeRemapShortcut.matches(keyEvent) {
                 guard !desktopCursorLockEnabled else { return }
                 forwardInputEventToHost(.keyUp(remappedEscapeKeyEvent()))
@@ -605,7 +582,10 @@ public struct MirageStreamContentView: View {
     }
 
     private func handleReservedShortcut(_ shortcut: MirageClientShortcut) {
-        if shortcut == escapeRemapShortcut {
+        if shortcut == desktopExitShortcut {
+            logDesktopExitShortcutTriggered()
+            onExitDesktopStream?()
+        } else if shortcut == escapeRemapShortcut {
             if desktopCursorLockEnabled {
                 onCursorLockEscapeRequested?()
             } else {
@@ -632,39 +612,6 @@ public struct MirageStreamContentView: View {
         MirageLogger.client("Desktop exit shortcut triggered for stream \(session.streamID)")
     }
 
-    // MARK: - Escape Hold-to-Exit
-
-    private func startEscapeHold() {
-        guard !escapeHoldActive, onExitDesktopStream != nil else { return }
-        escapeHoldActive = true
-        escapeHoldProgress = 0
-        withAnimation(.linear(duration: 5)) {
-            escapeHoldProgress = 1.0
-        }
-        escapeHoldTask = Task { @MainActor in
-            do {
-                try await Task.sleep(for: escapeHoldDuration)
-            } catch {
-                return
-            }
-            guard escapeHoldActive else { return }
-            logDesktopExitShortcutTriggered()
-            onExitDesktopStream?()
-            escapeHoldActive = false
-            escapeHoldProgress = 0
-        }
-    }
-
-    private func cancelEscapeHold() {
-        escapeHoldTask?.cancel()
-        escapeHoldTask = nil
-        guard escapeHoldActive else { return }
-        withAnimation(.easeOut(duration: 0.2)) {
-            escapeHoldActive = false
-            escapeHoldProgress = 0
-        }
-    }
-
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
 
@@ -675,6 +622,11 @@ public struct MirageStreamContentView: View {
         )
         resizeLifecycleState = lifecycleDecision.nextState
         guard lifecycleDecision.shouldProcessDrawableMetrics else { return }
+
+        // When the software keyboard is visible for app streams, the
+        // aspect-ratio constraint shrinks the drawable. Skip processing
+        // so the host window keeps its current size.
+        if softwareKeyboardVisible, !isDesktopStream { return }
         #endif
 
         let viewSize = metrics.viewSize

@@ -164,9 +164,6 @@ public class InputCapturingView: UIView {
     var usesVisibleVirtualCursor: Bool { usesVirtualTrackpad && !cursorLockEnabled }
     var usesLockedTrackpadCursor: Bool { usesVirtualTrackpad && cursorLockEnabled }
 
-    /// Apple Pencil behavior mode.
-    public var pencilInputMode: MiragePencilInputMode = .mouse
-
     /// Configured actions for Apple Pencil hardware gestures.
     public var pencilGestureConfiguration: MiragePencilGestureConfiguration = .default
 
@@ -1010,6 +1007,9 @@ public class InputCapturingView: UIView {
             lockedPointerLastHoverLocation = nil
             stopLockedCursorSmoothing()
             setLockedCursorVisible(false)
+            // Force UIKit to re-query the pointer style so the system cursor
+            // becomes visible again now that cursor lock is off.
+            pointerInteraction?.invalidate()
         }
     }
 
@@ -1972,14 +1972,6 @@ public class InputCapturingView: UIView {
         stylus: MirageStylusEvent?,
         clickCount: Int = 1
     ) -> MirageMouseEvent {
-        guard pencilInputMode == .drawingTablet else {
-            return MirageMouseEvent(
-                button: .left,
-                location: location,
-                clickCount: clickCount,
-                modifiers: modifiers
-            )
-        }
         return MirageMouseEvent(
             button: .left,
             location: location,

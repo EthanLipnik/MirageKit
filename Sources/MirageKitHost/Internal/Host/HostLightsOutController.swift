@@ -111,17 +111,42 @@ final class HostLightsOutController {
         let sampleCount: UInt32
     }
 
-    private final class EmergencyShortcutStore: @unchecked Sendable {
+    private final class EscapeHoldState: @unchecked Sendable {
         private let lock = NSLock()
-        private var value: MirageHostShortcut = .defaultLightsOutRecovery
+        private var holdStart: UInt64 = 0
+        private var triggered = false
 
-        var currentValue: MirageHostShortcut {
-            get {
-                lock.withLock { value }
+        func begin() {
+            lock.withLock {
+                holdStart = mach_absolute_time()
+                triggered = false
             }
-            set {
-                lock.withLock { value = newValue }
+        }
+
+        func reset() {
+            lock.withLock {
+                holdStart = 0
+                triggered = false
             }
+        }
+
+        /// Returns `true` the first time the hold duration is exceeded.
+        func checkThreshold(nanoseconds: UInt64) -> Bool {
+            lock.withLock {
+                guard holdStart != 0, !triggered else { return false }
+                var info = mach_timebase_info_data_t()
+                mach_timebase_info(&info)
+                let elapsed = (mach_absolute_time() - holdStart) * UInt64(info.numer) / UInt64(info.denom)
+                if elapsed >= nanoseconds {
+                    triggered = true
+                    return true
+                }
+                return false
+            }
+        }
+
+        var isHolding: Bool {
+            lock.withLock { holdStart != 0 && !triggered }
         }
     }
 
@@ -130,22 +155,20 @@ final class HostLightsOutController {
     private var eventTap: CFMachPort?
     private var eventTapSource: CFRunLoopSource?
     private var messageHideTask: Task<Void, Never>?
+    private var escapeHoldCheckTask: Task<Void, Never>?
     private var screenChangeObserver: Any?
     private var brightnessSnapshot: [CGDirectDisplayID: DisplayGammaSnapshot] = [:]
     private let revealClock = ContinuousClock()
     private var revealUntil: ContinuousClock.Instant?
 
     private let messageTitleText = "Streaming with Mirage"
-    private let forceStopMessagePrefix = "Force Stop Streams:"
+    private let forceStopMessageText = "Hold Escape to Force Stop Streams"
     private let messageDuration: Duration = .seconds(5)
+    private let escapeHoldDuration: UInt64 = 5_000_000_000 // 5 seconds in nanoseconds
     private let dimmedGammaScale: CGGammaValue = 0.05
 
     var onOverlayWindowsChanged: (@MainActor () -> Void)?
-    private nonisolated let emergencyShortcutStore = EmergencyShortcutStore()
-    var emergencyShortcut: MirageHostShortcut {
-        get { emergencyShortcutStore.currentValue }
-        set { emergencyShortcutStore.currentValue = newValue }
-    }
+    private nonisolated let escapeHoldState = EscapeHoldState()
     var onEmergencyShortcut: (@MainActor () async -> Void)?
     var onScreenshotShortcut: (@MainActor () async -> Void)?
 
@@ -174,6 +197,9 @@ final class HostLightsOutController {
         target = nil
         messageHideTask?.cancel()
         messageHideTask = nil
+        escapeHoldCheckTask?.cancel()
+        escapeHoldCheckTask = nil
+        escapeHoldState.reset()
         revealUntil = nil
         restoreBrightness()
         removeEventTap()
@@ -238,8 +264,7 @@ final class HostLightsOutController {
     }
 
     private func overlayMessage() -> String {
-        let shortcut = emergencyShortcutStore.currentValue.displayString
-        return "\(messageTitleText)\n\(forceStopMessagePrefix) \(shortcut)"
+        "\(messageTitleText)\n\(forceStopMessageText)"
     }
 
     private func hideMessage() {
@@ -450,13 +475,23 @@ final class HostLightsOutController {
             return Unmanaged.passUnretained(event)
         }
 
-        if type == .keyDown, shouldTriggerEmergencyShortcut(event: event) {
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                self.handleLocalInteraction(triggerMessage: true)
-                await self.onEmergencyShortcut?()
+        if type == .keyDown {
+            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
+            if keyCode == 0x35, !isRepeat {
+                // Bare Escape press starts the hold timer.
+                escapeHoldState.begin()
+                Task { @MainActor [weak self] in
+                    self?.startEscapeHoldCheck()
+                }
             }
-            return nil
+        }
+
+        if type == .keyUp {
+            let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
+            if keyCode == 0x35 {
+                escapeHoldState.reset()
+            }
         }
 
         if Self.shouldTriggerMessage(for: type) {
@@ -500,16 +535,21 @@ final class HostLightsOutController {
         }
     }
 
-    private nonisolated func shouldTriggerEmergencyShortcut(event: CGEvent) -> Bool {
-        let isRepeat = event.getIntegerValueField(.keyboardEventAutorepeat) != 0
-        if isRepeat { return false }
-
-        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
-        let modifierFlags = MirageModifierFlags(
-            nsEventFlags: NSEvent.ModifierFlags(rawValue: UInt(event.flags.rawValue))
-        )
-        let shortcut = emergencyShortcutStore.currentValue
-        return shortcut.matches(keyCode: keyCode, modifiers: modifierFlags)
+    private func startEscapeHoldCheck() {
+        escapeHoldCheckTask?.cancel()
+        handleLocalInteraction(triggerMessage: true)
+        escapeHoldCheckTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled, self.escapeHoldState.isHolding {
+                if self.escapeHoldState.checkThreshold(nanoseconds: self.escapeHoldDuration) {
+                    MirageLogger.host("Lights Out: hold-Escape emergency recovery triggered")
+                    self.handleLocalInteraction(triggerMessage: true)
+                    await self.onEmergencyShortcut?()
+                    return
+                }
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+        }
     }
 
     private nonisolated func shouldTriggerScreenshotShortcut(event: CGEvent) -> Bool {

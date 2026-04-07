@@ -48,9 +48,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the software keyboard should be visible.
     public var softwareKeyboardVisible: Bool
 
-    /// Apple Pencil behavior mode.
-    public var pencilInputMode: MiragePencilInputMode
-
     /// Apple Pencil hardware gesture mapping.
     public var pencilGestureConfiguration: MiragePencilGestureConfiguration
 
@@ -124,7 +121,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onDirectTouchActivity: (() -> Void)? = nil,
         directTouchInputMode: MirageDirectTouchInputMode = .normal,
         softwareKeyboardVisible: Bool = false,
-        pencilInputMode: MiragePencilInputMode = .mouse,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         clientShortcuts: [MirageClientShortcut] = [],
         onClientShortcut: ((MirageClientShortcut) -> Void)? = nil,
@@ -158,7 +154,6 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onDirectTouchActivity = onDirectTouchActivity
         self.directTouchInputMode = directTouchInputMode
         self.softwareKeyboardVisible = softwareKeyboardVisible
-        self.pencilInputMode = pencilInputMode
         self.pencilGestureConfiguration = pencilGestureConfiguration
         self.clientShortcuts = clientShortcuts
         self.onClientShortcut = onClientShortcut
@@ -217,7 +212,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             streamID: streamID,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
-            pencilInputMode: pencilInputMode,
+
             pencilGestureConfiguration: pencilGestureConfiguration,
             clientShortcuts: clientShortcuts,
             actions: actions,
@@ -272,7 +267,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             streamID: streamID,
             directTouchInputMode: directTouchInputMode,
             softwareKeyboardVisible: softwareKeyboardVisible,
-            pencilInputMode: pencilInputMode,
+
             pencilGestureConfiguration: pencilGestureConfiguration,
             clientShortcuts: clientShortcuts,
             actions: actions,
@@ -389,7 +384,6 @@ public final class MirageStreamViewController: UIViewController {
         streamID: StreamID,
         directTouchInputMode: MirageDirectTouchInputMode,
         softwareKeyboardVisible: Bool,
-        pencilInputMode: MiragePencilInputMode,
         pencilGestureConfiguration: MiragePencilGestureConfiguration,
         clientShortcuts: [MirageClientShortcut],
         actions: [MirageAction],
@@ -413,7 +407,6 @@ public final class MirageStreamViewController: UIViewController {
         captureView.streamID = streamID
         captureView.directTouchInputMode = directTouchInputMode
         captureView.softwareKeyboardVisible = softwareKeyboardVisible
-        captureView.pencilInputMode = pencilInputMode
         captureView.pencilGestureConfiguration = pencilGestureConfiguration
         captureView.clientShortcuts = clientShortcuts
         captureView.actions = actions

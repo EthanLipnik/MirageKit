@@ -206,7 +206,6 @@ extension InputCapturingView {
         }
 
         if usesVirtualTrackpad {
-            updateTrackpadCursorPosition(location, updateVisibility: true)
             return trackpadCursorPosition()
         }
 
@@ -583,9 +582,8 @@ extension InputCapturingView {
 
     @objc
     func handleHover(_ gesture: UIHoverGestureRecognizer) {
-        let hoverStylus = pencilInputMode == .drawingTablet ? stylusHoverEvent(from: gesture) : nil
-        let stylusPayload = hoverStylus
-        let hoverPressure: CGFloat = stylusPayload == nil ? 1.0 : 0.0
+        let hoverStylus = stylusHoverEvent(from: gesture)
+        let hoverPressure: CGFloat = hoverStylus == nil ? 1.0 : 0.0
         let location = gesture.location(in: self)
 
         if cursorLockEnabled {
@@ -610,7 +608,7 @@ extension InputCapturingView {
                     let translation = CGPoint(x: location.x - lastLocation.x, y: location.y - lastLocation.y)
                     if translation != .zero {
                         scrollPhysicsView?.stopIndirectScrollDeceleration()
-                        if stylusPayload == nil { revealCursorAfterPointerMovement() }
+                        if hoverStylus == nil { revealCursorAfterPointerMovement() }
                         noteLockedPointerDragIfNeeded(for: translation)
                         applyLockedCursorDelta(translation)
                         let eventModifiers = modifiers(from: gesture)
@@ -618,13 +616,14 @@ extension InputCapturingView {
                             location: lockedCursorPosition,
                             modifiers: eventModifiers,
                             pressure: hoverPressure,
-                            stylus: stylusPayload
+                            stylus: hoverStylus
                         )
                     }
                 }
                 lockedPointerLastHoverLocation = location
             default:
                 lockedPointerLastHoverLocation = nil
+                setLockedCursorVisible(false)
             }
             return
         }
@@ -638,7 +637,7 @@ extension InputCapturingView {
         switch gesture.state {
         case .began,
              .changed:
-            if pointerMoved, stylusPayload == nil { revealCursorAfterPointerMovement() }
+            if pointerMoved, hoverStylus == nil { revealCursorAfterPointerMovement() }
             if usesVirtualTrackpad {
                 setVirtualCursorVisible(false)
                 updateVirtualCursorPosition(normalized, updateVisibility: false)
@@ -655,7 +654,7 @@ extension InputCapturingView {
                     location: normalized,
                     modifiers: eventModifiers,
                     pressure: hoverPressure,
-                    stylus: stylusPayload
+                    stylus: hoverStylus
                 )
                 onInputEvent?(.mouseMoved(mouseEvent))
             }
@@ -769,8 +768,6 @@ extension InputCapturingView {
         }
         setTrackpadCursorVisible(true)
         if gesture.state == .began { stopVirtualCursorDeceleration() }
-        let location = normalizedLocation(gesture.location(in: self))
-        updateTrackpadCursorPosition(location, updateVisibility: false)
         let eventModifiers = modifiers(from: gesture)
 
         switch gesture.state {

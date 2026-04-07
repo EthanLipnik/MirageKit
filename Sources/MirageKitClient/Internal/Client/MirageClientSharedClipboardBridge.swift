@@ -55,6 +55,20 @@ private actor ClientClipboardSnapshotReader {
         0
         #endif
     }
+
+    func applyText(_ text: String) -> Int {
+        #if os(macOS)
+        let pasteboard = NSPasteboard.general
+        _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
+        pasteboard.setString(text, forType: .string)
+        return pasteboard.changeCount
+        #elseif canImport(UIKit)
+        UIPasteboard.general.string = text
+        return UIPasteboard.general.changeCount
+        #else
+        return 0
+        #endif
+    }
 }
 
 @MainActor
@@ -99,27 +113,16 @@ final class MirageClientSharedClipboardBridge {
         _ text: String,
         orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
-    ) {
+    ) async {
         guard let text = MirageSharedClipboard.validatedText(text) else { return }
         guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else { return }
 
-        #if os(macOS)
-        let pasteboard = NSPasteboard.general
-        _ = pasteboard.prepareForNewContents(with: [.currentHostOnly])
-        pasteboard.setString(text, forType: .string)
+        let changeCount = await ClientClipboardSnapshotReader.shared.applyText(text)
         clipboardState.recordRemoteWrite(
             text: text,
-            changeCount: pasteboard.changeCount,
+            changeCount: changeCount,
             orderingToken: orderingToken
         )
-        #elseif canImport(UIKit)
-        UIPasteboard.general.string = text
-        clipboardState.recordRemoteWrite(
-            text: text,
-            changeCount: UIPasteboard.general.changeCount,
-            orderingToken: orderingToken
-        )
-        #endif
     }
 
     func syncCurrentClipboardToRemote() async {

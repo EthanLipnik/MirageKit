@@ -252,7 +252,7 @@ public extension MirageCursorType {
     var cursorHotspot: CGPoint {
         switch self {
         case .arrow: CGPoint(x: 5, y: 5)
-        case .iBeam: CGPoint(x: 11, y: 10)
+        case .iBeam: CGPoint(x: 10, y: 11)
         case .crosshair: CGPoint(x: 11, y: 11)
         case .closedHand: CGPoint(x: 16, y: 17)
         case .openHand: CGPoint(x: 16, y: 17)
