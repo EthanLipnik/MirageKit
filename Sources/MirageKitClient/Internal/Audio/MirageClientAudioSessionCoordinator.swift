@@ -20,14 +20,13 @@ internal enum MirageClientAudioSessionConfiguration: Equatable {
     case dictation
 }
 
-internal protocol MirageClientAudioSessionDriving {
-    var isApplicationActive: Bool { get }
-    func activate(_ configuration: MirageClientAudioSessionConfiguration) throws
-    func deactivate() throws
+internal protocol MirageClientAudioSessionDriving: Sendable {
+    func isApplicationActive() async -> Bool
+    func activate(_ configuration: MirageClientAudioSessionConfiguration) async throws
+    func deactivate() async throws
 }
 
-@MainActor
-internal final class MirageClientAudioSessionCoordinator {
+internal actor MirageClientAudioSessionCoordinator {
     static let shared = MirageClientAudioSessionCoordinator()
 
     private let driver: any MirageClientAudioSessionDriving
@@ -49,9 +48,9 @@ internal final class MirageClientAudioSessionCoordinator {
         self.driver = driver
     }
 
-    func requestPlaybackSession() -> Bool {
+    func requestPlaybackSession() async -> Bool {
         playbackLeaseCount += 1
-        let _ = refreshSessionIfNeeded()
+        let _ = await refreshSessionIfNeeded()
         let isActive = currentConfiguration != nil
         if !isActive {
             playbackLeaseCount -= 1
@@ -59,15 +58,15 @@ internal final class MirageClientAudioSessionCoordinator {
         return isActive
     }
 
-    func releasePlaybackSession() {
+    func releasePlaybackSession() async {
         guard playbackLeaseCount > 0 else { return }
         playbackLeaseCount -= 1
-        _ = refreshSessionIfNeeded()
+        _ = await refreshSessionIfNeeded()
     }
 
-    func requestDictationSession() -> Bool {
+    func requestDictationSession() async -> Bool {
         dictationLeaseCount += 1
-        let _ = refreshSessionIfNeeded()
+        let _ = await refreshSessionIfNeeded()
         let isActive = currentConfiguration == .dictation
         if !isActive {
             dictationLeaseCount -= 1
@@ -75,14 +74,14 @@ internal final class MirageClientAudioSessionCoordinator {
         return isActive
     }
 
-    func releaseDictationSession() {
+    func releaseDictationSession() async {
         guard dictationLeaseCount > 0 else { return }
         dictationLeaseCount -= 1
-        _ = refreshSessionIfNeeded()
+        _ = await refreshSessionIfNeeded()
     }
 
     #if DEBUG
-    func resetForTesting() {
+    func resetForTesting() async {
         playbackLeaseCount = 0
         dictationLeaseCount = 0
         currentConfiguration = nil
@@ -102,13 +101,13 @@ internal final class MirageClientAudioSessionCoordinator {
         return nil
     }
 
-    private func refreshSessionIfNeeded() -> Bool {
+    private func refreshSessionIfNeeded() async -> Bool {
         guard let desiredConfiguration else {
-            deactivateIfNeeded()
+            await deactivateIfNeeded()
             return false
         }
 
-        guard driver.isApplicationActive else {
+        guard await driver.isApplicationActive() else {
             if !loggedInactiveDeferral {
                 MirageLogger.client("Deferring shared audio session activation until app becomes active")
                 loggedInactiveDeferral = true
@@ -127,7 +126,7 @@ internal final class MirageClientAudioSessionCoordinator {
         }
 
         do {
-            try driver.activate(desiredConfiguration)
+            try await driver.activate(desiredConfiguration)
             currentConfiguration = desiredConfiguration
             activationFailureCount = 0
             activationBackoffUntil = nil
@@ -155,13 +154,13 @@ internal final class MirageClientAudioSessionCoordinator {
         }
     }
 
-    private func deactivateIfNeeded() {
+    private func deactivateIfNeeded() async {
         guard currentConfiguration != nil else { return }
         currentConfiguration = nil
         activationFailureCount = 0
         activationBackoffUntil = nil
         loggedInactiveDeferral = false
-        try? driver.deactivate()
+        try? await driver.deactivate()
     }
 
     private func shouldSuppressActivationError(_ error: Error) -> Bool {
@@ -187,11 +186,13 @@ internal final class MirageClientAudioSessionCoordinator {
 
 #if os(iOS) || os(visionOS)
 private struct MirageSystemAudioSessionDriver: MirageClientAudioSessionDriving {
-    var isApplicationActive: Bool {
-        UIApplication.shared.applicationState == .active
+    func isApplicationActive() async -> Bool {
+        await MainActor.run {
+            UIApplication.shared.applicationState == .active
+        }
     }
 
-    func activate(_ configuration: MirageClientAudioSessionConfiguration) throws {
+    func activate(_ configuration: MirageClientAudioSessionConfiguration) async throws {
         let session = AVAudioSession.sharedInstance()
         switch configuration {
         case .playback:
@@ -203,18 +204,18 @@ private struct MirageSystemAudioSessionDriver: MirageClientAudioSessionDriving {
         }
     }
 
-    func deactivate() throws {
+    func deactivate() async throws {
         try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
     }
 }
 #else
 private struct MirageSystemAudioSessionDriver: MirageClientAudioSessionDriving {
-    var isApplicationActive: Bool { true }
+    func isApplicationActive() async -> Bool { true }
 
-    func activate(_ configuration: MirageClientAudioSessionConfiguration) throws {
+    func activate(_ configuration: MirageClientAudioSessionConfiguration) async throws {
         _ = configuration
     }
 
-    func deactivate() throws {}
+    func deactivate() async throws {}
 }
 #endif

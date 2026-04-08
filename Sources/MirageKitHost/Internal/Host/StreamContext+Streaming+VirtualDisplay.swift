@@ -246,7 +246,10 @@ extension StreamContext {
     }
 
     /// Updates window size for a resolution change (no virtual display reconfiguration needed).
-    func updateWindowCaptureResolution(newLogicalSize: CGSize) async throws {
+    func updateWindowCaptureResolution(
+        newLogicalSize: CGSize,
+        forceReconfigure: Bool = false
+    ) async throws {
         guard isRunning, useVirtualDisplay else { return }
 
         let currentSize = baseCaptureSize
@@ -255,12 +258,18 @@ extension StreamContext {
             displayScaleFactor: virtualDisplayContext?.scaleFactor ?? 1.0
         )
         .displayPixelSize
-        guard abs(currentSize.width - requestedPixels.width) > 4
-            || abs(currentSize.height - requestedPixels.height) > 4 else {
+        let sizeChanged = abs(currentSize.width - requestedPixels.width) > 4 ||
+            abs(currentSize.height - requestedPixels.height) > 4
+        guard sizeChanged || forceReconfigure else {
             MirageLogger.stream(
                 "Skipping window resize for stream \(streamID): size unchanged"
             )
             return
+        }
+        if forceReconfigure, !sizeChanged {
+            MirageLogger.stream(
+                "Forcing window resize reconfiguration for stream \(streamID) despite unchanged logical size"
+            )
         }
 
         isResizing = true

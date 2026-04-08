@@ -125,8 +125,14 @@ extension MirageHostService {
     func handleControlChannelSendFailure(
         client: MirageConnectedClient,
         error: Error,
-        operation: String
+        operation: String,
+        sessionID: UUID? = nil
     ) async {
+        if let sessionID,
+           findClientContext(sessionID: sessionID)?.client.id != client.id {
+            return
+        }
+
         // After the first send failure for a client, subsequent sends will
         // also fail while disconnectClient() is in flight.  Log only the
         // first failure as a Sentry event to avoid flooding diagnostics
@@ -146,7 +152,7 @@ extension MirageHostService {
         }
 
         guard clientsByID[client.id] != nil else { return }
-        await disconnectClient(client)
+        await disconnectClient(client, sessionID: sessionID)
     }
 
     func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {

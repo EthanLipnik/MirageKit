@@ -434,7 +434,7 @@ private class CallbackScrollView: UIScrollView, UIScrollViewDelegate, UIGestureR
     var onDidEndDecelerating: ((UIScrollView) -> Void)?
     var onDidEndScrollingAnimation: ((UIScrollView) -> Void)?
 
-    private func installDelegateBindingsIfNeeded() {
+    private func installDelegateBindings() {
         if (super.delegate as AnyObject?) !== self {
             super.delegate = self
         }
@@ -443,43 +443,14 @@ private class CallbackScrollView: UIScrollView, UIScrollViewDelegate, UIGestureR
         }
     }
 
-    private func clearDelegateBindingsIfNeeded() {
-        if (super.delegate as AnyObject?) === self {
-            super.delegate = nil
-        }
-        if (panGestureRecognizer.delegate as AnyObject?) === self {
-            panGestureRecognizer.delegate = nil
-        }
-    }
-
     override init(frame: CGRect) {
         super.init(frame: frame)
-        installDelegateBindingsIfNeeded()
+        installDelegateBindings()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        installDelegateBindingsIfNeeded()
-    }
-
-    override func willMove(toWindow newWindow: UIWindow?) {
-        if newWindow == nil {
-            setContentOffset(contentOffset, animated: false)
-            layer.removeAllAnimations()
-            clearDelegateBindingsIfNeeded()
-        }
-        super.willMove(toWindow: newWindow)
-    }
-
-    override func didMoveToWindow() {
-        super.didMoveToWindow()
-        if window != nil {
-            installDelegateBindingsIfNeeded()
-        }
-    }
-
-    deinit {
-        clearDelegateBindingsIfNeeded()
+        installDelegateBindings()
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {

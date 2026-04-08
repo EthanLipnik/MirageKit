@@ -12,6 +12,7 @@ import MirageKit
 extension MirageHostService {
     struct PendingStartupAttempt: Sendable {
         let startupAttemptID: UUID
+        let sessionID: UUID
         let clientID: UUID
         let kind: MirageStartupStreamKind
     }
@@ -19,12 +20,14 @@ extension MirageHostService {
     func registerPendingStartupAttempt(
         streamID: StreamID,
         startupAttemptID: UUID,
+        sessionID: UUID,
         clientID: UUID,
         kind: MirageStartupStreamKind
     ) {
         cancelPendingStartupAttempt(streamID: streamID)
         pendingStartupAttemptsByStreamID[streamID] = PendingStartupAttempt(
             startupAttemptID: startupAttemptID,
+            sessionID: sessionID,
             clientID: clientID,
             kind: kind
         )
@@ -88,7 +91,8 @@ extension MirageHostService {
 
         switch pending.kind {
         case .desktop:
-            if let clientContext = clientsByID[pending.clientID] {
+            if let clientContext = findClientContext(sessionID: pending.sessionID),
+               clientContext.client.id == pending.clientID {
                 let failure = DesktopStreamFailedMessage(
                     reason: "Desktop startup timed out waiting for client readiness acknowledgement.",
                     errorCode: .networkError
@@ -100,7 +104,8 @@ extension MirageHostService {
                 "Desktop startup timed out waiting for client readiness ack stream=\(streamID)"
             )
         case .window:
-            if let clientContext = clientsByID[pending.clientID] {
+            if let clientContext = findClientContext(sessionID: pending.sessionID),
+               clientContext.client.id == pending.clientID {
                 sendControlError(
                     ErrorMessage.ErrorCode.networkError,
                     message: "Stream startup timed out waiting for client readiness acknowledgement.",

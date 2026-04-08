@@ -40,6 +40,8 @@ package final class MiragePowerStateMonitor {
 
     #if os(macOS)
     private var powerSourceRunLoopSource: CFRunLoopSource?
+    private var cachedMacBatteryState: Bool?
+    private var hasCachedMacBatteryState = false
     #elseif canImport(UIKit)
     private var batteryStateObserver: NSObjectProtocol?
     private var batteryLevelObserver: NSObjectProtocol?
@@ -115,7 +117,11 @@ package final class MiragePowerStateMonitor {
 
     private func currentBatteryState() async -> Bool? {
         #if os(macOS)
-        await Self.readMacBatteryState()
+        if !isMonitoring || !hasCachedMacBatteryState {
+            cachedMacBatteryState = await Self.readMacBatteryState()
+            hasCachedMacBatteryState = true
+        }
+        return cachedMacBatteryState
         #elseif canImport(UIKit)
         readDeviceBatteryState()
         #else
@@ -152,9 +158,13 @@ private extension MiragePowerStateMonitor {
         guard let source = powerSourceRunLoopSource else { return }
         CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
         powerSourceRunLoopSource = nil
+        hasCachedMacBatteryState = false
+        cachedMacBatteryState = nil
     }
 
     func handlePowerSourceDidChange() async {
+        cachedMacBatteryState = await Self.readMacBatteryState()
+        hasCachedMacBatteryState = true
         await dispatchCurrentSnapshot()
     }
 

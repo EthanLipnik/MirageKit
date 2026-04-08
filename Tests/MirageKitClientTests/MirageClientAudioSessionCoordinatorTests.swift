@@ -16,75 +16,79 @@ import Testing
 struct MirageClientAudioSessionCoordinatorTests {
     @MainActor
     @Test("Playback and dictation share a single session owner")
-    func playbackAndDictationShareASessionOwner() {
+    func playbackAndDictationShareASessionOwner() async {
         let driver = RecordingAudioSessionDriver()
         let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
 
-        #expect(coordinator.requestPlaybackSession())
+        #expect(await coordinator.requestPlaybackSession())
         #expect(driver.events == [.activate(.playback)])
 
-        #expect(coordinator.requestDictationSession())
+        #expect(await coordinator.requestDictationSession())
         #expect(driver.events == [.activate(.playback), .activate(.dictation)])
 
-        coordinator.releasePlaybackSession()
+        await coordinator.releasePlaybackSession()
         #expect(driver.events == [.activate(.playback), .activate(.dictation)])
 
-        coordinator.releaseDictationSession()
+        await coordinator.releaseDictationSession()
         #expect(driver.events == [.activate(.playback), .activate(.dictation), .deactivate])
     }
 
     @MainActor
     @Test("Dictation releases back to playback when playback lease remains")
-    func dictationRestoresPlaybackWhenPlaybackLeaseRemains() {
+    func dictationRestoresPlaybackWhenPlaybackLeaseRemains() async {
         let driver = RecordingAudioSessionDriver()
         let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
 
-        #expect(coordinator.requestPlaybackSession())
-        #expect(coordinator.requestDictationSession())
+        #expect(await coordinator.requestPlaybackSession())
+        #expect(await coordinator.requestDictationSession())
 
-        coordinator.releaseDictationSession()
+        await coordinator.releaseDictationSession()
 
         #expect(driver.events == [.activate(.playback), .activate(.dictation), .activate(.playback)])
 
-        coordinator.releasePlaybackSession()
+        await coordinator.releasePlaybackSession()
         #expect(driver.events == [.activate(.playback), .activate(.dictation), .activate(.playback), .deactivate])
     }
 
     @MainActor
     @Test("Inactive app defers session activation")
-    func inactiveAppDefersSessionActivation() {
+    func inactiveAppDefersSessionActivation() async {
         let driver = RecordingAudioSessionDriver(isApplicationActive: false)
         let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
 
-        #expect(coordinator.requestPlaybackSession() == false)
+        #expect(await coordinator.requestPlaybackSession() == false)
         #expect(driver.events.isEmpty)
 
-        coordinator.releasePlaybackSession()
-        driver.isApplicationActive = true
+        await coordinator.releasePlaybackSession()
+        driver.isApplicationActiveValue = true
 
-        #expect(coordinator.requestPlaybackSession())
+        #expect(await coordinator.requestPlaybackSession())
         #expect(driver.events == [.activate(.playback)])
     }
 }
 
-private final class RecordingAudioSessionDriver: MirageClientAudioSessionDriving {
+private final class RecordingAudioSessionDriver: MirageClientAudioSessionDriving, @unchecked Sendable {
     enum Event: Equatable {
         case activate(MirageClientAudioSessionConfiguration)
         case deactivate
     }
 
-    var isApplicationActive: Bool
+    var isApplicationActiveValue: Bool
     private(set) var events: [Event] = []
 
     init(isApplicationActive: Bool = true) {
-        self.isApplicationActive = isApplicationActive
+        self.isApplicationActiveValue = isApplicationActive
     }
 
-    func activate(_ configuration: MirageClientAudioSessionConfiguration) throws {
+    func isApplicationActive() async -> Bool {
+        isApplicationActiveValue
+    }
+
+    func activate(_ configuration: MirageClientAudioSessionConfiguration) async throws {
         events.append(.activate(configuration))
     }
 
-    func deactivate() throws {
+    func deactivate() async throws {
         events.append(.deactivate)
     }
 }

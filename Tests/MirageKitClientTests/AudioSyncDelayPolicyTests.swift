@@ -60,14 +60,14 @@ struct AudioSyncDelayPolicyTests {
 
     @MainActor
     @Test("Playback controller reset clears runtime delay and stays idempotent")
-    func playbackControllerResetIsIdempotent() {
+    func playbackControllerResetIsIdempotent() async {
         let controller = AudioPlaybackController()
 
         controller.setRuntimeExtraDelay(seconds: 0.04)
-        controller.reset()
+        await controller.reset()
         #expect(controller.runtimeExtraDelaySecondsForTesting() == 0)
 
-        controller.reset()
+        await controller.reset()
         #expect(controller.runtimeExtraDelaySecondsForTesting() == 0)
     }
 }

@@ -63,7 +63,7 @@ extension MirageHostService {
                 await self?.handleInputEventMessage(message, from: clientContext.client)
             },
             .disconnect: { [weak self] message, clientContext in
-                await self?.handleDisconnectMessage(message, from: clientContext.client)
+                await self?.handleDisconnectMessage(message, from: clientContext)
             },
             .appListRequest: { [weak self] message, clientContext in
                 await self?.handleAppListRequest(message, from: clientContext)
@@ -215,6 +215,7 @@ extension MirageHostService {
             try await startStream(
                 for: window,
                 to: clientContext.client,
+                expectedSessionID: clientContext.sessionID,
                 clientDisplayResolution: clientDisplayResolution,
                 clientScaleFactor: request.scaleFactor,
                 keyFrameInterval: keyFrameInterval,
@@ -403,13 +404,14 @@ extension MirageHostService {
         }
     }
 
-    private func handleDisconnectMessage(_ message: ControlMessage, from client: MirageConnectedClient) async {
+    private func handleDisconnectMessage(_ message: ControlMessage, from clientContext: ClientContext) async {
+        let client = clientContext.client
         if let disconnect = try? message.decode(DisconnectMessage.self) {
             MirageLogger.host("Client \(client.name) disconnected: \(disconnect.reason.rawValue)")
         } else {
             MirageLogger.host("Client \(client.name) disconnected")
         }
-        await disconnectClient(client)
+        await disconnectClient(client, sessionID: clientContext.sessionID)
         delegate?.hostService(self, didDisconnectClient: client)
     }
 

@@ -41,7 +41,7 @@ extension InputCapturingView {
 
             do {
                 try await requestDictationPermissions()
-                try configureAudioSessionForDictation()
+                try await configureAudioSessionForDictation()
                 let dictationLocale = try await resolveDictationLocale()
                 MirageLogger.client("Dictation permissions and audio session ready")
 
@@ -146,7 +146,9 @@ extension InputCapturingView {
             onDictationStateChanged?(false)
         }
 
-        MirageClientAudioSessionCoordinator.shared.releaseDictationSession()
+        Task {
+            await MirageClientAudioSessionCoordinator.shared.releaseDictationSession()
+        }
     }
 
     private func requestDictationPermissions() async throws {
@@ -163,8 +165,8 @@ extension InputCapturingView {
         }
     }
 
-    private func configureAudioSessionForDictation() throws {
-        guard MirageClientAudioSessionCoordinator.shared.requestDictationSession() else {
+    private func configureAudioSessionForDictation() async throws {
+        guard await MirageClientAudioSessionCoordinator.shared.requestDictationSession() else {
             throw DictationError.audioSessionUnavailable
         }
     }

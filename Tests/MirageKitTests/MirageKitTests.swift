@@ -537,7 +537,7 @@ struct MirageKitTests {
             fragmentCount: 1,
             payloadLength: 256,
             frameByteCount: 256,
-            sampleRate: 44_100,
+            sampleRate: 48_000,
             channelCount: 2,
             samplesPerFrame: 512,
             checksum: 0xABCD_1234
@@ -550,7 +550,7 @@ struct MirageKitTests {
         #expect(decoded?.codec == .pcm16LE)
         #expect(decoded?.flags.contains(.discontinuity) == true)
         #expect(decoded?.streamID == 7)
-        #expect(decoded?.sampleRate == 44_100)
+        #expect(decoded?.sampleRate == 48_000)
         #expect(decoded?.channelCount == 2)
         #expect(decoded?.checksum == 0xABCD_1234)
     }

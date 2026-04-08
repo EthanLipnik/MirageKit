@@ -397,9 +397,18 @@ public struct MirageStreamContentView: View {
                 handleResizeAcknowledgement(sessionStore.sessionMinSizes[session.id])
             }
         }
+        .onChange(of: clientService.appStreamStartAcknowledgementByStreamID[session.streamID]) { _, acknowledgement in
+            handleAppStreamStartAcknowledgement(acknowledgement)
+        }
+        .onChange(of: session.hasPresentedFrame) { _, hasPresentedFrame in
+            guard hasPresentedFrame, !isDesktopStream else { return }
+            guard latestContainerDisplaySize.width > 0, latestContainerDisplaySize.height > 0 else { return }
+            handleContainerSizeChanged(latestContainerDisplaySize)
+        }
         .onAppear {
             sessionStore.setFocusedSession(session.id)
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
+            syncInitialAppDisplayResolutionBaselineIfNeeded()
         }
         .onDisappear {
             resizeHoldoffTask?.cancel()
@@ -629,6 +638,8 @@ public struct MirageStreamContentView: View {
     }
 
     private func handleContainerSizeChanged(_ containerSize: CGSize) {
+        syncInitialAppDisplayResolutionBaselineIfNeeded()
+
         #if os(iOS) || os(visionOS)
         let lifecycleDecision = desktopResizeLifecycleDecision(
             state: resizeLifecycleState,
@@ -708,6 +719,12 @@ public struct MirageStreamContentView: View {
                     return
                 }
                 latestRequestedDisplaySize = baseDisplaySize
+                if !session.hasPresentedFrame {
+                    pendingAppDisplayResolutionCandidate = .zero
+                    pendingAppDisplayResolutionCandidateSince = .distantPast
+                    if !awaitingAppResizeAck, isResizing { isResizing = false }
+                    return
+                }
                 if streamPresentationTier == .passiveSnapshot {
                     displayResolutionTask?.cancel()
                     displayResolutionTask = nil
@@ -922,6 +939,19 @@ public struct MirageStreamContentView: View {
         }
     }
 
+    private func syncInitialAppDisplayResolutionBaselineIfNeeded() {
+        guard !isDesktopStream else { return }
+        guard lastSentDisplayResolution == .zero else { return }
+        guard pendingDisplayResolutionDispatchTarget == .zero else { return }
+        guard let acknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID] else { return }
+        let acknowledgedDisplaySize = CGSize(
+            width: acknowledgement.width,
+            height: acknowledgement.height
+        )
+        guard acknowledgedDisplaySize.width > 0, acknowledgedDisplaySize.height > 0 else { return }
+        lastSentDisplayResolution = acknowledgedDisplaySize
+    }
+
     private func beginDesktopResizeAwaitingAck() {
         awaitingDesktopResizeAck = true
         isResizing = true
@@ -1024,6 +1054,27 @@ public struct MirageStreamContentView: View {
         awaitingAppResizeAck = false
         appResizeBaselineAcknowledgement = nil
         if isResizing { isResizing = false }
+    }
+
+    private func handleAppStreamStartAcknowledgement(
+        _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
+    ) {
+        guard !isDesktopStream else { return }
+        guard let acknowledgement else { return }
+        let acknowledgedDisplaySize = CGSize(
+            width: acknowledgement.width,
+            height: acknowledgement.height
+        )
+        guard acknowledgedDisplaySize.width > 0, acknowledgedDisplaySize.height > 0 else { return }
+
+        latestRequestedDisplaySize = acknowledgedDisplaySize
+        if !awaitingAppResizeAck ||
+            isMeaningfulAppResizeAcknowledgement(
+                acknowledgement,
+                comparedTo: appResizeBaselineAcknowledgement
+            ) {
+            lastSentDisplayResolution = acknowledgedDisplaySize
+        }
     }
 
     private func handleResizeAcknowledgement(_ minSize: CGSize?) {

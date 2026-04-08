@@ -13,6 +13,11 @@ import MirageKit
 
 @MainActor
 public final class AudioPlaybackController {
+    private struct PlaybackConfigurationKey: Equatable {
+        let sampleRate: Int
+        let channelCount: Int
+    }
+
     private final class PlaybackGraph {
         let engine = AVAudioEngine()
         let playerNode = AVAudioPlayerNode()
@@ -38,6 +43,8 @@ public final class AudioPlaybackController {
     private var isDelayHoldActive = false
     private var isConfigured = false
     private var hasPlaybackSessionLease = false
+    private var configurationTask: Task<Bool, Never>?
+    private var configurationTaskKey: PlaybackConfigurationKey?
 
     init(startupBufferSeconds: Double = 0.150, maxQueuedSeconds: Double = 0.750) {
         self.startupBufferSeconds = max(0, startupBufferSeconds)
@@ -72,7 +79,10 @@ public final class AudioPlaybackController {
         playbackGraph != nil
     }
 
-    func reset() {
+    func reset() async {
+        configurationTask?.cancel()
+        configurationTask = nil
+        configurationTaskKey = nil
         tearDownPlaybackGraph()
         pendingFrames.removeAll()
         pendingDurationSeconds = 0
@@ -83,7 +93,7 @@ public final class AudioPlaybackController {
         isConfigured = false
         configuredSampleRate = 0
         configuredChannelCount = 0
-        releasePlaybackSessionIfNeeded()
+        await releasePlaybackSessionIfNeeded()
     }
 
     func preferredChannelCount(for incomingChannelCount: Int) -> Int {
@@ -140,47 +150,114 @@ public final class AudioPlaybackController {
     }
 
     func enqueue(_ frame: DecodedPCMFrame) {
-        guard configureIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount) else { return }
+        startConfigurationIfNeeded(sampleRate: frame.sampleRate, channelCount: frame.channelCount)
         pendingFrames.append(frame)
         pendingDurationSeconds += frame.durationSeconds
         drainPendingFramesIfNeeded()
     }
 
     @discardableResult
-    func prepareForIncomingFormat(sampleRate: Int, channelCount: Int) -> Bool {
-        configureIfNeeded(sampleRate: sampleRate, channelCount: channelCount)
+    func prepareForIncomingFormat(sampleRate: Int, channelCount: Int) async -> Bool {
+        await ensureConfigured(sampleRate: sampleRate, channelCount: channelCount)
     }
 
-    private func configureIfNeeded(sampleRate: Int, channelCount: Int) -> Bool {
-        let resolvedSampleRate = max(1, sampleRate)
-        let resolvedChannels = max(1, channelCount)
+    private func ensureConfigured(sampleRate: Int, channelCount: Int) async -> Bool {
+        let key = PlaybackConfigurationKey(
+            sampleRate: max(1, sampleRate),
+            channelCount: max(1, channelCount)
+        )
         if isConfigured,
-           configuredSampleRate == resolvedSampleRate,
-           configuredChannelCount == resolvedChannels {
+           configuredSampleRate == key.sampleRate,
+           configuredChannelCount == key.channelCount {
+            return true
+        }
+
+        if let configurationTask, configurationTaskKey == key {
+            return await configurationTask.value
+        }
+
+        let task = startConfigurationTask(for: key)
+        return await task.value
+    }
+
+    private func startConfigurationIfNeeded(sampleRate: Int, channelCount: Int) {
+        let key = PlaybackConfigurationKey(
+            sampleRate: max(1, sampleRate),
+            channelCount: max(1, channelCount)
+        )
+        if isConfigured,
+           configuredSampleRate == key.sampleRate,
+           configuredChannelCount == key.channelCount {
+            return
+        }
+
+        if configurationTaskKey == key {
+            return
+        }
+
+        if configurationTask != nil {
+            configurationTask?.cancel()
+            configurationTask = nil
+            configurationTaskKey = nil
+            resetPendingPlaybackState()
+        }
+
+        _ = startConfigurationTask(for: key)
+    }
+
+    @discardableResult
+    private func startConfigurationTask(for key: PlaybackConfigurationKey) -> Task<Bool, Never> {
+        let task = Task { [weak self] in
+            guard let self else { return false }
+            return await self.performConfiguration(sampleRate: key.sampleRate, channelCount: key.channelCount)
+        }
+        configurationTask = task
+        configurationTaskKey = key
+        return task
+    }
+
+    private func performConfiguration(sampleRate: Int, channelCount: Int) async -> Bool {
+        let key = PlaybackConfigurationKey(sampleRate: sampleRate, channelCount: channelCount)
+        defer {
+            if configurationTaskKey == key {
+                configurationTask = nil
+                configurationTaskKey = nil
+            }
+        }
+
+        if isConfigured,
+           configuredSampleRate == key.sampleRate,
+           configuredChannelCount == key.channelCount {
             return true
         }
 
         tearDownPlaybackGraph()
         let hadPlaybackSessionLease = hasPlaybackSessionLease
 
-        guard ensurePlaybackSessionConfigured() else {
+        guard await ensurePlaybackSessionConfigured() else {
             return false
         }
 
-        let playbackGraph = resolvePlaybackGraph()
-
-        guard let format = AVAudioFormat(
-            commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(resolvedSampleRate),
-            channels: AVAudioChannelCount(resolvedChannels),
-            interleaved: false
-        ) else {
+        if Task.isCancelled {
             if !hadPlaybackSessionLease {
-                releasePlaybackSessionIfNeeded()
+                await releasePlaybackSessionIfNeeded()
             }
             return false
         }
 
+        guard let format = AVAudioFormat(
+            commonFormat: .pcmFormatFloat32,
+            sampleRate: Double(key.sampleRate),
+            channels: AVAudioChannelCount(key.channelCount),
+            interleaved: false
+        ) else {
+            if !hadPlaybackSessionLease {
+                await releasePlaybackSessionIfNeeded()
+            }
+            return false
+        }
+
+        let playbackGraph = resolvePlaybackGraph()
         playbackGraph.engine.connect(playbackGraph.playerNode, to: playbackGraph.engine.mainMixerNode, format: format)
         playbackGraph.engine.prepare()
         do {
@@ -188,26 +265,24 @@ public final class AudioPlaybackController {
         } catch {
             MirageLogger.error(.client, error: error, message: "Audio playback engine failed to start: ")
             if !hadPlaybackSessionLease {
-                releasePlaybackSessionIfNeeded()
+                await releasePlaybackSessionIfNeeded()
             }
             return false
         }
 
-        configuredSampleRate = resolvedSampleRate
-        configuredChannelCount = resolvedChannels
-        pendingFrames.removeAll()
-        pendingDurationSeconds = 0
-        scheduledDurationSeconds = 0
+        configuredSampleRate = key.sampleRate
+        configuredChannelCount = key.channelCount
         hasStartedPlayback = false
         isDelayHoldActive = false
         isConfigured = true
+        drainPendingFramesIfNeeded()
         return true
     }
 
-    private func ensurePlaybackSessionConfigured() -> Bool {
+    private func ensurePlaybackSessionConfigured() async -> Bool {
         guard !hasPlaybackSessionLease else { return true }
 
-        guard MirageClientAudioSessionCoordinator.shared.requestPlaybackSession() else {
+        guard await MirageClientAudioSessionCoordinator.shared.requestPlaybackSession() else {
             return false
         }
 
@@ -215,10 +290,18 @@ public final class AudioPlaybackController {
         return true
     }
 
-    private func releasePlaybackSessionIfNeeded() {
+    private func releasePlaybackSessionIfNeeded() async {
         guard hasPlaybackSessionLease else { return }
         hasPlaybackSessionLease = false
-        MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
+        await MirageClientAudioSessionCoordinator.shared.releasePlaybackSession()
+    }
+
+    private func resetPendingPlaybackState() {
+        pendingFrames.removeAll()
+        pendingDurationSeconds = 0
+        scheduledDurationSeconds = 0
+        hasStartedPlayback = false
+        isDelayHoldActive = false
     }
 
     private func drainPendingFramesIfNeeded() {

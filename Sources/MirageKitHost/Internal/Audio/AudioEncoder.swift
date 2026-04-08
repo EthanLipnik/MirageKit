@@ -343,7 +343,7 @@ actor AudioEncoder {
         case .lossless:
             return HostAudioEncodingParameters(
                 codec: .pcm16LE,
-                sampleRate: 44_100,
+                sampleRate: 48_000,
                 channelCount: channelCount,
                 bitrate: nil
             )

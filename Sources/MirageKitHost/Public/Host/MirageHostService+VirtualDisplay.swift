@@ -359,6 +359,7 @@ extension MirageHostService {
             try await startStream(
                 for: window,
                 to: client,
+                expectedSessionID: findClientContext(clientID: client.id)?.sessionID,
                 clientDisplayResolution: displayResolution,
                 clientScaleFactor: inheritedClientScaleFactor,
                 keyFrameInterval: encoderSettings.keyFrameInterval,
@@ -1073,6 +1074,11 @@ extension MirageHostService {
             encoderMaxHeight: encoderMaxHeight ?? Int(StreamContext.maxEncodedHeight),
             disableResolutionCap: disableResolutionCap
         ).encodedPixelSize
+        let requiresForcedReconfigure = if currentEncodedResolution.width > 0, currentEncodedResolution.height > 0 {
+            !virtualDisplayResolutionMatches(currentEncodedResolution, requestedEncodedResolution)
+        } else {
+            false
+        }
         if windowResizeNoOpDecision(
             currentVisibleResolution: currentVisibleResolution,
             currentDisplayResolution: currentDisplayResolution,
@@ -1090,7 +1096,10 @@ extension MirageHostService {
         }
 
         do {
-            try await context.updateWindowCaptureResolution(newLogicalSize: logicalResolution)
+            try await context.updateWindowCaptureResolution(
+                newLogicalSize: logicalResolution,
+                forceReconfigure: requiresForcedReconfigure
+            )
             await refreshWindowVirtualDisplayState(
                 streamID: streamID,
                 context: context,

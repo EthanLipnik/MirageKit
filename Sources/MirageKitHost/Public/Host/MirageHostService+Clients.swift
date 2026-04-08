@@ -13,7 +13,18 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
-    public func disconnectClient(_ client: MirageConnectedClient) async {
+    public func disconnectClient(
+        _ client: MirageConnectedClient,
+        sessionID expectedSessionID: UUID? = nil
+    )
+    async {
+        if let expectedSessionID,
+           findClientContext(sessionID: expectedSessionID)?.client.id != client.id {
+            MirageLogger.host(
+                "Ignoring disconnect for superseded client session \(expectedSessionID.uuidString) (\(client.name))"
+            )
+            return
+        }
         if disconnectingClientIDs.contains(client.id) { return }
         disconnectingClientIDs.insert(client.id)
         defer {
@@ -53,7 +64,13 @@ extension MirageHostService {
         // treat this client as active.
         var removedSessionID: UUID?
         var removedClientContext: ClientContext?
-        if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
+        if let expectedSessionID,
+           let currentClientContext = clientsBySessionID[expectedSessionID],
+           currentClientContext.client.id == client.id {
+            removedClientContext = clientsBySessionID.removeValue(forKey: expectedSessionID)
+            removedSessionID = expectedSessionID
+            stopReceiveLoop(sessionID: expectedSessionID)
+        } else if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
             removedClientContext = clientsBySessionID.removeValue(forKey: key)
             removedSessionID = key
             stopReceiveLoop(sessionID: key)

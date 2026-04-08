@@ -22,7 +22,9 @@ extension MirageClientService {
         setAudioDecodeTargetChannelCountForPipeline(2)
         if let audioPlaybackController = audioPlaybackControllerIfInitialized {
             audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
-            audioPlaybackController.reset()
+            Task { @MainActor [audioPlaybackController] in
+                await audioPlaybackController.reset()
+            }
         }
         Task { [audioPacketIngressQueue] in
             await audioPacketIngressQueue.reset()
@@ -137,9 +139,11 @@ extension MirageClientService {
                 guard let self else { return }
                 if previous != started {
                     await self.audioPacketIngressQueue.reset()
-                    self.audioPlaybackControllerIfInitialized?.reset()
+                    if let audioPlaybackController = self.audioPlaybackControllerIfInitialized {
+                        await audioPlaybackController.reset()
+                    }
                 }
-                let prepared = self.resolveAudioPlaybackController().prepareForIncomingFormat(
+                let prepared = await self.resolveAudioPlaybackController().prepareForIncomingFormat(
                     sampleRate: Int(started.sampleRate),
                     channelCount: preferredChannels
                 )
@@ -170,7 +174,7 @@ extension MirageClientService {
                 await self.audioPacketIngressQueue.reset()
                 if let audioPlaybackController = self.audioPlaybackControllerIfInitialized {
                     audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
-                    audioPlaybackController.reset()
+                    await audioPlaybackController.reset()
                 }
             }
         } catch {

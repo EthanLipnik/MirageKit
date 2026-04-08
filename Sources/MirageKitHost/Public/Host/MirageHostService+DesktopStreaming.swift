@@ -45,6 +45,24 @@ extension MirageHostService {
         codec: MirageVideoCodec? = nil
     )
     async throws {
+        guard findClientContext(sessionID: clientContext.sessionID)?.client.id == clientContext.client.id else {
+            throw MirageError.protocolError("Desktop stream client disconnected during startup")
+        }
+
+        if let currentOwnerClientID = desktopStreamClientContext?.client.id,
+           desktopStreamContext != nil,
+           (disconnectingClientIDs.contains(currentOwnerClientID) || clientsByID[currentOwnerClientID] == nil) {
+            MirageLogger.host(
+                "Cleaning up desktop stream owned by a disconnected client before accepting a new desktop stream request"
+            )
+            await stopDesktopStream(reason: .error, triggeredByExplicitStreamStop: false)
+        }
+
+        if desktopStreamContext != nil, desktopStreamID == nil {
+            MirageLogger.host("Cleaning up partial desktop startup state before accepting a new desktop stream request")
+            await cleanupFailedDesktopStreamStartup(mode: desktopStreamMode)
+        }
+
         // Check if desktop stream is already active
         guard desktopStreamContext == nil else {
             throw MirageError.protocolError("Desktop stream already active")
@@ -455,17 +473,19 @@ extension MirageHostService {
             MirageLogger.host("Low-latency high-res compression boost disabled for desktop stream \(streamID)")
         }
         let metricsClientID = clientContext.client.id
+        let metricsSessionID = clientContext.sessionID
         await streamContext.setMetricsUpdateHandler { [weak self] metrics in
             self?.dispatchControlWork(clientID: metricsClientID) { [weak self] in
                 guard let self else { return }
-                guard let clientContext = findClientContext(clientID: metricsClientID) else { return }
+                guard let clientContext = findClientContext(sessionID: metricsSessionID) else { return }
                 do {
                     try await clientContext.send(.streamMetricsUpdate, content: metrics)
                 } catch {
                     await handleControlChannelSendFailure(
                         client: clientContext.client,
                         error: error,
-                        operation: "Desktop stream metrics"
+                        operation: "Desktop stream metrics",
+                        sessionID: metricsSessionID
                     )
                 }
             }
@@ -494,11 +514,12 @@ extension MirageHostService {
         await syncAppListRequestDeferralForInteractiveWorkload()
         try await activateAudioForClient(
             clientID: clientContext.client.id,
+            expectedSessionID: clientContext.sessionID,
             sourceStreamID: streamID,
             configuration: resolvedAudioConfiguration
         )
         guard !disconnectingClientIDs.contains(clientContext.client.id),
-              let activeClientContext = findClientContext(clientID: clientContext.client.id) else {
+              let activeClientContext = findClientContext(sessionID: clientContext.sessionID) else {
             MirageLogger.host("Desktop stream client disconnected after audio activation; aborting startup")
             await cleanupFailedDesktopStreamStartup(mode: mode)
             throw MirageError.protocolError("Desktop stream client disconnected during startup")
@@ -618,6 +639,7 @@ extension MirageHostService {
             registerPendingStartupAttempt(
                 streamID: streamID,
                 startupAttemptID: startupAttemptID,
+                sessionID: activeClientContext.sessionID,
                 clientID: activeClientContext.client.id,
                 kind: .desktop
             )
@@ -645,6 +667,15 @@ extension MirageHostService {
 
     /// Clean up virtual display and mirroring state after a failed desktop stream startup.
     private func cleanupFailedDesktopStreamStartup(mode: MirageDesktopStreamMode) async {
+        if let context = desktopStreamContext {
+            await context.stop()
+        }
+        desktopStreamContext = nil
+        desktopStreamClientContext = nil
+        desktopStreamID = nil
+        desktopRequestedScaleFactor = nil
+        desktopStreamMode = .mirrored
+        desktopCursorPresentation = .clientCursor
         if let vdID = desktopVirtualDisplayID {
             if mode == .mirrored {
                 await disableDisplayMirroring(displayID: vdID)
@@ -672,6 +703,10 @@ extension MirageHostService {
         inputController.clearAllModifiers()
 
         guard let streamID = desktopStreamID else {
+            if desktopStreamContext != nil || desktopVirtualDisplayID != nil || desktopStreamClientContext != nil {
+                MirageLogger.host("Stopping partial desktop stream startup state without an established stream ID")
+                await cleanupFailedDesktopStreamStartup(mode: desktopStreamMode)
+            }
             await HostDesktopStreamTerminationTracker.shared.clearDesktopStreamMarker()
             return
         }

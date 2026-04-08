@@ -102,7 +102,8 @@ extension MirageHostService {
             await handleControlChannelSendFailure(
                 client: clientContext.client,
                 error: error,
-                operation: "Remote client \(operation)"
+                operation: "Remote client \(operation)",
+                sessionID: clientContext.sessionID
             )
         }
     }

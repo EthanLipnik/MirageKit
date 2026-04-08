@@ -110,7 +110,8 @@ extension MirageHostService {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
                     error: error,
-                    operation: "Host hardware icon response"
+                    operation: "Host hardware icon response",
+                    sessionID: clientContext.sessionID
                 )
                 return
             }
@@ -232,7 +233,8 @@ extension MirageHostService {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
                     error: error,
-                    operation: "Host wallpaper response"
+                    operation: "Host wallpaper response",
+                    sessionID: clientContext.sessionID
                 )
                 return
             }

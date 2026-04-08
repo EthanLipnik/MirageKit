@@ -20,29 +20,65 @@ enum WindowManager {
     /// - Returns: true if the window was successfully minimized, false otherwise
     @discardableResult
     static func minimizeWindow(_ windowID: WindowID) -> Bool {
+        setWindowMinimized(windowID, minimized: true)
+    }
+
+    /// Restores a minimized window by its WindowID.
+    /// - Parameter windowID: The WindowID of the window to restore
+    /// - Returns: true if the window was successfully restored, false otherwise
+    @discardableResult
+    static func restoreWindow(_ windowID: WindowID) -> Bool {
+        setWindowMinimized(windowID, minimized: false)
+    }
+
+    @discardableResult
+    private static func setWindowMinimized(_ windowID: WindowID, minimized: Bool) -> Bool {
+        let action = minimized ? "minimize" : "restore"
+        guard let axWindow = resolveAXWindow(windowID) else {
+            MirageLogger.host("WindowManager: No AX window found for window \(windowID) to \(action)")
+            return false
+        }
+
+        let targetValue: CFTypeRef = minimized ? kCFBooleanTrue : kCFBooleanFalse
+        let result = AXUIElementSetAttributeValue(
+            axWindow,
+            kAXMinimizedAttribute as CFString,
+            targetValue
+        )
+
+        if result == .success {
+            MirageLogger.host("WindowManager: Successfully \(minimized ? "minimized" : "restored") window \(windowID)")
+            return true
+        }
+
+        MirageLogger.host("WindowManager: Failed to \(action) window \(windowID): AXError \(result.rawValue)")
+        return false
+    }
+
+    private static func resolveAXWindow(_ windowID: WindowID) -> AXUIElement? {
         // Get window info from CGWindowList to find owner PID and position
         guard let windowList = CGWindowListCopyWindowInfo([.optionAll], kCGNullWindowID) as? [[String: Any]],
               let windowInfo = windowList.first(where: { ($0[kCGWindowNumber as String] as? Int) == Int(windowID) }) else {
             MirageLogger.host("WindowManager: Could not find window \(windowID) in window list")
-            return false
+            return nil
         }
 
         // Get the owner PID
         guard let ownerPID = windowInfo[kCGWindowOwnerPID as String] as? Int32 else {
             MirageLogger.host("WindowManager: Could not get owner PID for window \(windowID)")
-            return false
+            return nil
         }
 
         // Validate process is still running
         guard NSRunningApplication(processIdentifier: ownerPID) != nil else {
             MirageLogger.host("WindowManager: Process \(ownerPID) is no longer running")
-            return false
+            return nil
         }
 
         // Get the window's position for matching
         guard let windowBounds = windowInfo[kCGWindowBounds as String] as? [String: Any] else {
             MirageLogger.host("WindowManager: Could not get bounds for window \(windowID)")
-            return false
+            return nil
         }
         let windowX = windowBounds["X"] as? CGFloat
         let windowY = windowBounds["Y"] as? CGFloat
@@ -55,7 +91,7 @@ enum WindowManager {
 
         guard result == .success, let axWindows = windowsRef as? [AXUIElement] else {
             MirageLogger.host("WindowManager: Could not get AX windows for PID \(ownerPID): AXError \(result.rawValue)")
-            return false
+            return nil
         }
 
         // Find the matching window
@@ -91,24 +127,10 @@ enum WindowManager {
 
         guard let axWindow = targetWindow else {
             MirageLogger.host("WindowManager: No AX window found for window \(windowID)")
-            return false
+            return nil
         }
 
-        // Set the minimized attribute
-        let minimizeResult = AXUIElementSetAttributeValue(
-            axWindow,
-            kAXMinimizedAttribute as CFString,
-            kCFBooleanTrue
-        )
-
-        if minimizeResult == .success {
-            MirageLogger.host("WindowManager: Successfully minimized window \(windowID)")
-            return true
-        } else {
-            MirageLogger
-                .host("WindowManager: Failed to minimize window \(windowID): AXError \(minimizeResult.rawValue)")
-            return false
-        }
+        return axWindow
     }
 }
 #endif

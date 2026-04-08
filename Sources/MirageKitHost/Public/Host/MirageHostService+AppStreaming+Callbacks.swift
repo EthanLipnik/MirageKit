@@ -85,8 +85,15 @@ extension MirageHostService {
         }
     }
 
+    func findClientContext(sessionID: UUID) -> ClientContext? {
+        guard let clientContext = clientsBySessionID[sessionID] else { return nil }
+        guard clientsByID[clientContext.client.id]?.sessionID == sessionID else { return nil }
+        return clientContext
+    }
+
     func findClientContext(clientID: UUID) -> ClientContext? {
-        clientsBySessionID.values.first { $0.client.id == clientID }
+        guard let clientContext = clientsByID[clientID] else { return nil }
+        return findClientContext(sessionID: clientContext.sessionID)
     }
 
     func setupAppStreamManagerCallbacks() {

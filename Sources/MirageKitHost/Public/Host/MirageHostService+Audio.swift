@@ -23,6 +23,7 @@ extension MirageHostService {
     @discardableResult
     func activateAudioForClient(
         clientID: UUID,
+        expectedSessionID: UUID? = nil,
         sourceStreamID: StreamID,
         configuration: MirageAudioConfiguration
     )
@@ -51,12 +52,22 @@ extension MirageHostService {
             return false
         }
 
-        // Open Loom audio stream if not already present.
-        if loomAudioStreamsByClientID[clientID] == nil {
-            guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == clientID }) else {
+        let clientContext: ClientContext
+        if let expectedSessionID {
+            guard let currentClientContext = findClientContext(sessionID: expectedSessionID),
+                  currentClientContext.client.id == clientID else {
                 throw MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
             }
+            clientContext = currentClientContext
+        } else {
+            guard let currentClientContext = findClientContext(clientID: clientID) else {
+                throw MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
+            }
+            clientContext = currentClientContext
+        }
 
+        // Open Loom audio stream if not already present.
+        if loomAudioStreamsByClientID[clientID] == nil {
             do {
                 let audioStream = try await clientContext.controlChannel.session.openStream(
                     label: "audio/\(sourceStreamID)"

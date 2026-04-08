@@ -108,7 +108,9 @@ extension MirageHostService {
                 }
                 self.dispatchControlWork(clientID: clientContext.client.id, completion: completion) { [weak self] in
                     guard let self else { return }
-                    guard let liveClientContext = self.clientsByID[clientContext.client.id] else { return }
+                    guard let liveClientContext = self.findClientContext(sessionID: clientContext.sessionID) else {
+                        return
+                    }
                     await self.handleClientMessage(message, from: liveClientContext)
                 }
             },
@@ -154,7 +156,10 @@ extension MirageHostService {
                         )
                     }
 
-                    await self.disconnectClient(clientContext.client)
+                    await self.disconnectClient(
+                        clientContext.client,
+                        sessionID: clientContext.sessionID
+                    )
                 }
             },
             isFatalError: { [weak self] error in

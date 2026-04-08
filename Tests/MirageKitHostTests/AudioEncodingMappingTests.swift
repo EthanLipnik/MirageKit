@@ -53,7 +53,7 @@ struct AudioEncodingMappingTests {
             for: MirageAudioConfiguration(enabled: true, channelLayout: .stereo, quality: .lossless)
         )
         #expect(losslessStereo.codec == .pcm16LE)
-        #expect(losslessStereo.sampleRate == 44_100)
+        #expect(losslessStereo.sampleRate == 48_000)
         #expect(losslessStereo.channelCount == 2)
         #expect(losslessStereo.bitrate == nil)
     }

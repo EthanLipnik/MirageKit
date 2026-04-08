@@ -320,6 +320,9 @@ extension MirageClientService {
             } else {
                 false
             }
+            let shouldBeginPostResizeTransition = didAdvanceDimensionToken &&
+                isExistingStream &&
+                hasController
             if didAdvanceDimensionToken,
                let previousDimensionToken,
                let dimensionToken {
@@ -328,6 +331,7 @@ extension MirageClientService {
                         "App stream token advanced \(previousDimensionToken) -> \(dimensionToken); reset=\(shouldResetController)"
                     )
                 beginStreamStartupCriticalSection(streamID: streamID)
+                sessionStore.beginPostResizeTransition(for: streamID)
             }
             if let dimensionToken {
                 appDimensionTokenByStream[streamID] = dimensionToken
@@ -362,6 +366,7 @@ extension MirageClientService {
             if shouldSetupController {
                 await self.setupControllerForStream(
                     streamID,
+                    beginPostResizeTransition: shouldBeginPostResizeTransition,
                     mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
                 )
             }
@@ -408,6 +413,7 @@ extension MirageClientService {
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
             cursorPositionStore.clear(streamID: streamID)
+            sessionStore.clearPostResizeTransition(for: streamID)
 
             removeActiveStreamID(streamID)
             stopVideoStreamReceive(for: streamID)

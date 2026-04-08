@@ -81,7 +81,8 @@ extension MirageHostService {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
                     error: error,
-                    operation: "Host software update status"
+                    operation: "Host software update status",
+                    sessionID: clientContext.sessionID
                 )
                 return
             }
@@ -111,7 +112,8 @@ extension MirageHostService {
             await handleControlChannelSendFailure(
                 client: clientContext.client,
                 error: error,
-                operation: "Host software update install"
+                operation: "Host software update install",
+                sessionID: clientContext.sessionID
             )
         }
     }

@@ -60,6 +60,13 @@ extension AppStreamManager {
                 let hiddenWindowIDs = Set(session.hiddenWindows.keys)
                 let visibleWindowIDs = Set(session.windowStreams.keys)
                 var updatedKnownWindowIDs = knownWindowIDs
+                let trackedWindowIDs = visibleWindowIDs.union(hiddenWindowIDs)
+                let removedWindowIDs = trackedWindowIDs.subtracting(currentValidIDs)
+
+                for windowID in removedWindowIDs.sorted(by: <) {
+                    logger.info("Window removed from tracked set: \(windowID) for \(bundleID)")
+                    await onWindowClosed?(bundleID, windowID)
+                }
 
                 var currentAuxiliaryWindowIDs = Set<WindowID>()
 
@@ -121,13 +128,6 @@ extension AppStreamManager {
                 for windowID in staleKnownWindowIDs {
                     sessions[bundleID]?.knownWindowIDs.remove(windowID)
                     clearWindowStartupTracking(bundleID: bundleID, windowID: windowID)
-                }
-
-                let trackedWindowIDs = visibleWindowIDs.union(hiddenWindowIDs)
-                let removedWindowIDs = trackedWindowIDs.subtracting(currentValidIDs)
-                for windowID in removedWindowIDs.sorted(by: <) {
-                    logger.info("Window removed from tracked set: \(windowID) for \(bundleID)")
-                    await onWindowClosed?(bundleID, windowID)
                 }
 
                 // Check if app terminated (no windows and app not running).

@@ -87,6 +87,31 @@ extension WindowStreamStartError: LocalizedError {
     }
 }
 
+func shouldTreatWindowPlacementRepairFailureAsClosedWindow(
+    windowID: WindowID,
+    error: Error,
+    currentFrame: CGRect?
+) -> Bool {
+    if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
+        switch windowSpaceError {
+        case .windowNotFound:
+            return true
+        case .moveFailed:
+            return currentFrame == nil
+        case .noOriginalState, .ownerConflict, .ownerMismatch:
+            return false
+        }
+    }
+
+    if let mirageError = error as? MirageError {
+        if case .windowNotFound = mirageError {
+            return true
+        }
+    }
+
+    return false
+}
+
 func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureCode {
     if let windowStartError = error as? WindowStreamStartError {
         switch windowStartError {
@@ -187,6 +212,7 @@ public extension MirageHostService {
     func startStream(
         for window: MirageWindow,
         to client: MirageConnectedClient,
+        expectedSessionID: UUID? = nil,
         clientDisplayResolution: CGSize? = nil,
         clientScaleFactor: CGFloat? = nil,
         keyFrameInterval: Int? = nil,
@@ -218,6 +244,19 @@ public extension MirageHostService {
         guard !disconnectingClientIDs.contains(client.id),
               clientsByID[client.id] != nil else {
             throw MirageError.protocolError("Client is disconnected or disconnecting")
+        }
+        let startupClientContext: ClientContext
+        if let expectedSessionID {
+            guard let currentClientContext = findClientContext(sessionID: expectedSessionID),
+                  currentClientContext.client.id == client.id else {
+                throw MirageError.protocolError("Client session is disconnected or superseded")
+            }
+            startupClientContext = currentClientContext
+        } else {
+            guard let currentClientContext = findClientContext(clientID: client.id) else {
+                throw MirageError.protocolError("Client context missing for stream start")
+            }
+            startupClientContext = currentClientContext
         }
 
         // Resolve capture sources from live ScreenCaptureKit content to avoid stale host window IDs.
@@ -339,17 +378,19 @@ public extension MirageHostService {
         await registerStallWindowPointerRoute(streamID: streamID, context: context)
         registerActiveStreamSession(session)
         await syncAppListRequestDeferralForInteractiveWorkload()
+        let startupSessionID = startupClientContext.sessionID
         await context.setMetricsUpdateHandler { [weak self] metrics in
             self?.dispatchControlWork(clientID: client.id) { [weak self] in
                 guard let self else { return }
-                guard let clientContext = findClientContext(clientID: client.id) else { return }
+                guard let clientContext = findClientContext(sessionID: startupSessionID) else { return }
                 do {
                     try await clientContext.send(.streamMetricsUpdate, content: metrics)
                 } catch {
                     await handleControlChannelSendFailure(
                         client: clientContext.client,
                         error: error,
-                        operation: "Stream metrics"
+                        operation: "Stream metrics",
+                        sessionID: startupSessionID
                     )
                 }
             }
@@ -357,6 +398,7 @@ public extension MirageHostService {
 
         try await activateAudioForClient(
             clientID: client.id,
+            expectedSessionID: startupSessionID,
             sourceStreamID: streamID,
             configuration: resolvedAudioConfiguration
         )
@@ -368,7 +410,7 @@ public extension MirageHostService {
         inputStreamCacheActor.set(streamID, window: updatedWindow, client: client)
 
         // Open Loom video stream for this stream
-        guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) else {
+        guard let clientContext = findClientContext(sessionID: startupSessionID) else {
             throw MirageError.protocolError("Client context missing for stream \(streamID)")
         }
 
@@ -491,6 +533,7 @@ public extension MirageHostService {
                 registerPendingStartupAttempt(
                     streamID: streamID,
                     startupAttemptID: startupAttemptID,
+                    sessionID: clientContext.sessionID,
                     clientID: clientContext.client.id,
                     kind: .window
                 )
@@ -506,7 +549,7 @@ public extension MirageHostService {
 
         // Start menu bar monitoring for this stream
         if let app = session.window.application {
-            await startMenuBarMonitoring(streamID: streamID, app: app, client: client)
+            await startMenuBarMonitoring(streamID: streamID, app: app, clientContext: clientContext)
         }
 
         await updateLightsOutState()
@@ -832,6 +875,23 @@ public extension MirageHostService {
                         )
                     }
                 } catch {
+                    let currentFrame = currentWindowFrame(for: windowID)
+                    if shouldTreatWindowPlacementRepairFailureAsClosedWindow(
+                        windowID: windowID,
+                        error: error,
+                        currentFrame: currentFrame
+                    ),
+                       let appSession = await appStreamManager.getSessionForStreamID(streamID),
+                       appSession.windowStreams[windowID] != nil {
+                        MirageLogger.host(
+                            "Placement repair for app-stream window \(windowID) resolved as closed/stale; entering replacement flow"
+                        )
+                        await handleWindowClosedFromStreamedApp(
+                            bundleID: appSession.bundleIdentifier,
+                            windowID: windowID
+                        )
+                        return
+                    }
                     let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
                     let nextStep = windowPlacementRepairBackoffStep(
                         currentFailureCount: currentFailureCount,

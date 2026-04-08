@@ -78,6 +78,7 @@ enum AppStreamWindowCatalog {
 
         let runningPIDsByBundleID = runningProcessIDs(for: normalizedBundleIDs)
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let windowMetadata = fetchWindowMetadata()
 
         var candidatesByBundleID: [String: [AppStreamWindowCandidate]] = [:]
         var accessibilityByProcessID: [pid_t: [WindowID: AccessibilityClassification]] = [:]
@@ -142,7 +143,11 @@ enum AppStreamWindowCatalog {
         }
 
         for bundleID in candidatesByBundleID.keys {
-            candidatesByBundleID[bundleID]?.sort(by: preferredOrder(lhs:rhs:))
+            let collapsedCandidates = collapseTabGroups(
+                candidatesByBundleID[bundleID] ?? [],
+                metadata: windowMetadata
+            )
+            candidatesByBundleID[bundleID] = collapsedCandidates.sorted(by: preferredOrder(lhs:rhs:))
         }
 
         return candidatesByBundleID
@@ -223,6 +228,55 @@ enum AppStreamWindowCatalog {
         }
 
         return .primary
+    }
+
+    private static func collapseTabGroups(
+        _ candidates: [AppStreamWindowCandidate],
+        metadata: [CGWindowID: (alpha: CGFloat, isOnScreen: Bool)]
+    ) -> [AppStreamWindowCandidate] {
+        let candidatesByProcessID = Dictionary(grouping: candidates) { candidate in
+            candidate.window.application?.id ?? 0
+        }
+
+        var collapsedCandidates: [AppStreamWindowCandidate] = []
+        for (_, processCandidates) in candidatesByProcessID {
+            if processCandidates.count == 1 {
+                collapsedCandidates.append(processCandidates[0])
+                continue
+            }
+
+            var processedWindowIDs = Set<WindowID>()
+            for candidate in processCandidates.sorted(by: preferredOrder(lhs:rhs:)) {
+                guard !processedWindowIDs.contains(candidate.window.id) else { continue }
+
+                let tabGroup = processCandidates.filter { other in
+                    guard !processedWindowIDs.contains(other.window.id) else { return false }
+                    return framesAreNearlyIdentical(candidate.window.frame, other.window.frame)
+                }
+                guard !tabGroup.isEmpty else { continue }
+
+                let representative = tabGroup.sorted { lhs, rhs in
+                    let lhsOnScreen = metadata[CGWindowID(lhs.window.id)]?.isOnScreen ?? lhs.window.isOnScreen
+                    let rhsOnScreen = metadata[CGWindowID(rhs.window.id)]?.isOnScreen ?? rhs.window.isOnScreen
+                    if lhsOnScreen != rhsOnScreen { return lhsOnScreen }
+                    if lhs.isFocused != rhs.isFocused { return lhs.isFocused }
+                    if lhs.isMain != rhs.isMain { return lhs.isMain }
+                    return preferredOrder(lhs: lhs, rhs: rhs)
+                }
+                .first ?? candidate
+
+                collapsedCandidates.append(representative)
+                processedWindowIDs.formUnion(tabGroup.map(\.window.id))
+            }
+        }
+
+        let onScreenCandidates = collapsedCandidates.filter { candidate in
+            metadata[CGWindowID(candidate.window.id)]?.isOnScreen ?? candidate.window.isOnScreen
+        }
+        if !onScreenCandidates.isEmpty {
+            return onScreenCandidates
+        }
+        return collapsedCandidates
     }
 
     private static func matchedBundleIdentifier(

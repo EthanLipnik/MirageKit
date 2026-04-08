@@ -98,6 +98,21 @@ extension MirageHostService {
         return ranges
     }
 
+    private func prepareWindowForStreamingIfNeeded(
+        _ window: MirageWindow,
+        reason: String
+    ) async {
+        guard !window.isOnScreen else { return }
+
+        let didRestore = WindowManager.restoreWindow(window.id)
+        activateWindow(window)
+        let settleDuration: Duration = didRestore ? .milliseconds(250) : .milliseconds(150)
+        try? await Task.sleep(for: settleDuration)
+        MirageLogger.host(
+            "Prepared off-screen window \(window.id) for streaming (\(reason), restored=\(didRestore))"
+        )
+    }
+
     nonisolated static func initialAppWindowDiscoveryRetryDelay(
         afterAttempt attempt: Int
     ) -> Duration {
@@ -968,9 +983,14 @@ extension MirageHostService {
         let preferredSlotIndex = await appStreamManager.availableVisibleSlotIndex(bundleIdentifier: app.bundleIdentifier)
 
         do {
+            await prepareWindowForStreamingIfNeeded(
+                selectedWindow,
+                reason: "existing-session expansion"
+            )
             let streamSession = try await startStream(
                 for: selectedWindow,
                 to: clientContext.client,
+                expectedSessionID: clientContext.sessionID,
                 clientDisplayResolution: requestedDisplayResolution,
                 clientScaleFactor: preferredClientScaleFactor,
                 keyFrameInterval: encoderSettings?.keyFrameInterval ?? selectRequest.keyFrameInterval,
@@ -988,7 +1008,7 @@ extension MirageHostService {
                     selectRequest.lowLatencyHighResolutionCompressionBoost ??
                     true,
                 disableResolutionCap: disableResolutionCap,
-                allowBestEffortRemap: false,
+                allowBestEffortRemap: true,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
                 encoderMaxWidth: selectRequest.encoderMaxWidth,
@@ -1137,7 +1157,12 @@ extension MirageHostService {
         let normalizedBundleID = app.bundleIdentifier.lowercased()
         var startedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
         var failureNotes: [String] = []
-        let clientContext = findClientContext(clientID: client.id)
+        guard let clientContext = findClientContext(clientID: client.id) else {
+            return InitialAppWindowStartupResult(
+                windows: [],
+                failureSummary: "client session is disconnected or superseded"
+            )
+        }
         var startupCandidates: [AppStreamWindowCandidate] = []
         var usedBestEffortStartupFallback = false
         var requestedNewWindow = false
@@ -1247,15 +1272,13 @@ extension MirageHostService {
                     "Initial app-stream startup retry scheduled for \(candidate.window.id) attempt \(retryAttempt) at \(retryAt) (\(candidate.logMetadata))"
                 )
             case .terminal:
-                if let clientContext {
-                    await emitWindowStreamFailed(
-                        to: clientContext,
-                        bundleIdentifier: app.bundleIdentifier,
-                        windowID: candidate.window.id,
-                        title: initialStreamFailureTitle(for: candidate, appName: app.name),
-                        reason: reason
-                    )
-                }
+                await emitWindowStreamFailed(
+                    to: clientContext,
+                    bundleIdentifier: app.bundleIdentifier,
+                    windowID: candidate.window.id,
+                    title: initialStreamFailureTitle(for: candidate, appName: app.name),
+                    reason: reason
+                )
                 MirageLogger.host(
                     "Initial app-stream startup failed permanently for \(candidate.window.id): \(reason) (\(candidate.logMetadata))"
                 )
@@ -1341,7 +1364,7 @@ extension MirageHostService {
                         app: app,
                         binding: binding.binding,
                         preferredSlotIndex: binding.slotIndex,
-                        client: client,
+                        clientContext: clientContext,
                         selectRequest: selectRequest,
                         targetFrameRate: targetFrameRate,
                         requestedDisplayResolution: requestedDisplayResolution,
@@ -1379,7 +1402,7 @@ extension MirageHostService {
         app: MirageInstalledApp,
         binding: ResolvedAppWindowBinding,
         preferredSlotIndex: Int,
-        client: MirageConnectedClient,
+        clientContext: ClientContext,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize,
@@ -1433,7 +1456,7 @@ extension MirageHostService {
                     startupCandidate: currentBinding.candidate,
                     preferredWindow: currentBinding.resolvedWindow,
                     preferredSlotIndex: preferredSlotIndex,
-                    client: client,
+                    clientContext: clientContext,
                     selectRequest: selectRequest,
                     targetFrameRate: targetFrameRate,
                     requestedDisplayResolution: requestedDisplayResolution,
@@ -1551,16 +1574,21 @@ extension MirageHostService {
         startupCandidate: AppStreamWindowCandidate,
         preferredWindow: MirageWindow,
         preferredSlotIndex: Int,
-        client: MirageConnectedClient,
+        clientContext: ClientContext,
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize,
         requestedBitrateOverride: Int?,
         mediaMaxPacketSize: Int
     ) async throws -> AppStreamStartedMessage.AppStreamWindow {
+        await prepareWindowForStreamingIfNeeded(
+            preferredWindow,
+            reason: "initial app-stream startup"
+        )
         let streamSession = try await startStream(
             for: preferredWindow,
-            to: client,
+            to: clientContext.client,
+            expectedSessionID: clientContext.sessionID,
             clientDisplayResolution: requestedDisplayResolution,
             clientScaleFactor: selectRequest.scaleFactor,
             keyFrameInterval: selectRequest.keyFrameInterval,
@@ -1574,7 +1602,7 @@ extension MirageHostService {
             allowRuntimeQualityAdjustment: selectRequest.allowRuntimeQualityAdjustment,
             lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? true,
             disableResolutionCap: selectRequest.disableResolutionCap ?? false,
-            allowBestEffortRemap: false,
+            allowBestEffortRemap: true,
             audioConfiguration: selectRequest.audioConfiguration ?? .default,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,
@@ -1787,7 +1815,8 @@ extension MirageHostService {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
                     error: error,
-                    operation: "App list response"
+                    operation: "App list response",
+                    sessionID: clientContext.sessionID
                 )
                 return
             }
@@ -1862,7 +1891,8 @@ extension MirageHostService {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
                     error: error,
-                    operation: "App icon update for \(app.bundleIdentifier)"
+                    operation: "App icon update for \(app.bundleIdentifier)",
+                    sessionID: clientContext.sessionID
                 )
                 return
             }
@@ -1889,7 +1919,8 @@ extension MirageHostService {
             await handleControlChannelSendFailure(
                 client: clientContext.client,
                 error: error,
-                operation: "App icon stream completion"
+                operation: "App icon stream completion",
+                sessionID: clientContext.sessionID
             )
         }
     }
