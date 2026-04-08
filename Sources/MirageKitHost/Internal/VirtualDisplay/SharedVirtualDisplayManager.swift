@@ -53,6 +53,19 @@ actor SharedVirtualDisplayManager {
         let createdAt: Date
     }
 
+    enum DisplayResolutionUpdateOutcome: Sendable, Equatable {
+        case noChange
+        case updatedInPlace
+        case requiresRecreation
+        case recreated
+    }
+
+    struct DisplayResolutionUpdateResult: Sendable, Equatable {
+        let outcome: DisplayResolutionUpdateOutcome
+        let usedCachedResizeTarget: Bool
+        let generationChanged: Bool
+    }
+
     /// Cache key for dedicated-display inset calibration.
     struct DedicatedInsetCacheKey: Hashable, Sendable {
         let colorSpace: MirageColorSpace

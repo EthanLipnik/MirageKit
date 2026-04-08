@@ -80,6 +80,7 @@ extension StreamController {
             )
             return
         }
+        guard !hasTriggeredTerminalStartupFailure else { return }
         let shouldRestartStartupBootstrap = !hasPresentedFirstFrame
         let shouldAwaitNextPresentedFrame = shouldRestartStartupBootstrap || awaitFirstPresentedFrame
         let now = currentTime()
@@ -104,6 +105,14 @@ extension StreamController {
             await requestKeyframeRecovery(reason: reason)
             return
         }
+
+        if shouldRestartStartupBootstrap {
+            if startupHardRecoveryCount >= Self.startupHardRecoveryLimit {
+                await failStartupRecovery(reason: reason)
+                return
+            }
+            startupHardRecoveryCount += 1
+        }
         lastHardRecoveryStartTime = now
 
         MirageLogger.client("Starting stream recovery (\(reason.logLabel)) for stream \(streamID)")
@@ -114,6 +123,7 @@ extension StreamController {
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
+        postResizeDecodeErrorGraceDeadline = 0
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         stopFrameProcessingPipeline()

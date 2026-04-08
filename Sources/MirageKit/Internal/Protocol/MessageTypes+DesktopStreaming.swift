@@ -169,6 +169,12 @@ package struct StopDesktopStreamMessage: Codable {
     }
 }
 
+/// Client → Host: Cancel any in-progress stream setup (desktop or app).
+/// Sent when the user cancels during the loading phase before a stream ID is established.
+package struct CancelStreamSetupMessage: Codable {
+    package init() {}
+}
+
 /// Confirmation that desktop streaming has started (Host → Client)
 package struct DesktopStreamStartedMessage: Codable {
     /// Stream ID for the desktop stream

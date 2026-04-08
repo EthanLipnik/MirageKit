@@ -20,12 +20,13 @@ extension MirageHostService {
         hostAudioMuteController.setMuted(shouldMuteLocalAudio)
     }
 
+    @discardableResult
     func activateAudioForClient(
         clientID: UUID,
         sourceStreamID: StreamID,
         configuration: MirageAudioConfiguration
     )
-    async {
+    async throws -> Bool {
         audioConfigurationByClientID[clientID] = configuration
         if let streamContext = streamsByID[sourceStreamID] {
             await streamContext.setRequestedAudioChannelCount(configuration.channelLayout.channelCount)
@@ -34,20 +35,28 @@ extension MirageHostService {
         guard configuration.enabled else {
             audioSourceStreamByClientID.removeValue(forKey: clientID)
             await stopAudioPipeline(for: clientID, reason: .disabled)
-            return
+            return false
         }
 
         audioSourceStreamByClientID[clientID] = sourceStreamID
+        guard !disconnectingClientIDs.contains(clientID),
+              clientsByID[clientID] != nil else {
+            audioSourceStreamByClientID.removeValue(forKey: clientID)
+            return false
+        }
         guard mediaSecurityByClientID[clientID] != nil else {
             MirageLogger.host(
                 "Deferring audio pipeline activation for client \(clientID) — security context not yet available"
             )
-            return
+            return false
         }
 
         // Open Loom audio stream if not already present.
-        if loomAudioStreamsByClientID[clientID] == nil,
-           let clientContext = clientsBySessionID.values.first(where: { $0.client.id == clientID }) {
+        if loomAudioStreamsByClientID[clientID] == nil {
+            guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == clientID }) else {
+                throw MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
+            }
+
             do {
                 let audioStream = try await clientContext.controlChannel.session.openStream(
                     label: "audio/\(sourceStreamID)"
@@ -56,11 +65,8 @@ extension MirageHostService {
                 transportRegistry.registerAudioStream(audioStream, clientID: clientID)
                 MirageLogger.host("Opened Loom audio stream for client \(clientID)")
             } catch {
-                MirageLogger.error(
-                    .host,
-                    error: error,
-                    message: "Failed to open Loom audio stream for client \(clientID): "
-                )
+                audioSourceStreamByClientID.removeValue(forKey: clientID)
+                throw error
             }
         }
 
@@ -93,6 +99,7 @@ extension MirageHostService {
 
         await setAudioSourceCaptureHandler(clientID: clientID, streamID: sourceStreamID)
         updateHostAudioMuteState()
+        return true
     }
 
     func activateDeferredAudioIfNeeded(clientID: UUID) async {
@@ -103,11 +110,19 @@ extension MirageHostService {
             return
         }
         MirageLogger.host("Retrying deferred audio activation for client \(clientID)")
-        await activateAudioForClient(
-            clientID: clientID,
-            sourceStreamID: sourceStreamID,
-            configuration: configuration
-        )
+        do {
+            try await activateAudioForClient(
+                clientID: clientID,
+                sourceStreamID: sourceStreamID,
+                configuration: configuration
+            )
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Deferred audio activation failed: ")
+            if let clientContext = findClientContext(clientID: clientID),
+               isFatalConnectionError(error) {
+                await disconnectClient(clientContext.client)
+            }
+        }
     }
 
     func enqueueCapturedAudio(
@@ -130,11 +145,16 @@ extension MirageHostService {
             let fallbackStream = fallbackAudioSourceStreamID(for: clientID, excluding: streamID)
             if let fallbackStream {
                 let configuration = audioConfigurationByClientID[clientID] ?? .default
-                await activateAudioForClient(
-                    clientID: clientID,
-                    sourceStreamID: fallbackStream,
-                    configuration: configuration
-                )
+                do {
+                    try await activateAudioForClient(
+                        clientID: clientID,
+                        sourceStreamID: fallbackStream,
+                        configuration: configuration
+                    )
+                } catch {
+                    MirageLogger.error(.host, error: error, message: "Failed to rebind audio source: ")
+                    await stopAudioPipeline(for: clientID, reason: .sourceStopped)
+                }
             } else {
                 await stopAudioPipeline(for: clientID, reason: .sourceStopped)
             }

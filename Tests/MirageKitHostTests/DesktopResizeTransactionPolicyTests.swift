@@ -75,6 +75,53 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(plan == .unchanged)
     }
 
+    @Test("Mirrored mode only suspends mirroring when recreation is required")
+    func mirroredModeOnlySuspendsMirroringWhenRecreationIsRequired() {
+        #expect(
+            !desktopResizeShouldSuspendMirroring(
+                plan: .suspendAndRestore,
+                updateOutcome: .updatedInPlace
+            )
+        )
+        #expect(
+            !desktopResizeShouldSuspendMirroring(
+                plan: .suspendAndRestore,
+                updateOutcome: .noChange
+            )
+        )
+        #expect(
+            desktopResizeShouldSuspendMirroring(
+                plan: .suspendAndRestore,
+                updateOutcome: .requiresRecreation
+            )
+        )
+    }
+
+    @Test("Residual mirroring is only cleared for same-generation secondary resizes when recreation occurred")
+    func residualMirroringIsOnlyClearedWhenGenerationChanges() {
+        #expect(
+            !desktopResizeShouldDisableResidualMirroring(
+                plan: .unchanged,
+                generationChanged: false,
+                hasResidualMirroringState: true
+            )
+        )
+        #expect(
+            desktopResizeShouldDisableResidualMirroring(
+                plan: .unchanged,
+                generationChanged: true,
+                hasResidualMirroringState: true
+            )
+        )
+        #expect(
+            !desktopResizeShouldDisableResidualMirroring(
+                plan: .unchanged,
+                generationChanged: true,
+                hasResidualMirroringState: false
+            )
+        )
+    }
+
     @Test("Resize transaction aborts when desktop stream is already inactive")
     func resizeTransactionAbortsWhenStreamIsInactive() {
         let decision = desktopResizeTransactionContinuationDecision(
@@ -200,6 +247,42 @@ struct DesktopResizeTransactionPolicyTests {
         )
 
         #expect(decision == .apply)
+    }
+
+    @Test("Window target aspect ratio prefers latest resize override")
+    func windowTargetAspectRatioPrefersLatestOverride() {
+        let resolved = resolvedWindowTargetContentAspectRatio(
+            existingAspectRatio: 16.0 / 10.0,
+            overrideAspectRatio: 16.0 / 9.0
+        )
+
+        #expect(resolved != nil)
+        #expect(abs((resolved ?? 0) - (16.0 / 9.0)) < 0.0001)
+    }
+
+    @Test("Window target aspect ratio falls back to existing cached aspect when override is invalid")
+    func windowTargetAspectRatioFallsBackToExistingAspect() {
+        let resolved = resolvedWindowTargetContentAspectRatio(
+            existingAspectRatio: 4.0 / 3.0,
+            overrideAspectRatio: 0
+        )
+
+        #expect(resolved != nil)
+        #expect(abs((resolved ?? 0) - (4.0 / 3.0)) < 0.0001)
+    }
+
+    @Test("Aspect-fitted bounds use latest resize override instead of cached startup aspect")
+    func aspectFittedBoundsUseLatestResizeOverride() {
+        let targetAspectRatio = resolvedWindowTargetContentAspectRatio(
+            existingAspectRatio: 4.0 / 3.0,
+            overrideAspectRatio: 16.0 / 9.0
+        )
+        let fittedBounds = aspectFittedWindowBounds(
+            CGRect(x: 2056, y: 30, width: 1600, height: 1200),
+            targetAspectRatio: targetAspectRatio
+        )
+
+        #expect(fittedBounds == CGRect(x: 2056, y: 180, width: 1600, height: 900))
     }
 
     @Test("Placement bounds decision accepts same-origin bounded shrink")

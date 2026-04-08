@@ -35,6 +35,14 @@ public class MirageMetalView: UIView {
         }
     }
 
+    public var prefersLocalAspectFitPresentation: Bool = false {
+        didSet {
+            guard prefersLocalAspectFitPresentation != oldValue else { return }
+            applyPresentationVideoGravity()
+            requestDraw()
+        }
+    }
+
     public var streamID: StreamID? {
         didSet {
             guard streamID != oldValue else { return }
@@ -126,6 +134,7 @@ public class MirageMetalView: UIView {
 
     override public func didMoveToWindow() {
         super.didMoveToWindow()
+        applyPresentationVideoGravity()
         applyDisplayRefreshRateLock(maxRenderFPS)
         setNeedsLayout()
     }
@@ -175,12 +184,12 @@ public class MirageMetalView: UIView {
         insetsLayoutMarginsFromSafeArea = false
 
         let displayLayer = self.displayLayer
-        displayLayer.videoGravity = .resize
         displayLayer.backgroundColor = UIColor.black.cgColor
         displayLayer.wantsExtendedDynamicRangeContent = true
         displayLayer.contentsScale = effectiveScale
         displayLayer.isOpaque = true
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        applyPresentationVideoGravity()
 
         presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
         presenter.onFrameAvailable = { [weak self] in
@@ -193,6 +202,10 @@ public class MirageMetalView: UIView {
 
         applyRenderPreferences()
         startObservingPreferences()
+    }
+
+    private func applyPresentationVideoGravity() {
+        displayLayer.videoGravity = prefersLocalAspectFitPresentation ? .resizeAspect : .resize
     }
 
     // MARK: - Draw Path

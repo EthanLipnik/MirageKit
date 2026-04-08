@@ -55,6 +55,11 @@ struct AppStreamWindowCandidate: Sendable {
 }
 
 enum AppStreamWindowCatalog {
+    struct StartupCandidateSelection: Sendable {
+        let candidates: [AppStreamWindowCandidate]
+        let usedFallback: Bool
+    }
+
     struct AccessibilityClassification: Sendable {
         let role: String?
         let subrole: String?
@@ -117,7 +122,9 @@ enum AppStreamWindowCatalog {
             let classification = classifyWindow(
                 role: accessibility?.role,
                 subrole: accessibility?.subrole,
-                parentWindowID: accessibility?.parentWindowID
+                parentWindowID: accessibility?.parentWindowID,
+                isFocused: accessibility?.isFocused ?? false,
+                isMain: accessibility?.isMain ?? false
             )
 
             let candidate = AppStreamWindowCandidate(
@@ -154,31 +161,65 @@ enum AppStreamWindowCatalog {
         return lhs.window.id < rhs.window.id
     }
 
+    static func startupCandidateSelection(
+        from candidates: [AppStreamWindowCandidate]
+    ) -> StartupCandidateSelection {
+        let sortedCandidates = candidates.sorted(by: preferredOrder(lhs:rhs:))
+        let primaryCandidates = sortedCandidates.filter { $0.classification == .primary }
+        if !primaryCandidates.isEmpty {
+            return StartupCandidateSelection(candidates: primaryCandidates, usedFallback: false)
+        }
+
+        let bestEffortCandidates = sortedCandidates.filter {
+            $0.parentWindowID == nil && ($0.window.isOnScreen || $0.isFocused || $0.isMain)
+        }
+        if !bestEffortCandidates.isEmpty {
+            return StartupCandidateSelection(candidates: bestEffortCandidates, usedFallback: true)
+        }
+
+        let detachedCandidates = sortedCandidates.filter { $0.parentWindowID == nil }
+        if !detachedCandidates.isEmpty {
+            return StartupCandidateSelection(candidates: detachedCandidates, usedFallback: true)
+        }
+
+        return StartupCandidateSelection(candidates: sortedCandidates, usedFallback: !sortedCandidates.isEmpty)
+    }
+
     static func classifyWindow(
         role: String?,
         subrole: String?,
-        parentWindowID: WindowID?
+        parentWindowID: WindowID?,
+        isFocused: Bool = false,
+        isMain: Bool = false
     ) -> AppStreamWindowClassification {
         if parentWindowID != nil { return .auxiliary }
 
         let roleLower = role?.lowercased() ?? ""
+        let subroleLower = subrole?.lowercased() ?? ""
+        let isTopLevelUtilityLikeWindow = isFocused || isMain
+
         if roleLower.contains("sheet") ||
             roleLower.contains("dialog") ||
             roleLower.contains("popover") ||
-            roleLower.contains("drawer") ||
-            roleLower.contains("floating") {
+            roleLower.contains("drawer") {
             return .auxiliary
         }
 
-        let subroleLower = subrole?.lowercased() ?? ""
+        if roleLower.contains("floating") {
+            return isTopLevelUtilityLikeWindow ? .primary : .auxiliary
+        }
+
         if subroleLower.contains("dialog") ||
-            subroleLower.contains("floating") ||
             subroleLower.contains("popover") ||
             subroleLower.contains("drawer") ||
-            subroleLower.contains("utility") ||
-            subroleLower.contains("panel") ||
             subroleLower.contains("system") {
             return .auxiliary
+        }
+
+        if subroleLower.contains("floating") ||
+            subroleLower.contains("utility") ||
+            subroleLower.contains("panel") {
+            return isTopLevelUtilityLikeWindow ? .primary : .auxiliary
         }
 
         return .primary

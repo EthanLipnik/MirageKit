@@ -114,6 +114,44 @@ extension StreamContext {
         if !queued { MirageLogger.stream("Fallback keyframe skipped (unable to queue after restart)") }
     }
 
+    func scheduleCoalescedRecoveryKeyframe(
+        reason: String,
+        resetFrameNumber: Bool = false,
+        noteLoss: Bool = false,
+        requiresFlush: Bool = false,
+        requiresReset: Bool = false,
+        advanceEpochOnReset: Bool = true,
+        ignoreExistingInFlight: Bool = false
+    ) async {
+        if ignoreExistingInFlight {
+            keyframeSendDeadline = 0
+            lastKeyframeRequestTime = 0
+        }
+
+        let queued = queueKeyframe(
+            reason: reason,
+            checkInFlight: !ignoreExistingInFlight,
+            requiresFlush: requiresFlush,
+            requiresReset: requiresReset,
+            advanceEpochOnReset: advanceEpochOnReset,
+            urgent: true
+        )
+        guard queued else {
+            MirageLogger.stream("\(reason) skipped (recovery keyframe already pending or in flight)")
+            return
+        }
+
+        if noteLoss {
+            noteLossEvent(reason: reason, enablePFrameFEC: true)
+        }
+        if resetFrameNumber {
+            await encoder?.resetFrameNumber()
+        }
+        markKeyframeRequestIssued()
+        scheduleProcessingIfNeeded()
+        MirageLogger.stream("Scheduled coalesced recovery keyframe (\(reason))")
+    }
+
     func shouldEmitPendingKeyframe(queueBytes: Int) -> Bool {
         guard pendingKeyframeReason != nil else { return false }
         let now = CFAbsoluteTimeGetCurrent()

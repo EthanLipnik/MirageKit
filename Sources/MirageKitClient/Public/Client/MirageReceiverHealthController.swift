@@ -267,26 +267,34 @@ public struct MirageReceiverHealthController: Sendable {
         let transportDropCount = (snapshot.hostStalePacketDrops ?? 0) +
             (snapshot.hostGenerationAbortDrops ?? 0) +
             (snapshot.hostNonKeyframeHoldDrops ?? 0)
+        let transportAssessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: queueBytes,
+                queueStressBytes: Self.sendQueueStressBytes,
+                queueSevereBytes: Self.sendQueueSevereBytes,
+                packetPacerAverageSleepMs: packetPacerAverageSleepMs,
+                packetPacerStressThresholdMs: Self.packetPacerStressMs,
+                packetPacerSevereThresholdMs: Self.packetPacerSevereMs,
+                sendStartDelayAverageMs: sendStartDelayAverageMs,
+                sendStartDelayStressThresholdMs: Self.sendStartDelayStressMs,
+                sendStartDelaySevereThresholdMs: Self.sendStartDelaySevereMs,
+                sendCompletionAverageMs: sendCompletionAverageMs,
+                sendCompletionStressThresholdMs: Self.sendCompletionStressMs,
+                sendCompletionSevereThresholdMs: Self.sendCompletionSevereMs,
+                transportDropCount: transportDropCount,
+                transportDropSevereCount: Self.transportDropSevereCount,
+                encodedFPS: hostEncodedFPS,
+                deliveredFPS: receivedFPS,
+                deliveryStressRatio: Self.encodedDeliveryStressRatio,
+                deliverySevereRatio: Self.encodedDeliverySevereRatio
+            )
+        )
         let streamIsActive = max(
             hostEncodedFPS,
             max(receivedFPS, max(captureIngressFPS, max(captureFPS, encodeAttemptFPS)))
         ) > 0.5
-        let deliverySevere = hostEncodedFPS > 0 &&
-            receivedFPS < hostEncodedFPS * Self.encodedDeliverySevereRatio
-        let deliveryStress = hostEncodedFPS > 0 &&
-            receivedFPS < hostEncodedFPS * Self.encodedDeliveryStressRatio
-        let severe = deliverySevere ||
-            queueBytes >= Self.sendQueueSevereBytes ||
-            sendStartDelayAverageMs >= Self.sendStartDelaySevereMs ||
-            sendCompletionAverageMs >= Self.sendCompletionSevereMs ||
-            packetPacerAverageSleepMs >= Self.packetPacerSevereMs ||
-            transportDropCount >= Self.transportDropSevereCount
-        let sustainedLoss = deliveryStress ||
-            queueBytes >= Self.sendQueueStressBytes ||
-            sendStartDelayAverageMs >= Self.sendStartDelayStressMs ||
-            sendCompletionAverageMs >= Self.sendCompletionStressMs ||
-            packetPacerAverageSleepMs >= Self.packetPacerStressMs ||
-            transportDropCount > 0
+        let severe = transportAssessment.isSevere
+        let sustainedLoss = transportAssessment.isStress
         let healthy = !severe && !sustainedLoss
         return Sample(
             isSevere: severe,

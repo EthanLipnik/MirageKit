@@ -66,6 +66,7 @@ extension MirageHostService {
         let refreshedDisplayBounds = resolveDesktopDisplayBounds()
         let refreshedPhysicalBounds = refreshDesktopPrimaryPhysicalBounds()
         let virtualResolution = await desktopStreamContext?.getVirtualDisplaySnapshot()?.resolution
+        desktopMirroredVirtualResolution = virtualResolution
         let refreshedInputBounds = resolvedDesktopInputBounds(
             physicalBounds: refreshedPhysicalBounds,
             virtualResolution: virtualResolution

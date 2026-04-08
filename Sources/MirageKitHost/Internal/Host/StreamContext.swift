@@ -157,6 +157,9 @@ actor StreamContext {
     let packetBudgetDropUtilizationThreshold: Double = 1.05
     let packetBudgetHighPressureUtilizationThreshold: Double = 1.20
     let packetBudgetRaiseUtilizationThreshold: Double = 0.95
+    let packetPacerStressThresholdMs: Double = 0.75
+    let packetPacerHighPressureThresholdMs: Double = 2.0
+    let transportDropHighPressureThreshold: UInt64 = 12
     var lastInFlightAdjustmentTime: CFAbsoluteTime = 0
     let inFlightAdjustmentCooldown: CFAbsoluteTime = 1.0
     let typingBurstWindow: CFAbsoluteTime = 0.35

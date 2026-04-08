@@ -178,6 +178,59 @@ struct HostReceiveLoopTests {
         }
     }
 
+    @Test("Pong replies are consumed without entering generic control dispatch")
+    func pongRepliesBypassGenericControlDispatch() async throws {
+        let pong = ControlMessage(type: .pong)
+        let keyframe = try ControlMessage(
+            type: .keyframeRequest,
+            content: KeyframeRequestMessage(streamID: 42)
+        )
+
+        var initialData = Data()
+        initialData.append(pong.serialize())
+        initialData.append(keyframe.serialize())
+
+        let dispatched = Locked<[ControlMessage]>([])
+        let pingCount = Locked(0)
+        let terminalReason = Locked<HostReceiveLoop.TerminalReason?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "pong-fast-path-test",
+            receiveChunk: { completion in
+                completion(nil, nil, true, nil)
+            },
+            onInputMessage: { _ in },
+            onPingMessage: { _ in
+                pingCount.withLock { $0 += 1 }
+            },
+            dispatchControlMessage: { message, completion in
+                dispatched.withLock { $0.append(message) }
+                completion()
+            },
+            onTerminal: { reason in
+                terminalReason.withLock { $0 = reason }
+            },
+            isFatalError: { _ in false }
+        )
+
+        loop.start(initialBuffer: initialData)
+
+        let terminalDeadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while terminalReason.read({ $0 }) == nil, CFAbsoluteTimeGetCurrent() < terminalDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        #expect(terminalReason.read { $0 } != nil)
+
+        #expect(pingCount.read { $0 } == 0)
+        #expect(dispatched.read { $0.map(\.type) } == [.keyframeRequest])
+
+        let reason = terminalReason.read { $0 }
+        guard case .complete? = reason else {
+            Issue.record("Expected complete terminal reason, got \(String(describing: reason))")
+            return
+        }
+    }
+
     @Test("Invalid frame triggers protocol-violation terminal reason")
     func invalidFrameTriggersProtocolViolation() async throws {
         struct ReceiveEvent {

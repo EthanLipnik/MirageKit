@@ -118,6 +118,9 @@ extension MirageHostService {
             },
             .streamResumeAll: { [weak self] _, _ in
                 await self?.handleStreamResumeAll()
+            },
+            .cancelStreamSetup: { [weak self] _, _ in
+                await self?.handleCancelStreamSetup()
             }
         ]
     }

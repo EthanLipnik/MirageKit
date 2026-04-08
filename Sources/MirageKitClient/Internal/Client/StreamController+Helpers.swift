@@ -131,6 +131,14 @@ extension StreamController {
         }
     }
 
+    nonisolated static func shouldSuppressPostResizeDecodeErrorRecovery(
+        awaitingFirstFrameAfterResize: Bool,
+        graceDeadline: CFAbsoluteTime,
+        now: CFAbsoluteTime
+    ) -> Bool {
+        awaitingFirstFrameAfterResize && graceDeadline > 0 && now < graceDeadline
+    }
+
     func clearTransientRecoveryStateAfterPresentationProgress() async {
         guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
 
@@ -162,6 +170,7 @@ extension StreamController {
         reason: String,
         mode: FirstPresentedFrameAwaitMode = .startup
     ) async {
+        guard !hasTriggeredTerminalStartupFailure else { return }
         let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
         awaitingFirstPresentedFrame = true
         firstPresentedFrameAwaitMode = mode
@@ -204,7 +213,10 @@ extension StreamController {
         }
 
         if awaitingFirstFrameAfterResize {
-            awaitingFirstFrameAfterResize = false
+            postResizeDecodeErrorGraceDeadline = max(
+                postResizeDecodeErrorGraceDeadline,
+                currentTime() + Self.postResizeDecodeErrorGraceInterval
+            )
             MirageLogger.client("Post-resize first frame decoded for stream \(streamID)")
         }
 
@@ -219,16 +231,20 @@ extension StreamController {
         let wasAwaitingFirstPresentation = awaitingFirstPresentedFrame
         let waitStart = firstPresentedFrameWaitStartTime
 
+        postResizeDecodeErrorGraceDeadline = 0
         awaitingFirstPresentedFrame = false
         firstPresentedFrameBaselineSequence = 0
         firstPresentedFrameWaitStartTime = 0
         firstPresentedFrameLastWaitLogTime = 0
         firstPresentedFrameLastRecoveryRequestTime = 0
         firstPresentedFrameRecoveryAttemptCount = 0
+        startupHardRecoveryCount = 0
+        hasTriggeredTerminalStartupFailure = false
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(false)
 
         if awaitingFirstFrameAfterResize {
             awaitingFirstFrameAfterResize = false
+            postResizeDecodeErrorGraceDeadline = 0
             if waitStart > 0 {
                 let elapsedMs = Int((now - waitStart) * 1000)
                 MirageLogger.client(
@@ -470,6 +486,7 @@ extension StreamController {
     }
 
     func handleDecodeErrorThresholdSignal() async {
+        guard !hasTriggeredTerminalStartupFailure else { return }
         recordDecodeThresholdEvent()
 
         if presentationTier == .passiveSnapshot {
@@ -478,6 +495,13 @@ extension StreamController {
         }
 
         let now = currentTime()
+        if Self.shouldSuppressPostResizeDecodeErrorRecovery(
+            awaitingFirstFrameAfterResize: awaitingFirstFrameAfterResize,
+            graceDeadline: postResizeDecodeErrorGraceDeadline,
+            now: now
+        ) {
+            return
+        }
         if shouldAttemptStartupDecodeErrorRecovery(now: now) {
             firstPresentedFrameLastRecoveryRequestTime = now
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
@@ -508,6 +532,38 @@ extension StreamController {
         }
 
         await requestSoftRecovery(reason: .decodeErrorThreshold)
+    }
+
+    func failStartupRecovery(reason: RecoveryReason) async {
+        guard !hasTriggeredTerminalStartupFailure else { return }
+
+        let failure = TerminalStartupFailure(
+            reason: reason,
+            hardRecoveryAttempts: startupHardRecoveryCount,
+            waitReason: firstPresentedFrameWaitReason
+        )
+        let waitReason = failure.waitReason ?? "unknown"
+
+        hasTriggeredTerminalStartupFailure = true
+        isRunning = false
+        stopFrameProcessingPipeline()
+        stopMetricsReporting()
+        stopFreezeMonitor()
+        await stopTierPromotionProbe()
+        await stopKeyframeRecoveryLoop()
+        stopFirstPresentedFrameMonitor()
+        await setClientRecoveryStatus(.idle)
+
+        MirageLogger.error(
+            .client,
+            "Startup recovery exhausted for stream \(streamID) after \(failure.hardRecoveryAttempts) hard recovery attempt(s) " +
+                "(reason=\(failure.reason.logLabel), waitReason=\(waitReason))"
+        )
+
+        guard let onTerminalStartupFailure else { return }
+        await MainActor.run {
+            onTerminalStartupFailure(failure)
+        }
     }
 
     func shouldAttemptStartupDecodeErrorRecovery(now _: CFAbsoluteTime) -> Bool {

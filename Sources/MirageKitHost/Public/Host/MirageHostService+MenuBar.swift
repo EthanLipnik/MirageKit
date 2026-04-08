@@ -137,6 +137,7 @@ extension MirageHostService {
                 )
             }
 
+            streamSetupCancelled = false
             desktopStreamMode = request.mode ?? .mirrored
             desktopUsesHostResolution = request.useHostResolution == true
             desktopCursorPresentation = request.cursorPresentation ?? .clientCursor
@@ -216,6 +217,17 @@ extension MirageHostService {
         }
     }
 
+    /// Handle a client request to cancel in-progress stream setup.
+    func handleCancelStreamSetup() async {
+        MirageLogger.host("Client cancelled stream setup")
+        streamSetupCancelled = true
+
+        // If desktop stream is already fully set up, stop it directly
+        if desktopStreamID != nil {
+            await stopDesktopStream(reason: .clientRequested)
+        }
+    }
+
     private nonisolated static func isExpectedDesktopStartRejection(_ error: Error) -> Bool {
         if error is MirageRuntimeConditionError { return true }
         if case let MirageError.protocolError(message) = error {
@@ -223,7 +235,8 @@ extension MirageHostService {
                 return true
             }
             return message.contains("Virtual display acquisition failed for desktop stream:") ||
-                message.contains("client disconnected during startup")
+                message.contains("client disconnected during startup") ||
+                message.contains("cancelled by client")
         }
         return false
     }

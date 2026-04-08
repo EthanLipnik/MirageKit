@@ -236,6 +236,11 @@ public extension MirageClientService {
             onBackgroundDecodeFailure: { [weak self] in
                 MirageLogger.client("Stopping stream \(capturedStreamID) due to background decode failure")
                 Task { try? await self?.stopDesktopStream() }
+            },
+            onTerminalStartupFailure: { [weak self] failure in
+                Task {
+                    await self?.handleTerminalStartupFailure(failure, for: capturedStreamID)
+                }
             }
         )
 
@@ -314,8 +319,6 @@ public extension MirageClientService {
     async {
         let streamID = session.id
 
-        MirageFrameCache.shared.clear(for: streamID)
-
         let request = StopStreamMessage(
             streamID: streamID,
             minimizeWindow: minimizeWindow,
@@ -325,21 +328,137 @@ public extension MirageClientService {
             sendControlMessageBestEffort(message)
         }
 
+        await forceStopWindowStreamLocally(streamID: streamID)
+    }
+
+    private func handleTerminalStartupFailure(
+        _ failure: StreamController.TerminalStartupFailure,
+        for streamID: StreamID
+    ) async {
+        let waitReason = failure.waitReason ?? "unknown"
+        MirageLogger.error(
+            .client,
+            "Terminal startup failure for stream \(streamID): hardRecoveries=\(failure.hardRecoveryAttempts), " +
+                "reason=\(failure.reason.logLabel), waitReason=\(waitReason)"
+        )
+
+        let error = MirageError.protocolError(failure.errorMessage)
+
+        if desktopStreamID == streamID {
+            let request = StopDesktopStreamMessage(streamID: streamID)
+            if let message = try? ControlMessage(type: .stopDesktopStream, content: request) {
+                sendControlMessageBestEffort(message)
+            }
+            await forceStopDesktopStreamLocally(streamID: streamID, notifyStopReason: .error)
+            delegate?.clientService(self, didEncounterError: error)
+            return
+        }
+
+        if activeStreams.contains(where: { $0.id == streamID }) || controllersByStream[streamID] != nil {
+            let request = StopStreamMessage(
+                streamID: streamID,
+                minimizeWindow: false,
+                origin: nil
+            )
+            if let message = try? ControlMessage(type: .stopStream, content: request) {
+                sendControlMessageBestEffort(message)
+            }
+            await forceStopWindowStreamLocally(streamID: streamID)
+        }
+
+        delegate?.clientService(self, didEncounterError: error)
+    }
+
+    private func forceStopWindowStreamLocally(streamID: StreamID) async {
+        MirageFrameCache.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
 
+        metricsStore.clear(streamID: streamID)
+        cursorStore.clear(streamID: streamID)
+        cursorPositionStore.clear(streamID: streamID)
+
         removeActiveStreamID(streamID)
+        stopVideoStreamReceive(for: streamID)
         registeredStreamIDs.remove(streamID)
         clearStreamRefreshRateOverride(streamID: streamID)
         inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
+        clearDecoderColorDepthState(for: streamID)
+        mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
+        clearStartupAttempt(for: streamID)
+        appDimensionTokenByStream.removeValue(forKey: streamID)
+        appStreamStartAcknowledgementByStreamID.removeValue(forKey: streamID)
+        streamStartupBaseTimes.removeValue(forKey: streamID)
+        streamStartupFirstRegistrationSent.remove(streamID)
+        streamStartupFirstPacketReceived.remove(streamID)
+        clearStartupPacketPending(streamID)
+        cancelStartupRegistrationRetry(streamID: streamID)
+        cancelRecoveryKeyframeRetry(for: streamID)
+        activeJitterHoldMs = 0
 
         if let controller = controllersByStream[streamID] {
             await controller.stop()
             controllersByStream.removeValue(forKey: streamID)
             heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
         }
-        clearDecoderColorDepthState(for: streamID)
 
         await updateReassemblerSnapshot()
+        await refreshSharedClipboardBridgeState()
+    }
+
+    private func forceStopDesktopStreamLocally(
+        streamID: StreamID,
+        notifyStopReason: DesktopStreamStopReason? = nil
+    ) async {
+        let hadLocalState = desktopStreamID == streamID ||
+            controllersByStream[streamID] != nil ||
+            registeredStreamIDs.contains(streamID)
+
+        MirageFrameCache.shared.clear(for: streamID)
+        desktopStreamStartTimeoutTask?.cancel()
+        desktopStreamStartTimeoutTask = nil
+        desktopStreamRequestStartTime = 0
+        if desktopStreamID == streamID {
+            desktopStreamID = nil
+            desktopStreamResolution = nil
+            desktopStreamMode = nil
+            desktopCursorPresentation = nil
+        }
+        desktopDimensionTokenByStream.removeValue(forKey: streamID)
+        clearStartupAttempt(for: streamID)
+        sessionStore.clearPostResizeTransition(for: streamID)
+        metricsStore.clear(streamID: streamID)
+        cursorStore.clear(streamID: streamID)
+        cursorPositionStore.clear(streamID: streamID)
+        clearStreamRefreshRateOverride(streamID: streamID)
+
+        removeActiveStreamID(streamID)
+        stopVideoStreamReceive(for: streamID)
+        registeredStreamIDs.remove(streamID)
+        streamStartupBaseTimes.removeValue(forKey: streamID)
+        streamStartupFirstRegistrationSent.remove(streamID)
+        streamStartupFirstPacketReceived.remove(streamID)
+        clearStartupPacketPending(streamID)
+        cancelStartupRegistrationRetry(streamID: streamID)
+        cancelRecoveryKeyframeRetry(for: streamID)
+        clearDecoderColorDepthState(for: streamID)
+        inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
+        pendingDesktopRequestedColorDepth = nil
+        activeJitterHoldMs = 0
+        mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
+        activeStreamCodecs.removeValue(forKey: streamID)
+
+        if let controller = controllersByStream[streamID] {
+            await controller.stop()
+            controllersByStream.removeValue(forKey: streamID)
+            heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
+        }
+
+        await updateReassemblerSnapshot()
+        await refreshSharedClipboardBridgeState()
+
+        if let notifyStopReason, hadLocalState {
+            onDesktopStreamStopped?(streamID, notifyStopReason)
+        }
     }
 
     /// Get the minimum window size for a stream (in points).

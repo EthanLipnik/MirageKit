@@ -201,6 +201,11 @@ extension MirageHostService {
 
             // Abort early if the client disconnected during acquisition to avoid
             // creating virtual displays that will be immediately destroyed.
+            if streamSetupCancelled {
+                MirageLogger.host("Desktop stream setup cancelled by client during acquisition loop")
+                await cleanupFailedDesktopStreamStartup(mode: mode)
+                throw MirageError.protocolError("Desktop stream setup cancelled by client")
+            }
             if disconnectingClientIDs.contains(clientContext.client.id)
                 || clientsByID[clientContext.client.id] == nil {
                 MirageLogger.host("Desktop stream client disconnected during acquisition loop; aborting")
@@ -380,6 +385,11 @@ extension MirageHostService {
         let captureDisplayP3CoverageStatus = acquiredCaptureContext.p3CoverageStatus
         let captureDisplayColorSpace = acquiredCaptureContext.colorSpace
 
+        if streamSetupCancelled {
+            MirageLogger.host("Desktop stream setup cancelled by client after acquisition")
+            await cleanupFailedDesktopStreamStartup(mode: mode)
+            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+        }
         guard !disconnectingClientIDs.contains(clientContext.client.id),
               clientsByID[clientContext.client.id] != nil else {
             MirageLogger.host("Desktop stream client disconnected during virtual display acquisition; aborting startup")
@@ -461,6 +471,11 @@ extension MirageHostService {
             }
         }
 
+        if streamSetupCancelled {
+            MirageLogger.host("Desktop stream setup cancelled by client before activation")
+            await cleanupFailedDesktopStreamStartup(mode: mode)
+            throw MirageError.protocolError("Desktop stream setup cancelled by client")
+        }
         guard !disconnectingClientIDs.contains(clientContext.client.id),
               clientsByID[clientContext.client.id] != nil else {
             MirageLogger.host("Desktop stream client disconnected before stream activation; aborting startup")
@@ -472,15 +487,23 @@ extension MirageHostService {
         desktopStreamID = streamID
         desktopStreamClientContext = clientContext
         desktopRequestedScaleFactor = desktopBackingScale.scaleFactor
+        desktopMirroredVirtualResolution = captureResolution
         streamsByID[streamID] = streamContext
         registerTypingBurstRoute(streamID: streamID, context: streamContext)
         await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
         await syncAppListRequestDeferralForInteractiveWorkload()
-        await activateAudioForClient(
+        try await activateAudioForClient(
             clientID: clientContext.client.id,
             sourceStreamID: streamID,
             configuration: resolvedAudioConfiguration
         )
+        guard !disconnectingClientIDs.contains(clientContext.client.id),
+              let activeClientContext = findClientContext(clientID: clientContext.client.id) else {
+            MirageLogger.host("Desktop stream client disconnected after audio activation; aborting startup")
+            await cleanupFailedDesktopStreamStartup(mode: mode)
+            throw MirageError.protocolError("Desktop stream client disconnected during startup")
+        }
+        desktopStreamClientContext = activeClientContext
 
         syncSharedClipboardState(reason: "desktop_stream_started")
         await updateLightsOutState()
@@ -502,7 +525,7 @@ extension MirageHostService {
             isOnScreen: true,
             windowLayer: 0
         )
-        inputStreamCacheActor.set(streamID, window: desktopWindow, client: clientContext.client)
+        inputStreamCacheActor.set(streamID, window: desktopWindow, client: activeClientContext.client)
 
         // Enable power assertion
         await PowerAssertionManager.shared.enable()
@@ -510,7 +533,7 @@ extension MirageHostService {
         // Open Loom video stream for desktop streaming
         let activeVideoStream: LoomMultiplexedStream
         do {
-            let openedVideoStream = try await clientContext.controlChannel.session.openStream(
+            let openedVideoStream = try await activeClientContext.controlChannel.session.openStream(
                 label: "video/\(streamID)"
             )
             activeVideoStream = openedVideoStream
@@ -595,10 +618,10 @@ extension MirageHostService {
             registerPendingStartupAttempt(
                 streamID: streamID,
                 startupAttemptID: startupAttemptID,
-                clientID: clientContext.client.id,
+                clientID: activeClientContext.client.id,
                 kind: .desktop
             )
-            try await clientContext.send(.desktopStreamStarted, content: message)
+            try await activeClientContext.send(.desktopStreamStarted, content: message)
             MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=desktop")
             logDesktopStartStep("desktopStreamStarted sent")
         } catch {
@@ -632,6 +655,7 @@ extension MirageHostService {
         desktopDisplayBounds = nil
         desktopPrimaryPhysicalDisplayID = nil
         desktopPrimaryPhysicalBounds = nil
+        desktopMirroredVirtualResolution = nil
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = 1.0
         desktopUsesHostResolution = false
@@ -677,6 +701,7 @@ extension MirageHostService {
         desktopVirtualDisplayID = nil
         desktopPrimaryPhysicalDisplayID = nil
         desktopPrimaryPhysicalBounds = nil
+        desktopMirroredVirtualResolution = nil
         desktopRequestedScaleFactor = nil
         desktopUsesHostResolution = false
         sharedVirtualDisplayScaleFactor = 2.0
@@ -1042,7 +1067,17 @@ extension MirageHostService {
                 MirageLogger.host("Skipping mirroring restore for offline display \(displayID)")
                 continue
             }
-            let targetMirrorID = mirroredDisplayID == 0 ? kCGNullDirectDisplay : mirroredDisplayID
+            let targetMirrorID: CGDirectDisplayID
+            if mirroredDisplayID == 0 {
+                targetMirrorID = kCGNullDirectDisplay
+            } else if onlineDisplays.contains(mirroredDisplayID) {
+                targetMirrorID = mirroredDisplayID
+            } else {
+                targetMirrorID = kCGNullDirectDisplay
+                MirageLogger.host(
+                    "Skipping restore to offline mirror target \(mirroredDisplayID); unmirroring display \(displayID) instead"
+                )
+            }
             guard CGDisplayMirrorsDisplay(displayID) != targetMirrorID else { continue }
 
             let result = CGConfigureDisplayMirrorOfDisplay(config, displayID, targetMirrorID)

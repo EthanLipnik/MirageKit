@@ -299,6 +299,22 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Post-resize transition stays armed until first presented frame")
+    func postResizeTransitionStaysArmedUntilFirstPresentedFrame() async {
+        let controller = StreamController(streamID: 190, maxPayloadSize: 1200)
+
+        await controller.beginPostResizeTransition()
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.markFirstFrameDecoded()
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.markFirstFramePresented()
+        #expect(!(await controller.awaitingFirstFrameAfterResize))
+
+        await controller.stop()
+    }
+
     @Test("Decode enqueue signals render listeners through stream store")
     func decodeEnqueueSignalsRenderListeners() {
         let streamID: StreamID = 50
@@ -507,6 +523,44 @@ struct StreamControllerRecoveryTests {
         MirageFrameCache.shared.clear(for: streamID)
     }
 
+    @Test("Post-resize decode threshold waits through grace window before recovery")
+    func postResizeDecodeThresholdWaitsThroughGraceWindowBeforeRecovery() async throws {
+        let streamID: StreamID = 246
+        let keyframeCounter = LockedCounter()
+        let clock = ManualTimeProvider(start: 2_000)
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: {
+                keyframeCounter.increment()
+            },
+            onResizeEvent: nil
+        )
+
+        await controller.markFirstFramePresented()
+        await controller.beginPostResizeTransition()
+
+        clock.advance(by: 0.1)
+        await controller.handleDecodeErrorThresholdSignal()
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(keyframeCounter.value == 0)
+
+        clock.advance(by: 1.3)
+        await controller.handleDecodeErrorThresholdSignal()
+        try await waitUntil("post-resize decode-threshold recovery after grace") {
+            keyframeCounter.value >= 1
+        }
+        #expect(keyframeCounter.value >= 1)
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
+    }
+
     @Test("Recovery dispatch helper enforces minimum intervals")
     func recoveryDispatchHelperEnforcesMinimumIntervals() {
         #expect(
@@ -689,6 +743,81 @@ struct StreamControllerRecoveryTests {
         #expect(watchdogTriggered)
 
         await controller.stop()
+    }
+
+    @Test("Startup hard recovery budget escalates to terminal failure")
+    func startupHardRecoveryBudgetEscalatesToTerminalFailure() async throws {
+        let clock = ManualTimeProvider(start: 4_000)
+        let failures = LockedTerminalStartupFailure()
+        let controller = StreamController(
+            streamID: 144,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+
+        await controller.setCallbacks(
+            onKeyframeNeeded: nil,
+            onResizeEvent: nil,
+            onTerminalStartupFailure: { failure in
+                failures.record(failure)
+            }
+        )
+
+        await controller.requestRecovery(
+            reason: .startupKeyframeTimeout,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "initial-startup"
+        )
+        #expect(await controller.startupHardRecoveryCount == 1)
+
+        clock.advance(by: StreamController.hardRecoveryMinimumInterval + 0.1)
+        await controller.requestRecovery(
+            reason: .startupKeyframeTimeout,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "initial-startup"
+        )
+
+        try await waitUntil("terminal startup failure callback") {
+            failures.value != nil
+        }
+
+        let failure = try #require(failures.value)
+        #expect(failure.reason == .startupKeyframeTimeout)
+        #expect(failure.hardRecoveryAttempts == StreamController.startupHardRecoveryLimit)
+        #expect(failure.waitReason == "initial-startup")
+
+        await controller.stop()
+    }
+
+    @Test("First-frame presentation clears startup hard recovery budget")
+    func firstFramePresentationClearsStartupHardRecoveryBudget() async {
+        let clock = ManualTimeProvider(start: 5_000)
+        let streamID: StreamID = 145
+        let controller = StreamController(
+            streamID: streamID,
+            maxPayloadSize: 1200,
+            nowProvider: { clock.now }
+        )
+        MirageFrameCache.shared.clear(for: streamID)
+
+        await controller.requestRecovery(
+            reason: .startupKeyframeTimeout,
+            restartRecoveryLoop: false,
+            awaitFirstPresentedFrame: true,
+            firstPresentedFrameWaitReason: "initial-startup"
+        )
+        #expect(await controller.startupHardRecoveryCount == 1)
+
+        MirageFrameCache.shared.markPresented(sequence: 1, for: streamID)
+        await controller.markFirstFramePresented()
+
+        #expect(await controller.startupHardRecoveryCount == 0)
+        #expect(!(await controller.hasTriggeredTerminalStartupFailure))
+
+        await controller.stop()
+        MirageFrameCache.shared.clear(for: streamID)
     }
 
     @Test("Recovery requests are ignored after the controller stops")
@@ -974,6 +1103,23 @@ private final class LockedCounter: @unchecked Sendable {
     func increment() {
         lock.lock()
         storage += 1
+        lock.unlock()
+    }
+}
+
+private final class LockedTerminalStartupFailure: @unchecked Sendable {
+    private let lock = NSLock()
+    private var storage: StreamController.TerminalStartupFailure?
+
+    var value: StreamController.TerminalStartupFailure? {
+        lock.lock()
+        defer { lock.unlock() }
+        return storage
+    }
+
+    func record(_ failure: StreamController.TerminalStartupFailure) {
+        lock.lock()
+        storage = failure
         lock.unlock()
     }
 }

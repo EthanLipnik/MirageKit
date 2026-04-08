@@ -95,31 +95,39 @@ private final class MiragePointerLockRootController: UIViewController {
     private func updatePointerLockEvaluation() {
         setNeedsUpdateOfPrefersPointerLocked()
 
-        // When pointer lock is requested but no GCMouse is available yet,
-        // poll briefly to catch late GameController discovery that may not
-        // fire GCMouseDidConnect (e.g. mouse already connected at launch).
-        if pointerLockRequested, GCMouse.mice().isEmpty {
+        // Pointer lock acquisition can lag behind the initial preference update
+        // during scene/root-controller transitions. Retry briefly while lock is
+        // requested but not yet resolved so first-use lock remains reliable.
+        if shouldRetryPointerLockEvaluation {
             startPollIfNeeded()
         } else {
             stopPoll()
         }
     }
 
+    private var shouldRetryPointerLockEvaluation: Bool {
+        guard pointerLockRequested else { return false }
+        if GCMouse.mice().isEmpty {
+            return true
+        }
+        return !(view.window?.windowScene?.pointerLockState?.isLocked ?? false)
+    }
+
     private func startPollIfNeeded() {
         guard pollTimer == nil else { return }
         var attempts = 0
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] timer in
+        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
             guard let self else {
                 timer.invalidate()
                 return
             }
             attempts += 1
-            if !GCMouse.mice().isEmpty {
-                self.setNeedsUpdateOfPrefersPointerLocked()
+            self.setNeedsUpdateOfPrefersPointerLocked()
+            if !self.shouldRetryPointerLockEvaluation {
                 timer.invalidate()
                 self.pollTimer = nil
-            } else if attempts >= 10 {
-                // Stop polling after 5 seconds — no mouse detected.
+            } else if attempts >= 20 {
+                // Stop polling after 5 seconds if the scene still cannot lock.
                 timer.invalidate()
                 self.pollTimer = nil
             }
@@ -133,10 +141,16 @@ private final class MiragePointerLockRootController: UIViewController {
 }
 
 private final class MiragePointerLockWindowInstallerController: UIViewController {
+    private weak var installedRootController: MiragePointerLockRootController?
+
     var pointerLockRequested: Bool = false {
         didSet {
             applyPointerLockRootIfNeeded()
         }
+    }
+
+    deinit {
+        clearPointerLockIfNeeded()
     }
 
     override func loadView() {
@@ -155,10 +169,15 @@ private final class MiragePointerLockWindowInstallerController: UIViewController
         applyPointerLockRootIfNeeded()
     }
 
+    func clearPointerLockIfNeeded() {
+        installedRootController?.pointerLockRequested = false
+    }
+
     private func applyPointerLockRootIfNeeded() {
         guard let window = view.window else { return }
 
         if let rootController = window.rootViewController as? MiragePointerLockRootController {
+            installedRootController = rootController
             rootController.pointerLockRequested = pointerLockRequested
             return
         }
@@ -168,6 +187,7 @@ private final class MiragePointerLockWindowInstallerController: UIViewController
 
         let wrappedRootController = MiragePointerLockRootController(contentController: existingRootController)
         window.rootViewController = wrappedRootController
+        installedRootController = wrappedRootController
         wrappedRootController.pointerLockRequested = pointerLockRequested
     }
 }
@@ -186,6 +206,13 @@ private struct MiragePointerLockWindowInstallerRepresentable: UIViewControllerRe
         context: Context
     ) {
         uiViewController.pointerLockRequested = pointerLockRequested
+    }
+
+    static func dismantleUIViewController(
+        _ uiViewController: MiragePointerLockWindowInstallerController,
+        coordinator: ()
+    ) {
+        uiViewController.clearPointerLockIfNeeded()
     }
 }
 

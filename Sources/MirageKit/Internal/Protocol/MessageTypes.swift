@@ -114,6 +114,7 @@ package enum ControlMessageType: UInt8, Codable {
     // Stream lifecycle (background/foreground)
     case streamPauseAll = 0xC0 // Client → Host: Pause all stream encoding (client backgrounding)
     case streamResumeAll = 0xC1 // Client → Host: Resume all stream encoding (client foregrounding)
+    case cancelStreamSetup = 0xC2 // Client → Host: Cancel in-progress stream setup
 
     /// Errors
     case error = 0xFF

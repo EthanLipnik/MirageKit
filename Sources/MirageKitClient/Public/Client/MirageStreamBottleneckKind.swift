@@ -70,15 +70,32 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let transportDropCount = (snapshot.hostStalePacketDrops ?? 0) +
             (snapshot.hostGenerationAbortDrops ?? 0) +
             (snapshot.hostNonKeyframeHoldDrops ?? 0)
+        let transportAssessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: queueBytes,
+                queueStressBytes: 800_000,
+                queueSevereBytes: 2_000_000,
+                packetPacerAverageSleepMs: packetPacerAverageSleepMs,
+                packetPacerStressThresholdMs: 0.75,
+                packetPacerSevereThresholdMs: 2.0,
+                sendStartDelayAverageMs: sendStartDelayAverageMs,
+                sendStartDelayStressThresholdMs: 2.0,
+                sendStartDelaySevereThresholdMs: 6.0,
+                sendCompletionAverageMs: sendCompletionAverageMs,
+                sendCompletionStressThresholdMs: 12.0,
+                sendCompletionSevereThresholdMs: 28.0,
+                transportDropCount: transportDropCount,
+                transportDropSevereCount: 12,
+                encodedFPS: hostEncodedFPS,
+                deliveredFPS: receivedFPS,
+                deliveryStressRatio: 0.92,
+                deliverySevereRatio: 0.75
+            )
+        )
         let fpsGapGrace = max(4.0, targetFPS * 0.08)
         let decodeGapGrace = max(5.0, targetFPS * 0.10)
 
-        let networkBound = queueBytes >= 800_000 ||
-            sendStartDelayAverageMs >= 2.0 ||
-            sendCompletionAverageMs >= 12.0 ||
-            packetPacerAverageSleepMs >= 0.75 ||
-            transportDropCount > 0 ||
-            (hostEncodedFPS > 0 && receivedFPS > 0 && receivedFPS + fpsGapGrace < hostEncodedFPS)
+        let networkBound = transportAssessment.isStress
 
         let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
             (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS)

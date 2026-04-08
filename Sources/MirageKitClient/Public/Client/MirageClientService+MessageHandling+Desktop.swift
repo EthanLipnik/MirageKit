@@ -30,11 +30,34 @@ extension MirageClientService {
             let hasController = controllersByStream[streamID] != nil
             let previousDimensionToken = desktopDimensionTokenByStream[streamID]
             let dimensionToken = started.dimensionToken
-            let isResizeTokenAdvance = if let previousDimensionToken, let dimensionToken {
-                previousDimensionToken != dimensionToken && previousStreamID == streamID && hasController
-            } else {
-                false
+            let acceptanceDecision = desktopStreamStartAcceptanceDecision(
+                streamID: streamID,
+                previousStreamID: previousStreamID,
+                hasController: hasController,
+                requestStartPending: desktopStreamRequestStartTime > 0,
+                previousDimensionToken: previousDimensionToken,
+                receivedDimensionToken: dimensionToken
+            )
+            guard acceptanceDecision.shouldAccept else {
+                let tokenText = dimensionToken.map(String.init) ?? "nil"
+                let previousTokenText = previousDimensionToken.map(String.init) ?? "nil"
+                let reasonText: String = switch acceptanceDecision {
+                case .ignoreDuplicateToken:
+                    "duplicate dimension token \(tokenText)"
+                case .ignoreOlderToken:
+                    "older dimension token \(tokenText) < \(previousTokenText)"
+                case .ignoreMissingTokenAfterTokenizedStart:
+                    "missing dimension token after prior token \(previousTokenText)"
+                case .accept,
+                     .acceptResizeAdvance:
+                    "accepted"
+                }
+                MirageLogger.client(
+                    "Ignoring stale desktopStreamStarted for stream \(streamID): \(reasonText)"
+                )
+                return
             }
+            let isResizeTokenAdvance = acceptanceDecision == .acceptResizeAdvance
             let resetDecision = desktopStreamStartResetDecision(
                 streamID: streamID,
                 previousStreamID: previousStreamID,
@@ -166,6 +189,9 @@ extension MirageClientService {
         do {
             let stopped = try message.decode(DesktopStreamStoppedMessage.self)
             let streamID = stopped.streamID
+            let hadLocalDesktopState = desktopStreamID == streamID ||
+                controllersByStream[streamID] != nil ||
+                registeredStreamIDs.contains(streamID)
             MirageLogger.client("Desktop stream stopped: stream=\(streamID), reason=\(stopped.reason)")
 
             desktopStreamID = nil
@@ -181,6 +207,7 @@ extension MirageClientService {
             clearStreamRefreshRateOverride(streamID: streamID)
 
             removeActiveStreamID(streamID)
+            stopVideoStreamReceive(for: streamID)
             registeredStreamIDs.remove(streamID)
             streamStartupBaseTimes.removeValue(forKey: streamID)
             streamStartupFirstRegistrationSent.remove(streamID)
@@ -202,7 +229,9 @@ extension MirageClientService {
                 await self.updateReassemblerSnapshot()
             }
 
-            onDesktopStreamStopped?(streamID, stopped.reason)
+            if hadLocalDesktopState {
+                onDesktopStreamStopped?(streamID, stopped.reason)
+            }
             Task { await self.refreshSharedClipboardBridgeState() }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream stopped: ")

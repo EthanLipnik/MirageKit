@@ -43,6 +43,21 @@ func desktopResizeMirroringPlan(for mode: MirageDesktopStreamMode) -> DesktopRes
     return .unchanged
 }
 
+func desktopResizeShouldSuspendMirroring(
+    plan: DesktopResizeMirroringPlan,
+    updateOutcome: SharedVirtualDisplayManager.DisplayResolutionUpdateOutcome
+) -> Bool {
+    plan == .suspendAndRestore && updateOutcome == .requiresRecreation
+}
+
+func desktopResizeShouldDisableResidualMirroring(
+    plan: DesktopResizeMirroringPlan,
+    generationChanged: Bool,
+    hasResidualMirroringState: Bool
+) -> Bool {
+    plan == .unchanged && generationChanged && hasResidualMirroringState
+}
+
 enum DesktopResizeTransactionContinuationDecision: Equatable {
     case continueTransaction
     case abortStreamInactive
@@ -169,6 +184,25 @@ func aspectFittedWindowBounds(
     let originX = bounds.minX + (bounds.width - fittedWidth) * 0.5
     let originY = bounds.minY + (bounds.height - fittedHeight) * 0.5
     return CGRect(x: originX, y: originY, width: fittedWidth, height: fittedHeight)
+}
+
+func resolvedWindowTargetContentAspectRatio(
+    existingAspectRatio: CGFloat?,
+    overrideAspectRatio: CGFloat?
+) -> CGFloat? {
+    if let overrideAspectRatio,
+       overrideAspectRatio.isFinite,
+       overrideAspectRatio > 0 {
+        return overrideAspectRatio
+    }
+
+    if let existingAspectRatio,
+       existingAspectRatio.isFinite,
+       existingAspectRatio > 0 {
+        return existingAspectRatio
+    }
+
+    return nil
 }
 
 func requestedAspectRatioForWindowFit(
@@ -545,8 +579,10 @@ extension MirageHostService {
                 existingState?.clientScaleFactor ??
                 snapshot.scaleFactor
         )
-        let targetContentAspectRatio = existingState?.targetContentAspectRatio ??
-            targetContentAspectRatioOverride
+        let targetContentAspectRatio = resolvedWindowTargetContentAspectRatio(
+            existingAspectRatio: existingState?.targetContentAspectRatio,
+            overrideAspectRatio: targetContentAspectRatioOverride
+        )
         let windowID = await context.getWindowID()
         let effectiveBounds = aspectFittedWindowBounds(
             bounds,
@@ -679,6 +715,17 @@ extension MirageHostService {
             let targetFrameRate = await desktopContext.getTargetFrameRate()
             let streamRefreshRate = SharedVirtualDisplayManager.streamRefreshRate(for: targetFrameRate)
             let preResizeSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot()
+            let requestedScaleFactor = max(
+                1.0,
+                desktopRequestedScaleFactor ?? preResizeSnapshot?.scaleFactor ?? sharedVirtualDisplayScaleFactor
+            )
+            let requestedColorSpace = preResizeSnapshot?.colorSpace ?? .sRGB
+            let resizeRequest = desktopVirtualDisplayResizeRequest(
+                pixelResolution: pixelResolution,
+                refreshRate: streamRefreshRate,
+                hiDPI: requestedScaleFactor > 1.5,
+                colorSpace: requestedColorSpace
+            )
             let noOpDecision = desktopResizeNoOpDecision(
                 currentResolution: preResizeSnapshot?.resolution,
                 currentRefreshRate: preResizeSnapshot.map { Int($0.refreshRate.rounded()) },
@@ -707,23 +754,39 @@ extension MirageHostService {
                     "Desktop stream resize requested (#\(requestNumber)): " +
                         "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
-                )
+            )
             try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
             await desktopContext.suspendEncodingForDesktopResize()
             shouldResumeEncodingAfterResize = true
 
-            if mirroringPlan == .suspendAndRestore, let displayID = preResizeSnapshot?.displayID {
-                await suspendDisplayMirroringForResize(targetDisplayID: displayID)
-                suspendedMirroringDisplayID = displayID
-                shouldRestoreMirroring = true
-            }
-            try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
-
-            try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+            var updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
                 for: .desktopStream,
                 newResolution: pixelResolution,
-                refreshRate: streamRefreshRate
+                refreshRate: streamRefreshRate,
+                resizeRequest: resizeRequest,
+                allowRecreation: false
             )
+
+            if updateResult.outcome == .requiresRecreation {
+                if desktopResizeShouldSuspendMirroring(
+                    plan: mirroringPlan,
+                    updateOutcome: updateResult.outcome
+                ) {
+                    if let displayID = preResizeSnapshot?.displayID {
+                        await suspendDisplayMirroringForResize(targetDisplayID: displayID)
+                        suspendedMirroringDisplayID = displayID
+                        shouldRestoreMirroring = true
+                    }
+                }
+                try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
+                updateResult = try await SharedVirtualDisplayManager.shared.updateDisplayResolution(
+                    for: .desktopStream,
+                    newResolution: pixelResolution,
+                    refreshRate: streamRefreshRate,
+                    resizeRequest: resizeRequest,
+                    allowRecreation: true
+                )
+            }
 
             try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
 
@@ -771,13 +834,17 @@ extension MirageHostService {
             )
 
             let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
+            desktopMirroredVirtualResolution = effectivePixelResolution
             let inputBounds = resolvedDesktopInputBounds(
                 physicalBounds: primaryBounds,
                 virtualResolution: effectivePixelResolution
             )
             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
-            if mirroringPlan == .unchanged,
-               !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+            if desktopResizeShouldDisableResidualMirroring(
+                plan: mirroringPlan,
+                generationChanged: updateResult.generationChanged,
+                hasResidualMirroringState: !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty
+            ) {
                 await disableDisplayMirroring(displayID: activeDisplayID)
             }
             MirageLogger
@@ -992,6 +1059,9 @@ extension MirageHostService {
             width: currentEncodedDimensions.width,
             height: currentEncodedDimensions.height
         )
+        let requestedAspectRatio = logicalResolution.width > 0 && logicalResolution.height > 0
+            ? logicalResolution.width / logicalResolution.height
+            : nil
         let requestedStreamScale = await context.requestedStreamScale
         let encoderMaxWidth = await context.encoderMaxWidth
         let encoderMaxHeight = await context.encoderMaxHeight
@@ -1024,7 +1094,8 @@ extension MirageHostService {
             await refreshWindowVirtualDisplayState(
                 streamID: streamID,
                 context: context,
-                clientScaleFactorOverride: clientScaleOverride
+                clientScaleFactorOverride: clientScaleOverride,
+                targetContentAspectRatioOverride: requestedAspectRatio
             )
             await sendWindowResizeCompletion(
                 streamID: streamID,
@@ -1244,7 +1315,7 @@ extension MirageHostService {
                             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedBounds)
                         }
                         windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID)
-                        await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID, force: true)
+                        await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
                     }
                 } else if windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID) != nil {
                     MirageLogger.host(

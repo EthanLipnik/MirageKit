@@ -31,6 +31,16 @@ struct AudioPlaybackControllerInitializationTests {
 
         _ = controller.preferredChannelCount(for: 2)
 
+        #expect(!controller.hasInitializedPlaybackGraphForTesting())
+    }
+
+    @MainActor
+    @Test("Incoming audio format preparation initializes playback ahead of the first frame")
+    func incomingFormatPreparationInitializesPlaybackGraph() {
+        let controller = AudioPlaybackController()
+
+        #expect(!controller.hasInitializedPlaybackGraphForTesting())
+        #expect(controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
         #expect(controller.hasInitializedPlaybackGraphForTesting())
     }
 }

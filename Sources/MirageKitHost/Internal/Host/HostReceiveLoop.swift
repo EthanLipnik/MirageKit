@@ -210,6 +210,8 @@ final class HostReceiveLoop: @unchecked Sendable {
                         inputMessages.append(message)
                     } else if message.type == .ping {
                         pingMessages.append(message)
+                    } else if message.type == .pong {
+                        continue
                     } else {
                         controlMessages.append(message)
                     }

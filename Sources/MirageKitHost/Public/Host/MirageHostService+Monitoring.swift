@@ -36,15 +36,13 @@ extension MirageHostService {
                     streams.append(contentsOf: appStreams)
 
                     // Include desktop stream if active
-                    // Desktop stream uses NSScreen.main frame since it mirrors the main display
                     if let desktopID = desktopStreamID {
                         if desktopStreamMode == .secondary {
                             if let bounds = resolveDesktopDisplayBoundsForCursorMonitor() {
                                 streams.append((desktopID, bounds))
                             }
-                        } else if let screen = NSScreen.main {
-                            // Use the main screen's frame in Cocoa coordinates (already bottom-left origin)
-                            streams.append((desktopID, screen.frame))
+                        } else if let bounds = resolveMirroredDesktopDisplayBoundsForCursorMonitor() {
+                            streams.append((desktopID, bounds))
                         }
                     }
 
@@ -129,6 +127,16 @@ extension MirageHostService {
             y: primaryHeight - frame.origin.y - frame.height,
             width: frame.width,
             height: frame.height
+        )
+    }
+
+    private func resolveMirroredDesktopDisplayBoundsForCursorMonitor() -> CGRect? {
+        let physicalBounds = desktopPrimaryPhysicalBounds ?? refreshDesktopPrimaryPhysicalBounds()
+        let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
+        return Self.resolvedMirroredDesktopCursorMonitorBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: desktopMirroredVirtualResolution,
+            primaryHeight: primaryHeight
         )
     }
 

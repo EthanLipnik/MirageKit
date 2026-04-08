@@ -20,6 +20,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Callback when drawable metrics change - reports actual pixel dimensions and scale
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
 
+    /// Callback when the platform container/window bounds change.
+    public var onContainerSizeChanged: ((CGSize) -> Void)?
+
     /// Callback when the view decides on a refresh rate override.
     public var onRefreshRateOverrideChange: ((Int) -> Void)?
 
@@ -108,10 +111,14 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize?
 
+    /// Whether the stream should present locally using aspect fit.
+    public var prefersLocalAspectFitPresentation: Bool
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
+        onContainerSizeChanged: ((CGSize) -> Void)? = nil,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
@@ -140,11 +147,13 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onCursorLockRecaptureRequested: (() -> Void)? = nil,
         syntheticCursorEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
-        maxDrawableSize: CGSize? = nil
+        maxDrawableSize: CGSize? = nil,
+        prefersLocalAspectFitPresentation: Bool = false
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
+        self.onContainerSizeChanged = onContainerSizeChanged
         self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
@@ -174,12 +183,14 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.syntheticCursorEnabled = syntheticCursorEnabled
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
+        self.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
         MirageStreamViewCoordinator(
             onInputEvent: onInputEvent,
             onDrawableMetricsChanged: onDrawableMetricsChanged,
+            onContainerSizeChanged: onContainerSizeChanged,
             onRefreshRateOverrideChange: onRefreshRateOverrideChange,
             onBecomeActive: onBecomeActive,
             onHardwareKeyboardPresenceChanged: onHardwareKeyboardPresenceChanged,
@@ -196,6 +207,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         controller.configureCallbacks(
             onInputEvent: context.coordinator.handleInputEvent,
             onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
+            onContainerSizeChanged: context.coordinator.handleContainerSizeChanged,
             onRefreshRateOverrideChange: context.coordinator.handleRefreshRateOverrideChange,
             onBecomeActive: context.coordinator.handleBecomeActive,
             onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
@@ -228,7 +240,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
-            maxDrawableSize: maxDrawableSize
+            maxDrawableSize: maxDrawableSize,
+            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
         )
         return controller
     }
@@ -237,6 +250,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         // Update coordinator's callbacks in case they changed
         context.coordinator.onInputEvent = onInputEvent
         context.coordinator.onDrawableMetricsChanged = onDrawableMetricsChanged
+        context.coordinator.onContainerSizeChanged = onContainerSizeChanged
         context.coordinator.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         context.coordinator.onBecomeActive = onBecomeActive
         context.coordinator.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
@@ -250,6 +264,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         uiViewController.configureCallbacks(
             onInputEvent: context.coordinator.handleInputEvent,
             onDrawableMetricsChanged: context.coordinator.handleDrawableMetricsChanged,
+            onContainerSizeChanged: context.coordinator.handleContainerSizeChanged,
             onRefreshRateOverrideChange: context.coordinator.handleRefreshRateOverrideChange,
             onBecomeActive: context.coordinator.handleBecomeActive,
             onHardwareKeyboardPresenceChanged: context.coordinator.handleHardwareKeyboardPresenceChanged,
@@ -283,7 +298,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onCursorLockRecaptureRequested: onCursorLockRecaptureRequested,
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
-            maxDrawableSize: maxDrawableSize
+            maxDrawableSize: maxDrawableSize,
+            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
         )
     }
 
@@ -335,6 +351,11 @@ public final class MirageStreamViewController: UIViewController {
         startPointerLockObserverIfNeeded()
     }
 
+    override public func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        captureView.reportContainerSizeIfChanged(view.bounds.size)
+    }
+
     override public func target(forAction action: Selector, withSender sender: Any?) -> Any? {
         if captureView.shouldHandleResponderAction(action) {
             return captureView
@@ -353,6 +374,7 @@ public final class MirageStreamViewController: UIViewController {
     func configureCallbacks(
         onInputEvent: ((MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
+        onContainerSizeChanged: ((CGSize) -> Void)?,
         onRefreshRateOverrideChange: ((Int) -> Void)?,
         onBecomeActive: (() -> Void)?,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?,
@@ -367,6 +389,7 @@ public final class MirageStreamViewController: UIViewController {
     ) {
         captureView.onInputEvent = onInputEvent
         captureView.onDrawableMetricsChanged = onDrawableMetricsChanged
+        captureView.onContainerSizeChanged = onContainerSizeChanged
         captureView.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         captureView.onBecomeActive = onBecomeActive
         captureView.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
@@ -399,7 +422,8 @@ public final class MirageStreamViewController: UIViewController {
         onCursorLockRecaptureRequested: (() -> Void)?,
         syntheticCursorEnabled: Bool,
         presentationTier: StreamPresentationTier,
-        maxDrawableSize: CGSize?
+        maxDrawableSize: CGSize?,
+        prefersLocalAspectFitPresentation: Bool
     ) {
         // Set stream ID first so cursor router registration is ready
         // before cursorStore/cursorPositionStore didSet triggers refreshCursorIfNeeded.
@@ -423,6 +447,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.syntheticCursorEnabled = syntheticCursorEnabled
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
+        captureView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()

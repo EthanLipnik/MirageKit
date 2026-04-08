@@ -99,6 +99,7 @@ extension MirageHostService {
             )
 
             let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
+            desktopMirroredVirtualResolution = newContext.resolution
             let inputBounds = resolvedDesktopInputBounds(
                 physicalBounds: primaryBounds,
                 virtualResolution: newContext.resolution

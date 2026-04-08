@@ -355,7 +355,7 @@ public extension MirageHostService {
             }
         }
 
-        await activateAudioForClient(
+        try await activateAudioForClient(
             clientID: client.id,
             sourceStreamID: streamID,
             configuration: resolvedAudioConfiguration
@@ -368,39 +368,36 @@ public extension MirageHostService {
         inputStreamCacheActor.set(streamID, window: updatedWindow, client: client)
 
         // Open Loom video stream for this stream
-        var videoStream: LoomMultiplexedStream?
-        if let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) {
-            do {
-                let openedVideoStream = try await clientContext.controlChannel.session.openStream(
-                    label: "video/\(streamID)"
-                )
-                videoStream = openedVideoStream
-                loomVideoStreamsByStreamID[streamID] = openedVideoStream
-                transportRegistry.registerVideoStream(openedVideoStream, streamID: streamID)
-                MirageLogger.host("Opened Loom video stream for stream \(streamID)")
-            } catch {
-                MirageLogger.error(
-                    .host,
-                    error: error,
-                    message: "Failed to open Loom video stream for stream \(streamID): "
-                )
-            }
+        guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) else {
+            throw MirageError.protocolError("Client context missing for stream \(streamID)")
+        }
+
+        let videoStream: LoomMultiplexedStream
+        do {
+            let openedVideoStream = try await clientContext.controlChannel.session.openStream(
+                label: "video/\(streamID)"
+            )
+            videoStream = openedVideoStream
+            loomVideoStreamsByStreamID[streamID] = openedVideoStream
+            transportRegistry.registerVideoStream(openedVideoStream, streamID: streamID)
+            MirageLogger.host("Opened Loom video stream for stream \(streamID)")
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to open Loom video stream for stream \(streamID): "
+            )
+            throw error
         }
 
         // Wrap ScreenCaptureKit types for safe sending across actor boundary
         let windowWrapper = SCWindowWrapper(window: scWindow)
         let applicationWrapper = SCApplicationWrapper(application: scApplication)
         let displayWrapper = SCDisplayWrapper(display: captureSource.display)
-        let activeVideoStream = videoStream
-
         // Start capture with direct Loom send ownership in StreamPacketSender.
         // This will throw if screen recording permission is not granted.
         let sendPacket: @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void = { packetData, onComplete in
-            guard let activeVideoStream else {
-                onComplete(nil)
-                return
-            }
-            activeVideoStream.sendUnreliableQueued(packetData, onComplete: onComplete)
+            videoStream.sendUnreliableQueued(packetData, onComplete: onComplete)
         }
         let onSendError: @Sendable (Error) -> Void = { [weak self] error in
             guard let self else { return }
@@ -596,6 +593,11 @@ public extension MirageHostService {
     )
     async {
         let mirroredDisplayID = await context.getVirtualDisplayID()
+        let shouldDisableSharedMirroringBeforeStop = activeStreams.count == 1 &&
+            activeStreams.first?.id == streamID
+        if shouldDisableSharedMirroringBeforeStop, let mirroredDisplayID {
+            await disableDisplayMirroring(displayID: mirroredDisplayID)
+        }
         await context.stop()
         clearVirtualDisplayState(windowID: windowID)
         pendingWindowResizeResolutionByStreamID.removeValue(forKey: streamID)
@@ -787,11 +789,10 @@ public extension MirageHostService {
                     currentFrame: currentWindowFrame(for: windowID),
                     expectedFrame: getVirtualDisplayState(windowID: windowID)?.bounds
                 )
-                guard force || driftReason != nil else { return }
+                guard let driftReason else { return }
 
                 let now = CFAbsoluteTimeGetCurrent()
-                if !force,
-                   let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
+                if let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
                    now < backoffState.nextRetryAt {
                     return
                 }
@@ -816,9 +817,8 @@ public extension MirageHostService {
                             generation: vdContext.generation
                         )
                     )
-                    let reasonText = driftReason ?? "forced reassert"
                     MirageLogger.host(
-                        "Window capture: reasserted window \(windowID) to space \(spaceID) (\(reasonText))"
+                        "Window capture: reasserted window \(windowID) to space \(spaceID) (\(driftReason))"
                     )
                     if let previousBackoff = windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID) {
                         let resetStep = windowPlacementRepairBackoffStep(
@@ -832,33 +832,31 @@ public extension MirageHostService {
                         )
                     }
                 } catch {
-                    if !force {
-                        let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
-                        let nextStep = windowPlacementRepairBackoffStep(
-                            currentFailureCount: currentFailureCount,
-                            didSucceed: false
+                    let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
+                    let nextStep = windowPlacementRepairBackoffStep(
+                        currentFailureCount: currentFailureCount,
+                        didSucceed: false
+                    )
+                    if let retryDelaySeconds = nextStep.retryDelaySeconds {
+                        windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
+                            failureCount: nextStep.failureCount,
+                            nextRetryAt: now + retryDelaySeconds
                         )
-                        if let retryDelaySeconds = nextStep.retryDelaySeconds {
-                            windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
-                                failureCount: nextStep.failureCount,
-                                nextRetryAt: now + retryDelaySeconds
-                            )
-                            let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
-                            MirageLogger.host(
-                                "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
-                                    "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(streamID)"
-                            )
-                        } else {
-                            windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
-                                failureCount: nextStep.failureCount,
-                                nextRetryAt: .greatestFiniteMagnitude
-                            )
-                            MirageLogger.host(
-                                "event=placement_repair_abandoned failure_count=\(nextStep.failureCount) " +
-                                    "window=\(windowID) stream=\(streamID)"
-                            )
-                            return
-                        }
+                        let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
+                        MirageLogger.host(
+                            "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
+                                "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(streamID)"
+                        )
+                    } else {
+                        windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
+                            failureCount: nextStep.failureCount,
+                            nextRetryAt: .greatestFiniteMagnitude
+                        )
+                        MirageLogger.host(
+                            "event=placement_repair_abandoned failure_count=\(nextStep.failureCount) " +
+                                "window=\(windowID) stream=\(streamID)"
+                        )
+                        return
                     }
                     MirageLogger.error(
                         .host,
@@ -889,11 +887,10 @@ public extension MirageHostService {
                 expectedSpaceID: resolvedSpaceID,
                 state: state
             )
-        guard force || driftReason != nil else { return }
+        guard let driftReason else { return }
 
         let now = CFAbsoluteTimeGetCurrent()
-        if !force,
-           let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
+        if let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
            now < backoffState.nextRetryAt {
             return
         }
@@ -921,9 +918,8 @@ public extension MirageHostService {
                 )
             )
             inputStreamCacheActor.updateWindowFrame(state.streamID, newFrame: placementBounds)
-            let reasonText = driftReason ?? "placement drift"
             MirageLogger.host(
-                "Reasserted virtual-display placement for window \(windowID) on display \(state.displayID) (\(reasonText))"
+                "Reasserted virtual-display placement for window \(windowID) on display \(state.displayID) (\(driftReason))"
             )
             if let previousBackoff = windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID) {
                 let resetStep = windowPlacementRepairBackoffStep(
@@ -937,23 +933,21 @@ public extension MirageHostService {
                 )
             }
         } catch {
-            if !force {
-                let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
-                let nextStep = windowPlacementRepairBackoffStep(
-                    currentFailureCount: currentFailureCount,
-                    didSucceed: false
+            let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
+            let nextStep = windowPlacementRepairBackoffStep(
+                currentFailureCount: currentFailureCount,
+                didSucceed: false
+            )
+            if let retryDelaySeconds = nextStep.retryDelaySeconds {
+                windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
+                    failureCount: nextStep.failureCount,
+                    nextRetryAt: now + retryDelaySeconds
                 )
-                if let retryDelaySeconds = nextStep.retryDelaySeconds {
-                    windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
-                        failureCount: nextStep.failureCount,
-                        nextRetryAt: now + retryDelaySeconds
-                    )
-                    let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
-                    MirageLogger.host(
-                        "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
-                            "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(state.streamID)"
-                    )
-                }
+                let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
+                MirageLogger.host(
+                    "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
+                        "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(state.streamID)"
+                )
             }
             MirageLogger.error(
                 .host,
@@ -1186,6 +1180,8 @@ public extension MirageHostService {
         } else {
             nil
         }
+        let shouldDisableSharedMirroringBeforeStop = activeStreams.count == 1 &&
+            activeStreams.first?.id == session.id
 
         // Remove dedicated virtual display state for this window.
         clearVirtualDisplayState(windowID: windowID)
@@ -1195,6 +1191,9 @@ public extension MirageHostService {
         clearAppStreamGovernorState(streamID: session.id)
         stopWindowVisibleFrameMonitor(streamID: session.id)
 
+        if shouldDisableSharedMirroringBeforeStop, let mirroredDisplayID {
+            await disableDisplayMirroring(displayID: mirroredDisplayID)
+        }
         await context.stop()
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)

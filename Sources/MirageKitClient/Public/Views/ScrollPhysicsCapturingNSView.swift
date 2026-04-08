@@ -14,6 +14,20 @@ import QuartzCore
 /// The actual content (Metal view) stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingNSView: NSView {
+    struct CursorSystemHooks {
+        var mouseLocation: () -> CGPoint = { NSEvent.mouseLocation }
+        var setAssociationEnabled: (Bool) -> Void = { isEnabled in
+            CGAssociateMouseAndMouseCursorPosition(isEnabled ? 1 : 0)
+        }
+        var warpCursor: (CGPoint) -> Void = { point in
+            CGWarpMouseCursorPosition(point)
+        }
+        var hideCursor: () -> Void = { NSCursor.hide() }
+        var unhideCursor: () -> Void = { NSCursor.unhide() }
+    }
+
+    nonisolated(unsafe) static var cursorSystemHooks = CursorSystemHooks()
+
     /// Stream ID for cursor update routing
     var streamID: StreamID? {
         didSet {
@@ -54,6 +68,17 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// the client window size.
     var hostDisplayPointSize: CGSize?
 
+    /// Reference stream size for desktop aspect-fit presentation on macOS.
+    var desktopPresentationReferenceSize: CGSize? {
+        didSet {
+            guard desktopPresentationReferenceSize != oldValue else { return }
+            needsLayout = true
+            invalidateHostCursorRects()
+            updateLockedCursorViewPosition()
+            refreshCursorUpdates(force: true)
+        }
+    }
+
     /// Whether locked desktop cursor input may move beyond the streamed view bounds.
     var allowsExtendedCursorBounds: Bool = false {
         didSet {
@@ -81,6 +106,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
             updateLockedCursorViewVisibility()
             updateLockedCursorViewPosition()
             refreshCursorUpdates(force: true)
+            applyMirroredSystemCursorAppearance()
         }
     }
 
@@ -101,6 +127,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Callback for mouse events - used for forwarding clicks to host
     var onMouseEvent: ((MirageInputEvent) -> Void)?
+
+    /// Callback when the platform container/window bounds change.
+    var onContainerSizeChanged: ((CGSize) -> Void)? {
+        didSet {
+            if onContainerSizeChanged != nil {
+                reportContainerSizeIfChanged(force: true)
+            }
+        }
+    }
 
     /// Client-reserved shortcuts that should NOT be forwarded to the host.
     /// All other key equivalents are intercepted and forwarded.
@@ -126,8 +161,10 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     /// Locked cursor view for secondary display mode
     private let lockedCursorView = NSImageView(frame: .zero)
+    private var lastReportedContainerSize: CGSize = .zero
     private var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     private var lockedCursorTargetPosition: CGPoint = .init(x: 0.5, y: 0.5)
+    private var lockedCursorConfirmedHostPosition: CGPoint?
     private var lockedCursorVisible: Bool = false
     private var lockedCursorTargetVisible: Bool = false
     private var lockedCursorSequence: UInt64 = 0
@@ -146,6 +183,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var mirroredSystemCursorTypeSequence: UInt64 = 0
     private let mirroredSystemCursorWarpThreshold: CGFloat = 0.5
     private var cursorLockAnchor: CGPoint = .zero
+    private var cursorLockRestorePosition: CGPoint?
     private var cursorHidden: Bool = false
     private var cursorHiddenForTyping: Bool = false
     private var suppressEscapeKeyUpForCursorUnlock = false
@@ -180,6 +218,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         handleInputActivityStateChange()
+        reportContainerSizeIfChanged(force: true)
         if let window, isInputProcessingActive {
             window.makeFirstResponder(self)
         }
@@ -200,6 +239,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     override func layout() {
         super.layout()
+        reportContainerSizeIfChanged()
         if cursorLockEnabled, isInputProcessingActive {
             updateCursorLockAnchor()
             warpCursorToAnchor()
@@ -241,6 +281,24 @@ final class ScrollPhysicsCapturingNSView: NSView {
         updateTrackingAreas()
     }
 
+    private func reportContainerSizeIfChanged(force: Bool = false) {
+        let size = resolvedContainerSize()
+        guard size.width > 0, size.height > 0 else { return }
+        guard force || size != lastReportedContainerSize else { return }
+        lastReportedContainerSize = size
+        onContainerSizeChanged?(size)
+    }
+
+    private func resolvedContainerSize() -> CGSize {
+        if let window {
+            let contentLayoutSize = window.contentLayoutRect.size
+            if contentLayoutSize.width > 0, contentLayoutSize.height > 0 {
+                return contentLayoutSize
+            }
+        }
+        return bounds.size
+    }
+
     private func startModifierPollingIfNeeded() {
         guard modifierPollTimer == nil else { return }
         let timer = Timer(timeInterval: modifierPollInterval, repeats: true) { [weak self] _ in
@@ -280,7 +338,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
     // MARK: - Cursor Lock
 
     private var shouldHideSystemCursor: Bool {
-        cursorLockEnabled ||
+        guard isInputProcessingActive else { return false }
+        return cursorLockEnabled ||
             cursorHiddenForTyping ||
             (shouldMirrorHostCursorToSystemCursor && !mirroredSystemCursorVisible)
     }
@@ -288,11 +347,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func updateSystemCursorVisibility() {
         if shouldHideSystemCursor {
             if !cursorHidden {
-                NSCursor.hide()
+                Self.cursorSystemHooks.hideCursor()
                 cursorHidden = true
             }
         } else if cursorHidden {
-            NSCursor.unhide()
+            Self.cursorSystemHooks.unhideCursor()
             cursorHidden = false
         }
     }
@@ -324,8 +383,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
         }
 
         if cursorLockEnabled {
+            beginCursorLockSessionIfNeeded()
             updateSystemCursorVisibility()
-            CGAssociateMouseAndMouseCursorPosition(0)
             updateCursorLockAnchor()
             warpCursorToAnchor()
             startLockedCursorSmoothingIfNeeded()
@@ -345,16 +404,41 @@ final class ScrollPhysicsCapturingNSView: NSView {
         cursorLockAnchor = window.convertPoint(toScreen: windowPoint)
     }
 
+    private func beginCursorLockSessionIfNeeded() {
+        guard cursorLockRestorePosition == nil else { return }
+        cursorLockRestorePosition = Self.cursorSystemHooks.mouseLocation()
+        Self.cursorSystemHooks.setAssociationEnabled(false)
+    }
+
     private func warpCursorToAnchor() {
         guard cursorLockEnabled else { return }
         guard window != nil else { return }
-        CGWarpMouseCursorPosition(cursorLockAnchor)
+        Self.cursorSystemHooks.warpCursor(cursorLockAnchor)
+    }
+
+    private func resetCursorLockTransientState() {
+        cursorLockAnchor = .zero
+        lastMouseLocation = nil
+        lastCursorLocalInputTime = 0
+        lockedCursorTargetPosition = lockedCursorPosition
+        lockedCursorTargetVisible = lockedCursorVisible
+        cursorHiddenForTyping = false
+        suppressEscapeKeyUpForCursorUnlock = false
     }
 
     private func restoreCursorLockIfNeeded() {
-        CGAssociateMouseAndMouseCursorPosition(1)
+        let restorePosition = cursorLockRestorePosition
+        cursorLockRestorePosition = nil
+        if restorePosition != nil {
+            Self.cursorSystemHooks.setAssociationEnabled(true)
+        }
+        if let restorePosition {
+            Self.cursorSystemHooks.warpCursor(restorePosition)
+        }
+        resetCursorLockTransientState()
         updateSystemCursorVisibility()
         updateLockedCursorViewVisibility()
+        updateLockedCursorViewPosition()
         applyMirroredSystemCursorAppearance()
     }
 
@@ -374,7 +458,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private var isMouseInsideView: Bool {
         guard let window else { return false }
         let locationInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
-        return bounds.contains(locationInView)
+        return resolvedDesktopPresentationContentRect().contains(locationInView)
     }
 
     private func applyMirroredSystemCursorPosition(force: Bool = false) {
@@ -382,17 +466,21 @@ final class ScrollPhysicsCapturingNSView: NSView {
         guard !isCursorLocalInputActive() else { return }
         guard let targetScreenPoint = mirroredSystemCursorScreenPoint() else { return }
 
-        let currentLocation = NSEvent.mouseLocation
+        let currentLocation = Self.cursorSystemHooks.mouseLocation()
         let delta = hypot(currentLocation.x - targetScreenPoint.x, currentLocation.y - targetScreenPoint.y)
         guard force || delta >= mirroredSystemCursorWarpThreshold else { return }
 
-        CGWarpMouseCursorPosition(targetScreenPoint)
+        Self.cursorSystemHooks.warpCursor(targetScreenPoint)
         lastMouseLocation = mirroredSystemCursorPosition
     }
 
     private func mirroredSystemCursorScreenPoint() -> CGPoint? {
         guard let window else { return nil }
-        let localPoint = Self.localPoint(forNormalizedCursorPosition: mirroredSystemCursorPosition, in: bounds)
+        let localPoint = Self.localPoint(
+            forNormalizedCursorPosition: mirroredSystemCursorPosition,
+            in: bounds,
+            contentRect: resolvedDesktopPresentationContentRect()
+        )
         let windowPoint = convert(localPoint, to: nil)
         return window.convertPoint(toScreen: windowPoint)
     }
@@ -447,12 +535,24 @@ final class ScrollPhysicsCapturingNSView: NSView {
         LockedCursorPositionResolver.resolve(position, allowsExtendedBounds: allowsExtendedBounds)
     }
 
-    nonisolated static func localPoint(forNormalizedCursorPosition position: CGPoint, in bounds: CGRect) -> CGPoint {
-        let clampedPosition = clampedNormalizedCursorPosition(position)
-        return CGPoint(
-            x: clampedPosition.x * bounds.width,
-            y: (1.0 - clampedPosition.y) * bounds.height
-        )
+    nonisolated static func localPoint(
+        forNormalizedCursorPosition position: CGPoint,
+        in bounds: CGRect,
+        contentRect: CGRect? = nil
+    )
+    -> CGPoint {
+        let resolvedContentRect = contentRect ?? bounds
+        return DesktopPresentationGeometry.localPoint(for: position, in: resolvedContentRect)
+    }
+
+    nonisolated static func normalizedLocation(
+        _ point: CGPoint,
+        in bounds: CGRect,
+        contentRect: CGRect? = nil
+    )
+    -> CGPoint {
+        let resolvedContentRect = contentRect ?? bounds
+        return DesktopPresentationGeometry.normalizedPosition(for: point, in: resolvedContentRect)
     }
 
     @discardableResult
@@ -486,10 +586,22 @@ final class ScrollPhysicsCapturingNSView: NSView {
         resolvedLockedCursorEventPosition(lockedCursorPosition)
     }
 
+    private func resolvedDesktopPresentationContentRect() -> CGRect {
+        DesktopPresentationGeometry.resolvedContentRect(
+            referenceSize: desktopPresentationReferenceSize,
+            in: bounds
+        )
+    }
+
     private func updateLockedCursorViewPosition() {
         guard cursorLockEnabled, !lockedCursorView.isHidden else { return }
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let point = Self.localPoint(forNormalizedCursorPosition: lockedCursorPosition, in: bounds)
+        let contentRect = resolvedDesktopPresentationContentRect()
+        guard contentRect.width > 0, contentRect.height > 0 else { return }
+        let point = Self.localPoint(
+            forNormalizedCursorPosition: lockedCursorPosition,
+            in: bounds,
+            contentRect: contentRect
+        )
         let hotspot = mirroredSystemCursorType.nsCursor.hotSpot
         // macOS uses flipped coordinates for the hotspot Y (bottom-left origin)
         lockedCursorView.frame.origin = CGPoint(
@@ -501,9 +613,15 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func applyLockedCursorDelta(dx: CGFloat, dy: CGFloat) {
         let normSize = hostDisplayPointSize ?? bounds.size
         guard normSize.width > 0, normSize.height > 0 else { return }
-        lockedCursorPosition.x += dx / normSize.width
-        lockedCursorPosition.y -= dy / normSize.height
-        lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
+        let proposedPosition = CGPoint(
+            x: lockedCursorPosition.x + dx / normSize.width,
+            y: lockedCursorPosition.y - dy / normSize.height
+        )
+        lockedCursorPosition = LockedCursorPositionResolver.resolve(
+            proposedPosition,
+            allowsExtendedBounds: allowsExtendedCursorBounds,
+            confirmedHostPosition: lockedCursorConfirmedHostPosition
+        )
         noteCursorLocalInput()
         setLockedCursorVisible(true)
         lastMouseLocation = lockedCursorPosition
@@ -511,6 +629,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private func applyLockedCursorHostUpdate(position: CGPoint, isVisible: Bool) {
         lockedCursorTargetPosition = resolvedLockedCursorEventPosition(position)
+        lockedCursorConfirmedHostPosition = lockedCursorTargetPosition
         lockedCursorTargetVisible = isVisible
         guard cursorLockEnabled else { return }
         guard !isCursorLocalInputActive() else { return }
@@ -608,12 +727,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
             lastMouseLocation = lockedCursorPosition
         } else {
             let locationInView = convert(event.locationInWindow, from: nil)
-            if bounds.width > 0, bounds.height > 0 {
-                lastMouseLocation = CGPoint(
-                    x: locationInView.x / bounds.width,
-                    y: 1.0 - (locationInView.y / bounds.height)
-                )
-            }
+            lastMouseLocation = Self.normalizedLocation(
+                locationInView,
+                in: bounds,
+                contentRect: resolvedDesktopPresentationContentRect()
+            )
         }
 
         let deltaX = event.scrollingDeltaX
@@ -960,11 +1078,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// Normalize mouse location to 0-1 range within view bounds
     private func normalizedLocation(from event: NSEvent) -> CGPoint {
         let locationInView = convert(event.locationInWindow, from: nil)
-        guard bounds.width > 0, bounds.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
-        return CGPoint(
-            x: locationInView.x / bounds.width,
-            y: 1.0 - (locationInView.y / bounds.height) // Flip Y for normalized coords
-        )
+        let contentRect = resolvedDesktopPresentationContentRect()
+        guard contentRect.width > 0, contentRect.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
+        return Self.normalizedLocation(locationInView, in: bounds, contentRect: contentRect)
     }
 
     /// Enable tracking area for mouse moved events
@@ -991,7 +1107,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     override func resetCursorRects() {
         super.resetCursorRects()
         guard shouldMirrorHostCursorToSystemCursor, mirroredSystemCursorVisible else { return }
-        addCursorRect(bounds, cursor: mirroredSystemCursorType.nsCursor)
+        addCursorRect(resolvedDesktopPresentationContentRect(), cursor: mirroredSystemCursorType.nsCursor)
     }
 
     deinit {

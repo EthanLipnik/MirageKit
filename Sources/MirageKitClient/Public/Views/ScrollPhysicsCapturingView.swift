@@ -434,27 +434,52 @@ private class CallbackScrollView: UIScrollView, UIScrollViewDelegate, UIGestureR
     var onDidEndDecelerating: ((UIScrollView) -> Void)?
     var onDidEndScrollingAnimation: ((UIScrollView) -> Void)?
 
+    private func installDelegateBindingsIfNeeded() {
+        if (super.delegate as AnyObject?) !== self {
+            super.delegate = self
+        }
+        if (panGestureRecognizer.delegate as AnyObject?) !== self {
+            panGestureRecognizer.delegate = self
+        }
+    }
+
+    private func clearDelegateBindingsIfNeeded() {
+        if (super.delegate as AnyObject?) === self {
+            super.delegate = nil
+        }
+        if (panGestureRecognizer.delegate as AnyObject?) === self {
+            panGestureRecognizer.delegate = nil
+        }
+    }
+
     override init(frame: CGRect) {
         super.init(frame: frame)
-        super.delegate = self
+        installDelegateBindingsIfNeeded()
     }
 
     required init?(coder: NSCoder) {
         super.init(coder: coder)
-        super.delegate = self
+        installDelegateBindingsIfNeeded()
     }
 
-    override var delegate: UIScrollViewDelegate? {
-        get { super.delegate }
-        set {
-            guard let newValue else { return }
-            if (newValue as AnyObject) !== self {
-                assertionFailure(
-                    "CallbackScrollView must remain its own delegate to preserve UIKit scroll gesture invariants."
-                )
-            }
-            super.delegate = self
+    override func willMove(toWindow newWindow: UIWindow?) {
+        if newWindow == nil {
+            setContentOffset(contentOffset, animated: false)
+            layer.removeAllAnimations()
+            clearDelegateBindingsIfNeeded()
         }
+        super.willMove(toWindow: newWindow)
+    }
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil {
+            installDelegateBindingsIfNeeded()
+        }
+    }
+
+    deinit {
+        clearDelegateBindingsIfNeeded()
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {

@@ -48,10 +48,26 @@ public class InputCapturingView: UIView {
         }
     }
 
+    /// Callback when the platform container/window bounds change.
+    public var onContainerSizeChanged: ((CGSize) -> Void)? {
+        didSet {
+            if onContainerSizeChanged != nil {
+                reportContainerSizeIfChanged(force: true)
+            }
+        }
+    }
+
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize? {
         didSet {
             metalView.maxDrawableSize = maxDrawableSize
+        }
+    }
+
+    /// Whether the stream should present locally using aspect fit.
+    public var prefersLocalAspectFitPresentation: Bool = false {
+        didSet {
+            metalView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         }
     }
 
@@ -79,6 +95,7 @@ public class InputCapturingView: UIView {
             registeredCursorStreamID = streamID
             if let streamID { MirageCursorUpdateRouter.shared.register(view: self, for: streamID) }
             cursorSequence = 0
+            lockedCursorConfirmedHostPosition = nil
             refreshCursorIfNeeded(force: true)
         }
     }
@@ -95,6 +112,7 @@ public class InputCapturingView: UIView {
     public var cursorPositionStore: MirageClientCursorPositionStore? {
         didSet {
             lockedCursorSequence = 0
+            lockedCursorConfirmedHostPosition = nil
             refreshLockedCursorIfNeeded(force: true)
         }
     }
@@ -244,6 +262,7 @@ public class InputCapturingView: UIView {
     var virtualDragActive: Bool = false
     var lockedCursorPosition: CGPoint = .init(x: 0.5, y: 0.5)
     var lockedCursorTargetPosition: CGPoint = .init(x: 0.5, y: 0.5)
+    var lockedCursorConfirmedHostPosition: CGPoint?
     private let lockedCursorSize: CGFloat = 12
     var lockedCursorVisible: Bool = false
     var lockedCursorTargetVisible: Bool = false
@@ -292,6 +311,8 @@ public class InputCapturingView: UIView {
             updateSoftwareKeyboardVisibility()
         }
     }
+
+    private var lastReportedContainerSize: CGSize = .zero
 
     var softwareKeyboardField: SoftwareKeyboardTextField?
     var softwareKeyboardAccessoryView: SoftwareKeyboardAccessoryView?
@@ -1231,9 +1252,15 @@ public class InputCapturingView: UIView {
 
     func applyLockedCursorDelta(_ translation: CGPoint) {
         guard bounds.width > 0, bounds.height > 0 else { return }
-        lockedCursorPosition.x += translation.x / bounds.width
-        lockedCursorPosition.y += translation.y / bounds.height
-        lockedCursorPosition = resolvedLockedCursorEventPosition(lockedCursorPosition)
+        let proposedPosition = CGPoint(
+            x: lockedCursorPosition.x + translation.x / bounds.width,
+            y: lockedCursorPosition.y + translation.y / bounds.height
+        )
+        lockedCursorPosition = LockedCursorPositionResolver.resolve(
+            proposedPosition,
+            allowsExtendedBounds: allowsExtendedCursorBounds,
+            confirmedHostPosition: lockedCursorConfirmedHostPosition
+        )
         noteLockedCursorLocalInput()
         setLockedCursorVisible(true)
         lastCursorPosition = lockedCursorPosition
@@ -1241,6 +1268,7 @@ public class InputCapturingView: UIView {
 
     func applyLockedCursorHostUpdate(position: CGPoint, isVisible: Bool) {
         lockedCursorTargetPosition = resolvedLockedCursorEventPosition(position)
+        lockedCursorConfirmedHostPosition = lockedCursorTargetPosition
         lockedCursorTargetVisible = isVisible
         guard cursorLockEnabled else { return }
         guard !isLockedCursorLocalInputActive() else { return }
@@ -1541,6 +1569,7 @@ public class InputCapturingView: UIView {
 
     override public func didMoveToWindow() {
         super.didMoveToWindow()
+        reportContainerSizeIfChanged(force: true)
         if window != nil { becomeFirstResponder() }
     }
 
@@ -1552,8 +1581,17 @@ public class InputCapturingView: UIView {
             return
         }
         super.layoutSubviews()
+        reportContainerSizeIfChanged()
         updateVirtualCursorViewPosition()
         updateLockedCursorViewPosition()
+    }
+
+    func reportContainerSizeIfChanged(_ overrideSize: CGSize? = nil, force: Bool = false) {
+        let size = overrideSize ?? bounds.size
+        guard size.width > 0, size.height > 0 else { return }
+        guard force || size != lastReportedContainerSize else { return }
+        lastReportedContainerSize = size
+        onContainerSizeChanged?(size)
     }
 
     override public func resignFirstResponder() -> Bool {

@@ -183,6 +183,7 @@ extension MirageHostService {
                 + "name=\(peerIdentity.name) origin=\(origin)"
         )
 
+        await waitForDisconnectCompletionIfNeeded(for: peerIdentity)
         await preemptExistingClientIfSuperseded(by: peerIdentity)
 
         // Release stale slot reservation left by an incomplete cleanup.
@@ -525,6 +526,47 @@ extension MirageHostService {
             "Preempting existing client \(existingClient.name) for reconnect from \(incomingPeerIdentity.name)"
         )
         await disconnectClient(existingClient)
+    }
+
+    func waitForDisconnectCompletionIfNeeded(
+        for incomingPeerIdentity: LoomPeerIdentity,
+        timeout: Duration = .seconds(5)
+    ) async {
+        guard shouldWaitForDisconnectCompletion(for: incomingPeerIdentity) else { return }
+
+        let deadline = ContinuousClock.now + timeout
+        MirageLogger.host(
+            "Waiting for disconnect teardown to finish before accepting reconnect from \(incomingPeerIdentity.name)"
+        )
+
+        while shouldWaitForDisconnectCompletion(for: incomingPeerIdentity) {
+            if ContinuousClock.now >= deadline {
+                MirageLogger.host(
+                    "Timed out waiting for disconnect teardown before reconnect from \(incomingPeerIdentity.name)"
+                )
+                return
+            }
+
+            do {
+                try await Task.sleep(for: .milliseconds(50))
+            } catch {
+                return
+            }
+        }
+    }
+
+    private func shouldWaitForDisconnectCompletion(for incomingPeerIdentity: LoomPeerIdentity) -> Bool {
+        if disconnectingClientIDs.contains(incomingPeerIdentity.deviceID) {
+            return true
+        }
+
+        guard let existingClient = connectedClients.first(where: {
+            shouldPreemptExistingClient($0, for: incomingPeerIdentity)
+        }) else {
+            return false
+        }
+
+        return disconnectingClientIDs.contains(existingClient.id)
     }
 
     func expireStaleSingleClientReservationIfNeeded(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {

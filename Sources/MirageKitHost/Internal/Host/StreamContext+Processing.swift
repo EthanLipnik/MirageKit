@@ -1176,27 +1176,42 @@ extension StreamContext {
 
         let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
         let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.05
-        let queuePressured = queueBytes > queuePressureBytes
-        let highPressure = queueBytes > maxQueuedBytes
         let packetBudget = await packetSender?.packetBudgetSnapshot(now: now)
         let packetTelemetry = await packetSender?.telemetrySnapshot()
         let packetUtilization = packetBudget?.utilization ?? 0
-        let packetOverBudget = packetUtilization > packetBudgetDropUtilizationThreshold
-        let packetHighPressure = packetUtilization > packetBudgetHighPressureUtilizationThreshold
         let sendStartDelayAverageMs = packetTelemetry?.sendStartDelayAverageMs ?? 0
         let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
+        let packetPacerAverageSleepMs = packetTelemetry?.packetPacerSleepAverageMs ?? 0
+        let transportDropCount = (packetTelemetry?.stalePacketDrops ?? 0) +
+            (packetTelemetry?.generationAbortDrops ?? 0) +
+            (packetTelemetry?.nonKeyframeHoldDrops ?? 0)
         let adaptiveTransportRelief = usesAppOwnedBitrateAdaptation && latencyMode == .lowestLatency
-        let transportPressured = sendStartDelayAverageMs > (adaptiveTransportRelief ? 1.0 : 2.0) ||
-            sendCompletionAverageMs > (adaptiveTransportRelief ? 8.0 : 12.0)
-        let transportHighPressure = sendStartDelayAverageMs > (adaptiveTransportRelief ? 4.0 : 6.0) ||
-            sendCompletionAverageMs > (adaptiveTransportRelief ? 16.0 : 24.0)
+        let transportAssessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: queueBytes,
+                queueStressBytes: queuePressureBytes + 1,
+                queueSevereBytes: maxQueuedBytes + 1,
+                packetBudgetUtilization: packetBudget?.utilization,
+                packetBudgetStressThreshold: packetBudgetDropUtilizationThreshold,
+                packetBudgetSevereThreshold: packetBudgetHighPressureUtilizationThreshold,
+                packetPacerAverageSleepMs: packetPacerAverageSleepMs,
+                packetPacerStressThresholdMs: packetPacerStressThresholdMs,
+                packetPacerSevereThresholdMs: packetPacerHighPressureThresholdMs,
+                sendStartDelayAverageMs: sendStartDelayAverageMs,
+                sendStartDelayStressThresholdMs: adaptiveTransportRelief ? 1.0 : 2.0,
+                sendStartDelaySevereThresholdMs: adaptiveTransportRelief ? 4.0 : 6.0,
+                sendCompletionAverageMs: sendCompletionAverageMs,
+                sendCompletionStressThresholdMs: adaptiveTransportRelief ? 8.0 : 12.0,
+                sendCompletionSevereThresholdMs: adaptiveTransportRelief ? 16.0 : 24.0,
+                transportDropCount: transportDropCount,
+                transportDropSevereCount: transportDropHighPressureThreshold
+            )
+        )
         let packetWithinRaiseBudget = packetUtilization > 0
             ? packetUtilization < packetBudgetRaiseUtilizationThreshold
             : true
         let fixedGameModeQuality = performanceMode == .game && !gameModeAggressiveQualityDropEnabled
         let allowEncodeDrivenQualityRelief = !usesAppOwnedBitrateAdaptation && !fixedGameModeQuality
-        let qualityDropSignal = queuePressured || packetOverBudget || transportPressured ||
-            (allowEncodeDrivenQualityRelief && encodeOverBudget)
         let bitrateConstrained = (encoderConfig.bitrate ?? 0) > 0
         let baseDropThreshold = gameModeAggressiveQualityDropEnabled
             ? gameModeAggressiveQualityDropThreshold
@@ -1208,78 +1223,65 @@ extension StreamContext {
             ? gameModeAggressiveQualityDropStepHighPressure
             : qualityDropStepHighPressure
 
-        if qualityDropSignal {
-            qualityUnderBudgetCount = 0
-            qualityOverBudgetCount += 1
-            let dropThreshold: Int = if adaptiveTransportRelief &&
-                (highPressure || packetHighPressure || transportHighPressure) {
-                1
-            } else if bitrateConstrained && (highPressure || packetHighPressure || transportHighPressure) {
-                1
-            } else if bitrateConstrained && (queuePressured || packetOverBudget || transportPressured) {
-                max(1, baseDropThreshold - 1)
+        let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: activeQuality,
+                qualityOverBudgetCount: qualityOverBudgetCount,
+                qualityUnderBudgetCount: qualityUnderBudgetCount
+            ),
+            qualityFloor: qualityFloor,
+            qualityCeiling: qualityCeiling,
+            encodeOverBudget: encodeOverBudget,
+            packetWithinRaiseBudget: packetWithinRaiseBudget,
+            transportAssessment: transportAssessment,
+            allowEncodeDrivenQualityRelief: allowEncodeDrivenQualityRelief,
+            bitrateConstrained: bitrateConstrained,
+            adaptiveTransportRelief: adaptiveTransportRelief,
+            qualityDropThreshold: baseDropThreshold,
+            qualityRaiseThreshold: qualityRaiseThreshold,
+            qualityDropStep: baseDropStep,
+            qualityDropStepHighPressure: baseHighPressureDropStep,
+            qualityRaiseStep: qualityRaiseStep
+        )
+
+        let previousQuality = activeQuality
+        activeQuality = decision.state.activeQuality
+        qualityOverBudgetCount = decision.state.qualityOverBudgetCount
+        qualityUnderBudgetCount = decision.state.qualityUnderBudgetCount
+
+        switch decision.action {
+        case .hold:
+            return
+
+        case .drop(let reason):
+            guard activeQuality < previousQuality else { return }
+            await encoder.updateQuality(activeQuality)
+            lastQualityAdjustmentTime = now
+            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+            let packetUtilizationText: String = if let packetBudget {
+                packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
             } else {
-                baseDropThreshold
+                "n/a"
             }
-            let step: Float
-            if highPressure || packetHighPressure || transportHighPressure {
-                let baseStep = bitrateConstrained
-                    ? (baseHighPressureDropStep + 0.03)
-                    : baseHighPressureDropStep
-                step = adaptiveTransportRelief ? (baseStep + 0.02) : baseStep
-            } else if adaptiveTransportRelief &&
-                (queuePressured || packetOverBudget || transportPressured) {
-                step = baseDropStep + 0.03
-            } else if bitrateConstrained && (queuePressured || packetOverBudget || transportPressured) {
-                step = baseDropStep + 0.01
+            MirageLogger.metrics(
+                "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, packetUtil \(packetUtilizationText)x, reason=\(reason))"
+            )
+
+        case .raise:
+            guard activeQuality > previousQuality else { return }
+            await encoder.updateQuality(activeQuality)
+            lastQualityAdjustmentTime = now
+            let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
+            let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+            let packetUtilizationText: String = if let packetBudget {
+                packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
             } else {
-                step = baseDropStep
+                "n/a"
             }
-            if qualityOverBudgetCount >= dropThreshold {
-                let next = max(qualityFloor, activeQuality - step)
-                if next < activeQuality {
-                    activeQuality = next
-                    await encoder.updateQuality(activeQuality)
-                    lastQualityAdjustmentTime = now
-                    qualityOverBudgetCount = 0
-                    let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-                    let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-                    let packetUtilizationText: String = if let packetBudget {
-                        packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
-                    } else {
-                        "n/a"
-                    }
-                    MirageLogger.metrics(
-                        "Quality down to \(qualityText) (encode \(avgText)ms, queue \(queueBytes / 1024)KB, packetUtil \(packetUtilizationText)x)"
-                    )
-                }
-            }
-        } else {
-            qualityOverBudgetCount = 0
-            if !packetWithinRaiseBudget {
-                qualityUnderBudgetCount = 0
-                return
-            }
-            qualityUnderBudgetCount += 1
-            if qualityUnderBudgetCount >= qualityRaiseThreshold {
-                let next = min(qualityCeiling, activeQuality + qualityRaiseStep)
-                if next > activeQuality {
-                    activeQuality = next
-                    await encoder.updateQuality(activeQuality)
-                    lastQualityAdjustmentTime = now
-                    qualityUnderBudgetCount = 0
-                    let qualityText = activeQuality.formatted(.number.precision(.fractionLength(2)))
-                    let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
-                    let packetUtilizationText: String = if let packetBudget {
-                        packetBudget.utilization.formatted(.number.precision(.fractionLength(2)))
-                    } else {
-                        "n/a"
-                    }
-                    MirageLogger.metrics(
-                        "Quality up to \(qualityText) (encode \(avgText)ms, packetUtil \(packetUtilizationText)x)"
-                    )
-                }
-            }
+            MirageLogger.metrics(
+                "Quality up to \(qualityText) (encode \(avgText)ms, packetUtil \(packetUtilizationText)x)"
+            )
         }
     }
 }

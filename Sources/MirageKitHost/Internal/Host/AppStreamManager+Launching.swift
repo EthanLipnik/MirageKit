@@ -54,29 +54,43 @@ public extension AppStreamManager {
 
     /// Request a new window from an app (for apps that are running but have no windows)
     func requestNewWindow(bundleIdentifier: String) async {
-        guard let runningApp = NSWorkspace.shared.runningApplications.first(where: {
+        if let runningApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier?.lowercased() == bundleIdentifier.lowercased()
-        }) else {
+        }) {
+            _ = runningApp.activate()
+
+            guard let appURL = runningApp.bundleURL ??
+                NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+                logger.warning("Failed to resolve app URL for reopen request: \(bundleIdentifier)")
+                return
+            }
+
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            configuration.createsNewApplicationInstance = false
+
+            do {
+                _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
+                logger.info("Requested reopen/new window for app: \(bundleIdentifier)")
+            } catch {
+                logger.warning("Failed to request reopen/new window for app \(bundleIdentifier): \(error)")
+            }
             return
         }
 
-        _ = runningApp.activate()
-
-        guard let appURL = runningApp.bundleURL ??
-            NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
-            logger.warning("Failed to resolve app URL for reopen request: \(bundleIdentifier)")
+        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+            logger.warning("Failed to resolve app URL for launch request: \(bundleIdentifier)")
             return
         }
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        configuration.createsNewApplicationInstance = false
 
         do {
             _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
-            logger.info("Requested reopen/new window for app: \(bundleIdentifier)")
+            logger.info("Launched app while requesting first window: \(bundleIdentifier)")
         } catch {
-            logger.warning("Failed to request reopen/new window for app \(bundleIdentifier): \(error)")
+            logger.warning("Failed to launch app \(bundleIdentifier) while requesting first window: \(error)")
         }
     }
 }

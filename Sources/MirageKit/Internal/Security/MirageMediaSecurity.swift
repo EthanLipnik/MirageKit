@@ -38,6 +38,7 @@ package enum MirageMediaSecurityError: Error {
     case invalidEncryptedPayloadLength
     case invalidNonce
     case invalidClipboardTextEncoding
+    case encryptFailed
     case decryptFailed
 }
 
@@ -239,8 +240,11 @@ package enum MirageMediaSecurity {
             throw MirageMediaSecurityError.invalidClipboardTextEncoding
         }
 
-        let sealed = try ChaChaPoly.seal(plaintextData, using: SymmetricKey(data: context.sessionKey))
-        return sealed.combined
+        let sealed = try AES.GCM.seal(plaintextData, using: SymmetricKey(data: context.sessionKey))
+        guard let combined = sealed.combined else {
+            throw MirageMediaSecurityError.encryptFailed
+        }
+        return combined
     }
 
     package static func decryptClipboardText<Payload: DataProtocol>(
@@ -248,16 +252,16 @@ package enum MirageMediaSecurity {
         context: MirageMediaSecurityContext
     ) throws -> String {
         let combined = Data(encryptedText)
-        let box: ChaChaPoly.SealedBox
+        let box: AES.GCM.SealedBox
         do {
-            box = try ChaChaPoly.SealedBox(combined: combined)
+            box = try AES.GCM.SealedBox(combined: combined)
         } catch {
             throw MirageMediaSecurityError.invalidEncryptedPayloadLength
         }
 
         let plaintextData: Data
         do {
-            plaintextData = try ChaChaPoly.open(box, using: SymmetricKey(data: context.sessionKey))
+            plaintextData = try AES.GCM.open(box, using: SymmetricKey(data: context.sessionKey))
         } catch {
             throw MirageMediaSecurityError.decryptFailed
         }
@@ -282,9 +286,9 @@ package enum MirageMediaSecurity {
     private static func seal(
         _ plaintext: UnsafeRawBufferPointer,
         key: SymmetricKey,
-        nonce: ChaChaPoly.Nonce
+        nonce: AES.GCM.Nonce
     ) throws -> Data {
-        let sealed = try ChaChaPoly.seal(dataView(plaintext), using: key, nonce: nonce)
+        let sealed = try AES.GCM.seal(dataView(plaintext), using: key, nonce: nonce)
         var payload = Data()
         payload.reserveCapacity(sealed.ciphertext.count + sealed.tag.count)
         payload.append(sealed.ciphertext)
@@ -295,7 +299,7 @@ package enum MirageMediaSecurity {
     private static func open<Payload: DataProtocol>(
         _ wirePayload: Payload,
         key: SymmetricKey,
-        nonce: ChaChaPoly.Nonce
+        nonce: AES.GCM.Nonce
     ) throws -> Data {
         guard wirePayload.count >= authTagLength else {
             throw MirageMediaSecurityError.invalidEncryptedPayloadLength
@@ -303,13 +307,13 @@ package enum MirageMediaSecurity {
         let ciphertextCount = wirePayload.count - authTagLength
         let ciphertext = wirePayload.prefix(ciphertextCount)
         let tag = wirePayload.suffix(authTagLength)
-        let box = try ChaChaPoly.SealedBox(
+        let box = try AES.GCM.SealedBox(
             nonce: nonce,
-            ciphertext: ciphertext,
-            tag: tag
+            ciphertext: Data(ciphertext),
+            tag: Data(tag)
         )
         do {
-            return try ChaChaPoly.open(box, using: key)
+            return try AES.GCM.open(box, using: key)
         } catch {
             throw MirageMediaSecurityError.decryptFailed
         }
@@ -318,7 +322,7 @@ package enum MirageMediaSecurity {
     private static func videoNonce(
         for header: FrameHeader,
         direction: MirageMediaDirection
-    ) throws -> ChaChaPoly.Nonce {
+    ) throws -> AES.GCM.Nonce {
         var nonce = [UInt8](repeating: 0, count: 12)
         nonce[0] = 1
         nonce[1] = direction.rawValue
@@ -333,7 +337,7 @@ package enum MirageMediaSecurity {
     private static func audioNonce(
         for header: AudioPacketHeader,
         direction: MirageMediaDirection
-    ) throws -> ChaChaPoly.Nonce {
+    ) throws -> AES.GCM.Nonce {
         var nonce = [UInt8](repeating: 0, count: 12)
         nonce[0] = 1
         nonce[1] = direction.rawValue
@@ -345,9 +349,9 @@ package enum MirageMediaSecurity {
         return try nonceFromBytes(nonce)
     }
 
-    private static func nonceFromBytes(_ bytes: [UInt8]) throws -> ChaChaPoly.Nonce {
+    private static func nonceFromBytes(_ bytes: [UInt8]) throws -> AES.GCM.Nonce {
         do {
-            return try ChaChaPoly.Nonce(data: Data(bytes))
+            return try AES.GCM.Nonce(data: Data(bytes))
         } catch {
             throw MirageMediaSecurityError.invalidNonce
         }

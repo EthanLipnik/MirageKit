@@ -12,6 +12,7 @@ import MirageKit
 public final class MirageStreamViewCoordinator {
     var onInputEvent: ((MirageInputEvent) -> Void)?
     var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
+    var onContainerSizeChanged: ((CGSize) -> Void)?
     var onRefreshRateOverrideChange: ((Int) -> Void)?
     var onBecomeActive: (() -> Void)?
     var onHardwareKeyboardPresenceChanged: ((Bool) -> Void)?
@@ -29,6 +30,7 @@ public final class MirageStreamViewCoordinator {
     init(
         onInputEvent: ((MirageInputEvent) -> Void)?,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?,
+        onContainerSizeChanged: ((CGSize) -> Void)?,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         onBecomeActive: (() -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
@@ -40,6 +42,7 @@ public final class MirageStreamViewCoordinator {
     ) {
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
+        self.onContainerSizeChanged = onContainerSizeChanged
         self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.onBecomeActive = onBecomeActive
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
@@ -56,6 +59,10 @@ public final class MirageStreamViewCoordinator {
 
     func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         onDrawableMetricsChanged?(metrics)
+    }
+
+    func handleContainerSizeChanged(_ size: CGSize) {
+        onContainerSizeChanged?(size)
     }
 
     func handleRefreshRateOverrideChange(_ override: Int) {

@@ -23,6 +23,7 @@ struct LatencyModeTypingClassifierTests {
             )
         )
         #expect(MirageTypingBurstClassifier.shouldTrigger(for: event))
+        #expect(event.isTypingStyleInput)
     }
 
     @Test("Editing navigation key down triggers burst classifier")
@@ -36,6 +37,7 @@ struct LatencyModeTypingClassifierTests {
             )
         )
         #expect(MirageTypingBurstClassifier.shouldTrigger(for: event))
+        #expect(event.isTypingStyleInput)
     }
 
     @Test("Shortcut modifiers suppress burst classifier")
@@ -68,6 +70,9 @@ struct LatencyModeTypingClassifierTests {
         #expect(!MirageTypingBurstClassifier.shouldTrigger(for: commandEvent))
         #expect(!MirageTypingBurstClassifier.shouldTrigger(for: optionEvent))
         #expect(!MirageTypingBurstClassifier.shouldTrigger(for: controlEvent))
+        #expect(!commandEvent.isTypingStyleInput)
+        #expect(!optionEvent.isTypingStyleInput)
+        #expect(!controlEvent.isTypingStyleInput)
     }
 
     @Test("Non-key-down events do not trigger burst classifier")
@@ -81,6 +86,7 @@ struct LatencyModeTypingClassifierTests {
             )
         )
         #expect(!MirageTypingBurstClassifier.shouldTrigger(for: event))
+        #expect(!event.isTypingStyleInput)
     }
 
     @Test("Mouse events do not trigger burst classifier")
@@ -91,5 +97,12 @@ struct LatencyModeTypingClassifierTests {
             )
         )
         #expect(!MirageTypingBurstClassifier.shouldTrigger(for: event))
+        #expect(!event.isTypingStyleInput)
+    }
+
+    @Test("Modifier transitions do not count as typing-style input")
+    func modifierTransitionsDoNotCountAsTypingStyleInput() {
+        let event = MirageInputEvent.flagsChanged([.command, .shift])
+        #expect(!event.isTypingStyleInput)
     }
 }

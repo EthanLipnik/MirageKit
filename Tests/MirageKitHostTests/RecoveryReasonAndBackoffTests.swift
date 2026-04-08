@@ -120,6 +120,42 @@ struct RecoveryReasonMappingTests {
         #expect(escalated.epoch == 1)
     }
 
+    @Test("Coalesced resize recovery keeps the first armed keyframe")
+    func coalescedResizeRecoveryKeepsFirstArmedKeyframe() async {
+        let context = makeContext()
+
+        await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize reset",
+            noteLoss: true,
+            ignoreExistingInFlight: true
+        )
+        let armedDeadline = await context.keyframeSendDeadline
+
+        await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize resume",
+            resetFrameNumber: true
+        )
+
+        #expect(await context.pendingKeyframeReason == "Desktop resize reset")
+        #expect(await context.keyframeSendDeadline == armedDeadline)
+    }
+
+    @Test("Client recovery request does not override an armed resize keyframe")
+    func clientRecoveryRequestDoesNotOverrideArmedResizeKeyframe() async {
+        let context = makeContext()
+
+        await context.scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize reset",
+            noteLoss: true,
+            ignoreExistingInFlight: true
+        )
+        await context.requestKeyframe()
+
+        #expect(await context.pendingKeyframeReason == "Desktop resize reset")
+        #expect(await context.softRecoveryCount == 0)
+        #expect(await context.hardRecoveryCount == 0)
+    }
+
     private func makeContext() -> StreamContext {
         let encoderConfig = MirageEncoderConfiguration(
             targetFrameRate: 60,

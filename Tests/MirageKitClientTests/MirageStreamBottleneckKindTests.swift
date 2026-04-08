@@ -54,6 +54,15 @@ struct MirageStreamBottleneckKindTests {
         #expect(recoveredSnapshot.bottleneckKind != .networkBound)
     }
 
+    @Test("Delay-only transport advisory is not network-bound")
+    func delayOnlyTransportAdvisoryIsNotNetworkBound() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostSendStartDelayAverageMs = 3
+        snapshot.hostSendCompletionAverageMs = 14
+
+        #expect(snapshot.bottleneckKind != .networkBound)
+    }
+
     @Test("Decode-bound classification prefers client decode lag when transport is clean")
     func decodeBoundClassificationPrefersClientDecodeLag() {
         var snapshot = baselineSnapshot()

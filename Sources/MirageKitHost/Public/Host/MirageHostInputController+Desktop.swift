@@ -39,7 +39,12 @@ extension MirageHostInputController {
         currentCursorPosition: CGPoint
     )
     -> CGPoint {
-        requestedPoint
+        switch type {
+        case .rightMouseDown, .rightMouseUp:
+            currentCursorPosition
+        default:
+            requestedPoint
+        }
     }
 
     /// Handle input events for desktop streaming.

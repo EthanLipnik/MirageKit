@@ -88,9 +88,27 @@ public final class AudioPlaybackController {
 
     func preferredChannelCount(for incomingChannelCount: Int) -> Int {
         let incoming = max(1, incomingChannelCount)
-        let outputChannels = Int(resolvePlaybackGraph().engine.outputNode.outputFormat(forBus: 0).channelCount)
+        let outputChannels = resolvedOutputChannelCount(fallback: incoming)
         if incoming >= 6, outputChannels < 6 { return 2 }
         return incoming
+    }
+
+    private func resolvedOutputChannelCount(fallback: Int) -> Int {
+        if let playbackGraph {
+            let channelCount = Int(playbackGraph.engine.outputNode.outputFormat(forBus: 0).channelCount)
+            if channelCount > 0 {
+                return channelCount
+            }
+        }
+
+#if os(iOS) || os(visionOS)
+        let sessionChannelCount = Int(AVAudioSession.sharedInstance().outputNumberOfChannels)
+        if sessionChannelCount > 0 {
+            return sessionChannelCount
+        }
+#endif
+
+        return fallback
     }
 
     func setRuntimeExtraDelay(seconds: Double) {
@@ -128,6 +146,11 @@ public final class AudioPlaybackController {
         drainPendingFramesIfNeeded()
     }
 
+    @discardableResult
+    func prepareForIncomingFormat(sampleRate: Int, channelCount: Int) -> Bool {
+        configureIfNeeded(sampleRate: sampleRate, channelCount: channelCount)
+    }
+
     private func configureIfNeeded(sampleRate: Int, channelCount: Int) -> Bool {
         let resolvedSampleRate = max(1, sampleRate)
         let resolvedChannels = max(1, channelCount)
@@ -159,6 +182,7 @@ public final class AudioPlaybackController {
         }
 
         playbackGraph.engine.connect(playbackGraph.playerNode, to: playbackGraph.engine.mainMixerNode, format: format)
+        playbackGraph.engine.prepare()
         do {
             try playbackGraph.engine.start()
         } catch {

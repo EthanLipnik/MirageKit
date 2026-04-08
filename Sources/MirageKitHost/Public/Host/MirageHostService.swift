@@ -312,6 +312,10 @@ public final class MirageHostService {
     var desktopResizeInFlight: Bool = false
     var desktopResizeRequestCounter: UInt64 = 0
 
+    /// Set when the client cancels stream setup before a stream ID is established.
+    /// Checked at suspension points in desktop and app stream setup flows.
+    var streamSetupCancelled = false
+
     /// Displays mirrored during desktop streaming (for restoration).
     var mirroredDesktopDisplayIDs: Set<CGDirectDisplayID> = []
     /// Snapshot of display mirroring state before desktop streaming.
@@ -319,6 +323,7 @@ public final class MirageHostService {
     /// Primary physical display information captured before mirroring.
     var desktopPrimaryPhysicalDisplayID: CGDirectDisplayID?
     var desktopPrimaryPhysicalBounds: CGRect?
+    var desktopMirroredVirtualResolution: CGSize?
 
     /// Cursor monitoring - internal for extension access
     var cursorMonitor: CursorMonitor?
@@ -1350,7 +1355,17 @@ public final class MirageHostService {
     )
     -> CGRect {
         if desktopStreamMode == .secondary, let bounds = resolveDesktopDisplayBounds() { return bounds }
+        return Self.resolvedMirroredDesktopInputBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: virtualResolution
+        )
+    }
 
+    nonisolated static func resolvedMirroredDesktopInputBounds(
+        physicalBounds: CGRect,
+        virtualResolution: CGSize?
+    )
+    -> CGRect {
         guard let virtualResolution,
               virtualResolution.width > 0,
               virtualResolution.height > 0 else {
@@ -1369,13 +1384,36 @@ public final class MirageHostService {
             fittedSize.height = fittedSize.width / contentAspect
         }
 
-        let horizontalInset = max(0, physicalBounds.width - fittedSize.width)
-        let verticalInset = max(0, physicalBounds.height - fittedSize.height)
-        let origin = CGPoint(
-            x: physicalBounds.origin.x + horizontalInset * 0.5,
-            y: physicalBounds.origin.y + verticalInset * 0.5
+        return CGRect(
+            x: physicalBounds.minX + (physicalBounds.width - fittedSize.width) * 0.5,
+            y: physicalBounds.minY + (physicalBounds.height - fittedSize.height) * 0.5,
+            width: fittedSize.width,
+            height: fittedSize.height
         )
-        return CGRect(origin: origin, size: fittedSize)
+    }
+
+    nonisolated static func cocoaRect(fromCGDisplayRect cgRect: CGRect, primaryHeight: CGFloat) -> CGRect {
+        CGRect(
+            x: cgRect.origin.x,
+            y: primaryHeight - cgRect.origin.y - cgRect.height,
+            width: cgRect.width,
+            height: cgRect.height
+        )
+    }
+
+    nonisolated static func resolvedMirroredDesktopCursorMonitorBounds(
+        physicalBounds: CGRect,
+        virtualResolution: CGSize?,
+        primaryHeight: CGFloat
+    )
+    -> CGRect {
+        cocoaRect(
+            fromCGDisplayRect: resolvedMirroredDesktopInputBounds(
+                physicalBounds: physicalBounds,
+                virtualResolution: virtualResolution
+            ),
+            primaryHeight: primaryHeight
+        )
     }
 
     func setRemoteControlPort(_ port: UInt16?) {
@@ -1458,12 +1496,9 @@ public final class MirageHostService {
 
     /// Convert a CG display rect (top-left origin) to Cocoa screen coordinates (bottom-left origin).
     private func cocoaRectFromCGDisplayRect(_ cgRect: CGRect) -> CGRect {
-        let primaryHeight = CGDisplayBounds(CGMainDisplayID()).height
-        return CGRect(
-            x: cgRect.origin.x,
-            y: primaryHeight - cgRect.origin.y - cgRect.height,
-            width: cgRect.width,
-            height: cgRect.height
+        Self.cocoaRect(
+            fromCGDisplayRect: cgRect,
+            primaryHeight: CGDisplayBounds(CGMainDisplayID()).height
         )
     }
 

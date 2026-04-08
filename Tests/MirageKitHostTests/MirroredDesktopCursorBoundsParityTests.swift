@@ -1,0 +1,68 @@
+//
+//  MirroredDesktopCursorBoundsParityTests.swift
+//  MirageKit
+//
+//  Created by Ethan Lipnik on 4/7/26.
+//
+
+@testable import MirageKitHost
+import CoreGraphics
+import Testing
+
+#if os(macOS)
+@Suite("Mirrored Desktop Cursor Bounds Parity")
+struct MirroredDesktopCursorBoundsParityTests {
+    @Test("Mirrored desktop cursor monitor bounds reuse the aspect-fitted input rect")
+    func mirroredDesktopCursorMonitorBoundsReuseInputRect() {
+        let physicalBounds = CGRect(x: 200, y: 120, width: 1920, height: 1080)
+        let virtualResolution = CGSize(width: 2560, height: 1600)
+        let primaryHeight: CGFloat = 1600
+
+        let inputBounds = MirageHostService.resolvedMirroredDesktopInputBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: virtualResolution
+        )
+        let cursorMonitorBounds = MirageHostService.resolvedMirroredDesktopCursorMonitorBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: virtualResolution,
+            primaryHeight: primaryHeight
+        )
+
+        #expect(cursorMonitorBounds.width == inputBounds.width)
+        #expect(cursorMonitorBounds.height == inputBounds.height)
+        #expect(cursorMonitorBounds.minX == inputBounds.minX)
+        #expect(cursorMonitorBounds.minY == primaryHeight - inputBounds.maxY)
+    }
+
+    @Test("Mirrored desktop cursor monitor normalization matches input normalization")
+    func mirroredDesktopCursorMonitorNormalizationMatchesInputNormalization() {
+        let physicalBounds = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let virtualResolution = CGSize(width: 2560, height: 1600)
+        let primaryHeight: CGFloat = 1440
+        let expectedNormalized = CGPoint(x: 0.25, y: 0.7)
+
+        let inputBounds = MirageHostService.resolvedMirroredDesktopInputBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: virtualResolution
+        )
+        let cursorMonitorBounds = MirageHostService.resolvedMirroredDesktopCursorMonitorBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: virtualResolution,
+            primaryHeight: primaryHeight
+        )
+
+        let inputPoint = CGPoint(
+            x: inputBounds.minX + expectedNormalized.x * inputBounds.width,
+            y: inputBounds.minY + expectedNormalized.y * inputBounds.height
+        )
+        let cocoaPoint = CGPoint(x: inputPoint.x, y: primaryHeight - inputPoint.y)
+        let monitorNormalized = CGPoint(
+            x: (cocoaPoint.x - cursorMonitorBounds.minX) / cursorMonitorBounds.width,
+            y: 1.0 - ((cocoaPoint.y - cursorMonitorBounds.minY) / cursorMonitorBounds.height)
+        )
+
+        #expect(abs(monitorNormalized.x - expectedNormalized.x) < 0.0001)
+        #expect(abs(monitorNormalized.y - expectedNormalized.y) < 0.0001)
+    }
+}
+#endif

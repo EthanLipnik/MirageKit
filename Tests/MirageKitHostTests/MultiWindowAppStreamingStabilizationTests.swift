@@ -144,6 +144,42 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(binding?.resolvedWindow.id == liveLauncherWindow.id)
     }
 
+    @Test("Initial startup handoff keeps detached fallback windows eligible across refresh")
+    func initialStartupHandoffKeepsDetachedFallbackWindowsEligibleAcrossRefresh() {
+        let detachedFallbackCandidate = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(
+                id: 9113,
+                title: "Inspector",
+                origin: CGPoint(x: 70, y: 70)
+            ),
+            classification: .auxiliary,
+            role: "AXFloatingWindow",
+            subrole: "AXStandardWindow",
+            parentWindowID: nil,
+            isFocused: true,
+            isMain: false
+        )
+        let liveInspectorWindow = makeWindow(
+            id: detachedFallbackCandidate.window.id,
+            title: "Inspector",
+            origin: CGPoint(x: 70, y: 70)
+        )
+
+        let binding = MirageHostService.resolveInitialAppWindowStartupBinding(
+            candidates: [detachedFallbackCandidate],
+            liveWindows: [liveInspectorWindow],
+            visibleWindowIDs: [],
+            claimedWindowIDs: [],
+            preferredWindowID: detachedFallbackCandidate.window.id,
+            deprioritizedWindowIDs: [],
+            excludedWindowIDs: []
+        )
+
+        #expect(binding?.candidate.window.id == detachedFallbackCandidate.window.id)
+        #expect(binding?.resolvedWindow.id == liveInspectorWindow.id)
+    }
+
     @Test("Initial startup handoff rejects auxiliary and claimed window candidates")
     func initialStartupHandoffRejectsAuxiliaryAndClaimedWindowCandidates() {
         let auxiliaryCandidate = AppStreamWindowCandidate(

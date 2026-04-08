@@ -39,6 +39,9 @@ extension StreamController {
         hasDecodedFirstFrame = false
         hasPresentedFirstFrame = false
         awaitingFirstFrameAfterResize = false
+        startupHardRecoveryCount = 0
+        hasTriggeredTerminalStartupFailure = false
+        postResizeDecodeErrorGraceDeadline = 0
         decodePausedForLocalResize = false
         lastMetricsLogTime = 0
         lastDecodedFrameTime = 0
@@ -78,6 +81,7 @@ extension StreamController {
     func beginPostResizeTransition() async {
         guard !awaitingFirstFrameAfterResize else { return }
         awaitingFirstFrameAfterResize = true
+        postResizeDecodeErrorGraceDeadline = currentTime() + Self.postResizeDecodeErrorGraceInterval
         clearQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
         await setClientRecoveryStatus(.postResizeAwaitingFirstFrame)

@@ -197,4 +197,12 @@ public extension MirageClientService {
 
         MirageLogger.client("Requested stop desktop stream: \(streamID)")
     }
+
+    /// Cancel any in-progress stream setup on the host.
+    /// Used when the user cancels during loading before a stream ID is established.
+    func cancelStreamSetup() {
+        guard case .connected = connectionState else { return }
+        _ = sendControlMessageBestEffort(.cancelStreamSetup, content: CancelStreamSetupMessage())
+        MirageLogger.client("Sent cancel stream setup")
+    }
 }

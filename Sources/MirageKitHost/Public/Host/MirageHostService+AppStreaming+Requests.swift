@@ -121,6 +121,19 @@ extension MirageHostService {
         return discoveryAttempt >= 3
     }
 
+    nonisolated static func standaloneAuxiliaryFallbackCandidates(
+        from candidates: [AppStreamWindowCandidate]
+    ) -> [AppStreamWindowCandidate] {
+        candidates
+            .filter { candidate in
+                candidate.classification == .auxiliary &&
+                    candidate.parentWindowID == nil &&
+                    candidate.window.isOnScreen &&
+                    (candidate.isFocused || candidate.isMain)
+            }
+            .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
+    }
+
     nonisolated static func initialAppWindowSlotRetryDelay(
         afterAttempt attempt: Int
     ) -> Duration {
@@ -175,11 +188,10 @@ extension MirageHostService {
             .enumerated()
             .filter { _, candidate in
                 guard !excludedWindowIDs.contains(candidate.window.id) else { return false }
-                return appLifecycleCandidateDisposition(
-                    candidate: candidate,
-                    visibleWindowIDs: visibleWindowIDs,
-                    claimedWindowIDs: claimedWindowIDs
-                ) == .eligible
+                guard candidate.parentWindowID == nil else { return false }
+                guard !visibleWindowIDs.contains(candidate.window.id) else { return false }
+                guard !claimedWindowIDs.contains(candidate.window.id) else { return false }
+                return true
             }
             .sorted { lhs, rhs in
                 let lhsPriority = lifecycleStartupCandidatePriority(
@@ -324,6 +336,7 @@ extension MirageHostService {
         do {
             let request = try message.decode(SelectAppMessage.self)
             let client = clientContext.client
+            streamSetupCancelled = false
             guard !disconnectingClientIDs.contains(client.id),
                   clientsByID[client.id] != nil else {
                 MirageLogger.host("Ignoring selectApp from disconnected client \(client.name)")
@@ -513,6 +526,20 @@ extension MirageHostService {
                 requestedDisplayResolution: requestedDisplayResolution,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize
             )
+            if streamSetupCancelled {
+                MirageLogger.host("App stream setup cancelled by client; ending session for \(app.name)")
+                for window in startupResult.windows {
+                    if let session = activeStreams.first(where: { $0.id == window.streamID }) {
+                        await stopStream(session, updateAppSession: false)
+                    }
+                }
+                await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
+                await restoreStageManagerAfterAppStreamingIfNeeded()
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
+                return
+            }
+
             let startupDecision = Self.initialAppWindowStartupDecision(
                 startedWindowCount: startupResult.windows.count
             )
@@ -909,10 +936,13 @@ extension MirageHostService {
             activeStreamIDs: Set(activeSessionByStreamID.keys)
         )
         let claimedWindowIDs = visibleWindowIDs.union(activeOwnerClaimedWindowIDs)
-        let primaryCandidates = catalog
-            .filter { $0.classification == .primary }
-            .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
-        guard let selectedCandidate = primaryCandidates.first(where: { !claimedWindowIDs.contains($0.window.id) }) else {
+        let candidateSelection = AppStreamWindowCatalog.startupCandidateSelection(from: catalog)
+        if candidateSelection.usedFallback {
+            MirageLogger.host(
+                "Best-effort app stream candidate fallback engaged for \(app.bundleIdentifier); no strict primary windows were available"
+            )
+        }
+        guard let selectedCandidate = candidateSelection.candidates.first(where: { !claimedWindowIDs.contains($0.window.id) }) else {
             return .failure("No additional \(app.name) windows are available to stream.")
         }
 
@@ -1070,8 +1100,9 @@ extension MirageHostService {
 
         let normalizedBundleID = bundleIdentifier.lowercased()
         let catalog = try await AppStreamWindowCatalog.catalog(for: [bundleIdentifier])
-        let candidates = (catalog[normalizedBundleID] ?? [])
+        let allCandidates = (catalog[normalizedBundleID] ?? [])
             .sorted(by: AppStreamWindowCatalog.preferredOrder(lhs:rhs:))
+        let candidates = AppStreamWindowCatalog.startupCandidateSelection(from: allCandidates).candidates
 
         let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
         let liveWindows = Self.liveWindowsSnapshot(from: content)
@@ -1107,10 +1138,15 @@ extension MirageHostService {
         var startedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
         var failureNotes: [String] = []
         let clientContext = findClientContext(clientID: client.id)
-        var primaryCandidates: [AppStreamWindowCandidate] = []
+        var startupCandidates: [AppStreamWindowCandidate] = []
+        var usedBestEffortStartupFallback = false
         var requestedNewWindow = false
 
         for discoveryAttempt in 1 ... maxDiscoveryAttempts {
+            if streamSetupCancelled {
+                MirageLogger.host("App stream window discovery cancelled by client")
+                break
+            }
             do {
                 let catalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])
                 let allCandidates = (catalog[normalizedBundleID] ?? [])
@@ -1121,8 +1157,10 @@ extension MirageHostService {
                         "Initial startup detected \(auxiliaryCount) auxiliary parent-coupled windows for \(app.bundleIdentifier)"
                     )
                 }
-                primaryCandidates = allCandidates.filter { $0.classification == .primary }
-                if !primaryCandidates.isEmpty { break }
+                let selection = AppStreamWindowCatalog.startupCandidateSelection(from: allCandidates)
+                startupCandidates = selection.candidates
+                usedBestEffortStartupFallback = selection.usedFallback
+                if !startupCandidates.isEmpty { break }
                 if Self.shouldRequestNewAppWindowOnInitialDiscovery(
                     discoveryAttempt: discoveryAttempt,
                     hasRequestedNewWindow: requestedNewWindow
@@ -1133,7 +1171,7 @@ extension MirageHostService {
                         "Initial app-stream startup requested a new window for \(app.bundleIdentifier) after discovery attempt \(discoveryAttempt)"
                     )
                 }
-                failureNotes.append("discovery \(discoveryAttempt): no streamable primary windows found")
+                failureNotes.append("discovery \(discoveryAttempt): no startup-eligible app windows found")
             } catch {
                 let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 let renderedDetail = detail.isEmpty ? String(describing: error) : detail
@@ -1146,11 +1184,17 @@ extension MirageHostService {
             }
         }
 
-        if primaryCandidates.isEmpty {
+        if startupCandidates.isEmpty {
             let summary = failureNotes.suffix(3).joined(separator: "; ")
             return InitialAppWindowStartupResult(
                 windows: [],
-                failureSummary: summary.isEmpty ? "no streamable primary windows became available" : summary
+                failureSummary: summary.isEmpty ? "no startup-eligible app windows became available" : summary
+            )
+        }
+
+        if usedBestEffortStartupFallback {
+            MirageLogger.host(
+                "Initial app-stream startup using a best-effort fallback candidate for \(app.bundleIdentifier) because no strict primary window became available"
             )
         }
 
@@ -1163,7 +1207,7 @@ extension MirageHostService {
             )
             let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
             bindingPlan = AppWindowBindingPlanner.plan(
-                candidates: primaryCandidates,
+                candidates: startupCandidates,
                 liveWindows: liveWindows,
                 claimedWindowIDs: claimedWindowIDs
             )
@@ -1173,7 +1217,7 @@ extension MirageHostService {
             failureNotes.append("binding plan snapshot failed: \(renderedDetail)")
             bindingPlan = AppWindowBindingPlan(
                 resolvedBindings: [],
-                unresolvedCandidates: primaryCandidates
+                unresolvedCandidates: startupCandidates
             )
         }
 
@@ -1327,7 +1371,7 @@ extension MirageHostService {
         let summary = failureNotes.suffix(3).joined(separator: "; ")
         return InitialAppWindowStartupResult(
             windows: startedWindows.sorted { $0.streamID < $1.streamID },
-            failureSummary: summary.isEmpty ? "no streamable primary windows became available" : summary
+            failureSummary: summary.isEmpty ? "no startup-eligible app windows became available" : summary
         )
     }
 
@@ -1361,7 +1405,7 @@ extension MirageHostService {
                     excludedWindowIDs: excludedWindowIDs
                 ) else {
                     failureNotes.append(
-                        "slot \(preferredSlotIndex) attempt \(slotAttempt): no eligible primary windows available"
+                        "slot \(preferredSlotIndex) attempt \(slotAttempt): no startup-eligible app windows available"
                     )
                     if ContinuousClock.now < startupDeadline {
                         try? await Task.sleep(for: Self.initialAppWindowSlotRetryDelay(afterAttempt: slotAttempt))

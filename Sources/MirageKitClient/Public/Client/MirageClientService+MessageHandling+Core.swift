@@ -410,6 +410,7 @@ extension MirageClientService {
             cursorPositionStore.clear(streamID: streamID)
 
             removeActiveStreamID(streamID)
+            stopVideoStreamReceive(for: streamID)
             registeredStreamIDs.remove(streamID)
             clearStreamRefreshRateOverride(streamID: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)

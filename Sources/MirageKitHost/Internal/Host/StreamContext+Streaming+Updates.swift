@@ -767,7 +767,11 @@ extension StreamContext {
         )
         await refreshCaptureCadence()
         await applyDerivedQuality(for: outputSize, logLabel: "Desktop resize reset")
-        await encoder.forceKeyframe()
+        await scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize reset",
+            noteLoss: true,
+            ignoreExistingInFlight: true
+        )
         MirageLogger.stream("Desktop display reset complete at \(scaledWidth)x\(scaledHeight)")
     }
 
@@ -859,10 +863,10 @@ extension StreamContext {
         encodingSuspendedForResize = false
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
-        if let encoder {
-            await encoder.resetFrameNumber()
-            await encoder.forceKeyframe()
-        }
+        await scheduleCoalescedRecoveryKeyframe(
+            reason: "Desktop resize resume",
+            resetFrameNumber: true
+        )
         shouldEncodeFrames = true
         MirageLogger.stream("Desktop resize completion: encoding resumed")
     }
@@ -883,10 +887,11 @@ extension StreamContext {
         // The await calls below suspend this actor, which would let queued
         // processPendingFrames() tasks interleave and encode a P-frame before
         // the encoder has frameNumber == 0 / forceNextKeyframe set.
-        if let encoder {
-            await encoder.resetFrameNumber()
-            await encoder.forceKeyframe()
-        }
+        await scheduleCoalescedRecoveryKeyframe(
+            reason: "Startup registration confirmed",
+            resetFrameNumber: true,
+            noteLoss: true
+        )
 
         shouldEncodeFrames = true
         MirageLogger.signpostEvent(.stream, "Startup.EncodingEnabled", "stream=\(streamID)")

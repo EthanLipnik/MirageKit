@@ -43,6 +43,14 @@ public class MirageMetalView: NSView {
         }
     }
 
+    var desktopPresentationReferenceSize: CGSize? {
+        didSet {
+            guard desktopPresentationReferenceSize != oldValue else { return }
+            applyPresentationVideoGravity()
+            needsLayout = true
+        }
+    }
+
     // MARK: - Rendering State
 
     private let preferencesObserver = MirageUserDefaultsObserver()
@@ -130,12 +138,12 @@ public class MirageMetalView: NSView {
         wantsLayer = true
 
         let displayLayer = self.displayLayer
-        displayLayer.videoGravity = .resize
         displayLayer.backgroundColor = NSColor.black.cgColor
         displayLayer.wantsExtendedDynamicRangeContent = true
         displayLayer.isOpaque = true
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
         displayLayer.contentsScale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        applyPresentationVideoGravity()
 
         presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
         presenter.onFrameAvailable = { [weak self] in
@@ -144,6 +152,15 @@ public class MirageMetalView: NSView {
 
         applyRenderPreferences()
         startObservingPreferences()
+    }
+
+    private func applyPresentationVideoGravity() {
+        displayLayer.videoGravity = usesAspectFitDesktopPresentation ? .resizeAspect : .resize
+    }
+
+    private var usesAspectFitDesktopPresentation: Bool {
+        guard let desktopPresentationReferenceSize else { return false }
+        return desktopPresentationReferenceSize.width > 0 && desktopPresentationReferenceSize.height > 0
     }
 
     // MARK: - Draw Path

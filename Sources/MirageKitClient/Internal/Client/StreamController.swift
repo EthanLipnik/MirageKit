@@ -37,7 +37,7 @@ private final class FrameEnqueueOrderAllocator: @unchecked Sendable {
 actor StreamController {
     // MARK: - Types
 
-    enum RecoveryReason: Sendable {
+    enum RecoveryReason: Sendable, Equatable {
         case decodeErrorThreshold
         case frameLoss
         case freezeTimeout
@@ -78,6 +78,16 @@ actor StreamController {
     enum FirstPresentedFrameAwaitMode: Sendable, Equatable {
         case startup
         case recovery
+    }
+
+    struct TerminalStartupFailure: Sendable, Equatable {
+        let reason: RecoveryReason
+        let hardRecoveryAttempts: Int
+        let waitReason: String?
+
+        var errorMessage: String {
+            "Stream failed to present its first frame after bounded recovery."
+        }
     }
 
     nonisolated static func freezeRecoveryDecision(
@@ -244,6 +254,8 @@ actor StreamController {
     static let firstPresentedFrameRecoveryCooldown: CFAbsoluteTime = 1.0
     /// Escalate to a hard recovery after a single bounded bootstrap request stalls again.
     static let firstPresentedFrameHardRecoveryThreshold: Int = 2
+    /// Maximum number of startup hard recoveries before the stream is failed terminally.
+    static let startupHardRecoveryLimit: Int = 1
 
     nonisolated static func firstPresentedFrameBootstrapRecoveryGrace(
         for mode: FirstPresentedFrameAwaitMode
@@ -267,6 +279,7 @@ actor StreamController {
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
     static let decodeErrorLogInterval: CFAbsoluteTime = 15.0
     static let decodeErrorEscalationThreshold: Int = 3
+    static let postResizeDecodeErrorGraceInterval: CFAbsoluteTime = 0.75
     static let decodeSubmissionMaximumLimit: Int = 3
     static let decodeSubmissionStressThreshold: Double = 0.80
     static let decodeSubmissionHealthyThreshold: Double = 0.95
@@ -297,6 +310,8 @@ actor StreamController {
     var hasPresentedFirstFrame = false
     /// True while the decoder should remain keyframe-only for a post-resize transition.
     var awaitingFirstFrameAfterResize = false
+    /// Suppresses immediate post-resize decode-threshold recovery until presentation has a chance to resume.
+    var postResizeDecodeErrorGraceDeadline: CFAbsoluteTime = 0
     /// True while UI gating waits for the first newly presented frame.
     var awaitingFirstPresentedFrame = false
     /// Startup watchdog vs recovery watchdog mode for the first-frame awaiter.
@@ -313,6 +328,10 @@ actor StreamController {
     var firstPresentedFrameLastRecoveryRequestTime: CFAbsoluteTime = 0
     /// Number of bootstrap recovery actions dispatched in the current first-frame wait window.
     var firstPresentedFrameRecoveryAttemptCount: Int = 0
+    /// Number of full hard recoveries consumed while still waiting on the first presented frame.
+    var startupHardRecoveryCount: Int = 0
+    /// True after the controller has concluded startup recovery cannot succeed.
+    var hasTriggeredTerminalStartupFailure = false
     /// True while local client resize orchestration keeps decode paused pre-ack.
     var decodePausedForLocalResize = false
 
@@ -408,6 +427,8 @@ actor StreamController {
     private(set) var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
     /// Called when decode errors occur while the app is backgrounded, signaling the stream should stop.
     private(set) var onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)?
+    /// Called when bounded startup recovery is exhausted before the first frame is presented.
+    private(set) var onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)?
 
     /// Last recovery status delivered to the app layer.
     var clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle
@@ -423,7 +444,8 @@ actor StreamController {
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
         onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
-        onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)? = nil
+        onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)? = nil,
+        onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
         self.onResizeEvent = onResizeEvent
@@ -435,6 +457,7 @@ actor StreamController {
         self.onStallEvent = onStallEvent
         self.onRecoveryStatusChanged = onRecoveryStatusChanged
         self.onBackgroundDecodeFailure = onBackgroundDecodeFailure
+        self.onTerminalStartupFailure = onTerminalStartupFailure
     }
 
     func setClientRecoveryStatus(_ status: MirageStreamClientRecoveryStatus) async {
@@ -488,6 +511,8 @@ actor StreamController {
         lastRecoveryRequestDispatchTime = 0
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        startupHardRecoveryCount = 0
+        hasTriggeredTerminalStartupFailure = false
         await setClientRecoveryStatus(.idle)
         stopFreezeMonitor()
         let presentationSnapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
@@ -665,6 +690,7 @@ actor StreamController {
 
     private func recordDecodeFailure(_ error: Error) {
         guard isRunning, !isStopping else { return }
+        guard !hasTriggeredTerminalStartupFailure else { return }
 
         if let onBackgroundDecodeFailure, !isApplicationForeground() {
             MirageLogger.client("Decode error while backgrounded; requesting stream stop")
@@ -956,6 +982,7 @@ actor StreamController {
         onAdaptiveFallbackNeeded = nil
         onStallEvent = nil
         onRecoveryStatusChanged = nil
+        onTerminalStartupFailure = nil
 
         resizeDebounceTask?.cancel()
         resizeDebounceTask = nil
@@ -965,6 +992,8 @@ actor StreamController {
         lastRecoveryRequestTime = 0
         lastSoftRecoveryRequestTime = 0
         lastHardRecoveryStartTime = 0
+        startupHardRecoveryCount = 0
+        hasTriggeredTerminalStartupFailure = false
         consecutiveDecodeErrors = 0
         lastDecodeErrorSignature = nil
         lastDecodeErrorLogTime = 0
@@ -992,7 +1021,7 @@ actor StreamController {
         }
     }
 
-    private func stopMetricsReporting() {
+    func stopMetricsReporting() {
         metricsTask?.cancel()
         metricsTask = nil
     }

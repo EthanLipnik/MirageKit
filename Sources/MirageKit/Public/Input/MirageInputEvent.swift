@@ -90,6 +90,14 @@ public enum MirageInputEvent: Codable, Sendable {
             nil
         }
     }
+
+    /// Whether this event represents text-entry or editing keyboard input.
+    ///
+    /// This excludes pointer events, modifier-only transitions, and shortcut-style
+    /// key presses that use Command, Option, or Control.
+    public var isTypingStyleInput: Bool {
+        MirageTypingBurstClassifier.shouldTrigger(for: self)
+    }
 }
 
 /// Modifier flags for keyboard events

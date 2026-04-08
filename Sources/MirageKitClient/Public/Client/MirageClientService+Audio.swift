@@ -139,6 +139,15 @@ extension MirageClientService {
                     await self.audioPacketIngressQueue.reset()
                     self.audioPlaybackControllerIfInitialized?.reset()
                 }
+                let prepared = self.resolveAudioPlaybackController().prepareForIncomingFormat(
+                    sampleRate: Int(started.sampleRate),
+                    channelCount: preferredChannels
+                )
+                if !prepared {
+                    MirageLogger.client(
+                        "Deferred audio playback graph preparation for stream \(started.streamID) until the shared session becomes active"
+                    )
+                }
             }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode audioStreamStarted: ")

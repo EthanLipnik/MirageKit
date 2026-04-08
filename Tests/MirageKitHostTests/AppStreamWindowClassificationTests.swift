@@ -68,5 +68,70 @@ struct AppStreamWindowClassificationTests {
 
         #expect(classification == .primary)
     }
+
+    @Test("Focused top-level utility panels stay eligible as primary windows")
+    func focusedTopLevelUtilityPanelIsPrimary() {
+        let classification = AppStreamWindowCatalog.classifyWindow(
+            role: "AXWindow",
+            subrole: "AXUtilityPanel",
+            parentWindowID: nil,
+            isFocused: true,
+            isMain: true
+        )
+
+        #expect(classification == .primary)
+    }
+
+    @Test("Standalone focused auxiliary windows can be used as startup fallback candidates")
+    func standaloneAuxiliaryWindowsCanFallbackToPrimarySelection() {
+        let auxiliaryWindow = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.test",
+            window: MirageWindow(
+                id: WindowID(42),
+                title: "Inspector",
+                application: MirageApplication(
+                    id: 7,
+                    bundleIdentifier: "com.example.test",
+                    name: "Test App"
+                ),
+                frame: CGRect(x: 0, y: 0, width: 800, height: 600),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            classification: .auxiliary,
+            role: "AXWindow",
+            subrole: "AXFloatingWindow",
+            parentWindowID: nil,
+            isFocused: true,
+            isMain: false
+        )
+        let parentedAuxiliaryWindow = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.test",
+            window: MirageWindow(
+                id: WindowID(43),
+                title: "Sheet",
+                application: MirageApplication(
+                    id: 7,
+                    bundleIdentifier: "com.example.test",
+                    name: "Test App"
+                ),
+                frame: CGRect(x: 0, y: 0, width: 640, height: 480),
+                isOnScreen: true,
+                windowLayer: 0
+            ),
+            classification: .auxiliary,
+            role: "AXSheet",
+            subrole: nil,
+            parentWindowID: WindowID(42),
+            isFocused: true,
+            isMain: false
+        )
+
+        let fallbackCandidates = MirageHostService.standaloneAuxiliaryFallbackCandidates(
+            from: [parentedAuxiliaryWindow, auxiliaryWindow]
+        )
+
+        #expect(fallbackCandidates.map(\.window.id) == [WindowID(42)])
+    }
 }
 #endif

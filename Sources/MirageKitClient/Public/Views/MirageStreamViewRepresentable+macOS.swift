@@ -18,6 +18,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Callback when drawable metrics change - reports pixel size and scale factor
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)?
 
+    /// Callback when the platform container/window bounds change.
+    public var onContainerSizeChanged: ((CGSize) -> Void)?
+
     /// Callback when the view's effective refresh rate changes (screen move or preference toggle).
     public var onRefreshRateOverrideChange: ((Int) -> Void)?
 
@@ -73,6 +76,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
         onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? = nil,
+        onContainerSizeChanged: ((CGSize) -> Void)? = nil,
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
@@ -94,6 +98,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
         self.onDrawableMetricsChanged = onDrawableMetricsChanged
+        self.onContainerSizeChanged = onContainerSizeChanged
         self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
@@ -117,6 +122,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         MirageStreamViewCoordinator(
             onInputEvent: onInputEvent,
             onDrawableMetricsChanged: onDrawableMetricsChanged,
+            onContainerSizeChanged: onContainerSizeChanged,
             onRefreshRateOverrideChange: onRefreshRateOverrideChange
         )
     }
@@ -141,11 +147,14 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         metalView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
         metalView.onRefreshRateOverrideChange = context.coordinator.handleRefreshRateOverrideChange
         metalView.maxDrawableSize = maxDrawableSize
+        metalView.desktopPresentationReferenceSize = hostDisplayPointSize
         metalView.streamPresentationTier = presentationTier
         metalView.streamID = streamID
+        wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
 
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
+        wrapper.desktopPresentationReferenceSize = hostDisplayPointSize
         wrapper.hostDisplayPointSize = hostDisplayPointSize
         wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
         wrapper.cursorLockEnabled = cursorLockEnabled
@@ -187,16 +196,19 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
 
     public func updateNSView(_ nsView: NSView, context: Context) {
         context.coordinator.onDrawableMetricsChanged = onDrawableMetricsChanged
+        context.coordinator.onContainerSizeChanged = onContainerSizeChanged
         context.coordinator.onInputEvent = onInputEvent
         context.coordinator.onRefreshRateOverrideChange = onRefreshRateOverrideChange
 
         if let metalView = context.coordinator.metalView { metalView.streamID = streamID }
         if let metalView = context.coordinator.metalView { metalView.maxDrawableSize = maxDrawableSize }
+        if let metalView = context.coordinator.metalView { metalView.desktopPresentationReferenceSize = hostDisplayPointSize }
         if let metalView = context.coordinator.metalView { metalView.streamPresentationTier = presentationTier }
 
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
+            wrapper.desktopPresentationReferenceSize = hostDisplayPointSize
             wrapper.hostDisplayPointSize = hostDisplayPointSize
             wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
             wrapper.cursorLockEnabled = cursorLockEnabled
@@ -208,6 +220,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
             wrapper.streamID = streamID
             wrapper.clientShortcuts = clientShortcuts
             wrapper.onClientShortcut = onClientShortcut
+            wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
         }
     }
 }
