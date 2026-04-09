@@ -606,7 +606,7 @@ public final class MirageClientService {
     var hostSupportLogArchiveRequestID: UUID?
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
-    let hostSupportLogArchiveTimeout: Duration = .seconds(30)
+    let hostSupportLogArchiveTimeout: Duration = .seconds(10)
     var hostWallpaperRequestID: UUID?
     var hostWallpaperContinuation: CheckedContinuation<Void, Error>?
     var hostWallpaperTimeoutTask: Task<Void, Never>?
