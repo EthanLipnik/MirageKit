@@ -15,8 +15,31 @@ import ScreenCaptureKit
 
 // MARK: - Desktop Streaming
 
+enum DesktopMirroringRestoreContinuationDecision: Equatable {
+    case continueRestore
+    case abortStreamInactive
+    case abortModeChanged
+}
+
+func desktopMirroringRestoreContinuationDecision(
+    requestedStreamID: StreamID,
+    activeDesktopStreamID: StreamID?,
+    hasDesktopContext: Bool,
+    desktopStreamMode: MirageDesktopStreamMode
+)
+-> DesktopMirroringRestoreContinuationDecision {
+    guard requestedStreamID == activeDesktopStreamID, hasDesktopContext else {
+        return .abortStreamInactive
+    }
+    guard desktopStreamMode == .unified else {
+        return .abortModeChanged
+    }
+    return .continueRestore
+}
+
 extension MirageHostService {
-    /// Start streaming the desktop (mirrored or secondary display mode)
+
+    /// Start streaming the desktop (unified or secondary display mode)
     /// This stops any active app/window streams for mutual exclusivity
     func startDesktopStream(
         to clientContext: ClientContext,
@@ -294,7 +317,7 @@ extension MirageHostService {
                         )
                 }
 
-                if mode == .mirrored {
+                if mode == .unified {
                     await setupDisplayMirroring(targetDisplayID: context.displayID)
                     logDesktopStartStep("display mirroring configured")
                 } else {
@@ -674,10 +697,10 @@ extension MirageHostService {
         desktopStreamClientContext = nil
         desktopStreamID = nil
         desktopRequestedScaleFactor = nil
-        desktopStreamMode = .mirrored
+        desktopStreamMode = .unified
         desktopCursorPresentation = .clientCursor
         if let vdID = desktopVirtualDisplayID {
-            if mode == .mirrored {
+            if mode == .unified {
                 await disableDisplayMirroring(displayID: vdID)
             }
             await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
@@ -713,13 +736,15 @@ extension MirageHostService {
 
         cancelPendingStartupAttempt(streamID: streamID)
         MirageLogger.host("Stopping desktop stream: streamID=\(streamID), reason=\(reason)")
+        beginDesktopSharedDisplayTransition()
+        defer { endDesktopSharedDisplayTransition() }
         resetDesktopResizeTransactionState()
 
         let sharedDisplayID = await SharedVirtualDisplayManager.shared.getDisplayID()
 
         if let context = desktopStreamContext { await context.stop() }
 
-        if desktopStreamMode == .mirrored, let sharedDisplayID {
+        if desktopStreamMode == .unified, let sharedDisplayID {
             await disableDisplayMirroring(displayID: sharedDisplayID)
         }
 
@@ -740,7 +765,7 @@ extension MirageHostService {
         desktopRequestedScaleFactor = nil
         desktopUsesHostResolution = false
         sharedVirtualDisplayScaleFactor = 2.0
-        desktopStreamMode = .mirrored
+        desktopStreamMode = .unified
         desktopCursorPresentation = .clientCursor
         streamsByID.removeValue(forKey: streamID)
         unregisterTypingBurstRoute(streamID: streamID)
@@ -865,16 +890,49 @@ extension MirageHostService {
     }
 
     func restoreDisplayMirroringAfterResize(
+        streamID: StreamID,
         targetDisplayID: CGDirectDisplayID,
         maxAttempts: Int = 3
     )
     async -> Bool {
+        switch desktopMirroringRestoreContinuationDecision(
+            requestedStreamID: streamID,
+            activeDesktopStreamID: desktopStreamID,
+            hasDesktopContext: desktopStreamContext != nil,
+            desktopStreamMode: desktopStreamMode
+        ) {
+        case .continueRestore:
+            break
+        case .abortStreamInactive:
+            MirageLogger.host("Aborting desktop mirroring restore because the stream is no longer active")
+            return false
+        case .abortModeChanged:
+            MirageLogger.host("Aborting desktop mirroring restore because desktop stream mode changed")
+            return false
+        }
+
+        await setupDisplayMirroring(targetDisplayID: targetDisplayID)
+
         var retryDelayMs = 500
         for attempt in 1 ... maxAttempts {
-            await setupDisplayMirroring(targetDisplayID: targetDisplayID)
-
             // Allow CGDisplayMirror reconfiguration to settle before verifying.
             try? await Task.sleep(for: .milliseconds(retryDelayMs))
+
+            switch desktopMirroringRestoreContinuationDecision(
+                requestedStreamID: streamID,
+                activeDesktopStreamID: desktopStreamID,
+                hasDesktopContext: desktopStreamContext != nil,
+                desktopStreamMode: desktopStreamMode
+            ) {
+            case .continueRestore:
+                break
+            case .abortStreamInactive:
+                MirageLogger.host("Aborting desktop mirroring restore because the stream is no longer active")
+                return false
+            case .abortModeChanged:
+                MirageLogger.host("Aborting desktop mirroring restore because desktop stream mode changed")
+                return false
+            }
 
             if isDisplayMirroringRestored(targetDisplayID: targetDisplayID) {
                 if attempt > 1 {
@@ -1016,9 +1074,10 @@ extension MirageHostService {
             return
         }
 
-        let completeResult = CGCompleteDisplayConfiguration(config, .permanently)
+        let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
         if completeResult != .success {
             MirageLogger.error(.host, "Failed to complete mirroring configuration: \(completeResult)")
+            CGCancelDisplayConfiguration(config)
             return
         }
 

@@ -17,7 +17,7 @@ struct DesktopStreamStartFailureDispositionTests {
     func virtualDisplayStartFailureClearsPendingDesktopStart() throws {
         let service = MirageClientService(deviceName: "Test Device")
         service.connectionState = .connected(host: "Host")
-        service.desktopStreamMode = .mirrored
+        service.desktopStreamMode = .unified
         service.desktopStreamRequestStartTime = 42
         service.pendingDesktopRequestedColorDepth = .pro
 

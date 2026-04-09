@@ -653,7 +653,7 @@ public struct MirageAudioConfiguration: Sendable, Codable, Equatable {
 
     /// Resolves host-audio policy for a desktop stream mode.
     /// Secondary display streams are video-only because host audio belongs to
-    /// mirrored desktop and app/window streaming, not the synthetic display.
+    /// unified desktop and app/window streaming, not the synthetic display.
     public func resolvedForDesktopStreamMode(_ mode: MirageDesktopStreamMode) -> MirageAudioConfiguration {
         guard mode == .secondary, enabled else { return self }
         var configuration = self

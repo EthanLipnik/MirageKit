@@ -18,6 +18,17 @@ import ApplicationServices
 extension MirageHostInputController {
     // MARK: - Desktop Input Handling
 
+    nonisolated static func desktopInjectionCursorPosition(
+        fromCocoaScreenPosition position: CGPoint,
+        primaryDisplayHeight: CGFloat
+    )
+    -> CGPoint {
+        CGPoint(
+            x: position.x,
+            y: primaryDisplayHeight - position.y
+        )
+    }
+
     nonisolated static func shouldWarpDesktopPointerEvent(_ type: CGEventType) -> Bool {
         switch type {
         case .leftMouseDown,
@@ -123,10 +134,14 @@ extension MirageHostInputController {
         _ event: MirageMouseEvent,
         requestedPoint: CGPoint
     ) {
+        let currentCursorPosition = Self.desktopInjectionCursorPosition(
+            fromCocoaScreenPosition: NSEvent.mouseLocation,
+            primaryDisplayHeight: CGDisplayBounds(CGMainDisplayID()).height
+        )
         let point = Self.resolvedDesktopPointerEventPoint(
             type,
             requestedPoint: requestedPoint,
-            currentCursorPosition: NSEvent.mouseLocation
+            currentCursorPosition: currentCursorPosition
         )
         if Self.shouldWarpDesktopPointerEvent(type) {
             CGWarpMouseCursorPosition(point)

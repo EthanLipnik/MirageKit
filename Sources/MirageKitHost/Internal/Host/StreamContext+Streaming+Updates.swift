@@ -399,6 +399,7 @@ extension StreamContext {
 
     func updateDimensions(windowFrame: CGRect) async throws {
         guard isRunning else { return }
+        let rollbackSnapshot = makeResizeRollbackSnapshot()
 
         isResizing = true
         defer { isResizing = false }
@@ -429,15 +430,27 @@ extension StreamContext {
             .stream(
                 "Updating stream to scaled resolution: \(width)x\(height) (capture \(captureTarget.width)x\(captureTarget.height), scale: \(captureTarget.hostScaleFactor), from \(windowFrame.width)x\(windowFrame.height) pts) (frames paused)"
             )
+        do {
+            if let captureEngine {
+                try await captureEngine.updateDimensions(windowFrame: windowFrame, outputScale: streamScale)
+            }
 
-        if let captureEngine { try await captureEngine.updateDimensions(windowFrame: windowFrame, outputScale: streamScale) }
+            if let encoder {
+                try await encoder.updateDimensions(width: width, height: height)
+            }
+            await applyDerivedQuality(for: outputSize, logLabel: "Dimension update")
 
-        if let encoder { try await encoder.updateDimensions(width: width, height: height) }
-        await applyDerivedQuality(for: outputSize, logLabel: "Dimension update")
+            await encoder?.forceKeyframe()
 
-        await encoder?.forceKeyframe()
-
-        MirageLogger.stream("Dimension update complete (frames resumed)")
+            MirageLogger.stream("Dimension update complete (frames resumed)")
+        } catch {
+            do {
+                try await rollbackResizeFailure(rollbackSnapshot, logLabel: "Dimension update")
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Dimension update rollback failed: ")
+            }
+            throw error
+        }
     }
 
     func restartWindowCapture(
@@ -536,6 +549,7 @@ extension StreamContext {
 
     func updateResolution(width: Int, height: Int) async throws {
         guard isRunning else { return }
+        let rollbackSnapshot = makeResizeRollbackSnapshot()
 
         let requestedBaseSize = CGSize(width: width, height: height)
         guard requestedBaseSize.width > 0, requestedBaseSize.height > 0 else { return }
@@ -583,25 +597,36 @@ extension StreamContext {
             .stream(
                 "Updating to client-requested resolution: \(width)x\(height) (scaled \(scaledWidth)x\(scaledHeight)) (frames paused)"
             )
+        do {
+            if let captureEngine {
+                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
+            }
 
-        if let captureEngine { try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight) }
-
-        currentCaptureSize = outputSize
-        currentEncodedSize = outputSize
-        updateQueueLimits()
-
-        if let encoder {
-            try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+            currentCaptureSize = outputSize
+            currentEncodedSize = outputSize
             updateQueueLimits()
+
+            if let encoder {
+                try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+                updateQueueLimits()
+            }
+
+            await encoder?.forceKeyframe()
+
+            MirageLogger.stream("Resolution update to \(scaledWidth)x\(scaledHeight) complete (frames resumed)")
+        } catch {
+            do {
+                try await rollbackResizeFailure(rollbackSnapshot, logLabel: "Resolution update")
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Resolution update rollback failed: ")
+            }
+            throw error
         }
-
-        await encoder?.forceKeyframe()
-
-        MirageLogger.stream("Resolution update to \(scaledWidth)x\(scaledHeight) complete (frames resumed)")
     }
 
     func updateStreamScale(_ newScale: CGFloat) async throws {
         let clampedScale = StreamContext.clampStreamScale(newScale)
+        let rollbackSnapshot = makeResizeRollbackSnapshot()
         let previousScale = streamScale
 
         let derivedBaseSize: CGSize
@@ -663,28 +688,38 @@ extension StreamContext {
                     " resolved \(streamScale)," +
                     " encoded \(scaledWidth)x\(scaledHeight)"
             )
-
-        if let captureEngine {
-            switch captureMode {
-            case .display:
-                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
-            case .window:
-                if !lastWindowFrame.isEmpty { try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale) }
+        do {
+            if let captureEngine {
+                switch captureMode {
+                case .display:
+                    try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
+                case .window:
+                    if !lastWindowFrame.isEmpty {
+                        try await captureEngine.updateDimensions(windowFrame: lastWindowFrame, outputScale: streamScale)
+                    }
+                }
             }
-        }
 
-        if let encoder {
-            try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+            if let encoder {
+                try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+                updateQueueLimits()
+            }
             updateQueueLimits()
-        }
-        updateQueueLimits()
 
-        await applyDerivedQuality(for: outputSize, logLabel: "Stream scale update")
-        await encoder?.forceKeyframe()
-        MirageLogger
-            .stream(
-                "Stream scale updated to \(streamScale), encoding at \(Int(outputSize.width))x\(Int(outputSize.height))"
-            )
+            await applyDerivedQuality(for: outputSize, logLabel: "Stream scale update")
+            await encoder?.forceKeyframe()
+            MirageLogger
+                .stream(
+                    "Stream scale updated to \(streamScale), encoding at \(Int(outputSize.width))x\(Int(outputSize.height))"
+                )
+        } catch {
+            do {
+                try await rollbackResizeFailure(rollbackSnapshot, logLabel: "Stream scale update")
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Stream scale update rollback failed: ")
+            }
+            throw error
+        }
     }
 
     func hardResetDesktopDisplayCapture(
@@ -767,11 +802,18 @@ extension StreamContext {
         )
         await refreshCaptureCadence()
         await applyDerivedQuality(for: outputSize, logLabel: "Desktop resize reset")
-        await scheduleCoalescedRecoveryKeyframe(
-            reason: "Desktop resize reset",
-            noteLoss: true,
-            ignoreExistingInFlight: true
+        let keyframeStrategy = desktopResizeRecoveryKeyframeStrategy(
+            encodingSuspendedForResize: encodingSuspendedForResize
         )
+        if keyframeStrategy == .scheduleDuringReset {
+            await scheduleCoalescedRecoveryKeyframe(
+                reason: "Desktop resize reset",
+                noteLoss: true,
+                ignoreExistingInFlight: true
+            )
+        } else {
+            MirageLogger.stream("Desktop resize reset deferred recovery keyframe until encoding resume")
+        }
         MirageLogger.stream("Desktop display reset complete at \(scaledWidth)x\(scaledHeight)")
     }
 

@@ -880,7 +880,7 @@ struct MirageKitTests {
             keyFrameInterval: 1800,
             captureQueueDepth: 5,
             colorDepth: .pro,
-            mode: .mirrored,
+            mode: .unified,
             bitrate: 500_000_000,
             latencyMode: .auto,
             performanceMode: .game,

@@ -35,8 +35,10 @@ struct ScrollPhysicsCapturingViewTests {
             scrollViews.first { allowedTouchTypes(for: $0).contains(indirectPointerTouchType) }
         )
 
-        #expect((directScrollView.delegate as AnyObject?) === directScrollView)
-        #expect((indirectScrollView.delegate as AnyObject?) === indirectScrollView)
+        #expect(directScrollView.delegate != nil)
+        #expect(indirectScrollView.delegate != nil)
+        #expect((directScrollView.delegate as AnyObject?) !== directScrollView)
+        #expect((indirectScrollView.delegate as AnyObject?) !== indirectScrollView)
         #expect((directScrollView.panGestureRecognizer.delegate as AnyObject?) === directScrollView)
         #expect((indirectScrollView.panGestureRecognizer.delegate as AnyObject?) === indirectScrollView)
         #expect((rotationGesture.delegate as AnyObject?) !== (view as AnyObject?))

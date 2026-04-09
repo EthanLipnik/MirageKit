@@ -65,7 +65,7 @@ struct DesktopResizeTransactionPolicyTests {
 
     @Test("Mirrored mode uses suspend and restore plan")
     func mirroredModeUsesSuspendAndRestore() {
-        let plan = desktopResizeMirroringPlan(for: .mirrored)
+        let plan = desktopResizeMirroringPlan(for: .unified)
         #expect(plan == .suspendAndRestore)
     }
 
@@ -160,10 +160,10 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = desktopGenerationChangeRebindDecision(
             previousGeneration: 10,
             newGeneration: 11,
-            desktopResizeInFlight: true
+            sharedDisplayTransitionInFlight: true
         )
 
-        #expect(decision == .skipResizeInFlight)
+        #expect(decision == .skipSharedDisplayTransitionInFlight)
     }
 
     @Test("Generation-change rebind runs when resize is idle")
@@ -171,10 +171,46 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = desktopGenerationChangeRebindDecision(
             previousGeneration: 10,
             newGeneration: 11,
-            desktopResizeInFlight: false
+            sharedDisplayTransitionInFlight: false
         )
 
         #expect(decision == .rebind)
+    }
+
+    @Test("Desktop mirroring restore aborts when stream is inactive")
+    func desktopMirroringRestoreAbortsWhenStreamIsInactive() {
+        let decision = desktopMirroringRestoreContinuationDecision(
+            requestedStreamID: 41,
+            activeDesktopStreamID: nil,
+            hasDesktopContext: false,
+            desktopStreamMode: .unified
+        )
+
+        #expect(decision == .abortStreamInactive)
+    }
+
+    @Test("Desktop mirroring restore aborts when desktop mode changed")
+    func desktopMirroringRestoreAbortsWhenModeChanges() {
+        let decision = desktopMirroringRestoreContinuationDecision(
+            requestedStreamID: 41,
+            activeDesktopStreamID: 41,
+            hasDesktopContext: true,
+            desktopStreamMode: .secondary
+        )
+
+        #expect(decision == .abortModeChanged)
+    }
+
+    @Test("Desktop mirroring restore continues only for unified active stream")
+    func desktopMirroringRestoreContinuesForUnifiedStream() {
+        let decision = desktopMirroringRestoreContinuationDecision(
+            requestedStreamID: 41,
+            activeDesktopStreamID: 41,
+            hasDesktopContext: true,
+            desktopStreamMode: .unified
+        )
+
+        #expect(decision == .continueRestore)
     }
 
     @Test("Window resize no-op skips exact visible resolution")

@@ -36,7 +36,7 @@ struct HostCursorPositionUpdatePolicyTests {
         let shouldSend = MirageHostService.shouldSendCursorPositionUpdate(
             streamID: 7,
             desktopStreamID: 7,
-            desktopStreamMode: .mirrored,
+            desktopStreamMode: .unified,
             desktopCursorPresentation: presentation
         )
 
@@ -48,7 +48,7 @@ struct HostCursorPositionUpdatePolicyTests {
         let shouldSend = MirageHostService.shouldSendCursorPositionUpdate(
             streamID: 7,
             desktopStreamID: 7,
-            desktopStreamMode: .mirrored,
+            desktopStreamMode: .unified,
             desktopCursorPresentation: .clientCursor
         )
 
@@ -69,7 +69,7 @@ struct HostCursorPositionUpdatePolicyTests {
     func mirroredDesktopCursorPositionClampsIntoBounds() {
         let position = MirageHostService.resolvedClientCursorPosition(
             CGPoint(x: 1.2, y: -0.1),
-            desktopStreamMode: .mirrored
+            desktopStreamMode: .unified
         )
 
         #expect(position == CGPoint(x: 1, y: 0))
@@ -108,6 +108,16 @@ struct HostCursorPositionUpdatePolicyTests {
 
         #expect(downPoint == currentCursorPosition)
         #expect(upPoint == currentCursorPosition)
+    }
+
+    @Test("Desktop right-click cursor reuse converts Cocoa coordinates into injection space")
+    func desktopRightClickCursorReuseConvertsCocoaCoordinates() {
+        let converted = MirageHostInputController.desktopInjectionCursorPosition(
+            fromCocoaScreenPosition: CGPoint(x: 320, y: 140),
+            primaryDisplayHeight: 900
+        )
+
+        #expect(converted == CGPoint(x: 320, y: 760))
     }
 
     @Test("Desktop left-click events still use the incoming event location")

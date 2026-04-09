@@ -18,7 +18,7 @@ struct MirageAudioConfigurationDesktopModeTests {
             quality: .low
         )
 
-        let resolved = configuration.resolvedForDesktopStreamMode(.mirrored)
+        let resolved = configuration.resolvedForDesktopStreamMode(.unified)
 
         #expect(resolved == configuration)
     }

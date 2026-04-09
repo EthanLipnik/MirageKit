@@ -15,6 +15,44 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    nonisolated func isExpectedBootstrapConnectionClosure(_ error: Error) -> Bool {
+        if error is CancellationError {
+            return true
+        }
+
+        if let mirageError = error as? MirageError {
+            switch mirageError {
+            case let .protocolError(message):
+                return message == "Authenticated Loom session closed before Mirage control stream opened" ||
+                    message == "Control stream closed before session bootstrap request"
+            case let .connectionFailed(underlyingError):
+                return isExpectedBootstrapConnectionClosure(underlyingError)
+            default:
+                break
+            }
+        }
+
+        if let loomError = error as? LoomError {
+            switch loomError {
+            case let .connectionFailed(underlyingError):
+                return isExpectedBootstrapConnectionClosure(underlyingError)
+            default:
+                break
+            }
+        }
+
+        if let failure = error as? LoomConnectionFailure {
+            switch failure.reason {
+            case .cancelled, .closed:
+                return true
+            case .timedOut, .transportLoss, .connectionRefused, .addressUnavailable, .other:
+                break
+            }
+        }
+
+        return false
+    }
+
     nonisolated func isFatalConnectionError(_ error: Error) -> Bool {
         if let mirageError = error as? MirageError {
             switch mirageError {
@@ -189,6 +227,12 @@ extension MirageHostService {
                 + "name=\(peerIdentity.name) origin=\(origin)"
         )
 
+        if await hostSoftwareUpdateInstallInProgress(for: peerIdentity) {
+            MirageLogger.host("Connection rejected while host software update install is in progress")
+            await rejectIncomingSession(session, reason: .hostBusy)
+            return
+        }
+
         await waitForDisconnectCompletionIfNeeded(for: peerIdentity)
         await preemptExistingClientIfSuperseded(by: peerIdentity)
 
@@ -206,22 +250,7 @@ extension MirageHostService {
                 "Connection rejected: slot reserved=\(singleClientSessionID?.uuidString ?? "nil"), "
                 + "tracked=\(clientsBySessionID.count), connected=\(connectedClients.count)"
             )
-            let controlChannel = try? await MirageControlChannel.accept(from: session)
-            if let controlChannel {
-                let response = MirageSessionBootstrapResponse(
-                    accepted: false,
-                    hostID: hostID,
-                    hostName: serviceName,
-                    selectedFeatures: [],
-                    mediaEncryptionEnabled: false,
-                    udpRegistrationToken: Data(),
-                    rejectionReason: .hostBusy
-                )
-                try? await controlChannel.send(.sessionBootstrapResponse, content: response)
-                await controlChannel.cancel()
-            } else {
-                await session.cancel()
-            }
+            await rejectIncomingSession(session, reason: .hostBusy)
             return
         }
 
@@ -322,7 +351,9 @@ extension MirageHostService {
             startClientLivenessMonitorIfNeeded()
             delegate?.hostService(self, didConnectClient: client)
         } catch {
-            if isFatalConnectionError(error) || LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+            if isExpectedBootstrapConnectionClosure(error) ||
+                isFatalConnectionError(error) ||
+                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
                 MirageLogger.host("Mirage Loom control session closed during bootstrap: \(error.localizedDescription)")
             } else {
                 MirageLogger.error(.host, error: error, message: "Failed to establish Mirage Loom control session: ")
@@ -510,6 +541,38 @@ extension MirageHostService {
             trigger: .protocolMismatch
         )
         return (result.accepted, result.message)
+    }
+
+    func hostSoftwareUpdateInstallInProgress(for peerIdentity: LoomPeerIdentity) async -> Bool {
+        guard let softwareUpdateController else { return false }
+        let status = await softwareUpdateController.hostService(
+            self,
+            softwareUpdateStatusFor: peerIdentity,
+            forceRefresh: false
+        )
+        return status.isInstallInProgress
+    }
+
+    func rejectIncomingSession(
+        _ session: LoomAuthenticatedSession,
+        reason: MirageSessionBootstrapRejectionReason
+    ) async {
+        let controlChannel = try? await MirageControlChannel.accept(from: session)
+        if let controlChannel {
+            let response = MirageSessionBootstrapResponse(
+                accepted: false,
+                hostID: hostID,
+                hostName: serviceName,
+                selectedFeatures: [],
+                mediaEncryptionEnabled: false,
+                udpRegistrationToken: Data(),
+                rejectionReason: reason
+            )
+            try? await controlChannel.send(.sessionBootstrapResponse, content: response)
+            await controlChannel.cancel()
+        } else {
+            await session.cancel()
+        }
     }
 
     func shouldPreemptExistingClient(

@@ -13,7 +13,7 @@ import Foundation
 // MARK: - Desktop Streaming Messages
 
 /// Request to start streaming the desktop (Client → Host)
-/// This can mirror all physical displays or run as a secondary display
+/// This can stream the unified desktop or run as a secondary display
 package struct StartDesktopStreamMessage: Codable {
     /// Client's display scale factor
     package let scaleFactor: CGFloat?
@@ -27,7 +27,7 @@ package struct StartDesktopStreamMessage: Codable {
     package var captureQueueDepth: Int?
     /// Client-requested stream color depth preset.
     package var colorDepth: MirageStreamColorDepth?
-    /// Desktop stream mode (mirrored vs secondary display)
+    /// Desktop stream mode (unified vs secondary display)
     package var mode: MirageDesktopStreamMode?
     /// Desktop cursor presentation requested by the client.
     package var cursorPresentation: MirageDesktopCursorPresentation?

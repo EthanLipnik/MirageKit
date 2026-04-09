@@ -28,7 +28,7 @@ actor StreamContext {
     var lastWindowFrame: CGRect = .zero
     var applicationProcessID: pid_t = 0
     var isAppStream: Bool = false
-    enum CaptureMode {
+    enum CaptureMode: Sendable {
         case window
         case display
     }

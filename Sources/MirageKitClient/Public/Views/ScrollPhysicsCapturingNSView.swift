@@ -22,11 +22,27 @@ final class ScrollPhysicsCapturingNSView: NSView {
         var warpCursor: (CGPoint) -> Void = { point in
             CGWarpMouseCursorPosition(point)
         }
+        var setCursor: (NSCursor) -> Void = { $0.set() }
         var hideCursor: () -> Void = { NSCursor.hide() }
         var unhideCursor: () -> Void = { NSCursor.unhide() }
     }
 
     nonisolated(unsafe) static var cursorSystemHooks = CursorSystemHooks()
+
+    nonisolated static func globalDisplayFrameMaxY() -> CGFloat {
+        NSScreen.screens.map(\.frame.maxY).max() ?? NSScreen.main?.frame.height ?? 1080
+    }
+
+    nonisolated static func globalDisplayCursorPosition(
+        fromCocoaScreenPosition position: CGPoint,
+        globalFrameMaxY: CGFloat
+    )
+    -> CGPoint {
+        CGPoint(
+            x: position.x,
+            y: globalFrameMaxY - position.y
+        )
+    }
 
     /// Stream ID for cursor update routing
     var streamID: StreamID? {
@@ -243,7 +259,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         if cursorLockEnabled, isInputProcessingActive {
             updateCursorLockAnchor()
             warpCursorToAnchor()
-        } else if shouldMirrorHostCursorToSystemCursor {
+        } else if shouldMirrorHostCursorPositionToSystemCursor {
             applyMirroredSystemCursorPosition(force: true)
         }
         updateLockedCursorViewPosition()
@@ -253,7 +269,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
         inputEnabled && window != nil
     }
 
-    private var shouldMirrorHostCursorToSystemCursor: Bool {
+    private var shouldMirrorHostCursorAppearanceToSystemCursor: Bool {
+        isInputProcessingActive && !cursorLockEnabled
+    }
+
+    private var shouldMirrorHostCursorPositionToSystemCursor: Bool {
         isInputProcessingActive && !cursorLockEnabled && !syntheticCursorEnabled
     }
 
@@ -339,9 +359,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private var shouldHideSystemCursor: Bool {
         guard isInputProcessingActive else { return false }
-        return cursorLockEnabled ||
+        return (cursorLockEnabled && syntheticCursorEnabled) ||
             cursorHiddenForTyping ||
-            (shouldMirrorHostCursorToSystemCursor && !mirroredSystemCursorVisible)
+            (shouldMirrorHostCursorPositionToSystemCursor && !mirroredSystemCursorVisible)
     }
 
     private func updateSystemCursorVisibility() {
@@ -413,7 +433,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     private func warpCursorToAnchor() {
         guard cursorLockEnabled else { return }
         guard window != nil else { return }
-        Self.cursorSystemHooks.warpCursor(cursorLockAnchor)
+        warpSystemCursor(toCocoaScreenPosition: cursorLockAnchor)
     }
 
     private func resetCursorLockTransientState() {
@@ -433,7 +453,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
             Self.cursorSystemHooks.setAssociationEnabled(true)
         }
         if let restorePosition {
-            Self.cursorSystemHooks.warpCursor(restorePosition)
+            warpSystemCursor(toCocoaScreenPosition: restorePosition)
         }
         resetCursorLockTransientState()
         updateSystemCursorVisibility()
@@ -451,18 +471,19 @@ final class ScrollPhysicsCapturingNSView: NSView {
         updateSystemCursorVisibility()
         invalidateHostCursorRects()
 
-        guard shouldMirrorHostCursorToSystemCursor, mirroredSystemCursorVisible, isMouseInsideView else { return }
-        mirroredSystemCursorType.nsCursor.set()
+        guard shouldMirrorHostCursorAppearanceToSystemCursor, mirroredSystemCursorVisible, isMouseInsideView else { return }
+        Self.cursorSystemHooks.setCursor(mirroredSystemCursorType.nsCursor)
     }
 
     private var isMouseInsideView: Bool {
         guard let window else { return false }
-        let locationInView = convert(window.mouseLocationOutsideOfEventStream, from: nil)
+        let windowPoint = window.convertPoint(fromScreen: Self.cursorSystemHooks.mouseLocation())
+        let locationInView = convert(windowPoint, from: nil)
         return resolvedDesktopPresentationContentRect().contains(locationInView)
     }
 
     private func applyMirroredSystemCursorPosition(force: Bool = false) {
-        guard shouldMirrorHostCursorToSystemCursor, mirroredSystemCursorVisible else { return }
+        guard shouldMirrorHostCursorPositionToSystemCursor, mirroredSystemCursorVisible else { return }
         guard !isCursorLocalInputActive() else { return }
         guard let targetScreenPoint = mirroredSystemCursorScreenPoint() else { return }
 
@@ -470,7 +491,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
         let delta = hypot(currentLocation.x - targetScreenPoint.x, currentLocation.y - targetScreenPoint.y)
         guard force || delta >= mirroredSystemCursorWarpThreshold else { return }
 
-        Self.cursorSystemHooks.warpCursor(targetScreenPoint)
+        warpSystemCursor(toCocoaScreenPosition: targetScreenPoint)
         lastMouseLocation = mirroredSystemCursorPosition
     }
 
@@ -485,8 +506,17 @@ final class ScrollPhysicsCapturingNSView: NSView {
         return window.convertPoint(toScreen: windowPoint)
     }
 
+    private func warpSystemCursor(toCocoaScreenPosition position: CGPoint) {
+        Self.cursorSystemHooks.warpCursor(
+            Self.globalDisplayCursorPosition(
+                fromCocoaScreenPosition: position,
+                globalFrameMaxY: Self.globalDisplayFrameMaxY()
+            )
+        )
+    }
+
     private func refreshMirroredSystemCursorIfNeeded(force: Bool = false) -> Bool {
-        guard shouldMirrorHostCursorToSystemCursor, let streamID else { return false }
+        guard shouldMirrorHostCursorAppearanceToSystemCursor, let streamID else { return false }
 
         let positionSnapshot = cursorPositionStore?.snapshot(for: streamID)
         let cursorSnapshot = cursorStore?.snapshot(for: streamID)
@@ -1106,7 +1136,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     override func resetCursorRects() {
         super.resetCursorRects()
-        guard shouldMirrorHostCursorToSystemCursor, mirroredSystemCursorVisible else { return }
+        guard shouldMirrorHostCursorAppearanceToSystemCursor, mirroredSystemCursorVisible else { return }
         addCursorRect(resolvedDesktopPresentationContentRect(), cursor: mirroredSystemCursorType.nsCursor)
     }
 

@@ -136,7 +136,7 @@ extension MirageHostService {
             }
 
             streamSetupCancelled = false
-            desktopStreamMode = request.mode ?? .mirrored
+            desktopStreamMode = request.mode ?? .unified
             desktopUsesHostResolution = request.useHostResolution == true
             desktopCursorPresentation = request.cursorPresentation ?? .clientCursor
             pendingLightsOutSetup = true
@@ -145,7 +145,7 @@ extension MirageHostService {
                 to: clientContext,
                 displayResolution: displayResolution,
                 clientScaleFactor: request.scaleFactor,
-                mode: request.mode ?? .mirrored,
+                mode: request.mode ?? .unified,
                 cursorPresentation: request.cursorPresentation ?? .clientCursor,
                 keyFrameInterval: request.keyFrameInterval,
                 colorDepth: request.colorDepth,

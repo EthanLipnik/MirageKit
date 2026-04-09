@@ -4,18 +4,18 @@
 //
 //  Created by Ethan Lipnik on 2/1/26.
 //
-//  Desktop stream mode selection for mirrored vs secondary display usage.
+//  Desktop stream mode selection for unified vs secondary display usage.
 //
 
 import Foundation
 
 public enum MirageDesktopStreamMode: String, Sendable, CaseIterable, Codable {
-    case mirrored
+    case unified
     case secondary
 
     public var displayName: String {
         switch self {
-        case .mirrored:
+        case .unified:
             "Full Desktop"
         case .secondary:
             "Secondary Display"

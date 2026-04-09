@@ -18,7 +18,7 @@ struct MirageDesktopCursorPresentationTests {
             lockClientCursorWhenUsingHostCursor: true
         )
 
-        #expect(presentation.locksClientCursor(for: .mirrored) == false)
+        #expect(presentation.locksClientCursor(for: .unified) == false)
     }
 
     @Test("Synthetic client cursor honors mirrored desktop lock preference")
@@ -29,7 +29,7 @@ struct MirageDesktopCursorPresentationTests {
             lockClientCursorWhenUsingHostCursor: true
         )
 
-        #expect(presentation.locksClientCursor(for: .mirrored))
+        #expect(presentation.locksClientCursor(for: .unified))
     }
 
     @Test("Synthetic client cursor always locks for secondary desktop")
@@ -51,7 +51,7 @@ struct MirageDesktopCursorPresentationTests {
             lockClientCursorWhenUsingHostCursor: true
         )
 
-        #expect(presentation.locksClientCursor(for: .mirrored))
+        #expect(presentation.locksClientCursor(for: .unified))
     }
 
     @Test("Host cursor honors lock toggle when disabled")

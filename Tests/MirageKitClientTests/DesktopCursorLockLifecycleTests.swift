@@ -40,7 +40,13 @@ struct DesktopCursorLockLifecycleTests {
         #expect(associations == [false, true])
         #expect(hideCount == 1)
         #expect(unhideCount == 1)
-        #expect(warps.last == restoreLocation)
+        #expect(
+            warps.last ==
+                ScrollPhysicsCapturingNSView.globalDisplayCursorPosition(
+                    fromCocoaScreenPosition: restoreLocation,
+                    globalFrameMaxY: ScrollPhysicsCapturingNSView.globalDisplayFrameMaxY()
+                )
+        )
     }
 
     @Test("Disabling input restores the pre-lock cursor position")
@@ -66,7 +72,13 @@ struct DesktopCursorLockLifecycleTests {
         }
 
         #expect(associations == [false, true])
-        #expect(warps.last == restoreLocation)
+        #expect(
+            warps.last ==
+                ScrollPhysicsCapturingNSView.globalDisplayCursorPosition(
+                    fromCocoaScreenPosition: restoreLocation,
+                    globalFrameMaxY: ScrollPhysicsCapturingNSView.globalDisplayFrameMaxY()
+                )
+        )
     }
 
     @Test("Leaving real Mac cursor mode re-evaluates system cursor visibility")
@@ -103,6 +115,106 @@ struct DesktopCursorLockLifecycleTests {
         }
 
         #expect(unhideCount == 1)
+    }
+
+    @Test("Mirage cursor mode applies host cursor type updates to the macOS cursor")
+    func mirageCursorModeAppliesHostCursorTypeUpdates() {
+        let streamID: StreamID = 13
+        let cursorStore = MirageClientCursorStore()
+        cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
+
+        var appliedCursorTypes: [MirageCursorType] = []
+        var mouseLocation = CGPoint.zero
+
+        withCursorSystemHooks(
+            .init(
+                mouseLocation: { mouseLocation },
+                setAssociationEnabled: { _ in },
+                warpCursor: { _ in },
+                setCursor: { cursor in
+                    if let type = MirageCursorType(from: cursor) {
+                        appliedCursorTypes.append(type)
+                    }
+                },
+                hideCursor: {},
+                unhideCursor: {}
+            )
+        ) {
+            let (window, view) = makeMountedView()
+            withExtendedLifetime(window) {
+                mouseLocation = window.convertPoint(toScreen: CGPoint(x: 240, y: 180))
+                view.streamID = streamID
+                view.cursorStore = cursorStore
+                view.syntheticCursorEnabled = true
+                view.refreshCursorUpdates(force: true)
+            }
+        }
+
+        #expect(appliedCursorTypes.contains(.closedHand))
+    }
+
+    @Test("Real Mac cursor lock keeps the system cursor visible")
+    func realMacCursorLockKeepsSystemCursorVisible() {
+        var hideCount = 0
+
+        withCursorSystemHooks(
+            .init(
+                mouseLocation: { .zero },
+                setAssociationEnabled: { _ in },
+                warpCursor: { _ in },
+                hideCursor: { hideCount += 1 },
+                unhideCursor: {}
+            )
+        ) {
+            let (window, view) = makeMountedView()
+            withExtendedLifetime(window) {
+                view.syntheticCursorEnabled = false
+                view.cursorLockEnabled = true
+            }
+        }
+
+        #expect(hideCount == 0)
+    }
+
+    @Test("Real Mac cursor lock warps using global display coordinates")
+    func realMacCursorLockWarpsUsingGlobalDisplayCoordinates() {
+        var warps: [CGPoint] = []
+
+        withCursorSystemHooks(
+            .init(
+                mouseLocation: { .zero },
+                setAssociationEnabled: { _ in },
+                warpCursor: { warps.append($0) },
+                hideCursor: {},
+                unhideCursor: {}
+            )
+        ) {
+            let (window, view) = makeMountedView()
+            withExtendedLifetime(window) {
+                view.syntheticCursorEnabled = false
+                let localPoint = CGPoint(x: view.bounds.midX, y: view.bounds.midY)
+                let windowPoint = view.convert(localPoint, to: nil)
+                let cocoaScreenPoint = window.convertPoint(toScreen: windowPoint)
+                let expectedWarp = ScrollPhysicsCapturingNSView.globalDisplayCursorPosition(
+                    fromCocoaScreenPosition: cocoaScreenPoint,
+                    globalFrameMaxY: ScrollPhysicsCapturingNSView.globalDisplayFrameMaxY()
+                )
+
+                view.cursorLockEnabled = true
+
+                #expect(warps.last == expectedWarp)
+            }
+        }
+    }
+
+    @Test("Global display cursor conversion flips Cocoa Y")
+    func globalDisplayCursorConversionFlipsCocoaY() {
+        let converted = ScrollPhysicsCapturingNSView.globalDisplayCursorPosition(
+            fromCocoaScreenPosition: CGPoint(x: 320, y: 140),
+            globalFrameMaxY: 900
+        )
+
+        #expect(converted == CGPoint(x: 320, y: 760))
     }
 
     private func makeMountedView() -> (NSWindow, ScrollPhysicsCapturingNSView) {

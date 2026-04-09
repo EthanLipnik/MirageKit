@@ -251,6 +251,7 @@ extension StreamContext {
         forceReconfigure: Bool = false
     ) async throws {
         guard isRunning, useVirtualDisplay else { return }
+        let rollbackSnapshot = makeResizeRollbackSnapshot()
 
         let currentSize = baseCaptureSize
         let requestedPixels = MirageStreamGeometry.resolve(
@@ -279,10 +280,16 @@ extension StreamContext {
         // This prevents the race where VT callbacks from the old session's invalidation
         // interleave with new-session encodes via actor suspension points.
         let wasEncoding = shouldEncodeFrames
+        let previousWindowFrame = rollbackSnapshot.lastWindowFrame
         if wasEncoding {
             shouldEncodeFrames = false
             frameInbox.clear()
             resetPipelineStateForReconfiguration(reason: "window resize")
+        }
+        defer {
+            if wasEncoding {
+                shouldEncodeFrames = true
+            }
         }
 
         currentContentRect = .zero
@@ -351,36 +358,62 @@ extension StreamContext {
         currentEncodedSize = outputSize
         lastWindowFrame = windowFrame
         updateQueueLimits()
+        do {
+            if let captureEngine {
+                try await captureEngine.updateDimensions(
+                    windowFrame: windowFrame,
+                    outputScale: streamScale
+                )
+            }
 
-        if let captureEngine {
-            try await captureEngine.updateDimensions(
-                windowFrame: windowFrame,
-                outputScale: streamScale
-            )
+            if let encoder {
+                try await encoder.updateDimensions(
+                    width: Int(outputSize.width),
+                    height: Int(outputSize.height)
+                )
+                activePixelFormat = await encoder.getActivePixelFormat()
+                MirageLogger.encoder(
+                    "Encoder updated in place to \(Int(outputSize.width))x\(Int(outputSize.height)) for window resize"
+                )
+            }
+
+            await applyDerivedQuality(for: outputSize, logLabel: "Window resize")
+            await refreshCaptureCadence()
+            await encoder?.forceKeyframe()
+
+            MirageLogger.stream("Window resize complete in place for stream \(streamID)")
+        } catch {
+            var restoredWindowFrame = previousWindowFrame
+            if !previousWindowFrame.isEmpty {
+                let previousAspectRatio = previousWindowFrame.width > 0 && previousWindowFrame.height > 0
+                    ? previousWindowFrame.width / previousWindowFrame.height
+                    : nil
+                await iterativelyResizeWindow(
+                    windowID: windowID,
+                    targetSize: previousWindowFrame.size,
+                    aspectRatio: previousAspectRatio,
+                    maxBounds: maxBounds,
+                    label: "rollback"
+                )
+                try? await Task.sleep(for: .milliseconds(80))
+                if let resolvedRollbackWindowWrapper = try? await resolveSCWindowWrapper(
+                    windowID: windowID,
+                    label: "window resize rollback"
+                ) {
+                    restoredWindowFrame = resolvedRollbackWindowWrapper.window.frame
+                }
+            }
+            do {
+                try await rollbackResizeFailure(
+                    rollbackSnapshot,
+                    logLabel: "Window resize",
+                    restoredWindowFrame: restoredWindowFrame
+                )
+            } catch {
+                MirageLogger.error(.stream, error: error, message: "Window resize rollback failed: ")
+            }
+            throw error
         }
-
-        if let encoder {
-            try await encoder.updateDimensions(
-                width: Int(outputSize.width),
-                height: Int(outputSize.height)
-            )
-            activePixelFormat = await encoder.getActivePixelFormat()
-            MirageLogger.encoder(
-                "Encoder updated in place to \(Int(outputSize.width))x\(Int(outputSize.height)) for window resize"
-            )
-        }
-
-        await applyDerivedQuality(for: outputSize, logLabel: "Window resize")
-        await refreshCaptureCadence()
-        await encoder?.forceKeyframe()
-
-        // Resume encoding now that the encoder session, capture engine, and
-        // pipeline state are all consistent.
-        if wasEncoding {
-            shouldEncodeFrames = true
-        }
-
-        MirageLogger.stream("Window resize complete in place for stream \(streamID)")
     }
 
     // MARK: - SCK Resolution Helpers

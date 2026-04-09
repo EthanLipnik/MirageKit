@@ -22,7 +22,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: true
             )
         )
@@ -36,7 +36,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: false
             )
         )
@@ -50,7 +50,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: true
             )
         )
@@ -64,7 +64,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: false
             )
         )
@@ -78,7 +78,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: true,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: true
             )
         )
@@ -92,7 +92,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: true,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: false
             )
         )
@@ -106,7 +106,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: true,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: true
             )
         )
@@ -120,7 +120,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: true,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: false
             )
         )
@@ -162,7 +162,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: false,
                 hasPendingAppStreamStart: false,
                 hasPendingDesktopStreamStart: false,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: true
             )
         )
@@ -176,7 +176,7 @@ struct LightsOutStatePolicyTests {
                 hasDesktopStream: true,
                 hasPendingAppStreamStart: true,
                 hasPendingDesktopStreamStart: true,
-                desktopStreamMode: .mirrored,
+                desktopStreamMode: .unified,
                 lightsOutEnabled: true,
                 lightsOutDisabledByEnvironment: true
             )

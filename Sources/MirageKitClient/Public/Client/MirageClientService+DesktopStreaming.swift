@@ -13,18 +13,18 @@ import MirageKit
 
 @MainActor
 public extension MirageClientService {
-    /// Start streaming the desktop (mirrored or secondary display mode).
+    /// Start streaming the desktop (unified or secondary display mode).
     /// - Parameters:
     ///   - scaleFactor: Optional display scale factor.
     ///   - displayResolution: Client's logical display size in points for virtual display sizing.
-    ///   - mode: Desktop stream mode (mirrored vs secondary display).
+    ///   - mode: Desktop stream mode (unified vs secondary display).
     ///   - keyFrameInterval: Optional keyframe interval in frames.
     ///   - encoderOverrides: Optional per-stream encoder overrides.
     ///   - audioConfiguration: Optional per-stream audio overrides.
     func startDesktopStream(
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
-        mode: MirageDesktopStreamMode = .mirrored,
+        mode: MirageDesktopStreamMode = .unified,
         cursorPresentation: MirageDesktopCursorPresentation = .clientCursor,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,

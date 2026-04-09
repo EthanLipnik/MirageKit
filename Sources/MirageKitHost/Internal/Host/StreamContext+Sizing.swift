@@ -12,10 +12,111 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+struct StreamResizeRollbackSnapshot: Sendable {
+    let baseCaptureSize: CGSize
+    let currentEncodedSize: CGSize
+    let currentCaptureSize: CGSize
+    let activePixelFormat: MiragePixelFormat
+    let lastWindowFrame: CGRect
+    let streamScale: CGFloat
+    let requestedStreamScale: CGFloat
+    let captureMode: StreamContext.CaptureMode
+    let dimensionToken: UInt16
+    let currentContentRect: CGRect
+}
+
 extension StreamContext {
     /// Update the current content rectangle (called per-frame from capture callback).
     func setContentRect(_ rect: CGRect) {
         currentContentRect = rect
+    }
+
+    func makeResizeRollbackSnapshot() -> StreamResizeRollbackSnapshot {
+        StreamResizeRollbackSnapshot(
+            baseCaptureSize: baseCaptureSize,
+            currentEncodedSize: currentEncodedSize,
+            currentCaptureSize: currentCaptureSize,
+            activePixelFormat: activePixelFormat,
+            lastWindowFrame: lastWindowFrame,
+            streamScale: streamScale,
+            requestedStreamScale: requestedStreamScale,
+            captureMode: captureMode,
+            dimensionToken: dimensionToken,
+            currentContentRect: currentContentRect
+        )
+    }
+
+    func restoreResizeRollbackSnapshot(
+        _ snapshot: StreamResizeRollbackSnapshot,
+        restoredWindowFrame: CGRect? = nil
+    ) {
+        baseCaptureSize = snapshot.baseCaptureSize
+        currentEncodedSize = snapshot.currentEncodedSize
+        currentCaptureSize = snapshot.currentCaptureSize
+        activePixelFormat = snapshot.activePixelFormat
+        lastWindowFrame = restoredWindowFrame ?? snapshot.lastWindowFrame
+        streamScale = snapshot.streamScale
+        requestedStreamScale = snapshot.requestedStreamScale
+        captureMode = snapshot.captureMode
+        dimensionToken = snapshot.dimensionToken
+        currentContentRect = snapshot.currentContentRect
+        updateQueueLimits()
+    }
+
+    func rollbackResizeFailure(
+        _ snapshot: StreamResizeRollbackSnapshot,
+        logLabel: String,
+        restoredWindowFrame: CGRect? = nil
+    )
+    async throws {
+        let effectiveWindowFrame = restoredWindowFrame ?? snapshot.lastWindowFrame
+        let captureSize = snapshot.currentCaptureSize == .zero
+            ? snapshot.currentEncodedSize
+            : snapshot.currentCaptureSize
+        let encodedSize = snapshot.currentEncodedSize == .zero
+            ? captureSize
+            : snapshot.currentEncodedSize
+
+        restoreResizeRollbackSnapshot(snapshot, restoredWindowFrame: effectiveWindowFrame)
+        frameInbox.clear()
+        await packetSender?.bumpGeneration(reason: "\(logLabel) rollback")
+        resetPipelineStateForReconfiguration(reason: "\(logLabel) rollback")
+
+        if let captureEngine {
+            switch snapshot.captureMode {
+            case .display:
+                let width = Int(captureSize.width)
+                let height = Int(captureSize.height)
+                if width > 0, height > 0 {
+                    try await captureEngine.updateResolution(width: width, height: height)
+                }
+            case .window:
+                if !effectiveWindowFrame.isEmpty {
+                    try await captureEngine.updateDimensions(
+                        windowFrame: effectiveWindowFrame,
+                        outputScale: snapshot.streamScale
+                    )
+                }
+            }
+        }
+
+        if let encoder {
+            let width = Int(encodedSize.width)
+            let height = Int(encodedSize.height)
+            if width > 0, height > 0 {
+                try await encoder.updateDimensions(width: width, height: height)
+            }
+        }
+
+        updateQueueLimits()
+        if encodedSize != .zero {
+            await applyDerivedQuality(for: encodedSize, logLabel: "\(logLabel) rollback")
+        }
+        await refreshCaptureCadence()
+        await encoder?.forceKeyframe()
+        MirageLogger.stream(
+            "\(logLabel) rolled back to \(Int(encodedSize.width))x\(Int(encodedSize.height))"
+        )
     }
 
     func scaledOutputSize(for baseSize: CGSize) -> CGSize {

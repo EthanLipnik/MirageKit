@@ -235,7 +235,6 @@ final class ScrollPhysicsCapturingView: UIView {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
         scrollView.backgroundColor = .clear
         scrollView.isOpaque = false
-        scrollView.panGestureRecognizer.delegate = scrollView
     }
 
     private func setupScrollContent(_ scrollContent: UIView, in scrollView: UIScrollView) {
@@ -427,19 +426,42 @@ private final class RotationGestureDelegate: NSObject, UIGestureRecognizerDelega
     }
 }
 
-private class CallbackScrollView: UIScrollView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+private final class CallbackScrollViewDelegateProxy: NSObject, UIScrollViewDelegate {
+    weak var owner: CallbackScrollView?
+
+    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
+        owner?.onWillBeginDragging?(scrollView)
+    }
+
+    func scrollViewDidScroll(_ scrollView: UIScrollView) {
+        owner?.onDidScroll?(scrollView)
+    }
+
+    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
+        owner?.onDidEndDragging?(scrollView, decelerate)
+    }
+
+    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
+        owner?.onDidEndDecelerating?(scrollView)
+    }
+
+    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
+        owner?.onDidEndScrollingAnimation?(scrollView)
+    }
+}
+
+private class CallbackScrollView: UIScrollView {
     var onWillBeginDragging: ((UIScrollView) -> Void)?
     var onDidScroll: ((UIScrollView) -> Void)?
     var onDidEndDragging: ((UIScrollView, Bool) -> Void)?
     var onDidEndDecelerating: ((UIScrollView) -> Void)?
     var onDidEndScrollingAnimation: ((UIScrollView) -> Void)?
+    private let delegateProxy = CallbackScrollViewDelegateProxy()
 
     private func installDelegateBindings() {
-        if (super.delegate as AnyObject?) !== self {
-            super.delegate = self
-        }
-        if (panGestureRecognizer.delegate as AnyObject?) !== self {
-            panGestureRecognizer.delegate = self
+        delegateProxy.owner = self
+        if (super.delegate as AnyObject?) !== delegateProxy {
+            super.delegate = delegateProxy
         }
     }
 
@@ -453,25 +475,6 @@ private class CallbackScrollView: UIScrollView, UIScrollViewDelegate, UIGestureR
         installDelegateBindings()
     }
 
-    func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {
-        onWillBeginDragging?(scrollView)
-    }
-
-    func scrollViewDidScroll(_ scrollView: UIScrollView) {
-        onDidScroll?(scrollView)
-    }
-
-    func scrollViewDidEndDragging(_ scrollView: UIScrollView, willDecelerate decelerate: Bool) {
-        onDidEndDragging?(scrollView, decelerate)
-    }
-
-    func scrollViewDidEndDecelerating(_ scrollView: UIScrollView) {
-        onDidEndDecelerating?(scrollView)
-    }
-
-    func scrollViewDidEndScrollingAnimation(_ scrollView: UIScrollView) {
-        onDidEndScrollingAnimation?(scrollView)
-    }
 }
 
 private func isStylusLikeTouch(_ touch: UITouch) -> Bool {

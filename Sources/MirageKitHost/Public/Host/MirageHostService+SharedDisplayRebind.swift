@@ -16,18 +16,18 @@ import ScreenCaptureKit
 
 enum DesktopGenerationChangeRebindDecision: Equatable {
     case skipNoChange
-    case skipResizeInFlight
+    case skipSharedDisplayTransitionInFlight
     case rebind
 }
 
 func desktopGenerationChangeRebindDecision(
     previousGeneration: UInt64,
     newGeneration: UInt64,
-    desktopResizeInFlight: Bool
+    sharedDisplayTransitionInFlight: Bool
 )
 -> DesktopGenerationChangeRebindDecision {
     guard previousGeneration != newGeneration else { return .skipNoChange }
-    guard !desktopResizeInFlight else { return .skipResizeInFlight }
+    guard !sharedDisplayTransitionInFlight else { return .skipSharedDisplayTransitionInFlight }
     return .rebind
 }
 
@@ -74,19 +74,19 @@ extension MirageHostService {
         let rebindDecision = desktopGenerationChangeRebindDecision(
             previousGeneration: previousGeneration,
             newGeneration: newContext.generation,
-            desktopResizeInFlight: desktopResizeInFlight
+            sharedDisplayTransitionInFlight: desktopSharedDisplayTransitionInFlight
         )
-        if rebindDecision == .skipResizeInFlight {
+        if rebindDecision == .skipSharedDisplayTransitionInFlight {
             MirageLogger
                 .host(
-                    "Skipping desktop generation-change rebind during in-flight resize (\(previousGeneration) -> \(newContext.generation))"
+                    "Skipping desktop generation-change rebind during desktop shared-display transition (\(previousGeneration) -> \(newContext.generation))"
                 )
             return
         }
         guard rebindDecision == .rebind else { return }
 
         do {
-            if desktopStreamMode == .mirrored {
+            if desktopStreamMode == .unified {
                 await setupDisplayMirroring(targetDisplayID: newContext.displayID)
             } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
                 await disableDisplayMirroring(displayID: newContext.displayID)

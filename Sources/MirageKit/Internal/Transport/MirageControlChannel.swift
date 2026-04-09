@@ -108,6 +108,11 @@ package final class MirageControlChannel: @unchecked Sendable {
                 return MirageControlChannel(session: session, stream: stream)
             }
         }
-        throw MirageError.protocolError("Authenticated Loom session closed before Mirage control stream opened")
+        throw MirageError.connectionFailed(
+            LoomConnectionFailure(
+                reason: .closed,
+                detail: "Authenticated Loom session closed before Mirage control stream opened"
+            )
+        )
     }
 }

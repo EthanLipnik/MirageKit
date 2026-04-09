@@ -26,13 +26,13 @@ extension MirageHostService {
         hasDesktopStream: Bool,
         hasPendingAppStreamStart: Bool,
         hasPendingDesktopStreamStart: Bool,
-        desktopStreamMode: MirageDesktopStreamMode = .mirrored,
+        desktopStreamMode: MirageDesktopStreamMode = .unified,
         lightsOutEnabled: Bool,
         lightsOutDisabledByEnvironment: Bool = false
     ) -> Bool {
         guard !lightsOutDisabledByEnvironment, lightsOutEnabled else { return false }
         let hasMirroredDesktopWorkload = (hasDesktopStream || hasPendingDesktopStreamStart) &&
-            desktopStreamMode == .mirrored
+            desktopStreamMode == .unified
         return hasAppStreams ||
             hasMirroredDesktopWorkload ||
             hasPendingAppStreamStart
@@ -144,7 +144,7 @@ extension MirageHostService {
     func refreshLightsOutCaptureExclusions() async {
         guard lightsOutController.isActive,
               let desktopContext = desktopStreamContext,
-              desktopStreamMode == .mirrored else {
+              desktopStreamMode == .unified else {
             await desktopStreamContext?.updateDisplayCaptureExclusions([])
             return
         }

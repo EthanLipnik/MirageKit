@@ -448,7 +448,7 @@ public extension MirageHostService {
             }
         }
 
-        do {
+        captureStart: do {
             let mirroredDisplaySnapshot = try await ensureSharedAppStreamMirroring(
                 preset: sizePreset,
                 refreshRate: effectiveEncoderConfig.targetFrameRate,
@@ -473,6 +473,40 @@ public extension MirageHostService {
                     : nil
             )
         } catch {
+            if allowDirectCaptureFallback,
+               shouldFallbackToDirectWindowCapture(error) {
+                let mirroredStartupError = error
+                MirageLogger.host(
+                    "Mirrored app-window capture start failed for stream \(streamID); retrying direct capture: \(mirroredStartupError.localizedDescription)"
+                )
+                do {
+                    try await resetMirroredWindowCaptureForDirectFallback(
+                        streamID: streamID,
+                        context: context,
+                        windowID: updatedWindow.id
+                    )
+                    try await context.start(
+                        windowWrapper: windowWrapper,
+                        applicationWrapper: applicationWrapper,
+                        displayWrapper: displayWrapper,
+                        sendPacket: sendPacket,
+                        onSendError: onSendError
+                    )
+                    clearVirtualDisplayState(windowID: updatedWindow.id)
+                    MirageLogger.host("Direct window capture fallback succeeded for stream \(streamID)")
+                    break captureStart
+                } catch {
+                    await cleanupFailedStreamStart(
+                        streamID: streamID,
+                        context: context,
+                        windowID: updatedWindow.id
+                    )
+                    throw WindowStreamStartError.virtualDisplayStartFailed(
+                        code: .virtualDisplayDirectFallbackFailed,
+                        details: "virtual display error: \(mirroredStartupError.localizedDescription); direct fallback error: \(error.localizedDescription)"
+                    )
+                }
+            }
             await cleanupFailedStreamStart(
                 streamID: streamID,
                 context: context,
@@ -663,6 +697,23 @@ public extension MirageHostService {
         await teardownSharedAppStreamMirroringIfIdle(displayID: mirroredDisplayID)
     }
 
+    private func resetMirroredWindowCaptureForDirectFallback(
+        streamID: StreamID,
+        context: StreamContext,
+        windowID: WindowID
+    )
+    async throws {
+        let mirroredDisplayID = await context.getVirtualDisplayID()
+        let shouldDisableSharedMirroringBeforeStop = activeStreams.count == 1 &&
+            activeStreams.first?.id == streamID
+        if shouldDisableSharedMirroringBeforeStop, let mirroredDisplayID {
+            await disableDisplayMirroring(displayID: mirroredDisplayID)
+        }
+        await context.stop()
+        clearVirtualDisplayState(windowID: windowID)
+        clearAppStreamGovernorState(streamID: streamID)
+    }
+
     private func ensureSharedAppStreamMirroring(
         preset: MirageDisplaySizePreset,
         refreshRate: Int,
@@ -830,7 +881,12 @@ public extension MirageHostService {
                     currentSpaceMembership: currentSpaces,
                     expectedSpaceID: spaceID,
                     currentFrame: currentWindowFrame(for: windowID),
-                    expectedFrame: getVirtualDisplayState(windowID: windowID)?.bounds
+                    expectedFrame: getVirtualDisplayState(windowID: windowID).map { state in
+                        aspectFittedWindowBounds(
+                            state.bounds,
+                            targetAspectRatio: state.targetContentAspectRatio
+                        )
+                    }
                 )
                 guard let driftReason else { return }
 
