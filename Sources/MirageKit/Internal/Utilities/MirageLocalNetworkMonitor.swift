@@ -102,7 +102,7 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
             let interface = current.pointee
             cursor = interface.ifa_next
 
-            let name = String(cString: interface.ifa_name).lowercased()
+            let name = decodedCString(interface.ifa_name).lowercased()
             guard interfaceTypesByName[name] == interfaceType else { continue }
 
             let flags = Int32(interface.ifa_flags)
@@ -124,6 +124,11 @@ package final class MirageLocalNetworkMonitor: @unchecked Sendable {
         }
 
         return signatures.sorted()
+    }
+
+    private static func decodedCString(_ pointer: UnsafePointer<CChar>) -> String {
+        let bytes = UnsafeBufferPointer(start: pointer, count: strlen(pointer)).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
     }
 
     private static func subnetSignature(

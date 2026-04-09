@@ -96,7 +96,7 @@ extension MirageHostService {
             MirageLogger
                 .host(
                     "Client \(clientContext.client.name) requested desktop stream: " +
-                        "\(request.displayWidth)x\(request.displayHeight) pts, mode=\(request.mode?.displayName ?? "Full Desktop")"
+                        "\(request.displayWidth)x\(request.displayHeight) pts, mode=\(request.mode?.displayName ?? "Unified")"
                 )
             let enteredBitrateText = request.enteredBitrate.map(Self.formatBitrateForLogging) ?? "n/a"
             let requestedBitrateText = request.bitrate.map(Self.formatBitrateForLogging) ?? "auto"
@@ -105,12 +105,10 @@ extension MirageHostService {
                 "Desktop bitrate contract received: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText)"
             )
 
-            // Determine target frame rate based on client capability
-            let clientMaxRefreshRate = request.maxRefreshRate
-            let targetFrameRate = resolvedTargetFrameRate(clientMaxRefreshRate)
+            let targetFrameRate = initialStreamStartupFrameRate()
             MirageLogger
                 .host(
-                    "Desktop stream frame rate: \(targetFrameRate)fps (client max=\(clientMaxRefreshRate)Hz)"
+                    "Desktop stream frame rate: \(targetFrameRate)fps at startup; client sync follows after stream start"
                 )
             let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
@@ -243,13 +241,30 @@ extension MirageHostService {
         (Double(bitrate) / 1_000_000.0).formatted(.number.precision(.fractionLength(1))) + "Mbps"
     }
 
+    private nonisolated static func isDesktopStartDecodeError(_ error: Error) -> Bool {
+        if error is DecodingError {
+            return true
+        }
+
+        let nsError = error as NSError
+        guard nsError.domain == NSCocoaErrorDomain else { return false }
+        return nsError.code == 3_840 || nsError.code == 4_864
+    }
+
+    private nonisolated static func desktopStartErrorCode(for error: Error) -> ErrorMessage.ErrorCode {
+        if isDesktopStartDecodeError(error) {
+            return .invalidMessage
+        }
+        return .virtualDisplayStartFailed
+    }
+
     private nonisolated static func desktopStartErrorPayload(for error: Error) -> ErrorMessage {
         if let runtimeCondition = error as? MirageRuntimeConditionError {
             return ErrorMessage(code: .init(runtimeCondition), message: runtimeCondition.message)
         }
 
         return ErrorMessage(
-            code: .virtualDisplayStartFailed,
+            code: desktopStartErrorCode(for: error),
             message: "Failed to start desktop stream: \(error.localizedDescription)"
         )
     }

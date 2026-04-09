@@ -93,7 +93,11 @@ package final class MirageControlChannel: @unchecked Sendable {
     }
 
     package func cancel() async {
-        try? await stream.close()
+        // A Mirage control channel does not own the lifetime of the underlying
+        // Loom stream independently from the session. When the product decides
+        // to disconnect, tearing down the authenticated session already closes
+        // every multiplexed stream and avoids racing a control-stream close
+        // frame against full-session shutdown on both peers.
         await session.cancel()
     }
 

@@ -77,8 +77,6 @@ package struct StartStreamMessage: Codable {
     package var streamScale: CGFloat?
     /// Client audio streaming configuration
     package var audioConfiguration: MirageAudioConfiguration?
-    /// Client refresh rate override in Hz (60/120 based on client capability).
-    package var maxRefreshRate: Int = 60
     /// Maximum bitrate the in-stream adaptation governor may ramp toward.
     package var bitrateAdaptationCeiling: Int?
     /// Maximum encoded width in pixels for host-computed stream scaling.
@@ -111,7 +109,6 @@ package struct StartStreamMessage: Codable {
         case disableResolutionCap
         case streamScale
         case audioConfiguration
-        case maxRefreshRate
         case bitrateAdaptationCeiling
         case encoderMaxWidth
         case encoderMaxHeight
@@ -139,7 +136,6 @@ package struct StartStreamMessage: Codable {
         disableResolutionCap: Bool? = nil,
         streamScale: CGFloat? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
-        maxRefreshRate: Int = 60,
         mediaMaxPacketSize: Int? = nil
     ) {
         self.windowID = windowID
@@ -160,7 +156,6 @@ package struct StartStreamMessage: Codable {
         self.disableResolutionCap = disableResolutionCap
         self.streamScale = streamScale
         self.audioConfiguration = audioConfiguration
-        self.maxRefreshRate = maxRefreshRate
         self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 }

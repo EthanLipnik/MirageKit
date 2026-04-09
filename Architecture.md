@@ -71,6 +71,7 @@ Core wire definitions live under `Internal/Protocol`:
 - `FrameHeader`, `AudioPacketHeader`, and `QualityTestPacketHeader` define the media-plane packet formats.
 - Desktop stream startup uses explicit `desktopStreamStarted`, `desktopStreamFailed`, and `desktopStreamStopped` control messages so startup rejection is distinguishable from later transport loss.
 - Desktop cursor presentation is negotiated per desktop stream with `StartDesktopStreamMessage.cursorPresentation` and updated in place at runtime with `desktopCursorPresentationChange`.
+- Stream-start requests carry geometry, encoder, and cursor policy, but not refresh-rate policy. New app, window, and desktop streams start at the default host frame rate and then receive any client refresh override through the live `streamRefreshRateChange` control message after startup is established.
 
 The shared target also owns:
 

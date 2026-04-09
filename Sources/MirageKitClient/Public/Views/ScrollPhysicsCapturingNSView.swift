@@ -642,13 +642,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private func applyLockedCursorDelta(dx: CGFloat, dy: CGFloat) {
         let normSize = hostDisplayPointSize ?? bounds.size
-        guard normSize.width > 0, normSize.height > 0 else { return }
-        let proposedPosition = CGPoint(
-            x: lockedCursorPosition.x + dx / normSize.width,
-            y: lockedCursorPosition.y - dy / normSize.height
-        )
-        lockedCursorPosition = LockedCursorPositionResolver.resolve(
-            proposedPosition,
+        lockedCursorPosition = LockedCursorPositionResolver.applyRelativeDelta(
+            currentPosition: lockedCursorPosition,
+            deltaX: dx,
+            deltaY: dy,
+            normalizationSize: normSize,
             allowsExtendedBounds: allowsExtendedCursorBounds,
             confirmedHostPosition: lockedCursorConfirmedHostPosition
         )

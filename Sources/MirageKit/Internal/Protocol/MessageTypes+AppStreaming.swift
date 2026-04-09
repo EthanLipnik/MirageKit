@@ -58,13 +58,6 @@ package struct AppListRequestMessage: Codable {
     /// Client-generated request identifier for correlating metadata + icon updates.
     package let requestID: UUID
 
-    private enum CodingKeys: String, CodingKey {
-        case forceRefresh
-        case forceIconReset
-        case priorityBundleIdentifiers
-        case requestID
-    }
-
     package init(
         forceRefresh: Bool = false,
         forceIconReset: Bool = false,
@@ -75,28 +68,6 @@ package struct AppListRequestMessage: Codable {
         self.forceIconReset = forceIconReset
         self.priorityBundleIdentifiers = priorityBundleIdentifiers
         self.requestID = requestID
-    }
-
-    package init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        forceRefresh = Self.decodeValue(Bool.self, from: container, forKey: .forceRefresh, default: false)
-        forceIconReset = Self.decodeValue(Bool.self, from: container, forKey: .forceIconReset, default: false)
-        priorityBundleIdentifiers = Self.decodeValue(
-            [String].self,
-            from: container,
-            forKey: .priorityBundleIdentifiers,
-            default: []
-        )
-        requestID = Self.decodeValue(UUID.self, from: container, forKey: .requestID, default: UUID())
-    }
-
-    private static func decodeValue<T: Decodable>(
-        _ type: T.Type,
-        from container: KeyedDecodingContainer<CodingKeys>,
-        forKey key: CodingKeys,
-        default defaultValue: @autoclosure () -> T
-    ) -> T {
-        (try? container.decodeIfPresent(type, forKey: key)) ?? defaultValue()
     }
 }
 
@@ -169,9 +140,6 @@ package struct SelectAppMessage: Codable {
     /// Client's display dimensions
     package let displayWidth: Int?
     package let displayHeight: Int?
-    /// Client refresh rate override in Hz (60/120 based on client capability)
-    /// Used with P2P detection to enable 120fps streaming on capable displays
-    package let maxRefreshRate: Int
     /// Client-requested keyframe interval in frames
     package var keyFrameInterval: Int?
     /// Client-requested ScreenCaptureKit queue depth
@@ -219,7 +187,6 @@ package struct SelectAppMessage: Codable {
         case scaleFactor
         case displayWidth
         case displayHeight
-        case maxRefreshRate
         case keyFrameInterval
         case captureQueueDepth
         case colorDepth
@@ -248,7 +215,6 @@ package struct SelectAppMessage: Codable {
         scaleFactor: CGFloat? = nil,
         displayWidth: Int? = nil,
         displayHeight: Int? = nil,
-        maxRefreshRate: Int,
         keyFrameInterval: Int? = nil,
         captureQueueDepth: Int? = nil,
         colorDepth: MirageStreamColorDepth? = nil,
@@ -270,7 +236,6 @@ package struct SelectAppMessage: Codable {
         self.scaleFactor = scaleFactor
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
-        self.maxRefreshRate = maxRefreshRate
         self.keyFrameInterval = keyFrameInterval
         self.captureQueueDepth = captureQueueDepth
         self.colorDepth = colorDepth

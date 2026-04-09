@@ -292,6 +292,16 @@ struct ClientConnectionEndpointPlanningTests {
                 )
             ) == .addressUnavailable
         )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
+                MirageError.protocolError("Timed out waiting for host bootstrap response from Altair")
+            ) == .timeout
+        )
+        #expect(
+            MirageClientService.classifyControlSessionFailure(
+                MirageError.protocolError("Control stream closed before receiving bootstrap response")
+            ) == .transportLoss
+        )
     }
 
     @MainActor

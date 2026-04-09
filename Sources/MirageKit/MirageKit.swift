@@ -43,7 +43,7 @@ public enum MirageKit {
 
     /// Returns Mirage's canonical shared device identifier.
     public static func getOrCreateSharedDeviceID(suiteName: String? = sharedDeviceIDSuiteName) -> UUID {
-        LoomSharedDeviceID.getOrCreate(
+        return LoomSharedDeviceID.getOrCreate(
             suiteName: suiteName,
             key: sharedDeviceIDKey
         )

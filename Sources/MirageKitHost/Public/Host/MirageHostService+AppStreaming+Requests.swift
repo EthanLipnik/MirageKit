@@ -360,12 +360,10 @@ extension MirageHostService {
             MirageLogger.host("Client \(client.name) selected app: \(request.bundleIdentifier)")
             await pruneOrphanedAppSessions()
 
-            // Determine target frame rate based on client capability
-            let clientMaxRefreshRate = request.maxRefreshRate
-            let targetFrameRate = resolvedTargetFrameRate(clientMaxRefreshRate)
+            let targetFrameRate = initialStreamStartupFrameRate()
             MirageLogger
                 .host(
-                    "Frame rate: \(targetFrameRate)fps (client max=\(clientMaxRefreshRate)Hz)"
+                    "Frame rate: \(targetFrameRate)fps at startup; client sync follows after stream start"
                 )
 
             let latencyMode = request.latencyMode ?? .lowestLatency

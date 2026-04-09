@@ -373,7 +373,7 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
             return fallback
         }
 
-        let model = String(cString: buffer)
+        let model = String.mirageDecodedCString(buffer)
         cachedHardwareModel = model
         return model
     }
@@ -829,6 +829,38 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
         return abs(observed - expected) / expected
     }
 
+    static func isAcceptableOneXFallbackForRetinaRequest(
+        requestedLogical: CGSize,
+        requestedPixel: CGSize,
+        observedLogical: CGSize,
+        observedPixel: CGSize,
+        observedBounds: CGRect,
+        observedPixelDimensions: CGSize,
+        isOnline: Bool
+    ) -> Bool {
+        guard isOnline else { return false }
+
+        let requestedScale = requestedLogical.width > 0 ? requestedPixel.width / requestedLogical.width : 0
+        guard requestedScale > 1.5 else { return false }
+
+        let pixelMatches = approximatelyMatches(observedPixel, expected: requestedPixel) ||
+            approximatelyMatches(observedPixelDimensions, expected: requestedPixel)
+        guard pixelMatches else { return false }
+
+        let logicalCollapsedToPixel = approximatelyMatches(observedLogical, expected: requestedPixel) ||
+            approximatelyMatches(observedBounds.size, expected: requestedPixel)
+        guard logicalCollapsedToPixel else { return false }
+
+        let observedScale: CGFloat = if observedLogical.width > 0 {
+            observedPixel.width / observedLogical.width
+        } else if observedBounds.width > 0 {
+            observedPixelDimensions.width / observedBounds.width
+        } else {
+            0
+        }
+        return abs(observedScale - 1.0) <= retinaQuantizedScaleTolerance
+    }
+
     private static func validateModeActivation(
         displayID: CGDirectDisplayID,
         requestedLogical: CGSize,
@@ -926,6 +958,24 @@ final class CGVirtualDisplayBridge: @unchecked Sendable {
                         let observedScaleText = Double(observedScale).formatted(.number.precision(.fractionLength(2)))
                         MirageLogger.host(
                             "Virtual display mode accepted with quantized Retina validation: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observed.logical), observedPixel=\(observed.pixel), observedScale=\(observedScaleText)x"
+                        )
+                        return true
+                    }
+
+                    if isAcceptableOneXFallbackForRetinaRequest(
+                        requestedLogical: requestedLogical,
+                        requestedPixel: requestedPixel,
+                        observedLogical: observed.logical,
+                        observedPixel: observed.pixel,
+                        observedBounds: bounds,
+                        observedPixelDimensions: pixelDimensions,
+                        isOnline: isOnline
+                    ) {
+                        let observedScaleText = Double(observedScale).formatted(
+                            .number.precision(.fractionLength(2))
+                        )
+                        MirageLogger.host(
+                            "Virtual display mode accepted with stable 1x fallback for Retina request: requestedLogical=\(requestedLogical), requestedPixel=\(requestedPixel), observedLogical=\(observed.logical), observedPixel=\(observed.pixel), observedScale=\(observedScaleText)x"
                         )
                         return true
                     }

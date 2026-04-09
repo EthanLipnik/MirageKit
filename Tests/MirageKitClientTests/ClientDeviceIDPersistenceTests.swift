@@ -13,20 +13,13 @@ import Testing
 @Suite("Client Device ID Persistence", .serialized)
 struct ClientDeviceIDPersistenceTests {
     @MainActor
-    @Test("Client service ignores deprecated device ID keys and creates a fresh shared ID")
-    func clientServiceIgnoresDeprecatedDeviceIDKeysAndCreatesFreshSharedID() {
+    @Test("Client service persists the shared device ID in the shared suite")
+    func clientServicePersistsSharedDeviceIDInSharedSuite() {
         let suiteName = MirageKit.sharedDeviceIDSuiteName
         let suiteDefaults = UserDefaults(suiteName: suiteName)!
         let standardDefaults = UserDefaults.standard
         let originalSuiteDomain = standardDefaults.persistentDomain(forName: suiteName)
-        let legacyKeys = [
-            "com.mirage.client.deviceID",
-            "com.mirage.cloudkit.deviceID",
-            LoomSharedDeviceID.key,
-        ]
-        let originalStandardValues = legacyKeys.reduce(into: [String: Any?]()) { values, key in
-            values[key] = standardDefaults.object(forKey: key)
-        }
+        let originalStandardValue = standardDefaults.object(forKey: LoomSharedDeviceID.key)
 
         defer {
             if let originalSuiteDomain {
@@ -35,30 +28,22 @@ struct ClientDeviceIDPersistenceTests {
                 standardDefaults.removePersistentDomain(forName: suiteName)
             }
 
-            for (key, value) in originalStandardValues {
-                if let value {
-                    standardDefaults.set(value, forKey: key)
-                } else {
-                    standardDefaults.removeObject(forKey: key)
-                }
+            if let originalStandardValue {
+                standardDefaults.set(originalStandardValue, forKey: LoomSharedDeviceID.key)
+            } else {
+                standardDefaults.removeObject(forKey: LoomSharedDeviceID.key)
             }
         }
 
         standardDefaults.removePersistentDomain(forName: suiteName)
-        for key in legacyKeys {
-            standardDefaults.removeObject(forKey: key)
-            suiteDefaults.removeObject(forKey: key)
-        }
-
-        let legacyDeviceID = UUID()
-        standardDefaults.set(legacyDeviceID.uuidString, forKey: "com.mirage.client.deviceID")
+        standardDefaults.removeObject(forKey: LoomSharedDeviceID.key)
+        suiteDefaults.removeObject(forKey: LoomSharedDeviceID.key)
 
         let service = MirageClientService(deviceName: "Regression Device")
 
-        #expect(service.deviceID != legacyDeviceID)
         #expect(
             suiteDefaults.string(forKey: MirageKit.sharedDeviceIDKey) == service.deviceID.uuidString
         )
-        #expect(standardDefaults.string(forKey: "com.mirage.client.deviceID") == nil)
+        #expect(standardDefaults.string(forKey: LoomSharedDeviceID.key) == nil)
     }
 }

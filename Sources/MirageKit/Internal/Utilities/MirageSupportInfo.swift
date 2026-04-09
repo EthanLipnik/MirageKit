@@ -43,7 +43,7 @@ public enum MirageSupportInfo {
         var machine = [CChar](repeating: 0, count: size)
         if sysctlbyname("hw.model", &machine, &size, nil, 0) == 0 ||
             sysctlbyname("hw.machine", &machine, &size, nil, 0) == 0 {
-            return String(cString: machine)
+            return String.mirageDecodedCString(machine)
         }
 
         return "Unknown"
@@ -59,5 +59,17 @@ public enum MirageSupportInfo {
             return nil
         }
         return trimmed
+    }
+}
+
+package extension String {
+    static func mirageDecodedCString(_ buffer: [CChar]) -> String {
+        let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
+    }
+
+    static func mirageDecodedCString(_ pointer: UnsafePointer<CChar>) -> String {
+        let bytes = UnsafeBufferPointer(start: pointer, count: strlen(pointer)).map { UInt8(bitPattern: $0) }
+        return String(decoding: bytes, as: UTF8.self)
     }
 }

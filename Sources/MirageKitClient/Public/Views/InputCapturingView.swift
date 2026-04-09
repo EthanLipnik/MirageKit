@@ -1251,13 +1251,11 @@ public class InputCapturingView: UIView {
     }
 
     func applyLockedCursorDelta(_ translation: CGPoint) {
-        guard bounds.width > 0, bounds.height > 0 else { return }
-        let proposedPosition = CGPoint(
-            x: lockedCursorPosition.x + translation.x / bounds.width,
-            y: lockedCursorPosition.y + translation.y / bounds.height
-        )
-        lockedCursorPosition = LockedCursorPositionResolver.resolve(
-            proposedPosition,
+        lockedCursorPosition = LockedCursorPositionResolver.applyRelativeDelta(
+            currentPosition: lockedCursorPosition,
+            deltaX: translation.x,
+            deltaY: translation.y,
+            normalizationSize: bounds.size,
             allowsExtendedBounds: allowsExtendedCursorBounds,
             confirmedHostPosition: lockedCursorConfirmedHostPosition
         )

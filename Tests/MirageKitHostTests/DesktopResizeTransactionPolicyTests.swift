@@ -122,6 +122,16 @@ struct DesktopResizeTransactionPolicyTests {
         )
     }
 
+    @Test("Missing shared display requires recreation when updates cannot recreate immediately")
+    func missingSharedDisplayRequiresExplicitRecreationWhenDisallowed() {
+        #expect(sharedDisplayMissingUpdateDecision(allowRecreation: false) == .requiresRecreation)
+    }
+
+    @Test("Missing shared display recovers immediately when recreation is allowed")
+    func missingSharedDisplayRecoversImmediatelyWhenAllowed() {
+        #expect(sharedDisplayMissingUpdateDecision(allowRecreation: true) == .recreateNow)
+    }
+
     @Test("Resize transaction aborts when desktop stream is already inactive")
     func resizeTransactionAbortsWhenStreamIsInactive() {
         let decision = desktopResizeTransactionContinuationDecision(

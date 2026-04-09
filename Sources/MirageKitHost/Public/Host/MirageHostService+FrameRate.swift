@@ -12,6 +12,10 @@ import MirageKit
 
 #if os(macOS)
 extension MirageHostService {
+    func initialStreamStartupFrameRate() -> Int {
+        60
+    }
+
     func resolvedTargetFrameRate(_ requested: Int) -> Int {
         guard requested > 0 else { return 60 }
         if requested >= 120 { return 120 }

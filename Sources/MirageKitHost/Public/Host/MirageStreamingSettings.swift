@@ -29,28 +29,6 @@ public struct MirageStreamingSettings: Codable, Equatable {
         self.perAppSettings = perAppSettings
     }
 
-    private enum CodingKeys: String, CodingKey {
-        case closeHostWindowOnClientWindowClose
-        case encoderLowPowerModePreference
-        case perAppSettings
-    }
-
-    public init(from decoder: Decoder) throws {
-        let container = try decoder.container(keyedBy: CodingKeys.self)
-        closeHostWindowOnClientWindowClose = try container.decodeIfPresent(
-            Bool.self,
-            forKey: .closeHostWindowOnClientWindowClose
-        ) ?? false
-        encoderLowPowerModePreference = try container.decodeIfPresent(
-            MirageCodecLowPowerModePreference.self,
-            forKey: .encoderLowPowerModePreference
-        ) ?? .auto
-        perAppSettings = try container.decodeIfPresent(
-            [String: MirageAppStreamingSettings].self,
-            forKey: .perAppSettings
-        ) ?? [:]
-    }
-
     /// Get settings for a specific app (with fallback to global).
     public func settings(for bundleIdentifier: String) -> MirageAppStreamingSettings {
         perAppSettings[bundleIdentifier.lowercased()] ?? MirageAppStreamingSettings()

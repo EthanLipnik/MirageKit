@@ -16,7 +16,7 @@ public enum MirageDesktopStreamMode: String, Sendable, CaseIterable, Codable {
     public var displayName: String {
         switch self {
         case .unified:
-            "Full Desktop"
+            "Unified"
         case .secondary:
             "Secondary Display"
         }

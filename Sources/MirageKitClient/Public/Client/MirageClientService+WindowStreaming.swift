@@ -75,7 +75,6 @@ public extension MirageClientService {
         }
 
         request.audioConfiguration = audioConfiguration ?? self.audioConfiguration
-        request.maxRefreshRate = getScreenMaxRefreshRate()
         let geometry = resolvedStreamGeometry(
             for: effectiveDisplayResolution,
             explicitScaleFactor: scaleFactor,

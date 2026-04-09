@@ -149,7 +149,7 @@ public final class WindowActivator {
         axWindow: AXUIElement?
     )
     -> ActivationResult {
-        let success = runningApp.activate(options: [.activateIgnoringOtherApps])
+        let success = runningApp.activate(options: [])
 
         if !success { return .failure(method: "NSRunningApplication", error: "activate() returned false") }
 

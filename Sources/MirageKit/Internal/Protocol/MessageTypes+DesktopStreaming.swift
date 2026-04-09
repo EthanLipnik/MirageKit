@@ -65,9 +65,6 @@ package struct StartDesktopStreamMessage: Codable {
     package var codec: MirageVideoCodec?
     /// When true, the host should use its current display resolution instead of the client-provided dimensions.
     package var useHostResolution: Bool?
-    /// Client refresh rate override in Hz (60/120 based on client capability)
-    /// Used with P2P detection to enable 120fps streaming on capable displays
-    package let maxRefreshRate: Int
 
     enum CodingKeys: String, CodingKey {
         case scaleFactor
@@ -95,7 +92,6 @@ package struct StartDesktopStreamMessage: Codable {
         case upscalingMode
         case codec
         case useHostResolution
-        case maxRefreshRate
     }
 
     package init(
@@ -118,7 +114,6 @@ package struct StartDesktopStreamMessage: Codable {
         audioConfiguration: MirageAudioConfiguration? = nil,
         dataPort: UInt16? = nil,
         useHostResolution: Bool? = nil,
-        maxRefreshRate: Int,
         mediaMaxPacketSize: Int? = nil
     ) {
         self.scaleFactor = scaleFactor
@@ -140,7 +135,6 @@ package struct StartDesktopStreamMessage: Codable {
         self.audioConfiguration = audioConfiguration
         self.dataPort = dataPort
         self.useHostResolution = useHostResolution
-        self.maxRefreshRate = maxRefreshRate
         self.mediaMaxPacketSize = mediaMaxPacketSize
     }
 }

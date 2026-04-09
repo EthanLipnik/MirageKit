@@ -22,6 +22,11 @@ import AppKit
 
 @MainActor
 extension MirageClientService {
+    private struct BootstrappedControlSession {
+        let session: LoomAuthenticatedSession
+        let controlChannel: MirageControlChannel
+    }
+
     private var currentDeviceType: DeviceType {
         #if os(macOS)
         return .mac
@@ -94,6 +99,9 @@ extension MirageClientService {
             pendingChannel = controlChannel
             try Task.checkCancellation()
             try throwIfConnectAttemptIsStale(attemptID)
+            try await performBootstrap(over: controlChannel, provisionalHost: host)
+            try Task.checkCancellation()
+            try throwIfConnectAttemptIsStale(attemptID)
 
             loomSession = session
             rememberDirectEndpointHost(await session.remoteEndpoint, for: host.deviceID)
@@ -108,9 +116,6 @@ extension MirageClientService {
             }
             installControlSessionObservers(session)
             startMediaStreamListener()
-            try await performBootstrap(over: controlChannel, provisionalHost: host)
-            try Task.checkCancellation()
-            try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
             finishConnectAttempt(attemptID)
             armConnectionStartupIdleRelease()
@@ -172,18 +177,14 @@ extension MirageClientService {
         let helloRequest = try makeSessionHelloRequest()
 
         do {
-            let session = try await connectSession(
+            let bootstrappedSession = try await connectBootstrappedControlSession(
                 to: host,
                 hello: helloRequest,
                 attemptID: attemptID
             )
-            try Task.checkCancellation()
-            try throwIfConnectAttemptIsStale(attemptID)
-            let controlChannel = try await MirageControlChannel.open(on: session)
+            let session = bootstrappedSession.session
+            let controlChannel = bootstrappedSession.controlChannel
             pendingChannel = controlChannel
-            try Task.checkCancellation()
-            try throwIfConnectAttemptIsStale(attemptID)
-
             loomSession = session
             rememberDirectEndpointHost(await session.remoteEndpoint, for: host.deviceID)
             transferEngine = LoomTransferEngine(session: session)
@@ -197,9 +198,6 @@ extension MirageClientService {
             }
             installControlSessionObservers(session)
             startMediaStreamListener()
-            try await performBootstrap(over: controlChannel, provisionalHost: host)
-            try Task.checkCancellation()
-            try throwIfConnectAttemptIsStale(attemptID)
             startReceiving()
             finishConnectAttempt(attemptID)
             armConnectionStartupIdleRelease()
@@ -425,11 +423,11 @@ extension MirageClientService {
         }
     }
 
-    private func connectSession(
+    private func connectBootstrappedControlSession(
         to host: LoomPeer,
         hello: LoomSessionHelloRequest,
         attemptID: UUID
-    ) async throws -> LoomAuthenticatedSession {
+    ) async throws -> BootstrappedControlSession {
         try throwIfConnectAttemptIsStale(attemptID)
 
         let attempts = controlSessionAttempts(for: host)
@@ -437,19 +435,38 @@ extension MirageClientService {
 
         for (attemptIndex, attempt) in attempts.enumerated() {
             try throwIfConnectAttemptIsStale(attemptID)
+
+            var openedSession: LoomAuthenticatedSession?
+            var openedChannel: MirageControlChannel?
+
             do {
-                return try await establishControlSession(
+                let session = try await establishControlSession(
                     attempt: attempt,
                     hello: hello,
                     attemptID: attemptID
                 )
+                openedSession = session
+                let controlChannel = try await MirageControlChannel.open(on: session)
+                openedChannel = controlChannel
+                try Task.checkCancellation()
+                try throwIfConnectAttemptIsStale(attemptID)
+                try await performBootstrap(over: controlChannel, provisionalHost: host)
+                try Task.checkCancellation()
+                try throwIfConnectAttemptIsStale(attemptID)
+                return BootstrappedControlSession(session: session, controlChannel: controlChannel)
             } catch {
+                if let openedChannel {
+                    await openedChannel.cancel()
+                } else if let openedSession {
+                    await openedSession.cancel()
+                }
+
                 let classification = Self.classifyControlSessionFailure(error)
                 if error is CancellationError || classification == .cancelled {
                     throw error
                 }
 
-                let failureReason = Self.controlSessionFailureReason(
+                let failureReason = Self.bootstrappedControlSessionFailureReason(
                     for: attempt,
                     classification: classification,
                     underlyingError: error
@@ -471,7 +488,7 @@ extension MirageClientService {
                     localNetwork: localNetworkMonitor.snapshot()
                 ) {
                     MirageLogger.client(
-                        "Control session failure diagnosed as local-network mismatch: \(failureReason)"
+                        "Bootstrap failure diagnosed as local-network mismatch: \(failureReason)"
                     )
                     throw MirageError.protocolError(networkMismatchReason)
                 }
@@ -481,7 +498,7 @@ extension MirageClientService {
         }
 
         throw MirageError.protocolError(
-            lastFailureReason ?? "Failed to establish control session to \(host.name)"
+            lastFailureReason ?? "Failed to bootstrap control session to \(host.name)"
         )
     }
 
@@ -847,6 +864,12 @@ extension MirageClientService {
                 if looksLikeAddressResolutionFailure(reason) {
                     return .addressUnavailable
                 }
+                if looksLikeBootstrapResponseTimeout(reason) {
+                    return .timeout
+                }
+                if looksLikeBootstrapTransportFailure(reason) {
+                    return .transportLoss
+                }
             case let .connectionFailed(underlyingError):
                 return classifyControlSessionFailure(underlyingError)
             default:
@@ -861,6 +884,12 @@ extension MirageClientService {
             case let .protocolError(reason):
                 if looksLikeAddressResolutionFailure(reason) {
                     return .addressUnavailable
+                }
+                if looksLikeBootstrapResponseTimeout(reason) {
+                    return .timeout
+                }
+                if looksLikeBootstrapTransportFailure(reason) {
+                    return .transportLoss
                 }
             case let .connectionFailed(underlyingError):
                 if let failure = underlyingError as? LoomConnectionFailure {
@@ -903,6 +932,17 @@ extension MirageClientService {
             normalized.contains("name or service not known")
     }
 
+    private static func looksLikeBootstrapResponseTimeout(_ reason: String) -> Bool {
+        let normalized = reason.lowercased()
+        return normalized.contains("timed out waiting for host bootstrap response")
+    }
+
+    private static func looksLikeBootstrapTransportFailure(_ reason: String) -> Bool {
+        let normalized = reason.lowercased()
+        return normalized.contains("control stream closed before receiving bootstrap response") ||
+            normalized.contains("authenticated loom session closed before mirage control stream opened")
+    }
+
     private static func classifyLoomConnectionFailure(
         _ failure: LoomConnectionFailure
     ) -> ControlSessionFailureClassification {
@@ -929,6 +969,16 @@ extension MirageClientService {
     ) -> String {
         "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed for " +
             "\(attempt.hostName) endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription) " +
+            "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
+    }
+
+    internal static func bootstrappedControlSessionFailureReason(
+        for attempt: ControlSessionAttempt,
+        classification: ControlSessionFailureClassification,
+        underlyingError: Error
+    ) -> String {
+        "Mirage bootstrap failed for \(attempt.hostName) endpoint=\(attempt.endpoint) " +
+            "transport=\(attempt.transportKind.rawValue) interface=\(attempt.interfaceDescription) " +
             "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
     }
 

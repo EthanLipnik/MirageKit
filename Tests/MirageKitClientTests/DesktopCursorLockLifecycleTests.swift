@@ -217,6 +217,19 @@ struct DesktopCursorLockLifecycleTests {
         #expect(converted == CGPoint(x: 320, y: 760))
     }
 
+    @Test("Locked cursor delta keeps AppKit negative-up Y motion aligned with stream space")
+    func lockedCursorDeltaKeepsAppKitNegativeUpYMotionAlignedWithStreamSpace() {
+        let updated = LockedCursorPositionResolver.applyRelativeDelta(
+            currentPosition: CGPoint(x: 0.5, y: 0.5),
+            deltaX: 120,
+            deltaY: -120,
+            normalizationSize: CGSize(width: 1200, height: 1200),
+            allowsExtendedBounds: false
+        )
+
+        #expect(updated == CGPoint(x: 0.6, y: 0.4))
+    }
+
     private func makeMountedView() -> (NSWindow, ScrollPhysicsCapturingNSView) {
         let window = NSWindow(
             contentRect: CGRect(x: 100, y: 100, width: 960, height: 540),

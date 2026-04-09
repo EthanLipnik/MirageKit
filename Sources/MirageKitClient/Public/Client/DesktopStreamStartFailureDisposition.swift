@@ -19,15 +19,8 @@ func desktopStreamStartFailureDisposition(
 ) -> DesktopStreamStartFailureDisposition {
     guard desktopStartPending else { return .noChange }
     guard !hasActiveDesktopStream else { return .noChange }
-
-    switch errorCode {
-    case .virtualDisplayStartFailed,
-         .sessionLocked,
-         .waitingForHostApproval:
-        return .clearPendingStart
-    default:
-        return .noChange
-    }
+    _ = errorCode
+    return .clearPendingStart
 }
 
 @MainActor

@@ -15,6 +15,29 @@ import MirageKit
 #if os(macOS)
 @MainActor
 extension MirageHostService {
+    private func awaitBootstrapStep<T: Sendable>(
+        timeout: Duration,
+        peerName: String,
+        phase: String,
+        operation: @escaping @MainActor @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask {
+                try await operation()
+            }
+            group.addTask {
+                try await Task.sleep(for: timeout)
+                throw MirageError.protocolError("Timed out waiting for \(phase) from \(peerName)")
+            }
+
+            let result = try await group.next() ?? {
+                throw MirageError.protocolError("Bootstrap step ended unexpectedly")
+            }()
+            group.cancelAll()
+            return result
+        }
+    }
+
     nonisolated func isExpectedBootstrapConnectionClosure(_ error: Error) -> Bool {
         if error is CancellationError {
             return true
@@ -261,18 +284,24 @@ extension MirageHostService {
         }
 
         do {
-            let connectionAccepted = await withCheckedContinuation { continuation in
-                if let delegate {
-                    delegate.hostService(
-                        self,
-                        shouldAcceptConnectionFrom: peerIdentity.deviceInfo,
-                        origin: origin,
-                        completion: { accepted in
-                            continuation.resume(returning: accepted)
-                        }
-                    )
-                } else {
-                    continuation.resume(returning: true)
+            let connectionAccepted = try await awaitBootstrapStep(
+                timeout: .seconds(Int(connectionApprovalTimeoutSeconds.rounded(.up))),
+                peerName: peerIdentity.name,
+                phase: "connection approval"
+            ) { [self] in
+                await withCheckedContinuation { continuation in
+                    if let delegate = self.delegate {
+                        delegate.hostService(
+                            self,
+                            shouldAcceptConnectionFrom: peerIdentity.deviceInfo,
+                            origin: origin,
+                            completion: { accepted in
+                                continuation.resume(returning: accepted)
+                            }
+                        )
+                    } else {
+                        continuation.resume(returning: true)
+                    }
                 }
             }
 
@@ -297,9 +326,21 @@ extension MirageHostService {
                 return
             }
 
-            let controlChannel = try await MirageControlChannel.accept(from: session)
+            let controlChannel = try await awaitBootstrapStep(
+                timeout: .seconds(10),
+                peerName: peerIdentity.name,
+                phase: "Mirage control channel"
+            ) {
+                try await MirageControlChannel.accept(from: session)
+            }
             MirageLogger.host("Accepted Mirage control channel from \(peerIdentity.name) origin=\(origin)")
-            let bootstrap = try await receiveBootstrapRequest(from: controlChannel)
+            let bootstrap = try await awaitBootstrapStep(
+                timeout: .seconds(10),
+                peerName: peerIdentity.name,
+                phase: "Mirage bootstrap request"
+            ) { [self] in
+                try await self.receiveBootstrapRequest(from: controlChannel)
+            }
             MirageLogger.host("Received Mirage bootstrap request from \(peerIdentity.name)")
             let responseResult = try await makeBootstrapResponse(
                 for: bootstrap,

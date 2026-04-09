@@ -66,7 +66,7 @@ struct QualityTestWaiterTests {
         let heartbeatPing = Task {
             try await service.sendPingAndAwaitPong(sendPing: sendPing)
         }
-        try await Task.sleep(for: .milliseconds(5))
+        try await waitForPingRequestToStart(on: service, sendCounter: sendCounter)
 
         let rttTask = Task {
             try await service.measureRTT(sendPing: sendPing)
@@ -290,4 +290,20 @@ struct QualityTestWaiterTests {
 @MainActor
 private final class PingSendCounter {
     var value = 0
+}
+
+@MainActor
+private func waitForPingRequestToStart(
+    on service: MirageClientService,
+    sendCounter: PingSendCounter,
+    timeout: Duration = .seconds(1)
+) async throws {
+    let deadline = ContinuousClock.now + timeout
+    while ContinuousClock.now < deadline {
+        if !service.pingContinuations.isEmpty, sendCounter.value == 1 {
+            return
+        }
+        try await Task.sleep(for: .milliseconds(1))
+    }
+    Issue.record("Timed out waiting for an in-flight ping request to start")
 }

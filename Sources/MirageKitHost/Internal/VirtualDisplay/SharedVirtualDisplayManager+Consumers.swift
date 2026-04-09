@@ -12,6 +12,15 @@ import MirageKit
 import CoreGraphics
 import Foundation
 
+enum SharedDisplayMissingUpdateDecision: Equatable {
+    case requiresRecreation
+    case recreateNow
+}
+
+func sharedDisplayMissingUpdateDecision(allowRecreation: Bool) -> SharedDisplayMissingUpdateDecision {
+    allowRecreation ? .recreateNow : .requiresRecreation
+}
+
 extension SharedVirtualDisplayManager {
     // MARK: - Consumer-Based Acquisition (for non-stream consumers)
 
@@ -397,16 +406,6 @@ extension SharedVirtualDisplayManager {
             )
         }
 
-        guard let display = sharedDisplay else {
-            MirageLogger.error(.host, "Cannot update resolution: no active display")
-            return DisplayResolutionUpdateResult(
-                outcome: .noChange,
-                usedCachedResizeTarget: false,
-                generationChanged: false
-            )
-        }
-        let previousGeneration = display.generation
-
         let requestedColorSpace = existingInfo.colorSpace
         activeConsumers[consumer] = ClientDisplayInfo(
             resolution: newResolution,
@@ -414,6 +413,40 @@ extension SharedVirtualDisplayManager {
             colorSpace: requestedColorSpace,
             acquiredAt: existingInfo.acquiredAt
         )
+
+        guard let display = sharedDisplay else {
+            switch sharedDisplayMissingUpdateDecision(allowRecreation: allowRecreation) {
+            case .requiresRecreation:
+                MirageLogger.host(
+                    "Shared display missing during resolution update for \(consumer); recreation required"
+                )
+                return DisplayResolutionUpdateResult(
+                    outcome: .requiresRecreation,
+                    usedCachedResizeTarget: false,
+                    generationChanged: false
+                )
+            case .recreateNow:
+                MirageLogger.host(
+                    "Shared display missing during resolution update for \(consumer); recreating from requested state"
+                )
+                let usedCachedResizeTarget = try await recreateSharedDisplayForResolutionChange(
+                    consumer: consumer,
+                    newResolution: newResolution,
+                    refreshRate: refreshRate,
+                    colorSpace: requestedColorSpace,
+                    resizeRequest: resizeRequest
+                )
+                if let updatedDisplay = sharedDisplay {
+                    syncActiveConsumerColorSpace(consumer, to: updatedDisplay.colorSpace)
+                }
+                return DisplayResolutionUpdateResult(
+                    outcome: .recreated,
+                    usedCachedResizeTarget: usedCachedResizeTarget,
+                    generationChanged: true
+                )
+            }
+        }
+        let previousGeneration = display.generation
 
         // Check for color space mismatch - requires recreation
         if display.colorSpace != requestedColorSpace {

@@ -64,7 +64,6 @@ public extension MirageClientService {
             audioConfiguration: resolvedAudioConfiguration,
             dataPort: nil,
             useHostResolution: useHostResolution ? true : nil,
-            maxRefreshRate: getScreenMaxRefreshRate(),
             mediaMaxPacketSize: resolvedRequestedMediaMaxPacketSize()
         )
 
@@ -94,7 +93,7 @@ public extension MirageClientService {
             audioConfiguration: encoderRequest.audioConfiguration,
             dataPort: encoderRequest.dataPort,
             useHostResolution: encoderRequest.useHostResolution,
-            maxRefreshRate: encoderRequest.maxRefreshRate
+            mediaMaxPacketSize: encoderRequest.mediaMaxPacketSize
         )
         request.keyFrameInterval = encoderRequest.keyFrameInterval
         request.captureQueueDepth = encoderRequest.captureQueueDepth
@@ -111,7 +110,6 @@ public extension MirageClientService {
         request.bitrateAdaptationCeiling = bitrateSemantics.bitrateAdaptationCeilingBps
         request.encoderMaxWidth = encoderRequest.encoderMaxWidth
         request.encoderMaxHeight = encoderRequest.encoderMaxHeight
-        request.mediaMaxPacketSize = encoderRequest.mediaMaxPacketSize
         request.upscalingMode = encoderRequest.upscalingMode
         request.codec = encoderRequest.codec
         pendingDesktopRequestedColorDepth = request.colorDepth

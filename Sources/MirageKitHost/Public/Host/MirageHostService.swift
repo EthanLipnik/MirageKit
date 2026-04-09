@@ -688,7 +688,7 @@ public final class MirageHostService {
             return nil
         }
 
-        return String(cString: buffer).trimmingCharacters(in: .whitespacesAndNewlines)
+        return String.mirageDecodedCString(buffer).trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private static func detectSupportedColorDepths() -> [MirageStreamColorDepth] {
@@ -1504,16 +1504,59 @@ public final class MirageHostService {
         )
     }
 
+    nonisolated static func resolvedDesktopPrimaryPhysicalDisplaySnapshot(
+        cachedDisplayID: CGDirectDisplayID?,
+        cachedBounds: CGRect?,
+        resolvedPrimaryDisplayID: CGDirectDisplayID?,
+        mainDisplayID: CGDirectDisplayID,
+        boundsProvider: (CGDirectDisplayID) -> CGRect
+    ) -> (displayID: CGDirectDisplayID, bounds: CGRect?) {
+        var candidateDisplayIDs: [CGDirectDisplayID] = []
+
+        func appendCandidate(_ displayID: CGDirectDisplayID?) {
+            guard let displayID else { return }
+            guard !candidateDisplayIDs.contains(displayID) else { return }
+            candidateDisplayIDs.append(displayID)
+        }
+
+        appendCandidate(cachedDisplayID)
+        appendCandidate(resolvedPrimaryDisplayID)
+        appendCandidate(mainDisplayID)
+
+        for displayID in candidateDisplayIDs {
+            let bounds = boundsProvider(displayID)
+            if bounds.width > 0, bounds.height > 0 {
+                return (displayID, bounds)
+            }
+        }
+
+        let fallbackBounds: CGRect? = if let cachedBounds,
+                                         cachedBounds.width > 0,
+                                         cachedBounds.height > 0 {
+            cachedBounds
+        } else {
+            nil
+        }
+
+        return (candidateDisplayIDs.first ?? mainDisplayID, fallbackBounds)
+    }
+
     /// Refresh cached physical display bounds after mirroring changes.
     /// Returns the updated physical bounds.
     func refreshDesktopPrimaryPhysicalBounds() -> CGRect {
-        let displayID = desktopPrimaryPhysicalDisplayID
-            ?? resolvePrimaryPhysicalDisplayID()
-            ?? CGMainDisplayID()
-        desktopPrimaryPhysicalDisplayID = displayID
-        let bounds = CGDisplayBounds(displayID)
-        desktopPrimaryPhysicalBounds = bounds
-        return bounds
+        let snapshot = Self.resolvedDesktopPrimaryPhysicalDisplaySnapshot(
+            cachedDisplayID: desktopPrimaryPhysicalDisplayID,
+            cachedBounds: desktopPrimaryPhysicalBounds,
+            resolvedPrimaryDisplayID: resolvePrimaryPhysicalDisplayID(),
+            mainDisplayID: CGMainDisplayID(),
+            boundsProvider: { CGDisplayBounds($0) }
+        )
+        desktopPrimaryPhysicalDisplayID = snapshot.displayID
+        if let bounds = snapshot.bounds {
+            desktopPrimaryPhysicalBounds = bounds
+            return bounds
+        }
+        return desktopPrimaryPhysicalBounds ?? .zero
     }
 
     // Start hosting and advertising

@@ -10,6 +10,29 @@ import CoreGraphics
 enum LockedCursorPositionResolver {
     private static let speculativeExtendedBoundsAllowance: CGFloat = 0.02
 
+    static func applyRelativeDelta(
+        currentPosition: CGPoint,
+        deltaX: CGFloat,
+        deltaY: CGFloat,
+        normalizationSize: CGSize,
+        allowsExtendedBounds: Bool,
+        confirmedHostPosition: CGPoint? = nil
+    ) -> CGPoint {
+        guard normalizationSize.width > 0, normalizationSize.height > 0 else {
+            return currentPosition
+        }
+
+        let proposedPosition = CGPoint(
+            x: currentPosition.x + deltaX / normalizationSize.width,
+            y: currentPosition.y + deltaY / normalizationSize.height
+        )
+        return resolve(
+            proposedPosition,
+            allowsExtendedBounds: allowsExtendedBounds,
+            confirmedHostPosition: confirmedHostPosition
+        )
+    }
+
     static func resolve(
         _ position: CGPoint,
         allowsExtendedBounds: Bool,

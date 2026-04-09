@@ -298,7 +298,6 @@ struct MirageKitTests {
     func selectAppMessageMaxVisibleSlotsSerialization() throws {
         let request = SelectAppMessage(
             bundleIdentifier: "com.apple.mail",
-            maxRefreshRate: 120,
             maxConcurrentVisibleWindows: 8
         )
         let envelope = try ControlMessage(type: .selectApp, content: request)
@@ -328,33 +327,6 @@ struct MirageKitTests {
         #expect(decoded.forceIconReset)
         #expect(decoded.priorityBundleIdentifiers == ["com.apple.mail", "com.apple.safari"])
         #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000123")
-    }
-
-    @Test("App list request decoding defaults missing optional protocol fields")
-    func appListRequestDecodingDefaultsForMissingFields() throws {
-        let legacyPayload = Data(#"{"forceRefresh":true}"#.utf8)
-        let envelope = ControlMessage(type: .appListRequest, payload: legacyPayload)
-        let decoded = try envelope.decode(AppListRequestMessage.self)
-
-        #expect(decoded.forceRefresh)
-        #expect(decoded.forceIconReset == false)
-        #expect(decoded.priorityBundleIdentifiers.isEmpty)
-        #expect(decoded.requestID.uuidString.count == 36)
-    }
-
-    @Test("App list request decoding tolerates invalid new-field types")
-    func appListRequestDecodingToleratesTypeMismatch() throws {
-        let payload = Data(
-            #"{"forceRefresh":true,"forceIconReset":"true","priorityBundleIdentifiers":"com.apple.mail","requestID":"00000000-0000-0000-0000-000000000abc"}"#
-                .utf8
-        )
-        let envelope = ControlMessage(type: .appListRequest, payload: payload)
-        let decoded = try envelope.decode(AppListRequestMessage.self)
-
-        #expect(decoded.forceRefresh)
-        #expect(decoded.forceIconReset == false)
-        #expect(decoded.priorityBundleIdentifiers.isEmpty)
-        #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000abc")
     }
 
     @Test("Metadata app list and icon stream messages serialize")
@@ -598,8 +570,7 @@ struct MirageKitTests {
             lowLatencyHighResolutionCompressionBoost: false,
             disableResolutionCap: true,
             streamScale: 1.0,
-            audioConfiguration: .default,
-            maxRefreshRate: 60
+            audioConfiguration: .default
         )
 
         let envelope = try ControlMessage(type: .startStream, content: request)
@@ -620,7 +591,6 @@ struct MirageKitTests {
             scaleFactor: 2.0,
             displayWidth: 1920,
             displayHeight: 1200,
-            maxRefreshRate: 120,
             keyFrameInterval: 1800,
             captureQueueDepth: 4,
             colorDepth: .pro,
@@ -639,7 +609,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.performanceMode == .game)
-        #expect(decoded.maxRefreshRate == 120)
         #expect(decoded.colorDepth == .pro)
         #expect(decoded.lowLatencyHighResolutionCompressionBoost == true)
     }
@@ -658,7 +627,6 @@ struct MirageKitTests {
         let startStream = StartStreamMessage(
             windowID: 12,
             dataPort: 5000,
-            maxRefreshRate: 60,
             mediaMaxPacketSize: 1400
         )
         let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
@@ -668,7 +636,6 @@ struct MirageKitTests {
 
         let selectApp = SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
-            maxRefreshRate: 120,
             maxConcurrentVisibleWindows: 2,
             mediaMaxPacketSize: 1400
         )
@@ -681,7 +648,6 @@ struct MirageKitTests {
             scaleFactor: nil,
             displayWidth: 3008,
             displayHeight: 1692,
-            maxRefreshRate: 60,
             mediaMaxPacketSize: 1200
         )
         let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
@@ -889,8 +855,7 @@ struct MirageKitTests {
             disableResolutionCap: true,
             streamScale: 1.0,
             audioConfiguration: .default,
-            dataPort: 63220,
-            maxRefreshRate: 60
+            dataPort: 63220
         )
 
         let envelope = try ControlMessage(type: .startDesktopStream, content: request)
@@ -917,8 +882,7 @@ struct MirageKitTests {
                 lockClientCursorWhenUsingHostCursor: false
             ),
             audioConfiguration: .default,
-            dataPort: 63220,
-            maxRefreshRate: 120
+            dataPort: 63220
         )
 
         let envelope = try ControlMessage(type: .startDesktopStream, content: request)
@@ -952,10 +916,7 @@ struct MirageKitTests {
 
     @Test("Start stream request omits performance mode when unset")
     func startStreamPerformanceModeDefaultSerialization() throws {
-        let request = StartStreamMessage(
-            windowID: 11,
-            maxRefreshRate: 60
-        )
+        let request = StartStreamMessage(windowID: 11)
 
         let envelope = try ControlMessage(type: .startStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
