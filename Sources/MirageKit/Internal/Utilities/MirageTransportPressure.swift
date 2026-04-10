@@ -113,6 +113,14 @@ package struct MirageTransportPressureAssessment: Sendable, Equatable {
         !primaryStress && advisoryDelayStress
     }
 
+    package var isPacerOnlyStress: Bool {
+        packetPacerStress &&
+            !queueStress &&
+            !packetBudgetStress &&
+            !transportDropStress &&
+            !deliveryStress
+    }
+
     package var reasonTokens: [String] {
         var tokens: [String] = []
         if queueStress { tokens.append("queue") }

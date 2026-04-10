@@ -71,6 +71,8 @@ extension StreamContext {
         }
         activePixelFormat = await encoder.getActivePixelFormat()
         shouldEncodeFrames = false
+        startupFrameCachingEnabled = true
+        cachedStartupFrame = nil
         MirageLogger.stream("Waiting for UDP registration before encoding")
     }
 
@@ -210,6 +212,50 @@ extension StreamContext {
             return true
         }
         return engine
+    }
+
+    func waitForDisplayStartupReadiness(
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(50)
+    ) async -> DisplayCaptureStartupReadiness {
+        guard captureMode == .display, let captureEngine else { return .noScreenSamples }
+        return await captureEngine.waitForDisplayStartupReadiness(
+            timeout: timeout,
+            pollInterval: pollInterval
+        )
+    }
+
+    func restartDisplayCaptureForStartupRecovery(reason: String) async {
+        guard captureMode == .display else { return }
+        await captureEngine?.restartCapture(reason: reason)
+    }
+
+    func hasObservedDisplayStartupSample() async -> Bool {
+        guard captureMode == .display, let captureEngine else { return false }
+        return await captureEngine.hasObservedDisplayStartupSample()
+    }
+
+    func hasCachedStartupFrame() -> Bool {
+        cachedStartupFrame != nil
+    }
+
+    func seedDisplayStartupFrameIfNeeded() async -> Bool {
+        guard captureMode == .display,
+              startupFrameCachingEnabled,
+              cachedStartupFrame == nil,
+              let captureEngine else {
+            return cachedStartupFrame != nil
+        }
+
+        guard let seededFrame = await captureEngine.captureDisplayStartupSeedFrame() else {
+            return false
+        }
+
+        cachedStartupFrame = seededFrame
+        MirageLogger.stream(
+            "Cached screenshot startup frame for stream \(streamID) pending first live display sample"
+        )
+        return true
     }
 }
 #endif

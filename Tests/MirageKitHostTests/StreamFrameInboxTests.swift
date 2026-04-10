@@ -44,6 +44,18 @@ struct StreamFrameInboxTests {
         #expect(inbox.pendingCount() == 0)
     }
 
+    @Test("Enqueue marks the inbox as scheduled until a drain completes")
+    func enqueueMarksScheduledUntilDrainCompletes() throws {
+        let inbox = StreamFrameInbox(capacity: 2)
+
+        #expect(inbox.enqueue(try makeFrame(captureTime: 1)) == true)
+        #expect(inbox.scheduleIfNeeded() == false)
+
+        inbox.markDrainComplete()
+
+        #expect(inbox.scheduleIfNeeded() == true)
+    }
+
     private func makeFrame(captureTime: CFAbsoluteTime) throws -> CapturedFrame {
         let buffer = try #require(makePixelBuffer())
         return CapturedFrame(

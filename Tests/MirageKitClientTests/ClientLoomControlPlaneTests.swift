@@ -301,6 +301,65 @@ struct ClientLoomControlPlaneTests {
     }
 
     @MainActor
+    @Test("Bootstrap rejection is delivered before the control stream closes")
+    func bootstrapRejectionIsDeliveredBeforeControlStreamCloses() async throws {
+        let pair = try await makeLoopbackControlPair()
+
+        async let clientContext = pair.client.start(
+            localHello: pair.clientHello,
+            identityManager: pair.clientIdentityManager
+        )
+        async let serverContext = pair.server.start(
+            localHello: pair.serverHello,
+            identityManager: pair.serverIdentityManager,
+            trustProvider: pair.serverTrustProvider
+        )
+        _ = try await (clientContext, serverContext)
+
+        let serverControlTask = Task {
+            try await MirageControlChannel.accept(from: pair.server)
+        }
+        let clientControl = try await MirageControlChannel.open(on: pair.client)
+        let serverControl = try await serverControlTask.value
+        let service = MirageClientService(deviceName: "Loopback Client")
+
+        do {
+            let rejection = MirageSessionBootstrapResponse(
+                accepted: false,
+                hostID: UUID(),
+                hostName: "Loopback Host",
+                selectedFeatures: [],
+                mediaEncryptionEnabled: false,
+                udpRegistrationToken: Data(),
+                rejectionReason: .hostBusy
+            )
+            try await serverControl.send(.sessionBootstrapResponse, content: rejection)
+            try await serverControl.closeStream()
+
+            let responseEnvelope = try await service.receiveSingleControlMessage(
+                from: clientControl.incomingBytes,
+                timeout: .seconds(1),
+                timeoutMessage: "Timed out waiting for host bootstrap response from Loopback Host"
+            )
+            #expect(responseEnvelope.type == .sessionBootstrapResponse)
+            let response = try responseEnvelope.decode(MirageSessionBootstrapResponse.self)
+            #expect(response.accepted == false)
+            #expect(response.rejectionReason == .hostBusy)
+            #expect(await pair.client.state == .ready)
+            #expect(await pair.server.state == .ready)
+        } catch {
+            await clientControl.cancel()
+            await serverControl.cancel()
+            await pair.stop()
+            throw error
+        }
+
+        await clientControl.cancel()
+        await serverControl.cancel()
+        await pair.stop()
+    }
+
+    @MainActor
     @Test("TCP fallback sessions keep control traffic and labeled media streams coherent")
     func tcpFallbackSessionKeepsControlAndMediaTrafficCoherent() async throws {
         let pair = try await makeLoopbackControlPair()

@@ -117,6 +117,7 @@ extension MirageClientService {
             installControlSessionObservers(session)
             startMediaStreamListener()
             startReceiving()
+            fastPathState.resetInboundActivity(now: CFAbsoluteTimeGetCurrent())
             finishConnectAttempt(attemptID)
             armConnectionStartupIdleRelease()
 
@@ -199,6 +200,7 @@ extension MirageClientService {
             installControlSessionObservers(session)
             startMediaStreamListener()
             startReceiving()
+            fastPathState.resetInboundActivity(now: CFAbsoluteTimeGetCurrent())
             finishConnectAttempt(attemptID)
             armConnectionStartupIdleRelease()
 
@@ -314,6 +316,7 @@ extension MirageClientService {
         receiveBuffer = Data()
         stopRegistrationRefreshLoop()
         stopHeartbeat()
+        fastPathState.resetInboundActivity()
         connectedHost = nil
         availableWindows = []
         hasReceivedWindowList = false
@@ -577,12 +580,19 @@ extension MirageClientService {
         bootstrapProgressTracker: ConnectSessionBootstrapProgressTracker
     ) async throws -> LoomAuthenticatedSession {
         let timeoutError = MirageError.timeout
+        var connectResultTask: Task<Void, Never>?
+        var timeoutMonitorTask: Task<Void, Never>?
+
+        defer {
+            connectResultTask?.cancel()
+            timeoutMonitorTask?.cancel()
+        }
 
         do {
             return try await withCheckedThrowingContinuation { continuation in
                 let box = ConnectSessionContinuationBox(continuation)
 
-                Task {
+                connectResultTask = Task {
                     do {
                         let session = try await connectTask.value
                         await box.resume(returning: session)
@@ -591,7 +601,9 @@ extension MirageClientService {
                     }
                 }
 
-                Task { [timeout, timeoutError] in
+                // Cancel the watchdog loop as soon as this race resolves so
+                // repeated fallback attempts do not accumulate idle timers.
+                timeoutMonitorTask = Task { [timeout, timeoutError] in
                     let absoluteTimeout = absoluteControlSessionConnectTimeout(for: attempt)
                     let trustPendingTimeout = max(
                         absoluteTimeout,

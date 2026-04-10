@@ -1394,6 +1394,14 @@ public final class MirageHostService {
         )
     }
 
+    nonisolated static func resolvedDesktopCursorStartPoint(
+        inputBounds: CGRect
+    )
+    -> CGPoint? {
+        guard inputBounds.width > 0, inputBounds.height > 0 else { return nil }
+        return CGPoint(x: inputBounds.midX, y: inputBounds.midY)
+    }
+
     nonisolated static func cocoaRect(fromCGDisplayRect cgRect: CGRect, primaryHeight: CGFloat) -> CGRect {
         CGRect(
             x: cgRect.origin.x,
@@ -1420,6 +1428,17 @@ public final class MirageHostService {
 
     func setRemoteControlPort(_ port: UInt16?) {
         remoteControlPort = port
+    }
+
+    func recenterDesktopCursorAfterVirtualDisplaySetup(
+        inputBounds: CGRect,
+        reason: String
+    ) {
+        guard let point = Self.resolvedDesktopCursorStartPoint(inputBounds: inputBounds) else { return }
+        CGWarpMouseCursorPosition(point)
+        MirageLogger.host(
+            "Desktop cursor recentered after virtual display setup reason=\(reason) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
+        )
     }
 
     /// Resolve the current virtual display bounds for secondary desktop streaming.

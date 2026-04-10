@@ -438,7 +438,6 @@ extension MirageClientService {
                 if let controller = controllersByStream[streamID] {
                     await controller.stop()
                     controllersByStream.removeValue(forKey: streamID)
-                    heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
                 }
                 await updateReassemblerSnapshot()
                 await refreshSharedClipboardBridgeState()
@@ -449,7 +448,9 @@ extension MirageClientService {
     func handleStreamMetricsUpdate(_ message: ControlMessage) {
         if let metrics = try? message.decode(StreamMetricsMessage.self) {
             if let controller = controllersByStream[metrics.streamID] {
+                let hostCadencePressureSample = HostCadencePressureDiagnosticSample(metrics: metrics)
                 Task {
+                    await controller.updateHostCadencePressureSample(hostCadencePressureSample)
                     await controller.updateDecodeSubmissionLimit(targetFrameRate: metrics.targetFrameRate)
                 }
             }

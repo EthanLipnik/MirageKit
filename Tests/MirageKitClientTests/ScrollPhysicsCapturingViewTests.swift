@@ -104,6 +104,32 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Passive hover only emits movement after actual pointer motion")
+    func passiveHoverRequiresActualPointerMotion() {
+        #expect(
+            !InputCapturingView.shouldEmitPassiveHoverMove(
+                pointerMoved: false,
+                isDragging: false
+            )
+        )
+        #expect(
+            InputCapturingView.shouldEmitPassiveHoverMove(
+                pointerMoved: true,
+                isDragging: false
+            )
+        )
+    }
+
+    @Test("Passive hover does not emit movement while a drag gesture owns the pointer")
+    func passiveHoverSkipsWhileDragging() {
+        #expect(
+            !InputCapturingView.shouldEmitPassiveHoverMove(
+                pointerMoved: true,
+                isDragging: true
+            )
+        )
+    }
+
     @Test("Virtual cursor scroll reanchors to the swipe location")
     func virtualCursorScrollReanchorsToTheSwipeLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

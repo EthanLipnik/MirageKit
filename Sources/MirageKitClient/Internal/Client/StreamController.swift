@@ -372,6 +372,8 @@ actor StreamController {
     var decodeSubmissionHealthyStreak: Int = 0
     var currentDecodeSubmissionLimit: Int = 2
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
+    var lastSourceBoundDiagnosticSignature: String?
+    var latestHostCadencePressureSample: HostCadencePressureDiagnosticSample?
     var presentationTier: StreamPresentationTier = .activeLive
     var isRunning = false
     var isStopping = false
@@ -1070,6 +1072,7 @@ actor StreamController {
             decodeSubmissionBaselineLimit = 1
             decodeSchedulerTargetFPS = max(1, decodeSchedulerTargetFPS)
             lastDecodeSubmissionConstraintWasSourceBound = nil
+            lastSourceBoundDiagnosticSignature = nil
             if currentDecodeSubmissionLimit != 1 {
                 currentDecodeSubmissionLimit = 1
                 await decoder.setDecodeSubmissionLimit(limit: 1, reason: "passive tier fixed submission")
@@ -1083,6 +1086,7 @@ actor StreamController {
         let decodeGap = max(0.0, receivedFPS - decodedFPS)
         let sourceBound = receivedFPS > 0 && decodeGap <= Self.decodeSubmissionSourceBoundGapFPS
         let decodeBound = receivedFPS > 0 && decodeGap >= Self.decodeSubmissionDecodeBoundGapFPS
+        let hostCadencePressure = hostCadencePressureDiagnostic(sample: latestHostCadencePressureSample)
 
         if ratio < Self.decodeSubmissionStressThreshold {
             if decodeBound {
@@ -1094,18 +1098,27 @@ actor StreamController {
                     )
                 }
                 lastDecodeSubmissionConstraintWasSourceBound = false
+                lastSourceBoundDiagnosticSignature = nil
                 decodeSubmissionStressStreak += 1
                 decodeSubmissionHealthyStreak = 0
             } else {
-                if sourceBound, lastDecodeSubmissionConstraintWasSourceBound != true {
-                    let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))
-                    let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
+                let sourceDiagnosticSignature = hostCadencePressure?.signature ?? "generic-source-bound"
+                if sourceBound,
+                   lastDecodeSubmissionConstraintWasSourceBound != true ||
+                   lastSourceBoundDiagnosticSignature != sourceDiagnosticSignature {
                     MirageLogger.client(
-                        "Decode submission stress classified as source-bound (decoded \(decodedText)fps, received \(receivedText)fps, target \(targetFPS)fps)"
+                        sourceBoundDecodeSubmissionDiagnosticMessage(
+                            decodedFPS: decodedFPS,
+                            receivedFPS: receivedFPS,
+                            targetFPS: targetFPS,
+                            hostCadencePressure: hostCadencePressure
+                        )
                     )
                     lastDecodeSubmissionConstraintWasSourceBound = true
+                    lastSourceBoundDiagnosticSignature = sourceDiagnosticSignature
                 } else if !sourceBound {
                     lastDecodeSubmissionConstraintWasSourceBound = nil
+                    lastSourceBoundDiagnosticSignature = nil
                 }
                 decodeSubmissionStressStreak = 0
                 decodeSubmissionHealthyStreak = 0
@@ -1114,10 +1127,12 @@ actor StreamController {
             decodeSubmissionHealthyStreak += 1
             decodeSubmissionStressStreak = 0
             lastDecodeSubmissionConstraintWasSourceBound = nil
+            lastSourceBoundDiagnosticSignature = nil
         } else {
             decodeSubmissionStressStreak = 0
             decodeSubmissionHealthyStreak = 0
             lastDecodeSubmissionConstraintWasSourceBound = nil
+            lastSourceBoundDiagnosticSignature = nil
         }
 
         if currentDecodeSubmissionLimit < stressLimit,

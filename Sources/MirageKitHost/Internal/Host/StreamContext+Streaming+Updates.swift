@@ -935,9 +935,44 @@ extension StreamContext {
             noteLoss: true
         )
 
+        let releaseDisposition = startupFrameReleaseDisposition(
+            hasCachedFrame: cachedStartupFrame != nil,
+            hasQueuedFrame: frameInbox.hasPending()
+        )
+        let cachedStartupFrame = self.cachedStartupFrame
+        self.cachedStartupFrame = nil
+        startupFrameCachingEnabled = false
+        var requiresExplicitDrainKick = frameInbox.hasPending()
+        switch releaseDisposition {
+        case .injectCachedFrame:
+            if let cachedStartupFrame {
+                let injectedFrame = CapturedFrame(
+                    pixelBuffer: cachedStartupFrame.pixelBuffer,
+                    presentationTime: cachedStartupFrame.presentationTime,
+                    duration: cachedStartupFrame.duration,
+                    captureTime: cachedStartupFrame.captureTime,
+                    info: resolvedStartupFrameInjectionInfo(cachedStartupFrame.info)
+                )
+                _ = frameInbox.enqueue(injectedFrame)
+                requiresExplicitDrainKick = true
+                MirageLogger.stream(
+                    "Queued cached pre-registration frame for startup stream \(streamID) idle=\(cachedStartupFrame.info.isIdleFrame)"
+                )
+            }
+        case .none:
+            break
+        }
+
         shouldEncodeFrames = true
         MirageLogger.signpostEvent(.stream, "Startup.EncodingEnabled", "stream=\(streamID)")
         MirageLogger.stream("UDP registration confirmed, encoding resumed")
+        if requiresExplicitDrainKick {
+            // A frame enqueued while startup-gated marks the inbox as scheduled even
+            // though no drain task is running yet. Kick the first drain explicitly.
+            Task(priority: .userInitiated) { await self.processPendingFrames() }
+        } else {
+            scheduleProcessingIfNeeded()
+        }
     }
 
     func stop() async {
@@ -952,6 +987,8 @@ extension StreamContext {
         await captureEngine?.stopCapture()
         captureEngine = nil
         frameInbox.clear()
+        cachedStartupFrame = nil
+        startupFrameCachingEnabled = false
 
         if useVirtualDisplay {
             let expectedOwner: WindowSpaceManager.WindowBindingOwner?

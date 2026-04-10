@@ -95,7 +95,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let fpsGapGrace = max(4.0, targetFPS * 0.08)
         let decodeGapGrace = max(5.0, targetFPS * 0.10)
 
-        let networkBound = transportAssessment.isStress
+        let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress
 
         let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
             (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS)

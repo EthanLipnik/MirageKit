@@ -66,12 +66,21 @@ extension StreamContext {
     }
 
     nonisolated func enqueueCapturedFrame(_ frame: CapturedFrame) {
-        guard shouldEncodeFrames else { return }
+        guard shouldEncodeFrames else {
+            Task(priority: .userInitiated) { await self.handleCapturedFrameWhileStartupGated(frame) }
+            return
+        }
         Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
         if frame.info.isIdleFrame { return }
         if frameInbox.enqueue(frame) {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
         }
+    }
+
+    func handleCapturedFrameWhileStartupGated(_ frame: CapturedFrame) {
+        recordCaptureIngress(frame)
+        guard startupFrameCachingEnabled else { return }
+        cachedStartupFrame = frame
     }
 
     func recordCaptureIngress(_ frame: CapturedFrame) {
@@ -144,6 +153,7 @@ extension StreamContext {
         backpressureActivatedAt = 0
         lastBackpressureRecoveryTime = 0
         lastCapturedFrame = nil
+        cachedStartupFrame = nil
         lastCapturedFrameTime = 0
         lastCapturedDuration = .invalid
         lastEncodedPresentationTime = .invalid
@@ -156,6 +166,7 @@ extension StreamContext {
         if latencyBurstCaptureQueueDepthOverride != nil {
             encoderConfig.captureQueueDepth = preLatencyBurstCaptureQueueDepthOverride
         }
+        startupFrameCachingEnabled = false
         latencyBurstActive = false
         latencyBurstDrainsNewestFrames = false
         latencyBurstCaptureQueueDepthOverride = nil
@@ -1024,6 +1035,25 @@ extension StreamContext {
 
         guard maxInFlightFramesCap > 1 else { return }
         if useLowLatencyPipeline {
+            if usesAdaptiveStandardDesktopLowLatency60HzPolicy {
+                let frameBudgetMs = 1000.0 / Double(max(1, currentFrameRate))
+                let encodeOverBudget = averageEncodeMs > frameBudgetMs * 1.02
+                let desired = if encodeOverBudget || pendingCount > 0 {
+                    min(maxInFlightFramesCap, 2)
+                } else {
+                    1
+                }
+                guard desired != maxInFlightFrames else { return }
+                maxInFlightFrames = desired
+                lastInFlightAdjustmentTime = now
+                await encoder?.updateInFlightLimit(desired)
+                let budgetText = frameBudgetMs.formatted(.number.precision(.fractionLength(1)))
+                let avgText = averageEncodeMs.formatted(.number.precision(.fractionLength(1)))
+                MirageLogger.metrics(
+                    "In-flight depth set to \(desired) (adaptive desktop 60Hz low latency, encode \(avgText)ms, budget \(budgetText)ms, pending=\(pendingCount))"
+                )
+                return
+            }
             let baselineLowLatencyLimit: Int
             if performanceMode == .game {
                 baselineLowLatencyLimit = currentFrameRate >= 120

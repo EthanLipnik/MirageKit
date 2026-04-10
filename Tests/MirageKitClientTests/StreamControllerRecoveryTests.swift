@@ -30,6 +30,19 @@ struct StreamControllerRecoveryTests {
         )
     }
 
+    @Test("Post-resize first-frame watchdog arms in recovery mode")
+    func postResizeFirstFrameWatchdogArmsInRecoveryMode() async {
+        let controller = StreamController(streamID: 90, maxPayloadSize: 1200)
+
+        await controller.beginPostResizeTransition()
+
+        #expect(await controller.awaitingFirstFrameAfterResize)
+        #expect(await controller.awaitingFirstPresentedFrame)
+        #expect(await controller.firstPresentedFrameAwaitMode == .recovery)
+
+        await controller.stop()
+    }
+
     @Test("Post-resize decode admission stays keyframe-only until first frame")
     func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstFrame() {
         let dropDecision = StreamController.postResizeDecodeAdmissionDecision(
@@ -142,6 +155,22 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.currentDecodeSubmissionLimit == 1)
 
         await controller.stop()
+    }
+
+    @Test("Severe forward gap emits dedicated diagnostic without changing timeout handling")
+    func severeForwardGapEmitsDedicatedDiagnostic() {
+        let message = StreamController.frameLossDiagnosticMessage(
+            streamID: 97,
+            reason: .severeForwardGap
+        )
+
+        #expect(message?.contains("short gap-recovery dip") == true)
+        #expect(
+            StreamController.frameLossDiagnosticMessage(
+                streamID: 97,
+                reason: .timeout
+            ) == nil
+        )
     }
 
     @Test("Passive tier frame loss enters keyframe-only mode without requesting keyframe")

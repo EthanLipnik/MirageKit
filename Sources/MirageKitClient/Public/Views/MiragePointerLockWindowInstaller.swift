@@ -95,9 +95,10 @@ private final class MiragePointerLockRootController: UIViewController {
     private func updatePointerLockEvaluation() {
         setNeedsUpdateOfPrefersPointerLocked()
 
-        // Pointer lock acquisition can lag behind the initial preference update
-        // during scene/root-controller transitions. Retry briefly while lock is
-        // requested but not yet resolved so first-use lock remains reliable.
+        // Pointer lock state changes can lag behind preference updates during
+        // scene/root-controller transitions. Retry briefly until UIKit's
+        // actual scene lock state matches the current request so both acquire
+        // and release remain reliable in current-window flows.
         if shouldRetryPointerLockEvaluation {
             startPollIfNeeded()
         } else {
@@ -106,11 +107,11 @@ private final class MiragePointerLockRootController: UIViewController {
     }
 
     private var shouldRetryPointerLockEvaluation: Bool {
-        guard pointerLockRequested else { return false }
-        if GCMouse.mice().isEmpty {
-            return true
-        }
-        return !(view.window?.windowScene?.pointerLockState?.isLocked ?? false)
+        PointerLockRetryPolicy.shouldRetryEvaluation(
+            pointerLockRequested: pointerLockRequested,
+            hasMouse: !GCMouse.mice().isEmpty,
+            isLocked: view.window?.windowScene?.pointerLockState?.isLocked ?? false
+        )
     }
 
     private func startPollIfNeeded() {

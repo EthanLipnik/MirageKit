@@ -26,6 +26,10 @@ extension StreamController {
 
     // MARK: - Private Helpers
 
+    func updateHostCadencePressureSample(_ sample: HostCadencePressureDiagnosticSample?) {
+        latestHostCadencePressureSample = sample
+    }
+
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {
         let awdlActive = awdlExperimentEnabled && kind == .awdl
         guard awdlTransportActive != awdlActive else { return }
@@ -426,6 +430,9 @@ extension StreamController {
     func handleFrameLossSignal(
         reason: FrameReassembler.FrameLossReason = .timeout
     ) async {
+        if let diagnostic = Self.frameLossDiagnosticMessage(streamID: streamID, reason: reason) {
+            MirageLogger.client(diagnostic)
+        }
         if !hasDecodedFirstFrame || !hasPresentedFirstFrame {
             if presentationTier == .activeLive, !awaitingFirstPresentedFrame {
                 await armFirstPresentedFrameAwaiter(reason: "frame-loss-bootstrap")
@@ -465,6 +472,14 @@ extension StreamController {
         MirageLogger.client(
             "Frame loss detected for stream \(streamID) reason=\(reason.rawValue); waiting for natural keyframe or decode error"
         )
+    }
+
+    nonisolated static func frameLossDiagnosticMessage(
+        streamID: StreamID,
+        reason: FrameReassembler.FrameLossReason
+    ) -> String? {
+        guard reason == .severeForwardGap else { return nil }
+        return "Severe forward gap recovery fired for stream \(streamID); treating this as a short gap-recovery dip rather than a sustained host cadence collapse"
     }
 
     func requestKeyframeRecovery(reason: RecoveryReason) async {

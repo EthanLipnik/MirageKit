@@ -179,6 +179,95 @@ actor WindowCaptureEngine {
         streamOutput?.telemetrySnapshot()
     }
 
+    func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
+        guard captureMode == .display else { return .noScreenSamples }
+        return streamOutput?.displayStartupReadiness() ?? .noScreenSamples
+    }
+
+    func hasObservedDisplayStartupSample() -> Bool {
+        guard captureMode == .display else { return false }
+        return streamOutput?.hasObservedDisplayStartupSample() ?? false
+    }
+
+    func waitForDisplayStartupReadiness(
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(50)
+    ) async -> DisplayCaptureStartupReadiness {
+        let deadline = ContinuousClock.now + timeout
+        while !Task.isCancelled {
+            let readiness = displayStartupReadiness()
+            switch readiness {
+            case .usableFrameSeen, .idleFrameSeen:
+                return readiness
+            case .blankOrSuspendedOnly, .noScreenSamples:
+                break
+            }
+            guard ContinuousClock.now < deadline else { return readiness }
+            try? await Task.sleep(for: pollInterval)
+        }
+        return displayStartupReadiness()
+    }
+
+    func captureDisplayStartupSeedFrame() async -> CapturedFrame? {
+        guard captureMode == .display,
+              let config = captureSessionConfig else {
+            return nil
+        }
+
+        let width = max(1, currentWidth)
+        let height = max(1, currentHeight)
+        let filter = SCContentFilter(display: config.display, excludingWindows: config.excludedWindows)
+        let screenshotConfiguration = SCStreamConfiguration()
+        screenshotConfiguration.width = width
+        screenshotConfiguration.height = height
+        screenshotConfiguration.showsCursor = config.showsCursor
+        screenshotConfiguration.colorSpaceName = captureColorSpaceName
+        if let sourceRect = config.sourceRect, !sourceRect.isEmpty {
+            screenshotConfiguration.sourceRect = sourceRect
+        }
+
+        let image: CGImage? = try? await withCheckedThrowingContinuation { (
+            continuation: CheckedContinuation<CGImage, Error>
+        ) in
+            SCScreenshotManager.captureImage(
+                contentFilter: filter,
+                configuration: screenshotConfiguration
+            ) { image, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+                guard let image else {
+                    continuation.resume(
+                        throwing: MirageError.protocolError(
+                            "Display startup screenshot capture returned no image"
+                        )
+                    )
+                    return
+                }
+                continuation.resume(returning: image)
+            }
+        }
+        guard let image else {
+            return nil
+        }
+
+        let frame = DisplayStartupFrameSeeder.makeCapturedFrame(
+            from: image,
+            targetWidth: width,
+            targetHeight: height,
+            pixelFormatType: pixelFormatType,
+            colorSpace: configuration.colorSpace,
+            frameRate: currentFrameRate
+        )
+        if frame != nil {
+            MirageLogger.capture(
+                "Display startup screenshot seed captured for display \(config.displayID) at \(width)x\(height)"
+            )
+        }
+        return frame
+    }
+
     nonisolated func enqueueKeyframeRequest(_ reason: CaptureStreamOutput.KeyframeRequestReason) {
         Task(priority: .userInitiated) {
             await self.markKeyframeRequested(reason: reason)

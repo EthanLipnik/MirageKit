@@ -164,6 +164,31 @@ extension InputCapturingView {
         return result
     }
 
+    static func resolvedHardwareKeyModifiers(
+        reportedModifiers: MirageModifierFlags?,
+        trackedModifiers: MirageModifierFlags
+    ) -> MirageModifierFlags {
+        guard let reportedModifiers else { return trackedModifiers }
+        return trackedModifiers.union(reportedModifiers)
+    }
+
+    private func resolvedHardwareKeyModifiers(
+        from event: UIPressesEvent?,
+        fallbackFlags: UIKeyModifierFlags?
+    ) -> MirageModifierFlags {
+        let reportedModifiers = modifierSnapshot(
+            from: event,
+            fallbackFlags: fallbackFlags,
+            allowFallback: true
+        )
+        .map(MirageModifierFlags.init(uiKeyModifierFlags:))
+
+        return Self.resolvedHardwareKeyModifiers(
+            reportedModifiers: reportedModifiers,
+            trackedModifiers: keyboardModifiers
+        )
+    }
+
     private func clientShortcut(
         keyCode: UInt16,
         modifiers: MirageModifierFlags
@@ -173,16 +198,6 @@ extension InputCapturingView {
                 MirageClientShortcut.normalizedShortcutModifiers(shortcut.modifiers) ==
                 MirageClientShortcut.normalizedShortcutModifiers(modifiers)
         }
-    }
-
-    private func clientShortcut(
-        for keyCode: UIKeyboardHIDUsage,
-        modifierFlags: UIKeyModifierFlags?
-    ) -> MirageClientShortcut? {
-        let fallbackModifiers = modifierFlags.map(MirageModifierFlags.init(uiKeyModifierFlags:))
-        let eventModifiers = fallbackModifiers ?? keyboardModifiers
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(keyCode)
-        return clientShortcut(keyCode: macKeyCode, modifiers: eventModifiers)
     }
 
     private func clientShortcut(
@@ -206,16 +221,6 @@ extension InputCapturingView {
             return binding.keyCode == keyCode &&
                 MirageClientShortcutBinding.normalizedModifiers(binding.modifiers) == normalized
         }
-    }
-
-    private func matchingAction(
-        for keyCode: UIKeyboardHIDUsage,
-        modifierFlags: UIKeyModifierFlags?
-    ) -> MirageAction? {
-        let fallbackModifiers = modifierFlags.map(MirageModifierFlags.init(uiKeyModifierFlags:))
-        let eventModifiers = fallbackModifiers ?? keyboardModifiers
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(keyCode)
-        return matchingAction(keyCode: macKeyCode, modifiers: eventModifiers)
     }
 
     private func performAction(
@@ -267,19 +272,6 @@ extension InputCapturingView {
         return onInputEvent != nil
     }
 
-    private func interceptedShortcut(
-        for keyCode: UIKeyboardHIDUsage,
-        modifierFlags: UIKeyModifierFlags?
-    ) -> MirageInterceptedShortcut? {
-        let fallbackModifiers = modifierFlags.map(MirageModifierFlags.init(uiKeyModifierFlags:))
-        let eventModifiers = fallbackModifiers ?? keyboardModifiers
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(keyCode)
-        return MirageInterceptedShortcutPolicy.shortcut(
-            keyCode: macKeyCode,
-            modifiers: eventModifiers
-        )
-    }
-
     override public func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
         updateHardwareKeyboardPresence(true)
         let hardwareAvailable = refreshModifiersForInput()
@@ -289,16 +281,21 @@ extension InputCapturingView {
             guard let key = press.key else { continue }
             let isCapsLockKey = key.keyCode == .keyboardCapsLock
             let fallbackFlags = key.modifierFlags
+            let resolvedModifiers = resolvedHardwareKeyModifiers(
+                from: event,
+                fallbackFlags: fallbackFlags
+            )
+            let normalizedResolvedShortcutModifiers = MirageClientShortcut
+                .normalizedShortcutModifiers(resolvedModifiers)
 
             // Escape without modifiers clears any stuck modifier state as a recovery mechanism
             if key.keyCode == .keyboardEscape {
-                let flags = modifierSnapshot(from: event, fallbackFlags: fallbackFlags, allowFallback: true) ?? []
-                if flags.isEmpty, requestCursorLockEscapeIfNeeded() {
+                if normalizedResolvedShortcutModifiers.isEmpty, requestCursorLockEscapeIfNeeded() {
                     resetAllModifiers()
                     suppressEscapeKeyUpForCursorUnlock = true
                     continue
                 }
-                if flags.isEmpty { resetAllModifiers() }
+                if normalizedResolvedShortcutModifiers.isEmpty { resetAllModifiers() }
             }
 
             if isCapsLockKey {
@@ -307,7 +304,7 @@ extension InputCapturingView {
                 continue
             }
 
-            if let modifierFlags = modifierSnapshot(from: event, fallbackFlags: fallbackFlags, allowFallback: true) { updateCapsLockState(from: modifierFlags) }
+            updateCapsLockState(from: Self.uiKeyModifierFlags(from: resolvedModifiers))
             let isModifier = Self.modifierKeyMap[key.keyCode] != nil
 
             if isModifier {
@@ -322,9 +319,10 @@ extension InputCapturingView {
                 // Skip if GCKeyboard already claimed this key (modifier+key combo)
                 if gcClaimedKeyCodes.contains(GCKeyCode(rawValue: key.keyCode.rawValue)) { continue }
                 #endif
+                let macKeyCode = MirageKeyEvent.hidToMacKeyCode(key.keyCode)
                 if let action = matchingAction(
-                    for: key.keyCode,
-                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                    keyCode: macKeyCode,
+                    modifiers: resolvedModifiers
                 ) {
                     #if canImport(GameController)
                     clientShortcutClaimedKeyCodes.insert(key.keyCode)
@@ -340,8 +338,8 @@ extension InputCapturingView {
                     continue
                 }
                 if let shortcut = clientShortcut(
-                    for: key.keyCode,
-                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                    keyCode: macKeyCode,
+                    modifiers: resolvedModifiers
                 ) {
                     #if canImport(GameController)
                     clientShortcutClaimedKeyCodes.insert(key.keyCode)
@@ -356,9 +354,9 @@ extension InputCapturingView {
                     performClientShortcut(shortcut, source: .hardwareKey)
                     continue
                 }
-                if let shortcut = interceptedShortcut(
-                    for: key.keyCode,
-                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                if let shortcut = MirageInterceptedShortcutPolicy.shortcut(
+                    keyCode: macKeyCode,
+                    modifiers: resolvedModifiers
                 ) {
                     if allowFallback {
                         resyncModifiers(
@@ -371,9 +369,11 @@ extension InputCapturingView {
                     continue
                 }
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
-                if !keyboardModifiers.contains(.command) { startKeyRepeat(for: press) }
+                if !resolvedModifiers.contains(.command) { startKeyRepeat(for: press) }
                 hideCursorForTypingUntilPointerMovement()
-                if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyDown(keyEvent)) }
+                if let keyEvent = MirageKeyEvent(press: press, modifiers: resolvedModifiers) {
+                    onInputEvent?(.keyDown(keyEvent))
+                }
             }
         }
         updateModifierRefreshTimer()
@@ -388,6 +388,10 @@ extension InputCapturingView {
             guard let key = press.key else { continue }
             let isCapsLockKey = key.keyCode == .keyboardCapsLock
             let fallbackFlags = key.modifierFlags
+            let resolvedModifiers = resolvedHardwareKeyModifiers(
+                from: event,
+                fallbackFlags: fallbackFlags
+            )
 
             if key.keyCode == .keyboardEscape, suppressEscapeKeyUpForCursorUnlock {
                 suppressEscapeKeyUpForCursorUnlock = false
@@ -411,9 +415,9 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
-                let shortcut = interceptedShortcut(
-                    for: key.keyCode,
-                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                let shortcut = MirageInterceptedShortcutPolicy.shortcut(
+                    keyCode: MirageKeyEvent.hidToMacKeyCode(key.keyCode),
+                    modifiers: resolvedModifiers
                 )
                 #if canImport(GameController)
                 if clientShortcutClaimedKeyCodes.remove(key.keyCode) != nil {
@@ -432,7 +436,9 @@ extension InputCapturingView {
                 if shortcut != nil { continue }
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
-                if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyUp(keyEvent)) }
+                if let keyEvent = MirageKeyEvent(press: press, modifiers: resolvedModifiers) {
+                    onInputEvent?(.keyUp(keyEvent))
+                }
             }
         }
         updateModifierRefreshTimer()
@@ -446,6 +452,10 @@ extension InputCapturingView {
             guard let key = press.key else { continue }
             let isCapsLockKey = key.keyCode == .keyboardCapsLock
             let fallbackFlags = key.modifierFlags
+            let resolvedModifiers = resolvedHardwareKeyModifiers(
+                from: event,
+                fallbackFlags: fallbackFlags
+            )
 
             if key.keyCode == .keyboardEscape, suppressEscapeKeyUpForCursorUnlock {
                 suppressEscapeKeyUpForCursorUnlock = false
@@ -469,9 +479,9 @@ extension InputCapturingView {
                     sendModifierStateIfNeeded(force: true)
                 }
             } else {
-                let shortcut = interceptedShortcut(
-                    for: key.keyCode,
-                    modifierFlags: event?.modifierFlags ?? fallbackFlags
+                let shortcut = MirageInterceptedShortcutPolicy.shortcut(
+                    keyCode: MirageKeyEvent.hidToMacKeyCode(key.keyCode),
+                    modifiers: resolvedModifiers
                 )
                 #if canImport(GameController)
                 if clientShortcutClaimedKeyCodes.remove(key.keyCode) != nil {
@@ -490,7 +500,9 @@ extension InputCapturingView {
                 if shortcut != nil { continue }
                 stopKeyRepeat(for: key.keyCode)
                 if allowFallback { resyncModifiers(using: event, fallbackFlags: fallbackFlags, allowFallback: true) }
-                if let keyEvent = MirageKeyEvent(press: press, modifiers: keyboardModifiers) { onInputEvent?(.keyUp(keyEvent)) }
+                if let keyEvent = MirageKeyEvent(press: press, modifiers: resolvedModifiers) {
+                    onInputEvent?(.keyUp(keyEvent))
+                }
             }
         }
         updateModifierRefreshTimer()

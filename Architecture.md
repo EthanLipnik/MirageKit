@@ -47,6 +47,7 @@ Session setup is explicit:
 1. Control connection is established.
 2. Loom authenticates the peer identity and runs trust evaluation.
 3. Mirage opens its control stream on top of the authenticated Loom session and exchanges bootstrap request/response control messages to negotiate protocol compatibility and media registration state.
+   When bootstrap is rejected, the host still delivers the rejection response on the control stream and then closes only that stream in-order so the client can surface the real rejection reason before either peer tears the full Loom session down.
 4. Client registers stream and audio channels.
 5. Host begins sending media packets once registration succeeds. The first startup keyframe uses a temporary protection window with stronger keyframe FEC, tighter sender pacing, and a longer client-side startup timeout than steady-state traffic.
 

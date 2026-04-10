@@ -270,7 +270,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private var shouldMirrorHostCursorAppearanceToSystemCursor: Bool {
-        isInputProcessingActive && !cursorLockEnabled
+        guard isInputProcessingActive else { return false }
+        return !cursorLockEnabled || !syntheticCursorEnabled
     }
 
     private var shouldMirrorHostCursorPositionToSystemCursor: Bool {

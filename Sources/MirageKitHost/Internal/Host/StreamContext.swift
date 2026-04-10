@@ -119,6 +119,7 @@ actor StreamContext {
     var syntheticFrameCount: UInt64 = 0
     var syntheticIntervalCount: UInt64 = 0
     var lastCapturedFrame: CapturedFrame?
+    var cachedStartupFrame: CapturedFrame?
     var lastCapturedDuration: CMTime = .invalid
     var lastEncodedPresentationTime: CMTime = .invalid
     var lastSyntheticFrameTime: CFAbsoluteTime = 0
@@ -209,6 +210,7 @@ actor StreamContext {
     var startupFirstCaptureLogged = false
     var startupFirstEncodeLogged = false
     var startupRegistrationLogged = false
+    var startupFrameCachingEnabled = false
 
     /// Maximum time to wait for encode progress before considering encoder stuck (ms)
     /// During drag operations, VideoToolbox can block - we need to detect this and recover
@@ -473,6 +475,12 @@ actor StreamContext {
         let prefersSmoothness = resolvedLatencyMode == .smoothest || resolvedLatencyMode == .auto
         let latencySensitive = resolvedLatencyMode == .lowestLatency
         useLowLatencyPipeline = latencySensitive || (resolvedEncoderConfig.targetFrameRate >= 120 && !prefersSmoothness)
+        let usesAdaptiveDesktopLowLatency60HzPolicy = Self.usesAdaptiveStandardDesktopLowLatency60HzPolicy(
+            streamKind: streamKind,
+            frameRate: resolvedEncoderConfig.targetFrameRate,
+            latencyMode: resolvedLatencyMode,
+            performanceMode: performanceMode
+        )
         var bufferDepth = Self.frameBufferDepth(
             useLowLatencyPipeline: useLowLatencyPipeline,
             frameRate: resolvedEncoderConfig.targetFrameRate,
@@ -491,6 +499,10 @@ actor StreamContext {
                 latencyMode: resolvedLatencyMode
             )
         )
+        if usesAdaptiveDesktopLowLatency60HzPolicy {
+            bufferDepth = max(bufferDepth, 2)
+            inFlightCap = max(inFlightCap, 2)
+        }
         if performanceMode == .game,
            useLowLatencyPipeline,
            resolvedEncoderConfig.targetFrameRate <= 60 {
@@ -655,6 +667,28 @@ actor StreamContext {
         case .lowestLatency:
             return 1
         }
+    }
+
+    static func usesAdaptiveStandardDesktopLowLatency60HzPolicy(
+        streamKind: VideoEncoder.StreamKind,
+        frameRate: Int,
+        latencyMode: MirageStreamLatencyMode,
+        performanceMode: MirageStreamPerformanceMode
+    )
+    -> Bool {
+        streamKind == .desktop &&
+            performanceMode == .standard &&
+            latencyMode == .lowestLatency &&
+            frameRate == 60
+    }
+
+    var usesAdaptiveStandardDesktopLowLatency60HzPolicy: Bool {
+        Self.usesAdaptiveStandardDesktopLowLatency60HzPolicy(
+            streamKind: streamKind,
+            frameRate: currentFrameRate,
+            latencyMode: latencyMode,
+            performanceMode: performanceMode
+        )
     }
 
     nonisolated func schedulePipelineStatsLog() {

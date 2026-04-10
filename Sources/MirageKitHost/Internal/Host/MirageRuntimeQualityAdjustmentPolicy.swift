@@ -46,11 +46,12 @@ package enum MirageRuntimeQualityAdjustmentPolicy {
         qualityRaiseStep: Float
     ) -> MirageRuntimeQualityAdjustmentDecision {
         var nextState = state
-        let transportStress = transportAssessment.isStress
-        let transportHighPressure = transportAssessment.isSevere
+        let pacingOnlyStress = transportAssessment.isPacerOnlyStress
+        let transportStress = transportAssessment.isStress && !pacingOnlyStress
+        let transportHighPressure = transportAssessment.isSevere && !pacingOnlyStress
         let qualityDropSignal = transportStress || (allowEncodeDrivenQualityRelief && encodeOverBudget)
 
-        if !qualityDropSignal, transportAssessment.isDelayOnlyBurst {
+        if !qualityDropSignal, transportAssessment.isDelayOnlyBurst || pacingOnlyStress {
             nextState.qualityOverBudgetCount = 0
             nextState.qualityUnderBudgetCount = 0
             return MirageRuntimeQualityAdjustmentDecision(
@@ -92,7 +93,7 @@ package enum MirageRuntimeQualityAdjustmentPolicy {
                 if nextQuality < nextState.activeQuality {
                     nextState.activeQuality = nextQuality
                     nextState.qualityOverBudgetCount = 0
-                    var reasonTokens = transportAssessment.reasonTokens
+                    var reasonTokens = pacingOnlyStress ? [] : transportAssessment.reasonTokens
                     if allowEncodeDrivenQualityRelief, encodeOverBudget {
                         reasonTokens.append("encode")
                     }

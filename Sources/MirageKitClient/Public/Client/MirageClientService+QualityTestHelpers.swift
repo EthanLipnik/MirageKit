@@ -63,6 +63,7 @@ extension MirageClientService {
     }
 
     func sendPingAndAwaitPong(
+        timeout: Duration = .seconds(5),
         sendPing: (@MainActor @Sendable () async throws -> Void)? = nil
     ) async throws {
         guard case .connected = connectionState else {
@@ -70,7 +71,7 @@ extension MirageClientService {
         }
         let message = ControlMessage(type: .ping)
         try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
-            let registration = registerPingWaiter(continuation)
+            let registration = registerPingWaiter(continuation, timeout: timeout)
             guard registration.startedNewRequest else { return }
             Task { @MainActor [weak self] in
                 do {

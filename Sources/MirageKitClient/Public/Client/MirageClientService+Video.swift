@@ -188,6 +188,8 @@ extension MirageClientService {
             return
         }
 
+        fastPathState.noteInboundMediaActivity()
+
         guard let packetContext = fastPathState.videoPacketContext(for: streamID) else {
             logFirstVideoPacketRejectionIfNeeded(.packetContextMissing, expectedStreamID: streamID)
             return

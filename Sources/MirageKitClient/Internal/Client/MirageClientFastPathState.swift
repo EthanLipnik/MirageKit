@@ -32,6 +32,8 @@ final class MirageClientFastPathState: @unchecked Sendable {
         var reassemblersByStream: [StreamID: FrameReassembler] = [:]
         var observedMediaStreamLabels: Set<String> = []
         var firstVideoPacketRejectionReasonByStream: [StreamID: IncomingVideoPacketRejectionReason] = [:]
+        var lastInboundControlActivityTime: CFAbsoluteTime = 0
+        var lastInboundMediaActivityTime: CFAbsoluteTime = 0
     }
 
     private let lock = NSLock()
@@ -141,6 +143,25 @@ final class MirageClientFastPathState: @unchecked Sendable {
         withLock { state in
             state.observedMediaStreamLabels.removeAll()
             state.firstVideoPacketRejectionReasonByStream.removeAll()
+        }
+    }
+
+    func noteInboundControlActivity(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        withLock { $0.lastInboundControlActivityTime = now }
+    }
+
+    func noteInboundMediaActivity(now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) {
+        withLock { $0.lastInboundMediaActivityTime = now }
+    }
+
+    func latestInboundActivityTime() -> CFAbsoluteTime {
+        withLock { max($0.lastInboundControlActivityTime, $0.lastInboundMediaActivityTime) }
+    }
+
+    func resetInboundActivity(now: CFAbsoluteTime = 0) {
+        withLock { state in
+            state.lastInboundControlActivityTime = now
+            state.lastInboundMediaActivityTime = now
         }
     }
 

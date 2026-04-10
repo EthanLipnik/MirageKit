@@ -10,10 +10,37 @@
 import Foundation
 import MirageKit
 
+enum ClientHeartbeatProbeDecision: Equatable {
+    case waitForInboundActivity
+    case skipActiveStream
+    case skipGracePeriod
+    case skipQualityTest
+    case skipOperationInFlight
+    case sendPing
+}
+
+func clientHeartbeatProbeDecision(
+    inactivityDuration: CFAbsoluteTime,
+    inactivityThreshold: CFAbsoluteTime,
+    hasActiveStreams: Bool,
+    isWithinGracePeriod: Bool,
+    qualityTestActive: Bool,
+    hasInFlightPingOrHostOperation: Bool
+) -> ClientHeartbeatProbeDecision {
+    guard !hasActiveStreams else { return .skipActiveStream }
+    guard !isWithinGracePeriod else { return .skipGracePeriod }
+    guard !qualityTestActive else { return .skipQualityTest }
+    guard !hasInFlightPingOrHostOperation else { return .skipOperationInFlight }
+    guard inactivityDuration >= inactivityThreshold else { return .waitForInboundActivity }
+    return .sendPing
+}
+
 @MainActor
 extension MirageClientService {
-    private static let heartbeatInterval: Duration = .seconds(30)
-    private static let heartbeatMaxConsecutiveFailures = 3
+    private static let heartbeatInterval: Duration = .seconds(5)
+    private static let heartbeatInactivityThreshold: CFAbsoluteTime = 10
+    private static let heartbeatPingTimeout: Duration = .seconds(5)
+    private static let heartbeatMaxConsecutiveFailures = 2
 
     func startHeartbeat() {
         stopHeartbeat()
@@ -29,41 +56,24 @@ extension MirageClientService {
                 }
                 guard case .connected = self.connectionState else { return }
 
-                // Only probe when the app layer signals idle state (e.g. app
-                // selection view with nothing loading).  During stream start,
-                // icon fetching, or any active control-channel operation the
-                // heartbeat skips — those operations have their own timeouts.
-                guard self.heartbeatProbingEnabled else {
-                    consecutiveFailures = 0
-                    continue
-                }
-
-                // Active streams provide their own liveness signal via UDP packet flow.
-                guard self.controllersByStream.isEmpty else {
-                    consecutiveFailures = 0
-                    continue
-                }
-
-                // Stream recently stopped — give the control channel time to stabilize.
-                if let deadline = self.heartbeatGraceDeadline, ContinuousClock.now < deadline {
-                    consecutiveFailures = 0
-                    continue
-                }
-
-                guard self.qualityTestPendingTestID == nil else {
-                    consecutiveFailures = 0
-                    continue
-                }
-
-                // An in-flight ping already proves the connection is alive.
-                guard self.pingContinuations.isEmpty,
-                      self.hostWallpaperContinuation == nil else {
+                let latestInboundActivityTime = self.fastPathState.latestInboundActivityTime()
+                let inactivityDuration = max(0, CFAbsoluteTimeGetCurrent() - latestInboundActivityTime)
+                let decision = clientHeartbeatProbeDecision(
+                    inactivityDuration: inactivityDuration,
+                    inactivityThreshold: Self.heartbeatInactivityThreshold,
+                    hasActiveStreams: !self.controllersByStream.isEmpty,
+                    isWithinGracePeriod: self.heartbeatGraceDeadline.map { ContinuousClock.now < $0 } ?? false,
+                    qualityTestActive: self.qualityTestPendingTestID != nil,
+                    hasInFlightPingOrHostOperation: !self.pingContinuations.isEmpty ||
+                        self.hostWallpaperContinuation != nil
+                )
+                guard decision == .sendPing else {
                     consecutiveFailures = 0
                     continue
                 }
 
                 do {
-                    try await self.sendPingAndAwaitPong()
+                    try await self.sendPingAndAwaitPong(timeout: Self.heartbeatPingTimeout)
                     consecutiveFailures = 0
                 } catch {
                     consecutiveFailures += 1

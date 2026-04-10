@@ -100,8 +100,8 @@ struct RuntimeQualityAdjustmentPolicyTests {
         #expect(decision.state.qualityOverBudgetCount == 0)
     }
 
-    @Test("Packet pacer pressure still lowers active quality")
-    func packetPacerPressureStillLowersActiveQuality() {
+    @Test("Packet pacer pressure alone does not lower active quality")
+    func packetPacerPressureAloneDoesNotLowerActiveQuality() {
         let assessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(
                 queueBytes: 0,
@@ -137,8 +137,9 @@ struct RuntimeQualityAdjustmentPolicyTests {
             qualityRaiseStep: 0.03
         )
 
-        #expect(decision.action == .drop(reason: "pacer"))
-        #expect(abs(decision.state.activeQuality - 0.70) < 0.0001)
+        #expect(decision.action == .hold)
+        #expect(abs(decision.state.activeQuality - 0.75) < 0.0001)
+        #expect(decision.state.qualityOverBudgetCount == 0)
     }
 }
 #endif

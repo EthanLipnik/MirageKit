@@ -10,6 +10,13 @@ import MirageKit
 import UIKit
 
 extension InputCapturingView {
+    nonisolated static func shouldEmitPassiveHoverMove(
+        pointerMoved: Bool,
+        isDragging: Bool
+    ) -> Bool {
+        pointerMoved && !isDragging
+    }
+
     func setupGestureRecognizers() {
         // Immediate press/drag for indirect pointer input.
         longPressGesture = UILongPressGestureRecognizer(target: self, action: #selector(handleLongPress(_:)))
@@ -646,8 +653,10 @@ extension InputCapturingView {
             // Track cursor position for scroll events
             lastCursorPosition = normalized
 
-            // Only send mouse moved if not dragging (pan gesture handles that)
-            if !isDragging {
+            if Self.shouldEmitPassiveHoverMove(
+                pointerMoved: pointerMoved,
+                isDragging: isDragging
+            ) {
                 let eventModifiers = modifiers(from: gesture)
                 let mouseEvent = MirageMouseEvent(
                     button: .left,

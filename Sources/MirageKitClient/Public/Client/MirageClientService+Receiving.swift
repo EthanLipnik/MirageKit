@@ -278,6 +278,7 @@ extension MirageClientService {
         for controlChannel: MirageControlChannel
     ) async {
         guard self.controlChannel === controlChannel else { return }
+        fastPathState.noteInboundControlActivity()
         receiveBuffer.append(data)
         await processReceivedData()
     }

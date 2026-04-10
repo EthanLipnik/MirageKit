@@ -107,6 +107,29 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
+    @Test("Packet pacer pressure alone does not trigger backoff or block probing")
+    func packetPacerPressureAloneDoesNotTriggerBackoffOrBlockProbing() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = packetPacerOnlySnapshot()
+
+        let firstAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        let secondAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2
+        )
+
+        #expect(firstAction == .none)
+        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(controller.state == .stable)
+    }
+
     @Test("Healthy fast-start windows probe upward after two clean samples")
     func healthyFastStartWindowsProbeUpwardAfterTwoCleanSamples() {
         var controller = MirageReceiverHealthController()
@@ -390,6 +413,12 @@ struct ReceiverHealthControllerTests {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostSendStartDelayAverageMs = 3.5
         snapshot.hostSendCompletionAverageMs = 14
+        return snapshot
+    }
+
+    private func packetPacerOnlySnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostPacketPacerAverageSleepMs = 1.0
         return snapshot
     }
 }

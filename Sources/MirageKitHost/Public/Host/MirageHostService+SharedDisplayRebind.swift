@@ -105,6 +105,10 @@ extension MirageHostService {
                 virtualResolution: newContext.resolution
             )
             inputStreamCacheActor.updateWindowFrame(desktopStreamID, newFrame: inputBounds)
+            recenterDesktopCursorAfterVirtualDisplaySetup(
+                inputBounds: inputBounds,
+                reason: "shared_display_generation_change"
+            )
             await sendStreamScaleUpdate(streamID: desktopStreamID)
             MirageLogger
                 .host(

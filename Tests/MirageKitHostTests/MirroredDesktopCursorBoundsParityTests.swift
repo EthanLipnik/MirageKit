@@ -64,5 +64,20 @@ struct MirroredDesktopCursorBoundsParityTests {
         #expect(abs(monitorNormalized.x - expectedNormalized.x) < 0.0001)
         #expect(abs(monitorNormalized.y - expectedNormalized.y) < 0.0001)
     }
+
+    @Test("Mirrored desktop cursor start point uses the center of the aspect-fitted input rect")
+    func mirroredDesktopCursorStartPointUsesAspectFittedCenter() {
+        let physicalBounds = CGRect(x: 0, y: 0, width: 2880, height: 1620)
+        let virtualResolution = CGSize(width: 2752, height: 2064)
+        let inputBounds = MirageHostService.resolvedMirroredDesktopInputBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: virtualResolution
+        )
+
+        let startPoint = MirageHostService.resolvedDesktopCursorStartPoint(inputBounds: inputBounds)
+
+        #expect(startPoint == CGPoint(x: inputBounds.midX, y: inputBounds.midY))
+        #expect(startPoint == CGPoint(x: physicalBounds.midX, y: physicalBounds.midY))
+    }
 }
 #endif

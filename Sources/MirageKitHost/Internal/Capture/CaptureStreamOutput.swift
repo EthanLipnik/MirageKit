@@ -136,6 +136,8 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var wasInFallbackMode: Bool = false
     private var fallbackStartTime: CFAbsoluteTime = 0 // When fallback mode started
     private let fallbackLock = NSLock()
+    private let startupReadinessLock = NSLock()
+    private var displayStartupReadinessState = DisplayStartupReadinessState()
 
     /// Only request keyframe if fallback lasted longer than this threshold.
     /// Short fallback blips are common during menu tracking and focus churn and
@@ -145,6 +147,22 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     /// Low-FPS passive streams should require a much longer fallback duration before
     /// forcing expensive keyframes.
     private let fallbackResumeKeyframeGapMultiplier: CFAbsoluteTime = 2.5
+
+    private struct DisplayStartupReadinessState {
+        var hasObservedSample = false
+        var hasUsableFrame = false
+        var hasIdleFrame = false
+        var blankOrSuspendedCount: UInt64 = 0
+        var hasLoggedBlankOrSuspended = false
+        var hasLoggedLifecycleSample = false
+
+        var readiness: DisplayCaptureStartupReadiness {
+            if hasUsableFrame { return .usableFrameSeen }
+            if hasIdleFrame { return .idleFrameSeen }
+            if blankOrSuspendedCount > 0 { return .blankOrSuspendedOnly }
+            return .noScreenSamples
+        }
+    }
 
     init(
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
@@ -206,6 +224,14 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     func stopWatchdogTimer() {
         watchdogTimer?.cancel()
         watchdogTimer = nil
+    }
+
+    func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
+        startupReadinessLock.withLock { displayStartupReadinessState.readiness }
+    }
+
+    func hasObservedDisplayStartupSample() -> Bool {
+        startupReadinessLock.withLock { displayStartupReadinessState.hasObservedSample }
     }
 
     func updateExpectations(
@@ -560,8 +586,21 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             }
         }
 
+        let attachments =
+            (CMSampleBufferGetSampleAttachmentsArray(
+                sampleBuffer,
+                createIfNecessary: false
+            ) as? [[SCStreamFrameInfo: Any]])?.first
+        let status = resolvedFrameStatus(from: attachments)
+        let isValidSampleBuffer = CMSampleBufferIsValid(sampleBuffer)
+        if let status {
+            noteDisplayStartupSample(status: status)
+        } else if tracksFrameStatus, windowID == 0, isValidSampleBuffer {
+            noteObservedDisplayStartupSample()
+        }
+
         // Validate the sample buffer
-        guard CMSampleBufferIsValid(sampleBuffer),
+        guard isValidSampleBuffer,
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
@@ -571,6 +610,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         if !tracksFrameStatus {
+            if status == nil {
+                noteDisplayStartupSample(status: .complete)
+            }
             updateDeliveryState(captureTime: captureTime, isComplete: true)
             if diagnosticsEnabled {
                 deliveredFrameCount += 1
@@ -604,21 +646,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         // Check SCFrameStatus - track all statuses for diagnostics
-        let attachments =
-            (CMSampleBufferGetSampleAttachmentsArray(
-                sampleBuffer,
-                createIfNecessary: false
-            ) as? [[SCStreamFrameInfo: Any]])?.first
         var isIdleFrame = false
-        var status: SCFrameStatus?
-        if let attachments,
-           let statusRawValue = attachments[.status] as? Int,
-           let resolvedStatus = SCFrameStatus(rawValue: statusRawValue) {
-            status = resolvedStatus
+        if let status {
+            let resolvedStatus = status
 
             // DIAGNOSTIC: Track status distribution
             if diagnosticsEnabled {
-                statusCounts[statusRawValue, default: 0] += 1
+                statusCounts[resolvedStatus.rawValue, default: 0] += 1
                 let logInterval: CFAbsoluteTime = captureTime <= statusBurstDeadline ? 0.5 : 2.0
                 if captureTime - lastStatusLogTime > logInterval {
                     lastStatusLogTime = captureTime
@@ -650,6 +684,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         let effectiveStatus = status ?? .complete
+        if status == nil {
+            noteDisplayStartupSample(status: effectiveStatus)
+        }
         guard effectiveStatus == .complete || effectiveStatus == .idle else { return }
         if effectiveStatus == .idle { isIdleFrame = true }
 
@@ -753,6 +790,74 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         )
 
         emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo, captureTime: captureTime)
+    }
+
+    private func noteDisplayStartupSample(status: SCFrameStatus) {
+        guard windowID == 0 else { return }
+
+        var blankOrSuspendedStatusName: String?
+        var lifecycleStatusName: String?
+        startupReadinessLock.withLock {
+            displayStartupReadinessState.hasObservedSample = true
+            switch status {
+            case .complete:
+                displayStartupReadinessState.hasUsableFrame = true
+            case .idle:
+                displayStartupReadinessState.hasIdleFrame = true
+            case .blank:
+                displayStartupReadinessState.blankOrSuspendedCount &+= 1
+                if !displayStartupReadinessState.hasLoggedBlankOrSuspended {
+                    displayStartupReadinessState.hasLoggedBlankOrSuspended = true
+                    blankOrSuspendedStatusName = "blank"
+                }
+            case .suspended:
+                displayStartupReadinessState.blankOrSuspendedCount &+= 1
+                if !displayStartupReadinessState.hasLoggedBlankOrSuspended {
+                    displayStartupReadinessState.hasLoggedBlankOrSuspended = true
+                    blankOrSuspendedStatusName = "suspended"
+                }
+            case .started:
+                if !displayStartupReadinessState.hasLoggedLifecycleSample {
+                    displayStartupReadinessState.hasLoggedLifecycleSample = true
+                    lifecycleStatusName = "started"
+                }
+            case .stopped:
+                if !displayStartupReadinessState.hasLoggedLifecycleSample {
+                    displayStartupReadinessState.hasLoggedLifecycleSample = true
+                    lifecycleStatusName = "stopped"
+                }
+            default:
+                break
+            }
+        }
+
+        if let blankOrSuspendedStatusName {
+            MirageLogger.capture(
+                "Display startup sample status=\(blankOrSuspendedStatusName) while waiting for first usable frame"
+            )
+        }
+        if let lifecycleStatusName {
+            MirageLogger.capture(
+                "Display startup lifecycle status=\(lifecycleStatusName) before first renderable frame"
+            )
+        }
+    }
+
+    private func noteObservedDisplayStartupSample() {
+        guard windowID == 0 else { return }
+        startupReadinessLock.withLock {
+            displayStartupReadinessState.hasObservedSample = true
+        }
+    }
+
+    private func resolvedFrameStatus(
+        from attachments: [SCStreamFrameInfo: Any]?
+    ) -> SCFrameStatus? {
+        guard let attachments,
+              let statusRawValue = attachments[.status] as? Int else {
+            return nil
+        }
+        return SCFrameStatus(rawValue: statusRawValue)
     }
 
     private func updatePresentationFPS(presentationTime: CMTime) {

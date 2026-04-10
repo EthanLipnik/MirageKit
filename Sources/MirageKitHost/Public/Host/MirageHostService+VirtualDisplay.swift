@@ -863,6 +863,10 @@ extension MirageHostService {
                 virtualResolution: effectivePixelResolution
             )
             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+            recenterDesktopCursorAfterVirtualDisplaySetup(
+                inputBounds: inputBounds,
+                reason: "desktop_resize"
+            )
             if desktopResizeShouldDisableResidualMirroring(
                 plan: mirroringPlan,
                 generationChanged: updateResult.generationChanged,
@@ -1012,6 +1016,10 @@ extension MirageHostService {
             virtualResolution: restoredSnapshot.resolution
         )
         inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+        recenterDesktopCursorAfterVirtualDisplaySetup(
+            inputBounds: inputBounds,
+            reason: "desktop_resize_rollback"
+        )
 
         let outcomeLabel: String = switch updateResult.outcome {
         case .noChange:

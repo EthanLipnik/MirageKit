@@ -92,12 +92,22 @@ package final class MirageControlChannel: @unchecked Sendable {
         }
     }
 
+    package func closeStream() async throws {
+        // Bootstrap rejection paths need an ordered EOF on the control stream
+        // so the peer can read the final response before either side tears the
+        // authenticated Loom session down.
+        try await sendLane.perform { [stream] in
+            try await stream.close()
+        }
+    }
+
     package func cancel() async {
         // A Mirage control channel does not own the lifetime of the underlying
         // Loom stream independently from the session. When the product decides
         // to disconnect, tearing down the authenticated session already closes
         // every multiplexed stream and avoids racing a control-stream close
-        // frame against full-session shutdown on both peers.
+        // frame against full-session shutdown on both peers. Use closeStream()
+        // when the peer is still blocked waiting on a final control response.
         await session.cancel()
     }
 

@@ -37,6 +37,8 @@ func desktopMirroringRestoreContinuationDecision(
     return .continueRestore
 }
 
+private let desktopStartupCaptureReadinessWindow: Duration = .milliseconds(750)
+
 extension MirageHostService {
 
     /// Start streaming the desktop (unified or secondary display mode)
@@ -570,6 +572,10 @@ extension MirageHostService {
             windowLayer: 0
         )
         inputStreamCacheActor.set(streamID, window: desktopWindow, client: activeClientContext.client)
+        recenterDesktopCursorAfterVirtualDisplaySetup(
+            inputBounds: inputBounds,
+            reason: "desktop_stream_start"
+        )
 
         // Enable power assertion
         await PowerAssertionManager.shared.enable()
@@ -627,6 +633,61 @@ extension MirageHostService {
                 }
             }
         )
+        if mode == .unified {
+            var recoveryAttempted = false
+            while true {
+                var readiness = await streamContext.waitForDisplayStartupReadiness(
+                    timeout: desktopStartupCaptureReadinessWindow
+                )
+                let capturedStartupSeedFrame: Bool
+                if readiness == .noScreenSamples {
+                    capturedStartupSeedFrame = await streamContext.seedDisplayStartupFrameIfNeeded()
+                    if !capturedStartupSeedFrame {
+                        readiness = await streamContext.waitForDisplayStartupReadiness(
+                            timeout: .milliseconds(250)
+                        )
+                    }
+                } else {
+                    capturedStartupSeedFrame = false
+                }
+                let hasCachedStartupFrame = await streamContext.hasCachedStartupFrame()
+                let hasObservedStartupSample = await streamContext.hasObservedDisplayStartupSample()
+                switch desktopStartupCaptureRecoveryDecision(
+                    readiness: readiness,
+                    recoveryAttempted: recoveryAttempted,
+                    hasCachedStartupFrame: hasCachedStartupFrame,
+                    hasObservedStartupSample: hasObservedStartupSample
+                ) {
+                case .proceed:
+                    if readiness == .noScreenSamples {
+                        MirageLogger.host(
+                            "Desktop start: proceeding without a live startup frame " +
+                                "(cachedSeed=\(capturedStartupSeedFrame || hasCachedStartupFrame), " +
+                                "observedSample=\(hasObservedStartupSample))"
+                        )
+                    } else {
+                        MirageLogger.host(
+                            "Desktop start: capture readiness satisfied (\(readiness.rawValue))"
+                        )
+                    }
+                    break
+                case .restartCapture:
+                    recoveryAttempted = true
+                    MirageLogger.host(
+                        "Desktop start: capture readiness \(readiness.rawValue); restarting display capture once"
+                    )
+                    await streamContext.restartDisplayCaptureForStartupRecovery(
+                        reason: "startup_capture_readiness_\(readiness.rawValue)"
+                    )
+                    continue
+                case .fail:
+                    throw MirageError.protocolError(
+                        "Unified desktop startup failed waiting for first display sample (\(readiness.rawValue))"
+                    )
+                }
+                break
+            }
+        }
         logDesktopStartStep("capture and encoder started")
         } catch {
             MirageLogger.error(

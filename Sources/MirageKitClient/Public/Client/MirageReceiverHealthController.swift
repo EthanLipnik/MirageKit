@@ -289,12 +289,13 @@ public struct MirageReceiverHealthController: Sendable {
                 deliverySevereRatio: Self.encodedDeliverySevereRatio
             )
         )
+        let pacingOnlyStress = transportAssessment.isPacerOnlyStress
         let streamIsActive = max(
             hostEncodedFPS,
             max(receivedFPS, max(captureIngressFPS, max(captureFPS, encodeAttemptFPS)))
         ) > 0.5
-        let severe = transportAssessment.isSevere
-        let sustainedLoss = transportAssessment.isStress
+        let severe = transportAssessment.isSevere && !pacingOnlyStress
+        let sustainedLoss = transportAssessment.isStress && !pacingOnlyStress
         let healthy = !severe && !sustainedLoss
         return Sample(
             isSevere: severe,
@@ -339,6 +340,29 @@ public struct MirageReceiverHealthController: Sendable {
         let transportDropCount = (snapshot.hostStalePacketDrops ?? 0) +
             (snapshot.hostGenerationAbortDrops ?? 0) +
             (snapshot.hostNonKeyframeHoldDrops ?? 0)
+        let transportAssessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                queueBytes: queueBytes,
+                queueStressBytes: Self.sendQueueStressBytes,
+                queueSevereBytes: Self.sendQueueSevereBytes,
+                packetPacerAverageSleepMs: packetPacerAverageSleepMs,
+                packetPacerStressThresholdMs: Self.packetPacerStressMs,
+                packetPacerSevereThresholdMs: Self.packetPacerSevereMs,
+                sendStartDelayAverageMs: sendStartDelayAverageMs,
+                sendStartDelayStressThresholdMs: Self.sendStartDelayStressMs,
+                sendStartDelaySevereThresholdMs: Self.sendStartDelaySevereMs,
+                sendCompletionAverageMs: sendCompletionAverageMs,
+                sendCompletionStressThresholdMs: Self.sendCompletionStressMs,
+                sendCompletionSevereThresholdMs: Self.sendCompletionSevereMs,
+                transportDropCount: transportDropCount,
+                transportDropSevereCount: Self.transportDropSevereCount,
+                encodedFPS: hostEncodedFPS,
+                deliveredFPS: receivedFPS,
+                deliveryStressRatio: Self.encodedDeliveryStressRatio,
+                deliverySevereRatio: Self.encodedDeliverySevereRatio
+            )
+        )
+        let pacingOnlyStress = transportAssessment.isPacerOnlyStress
         var score = 0
 
         if hostEncodedFPS > 0,
@@ -352,7 +376,8 @@ public struct MirageReceiverHealthController: Sendable {
             sendCompletionAverageMs >= Self.sendCompletionSevereMs {
             score += 700
         }
-        if packetPacerAverageSleepMs >= Self.packetPacerSevereMs {
+        if !pacingOnlyStress,
+           packetPacerAverageSleepMs >= Self.packetPacerSevereMs {
             score += 650
         }
         if transportDropCount >= Self.transportDropSevereCount {
@@ -369,7 +394,8 @@ public struct MirageReceiverHealthController: Sendable {
             sendCompletionAverageMs >= Self.sendCompletionStressMs {
             score += 300
         }
-        if packetPacerAverageSleepMs >= Self.packetPacerStressMs {
+        if !pacingOnlyStress,
+           packetPacerAverageSleepMs >= Self.packetPacerStressMs {
             score += 250
         }
         if transportDropCount > 0 {

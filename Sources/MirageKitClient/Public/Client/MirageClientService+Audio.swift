@@ -54,6 +54,7 @@ extension MirageClientService {
         }
 
         guard header.streamID == expectedStreamID else { return }
+        fastPathState.noteInboundMediaActivity()
 
         guard let packetContext = fastPathState.audioPacketContext(for: header.streamID) else {
             return

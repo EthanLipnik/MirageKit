@@ -319,7 +319,7 @@ extension MirageHostService {
                         rejectionReason: .unauthorized
                     )
                     try? await controlChannel.send(.sessionBootstrapResponse, content: rejection)
-                    await controlChannel.cancel()
+                    try? await controlChannel.closeStream()
                 } else {
                     await session.cancel()
                 }
@@ -356,7 +356,7 @@ extension MirageHostService {
             )
 
             guard responseResult.response.accepted else {
-                await controlChannel.cancel()
+                try? await controlChannel.closeStream()
                 return
             }
 
@@ -610,7 +610,7 @@ extension MirageHostService {
                 rejectionReason: reason
             )
             try? await controlChannel.send(.sessionBootstrapResponse, content: response)
-            await controlChannel.cancel()
+            try? await controlChannel.closeStream()
         } else {
             await session.cancel()
         }

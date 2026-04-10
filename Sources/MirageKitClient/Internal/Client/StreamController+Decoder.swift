@@ -44,6 +44,11 @@ extension StreamController {
         postResizeDecodeErrorGraceDeadline = 0
         decodePausedForLocalResize = false
         lastMetricsLogTime = 0
+        decodeSubmissionStressStreak = 0
+        decodeSubmissionHealthyStreak = 0
+        lastDecodeSubmissionConstraintWasSourceBound = nil
+        lastSourceBoundDiagnosticSignature = nil
+        latestHostCadencePressureSample = nil
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
@@ -85,7 +90,7 @@ extension StreamController {
         clearQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
         await setClientRecoveryStatus(.postResizeAwaitingFirstFrame)
-        await armFirstPresentedFrameAwaiter(reason: "post-resize")
+        await armFirstPresentedFrameAwaiter(reason: "post-resize", mode: .recovery)
         MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-only decode admission)")
     }
 
@@ -130,6 +135,7 @@ extension StreamController {
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         lastDecodeSubmissionConstraintWasSourceBound = nil
+        lastSourceBoundDiagnosticSignature = nil
         if currentDecodeSubmissionLimit < decodeSubmissionBaselineLimit {
             currentDecodeSubmissionLimit = decodeSubmissionBaselineLimit
         }
@@ -154,6 +160,7 @@ extension StreamController {
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
         lastDecodeSubmissionConstraintWasSourceBound = nil
+        lastSourceBoundDiagnosticSignature = nil
         currentDecodeSubmissionLimit = max(1, decodeSubmissionBaselineLimit)
         await decoder.setDecodeSubmissionLimit(limit: currentDecodeSubmissionLimit, reason: "presentation tier update")
 

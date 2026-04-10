@@ -63,6 +63,14 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind != .networkBound)
     }
 
+    @Test("Packet pacer pressure alone is not network-bound")
+    func packetPacerPressureAloneIsNotNetworkBound() {
+        var snapshot = baselineSnapshot()
+        snapshot.hostPacketPacerAverageSleepMs = 1.0
+
+        #expect(snapshot.bottleneckKind != .networkBound)
+    }
+
     @Test("Decode-bound classification prefers client decode lag when transport is clean")
     func decodeBoundClassificationPrefersClientDecodeLag() {
         var snapshot = baselineSnapshot()

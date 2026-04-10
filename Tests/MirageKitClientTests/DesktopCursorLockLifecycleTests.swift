@@ -176,6 +176,42 @@ struct DesktopCursorLockLifecycleTests {
         #expect(hideCount == 0)
     }
 
+    @Test("Real Mac cursor lock applies host cursor updates to the macOS cursor")
+    func realMacCursorLockAppliesHostCursorUpdates() {
+        let streamID: StreamID = 14
+        let cursorStore = MirageClientCursorStore()
+        cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
+
+        var appliedCursorTypes: [MirageCursorType] = []
+        var mouseLocation = CGPoint.zero
+
+        withCursorSystemHooks(
+            .init(
+                mouseLocation: { mouseLocation },
+                setAssociationEnabled: { _ in },
+                warpCursor: { _ in },
+                setCursor: { cursor in
+                    if let type = MirageCursorType(from: cursor) {
+                        appliedCursorTypes.append(type)
+                    }
+                },
+                hideCursor: {},
+                unhideCursor: {}
+            )
+        ) {
+            let (window, view) = makeMountedView()
+            withExtendedLifetime(window) {
+                mouseLocation = window.convertPoint(toScreen: CGPoint(x: 240, y: 180))
+                view.cursorLockEnabled = true
+                view.cursorStore = cursorStore
+                view.syntheticCursorEnabled = false
+                view.streamID = streamID
+            }
+        }
+
+        #expect(appliedCursorTypes.contains(.closedHand))
+    }
+
     @Test("Real Mac cursor lock warps using global display coordinates")
     func realMacCursorLockWarpsUsingGlobalDisplayCoordinates() {
         var warps: [CGPoint] = []

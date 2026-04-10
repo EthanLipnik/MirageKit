@@ -619,15 +619,22 @@ public final class MirageClientService {
     @ObservationIgnored var heartbeatTask: Task<Void, Never>?
     @ObservationIgnored var heartbeatGraceDeadline: ContinuousClock.Instant?
 
-    /// When true, the heartbeat is allowed to probe. The app layer should set
-    /// this to true only when the user is at the app selection view with
-    /// nothing loading.  During stream start, icon fetching, or any active
-    /// operation that keeps the control channel busy, this should be false.
-    @ObservationIgnored public var heartbeatProbingEnabled: Bool = false
-
     /// Thread-safe property to check if a stream is active from nonisolated contexts
     nonisolated var activeStreamIDsForFiltering: Set<StreamID> {
         fastPathState.activeStreamIDsSnapshot()
+    }
+
+    /// Stream IDs that currently participate in interactive playback and
+    /// should receive runtime encoder-setting updates.
+    public var activeInteractiveStreamIDs: [StreamID] {
+        var streamIDs: [StreamID] = []
+        if let desktopStreamID {
+            streamIDs.append(desktopStreamID)
+        }
+        streamIDs.append(contentsOf: activeStreams.map(\.id))
+
+        var seen = Set<StreamID>()
+        return streamIDs.filter { seen.insert($0).inserted }
     }
 
     var startupRegistrationRetryTasks: [StreamID: Task<Void, Never>] = [:]
