@@ -11,7 +11,6 @@ import MirageKit
 #if os(macOS)
 import AVFoundation
 import AppKit
-import Metal
 import QuartzCore
 
 public class MirageMetalView: NSView {
@@ -21,7 +20,7 @@ public class MirageMetalView: NSView {
         didSet {
             guard streamID != oldValue else { return }
             presenter.setStreamID(streamID)
-            requestDraw()
+            requestImmediateSubmission()
         }
     }
 
@@ -29,7 +28,7 @@ public class MirageMetalView: NSView {
         didSet {
             guard streamPresentationTier != oldValue else { return }
             applyDisplayRefreshRateLock(appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
-            requestDraw()
+            requestImmediateSubmission()
         }
     }
 
@@ -78,10 +77,6 @@ public class MirageMetalView: NSView {
         setup()
     }
 
-    public convenience init(frame frameRect: NSRect, device _: MTLDevice?) {
-        self.init(frame: frameRect)
-    }
-
     required init?(coder: NSCoder) {
         super.init(coder: coder)
         setup()
@@ -118,7 +113,7 @@ public class MirageMetalView: NSView {
         displayLayer.contentsScale = scale
 
         reportDrawableMetricsIfChanged()
-        requestDraw()
+        requestImmediateSubmission()
     }
 
     // MARK: - Public Controls
@@ -129,7 +124,7 @@ public class MirageMetalView: NSView {
 
     func resumeRendering() {
         presenter.setRenderingSuspended(false, clearCurrentFrame: false)
-        requestDraw()
+        requestImmediateSubmission()
     }
 
     // MARK: - Setup
@@ -147,7 +142,7 @@ public class MirageMetalView: NSView {
 
         presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
         presenter.onFrameAvailable = { [weak self] in
-            self?.requestDraw()
+            self?.handleFrameAvailable()
         }
 
         applyRenderPreferences()
@@ -165,34 +160,31 @@ public class MirageMetalView: NSView {
 
     // MARK: - Draw Path
 
-    func requestDraw() {
-        let overrides = presentationTierOverrides()
-        presenter.requestDraw(
-            referenceTime: CACurrentMediaTime(),
-            useFramePacing: false,
-            presentationPolicyOverride: overrides.policy,
-            maxFramesOverride: overrides.maxFrames
-        )
+    func requestImmediateSubmission() {
+        presenter.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
     }
 
     @objc private func displayLinkTick(_ link: CADisplayLink) {
         let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 1
         let interval = link.targetTimestamp - link.timestamp
         let displayRefreshRate = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
-        let overrides = presentationTierOverrides()
         presenter.displayLinkTick(
             referenceTime: link.timestamp,
-            displayRefreshRate: displayRefreshRate,
-            presentationPolicyOverride: overrides.policy,
-            maxFramesOverride: overrides.maxFrames
+            displayRefreshRate: displayRefreshRate
         )
     }
 
-    private func presentationTierOverrides() -> (policy: MirageRenderPresentationPolicy?, maxFrames: Int?) {
-        if streamPresentationTier == .passiveSnapshot {
-            return (.latest, 1)
-        }
-        return (nil, nil)
+    private func handleFrameAvailable() {
+        presenter.handleFrameAvailable(
+            referenceTime: CACurrentMediaTime(),
+            allowImmediateSubmission: allowsImmediateFrameAvailableSubmission
+        )
+    }
+
+    private var allowsImmediateFrameAvailableSubmission: Bool {
+        if streamPresentationTier != .activeLive { return true }
+        if activeDisplayLink == nil { return true }
+        return !presenter.hasSubmittedFrame
     }
 
     private func startDisplayLinkIfNeeded() {

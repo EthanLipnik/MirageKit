@@ -65,13 +65,19 @@ public final class MirageHostService {
     public internal(set) var isEncoderLowPowerModeActive: Bool = false
 
     /// Effective cursor presentation for the active desktop stream.
-    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .clientCursor
+    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .emulatedCursor
 
     /// Latest client-owned stream-option state mirrored back to the host UI.
     public internal(set) var remoteClientStreamStatusOverlayEnabled = false
 
     /// Latest client-owned stream-options display mode mirrored back to the host UI.
     public internal(set) var remoteClientStreamOptionsDisplayMode: MirageStreamOptionsDisplayMode = .inStream
+
+    /// Whether the connected client currently exposes desktop cursor lock controls.
+    public internal(set) var remoteClientDesktopCursorLockAvailable = false
+
+    /// Latest client-owned desktop cursor lock mode mirrored back to the host UI.
+    public internal(set) var remoteClientDesktopCursorLockMode: MirageDesktopCursorLockMode = .off
 
     /// Callback fired when host battery-policy support changes.
     public var onEncoderLowPowerBatteryPolicySupportChanged: ((Bool) -> Void)?
@@ -321,6 +327,8 @@ public final class MirageHostService {
     var mirroredDesktopDisplayIDs: Set<CGDirectDisplayID> = []
     /// Snapshot of display mirroring state before desktop streaming.
     var desktopMirroringSnapshot: [CGDirectDisplayID: CGDirectDisplayID] = [:]
+    /// Last known current Space for each physical display before Mirage reconfigures mirroring.
+    var desktopDisplaySpaceSnapshot: [CGDirectDisplayID: CGSSpaceID] = [:]
     /// Primary physical display information captured before mirroring.
     var desktopPrimaryPhysicalDisplayID: CGDirectDisplayID?
     var desktopPrimaryPhysicalBounds: CGRect?

@@ -32,6 +32,18 @@ extension StreamContext {
         )
     }
 
+    nonisolated static func mirroredAppWindowPlacementBounds(
+        sourceVisibleBounds: CGRect,
+        mirroredVisibleBounds: CGRect
+    )
+    -> CGRect {
+        let normalizedSourceBounds = sourceVisibleBounds.standardized
+        if normalizedSourceBounds.width > 0, normalizedSourceBounds.height > 0 {
+            return normalizedSourceBounds
+        }
+        return mirroredVisibleBounds.standardized
+    }
+
     func updateWindowCaptureVirtualDisplayState(_ snapshot: SharedVirtualDisplayManager.DisplaySnapshot?) {
         guard let snapshot else {
             virtualDisplayVisibleBounds = .zero
@@ -91,8 +103,8 @@ extension StreamContext {
 
     /// Starts window capture on an already-acquired shared app-stream virtual display.
     ///
-    /// The window is moved to the shared display, resized to match the client's
-    /// requested logical size, and captured individually via `desktopIndependentWindow`.
+    /// Mirrored app streaming keeps the host window on its current display, normalizes
+    /// its size/state locally, and captures it individually via `desktopIndependentWindow`.
     func startSharedDisplayWindowCapture(
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
@@ -130,48 +142,60 @@ extension StreamContext {
             for: mirroredDisplaySnapshot.resolution,
             scaleFactor: scaleFactor
         )
-        let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+        let mirroredDisplayBounds = CGVirtualDisplayBridge.getDisplayBounds(
             mirroredDisplaySnapshot.displayID,
             knownResolution: logicalResolution
         )
-        let visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+        let mirroredVisibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
             mirroredDisplaySnapshot.displayID,
-            knownBounds: displayBounds
+            knownBounds: mirroredDisplayBounds
         )
-        let effectiveVisibleBounds = visibleBounds.isEmpty ? displayBounds : visibleBounds.intersection(displayBounds)
+        let effectiveMirroredVisibleBounds = mirroredVisibleBounds.isEmpty
+            ? mirroredDisplayBounds
+            : mirroredVisibleBounds.intersection(mirroredDisplayBounds)
+        let sourceDisplayBounds = CGDisplayBounds(displayWrapper.display.displayID)
+        let sourceVisibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            displayWrapper.display.displayID,
+            knownBounds: sourceDisplayBounds
+        )
+        let effectiveSourceVisibleBounds = sourceVisibleBounds.isEmpty
+            ? sourceDisplayBounds
+            : sourceVisibleBounds.intersection(sourceDisplayBounds)
+        let placementBounds = Self.mirroredAppWindowPlacementBounds(
+            sourceVisibleBounds: effectiveSourceVisibleBounds,
+            mirroredVisibleBounds: effectiveMirroredVisibleBounds
+        )
+        virtualDisplayVisibleBounds = placementBounds
+        virtualDisplayCaptureSourceRect = placementBounds
+        virtualDisplayVisiblePixelResolution = CGSize(
+            width: max(1, ceil(placementBounds.width * scaleFactor)),
+            height: max(1, ceil(placementBounds.height * scaleFactor))
+        )
         let targetWindowSize = Self.startupTargetWindowSize(
             requestedLogicalSize: clientLogicalSize,
-            visibleBounds: effectiveVisibleBounds
+            visibleBounds: placementBounds
         )
         MirageLogger.stream(
             "Stream \(streamID) window target: \(Int(targetWindowSize.width))x\(Int(targetWindowSize.height)) " +
             "(client requested \(Int(clientLogicalSize.width))x\(Int(clientLogicalSize.height)), " +
-            "display visible \(Int(effectiveVisibleBounds.width))x\(Int(effectiveVisibleBounds.height)))"
+            "placement visible \(Int(placementBounds.width))x\(Int(placementBounds.height)))"
         )
 
         _ = try await resolveSCWindowWrapper(
             windowID: windowID,
-            label: "pre-move window capture"
+            label: "pre-prepare window capture"
         )
         let resolvedDisplayWrapper = try await resolveWindowCaptureDisplayWrapper(
             sourceDisplayWrapper: displayWrapper,
             mirroredDisplaySnapshot: mirroredDisplaySnapshot,
-            label: "pre-move display"
+            label: "mirrored app capture display"
         )
 
         let clientAspectRatio = clientLogicalSize.width > 0 && clientLogicalSize.height > 0
             ? clientLogicalSize.width / clientLogicalSize.height
             : nil
-        let windowPlacementBounds = CGRect(
-            origin: effectiveVisibleBounds.origin,
-            size: targetWindowSize
-        )
-        try await WindowSpaceManager.shared.moveWindow(
+        try await WindowSpaceManager.shared.prepareWindowForMirroredCapture(
             windowID,
-            toSpaceID: mirroredDisplaySnapshot.spaceID,
-            displayID: mirroredDisplaySnapshot.displayID,
-            displayBounds: windowPlacementBounds,
-            targetContentAspectRatio: clientAspectRatio,
             owner: WindowSpaceManager.WindowBindingOwner(
                 streamID: streamID,
                 windowID: windowID,
@@ -184,13 +208,15 @@ extension StreamContext {
             windowID: windowID,
             targetSize: targetWindowSize,
             aspectRatio: clientAspectRatio,
-            maxBounds: effectiveVisibleBounds.size,
+            maxBounds: placementBounds.size,
             label: "startup"
         )
+        await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
+        try? await Task.sleep(for: .milliseconds(60))
 
         let settledWindowWrapper = try await resolveSCWindowWrapper(
             windowID: windowID,
-            label: "post-resize window capture"
+            label: "post-prepare window capture"
         )
 
         let captureTarget = streamTargetDimensions(windowFrame: settledWindowWrapper.window.frame)
@@ -299,7 +325,10 @@ extension StreamContext {
         // Aspect-fit the requested size into the virtual display's visible bounds
         let effectiveSize: CGSize
         let maxBounds: CGSize
-        if let vdContext = virtualDisplayContext {
+        if virtualDisplayVisibleBounds.width > 0, virtualDisplayVisibleBounds.height > 0 {
+            maxBounds = virtualDisplayVisibleBounds.size
+            effectiveSize = Self.aspectFitSize(requested: newLogicalSize, maxBounds: maxBounds)
+        } else if let vdContext = virtualDisplayContext {
             let scale = max(1.0, vdContext.scaleFactor)
             let logicalRes = SharedVirtualDisplayManager.logicalResolution(
                 for: vdContext.resolution, scaleFactor: scale

@@ -65,6 +65,24 @@ struct MirageClientAudioSessionCoordinatorTests {
         #expect(await coordinator.requestPlaybackSession())
         #expect(driver.events == [.activate(.playback)])
     }
+
+    @MainActor
+    @Test("Dictation request waits briefly for app activation")
+    func dictationRequestWaitsBrieflyForAppActivation() async {
+        let driver = RecordingAudioSessionDriver(isApplicationActive: false)
+        let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
+
+        Task {
+            try? await Task.sleep(for: .milliseconds(150))
+            driver.isApplicationActiveValue = true
+        }
+
+        #expect(await coordinator.requestDictationSession())
+        #expect(driver.events == [.activate(.dictation)])
+
+        await coordinator.releaseDictationSession()
+        #expect(driver.events == [.activate(.dictation), .deactivate])
+    }
 }
 
 private final class RecordingAudioSessionDriver: MirageClientAudioSessionDriving, @unchecked Sendable {

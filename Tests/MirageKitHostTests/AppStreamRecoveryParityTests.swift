@@ -24,6 +24,30 @@ struct AppStreamRecoveryParityTests {
         #expect(targetSize == CGSize(width: 1_376, height: 896))
     }
 
+    @Test("Window streaming preparation restores minimized windows and exits full screen")
+    func windowStreamingPreparationRestoresMinimizedWindowsAndExitsFullScreen() {
+        let plan = MirageHostService.windowStreamingPreparationPlan(
+            isOnScreen: false,
+            isFullScreen: true
+        )
+
+        #expect(plan.shouldRestoreWindow)
+        #expect(plan.shouldExitFullScreen)
+        #expect(plan.settleDelayMilliseconds == 350)
+    }
+
+    @Test("Window streaming preparation avoids settling when no state change is required")
+    func windowStreamingPreparationSkipsNoOpPreparation() {
+        let plan = MirageHostService.windowStreamingPreparationPlan(
+            isOnScreen: true,
+            isFullScreen: false
+        )
+
+        #expect(plan.shouldRestoreWindow == false)
+        #expect(plan.shouldExitFullScreen == false)
+        #expect(plan.settleDelayMilliseconds == 0)
+    }
+
     @MainActor
     @Test("Dedicated app virtual-display streams honor encoder-settings scale updates")
     func dedicatedAppVirtualDisplayStreamsHonorEncoderSettingsScaleUpdates() async {

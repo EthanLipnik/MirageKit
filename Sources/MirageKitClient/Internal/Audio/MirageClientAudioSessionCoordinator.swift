@@ -38,6 +38,8 @@ internal actor MirageClientAudioSessionCoordinator {
     private var loggedInactiveDeferral = false
 
     private static let maxActivationRetries = 3
+    private static let activationWaitTimeout: Duration = .milliseconds(750)
+    private static let activationWaitPollInterval: Duration = .milliseconds(50)
     private static let activationBackoffs: [Duration] = [
         .milliseconds(100),
         .milliseconds(500),
@@ -91,6 +93,11 @@ internal actor MirageClientAudioSessionCoordinator {
     }
     #endif
 
+    func handleApplicationDidBecomeActive() async {
+        loggedInactiveDeferral = false
+        let _ = await refreshSessionIfNeeded()
+    }
+
     private var desiredConfiguration: MirageClientAudioSessionConfiguration? {
         if dictationLeaseCount > 0 {
             return .dictation
@@ -107,12 +114,14 @@ internal actor MirageClientAudioSessionCoordinator {
             return false
         }
 
-        guard await driver.isApplicationActive() else {
+        if !(await driver.isApplicationActive()) {
             if !loggedInactiveDeferral {
                 MirageLogger.client("Deferring shared audio session activation until app becomes active")
                 loggedInactiveDeferral = true
             }
-            return currentConfiguration != nil
+            guard await waitForApplicationActivation() else {
+                return currentConfiguration != nil
+            }
         }
 
         loggedInactiveDeferral = false
@@ -161,6 +170,21 @@ internal actor MirageClientAudioSessionCoordinator {
         activationBackoffUntil = nil
         loggedInactiveDeferral = false
         try? await driver.deactivate()
+    }
+
+    private func waitForApplicationActivation() async -> Bool {
+        let deadline = ContinuousClock.now + Self.activationWaitTimeout
+        while ContinuousClock.now < deadline {
+            do {
+                try await Task.sleep(for: Self.activationWaitPollInterval)
+            } catch {
+                return false
+            }
+            if await driver.isApplicationActive() {
+                return true
+            }
+        }
+        return await driver.isApplicationActive()
     }
 
     private func shouldSuppressActivationError(_ error: Error) -> Bool {

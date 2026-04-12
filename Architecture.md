@@ -80,7 +80,7 @@ The shared target also owns:
 - stream lifecycle message payloads
 - app-stream inventory and icon streaming payloads
 - shared clipboard status and update control message contracts
-- menu bar and remote input message schemas
+- menu bar and remote input message schemas, including host-owned system-action requests that resolve against the host's symbolic-hotkey configuration at execution time
 - software update message contracts
 
 ### 3.2 Shared Security
@@ -155,9 +155,11 @@ The host keeps stream-specific policy local to the host runtime. That includes f
 
 Desktop cursor presentation is also session-owned host policy for desktop streams. The client chooses between:
 
-- `Mirage Cursor`
-  the host keeps `ScreenCaptureKit` cursor capture disabled and the client renders its local Mirage cursor presentation
-- `Real Mac Cursor`
+- `Client`
+  the host keeps `ScreenCaptureKit` cursor capture disabled and the client uses its own local cursor presentation
+- `Emulated`
+  the host keeps `ScreenCaptureKit` cursor capture disabled and the client renders Mirage's software cursor presentation
+- `Host`
   the host sets `showsCursor = true` on desktop display capture and keeps that value sticky across resize, refresh-rate, display-switch, and encoder reconfiguration updates
 
 Runtime cursor-presentation overrides do not restart the desktop stream. The host updates the active desktop stream context's `captureShowsCursor` state and applies the new `ScreenCaptureKit` configuration in place.
@@ -234,12 +236,14 @@ Each quality-test stage has two budgets: a fixed measurement window (`durationMs
 Desktop cursor presentation is resolved on the client from a shared `MirageDesktopCursorPresentation` value:
 
 - `source = client`
-  render Mirage's synthetic client cursor, always lock the local cursor for secondary-display desktop streams, and optionally lock mirrored desktop streams through `lockClientCursorWhenUsingMirageCursor`
+  suppress host cursor capture, use the platform cursor presentation on the client, and keep cursor-position updates available so the client can mirror host cursor state when needed
+- `source = emulated`
+  suppress host cursor capture, render Mirage's software cursor presentation, always lock the local cursor for secondary-display desktop streams, and optionally lock mirrored desktop streams through `lockClientCursorWhenUsingMirageCursor`
 - `source = host`
   suppress Mirage's synthetic cursor presentation, rely on the captured host cursor in the video stream, and use `lockClientCursorWhenUsingHostCursor` as the client-lock policy
 
 Desktop startup carries that value in `startDesktopStream(...)`, and active desktop sessions can update it without reconnecting. The client render layer keeps cursor lock, local cursor hiding, and synthetic cursor drawing as separate switches so pointer lock can remain active even when the synthetic cursor is disabled. Temporary client-side unlock and recapture are layered above that configuration: pressing unmodified Escape suspends local cursor lock for the active desktop session, and the next local click/tap re-engages it without mutating the saved cursor presentation.
-Desktop cursor position updates remain required for secondary-display sessions and also stay enabled for host-cursor desktop sessions so macOS clients can mirror the local system cursor to the host position whenever pointer lock is disabled.
+Desktop cursor position updates remain required for secondary-display sessions and also stay enabled for client-cursor and host-cursor desktop sessions so clients can mirror local cursor state to the host position whenever pointer lock is disabled.
 For secondary-display sessions, those normalized cursor positions are intentionally allowed to move outside `0...1` while the host cursor crosses onto another host display, which lets locked-cursor input push across display edges instead of pinning at the streamed display border.
 
 Stream sizing is also package-owned through a single canonical resolver. `MirageStreamGeometry` is the shared internal contract used by client startup, host startup, and live resize to resolve logical size, backing scale, encoded size, and capped stream scale from the same inputs. That keeps requested, visible, and encoded geometry from diverging across the client and host codepaths.

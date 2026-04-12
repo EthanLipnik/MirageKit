@@ -65,6 +65,13 @@ extension MirageHostInputController {
                 injectMouseEvent(.otherMouseDragged, e, windowFrame, windowID: window.id, app: window.application)
             case let .scrollWheel(e):
                 injectScrollEvent(e, windowFrame, app: window.application)
+            case let .hostSystemAction(request):
+                performWindowActivation(
+                    windowID: window.id,
+                    app: window.application,
+                    trigger: .windowFocus
+                )
+                executeHostSystemAction(request, domain: .session)
             case let .keyDown(e):
                 performWindowActivation(
                     windowID: window.id,

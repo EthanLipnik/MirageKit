@@ -13,11 +13,15 @@ public extension MirageClientService {
     /// Mirrors client-owned stream-option state back to the connected host UI.
     func sendRemoteClientStreamOptionsStateUpdate(
         displayMode: MirageStreamOptionsDisplayMode,
-        statusOverlayEnabled: Bool
+        statusOverlayEnabled: Bool,
+        desktopCursorLockAvailable: Bool,
+        desktopCursorLockMode: MirageDesktopCursorLockMode
     ) {
         let update = RemoteClientStreamOptionsStateMessage(
             displayMode: displayMode,
-            statusOverlayEnabled: statusOverlayEnabled
+            statusOverlayEnabled: statusOverlayEnabled,
+            desktopCursorLockAvailable: desktopCursorLockAvailable,
+            desktopCursorLockMode: desktopCursorLockMode
         )
         _ = sendControlMessageBestEffort(.remoteClientStreamOptionsState, content: update)
     }
@@ -39,6 +43,10 @@ extension MirageClientService {
 
             if let desktopCursorPresentation = command.desktopCursorPresentation {
                 onRemoteClientDesktopCursorPresentationCommand?(desktopCursorPresentation)
+            }
+
+            if let desktopCursorLockMode = command.desktopCursorLockMode {
+                onRemoteClientDesktopCursorLockModeCommand?(desktopCursorLockMode)
             }
 
             if let stopAppBundleIdentifier = command.stopAppBundleIdentifier,

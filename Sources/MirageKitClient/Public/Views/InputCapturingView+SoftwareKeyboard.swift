@@ -13,25 +13,19 @@ import UIKit
 
 extension InputCapturingView {
     func setupSoftwareKeyboardField() {
-        let textField = SoftwareKeyboardTextField()
-        textField.translatesAutoresizingMaskIntoConstraints = false
-        textField.isHidden = false
-        textField.alpha = 0
-        textField.isUserInteractionEnabled = true
-        textField.backgroundColor = .clear
-        textField.textColor = .clear
-        textField.tintColor = .clear
-        textField.delegate = self
-        textField.autocorrectionType = .no
-        textField.autocapitalizationType = .none
-        textField.spellCheckingType = .no
-        textField.smartDashesType = .no
-        textField.smartQuotesType = .no
-        textField.keyboardType = .asciiCapable
-        textField.returnKeyType = .default
-        textField.textContentType = .none
-        textField.onDeleteBackward = { [weak self] in
+        let inputView = SoftwareKeyboardInputView()
+        inputView.translatesAutoresizingMaskIntoConstraints = false
+        inputView.alpha = 0.01
+        inputView.isUserInteractionEnabled = false
+        inputView.backgroundColor = .clear
+        inputView.onInsertText = { [weak self] text in
+            self?.handleSoftwareKeyboardInsertText(text)
+        }
+        inputView.onDeleteBackward = { [weak self] in
             self?.handleSoftwareKeyboardDeleteBackward()
+        }
+        inputView.onFirstResponderChanged = { [weak self] isFirstResponder in
+            self?.handleSoftwareKeyboardResponderChange(isFirstResponder: isFirstResponder)
         }
 
         let accessoryView = SoftwareKeyboardAccessoryView()
@@ -39,7 +33,7 @@ extension InputCapturingView {
             self?.toggleSoftwareModifier(key, isSelected: isSelected)
         }
         accessoryView.onDismissKeyboard = { [weak self] in
-            self?.softwareKeyboardVisible = false
+            self?.dismissSoftwareKeyboard()
         }
         #if os(visionOS)
         accessoryView.translatesAutoresizingMaskIntoConstraints = false
@@ -52,43 +46,45 @@ extension InputCapturingView {
             accessoryView.heightAnchor.constraint(equalToConstant: 44),
         ])
         #else
-        textField.inputAccessoryView = accessoryView
+        inputView.keyboardAccessoryView = accessoryView
         #endif
 
-        addSubview(textField)
+        addSubview(inputView)
         NSLayoutConstraint.activate([
-            textField.leadingAnchor.constraint(equalTo: leadingAnchor),
-            textField.topAnchor.constraint(equalTo: topAnchor),
-            textField.widthAnchor.constraint(equalToConstant: 1),
-            textField.heightAnchor.constraint(equalToConstant: 1),
+            inputView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            inputView.topAnchor.constraint(equalTo: topAnchor),
+            inputView.widthAnchor.constraint(equalToConstant: 1),
+            inputView.heightAnchor.constraint(equalToConstant: 1),
         ])
 
-        softwareKeyboardField = textField
+        softwareKeyboardField = inputView
         softwareKeyboardAccessoryView = accessoryView
     }
 
     func updateSoftwareKeyboardVisibility() {
-        guard let textField = softwareKeyboardField else { return }
-        if softwareKeyboardVisible, !hardwareKeyboardPresent {
-            textField.becomeFirstResponder()
-            textField.reloadInputViews()
-        } else {
-            textField.resignFirstResponder()
+        guard let inputView = softwareKeyboardField else { return }
+        let shouldShow = softwareKeyboardVisible && !softwareKeyboardDismissalPending && !hardwareKeyboardPresent
+        if shouldShow {
+            if !inputView.isFirstResponder {
+                inputView.becomeFirstResponder()
+            }
+            inputView.reloadInputViews()
+        } else if inputView.isFirstResponder {
+            inputView.resignFirstResponder()
         }
         #if os(visionOS)
-        softwareKeyboardAccessoryView?.isHidden = !(softwareKeyboardVisible && !hardwareKeyboardPresent)
+        softwareKeyboardAccessoryView?.isHidden = !shouldShow
         #endif
     }
 
     func clearSoftwareKeyboardState() {
-        softwareKeyboardVisible = false
-        softwareKeyboardField?.resignFirstResponder()
-        softwareHeldModifiers = []
-        updateSoftwareModifierButtons()
-        sendModifierStateIfNeeded(force: true)
-        if isSoftwareKeyboardShown {
-            isSoftwareKeyboardShown = false
-            onSoftwareKeyboardVisibilityChanged?(false)
+        if softwareKeyboardVisible || isSoftwareKeyboardResponderActive {
+            softwareKeyboardDismissalPending = true
+        }
+        if softwareKeyboardField?.isFirstResponder == true {
+            softwareKeyboardField?.resignFirstResponder()
+        } else {
+            handleSoftwareKeyboardResponderChange(isFirstResponder: false)
         }
     }
 
@@ -137,6 +133,40 @@ extension InputCapturingView {
         sendSoftwareKeyEvent(keyCode: 0x33, characters: nil, charactersIgnoringModifiers: nil, modifiers: modifiers)
     }
 
+    func dismissSoftwareKeyboard() {
+        softwareKeyboardDismissalPending = true
+        if softwareKeyboardField?.isFirstResponder == true {
+            softwareKeyboardField?.resignFirstResponder()
+        } else {
+            handleSoftwareKeyboardResponderChange(isFirstResponder: false)
+        }
+    }
+
+    func handleSoftwareKeyboardResponderChange(isFirstResponder: Bool) {
+        guard isSoftwareKeyboardResponderActive != isFirstResponder else { return }
+        isSoftwareKeyboardResponderActive = isFirstResponder
+        if isFirstResponder {
+            softwareKeyboardDismissalPending = false
+            notifySoftwareKeyboardVisibilityChanged(true)
+            return
+        }
+
+        if softwareKeyboardVisible {
+            softwareKeyboardDismissalPending = true
+        }
+        softwareHeldModifiers = []
+        updateSoftwareModifierButtons()
+        sendModifierStateIfNeeded(force: true)
+        refreshCursorUpdates(force: true)
+        notifySoftwareKeyboardVisibilityChanged(false)
+    }
+
+    func notifySoftwareKeyboardVisibilityChanged(_ isVisible: Bool) {
+        guard isSoftwareKeyboardShown != isVisible else { return }
+        isSoftwareKeyboardShown = isVisible
+        onSoftwareKeyboardVisibilityChanged?(isVisible)
+    }
+
     func sendSoftwareKeyEvent(
         keyCode: UInt16,
         characters: String?,
@@ -169,48 +199,60 @@ extension InputCapturingView {
     }
 }
 
-extension InputCapturingView: UITextFieldDelegate {
-    public func textField(
-        _ textField: UITextField,
-        shouldChangeCharactersIn _: NSRange,
-        replacementString string: String
-    )
-    -> Bool {
-        guard textField === softwareKeyboardField else { return true }
-        if !string.isEmpty { handleSoftwareKeyboardInsertText(string) }
-        return false
-    }
-
-    public func textFieldDidBeginEditing(_: UITextField) {
-        isSoftwareKeyboardShown = true
-        if !softwareKeyboardVisible { softwareKeyboardVisible = true }
-        onSoftwareKeyboardVisibilityChanged?(true)
-    }
-
-    public func textFieldDidEndEditing(_: UITextField) {
-        isSoftwareKeyboardShown = false
-        if softwareKeyboardVisible { softwareKeyboardVisible = false }
-        softwareHeldModifiers = []
-        updateSoftwareModifierButtons()
-        sendModifierStateIfNeeded(force: true)
-        refreshCursorUpdates(force: true)
-        onSoftwareKeyboardVisibilityChanged?(false)
-    }
-}
-
 struct SoftwareModifierKey: Hashable {
     let title: String
     let modifier: MirageModifierFlags
 }
 
-final class SoftwareKeyboardTextField: UITextField {
+final class SoftwareKeyboardInputView: UIView, UIKeyInput, UITextInputTraits {
+    var onInsertText: ((String) -> Void)?
     var onDeleteBackward: (() -> Void)?
+    var onFirstResponderChanged: ((Bool) -> Void)?
+    var keyboardAccessoryView: UIView?
 
-    override func deleteBackward() {
-        onDeleteBackward?()
-    }
+    var autocapitalizationType: UITextAutocapitalizationType = .none
+    var autocorrectionType: UITextAutocorrectionType = .no
+    var spellCheckingType: UITextSpellCheckingType = .no
+    var smartDashesType: UITextSmartDashesType = .no
+    var smartQuotesType: UITextSmartQuotesType = .no
+    var smartInsertDeleteType: UITextSmartInsertDeleteType = .no
+    var keyboardType: UIKeyboardType = .asciiCapable
+    var keyboardAppearance: UIKeyboardAppearance = .default
+    var returnKeyType: UIReturnKeyType = .default
+    var enablesReturnKeyAutomatically = false
+    var isSecureTextEntry = false
+    var textContentType: UITextContentType! = .none
+    var passwordRules: UITextInputPasswordRules?
+
+    var hasText: Bool { true }
 
     override var canBecomeFirstResponder: Bool { true }
+
+    override var inputAccessoryView: UIView? { keyboardAccessoryView }
+
+    override func becomeFirstResponder() -> Bool {
+        let didBecomeFirstResponder = super.becomeFirstResponder()
+        if didBecomeFirstResponder {
+            onFirstResponderChanged?(true)
+        }
+        return didBecomeFirstResponder
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let didResignFirstResponder = super.resignFirstResponder()
+        if didResignFirstResponder {
+            onFirstResponderChanged?(false)
+        }
+        return didResignFirstResponder
+    }
+
+    func insertText(_ text: String) {
+        onInsertText?(text)
+    }
+
+    func deleteBackward() {
+        onDeleteBackward?()
+    }
 }
 
 final class SoftwareKeyboardAccessoryView: UIView {

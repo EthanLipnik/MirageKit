@@ -78,13 +78,43 @@ public extension MirageActionPreferences {
               let prefs = try? JSONDecoder().decode(MirageActionPreferences.self, from: data) else {
             return MirageActionPreferences()
         }
-        return prefs
+        return MirageActionPreferences(actions: normalizedLoadedActions(prefs.actions))
     }
 
     func save() {
         if let data = try? JSONEncoder().encode(self) {
             UserDefaults.standard.set(data, forKey: Self.userDefaultsKey)
         }
+    }
+
+    static func normalizedLoadedActions(_ actions: [MirageAction]) -> [MirageAction] {
+        let builtInIDs = Set(MirageAction.allBuiltIn.map(\.id))
+        let storedActionsByID = Dictionary(uniqueKeysWithValues: actions.map { ($0.id, $0) })
+
+        let normalizedBuiltIns = MirageAction.allBuiltIn.map { canonicalAction in
+            guard let storedAction = storedActionsByID[canonicalAction.id] else {
+                return canonicalAction
+            }
+            return mergedBuiltInAction(canonicalAction: canonicalAction, storedAction: storedAction)
+        }
+
+        let customActions = actions.filter { action in
+            !builtInIDs.contains(action.id) || !action.isBuiltIn
+        }
+
+        return normalizedBuiltIns + customActions
+    }
+
+    private static func mergedBuiltInAction(
+        canonicalAction: MirageAction,
+        storedAction: MirageAction
+    ) -> MirageAction {
+        var mergedAction = canonicalAction
+        mergedAction.displayName = storedAction.displayName
+        mergedAction.shortcut = storedAction.shortcut
+        mergedAction.showInControlBar = storedAction.showInControlBar
+        mergedAction.sfSymbolName = storedAction.sfSymbolName
+        return mergedAction
     }
 
 }

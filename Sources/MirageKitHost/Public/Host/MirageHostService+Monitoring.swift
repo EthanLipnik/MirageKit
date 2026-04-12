@@ -187,7 +187,7 @@ extension MirageHostService {
         desktopCursorPresentation: MirageDesktopCursorPresentation
     ) -> Bool {
         guard streamID == desktopStreamID else { return false }
-        return desktopStreamMode == .secondary || desktopCursorPresentation.source == .host
+        return desktopStreamMode == .secondary || desktopCursorPresentation.requiresCursorPositionUpdates
     }
 
     nonisolated static func resolvedClientCursorPosition(

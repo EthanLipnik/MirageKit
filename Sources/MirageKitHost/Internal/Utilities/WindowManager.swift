@@ -15,6 +15,8 @@ import ApplicationServices
 
 /// Utility for managing windows via the Accessibility API
 enum WindowManager {
+    private static let fullScreenAttribute = "AXFullScreen"
+
     /// Minimizes a window by its WindowID
     /// - Parameter windowID: The WindowID of the window to minimize
     /// - Returns: true if the window was successfully minimized, false otherwise
@@ -29,6 +31,20 @@ enum WindowManager {
     @discardableResult
     static func restoreWindow(_ windowID: WindowID) -> Bool {
         setWindowMinimized(windowID, minimized: false)
+    }
+
+    /// Returns whether a window is currently in macOS full-screen mode.
+    static func isWindowFullScreen(_ windowID: WindowID) -> Bool {
+        guard let axWindow = resolveAXWindow(windowID) else { return false }
+        return axBooleanAttributeValue(axWindow, attribute: fullScreenAttribute as CFString) ?? false
+    }
+
+    /// Exits macOS full-screen mode for a window when supported.
+    /// - Parameter windowID: The WindowID of the window to exit full-screen mode.
+    /// - Returns: true if a full-screen window was toggled out of that state.
+    @discardableResult
+    static func exitFullScreen(_ windowID: WindowID) -> Bool {
+        setWindowFullScreen(windowID, fullScreen: false)
     }
 
     @discardableResult
@@ -53,6 +69,58 @@ enum WindowManager {
 
         MirageLogger.host("WindowManager: Failed to \(action) window \(windowID): AXError \(result.rawValue)")
         return false
+    }
+
+    @discardableResult
+    private static func setWindowFullScreen(_ windowID: WindowID, fullScreen: Bool) -> Bool {
+        let action = fullScreen ? "enter full screen" : "exit full screen"
+        guard let axWindow = resolveAXWindow(windowID) else {
+            MirageLogger.host("WindowManager: No AX window found for window \(windowID) to \(action)")
+            return false
+        }
+
+        guard let currentValue = axBooleanAttributeValue(
+            axWindow,
+            attribute: fullScreenAttribute as CFString
+        ) else {
+            MirageLogger.host("WindowManager: Full-screen state unavailable for window \(windowID)")
+            return false
+        }
+
+        guard currentValue != fullScreen else { return false }
+
+        let targetValue: CFTypeRef = fullScreen ? kCFBooleanTrue : kCFBooleanFalse
+        let result = AXUIElementSetAttributeValue(
+            axWindow,
+            fullScreenAttribute as CFString,
+            targetValue
+        )
+
+        if result == .success {
+            MirageLogger.host("WindowManager: Successfully toggled full-screen state for window \(windowID)")
+            return true
+        }
+
+        MirageLogger.host("WindowManager: Failed to \(action) for window \(windowID): AXError \(result.rawValue)")
+        return false
+    }
+
+    private static func axBooleanAttributeValue(_ element: AXUIElement, attribute: CFString) -> Bool? {
+        var value: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute, &value) == .success,
+              let value else {
+            return nil
+        }
+
+        if let boolValue = value as? Bool {
+            return boolValue
+        }
+
+        if let numberValue = value as? NSNumber {
+            return numberValue.boolValue
+        }
+
+        return nil
     }
 
     private static func resolveAXWindow(_ windowID: WindowID) -> AXUIElement? {

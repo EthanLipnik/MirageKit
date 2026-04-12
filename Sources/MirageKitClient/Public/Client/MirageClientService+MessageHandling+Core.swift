@@ -62,6 +62,8 @@ extension MirageClientService {
             modelIdentifier: sourceAdvertisement.modelIdentifier,
             iconName: sourceAdvertisement.iconName,
             machineFamily: sourceAdvertisement.machineFamily,
+            hostName: sourceAdvertisement.hostName,
+            directTransports: sourceAdvertisement.directTransports,
             metadata: sourceAdvertisement.metadata
         )
 
@@ -76,7 +78,8 @@ extension MirageClientService {
             name: resolvedHostName,
             deviceType: deviceType,
             endpoint: hostEndpoint,
-            advertisement: canonicalAdvertisement
+            advertisement: canonicalAdvertisement,
+            resolvedAddresses: provisionalHost?.resolvedAddresses ?? []
         )
     }
 

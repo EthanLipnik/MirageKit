@@ -19,6 +19,7 @@ struct ClientHelloHandshakeStateTests {
         let provisionalHostID = UUID()
         let acceptedHostID = UUID()
         let port = try #require(NWEndpoint.Port(rawValue: 9_848))
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_020))
         let provisionalAdvertisement = LoomPeerAdvertisement(
             protocolVersion: Int(Loom.protocolVersion),
             deviceID: provisionalHostID,
@@ -27,6 +28,10 @@ struct ClientHelloHandshakeStateTests {
             modelIdentifier: "Mac16,1",
             iconName: "com.apple.macbookpro-16-silver",
             machineFamily: "macBook",
+            hostName: "bonjour.local",
+            directTransports: [
+                LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+            ],
             metadata: ["source": "bonjour"]
         )
         let provisionalHost = LoomPeer(
@@ -34,7 +39,8 @@ struct ClientHelloHandshakeStateTests {
             name: "Bonjour Host",
             deviceType: .mac,
             endpoint: .hostPort(host: NWEndpoint.Host("bonjour.local"), port: port),
-            advertisement: provisionalAdvertisement
+            advertisement: provisionalAdvertisement,
+            resolvedAddresses: [.ipv4(IPv4Address("192.168.50.81")!)]
         )
         let service = MirageClientService(deviceName: "Test Device")
         service.connectedHost = provisionalHost
@@ -68,7 +74,10 @@ struct ClientHelloHandshakeStateTests {
         #expect(service.connectedHost?.advertisement.modelIdentifier == "Mac16,1")
         #expect(service.connectedHost?.advertisement.iconName == "com.apple.macbookpro-16-silver")
         #expect(service.connectedHost?.advertisement.machineFamily == "macBook")
+        #expect(service.connectedHost?.advertisement.hostName == "bonjour.local")
+        #expect(service.connectedHost?.advertisement.directTransports == provisionalAdvertisement.directTransports)
         #expect(service.connectedHost?.advertisement.metadata["source"] == "bonjour")
+        #expect(service.connectedHost?.resolvedAddresses == provisionalHost.resolvedAddresses)
     }
 
     @MainActor

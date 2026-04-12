@@ -8,7 +8,7 @@
 import CoreGraphics
 
 enum LockedCursorPositionResolver {
-    private static let speculativeExtendedBoundsAllowance: CGFloat = 0.02
+    private static let speculativeExtendedBoundsAllowance: CGFloat = 0.35
 
     static func applyRelativeDelta(
         currentPosition: CGPoint,
@@ -39,12 +39,12 @@ enum LockedCursorPositionResolver {
         confirmedHostPosition: CGPoint? = nil
     ) -> CGPoint {
         guard allowsExtendedBounds else { return inBoundsPosition(position) }
-        guard let confirmedHostPosition else { return inBoundsPosition(position) }
+        let baselinePosition = confirmedHostPosition ?? inBoundsPosition(position)
 
-        let minX = min(0, confirmedHostPosition.x) - speculativeExtendedBoundsAllowance
-        let maxX = max(1, confirmedHostPosition.x) + speculativeExtendedBoundsAllowance
-        let minY = min(0, confirmedHostPosition.y) - speculativeExtendedBoundsAllowance
-        let maxY = max(1, confirmedHostPosition.y) + speculativeExtendedBoundsAllowance
+        let minX = min(0, baselinePosition.x) - speculativeExtendedBoundsAllowance
+        let maxX = max(1, baselinePosition.x) + speculativeExtendedBoundsAllowance
+        let minY = min(0, baselinePosition.y) - speculativeExtendedBoundsAllowance
+        let maxY = max(1, baselinePosition.y) + speculativeExtendedBoundsAllowance
 
         return CGPoint(
             x: min(max(position.x, minX), maxX),

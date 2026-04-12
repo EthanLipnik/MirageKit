@@ -133,6 +133,8 @@ extension MirageHostService {
             singleClientSessionID = nil
             remoteClientStreamStatusOverlayEnabled = false
             remoteClientStreamOptionsDisplayMode = .inStream
+            remoteClientDesktopCursorLockAvailable = false
+            remoteClientDesktopCursorLockMode = .off
             await cleanupSharedVirtualDisplayIfIdle()
             await forceDisableLightsOut(reason: "last client disconnected")
         }

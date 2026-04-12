@@ -13,6 +13,7 @@ public enum MirageInputEvent: Codable, Sendable {
     case keyDown(MirageKeyEvent)
     case keyUp(MirageKeyEvent)
     case flagsChanged(MirageModifierFlags)
+    case hostSystemAction(MirageHostSystemActionRequest)
     case mouseDown(MirageMouseEvent)
     case mouseUp(MirageMouseEvent)
     case mouseMoved(MirageMouseEvent)
@@ -39,6 +40,7 @@ public enum MirageInputEvent: Codable, Sendable {
         case let .keyDown(e),
              let .keyUp(e): e.timestamp
         case .flagsChanged,
+             .hostSystemAction,
              .windowFocus: Date.timeIntervalSinceReferenceDate
         case let .mouseDown(e),
              let .mouseDragged(e),
@@ -79,6 +81,7 @@ public enum MirageInputEvent: Codable, Sendable {
         case let .scrollWheel(e):
             e.location
         case .flagsChanged,
+             .hostSystemAction,
              .keyDown,
              .keyUp,
              .magnify,

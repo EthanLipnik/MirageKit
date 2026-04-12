@@ -175,6 +175,19 @@ extension InputCapturingView {
         return normalized
     }
 
+    func resolvedIndirectSecondaryClickLocation(_ rawLocation: CGPoint) -> CGPoint {
+        if cursorLockEnabled {
+            setLockedCursorVisible(true)
+            return lockedCursorActionPosition()
+        }
+
+        if let lastCursorPosition {
+            return lastCursorPosition
+        }
+
+        return normalizedLocation(rawLocation)
+    }
+
     /// Get combined modifiers from a gesture (at event time) and keyboard state
     /// Polls hardware keyboard for accurate modifier state to avoid stuck modifiers
     func modifiers(from gesture: UIGestureRecognizer) -> MirageModifierFlags {
@@ -528,13 +541,7 @@ extension InputCapturingView {
     func handleRightClick(_ gesture: UITapGestureRecognizer) {
         if requestCursorLockRecaptureIfNeeded() { return }
 
-        let location: CGPoint
-        if cursorLockEnabled {
-            setLockedCursorVisible(true)
-            location = lockedCursorActionPosition()
-        } else {
-            location = normalizedLocation(gesture.location(in: self))
-        }
+        let location = resolvedIndirectSecondaryClickLocation(gesture.location(in: self))
         let now = CACurrentMediaTime()
         let clickCount = nextSecondaryClickCount(at: location, timestamp: now)
         currentRightClickCount = clickCount

@@ -47,6 +47,18 @@ public struct MirageAppPreferences: Codable, Equatable {
         setPreferences(prefs, for: hostID)
     }
 
+    /// Update whether pinned-only filtering is enabled for a host.
+    public mutating func setShowPinnedOnlyApps(_ isEnabled: Bool, for hostID: UUID) {
+        var prefs = preferences(for: hostID)
+        prefs.showPinnedOnlyApps = isEnabled
+        setPreferences(prefs, for: hostID)
+    }
+
+    /// Check whether pinned-only filtering is enabled for a host.
+    public func showsPinnedOnlyApps(for hostID: UUID) -> Bool {
+        preferences(for: hostID).showPinnedOnlyApps
+    }
+
     /// Check if an app is pinned for a host.
     public func isAppPinned(_ bundleIdentifier: String, for hostID: UUID) -> Bool {
         preferences(for: hostID).pinnedApps.contains(bundleIdentifier.lowercased())
@@ -85,14 +97,35 @@ public struct MirageHostAppPreferences: Codable, Equatable {
     /// Whether to show apps installed outside /Applications and ~/Applications.
     public var showNonStandardApps: Bool = false
 
+    /// Whether to show only pinned apps for the host.
+    public var showPinnedOnlyApps: Bool = false
+
     public init(
         pinnedApps: Set<String> = [],
         recentApps: [String: Date] = [:],
-        showNonStandardApps: Bool = false
+        showNonStandardApps: Bool = false,
+        showPinnedOnlyApps: Bool = false
     ) {
         self.pinnedApps = pinnedApps
         self.recentApps = recentApps
         self.showNonStandardApps = showNonStandardApps
+        self.showPinnedOnlyApps = showPinnedOnlyApps
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case pinnedApps
+        case recentApps
+        case showNonStandardApps
+        case showPinnedOnlyApps
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+
+        pinnedApps = try container.decodeIfPresent(Set<String>.self, forKey: .pinnedApps) ?? []
+        recentApps = try container.decodeIfPresent([String: Date].self, forKey: .recentApps) ?? [:]
+        showNonStandardApps = try container.decodeIfPresent(Bool.self, forKey: .showNonStandardApps) ?? false
+        showPinnedOnlyApps = try container.decodeIfPresent(Bool.self, forKey: .showPinnedOnlyApps) ?? false
     }
 }
 

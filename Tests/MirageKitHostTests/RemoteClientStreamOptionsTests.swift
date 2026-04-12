@@ -35,5 +35,17 @@ struct HostRemoteClientStreamOptionsTests {
 
         #expect(host.remoteClientStreamStatusOverlayEnabled == true)
     }
+
+    @MainActor
+    @Test("Host-side desktop cursor lock mode command updates mirrored state immediately")
+    func desktopCursorLockModeCommandUpdatesMirroredState() async {
+        let host = MirageHostService()
+
+        #expect(host.remoteClientDesktopCursorLockMode == .off)
+
+        await host.setRemoteClientDesktopCursorLockMode(.allDesktopStreams)
+
+        #expect(host.remoteClientDesktopCursorLockMode == .allDesktopStreams)
+    }
 }
 #endif

@@ -26,9 +26,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     static let cmTimeScale: CMTimeScale = 1_000_000_000
     static let presentationRebaseThresholdSeconds: CFTimeInterval = 1.0
     static let stallRecoveryThresholdSeconds: CFTimeInterval = 0.5
-    static let framePacingRefreshThresholdFactor: Double = 0.9
-    static let framePacingBufferedDepth = 2
-    static let maxCatchUpFramesPerTick = 4
 
     private weak var displayLayer: AVSampleBufferDisplayLayer?
 
@@ -39,7 +36,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
     private var cachedFormatKey: PixelBufferFormatKey?
     private var cachedFormatDescription: CMVideoFormatDescription?
-    private var lastEnqueuedSequence: UInt64 = 0
+    private var lastSubmittedSequence: UInt64 = 0
     private var remotePresentationOrigin: CMTime?
     private var localPresentationOrigin: CFTimeInterval?
     private var lastMappedPresentationTime: CMTime = .invalid
@@ -60,11 +57,15 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayer?.status == .failed
     }
 
+    var hasSubmittedFrame: Bool {
+        lastSubmittedSequence > 0
+    }
+
     func setTargetFPS(_ fps: Int) {
         let normalized = MirageRenderModePolicy.normalizedTargetFPS(fps)
         maxRenderFPS = normalized
         if let streamID {
-            MirageFrameCache.shared.setTargetFPS(normalized, for: streamID)
+            MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: normalized)
         }
     }
 
@@ -74,7 +75,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         streamID = newStreamID
         registerFrameListener(for: newStreamID)
         if let newStreamID {
-            MirageFrameCache.shared.setTargetFPS(maxRenderFPS, for: newStreamID)
+            MirageRenderStreamStore.shared.setTargetFPS(for: newStreamID, targetFPS: maxRenderFPS)
         }
         resetPresentationState()
     }
@@ -94,60 +95,40 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         clearCurrentFrameState()
     }
 
-    func requestDraw(
+    func requestImmediateSubmission(referenceTime: CFTimeInterval) {
+        guard !renderingSuspended else { return }
+        _ = submitPendingFrameIfPossible(referenceTime: referenceTime)
+    }
+
+    func handleFrameAvailable(
         referenceTime: CFTimeInterval,
-        useFramePacing: Bool,
-        presentationPolicyOverride: MirageRenderPresentationPolicy? = nil,
-        maxFramesOverride: Int? = nil
+        allowImmediateSubmission: Bool
     ) {
         guard !renderingSuspended else { return }
-        drainFramesIfPossible(
-            referenceTime: referenceTime,
-            useFramePacing: useFramePacing,
-            presentationPolicyOverride: presentationPolicyOverride,
-            maxFramesOverride: maxFramesOverride
-        )
+        guard allowImmediateSubmission else { return }
+        _ = submitPendingFrameIfPossible(referenceTime: referenceTime)
     }
 
     func displayLinkTick(
         referenceTime: CFTimeInterval,
-        displayRefreshRate: Double,
-        presentationPolicyOverride: MirageRenderPresentationPolicy? = nil,
-        maxFramesOverride: Int? = nil
+        displayRefreshRate _: Double
     ) {
         guard !renderingSuspended else { return }
-        let framePacingEnabled = displayRefreshRate >=
-            Double(maxRenderFPS) * Self.framePacingRefreshThresholdFactor
-
-        drainFramesIfPossible(
-            referenceTime: referenceTime,
-            useFramePacing: framePacingEnabled,
-            presentationPolicyOverride: presentationPolicyOverride,
-            maxFramesOverride: maxFramesOverride
-        )
+        _ = submitPendingFrameIfPossible(referenceTime: referenceTime)
     }
 
     private func clearCurrentFrameState() {
         guard let displayLayer else { return }
         displayLayer.flushAndRemoveImage()
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
-        lastEnqueuedSequence = 0
+        lastSubmittedSequence = 0
     }
 
-    private func drainFramesIfPossible(
-        referenceTime: CFTimeInterval,
-        useFramePacing: Bool,
-        presentationPolicyOverride: MirageRenderPresentationPolicy?,
-        maxFramesOverride: Int?
-    ) {
+    @discardableResult
+    private func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> Bool {
         guard let streamID, let displayLayer else { return }
         recoverDisplayLayerIfNeeded()
         guard displayLayer.status != .failed else { return }
-
-        let policy = presentationPolicyOverride ?? (useFramePacing
-            ? .buffered(maxDepth: Self.framePacingBufferedDepth)
-            : .latest)
-        let maxFrames = maxFramesOverride ?? (useFramePacing ? 1 : Self.maxCatchUpFramesPerTick)
 
         // Detect presentation stalls (backpressure, display sleep, window occlusion)
         // and rebase time mapping to prevent fast-forward playback on recovery
@@ -159,48 +140,49 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
             resetSequenceTrackingState()
         }
 
-        var framesSubmitted = 0
-        while framesSubmitted < maxFrames {
-            guard displayLayer.isReadyForMoreMediaData else { return }
-            guard let frame = MirageFrameCache.shared.dequeueForPresentation(
-                for: streamID,
-                policy: policy
-            ) else {
-                return
-            }
-            if frame.sequence <= lastEnqueuedSequence {
-                let latestSequence = MirageFrameCache.shared.latestSequence(for: streamID)
-                if latestSequence > 0, latestSequence < lastEnqueuedSequence {
-                    MirageLogger
-                        .renderer(
-                            "Detected render sequence regression for stream \(streamID) (\(lastEnqueuedSequence) -> \(latestSequence)); rebasing presenter state"
-                        )
-                    resetSequenceTrackingState()
-                    refreshFrameListener(for: streamID)
-                } else {
-                    continue
-                }
-            }
-
-            updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
-            guard let sampleBuffer = makeSampleBuffer(
-                from: frame.pixelBuffer,
-                presentationTime: frame.presentationTime,
-                referenceTime: referenceTime
-            ) else {
-                continue
-            }
-
-            displayLayer.enqueue(sampleBuffer)
-            lastEnqueuedSequence = frame.sequence
-            lastFrameSubmissionTime = CACurrentMediaTime()
-            MirageFrameCache.shared.markPresented(sequence: frame.sequence, for: streamID)
-            framesSubmitted += 1
+        guard displayLayer.isReadyForMoreMediaData else {
+            MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+            return false
         }
+        guard let frame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID) else {
+            return false
+        }
+
+        if frame.sequence <= lastSubmittedSequence {
+            let latestSequence = MirageRenderStreamStore.shared.latestSequence(for: streamID)
+            if latestSequence > 0, latestSequence < lastSubmittedSequence {
+                MirageLogger
+                    .renderer(
+                        "Detected render sequence regression for stream \(streamID) (\(lastSubmittedSequence) -> \(latestSequence)); rebasing presenter state"
+                    )
+                resetSequenceTrackingState()
+                refreshFrameListener(for: streamID)
+            }
+            guard frame.sequence > lastSubmittedSequence else { return false }
+        }
+
+        updateLayerContentRect(frame.contentRect, pixelBuffer: frame.pixelBuffer)
+        guard let (sampleBuffer, mappedPresentationTime) = makeSampleBuffer(
+            from: frame.pixelBuffer,
+            presentationTime: frame.presentationTime,
+            referenceTime: referenceTime
+        ) else {
+            return false
+        }
+
+        displayLayer.enqueue(sampleBuffer)
+        lastSubmittedSequence = frame.sequence
+        lastFrameSubmissionTime = CACurrentMediaTime()
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: frame.sequence,
+            mappedPresentationTime: mappedPresentationTime,
+            for: streamID
+        )
+        return true
     }
 
     private func resetSequenceTrackingState() {
-        lastEnqueuedSequence = 0
+        lastSubmittedSequence = 0
         remotePresentationOrigin = nil
         localPresentationOrigin = nil
         lastMappedPresentationTime = .invalid
@@ -229,7 +211,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         from pixelBuffer: CVPixelBuffer,
         presentationTime: CMTime,
         referenceTime: CFTimeInterval
-    ) -> CMSampleBuffer? {
+    ) -> (sampleBuffer: CMSampleBuffer, mappedPresentationTime: CMTime)? {
         guard let formatDescription = formatDescription(for: pixelBuffer) else { return nil }
 
         let samplePresentationTime = mappedPresentationTime(
@@ -260,7 +242,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
            let first = (attachments as NSArray).firstObject as? NSMutableDictionary {
             first[kCMSampleAttachmentKey_DisplayImmediately] = kCFBooleanTrue
         }
-        return sampleBuffer
+        return (sampleBuffer, samplePresentationTime)
     }
 
     private func mappedPresentationTime(

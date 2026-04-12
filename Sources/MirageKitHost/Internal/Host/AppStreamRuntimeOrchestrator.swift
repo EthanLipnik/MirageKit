@@ -46,6 +46,7 @@ actor AppStreamRuntimeOrchestrator {
              .mouseDown,
              .rightMouseDown,
              .otherMouseDown,
+             .hostSystemAction,
              .keyDown:
             return true
         case .flagsChanged,

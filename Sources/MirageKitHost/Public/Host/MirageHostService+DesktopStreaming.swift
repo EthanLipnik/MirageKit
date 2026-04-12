@@ -37,6 +37,30 @@ func desktopMirroringRestoreContinuationDecision(
     return .continueRestore
 }
 
+func capturedDisplaySpaceSnapshot(
+    displayIDs: [CGDirectDisplayID],
+    currentSpaceProvider: (CGDirectDisplayID) -> CGSSpaceID
+)
+-> [CGDirectDisplayID: CGSSpaceID] {
+    var snapshot: [CGDirectDisplayID: CGSSpaceID] = [:]
+    for displayID in displayIDs {
+        let spaceID = currentSpaceProvider(displayID)
+        guard spaceID != 0 else { continue }
+        snapshot[displayID] = spaceID
+    }
+    return snapshot
+}
+
+func pendingDisplaySpaceRestores(
+    snapshot: [CGDirectDisplayID: CGSSpaceID],
+    currentSpaceProvider: (CGDirectDisplayID) -> CGSSpaceID
+)
+-> [CGDirectDisplayID: CGSSpaceID] {
+    snapshot.filter { displayID, expectedSpaceID in
+        currentSpaceProvider(displayID) != expectedSpaceID
+    }
+}
+
 private let desktopStartupCaptureReadinessWindow: Duration = .milliseconds(750)
 
 extension MirageHostService {
@@ -48,7 +72,7 @@ extension MirageHostService {
         displayResolution: CGSize,
         clientScaleFactor: CGFloat? = nil,
         mode: MirageDesktopStreamMode,
-        cursorPresentation: MirageDesktopCursorPresentation = .clientCursor,
+        cursorPresentation: MirageDesktopCursorPresentation = .emulatedCursor,
         keyFrameInterval: Int?,
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
@@ -537,12 +561,28 @@ extension MirageHostService {
         registerTypingBurstRoute(streamID: streamID, context: streamContext)
         await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
         await syncAppListRequestDeferralForInteractiveWorkload()
-        try await activateAudioForClient(
-            clientID: clientContext.client.id,
-            expectedSessionID: clientContext.sessionID,
-            sourceStreamID: streamID,
-            configuration: resolvedAudioConfiguration
-        )
+        var effectiveAudioConfiguration = resolvedAudioConfiguration
+        if effectiveAudioConfiguration.enabled {
+            do {
+                try await activateAudioForClient(
+                    clientID: clientContext.client.id,
+                    expectedSessionID: clientContext.sessionID,
+                    sourceStreamID: streamID,
+                    configuration: effectiveAudioConfiguration
+                )
+            } catch {
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Desktop audio activation failed; retrying desktop stream without audio: "
+                )
+                effectiveAudioConfiguration.enabled = false
+                audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
+                await stopAudioPipeline(for: clientContext.client.id, reason: .error)
+                await closeAudioTransportIfNeeded(for: clientContext.client.id)
+                await streamContext.setCapturedAudioHandler(nil)
+            }
+        }
         guard !disconnectingClientIDs.contains(clientContext.client.id),
               let activeClientContext = findClientContext(sessionID: clientContext.sessionID) else {
             MirageLogger.host("Desktop stream client disconnected after audio activation; aborting startup")
@@ -603,36 +643,56 @@ extension MirageHostService {
         // Start streaming the display with direct Loom send ownership in StreamPacketSender.
         let firstSuccessfulVideoPacketSent = Locked(false)
         do {
-            try await streamContext.startDesktopDisplay(
-            displayWrapper: captureDisplay,
-            resolution: captureResolution,
-            excludedWindows: excludedWindows,
-            sendPacket: { packetData, onComplete in
-                activeVideoStream.sendUnreliableQueued(packetData) { error in
-                    if error == nil {
-                        let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
-                            guard !didMark else { return false }
-                            didMark = true
-                            return true
-                        }
-                        if shouldMarkFirstPacket {
-                            Task {
-                                await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
-                                    streamID: streamID
-                                )
+            let startDesktopDisplay: () async throws -> Void = {
+                try await streamContext.startDesktopDisplay(
+                    displayWrapper: captureDisplay,
+                    resolution: captureResolution,
+                    excludedWindows: excludedWindows,
+                    sendPacket: { packetData, onComplete in
+                        activeVideoStream.sendUnreliableQueued(packetData) { error in
+                            if error == nil {
+                                let shouldMarkFirstPacket = firstSuccessfulVideoPacketSent.withLock { didMark in
+                                    guard !didMark else { return false }
+                                    didMark = true
+                                    return true
+                                }
+                                if shouldMarkFirstPacket {
+                                    Task {
+                                        await HostDesktopStreamTerminationTracker.shared.markDesktopStreamFirstPacketSent(
+                                            streamID: streamID
+                                        )
+                                    }
+                                }
                             }
+                            onComplete(error)
+                        }
+                    },
+                    onSendError: { [weak self] error in
+                        guard let self else { return }
+                        dispatchMainWork {
+                            await self.handleVideoSendError(streamID: streamID, error: error)
                         }
                     }
-                    onComplete(error)
-                }
-            },
-            onSendError: { [weak self] error in
-                guard let self else { return }
-                dispatchMainWork {
-                    await self.handleVideoSendError(streamID: streamID, error: error)
-                }
+                )
             }
-        )
+
+            do {
+                try await startDesktopDisplay()
+            } catch {
+                guard effectiveAudioConfiguration.enabled else { throw error }
+                MirageLogger.error(
+                    .host,
+                    error: error,
+                    message: "Desktop display capture start failed with audio enabled; retrying without audio: "
+                )
+                effectiveAudioConfiguration.enabled = false
+                audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
+                await stopAudioPipeline(for: clientContext.client.id, reason: .error)
+                await closeAudioTransportIfNeeded(for: clientContext.client.id)
+                await streamContext.setCapturedAudioHandler(nil)
+                try await startDesktopDisplay()
+            }
+
         if mode == .unified {
             var recoveryAttempted = false
             while true {
@@ -759,7 +819,7 @@ extension MirageHostService {
         desktopStreamID = nil
         desktopRequestedScaleFactor = nil
         desktopStreamMode = .unified
-        desktopCursorPresentation = .clientCursor
+        desktopCursorPresentation = .emulatedCursor
         if let vdID = desktopVirtualDisplayID {
             if mode == .unified {
                 await disableDisplayMirroring(displayID: vdID)
@@ -776,6 +836,7 @@ extension MirageHostService {
         desktopUsesHostResolution = false
         mirroredDesktopDisplayIDs.removeAll()
         desktopMirroringSnapshot.removeAll()
+        desktopDisplaySpaceSnapshot.removeAll()
     }
 
     /// Stop the desktop stream
@@ -827,7 +888,7 @@ extension MirageHostService {
         desktopUsesHostResolution = false
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .unified
-        desktopCursorPresentation = .clientCursor
+        desktopCursorPresentation = .emulatedCursor
         streamsByID.removeValue(forKey: streamID)
         unregisterTypingBurstRoute(streamID: streamID)
         unregisterStallWindowPointerRoute(streamID: streamID)
@@ -934,6 +995,29 @@ extension MirageHostService {
         CGVirtualDisplayBridge.getDisplaysToMirror(excludingDisplayID: targetDisplayID)
     }
 
+    func captureDisplaySpaceSnapshot(
+        for displayIDs: [CGDirectDisplayID],
+        overwriteExisting: Bool
+    ) {
+        let snapshot = capturedDisplaySpaceSnapshot(
+            displayIDs: displayIDs,
+            currentSpaceProvider: { CGSWindowSpaceBridge.getCurrentSpaceForDisplay($0) }
+        )
+        guard !snapshot.isEmpty else { return }
+
+        if overwriteExisting || desktopDisplaySpaceSnapshot.isEmpty {
+            desktopDisplaySpaceSnapshot = snapshot
+        } else {
+            for displayID in displayIDs {
+                guard desktopDisplaySpaceSnapshot[displayID] == nil,
+                      let spaceID = snapshot[displayID] else { continue }
+                desktopDisplaySpaceSnapshot[displayID] = spaceID
+            }
+        }
+
+        MirageLogger.host("Captured display space snapshot for \(snapshot.count) displays")
+    }
+
     func captureDisplayMirroringSnapshot(for displayIDs: [CGDirectDisplayID])
     -> [CGDirectDisplayID: CGDirectDisplayID] {
         var snapshot: [CGDirectDisplayID: CGDirectDisplayID] = [:]
@@ -941,6 +1025,57 @@ extension MirageHostService {
             snapshot[displayID] = CGDisplayMirrorsDisplay(displayID)
         }
         return snapshot
+    }
+
+    func restoreDisplaySpaceSnapshotIfNeeded(
+        reason: String,
+        maxAttempts: Int = 3
+    )
+    async {
+        guard !desktopDisplaySpaceSnapshot.isEmpty else { return }
+
+        for attempt in 1 ... maxAttempts {
+            let pending = pendingDisplaySpaceRestores(
+                snapshot: desktopDisplaySpaceSnapshot,
+                currentSpaceProvider: { CGSWindowSpaceBridge.getCurrentSpaceForDisplay($0) }
+            )
+            if pending.isEmpty { return }
+
+            for displayID in pending.keys.sorted() {
+                guard let expectedSpaceID = pending[displayID] else { continue }
+                if !CGSWindowSpaceBridge.setCurrentSpaceForDisplay(displayID, spaceID: expectedSpaceID) {
+                    MirageLogger.host(
+                        "Failed to restore current space \(expectedSpaceID) for display \(displayID) " +
+                            "(reason=\(reason), attempt=\(attempt))"
+                    )
+                }
+            }
+
+            if attempt < maxAttempts {
+                try? await Task.sleep(for: .milliseconds(Int64(120 * attempt)))
+            }
+        }
+
+        let unresolved = pendingDisplaySpaceRestores(
+            snapshot: desktopDisplaySpaceSnapshot,
+            currentSpaceProvider: { CGSWindowSpaceBridge.getCurrentSpaceForDisplay($0) }
+        )
+        if !unresolved.isEmpty {
+            let unresolvedSummary = unresolved
+                .keys
+                .sorted()
+                .compactMap { displayID in
+                    guard let expectedSpaceID = unresolved[displayID] else { return nil }
+                    let actualSpaceID = CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
+                    return "\(displayID): expected=\(expectedSpaceID), actual=\(actualSpaceID)"
+                }
+                .joined(separator: "; ")
+            MirageLogger.error(
+                .host,
+                "Display current Space restore remained incomplete after \(maxAttempts) attempts " +
+                    "(reason=\(reason)): \(unresolvedSummary)"
+            )
+        }
     }
 
     func isDisplayMirroringRestored(targetDisplayID: CGDirectDisplayID) -> Bool {
@@ -1087,6 +1222,8 @@ extension MirageHostService {
             return
         }
 
+        captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: false)
+
         let mirroredDisplayIDs = displaysToMirror.filter { CGDisplayMirrorsDisplay($0) == targetDisplayID }
         if mirroredDisplayIDs.count == displaysToMirror.count {
             if desktopMirroringSnapshot.isEmpty {
@@ -1095,6 +1232,7 @@ extension MirageHostService {
             }
             mirroredDesktopDisplayIDs = Set(displaysToMirror)
             MirageLogger.host("Display mirroring already enabled for \(displaysToMirror.count) displays")
+            await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup_noop")
             return
         }
 
@@ -1147,6 +1285,7 @@ extension MirageHostService {
             .host(
                 "Display mirroring enabled for \(successfullyMirrored.count) displays → virtual display \(targetDisplayID)"
             )
+        await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup")
     }
 
     /// Temporarily suspend desktop mirroring before a virtual-display resize.
@@ -1154,6 +1293,8 @@ extension MirageHostService {
     func suspendDisplayMirroringForResize(targetDisplayID: CGDirectDisplayID) async {
         let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
         guard !displaysToMirror.isEmpty else { return }
+
+        captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: true)
 
         if desktopMirroringSnapshot.isEmpty {
             desktopMirroringSnapshot = captureDisplayMirroringSnapshot(for: displaysToMirror)
@@ -1199,8 +1340,14 @@ extension MirageHostService {
         guard !desktopMirroringSnapshot.isEmpty else {
             MirageLogger.host("No display mirroring snapshot to restore")
             mirroredDesktopDisplayIDs.removeAll()
+            desktopDisplaySpaceSnapshot.removeAll()
             return
         }
+
+        captureDisplaySpaceSnapshot(
+            for: desktopMirroringSnapshot.keys.sorted(),
+            overwriteExisting: true
+        )
 
         MirageLogger
             .host("Restoring \(desktopMirroringSnapshot.count) displays from mirroring (virtual display \(displayID))")
@@ -1248,13 +1395,16 @@ extension MirageHostService {
                 CGCancelDisplayConfiguration(config)
             } else {
                 MirageLogger.host("Display mirroring disabled for \(successfullyRestored) displays")
+                await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable")
             }
         } else {
             CGCancelDisplayConfiguration(config)
+            await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_disable_noop")
         }
 
         mirroredDesktopDisplayIDs.removeAll()
         desktopMirroringSnapshot.removeAll()
+        desktopDisplaySpaceSnapshot.removeAll()
     }
 }
 

@@ -119,8 +119,9 @@ func placementBoundsSelectionDecision(
     return PlacementBoundsDecision(outcome: outcome, resolvedBounds: recomputed)
 }
 
-/// Manages window movement between displays/spaces for Mirage streams
-/// Handles moving windows to virtual displays and restoring them on stream end
+/// Manages window placement ownership and restoration for Mirage streams.
+/// Dedicated virtual-display streams can move windows between spaces; mirrored
+/// app-window capture preserves the source display and only snapshots/ restores state.
 actor WindowSpaceManager {
     // MARK: - Singleton
 
@@ -420,13 +421,11 @@ actor WindowSpaceManager {
         )
     }
 
-    func bindWindowToSpaceOnly(
+    func prepareWindowForMirroredCapture(
         _ windowID: WindowID,
-        toSpaceID spaceID: CGSSpaceID,
-        displayID: CGDirectDisplayID,
         owner: WindowBindingOwner? = nil
     )
-    async throws {
+    throws {
         guard let windowInfo = getWindowInfo(windowID) else {
             throw WindowSpaceError.windowNotFound(windowID)
         }
@@ -436,60 +435,7 @@ actor WindowSpaceManager {
             owner: owner
         )
 
-        let resolvedAXWindow = resolveAXWindow(for: windowID)
         ensureTrafficLightsHidden(windowID: windowID)
-
-        var currentSpaceID = spaceID
-        let maxAttempts = 4
-        for attempt in 1 ... maxAttempts {
-            if attempt > 1 {
-                let refreshedSpaceID = CGSWindowSpaceBridge.getCurrentSpaceForDisplay(displayID)
-                if refreshedSpaceID != 0, refreshedSpaceID != currentSpaceID {
-                    MirageLogger.host(
-                        "Display \(displayID) space changed from \(currentSpaceID) to \(refreshedSpaceID) on space-only attempt \(attempt); adopting new space"
-                    )
-                    currentSpaceID = refreshedSpaceID
-                }
-            }
-
-            let didActivateSpaceBeforeMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(
-                displayID,
-                spaceID: currentSpaceID
-            )
-            if !didActivateSpaceBeforeMove {
-                MirageLogger.host(
-                    "Failed to set current space \(currentSpaceID) for display \(displayID) before space-only move attempt \(attempt)"
-                )
-            }
-
-            CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: currentSpaceID)
-            if !raiseWindow(windowID, axWindow: resolvedAXWindow) {
-                MirageLogger.debug(
-                    .host,
-                    "Failed to raise window \(windowID) on space-only move attempt \(attempt)"
-                )
-            }
-
-            let didActivateSpaceAfterMove = CGSWindowSpaceBridge.setCurrentSpaceForDisplay(
-                displayID,
-                spaceID: currentSpaceID
-            )
-            if !didActivateSpaceAfterMove {
-                MirageLogger.host(
-                    "Failed to set current space \(currentSpaceID) for display \(displayID) after space-only move attempt \(attempt)"
-                )
-            }
-
-            let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-            if currentSpaces.contains(currentSpaceID) {
-                return
-            }
-        }
-
-        throw WindowSpaceError.moveFailed(
-            windowID,
-            "Failed to bind window to target space \(currentSpaceID); actual spaces=\(CGSWindowSpaceBridge.getSpacesForWindow(windowID))"
-        )
     }
 
     private func resolvePlacementDisplayBounds(

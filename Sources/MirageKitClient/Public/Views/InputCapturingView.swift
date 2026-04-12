@@ -279,6 +279,9 @@ public class InputCapturingView: UIView {
     var swallowingLongPressForCursorRecapture = false
     var swallowingVirtualCursorLongPressForCursorRecapture = false
     var usesMouseInputDeltas: Bool = false
+    #if canImport(GameController)
+    private var lastLoggedMouseInputDeltaStatus: String?
+    #endif
     var pointerLockActive: Bool = false {
         didSet {
             guard pointerLockActive != oldValue else { return }
@@ -308,15 +311,20 @@ public class InputCapturingView: UIView {
     public var softwareKeyboardVisible: Bool = false {
         didSet {
             guard softwareKeyboardVisible != oldValue else { return }
+            if !softwareKeyboardVisible {
+                softwareKeyboardDismissalPending = false
+            }
             updateSoftwareKeyboardVisibility()
         }
     }
 
     private var lastReportedContainerSize: CGSize = .zero
 
-    var softwareKeyboardField: SoftwareKeyboardTextField?
+    var softwareKeyboardField: SoftwareKeyboardInputView?
     var softwareKeyboardAccessoryView: SoftwareKeyboardAccessoryView?
     var isSoftwareKeyboardShown: Bool = false
+    var isSoftwareKeyboardResponderActive: Bool = false
+    var softwareKeyboardDismissalPending = false
     var softwareHeldModifiers: MirageModifierFlags = []
     var suppressedOnInputEventRebindCount: UInt64 = 0
     var lastOnInputEventRebindLogTime: CFAbsoluteTime = 0
@@ -1348,13 +1356,14 @@ public class InputCapturingView: UIView {
     private func updateMouseInputHandler() {
         #if canImport(GameController)
         if cursorLockEnabled, pointerLockActive,
-           let mouse = GCMouse.mice().first,
+           let mouse = GCMouse.mice().first(where: { $0.mouseInput != nil }),
            let input = mouse.mouseInput {
             if mouseInput !== input {
                 mouseInput?.mouseMovedHandler = nil
                 mouseInput = input
             }
             usesMouseInputDeltas = true
+            logMouseInputDeltaStatusIfNeeded("Pointer lock using GameController mouse delta input.")
             input.mouseMovedHandler = { [weak self] (_: GCMouseInput, deltaX: Float, deltaY: Float) in
                 Task { @MainActor [weak self] in
                     self?.handleLockedMouseDelta(deltaX: deltaX, deltaY: deltaY)
@@ -1364,6 +1373,16 @@ public class InputCapturingView: UIView {
             usesMouseInputDeltas = false
             mouseInput?.mouseMovedHandler = nil
             mouseInput = nil
+            if cursorLockEnabled, pointerLockActive {
+                let status = if GCMouse.mice().isEmpty {
+                    "Pointer lock waiting for connected mouse input."
+                } else {
+                    "Pointer lock waiting for usable GameController mouse input."
+                }
+                logMouseInputDeltaStatusIfNeeded(status)
+            } else {
+                lastLoggedMouseInputDeltaStatus = nil
+            }
         }
         if cursorLockEnabled {
             hoverGesture.isEnabled = !usesMouseInputDeltas
@@ -1420,6 +1439,14 @@ public class InputCapturingView: UIView {
             onInputEvent?(.mouseMoved(mouseEvent))
         }
     }
+
+    #if canImport(GameController)
+    private func logMouseInputDeltaStatusIfNeeded(_ status: String) {
+        guard lastLoggedMouseInputDeltaStatus != status else { return }
+        lastLoggedMouseInputDeltaStatus = status
+        MirageLogger.client(status)
+    }
+    #endif
 
     private func setupSceneLifecycleObservers() {
         // Clear modifiers and transient input state when app loses focus.
@@ -1496,8 +1523,8 @@ public class InputCapturingView: UIView {
     private func appDidEnterBackground() {
         didEnterBackgroundSinceLastActive = true
         // Ordinary app backgrounding should suspend the display layer so we
-        // restart presentation cleanly when the scene becomes active again.
-        metalView.suspendRendering()
+        // can resume from the last presented frame if the display layer stays healthy.
+        metalView.suspendRendering(clearCurrentFrame: false)
     }
 
     @objc
@@ -1505,10 +1532,13 @@ public class InputCapturingView: UIView {
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
         let displayLayerFailed = metalView.hasDisplayLayerFailure
-        let shouldRequestRecovery = displayLayerFailed || backgrounded
+        let shouldRequestRecovery = displayLayerFailed
 
         if window != nil {
             metalView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)
+        }
+        Task {
+            await MirageClientAudioSessionCoordinator.shared.handleApplicationDidBecomeActive()
         }
 
         sendModifierStateIfNeeded(force: true)

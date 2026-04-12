@@ -4,34 +4,37 @@
 //
 //  Created by Ethan Lipnik on 2/16/26.
 //
-//  Per-stream render store with decode-health telemetry.
+//  Latest-frame render store with submission telemetry.
 //
 
 import CoreGraphics
 import CoreMedia
 import CoreVideo
 import Foundation
-import Metal
 import MirageKit
 
 final class MirageRenderStreamStore: @unchecked Sendable {
     struct EnqueueResult: Sendable {
         let sequence: UInt64
-        let queueDepth: Int
-        let oldestAgeMs: Double
-        let emergencyDrops: Int
+        let pendingFrameCount: Int
+        let pendingFrameAgeMs: Double
+        let overwrittenPendingFrames: Int
     }
 
-    struct PresentationSnapshot: Sendable {
+    struct SubmissionSnapshot: Sendable {
         let sequence: UInt64
-        let presentedTime: CFAbsoluteTime
+        let submittedTime: CFAbsoluteTime
+        let mappedPresentationTime: CMTime
     }
 
     struct RenderTelemetrySnapshot: Sendable {
         let decodeFPS: Double
-        let presentedFPS: Double
-        let uniquePresentedFPS: Double
-        let queueDepth: Int
+        let submittedFPS: Double
+        let uniqueSubmittedFPS: Double
+        let pendingFrameCount: Int
+        let pendingFrameAgeMs: Double
+        let overwrittenPendingFrames: UInt64
+        let displayLayerNotReadyCount: UInt64
         let decodeHealthy: Bool
         let severeDecodeUnderrun: Bool
         let targetFPS: Int
@@ -54,42 +57,27 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
     private final class StreamState {
         let lock = NSLock()
-        let queue: MirageSPSCFrameQueue
+        var pendingFrame: MirageRenderFrame?
         var nextSequence: UInt64 = 0
-        var lastPresentedSequence: UInt64 = 0
-        var lastPresentedTime: CFAbsoluteTime = 0
+        var lastSubmittedSequence: UInt64 = 0
+        var lastSubmittedTime: CFAbsoluteTime = 0
+        var lastSubmittedMappedPresentationTime: CMTime = .invalid
         var targetFPS: Int = 60
         var listeners: [ObjectIdentifier: FrameListener] = [:]
 
         var decodeSamples: [CFAbsoluteTime] = []
         var decodeSampleStartIndex: Int = 0
-        var presentedSamples: [CFAbsoluteTime] = []
-        var presentedSampleStartIndex: Int = 0
-        var uniquePresentedSamples: [CFAbsoluteTime] = []
-        var uniquePresentedSampleStartIndex: Int = 0
+        var submittedSamples: [CFAbsoluteTime] = []
+        var submittedSampleStartIndex: Int = 0
+        var uniqueSubmittedSamples: [CFAbsoluteTime] = []
+        var uniqueSubmittedSampleStartIndex: Int = 0
 
-        init(capacity: Int, byteBudget: Int) {
-            queue = MirageSPSCFrameQueue(
-                capacity: capacity,
-                byteBudget: byteBudget
-            )
-        }
+        var overwrittenPendingFramesSinceLastSnapshot: UInt64 = 0
+        var displayLayerNotReadyCountSinceLastSnapshot: UInt64 = 0
     }
 
     private let stateLock = NSLock()
     private var streams: [StreamID: StreamState] = [:]
-    private let memoryBudgetController = MirageRenderMemoryBudgetController()
-
-    #if os(iOS) || os(visionOS)
-    private let defaultQueueCapacity = 24
-    private let defaultQueueByteBudget = 128 * 1024 * 1024
-    #elseif os(macOS)
-    private let defaultQueueCapacity = 24
-    private let defaultQueueByteBudget = 256 * 1024 * 1024
-    #else
-    private let defaultQueueCapacity = 24
-    private let defaultQueueByteBudget = 128 * 1024 * 1024
-    #endif
     private let sampleWindowSeconds: CFAbsoluteTime = 1.0
 
     private init() {}
@@ -100,8 +88,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         contentRect: CGRect,
         decodeTime: CFAbsoluteTime,
         presentationTime: CMTime,
-        metalTexture: CVMetalTexture?,
-        texture: MTLTexture?,
         for streamID: StreamID
     ) -> EnqueueResult {
         let state = streamState(for: streamID)
@@ -109,37 +95,27 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let result: EnqueueResult
 
         state.lock.lock()
-        let effectiveByteBudget = memoryBudgetController.effectiveQueueBudgetBytes(
-            normalBudgetBytes: defaultQueueByteBudget
-        )
-        let pressureDrops = state.queue.updateByteBudget(effectiveByteBudget)
         state.nextSequence &+= 1
         let frame = MirageRenderFrame(
             pixelBuffer: pixelBuffer,
             contentRect: contentRect,
             sequence: state.nextSequence,
             decodeTime: decodeTime,
-            presentationTime: presentationTime,
-            metalTexture: metalTexture,
-            texture: texture,
-            approximateByteSize: MirageRenderFrame.estimatedByteSize(for: pixelBuffer)
+            presentationTime: presentationTime
         )
-
-        let pushResult = state.queue.enqueue(frame)
+        let overwrotePendingFrame = state.pendingFrame != nil ? 1 : 0
+        state.pendingFrame = frame
         let now = CFAbsoluteTimeGetCurrent()
-        appendSampleLocked(
-            now,
-            samples: &state.decodeSamples,
-            startIndex: &state.decodeSampleStartIndex
-        )
-
-        let snapshot = state.queue.snapshot()
+        appendSampleLocked(now, samples: &state.decodeSamples, startIndex: &state.decodeSampleStartIndex)
+        if overwrotePendingFrame > 0 {
+            state.overwrittenPendingFramesSinceLastSnapshot &+= UInt64(overwrotePendingFrame)
+        }
         listeners = activeListenersLocked(state: state)
         result = EnqueueResult(
             sequence: frame.sequence,
-            queueDepth: snapshot.depth,
-            oldestAgeMs: oldestAgeMs(snapshot: snapshot, now: now),
-            emergencyDrops: pressureDrops + pushResult.dropped
+            pendingFrameCount: 1,
+            pendingFrameAgeMs: pendingFrameAgeMsLocked(state: state, now: now),
+            overwrittenPendingFrames: overwrotePendingFrame
         )
         state.lock.unlock()
 
@@ -150,113 +126,99 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         return result
     }
 
-    func dequeue(for streamID: StreamID) -> MirageRenderFrame? {
+    func takePendingFrame(for streamID: StreamID) -> MirageRenderFrame? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
-        state.lock.lock()
-        let frame = state.queue.dequeue()
-        state.lock.unlock()
-        return frame
-    }
-
-    func dequeueForPresentation(
-        for streamID: StreamID,
-        policy: MirageRenderPresentationPolicy
-    ) -> MirageRenderFrame? {
-        guard let state = streamStateIfPresent(for: streamID) else { return nil }
-
         state.lock.lock()
         defer { state.lock.unlock() }
 
-        let snapshot = state.queue.snapshot()
-        guard snapshot.depth > 0 else { return nil }
-
-        switch policy {
-        case .latest:
-            if snapshot.depth > 1 {
-                state.queue.trimNewest(keepDepth: 1)
-            }
-        case let .buffered(maxDepth):
-            let clampedDepth = min(
-                max(1, maxDepth),
-                MirageRenderModePolicy.maxStressBufferDepth
-            )
-            if snapshot.depth > clampedDepth {
-                state.queue.trimNewest(keepDepth: clampedDepth)
-            }
+        guard let pendingFrame = state.pendingFrame else { return nil }
+        guard pendingFrame.sequence > state.lastSubmittedSequence else {
+            state.pendingFrame = nil
+            return nil
         }
 
-        return state.queue.dequeue()
+        state.pendingFrame = nil
+        return pendingFrame
     }
 
-    func peekLatest(for streamID: StreamID) -> MirageRenderFrame? {
+    func peekPendingFrame(for streamID: StreamID) -> MirageRenderFrame? {
         guard let state = streamStateIfPresent(for: streamID) else { return nil }
         state.lock.lock()
-        let frame = state.queue.peekLatest()
+        let frame = state.pendingFrame
         state.lock.unlock()
         return frame
     }
 
-    func queueDepth(for streamID: StreamID) -> Int {
+    func pendingFrameCount(for streamID: StreamID) -> Int {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
         state.lock.lock()
-        let depth = state.queue.snapshot().depth
+        let count = state.pendingFrame == nil ? 0 : 1
         state.lock.unlock()
-        return depth
+        return count
     }
 
-    func oldestAgeMs(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Double {
+    func pendingFrameAgeMs(for streamID: StreamID, now: CFAbsoluteTime = CFAbsoluteTimeGetCurrent()) -> Double {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
         state.lock.lock()
-        let snapshot = state.queue.snapshot()
+        let age = pendingFrameAgeMsLocked(state: state, now: now)
         state.lock.unlock()
-        return oldestAgeMs(snapshot: snapshot, now: now)
+        return age
     }
 
     func latestSequence(for streamID: StreamID) -> UInt64 {
         guard let state = streamStateIfPresent(for: streamID) else { return 0 }
         state.lock.lock()
-        let sequence = state.queue.snapshot().latestSequence
+        let sequence = state.nextSequence
         state.lock.unlock()
         return sequence
     }
 
-    func markPresented(sequence: UInt64, for streamID: StreamID) {
+    func markSubmitted(
+        sequence: UInt64,
+        mappedPresentationTime: CMTime,
+        for streamID: StreamID
+    ) {
         let state = streamState(for: streamID)
         let now = CFAbsoluteTimeGetCurrent()
 
         state.lock.lock()
-        appendSampleLocked(
-            now,
-            samples: &state.presentedSamples,
-            startIndex: &state.presentedSampleStartIndex
-        )
-        guard sequence > state.lastPresentedSequence else {
+        appendSampleLocked(now, samples: &state.submittedSamples, startIndex: &state.submittedSampleStartIndex)
+        guard sequence > state.lastSubmittedSequence else {
             state.lock.unlock()
             return
         }
 
-        state.lastPresentedSequence = sequence
-        state.lastPresentedTime = now
+        state.lastSubmittedSequence = sequence
+        state.lastSubmittedTime = now
+        state.lastSubmittedMappedPresentationTime = mappedPresentationTime
         appendSampleLocked(
             now,
-            samples: &state.uniquePresentedSamples,
-            startIndex: &state.uniquePresentedSampleStartIndex
+            samples: &state.uniqueSubmittedSamples,
+            startIndex: &state.uniqueSubmittedSampleStartIndex
         )
         state.lock.unlock()
     }
 
-    func presentationSnapshot(for streamID: StreamID) -> PresentationSnapshot {
+    func submissionSnapshot(for streamID: StreamID) -> SubmissionSnapshot {
         guard let state = streamStateIfPresent(for: streamID) else {
-            return PresentationSnapshot(sequence: 0, presentedTime: 0)
+            return SubmissionSnapshot(sequence: 0, submittedTime: 0, mappedPresentationTime: .invalid)
         }
 
         state.lock.lock()
-        let snapshot = PresentationSnapshot(
-            sequence: state.lastPresentedSequence,
-            presentedTime: state.lastPresentedTime
+        let snapshot = SubmissionSnapshot(
+            sequence: state.lastSubmittedSequence,
+            submittedTime: state.lastSubmittedTime,
+            mappedPresentationTime: state.lastSubmittedMappedPresentationTime
         )
         state.lock.unlock()
         return snapshot
+    }
+
+    func noteDisplayLayerNotReady(for streamID: StreamID) {
+        let state = streamState(for: streamID)
+        state.lock.lock()
+        state.displayLayerNotReadyCountSinceLastSnapshot &+= 1
+        state.lock.unlock()
     }
 
     func renderTelemetrySnapshot(
@@ -266,9 +228,12 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         guard let state = streamStateIfPresent(for: streamID) else {
             return RenderTelemetrySnapshot(
                 decodeFPS: 0,
-                presentedFPS: 0,
-                uniquePresentedFPS: 0,
-                queueDepth: 0,
+                submittedFPS: 0,
+                uniqueSubmittedFPS: 0,
+                pendingFrameCount: 0,
+                pendingFrameAgeMs: 0,
+                overwrittenPendingFrames: 0,
+                displayLayerNotReadyCount: 0,
                 decodeHealthy: true,
                 severeDecodeUnderrun: false,
                 targetFPS: 60
@@ -276,26 +241,24 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         }
 
         state.lock.lock()
+        trimSamplesLocked(now: now, samples: &state.decodeSamples, startIndex: &state.decodeSampleStartIndex)
+        trimSamplesLocked(now: now, samples: &state.submittedSamples, startIndex: &state.submittedSampleStartIndex)
         trimSamplesLocked(
             now: now,
-            samples: &state.decodeSamples,
-            startIndex: &state.decodeSampleStartIndex
-        )
-        trimSamplesLocked(
-            now: now,
-            samples: &state.presentedSamples,
-            startIndex: &state.presentedSampleStartIndex
-        )
-        trimSamplesLocked(
-            now: now,
-            samples: &state.uniquePresentedSamples,
-            startIndex: &state.uniquePresentedSampleStartIndex
+            samples: &state.uniqueSubmittedSamples,
+            startIndex: &state.uniqueSubmittedSampleStartIndex
         )
 
         let decodeFPS = Double(state.decodeSamples.count - state.decodeSampleStartIndex)
-        let presentedFPS = Double(state.presentedSamples.count - state.presentedSampleStartIndex)
-        let uniquePresentedFPS = Double(state.uniquePresentedSamples.count - state.uniquePresentedSampleStartIndex)
-        let queueDepth = state.queue.snapshot().depth
+        let submittedFPS = Double(state.submittedSamples.count - state.submittedSampleStartIndex)
+        let uniqueSubmittedFPS = Double(state.uniqueSubmittedSamples.count - state.uniqueSubmittedSampleStartIndex)
+        let pendingFrameCount = state.pendingFrame == nil ? 0 : 1
+        let pendingFrameAgeMs = pendingFrameAgeMsLocked(state: state, now: now)
+        let overwrittenPendingFrames = state.overwrittenPendingFramesSinceLastSnapshot
+        let displayLayerNotReadyCount = state.displayLayerNotReadyCountSinceLastSnapshot
+        state.overwrittenPendingFramesSinceLastSnapshot = 0
+        state.displayLayerNotReadyCountSinceLastSnapshot = 0
+
         let targetFPS = max(1, state.targetFPS)
         let decodeRatio = decodeFPS / Double(targetFPS)
         let decodeHealthy = decodeRatio >= MirageRenderModePolicy.healthyDecodeRatio
@@ -304,9 +267,12 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         return RenderTelemetrySnapshot(
             decodeFPS: decodeFPS,
-            presentedFPS: presentedFPS,
-            uniquePresentedFPS: uniquePresentedFPS,
-            queueDepth: queueDepth,
+            submittedFPS: submittedFPS,
+            uniqueSubmittedFPS: uniqueSubmittedFPS,
+            pendingFrameCount: pendingFrameCount,
+            pendingFrameAgeMs: pendingFrameAgeMs,
+            overwrittenPendingFrames: overwrittenPendingFrames,
+            displayLayerNotReadyCount: displayLayerNotReadyCount,
             decodeHealthy: decodeHealthy,
             severeDecodeUnderrun: severeDecodeUnderrun,
             targetFPS: targetFPS
@@ -346,17 +312,20 @@ final class MirageRenderStreamStore: @unchecked Sendable {
 
         guard let state else { return }
         state.lock.lock()
-        state.queue.clear()
+        state.pendingFrame = nil
         state.listeners.removeAll()
         state.nextSequence = 0
-        state.lastPresentedSequence = 0
-        state.lastPresentedTime = 0
+        state.lastSubmittedSequence = 0
+        state.lastSubmittedTime = 0
+        state.lastSubmittedMappedPresentationTime = .invalid
         state.decodeSamples.removeAll(keepingCapacity: false)
         state.decodeSampleStartIndex = 0
-        state.presentedSamples.removeAll(keepingCapacity: false)
-        state.presentedSampleStartIndex = 0
-        state.uniquePresentedSamples.removeAll(keepingCapacity: false)
-        state.uniquePresentedSampleStartIndex = 0
+        state.submittedSamples.removeAll(keepingCapacity: false)
+        state.submittedSampleStartIndex = 0
+        state.uniqueSubmittedSamples.removeAll(keepingCapacity: false)
+        state.uniqueSubmittedSampleStartIndex = 0
+        state.overwrittenPendingFramesSinceLastSnapshot = 0
+        state.displayLayerNotReadyCountSinceLastSnapshot = 0
         state.lock.unlock()
     }
 
@@ -367,10 +336,7 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             return existing
         }
 
-        let created = StreamState(
-            capacity: defaultQueueCapacity,
-            byteBudget: 0
-        )
+        let created = StreamState()
         streams[streamID] = created
         stateLock.unlock()
         return created
@@ -381,11 +347,6 @@ final class MirageRenderStreamStore: @unchecked Sendable {
         let state = streams[streamID]
         stateLock.unlock()
         return state
-    }
-
-    private func oldestAgeMs(snapshot: MirageSPSCFrameQueue.Snapshot, now: CFAbsoluteTime) -> Double {
-        guard let decodeTime = snapshot.oldestDecodeTime else { return 0 }
-        return max(0, now - decodeTime) * 1000
     }
 
     private func activeListenersLocked(state: StreamState) -> [@Sendable () -> Void] {
@@ -432,5 +393,10 @@ final class MirageRenderStreamStore: @unchecked Sendable {
             samples.removeFirst(startIndex)
             startIndex = 0
         }
+    }
+
+    private func pendingFrameAgeMsLocked(state: StreamState, now: CFAbsoluteTime) -> Double {
+        guard let decodeTime = state.pendingFrame?.decodeTime else { return 0 }
+        return max(0, now - decodeTime) * 1000
     }
 }

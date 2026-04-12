@@ -223,6 +223,40 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision == .continueRestore)
     }
 
+    @Test("Display space snapshot ignores invalid zero Space IDs")
+    func displaySpaceSnapshotIgnoresInvalidSpaces() {
+        let snapshot = capturedDisplaySpaceSnapshot(displayIDs: [1, 2, 3]) { displayID in
+            switch displayID {
+            case 1:
+                101
+            case 2:
+                0
+            default:
+                303
+            }
+        }
+
+        #expect(snapshot == [1: 101, 3: 303])
+    }
+
+    @Test("Pending display space restores only returns mismatched displays")
+    func pendingDisplaySpaceRestoresOnlyReturnsMismatches() {
+        let pending = pendingDisplaySpaceRestores(
+            snapshot: [1: 101, 2: 202, 3: 303]
+        ) { displayID in
+            switch displayID {
+            case 1:
+                101
+            case 2:
+                999
+            default:
+                0
+            }
+        }
+
+        #expect(pending == [2: 202, 3: 303])
+    }
+
     @Test("Window resize no-op skips exact visible resolution")
     func windowResizeNoOpSkipsExactMatch() {
         let decision = windowResizeNoOpDecision(

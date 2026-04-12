@@ -517,35 +517,6 @@ struct MultiWindowAppStreamingStabilizationTests {
         )
     }
 
-    @Test("Window-capture placement ignores stale space metadata when the frame already matches")
-    func windowCapturePlacementIgnoresStaleSpaceMetadataWhenFrameMatches() {
-        let expectedFrame = CGRect(x: 120, y: 180, width: 1280, height: 720)
-        let currentFrame = CGRect(x: 123, y: 184, width: 1276, height: 718)
-
-        #expect(
-            MirageHostService.windowCapturePlacementDriftReason(
-                currentSpaceMembership: [1],
-                expectedSpaceID: 2,
-                currentFrame: currentFrame,
-                expectedFrame: expectedFrame
-            ) == nil
-        )
-    }
-
-    @Test("Window-capture placement still repairs real frame drift when space metadata is stale")
-    func windowCapturePlacementRepairsRealFrameDrift() {
-        let expectedFrame = CGRect(x: 120, y: 180, width: 1280, height: 720)
-        let currentFrame = CGRect(x: 420, y: 380, width: 980, height: 620)
-        let driftReason = MirageHostService.windowCapturePlacementDriftReason(
-            currentSpaceMembership: [1],
-            expectedSpaceID: 2,
-            currentFrame: currentFrame,
-            expectedFrame: expectedFrame
-        )
-
-        #expect(driftReason?.contains("space drift") == true)
-    }
-
     @Test("Preferred app-window ordering prioritizes focused then main windows")
     func preferredWindowOrderingPrioritizesFocusedThenMain() {
         let focusedCandidate = AppStreamWindowCandidate(

@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 4/4/26.
 //
 
+import Foundation
 @testable import MirageKit
 @testable import MirageKitClient
 import Testing
@@ -18,12 +19,14 @@ struct RemoteClientStreamOptionsTests {
         var receivedDisplayMode: MirageStreamOptionsDisplayMode?
         var receivedStatusOverlayEnabled: Bool?
         var receivedCursorPresentation: MirageDesktopCursorPresentation?
+        var receivedCursorLockMode: MirageDesktopCursorLockMode?
         var receivedStoppedAppBundleIdentifier: String?
         var receivedStopDesktopStream = false
 
         service.onRemoteClientStreamOptionsDisplayModeCommand = { receivedDisplayMode = $0 }
         service.onRemoteClientStreamStatusOverlayCommand = { receivedStatusOverlayEnabled = $0 }
         service.onRemoteClientDesktopCursorPresentationCommand = { receivedCursorPresentation = $0 }
+        service.onRemoteClientDesktopCursorLockModeCommand = { receivedCursorLockMode = $0 }
         service.onRemoteClientStopAppStreamCommand = { receivedStoppedAppBundleIdentifier = $0 }
         service.onRemoteClientStopDesktopStreamCommand = { receivedStopDesktopStream = true }
 
@@ -36,6 +39,7 @@ struct RemoteClientStreamOptionsTests {
             displayMode: .hostMenuBar,
             statusOverlayEnabled: true,
             desktopCursorPresentation: presentation,
+            desktopCursorLockMode: .secondaryOnly,
             stopAppBundleIdentifier: "com.example.app",
             stopDesktopStream: true
         )
@@ -46,7 +50,26 @@ struct RemoteClientStreamOptionsTests {
         #expect(receivedDisplayMode == .hostMenuBar)
         #expect(receivedStatusOverlayEnabled == true)
         #expect(receivedCursorPresentation == presentation)
+        #expect(receivedCursorLockMode == .secondaryOnly)
         #expect(receivedStoppedAppBundleIdentifier == "com.example.app")
         #expect(receivedStopDesktopStream == true)
+    }
+
+    @Test("Remote client stream-option state preserves cursor lock availability")
+    func remoteClientStatePreservesCursorLockAvailability() throws {
+        let state = RemoteClientStreamOptionsStateMessage(
+            displayMode: .inStream,
+            statusOverlayEnabled: false,
+            desktopCursorLockAvailable: true,
+            desktopCursorLockMode: .allDesktopStreams
+        )
+
+        let data = try JSONEncoder().encode(state)
+        let decoded = try JSONDecoder().decode(RemoteClientStreamOptionsStateMessage.self, from: data)
+
+        #expect(decoded.displayMode == .inStream)
+        #expect(decoded.statusOverlayEnabled == false)
+        #expect(decoded.desktopCursorLockAvailable == true)
+        #expect(decoded.desktopCursorLockMode == .allDesktopStreams)
     }
 }

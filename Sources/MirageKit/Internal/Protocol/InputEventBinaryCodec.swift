@@ -18,23 +18,24 @@ package enum InputEventBinaryCodec {
         case keyDown = 0x01
         case keyUp = 0x02
         case flagsChanged = 0x03
-        case mouseDown = 0x04
-        case mouseUp = 0x05
-        case mouseMoved = 0x06
-        case mouseDragged = 0x07
-        case rightMouseDown = 0x08
-        case rightMouseUp = 0x09
-        case rightMouseDragged = 0x0A
-        case otherMouseDown = 0x0B
-        case otherMouseUp = 0x0C
-        case otherMouseDragged = 0x0D
-        case scrollWheel = 0x0E
-        case magnify = 0x0F
-        case rotate = 0x10
-        case windowResize = 0x11
-        case relativeResize = 0x12
-        case pixelResize = 0x13
-        case windowFocus = 0x14
+        case hostSystemAction = 0x04
+        case mouseDown = 0x05
+        case mouseUp = 0x06
+        case mouseMoved = 0x07
+        case mouseDragged = 0x08
+        case rightMouseDown = 0x09
+        case rightMouseUp = 0x0A
+        case rightMouseDragged = 0x0B
+        case otherMouseDown = 0x0C
+        case otherMouseUp = 0x0D
+        case otherMouseDragged = 0x0E
+        case scrollWheel = 0x0F
+        case magnify = 0x10
+        case rotate = 0x11
+        case windowResize = 0x12
+        case relativeResize = 0x13
+        case pixelResize = 0x14
+        case windowFocus = 0x15
     }
 
     package static func serialize(_ message: InputEventMessage) throws -> Data {
@@ -72,6 +73,9 @@ package enum InputEventBinaryCodec {
         case let .flagsChanged(flags):
             writer.appendUInt8(EventType.flagsChanged.rawValue)
             writer.appendUInt64(UInt64(truncatingIfNeeded: flags.rawValue))
+        case let .hostSystemAction(request):
+            writer.appendUInt8(EventType.hostSystemAction.rawValue)
+            try writer.appendHostSystemActionRequest(request)
         case let .mouseDown(mouseEvent):
             writer.appendUInt8(EventType.mouseDown.rawValue)
             writer.appendMouseEvent(mouseEvent)
@@ -133,6 +137,8 @@ package enum InputEventBinaryCodec {
             .keyUp(try reader.readKeyEvent())
         case .flagsChanged:
             .flagsChanged(MirageModifierFlags(rawValue: UInt(truncatingIfNeeded: try reader.readUInt64())))
+        case .hostSystemAction:
+            .hostSystemAction(try reader.readHostSystemActionRequest())
         case .mouseDown:
             .mouseDown(try reader.readMouseEvent())
         case .mouseUp:
@@ -242,6 +248,14 @@ package enum InputEventBinaryCodec {
             appendUInt64(UInt64(truncatingIfNeeded: event.modifiers.rawValue))
             appendBool(event.isRepeat)
             appendDouble(event.timestamp)
+        }
+
+        mutating func appendHostSystemActionRequest(_ request: MirageHostSystemActionRequest) throws {
+            appendUInt8(request.action.rawValue)
+            appendBool(request.fallbackKeyEvent != nil)
+            if let fallbackKeyEvent = request.fallbackKeyEvent {
+                try appendKeyEvent(fallbackKeyEvent)
+            }
         }
 
         mutating func appendMouseEvent(_ event: MirageMouseEvent) {
@@ -416,6 +430,18 @@ package enum InputEventBinaryCodec {
                 modifiers: modifiers,
                 isRepeat: isRepeat,
                 timestamp: timestamp
+            )
+        }
+
+        mutating func readHostSystemActionRequest() throws -> MirageHostSystemActionRequest {
+            let actionRawValue = try readUInt8()
+            guard let action = MirageHostSystemAction(rawValue: actionRawValue) else {
+                throw MirageError.protocolError("Unknown host system action \(actionRawValue)")
+            }
+            let fallbackKeyEvent: MirageKeyEvent? = try readBool() ? try readKeyEvent() : nil
+            return MirageHostSystemActionRequest(
+                action: action,
+                fallbackKeyEvent: fallbackKeyEvent
             )
         }
 

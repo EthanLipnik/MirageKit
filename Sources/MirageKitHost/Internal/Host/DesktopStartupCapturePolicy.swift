@@ -31,7 +31,7 @@ func desktopStartupCaptureRecoveryDecision(
     switch readiness {
     case .usableFrameSeen, .idleFrameSeen:
         return .proceed
-    case .noScreenSamples where hasCachedStartupFrame || hasObservedStartupSample:
+    case .noScreenSamples where hasObservedStartupSample:
         return .proceed
     case .blankOrSuspendedOnly, .noScreenSamples:
         return recoveryAttempted ? .fail : .restartCapture

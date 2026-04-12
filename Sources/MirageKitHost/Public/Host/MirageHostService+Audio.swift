@@ -28,6 +28,7 @@ extension MirageHostService {
         configuration: MirageAudioConfiguration
     )
     async throws -> Bool {
+        let previousSourceStreamID = audioSourceStreamByClientID[clientID]
         audioConfigurationByClientID[clientID] = configuration
         if let streamContext = streamsByID[sourceStreamID] {
             await streamContext.setRequestedAudioChannelCount(configuration.channelLayout.channelCount)
@@ -36,6 +37,7 @@ extension MirageHostService {
         guard configuration.enabled else {
             audioSourceStreamByClientID.removeValue(forKey: clientID)
             await stopAudioPipeline(for: clientID, reason: .disabled)
+            await closeAudioTransportIfNeeded(for: clientID)
             return false
         }
 
@@ -64,6 +66,11 @@ extension MirageHostService {
                 throw MirageError.protocolError("Audio transport unavailable for disconnected client \(clientID)")
             }
             clientContext = currentClientContext
+        }
+
+        if let existingSourceStreamID = previousSourceStreamID,
+           existingSourceStreamID != sourceStreamID {
+            await closeAudioTransportIfNeeded(for: clientID)
         }
 
         // Open Loom audio stream if not already present.
@@ -168,6 +175,7 @@ extension MirageHostService {
                 }
             } else {
                 await stopAudioPipeline(for: clientID, reason: .sourceStopped)
+                await closeAudioTransportIfNeeded(for: clientID)
             }
         }
     }
@@ -192,12 +200,20 @@ extension MirageHostService {
 
     func stopAudioForDisconnectedClient(_ clientID: UUID) async {
         await stopAudioPipeline(for: clientID, reason: .clientRequested)
-        if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: clientID) {
-            Task { try? await audioStream.close() }
-        }
-        transportRegistry.unregisterAudioStream(clientID: clientID)
+        await closeAudioTransportIfNeeded(for: clientID)
         audioConfigurationByClientID.removeValue(forKey: clientID)
         audioSourceStreamByClientID.removeValue(forKey: clientID)
+    }
+
+    func closeAudioTransportIfNeeded(for clientID: UUID) async {
+        if let audioStream = loomAudioStreamsByClientID.removeValue(forKey: clientID) {
+            do {
+                try await audioStream.close()
+            } catch {
+                MirageLogger.debug(.host, "Failed to close Loom audio stream for client \(clientID): \(error)")
+            }
+        }
+        transportRegistry.unregisterAudioStream(clientID: clientID)
     }
 
     private func setAudioSourceCaptureHandler(clientID: UUID, streamID: StreamID) async {

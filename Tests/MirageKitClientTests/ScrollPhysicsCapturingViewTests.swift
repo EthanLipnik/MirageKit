@@ -130,6 +130,16 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Indirect secondary click reuses the tracked pointer location")
+    func indirectSecondaryClickReusesTrackedPointerLocation() {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.lastCursorPosition = CGPoint(x: 0.2, y: 0.8)
+
+        let location = view.resolvedIndirectSecondaryClickLocation(CGPoint(x: 300, y: 12))
+
+        #expect(location == CGPoint(x: 0.2, y: 0.8))
+    }
+
     @Test("Virtual cursor scroll reanchors to the swipe location")
     func virtualCursorScrollReanchorsToTheSwipeLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

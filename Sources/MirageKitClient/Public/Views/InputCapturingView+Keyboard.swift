@@ -75,18 +75,6 @@ extension InputCapturingView {
             performPassthroughShortcut(shortcut, source: .hardwareKey)
             return
         }
-        let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
-
-        gcClaimedKeyCodes.insert(keyCode)
-
-        let keyEvent = MirageKeyEvent(
-            keyCode: macKeyCode,
-            characters: character,
-            charactersIgnoringModifiers: character,
-            modifiers: eventModifiers
-        )
-        hideCursorForTypingUntilPointerMovement()
-        onInputEvent?(.keyDown(keyEvent))
     }
     #endif
 

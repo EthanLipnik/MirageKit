@@ -87,31 +87,6 @@ extension WindowStreamStartError: LocalizedError {
     }
 }
 
-func shouldTreatWindowPlacementRepairFailureAsClosedWindow(
-    windowID: WindowID,
-    error: Error,
-    currentFrame: CGRect?
-) -> Bool {
-    if let windowSpaceError = error as? WindowSpaceManager.WindowSpaceError {
-        switch windowSpaceError {
-        case .windowNotFound:
-            return true
-        case .moveFailed:
-            return currentFrame == nil
-        case .noOriginalState, .ownerConflict, .ownerMismatch:
-            return false
-        }
-    }
-
-    if let mirageError = error as? MirageError {
-        if case .windowNotFound = mirageError {
-            return true
-        }
-    }
-
-    return false
-}
-
 func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureCode {
     if let windowStartError = error as? WindowStreamStartError {
         switch windowStartError {
@@ -831,30 +806,6 @@ public extension MirageHostService {
         return false
     }
 
-    nonisolated internal static func windowCapturePlacementDriftReason(
-        currentSpaceMembership: [CGSSpaceID],
-        expectedSpaceID: CGSSpaceID,
-        currentFrame: CGRect?,
-        expectedFrame: CGRect?
-    ) -> String? {
-        if currentSpaceMembership.contains(expectedSpaceID) {
-            return nil
-        }
-
-        if let currentFrame,
-           let expectedFrame,
-           windowFrameMatchesExpectedPlacement(
-               currentFrame: currentFrame,
-               expectedFrame: expectedFrame,
-               currentSpaceMembership: currentSpaceMembership,
-               expectedSpaceID: expectedSpaceID
-           ) {
-            return nil
-        }
-
-        return "space drift expected=\(expectedSpaceID) actual=\(currentSpaceMembership)"
-    }
-
     func enforceVirtualDisplayPlacementAfterActivation(
         windowID: WindowID,
         force: Bool = false
@@ -865,121 +816,15 @@ public extension MirageHostService {
             return
         }
 
-        // For window capture, only ensure the window is on the correct space.
-        // Do NOT resize or reposition — the window is aspect-fit to the client's
-        // resolution and the full moveWindow flow fights that sizing.
-        for (streamID, context) in streamsByID {
+        // Mirrored app-window capture keeps the source window on its current host display.
+        // There is no virtual-display space rebinding to repair after activation.
+        for (_, context) in streamsByID {
             let wID = await context.windowID
             guard wID == windowID else { continue }
             let mode = await context.captureMode
             if mode == .window {
-                guard let vdContext = await context.virtualDisplayContext else { return }
-                let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(vdContext.displayID)
-                guard spaceID != 0 else { return }
-                let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-                let driftReason = Self.windowCapturePlacementDriftReason(
-                    currentSpaceMembership: currentSpaces,
-                    expectedSpaceID: spaceID,
-                    currentFrame: currentWindowFrame(for: windowID),
-                    expectedFrame: getVirtualDisplayState(windowID: windowID).map { state in
-                        aspectFittedWindowBounds(
-                            state.bounds,
-                            targetAspectRatio: state.targetContentAspectRatio
-                        )
-                    }
-                )
-                guard let driftReason else { return }
-
-                let now = CFAbsoluteTimeGetCurrent()
-                if let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
-                   now < backoffState.nextRetryAt {
-                    return
-                }
-
-                let cooldown: CFAbsoluteTime = 0.20
-                if !force,
-                   let lastAppliedAt = lastWindowPlacementRepairAtByWindowID[windowID],
-                   now - lastAppliedAt < cooldown {
-                    return
-                }
-                lastWindowPlacementRepairAtByWindowID[windowID] = now
-
-                do {
-                    try await WindowSpaceManager.shared.bindWindowToSpaceOnly(
-                        windowID,
-                        toSpaceID: spaceID,
-                        displayID: vdContext.displayID,
-                        owner: WindowSpaceManager.WindowBindingOwner(
-                            streamID: streamID,
-                            windowID: windowID,
-                            displayID: vdContext.displayID,
-                            generation: vdContext.generation
-                        )
-                    )
-                    MirageLogger.host(
-                        "Window capture: reasserted window \(windowID) to space \(spaceID) (\(driftReason))"
-                    )
-                    if let previousBackoff = windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID) {
-                        let resetStep = windowPlacementRepairBackoffStep(
-                            currentFailureCount: previousBackoff.failureCount,
-                            didSucceed: true
-                        )
-                        MirageLogger.host(
-                            "event=placement_repair_backoff reset_on_success=true " +
-                                "previous_failure_count=\(previousBackoff.failureCount) " +
-                                "failure_count=\(resetStep.failureCount) window=\(windowID) stream=\(streamID)"
-                        )
-                    }
-                } catch {
-                    let currentFrame = currentWindowFrame(for: windowID)
-                    if shouldTreatWindowPlacementRepairFailureAsClosedWindow(
-                        windowID: windowID,
-                        error: error,
-                        currentFrame: currentFrame
-                    ),
-                       let appSession = await appStreamManager.getSessionForStreamID(streamID),
-                       appSession.windowStreams[windowID] != nil {
-                        MirageLogger.host(
-                            "Placement repair for app-stream window \(windowID) resolved as closed/stale; entering replacement flow"
-                        )
-                        await handleWindowClosedFromStreamedApp(
-                            bundleID: appSession.bundleIdentifier,
-                            windowID: windowID
-                        )
-                        return
-                    }
-                    let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
-                    let nextStep = windowPlacementRepairBackoffStep(
-                        currentFailureCount: currentFailureCount,
-                        didSucceed: false
-                    )
-                    if let retryDelaySeconds = nextStep.retryDelaySeconds {
-                        windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
-                            failureCount: nextStep.failureCount,
-                            nextRetryAt: now + retryDelaySeconds
-                        )
-                        let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
-                        MirageLogger.host(
-                            "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
-                                "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(streamID)"
-                        )
-                    } else {
-                        windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
-                            failureCount: nextStep.failureCount,
-                            nextRetryAt: .greatestFiniteMagnitude
-                        )
-                        MirageLogger.host(
-                            "event=placement_repair_abandoned failure_count=\(nextStep.failureCount) " +
-                                "window=\(windowID) stream=\(streamID)"
-                        )
-                        return
-                    }
-                    MirageLogger.error(
-                        .host,
-                        error: error,
-                        message: "Failed to reassert window-capture placement for window \(windowID): "
-                    )
-                }
+                lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
+                windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
                 return
             }
             break

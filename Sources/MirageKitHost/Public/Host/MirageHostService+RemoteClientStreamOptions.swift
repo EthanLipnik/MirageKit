@@ -16,15 +16,14 @@ public extension MirageHostService {
         desktopStreamID != nil
     }
 
+    /// Whether the connected client currently exposes desktop cursor lock controls.
+    var activeDesktopCursorLockAvailable: Bool {
+        desktopStreamID != nil && remoteClientDesktopCursorLockAvailable
+    }
+
     /// Client currently receiving the active desktop stream, if any.
     var activeDesktopStreamClient: MirageConnectedClient? {
         desktopStreamClientContext?.client
-    }
-
-    /// Whether the active desktop stream can change its local cursor-lock preference.
-    var activeDesktopCursorLockToggleDisabled: Bool {
-        guard desktopStreamID != nil else { return false }
-        return !desktopCursorPresentation.canToggleLockClientCursor(for: desktopStreamMode)
     }
 
     /// Sends a display-mode preference change to the connected client.
@@ -48,6 +47,13 @@ public extension MirageHostService {
             desktopCursorPresentation: presentation
         )
         await sendRemoteClientStreamOptionsCommand(command, operation: "desktop cursor update")
+    }
+
+    /// Sends an active desktop cursor lock mode change to the connected client.
+    func setRemoteClientDesktopCursorLockMode(_ mode: MirageDesktopCursorLockMode) async {
+        remoteClientDesktopCursorLockMode = mode
+        let command = RemoteClientStreamOptionsCommandMessage(desktopCursorLockMode: mode)
+        await sendRemoteClientStreamOptionsCommand(command, operation: "desktop cursor lock mode update")
     }
 
     /// Requests that the client stop the active app stream for the bundle identifier.
@@ -76,10 +82,14 @@ extension MirageHostService {
             let state = try message.decode(RemoteClientStreamOptionsStateMessage.self)
             remoteClientStreamOptionsDisplayMode = state.displayMode
             remoteClientStreamStatusOverlayEnabled = state.statusOverlayEnabled
+            remoteClientDesktopCursorLockAvailable = state.desktopCursorLockAvailable
+            remoteClientDesktopCursorLockMode = state.desktopCursorLockMode
             MirageLogger.host(
                 "Client \(clientContext.client.name) synced stream options: "
                     + "displayMode=\(state.displayMode.rawValue) "
-                    + "statusOverlay=\(state.statusOverlayEnabled)"
+                    + "statusOverlay=\(state.statusOverlayEnabled) "
+                    + "cursorLockAvailable=\(state.desktopCursorLockAvailable) "
+                    + "cursorLockMode=\(state.desktopCursorLockMode.rawValue)"
             )
         } catch {
             MirageLogger.error(

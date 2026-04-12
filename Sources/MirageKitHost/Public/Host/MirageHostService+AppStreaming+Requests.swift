@@ -41,6 +41,12 @@ extension MirageHostService {
         case resumeDeferred
     }
 
+    struct WindowStreamingPreparationPlan: Equatable, Sendable {
+        let shouldRestoreWindow: Bool
+        let shouldExitFullScreen: Bool
+        let settleDelayMilliseconds: Int
+    }
+
     nonisolated static func initialAppWindowStartupDecision(
         startedWindowCount: Int
     ) -> InitialAppWindowStartupDecision {
@@ -98,18 +104,49 @@ extension MirageHostService {
         return ranges
     }
 
+    nonisolated static func windowStreamingPreparationPlan(
+        isOnScreen: Bool,
+        isFullScreen: Bool
+    ) -> WindowStreamingPreparationPlan {
+        let shouldRestoreWindow = !isOnScreen
+        let shouldExitFullScreen = isFullScreen
+        let settleDelayMilliseconds: Int = switch (shouldRestoreWindow, shouldExitFullScreen) {
+        case (true, true):
+            350
+        case (true, false), (false, true):
+            250
+        case (false, false):
+            0
+        }
+
+        return WindowStreamingPreparationPlan(
+            shouldRestoreWindow: shouldRestoreWindow,
+            shouldExitFullScreen: shouldExitFullScreen,
+            settleDelayMilliseconds: settleDelayMilliseconds
+        )
+    }
+
     private func prepareWindowForStreamingIfNeeded(
         _ window: MirageWindow,
         reason: String
     ) async {
-        guard !window.isOnScreen else { return }
+        let plan = Self.windowStreamingPreparationPlan(
+            isOnScreen: window.isOnScreen,
+            isFullScreen: WindowManager.isWindowFullScreen(window.id)
+        )
 
-        let didRestore = WindowManager.restoreWindow(window.id)
+        let didRestore = plan.shouldRestoreWindow
+            ? WindowManager.restoreWindow(window.id)
+            : false
+        let didExitFullScreen = plan.shouldExitFullScreen
+            ? WindowManager.exitFullScreen(window.id)
+            : false
         activateWindow(window)
-        let settleDuration: Duration = didRestore ? .milliseconds(250) : .milliseconds(150)
-        try? await Task.sleep(for: settleDuration)
+        if plan.settleDelayMilliseconds > 0 {
+            try? await Task.sleep(for: .milliseconds(plan.settleDelayMilliseconds))
+        }
         MirageLogger.host(
-            "Prepared off-screen window \(window.id) for streaming (\(reason), restored=\(didRestore))"
+            "Prepared window \(window.id) for streaming (\(reason), restored=\(didRestore), exitedFullScreen=\(didExitFullScreen))"
         )
     }
 

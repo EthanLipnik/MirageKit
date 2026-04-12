@@ -9,8 +9,11 @@ import Foundation
 
 /// Cursor source choices for desktop streams.
 public enum MirageDesktopCursorSource: String, Codable, Sendable, CaseIterable, Hashable {
-    /// Render the client-side Mirage cursor instead of capturing the host cursor in the stream.
-    case client
+    /// Show the local client cursor instead of capturing the host cursor in the stream.
+    case client = "local"
+
+    /// Render Mirage's software cursor instead of capturing the host cursor in the stream.
+    case emulated = "client"
 
     /// Capture and display the real host cursor inside the streamed desktop image.
     case host
@@ -18,9 +21,22 @@ public enum MirageDesktopCursorSource: String, Codable, Sendable, CaseIterable, 
     public var displayName: String {
         switch self {
         case .client:
-            "Mirage Cursor"
+            "Client"
+        case .emulated:
+            "Emulated"
         case .host:
-            "Real Mac Cursor"
+            "Host"
+        }
+    }
+
+    public var footerDescription: String {
+        switch self {
+        case .client:
+            "Client uses your local cursor."
+        case .emulated:
+            "Emulated draws Mirage's software cursor."
+        case .host:
+            "Host captures the real Mac cursor inside the stream."
         }
     }
 }
@@ -37,7 +53,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
     public var lockClientCursorWhenUsingHostCursor: Bool
 
     public init(
-        source: MirageDesktopCursorSource = .client,
+        source: MirageDesktopCursorSource = .emulated,
         lockClientCursorWhenUsingMirageCursor: Bool = false,
         lockClientCursorWhenUsingHostCursor: Bool = true
     ) {
@@ -47,19 +63,23 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
     }
 
     /// Default desktop cursor presentation.
-    public static let clientCursor = MirageDesktopCursorPresentation()
+    public static let emulatedCursor = MirageDesktopCursorPresentation()
 
     public var capturesHostCursor: Bool {
         source == .host
     }
 
     public var rendersSyntheticClientCursor: Bool {
-        source == .client
+        source == .emulated
+    }
+
+    public var requiresCursorPositionUpdates: Bool {
+        source != .emulated
     }
 
     public func lockClientCursorPreference(for source: MirageDesktopCursorSource? = nil) -> Bool {
         switch source ?? self.source {
-        case .client:
+        case .client, .emulated:
             lockClientCursorWhenUsingMirageCursor
         case .host:
             lockClientCursorWhenUsingHostCursor
@@ -71,7 +91,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
         for source: MirageDesktopCursorSource? = nil
     ) {
         switch source ?? self.source {
-        case .client:
+        case .client, .emulated:
             lockClientCursorWhenUsingMirageCursor = isEnabled
         case .host:
             lockClientCursorWhenUsingHostCursor = isEnabled
@@ -80,7 +100,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
 
     public func canToggleLockClientCursor(for mode: MirageDesktopStreamMode) -> Bool {
         switch source {
-        case .client:
+        case .client, .emulated:
             mode != .secondary
         case .host:
             true
@@ -89,7 +109,7 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
 
     public func locksClientCursor(for mode: MirageDesktopStreamMode) -> Bool {
         switch source {
-        case .client:
+        case .client, .emulated:
             mode == .secondary || lockClientCursorWhenUsingMirageCursor
         case .host:
             lockClientCursorWhenUsingHostCursor

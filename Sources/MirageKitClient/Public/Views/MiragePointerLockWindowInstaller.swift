@@ -33,8 +33,12 @@ private final class MiragePointerLockRootController: UIViewController {
         fatalError("init(coder:) has not been implemented")
     }
 
+    private var hasUsableMouseInput: Bool {
+        GCMouse.mice().contains { $0.mouseInput != nil }
+    }
+
     override var prefersPointerLocked: Bool {
-        pointerLockRequested && !GCMouse.mice().isEmpty
+        pointerLockRequested && hasUsableMouseInput
     }
 
     override var childForStatusBarStyle: UIViewController? {
@@ -96,39 +100,31 @@ private final class MiragePointerLockRootController: UIViewController {
         setNeedsUpdateOfPrefersPointerLocked()
 
         // Pointer lock state changes can lag behind preference updates during
-        // scene/root-controller transitions. Retry briefly until UIKit's
-        // actual scene lock state matches the current request so both acquire
-        // and release remain reliable in current-window flows.
-        if shouldRetryPointerLockEvaluation {
+        // scene/root-controller transitions, and GameController mouse-input
+        // readiness can transiently disappear even while a Magic Keyboard
+        // remains attached. Keep a lightweight poll active while lock is
+        // requested so the scene can both acquire lock once deltas are ready
+        // and automatically release it if usable mouse input disappears.
+        if shouldKeepPointerLockPolling {
             startPollIfNeeded()
         } else {
             stopPoll()
         }
     }
 
-    private var shouldRetryPointerLockEvaluation: Bool {
-        PointerLockRetryPolicy.shouldRetryEvaluation(
-            pointerLockRequested: pointerLockRequested,
-            hasMouse: !GCMouse.mice().isEmpty,
-            isLocked: view.window?.windowScene?.pointerLockState?.isLocked ?? false
-        )
+    private var shouldKeepPointerLockPolling: Bool {
+        pointerLockRequested || (view.window?.windowScene?.pointerLockState?.isLocked ?? false)
     }
 
     private func startPollIfNeeded() {
         guard pollTimer == nil else { return }
-        var attempts = 0
         pollTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] timer in
             guard let self else {
                 timer.invalidate()
                 return
             }
-            attempts += 1
             self.setNeedsUpdateOfPrefersPointerLocked()
-            if !self.shouldRetryPointerLockEvaluation {
-                timer.invalidate()
-                self.pollTimer = nil
-            } else if attempts >= 20 {
-                // Stop polling after 5 seconds if the scene still cannot lock.
+            if !self.shouldKeepPointerLockPolling {
                 timer.invalidate()
                 self.pollTimer = nil
             }

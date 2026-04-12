@@ -20,7 +20,24 @@ struct HostCursorPositionUpdatePolicyTests {
             streamID: 42,
             desktopStreamID: 42,
             desktopStreamMode: .secondary,
-            desktopCursorPresentation: .clientCursor
+            desktopCursorPresentation: .emulatedCursor
+        )
+
+        #expect(shouldSend)
+    }
+
+    @Test("Client cursor desktop streams publish cursor positions even when mirrored")
+    func clientCursorMirroredDesktopPublishesCursorPositions() {
+        let presentation = MirageDesktopCursorPresentation(
+            source: .client,
+            lockClientCursorWhenUsingMirageCursor: false,
+            lockClientCursorWhenUsingHostCursor: false
+        )
+        let shouldSend = MirageHostService.shouldSendCursorPositionUpdate(
+            streamID: 7,
+            desktopStreamID: 7,
+            desktopStreamMode: .unified,
+            desktopCursorPresentation: presentation
         )
 
         #expect(shouldSend)
@@ -49,7 +66,7 @@ struct HostCursorPositionUpdatePolicyTests {
             streamID: 7,
             desktopStreamID: 7,
             desktopStreamMode: .unified,
-            desktopCursorPresentation: .clientCursor
+            desktopCursorPresentation: .emulatedCursor
         )
 
         #expect(shouldSend == false)
