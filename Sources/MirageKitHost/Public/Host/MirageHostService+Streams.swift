@@ -568,6 +568,9 @@ public extension MirageHostService {
             usesVirtualDisplay: isStreamUsingVirtualDisplay(windowID: session.window.id)
         )
         MirageInstrumentation.record(.hostStreamWindowStartedPerformanceMode(.init(rawMode: performanceMode.rawValue)))
+        if isStreamUsingVirtualDisplay(windowID: session.window.id) {
+            ensureWindowVisibleFrameMonitor(streamID: streamID)
+        }
 
         return session
     }
@@ -621,7 +624,7 @@ public extension MirageHostService {
             effectiveEncoderConfig.bitrate = normalized
         }
 
-        // Apply target frame rate override if specified (based on P2P + client capability)
+        // Apply the client-selected frame rate override if specified.
         if let targetFrameRate {
             effectiveEncoderConfig = effectiveEncoderConfig.withTargetFrameRate(targetFrameRate)
             MirageLogger.host("Using target frame rate: \(targetFrameRate)fps")
@@ -831,11 +834,11 @@ public extension MirageHostService {
     func enforceVirtualDisplayPlacementAfterActivation(
         windowID: WindowID,
         force: Bool = false
-    ) async {
+    ) async -> Bool {
         if shouldSkipPlacementRepair(for: windowID) {
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
             windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
-            return
+            return false
         }
 
         // Mirrored app-window capture keeps the source window on its current host display.
@@ -847,12 +850,12 @@ public extension MirageHostService {
             if mode == .window {
                 lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
                 windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
-                return
+                return false
             }
             break
         }
 
-        guard let state = getVirtualDisplayState(windowID: windowID) else { return }
+        guard let state = getVirtualDisplayState(windowID: windowID) else { return false }
 
         let placementBounds = state.bounds
         let placementAspectRatio = state.targetContentAspectRatio
@@ -860,7 +863,7 @@ public extension MirageHostService {
         let resolvedSpaceID = CGVirtualDisplayBridge.getSpaceForDisplay(state.displayID)
         guard resolvedSpaceID != 0 else {
             MirageLogger.host("Skipping placement reassert for window \(windowID): no active space for display \(state.displayID)")
-            return
+            return false
         }
 
         let driftReason = force
@@ -870,19 +873,19 @@ public extension MirageHostService {
                 expectedSpaceID: resolvedSpaceID,
                 state: state
             )
-        guard let driftReason else { return }
+        guard let driftReason else { return false }
 
         let now = CFAbsoluteTimeGetCurrent()
         if let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
            now < backoffState.nextRetryAt {
-            return
+            return false
         }
 
         let cooldown: CFAbsoluteTime = 0.20
         if !force,
            let lastAppliedAt = lastWindowPlacementRepairAtByWindowID[windowID],
            now - lastAppliedAt < cooldown {
-            return
+            return false
         }
         lastWindowPlacementRepairAtByWindowID[windowID] = now
 
@@ -915,6 +918,11 @@ public extension MirageHostService {
                         "failure_count=\(resetStep.failureCount) window=\(windowID) stream=\(state.streamID)"
                 )
             }
+            await refreshSharedDisplayAppCaptureStateBestEffort(
+                streamID: state.streamID,
+                reason: force ? "forced placement reassert" : "placement repair"
+            )
+            return true
         } catch {
             let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
             let nextStep = windowPlacementRepairBackoffStep(
@@ -937,6 +945,7 @@ public extension MirageHostService {
                 error: error,
                 message: "Failed to reassert virtual-display placement for window \(windowID): "
             )
+            return false
         }
     }
 
@@ -953,7 +962,7 @@ public extension MirageHostService {
                 try? await Task.sleep(for: delay)
                 guard isStreamUsingVirtualDisplay(windowID: windowID) else { return }
                 guard !shouldSkipPlacementRepair(for: windowID) else { return }
-                await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
+                _ = await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
             }
         }
     }
@@ -1243,7 +1252,7 @@ public extension MirageHostService {
             if let bounds = getVirtualDisplayBounds(windowID: window.id) {
                 inputStreamCacheActor.updateWindowFrame(session.id, newFrame: bounds)
             }
-            await enforceVirtualDisplayPlacementAfterActivation(windowID: window.id)
+            _ = await enforceVirtualDisplayPlacementAfterActivation(windowID: window.id)
             return
         }
 

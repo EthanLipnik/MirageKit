@@ -38,6 +38,32 @@ struct HostSymbolicHotKeyResolverTests {
         #expect(keyEvent.modifiers == [.control, .option])
     }
 
+    @Test("Function modifier is preserved when resolving symbolic hotkeys")
+    func functionModifierIsPreservedWhenResolvingSymbolicHotkeys() {
+        let resolution = HostSymbolicHotKeyResolver.resolve(
+            .missionControl,
+            propertyList: [
+                "AppleSymbolicHotKeys": [
+                    "32": [
+                        "enabled": true,
+                        "value": [
+                            "parameters": [65535, 126, 8_388_608],
+                            "type": "standard",
+                        ],
+                    ],
+                ],
+            ]
+        )
+
+        guard case let .shortcut(keyEvent) = resolution else {
+            Issue.record("Expected a resolved shortcut")
+            return
+        }
+
+        #expect(keyEvent.keyCode == 126)
+        #expect(keyEvent.modifiers == [.function])
+    }
+
     @Test("Space switching resolves using the host symbolic hotkey entry")
     func spaceSwitchingResolvesUsingHostEntry() {
         let resolution = HostSymbolicHotKeyResolver.resolve(

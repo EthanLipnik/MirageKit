@@ -21,6 +21,8 @@ package struct StartDesktopStreamMessage: Codable {
     package let displayWidth: Int
     /// Client's display height in points (logical view bounds)
     package let displayHeight: Int
+    /// Client-selected target frame rate in Hz.
+    package let targetFrameRate: Int
     /// Client-requested keyframe interval in frames
     package var keyFrameInterval: Int?
     /// Client-requested ScreenCaptureKit queue depth
@@ -70,6 +72,7 @@ package struct StartDesktopStreamMessage: Codable {
         case scaleFactor
         case displayWidth
         case displayHeight
+        case targetFrameRate
         case keyFrameInterval
         case captureQueueDepth
         case colorDepth
@@ -98,6 +101,7 @@ package struct StartDesktopStreamMessage: Codable {
         scaleFactor: CGFloat?,
         displayWidth: Int,
         displayHeight: Int,
+        targetFrameRate: Int,
         keyFrameInterval: Int? = nil,
         captureQueueDepth: Int? = nil,
         colorDepth: MirageStreamColorDepth? = nil,
@@ -119,6 +123,7 @@ package struct StartDesktopStreamMessage: Codable {
         self.scaleFactor = scaleFactor
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
+        self.targetFrameRate = targetFrameRate
         self.keyFrameInterval = keyFrameInterval
         self.captureQueueDepth = captureQueueDepth
         self.colorDepth = colorDepth

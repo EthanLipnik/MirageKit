@@ -22,7 +22,7 @@ enum PlacementBoundsDecisionOutcome: String, Equatable, Sendable {
 
 struct PlacementBoundsDecisionConfig: Equatable, Sendable {
     var sizeTolerance: CGFloat = 12
-    var originTolerance: CGFloat = 24
+    var originTolerance: CGFloat = 32
     var minimumSignificantDelta: CGFloat = 24
     var maximumAcceptedShrinkRatio: CGFloat = 0.35
     var maximumAcceptedAbsoluteShrink: CGFloat = 140

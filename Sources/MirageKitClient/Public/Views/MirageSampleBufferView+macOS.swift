@@ -270,9 +270,9 @@ public class MirageSampleBufferView: NSView {
     // MARK: - Preferences
 
     private func applyRenderPreferences() {
-        let preferredRefreshRate = MirageRenderPreferences.preferredMaximumRefreshRate()
-        let screenMax = window?.screen?.maximumFramesPerSecond ?? 60
-        let target = min(preferredRefreshRate, max(1, screenMax))
+        let target = MirageRenderModePolicy.normalizedTargetFPS(
+            MirageRenderPreferences.preferredMaximumRefreshRate()
+        )
         maxRenderFPS = target
         presenter.setTargetFPS(target)
         applyDisplayRefreshRateLock(target)

@@ -10,37 +10,31 @@ import Testing
 
 @Suite("Display Refresh Rate")
 struct DisplayRefreshRateTests {
-    @Test("Live screen refresh rate overrides stale cached value")
-    func liveRefreshRateWinsOverStaleCache() {
-        let resolved = MirageClientService.resolvedScreenMaxRefreshRate(
+    @Test("Explicit override wins over preferred refresh rate")
+    func explicitOverrideWins() {
+        let resolved = MirageClientService.resolvedRequestedRefreshRate(
             override: 120,
-            liveScreenMax: 120,
-            cachedScreenMax: 60,
-            defaultScreenMax: 60
+            preferredMaximumRefreshRate: 60
         )
 
         #expect(resolved == 120)
     }
 
-    @Test("Override remains clamped to resolved screen maximum")
-    func overrideClampsToResolvedScreenMaximum() {
-        let resolved = MirageClientService.resolvedScreenMaxRefreshRate(
-            override: 120,
-            liveScreenMax: nil,
-            cachedScreenMax: 60,
-            defaultScreenMax: 60
+    @Test("Preferred refresh rate is used when no override is active")
+    func preferredRateIsUsedWithoutOverride() {
+        let resolved = MirageClientService.resolvedRequestedRefreshRate(
+            override: nil,
+            preferredMaximumRefreshRate: 90
         )
 
-        #expect(resolved == 60)
+        #expect(resolved == 90)
     }
 
-    @Test("Override preserves 90 fps when the display supports it")
+    @Test("Override preserves 90 fps")
     func overridePreservesNinetyFPS() {
-        let resolved = MirageClientService.resolvedScreenMaxRefreshRate(
+        let resolved = MirageClientService.resolvedRequestedRefreshRate(
             override: 90,
-            liveScreenMax: 120,
-            cachedScreenMax: 60,
-            defaultScreenMax: 60
+            preferredMaximumRefreshRate: 60
         )
 
         #expect(resolved == 90)

@@ -228,7 +228,9 @@ final class SoftwareKeyboardInputView: UIView, UIKeyInput, UITextInputTraits {
 
     override var canBecomeFirstResponder: Bool { true }
 
+    #if !os(visionOS)
     override var inputAccessoryView: UIView? { keyboardAccessoryView }
+    #endif
 
     override func becomeFirstResponder() -> Bool {
         let didBecomeFirstResponder = super.becomeFirstResponder()

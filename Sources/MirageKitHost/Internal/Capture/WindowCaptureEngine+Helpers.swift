@@ -233,24 +233,11 @@ extension WindowCaptureEngine {
         currentFrameRate
     }
 
-    private func shouldFollowDisplayRefreshCadence() -> Bool {
-        guard usesDisplayRefreshCadence else { return false }
-        // Passive snapshot tiers (1-4 FPS) must not run full-refresh capture cadence.
-        // Reserve display-refresh cadence for live/high-FPS paths only.
-        return currentFrameRate >= 30
-    }
-
     func effectiveCaptureRate() -> Int {
-        if shouldFollowDisplayRefreshCadence(),
-           let refreshRate = currentDisplayRefreshRate,
-           refreshRate > 0 {
-            return refreshRate
-        }
         return currentFrameRate
     }
 
     func resolvedMinimumFrameInterval() -> CMTime {
-        if shouldFollowDisplayRefreshCadence() { return .zero }
         return CMTime(value: 1, timescale: CMTimeScale(minimumFrameIntervalRate()))
     }
 

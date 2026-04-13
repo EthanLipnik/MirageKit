@@ -195,7 +195,7 @@ func desktopVirtualDisplayStartupPlan(
             logicalResolution: logicalResolution,
             defaultScaleFactor: 1.0
         ),
-        refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: 60),
+        refreshRate: SharedVirtualDisplayManager.streamRefreshRate(for: requestedRefreshRate),
         colorSpace: .sRGB,
         label: "conservative-retry",
         fallbackKind: .conservative,

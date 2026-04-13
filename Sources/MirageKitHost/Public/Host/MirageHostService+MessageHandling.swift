@@ -191,7 +191,7 @@ extension MirageHostService {
             let clientDisplayResolution = CGSize(width: displayWidth, height: displayHeight)
             MirageLogger.host("Client display size (points): \(displayWidth)x\(displayHeight)")
 
-            let targetFrameRate = initialStreamStartupFrameRate()
+            let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
 
             let keyFrameInterval = request.keyFrameInterval
             let colorDepth = request.colorDepth
@@ -208,9 +208,7 @@ extension MirageHostService {
                 requested: request.mediaMaxPacketSize,
                 pathKind: pathKind
             )
-            MirageLogger.host(
-                "Frame rate: \(targetFrameRate)fps at startup; client sync follows after stream start"
-            )
+            MirageLogger.host("Frame rate: \(targetFrameRate)fps")
             MirageLogger.host("Latency mode: \(latencyMode.displayName)")
             MirageLogger.host("Performance mode: \(performanceMode.displayName)")
 

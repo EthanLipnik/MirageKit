@@ -41,5 +41,12 @@ struct VirtualDisplayScaleMathTests {
         #expect(fallback.width == 3008)
         #expect(fallback.height == 1680)
     }
+
+    @Test("Stream refresh rate preserves requested presets")
+    func streamRefreshRatePreservesRequestedPresets() {
+        #expect(SharedVirtualDisplayManager.streamRefreshRate(for: 60) == 60)
+        #expect(SharedVirtualDisplayManager.streamRefreshRate(for: 90) == 90)
+        #expect(SharedVirtualDisplayManager.streamRefreshRate(for: 120) == 120)
+    }
 }
 #endif

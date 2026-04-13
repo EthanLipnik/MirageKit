@@ -273,8 +273,14 @@ extension StreamContext {
 
         lastWindowFrame = layout.primaryWindowWrapper.window.frame
         capturedWindowClusterWindowIDs = layout.clusterWindowIDs
+        virtualDisplayVisibleBounds = layout.presentationRect
         virtualDisplayCapturePresentationRect = layout.presentationRect
         virtualDisplayCaptureSourceRect = layout.captureSourceRect
+        let scaleFactor = max(1.0, virtualDisplayContext.scaleFactor)
+        virtualDisplayVisiblePixelResolution = CGSize(
+            width: max(1, ceil(layout.presentationRect.width * scaleFactor)),
+            height: max(1, ceil(layout.presentationRect.height * scaleFactor))
+        )
         currentContentRect = layout.contentRect
 
         try await captureEngine.updateDisplayCaptureLayout(

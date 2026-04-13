@@ -622,6 +622,54 @@ extension MirageHostService {
         inputStreamCacheActor.updateWindowFrame(streamID, newFrame: effectiveBounds)
     }
 
+    func refreshSharedDisplayAppCaptureStateIfNeeded(
+        streamID: StreamID,
+        reason: String,
+        targetContentAspectRatioOverride: CGFloat? = nil
+    ) async throws {
+        guard let context = streamsByID[streamID] else { return }
+        guard await context.isAppStream,
+              await context.isUsingVirtualDisplay(),
+              await context.captureMode == .display else {
+            return
+        }
+
+        try await context.refreshSharedDisplayAppCaptureLayout(label: reason)
+        await refreshWindowVirtualDisplayState(
+            streamID: streamID,
+            context: context,
+            clientScaleFactorOverride: nil,
+            targetContentAspectRatioOverride: targetContentAspectRatioOverride
+        )
+        if let appSession = await appStreamManager.getSessionForStreamID(streamID) {
+            await appStreamManager.setCapturedClusterWindowIDs(
+                bundleIdentifier: appSession.bundleIdentifier,
+                streamID: streamID,
+                capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
+            )
+        }
+    }
+
+    func refreshSharedDisplayAppCaptureStateBestEffort(
+        streamID: StreamID,
+        reason: String,
+        targetContentAspectRatioOverride: CGFloat? = nil
+    ) async {
+        do {
+            try await refreshSharedDisplayAppCaptureStateIfNeeded(
+                streamID: streamID,
+                reason: reason,
+                targetContentAspectRatioOverride: targetContentAspectRatioOverride
+            )
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to refresh shared-display app capture state for stream \(streamID): "
+            )
+        }
+    }
+
     func sendStreamScaleUpdate(streamID: StreamID) async {
         guard let context = streamsByID[streamID] else {
             MirageLogger.debug(.host, "No stream found for stream scale update: \(streamID)")
@@ -1437,7 +1485,9 @@ extension MirageHostService {
                             "event=visible_frame_drift_stability state=stable stream=\(streamID) " +
                                 "samples=\(nextSampleCount)"
                         )
+                        var targetContentAspectRatio: CGFloat?
                         if let currentState = getVirtualDisplayState(windowID: windowID), currentState.streamID == streamID {
+                            targetContentAspectRatio = currentState.targetContentAspectRatio
                             let updatedBounds = aspectFittedWindowBounds(
                                 visibleBounds,
                                 targetAspectRatio: currentState.targetContentAspectRatio
@@ -1458,7 +1508,14 @@ extension MirageHostService {
                             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: updatedBounds)
                         }
                         windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID)
-                        await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
+                        let didRepairPlacement = await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
+                        if !didRepairPlacement {
+                            await refreshSharedDisplayAppCaptureStateBestEffort(
+                                streamID: streamID,
+                                reason: "visible frame drift",
+                                targetContentAspectRatioOverride: targetContentAspectRatio
+                            )
+                        }
                     }
                 } else if windowVisibleFrameDriftStateByStreamID.removeValue(forKey: streamID) != nil {
                     MirageLogger.host(
@@ -1466,7 +1523,7 @@ extension MirageHostService {
                     )
                 }
 
-                await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
+                _ = await enforceVirtualDisplayPlacementAfterActivation(windowID: windowID)
 
                 do {
                     try await Task.sleep(for: .milliseconds(120))

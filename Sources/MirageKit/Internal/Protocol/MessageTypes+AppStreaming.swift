@@ -135,6 +135,8 @@ package struct SelectAppMessage: Codable {
     package let bundleIdentifier: String
     /// Client's data port for video
     package let dataPort: UInt16?
+    /// Client-selected target frame rate in Hz.
+    package let targetFrameRate: Int
     /// Client's display scale factor
     package let scaleFactor: CGFloat?
     /// Client's display dimensions
@@ -184,6 +186,7 @@ package struct SelectAppMessage: Codable {
     enum CodingKeys: String, CodingKey {
         case bundleIdentifier
         case dataPort
+        case targetFrameRate
         case scaleFactor
         case displayWidth
         case displayHeight
@@ -212,6 +215,7 @@ package struct SelectAppMessage: Codable {
     package init(
         bundleIdentifier: String,
         dataPort: UInt16? = nil,
+        targetFrameRate: Int,
         scaleFactor: CGFloat? = nil,
         displayWidth: Int? = nil,
         displayHeight: Int? = nil,
@@ -233,6 +237,7 @@ package struct SelectAppMessage: Codable {
     ) {
         self.bundleIdentifier = bundleIdentifier
         self.dataPort = dataPort
+        self.targetFrameRate = targetFrameRate
         self.scaleFactor = scaleFactor
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight

@@ -298,6 +298,7 @@ struct MirageKitTests {
     func selectAppMessageMaxVisibleSlotsSerialization() throws {
         let request = SelectAppMessage(
             bundleIdentifier: "com.apple.mail",
+            targetFrameRate: 60,
             maxConcurrentVisibleWindows: 8
         )
         let envelope = try ControlMessage(type: .selectApp, content: request)
@@ -570,6 +571,7 @@ struct MirageKitTests {
         let request = StartStreamMessage(
             windowID: 9,
             dataPort: 5000,
+            targetFrameRate: 120,
             scaleFactor: 2.0,
             pixelWidth: 3840,
             pixelHeight: 2160,
@@ -591,6 +593,7 @@ struct MirageKitTests {
         let envelope = try ControlMessage(type: .startStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartStreamMessage.self)
+        #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .smoothest)
         #expect(decoded.performanceMode == .game)
         #expect(decoded.colorDepth == .pro)
@@ -603,6 +606,7 @@ struct MirageKitTests {
         let request = SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
             dataPort: 6000,
+            targetFrameRate: 90,
             scaleFactor: 2.0,
             displayWidth: 1920,
             displayHeight: 1200,
@@ -622,6 +626,7 @@ struct MirageKitTests {
         let envelope = try ControlMessage(type: .selectApp, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(SelectAppMessage.self)
+        #expect(decoded.targetFrameRate == 90)
         #expect(decoded.latencyMode == .lowestLatency)
         #expect(decoded.performanceMode == .game)
         #expect(decoded.colorDepth == .pro)
@@ -642,6 +647,7 @@ struct MirageKitTests {
         let startStream = StartStreamMessage(
             windowID: 12,
             dataPort: 5000,
+            targetFrameRate: 60,
             mediaMaxPacketSize: 1400
         )
         let startStreamEnvelope = try ControlMessage(type: .startStream, content: startStream)
@@ -651,6 +657,7 @@ struct MirageKitTests {
 
         let selectApp = SelectAppMessage(
             bundleIdentifier: "com.example.Editor",
+            targetFrameRate: 60,
             maxConcurrentVisibleWindows: 2,
             mediaMaxPacketSize: 1400
         )
@@ -663,6 +670,7 @@ struct MirageKitTests {
             scaleFactor: nil,
             displayWidth: 3008,
             displayHeight: 1692,
+            targetFrameRate: 60,
             mediaMaxPacketSize: 1200
         )
         let startDesktopEnvelope = try ControlMessage(type: .startDesktopStream, content: startDesktop)
@@ -858,6 +866,7 @@ struct MirageKitTests {
             scaleFactor: 2.0,
             displayWidth: 3008,
             displayHeight: 1692,
+            targetFrameRate: 120,
             keyFrameInterval: 1800,
             captureQueueDepth: 5,
             colorDepth: .pro,
@@ -876,6 +885,7 @@ struct MirageKitTests {
         let envelope = try ControlMessage(type: .startDesktopStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(StartDesktopStreamMessage.self)
+        #expect(decoded.targetFrameRate == 120)
         #expect(decoded.latencyMode == .auto)
         #expect(decoded.performanceMode == .game)
         #expect(decoded.displayWidth == 3008)
@@ -890,6 +900,7 @@ struct MirageKitTests {
             scaleFactor: 2.0,
             displayWidth: 3008,
             displayHeight: 1692,
+            targetFrameRate: 60,
             mode: .secondary,
             cursorPresentation: MirageDesktopCursorPresentation(
                 source: .host,
@@ -931,7 +942,7 @@ struct MirageKitTests {
 
     @Test("Start stream request omits performance mode when unset")
     func startStreamPerformanceModeDefaultSerialization() throws {
-        let request = StartStreamMessage(windowID: 11)
+        let request = StartStreamMessage(windowID: 11, targetFrameRate: 60)
 
         let envelope = try ControlMessage(type: .startStream, content: request)
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())

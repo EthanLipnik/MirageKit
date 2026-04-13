@@ -146,9 +146,11 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Display size unavailable for app streaming")
         }
+        let targetFrameRate = getScreenMaxRefreshRate()
         var encoderRequest = SelectAppMessage(
             bundleIdentifier: bundleIdentifier,
             dataPort: nil,
+            targetFrameRate: targetFrameRate,
             scaleFactor: nil,
             displayWidth: effectiveDisplayResolution.width > 0 ? Int(effectiveDisplayResolution.width) : nil,
             displayHeight: effectiveDisplayResolution.height > 0 ? Int(effectiveDisplayResolution.height) : nil,
@@ -194,6 +196,7 @@ public extension MirageClientService {
         var request = SelectAppMessage(
             bundleIdentifier: encoderRequest.bundleIdentifier,
             dataPort: encoderRequest.dataPort,
+            targetFrameRate: encoderRequest.targetFrameRate,
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: encoderRequest.displayWidth,
             displayHeight: encoderRequest.displayHeight,

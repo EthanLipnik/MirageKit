@@ -399,11 +399,8 @@ extension MirageHostService {
             MirageLogger.host("Client \(client.name) selected app: \(request.bundleIdentifier)")
             await pruneOrphanedAppSessions()
 
-            let targetFrameRate = initialStreamStartupFrameRate()
-            MirageLogger
-                .host(
-                    "Frame rate: \(targetFrameRate)fps at startup; client sync follows after stream start"
-                )
+            let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
+            MirageLogger.host("Frame rate: \(targetFrameRate)fps")
 
             let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
@@ -820,11 +817,14 @@ extension MirageHostService {
             )
             await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: newGeneration)
             activateWindow(targetWindow)
-            await enforceVirtualDisplayPlacementAfterActivation(windowID: targetWindowID, force: true)
+            _ = await enforceVirtualDisplayPlacementAfterActivation(windowID: targetWindowID, force: true)
             do {
-                try await context.refreshSharedDisplayAppCaptureLayout(label: "slot swap")
+                try await refreshSharedDisplayAppCaptureStateIfNeeded(
+                    streamID: targetSlotStreamID,
+                    reason: "slot swap"
+                )
             } catch {
-                return failure("Failed to retarget shared-display app capture layout: \(error.localizedDescription)")
+                return failure("Failed to retarget shared-display app capture state: \(error.localizedDescription)")
             }
         } else {
             let restartComponents: (
@@ -1052,7 +1052,7 @@ extension MirageHostService {
                     true,
                 disableResolutionCap: disableResolutionCap,
                 allowBestEffortRemap: true,
-                allowDirectCaptureFallback: true,
+                allowDirectCaptureFallback: false,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
                 encoderMaxWidth: selectRequest.encoderMaxWidth,
@@ -1672,7 +1672,7 @@ extension MirageHostService {
             lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? true,
             disableResolutionCap: selectRequest.disableResolutionCap ?? false,
             allowBestEffortRemap: true,
-            allowDirectCaptureFallback: true,
+            allowDirectCaptureFallback: false,
             audioConfiguration: selectRequest.audioConfiguration ?? .default,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,

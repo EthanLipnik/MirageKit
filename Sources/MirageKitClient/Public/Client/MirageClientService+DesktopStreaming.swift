@@ -46,6 +46,7 @@ public extension MirageClientService {
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {
             throw MirageError.protocolError("Invalid display resolution")
         }
+        let targetFrameRate = getScreenMaxRefreshRate()
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
 
@@ -56,6 +57,7 @@ public extension MirageClientService {
             scaleFactor: nil,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
+            targetFrameRate: targetFrameRate,
             keyFrameInterval: nil,
             mode: mode,
             cursorPresentation: cursorPresentation,
@@ -89,6 +91,7 @@ public extension MirageClientService {
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: encoderRequest.displayWidth,
             displayHeight: encoderRequest.displayHeight,
+            targetFrameRate: encoderRequest.targetFrameRate,
             streamScale: geometry.resolvedStreamScale,
             audioConfiguration: encoderRequest.audioConfiguration,
             dataPort: encoderRequest.dataPort,

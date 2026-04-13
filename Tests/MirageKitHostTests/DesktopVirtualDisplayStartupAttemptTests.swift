@@ -50,7 +50,7 @@ struct DesktopVirtualDisplayStartupAttemptTests {
 
         #expect(attempts[2].label == "conservative-retry")
         #expect(attempts[2].backingScale.pixelResolution == CGSize(width: 3008, height: 1680))
-        #expect(attempts[2].refreshRate == 60)
+        #expect(attempts[2].refreshRate == 120)
         #expect(attempts[2].colorSpace == .sRGB)
         #expect(attempts[2].fallbackKind == .conservative)
         #expect(attempts[2].isConservativeRetry)

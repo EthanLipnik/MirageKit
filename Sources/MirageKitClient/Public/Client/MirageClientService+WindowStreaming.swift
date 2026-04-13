@@ -43,7 +43,11 @@ public extension MirageClientService {
         )
 
         // Note: Decoder/reassembler are created per-stream AFTER receiving streamStarted with the stream ID.
-        var request = StartStreamMessage(windowID: window.id, dataPort: nil)
+        var request = StartStreamMessage(
+            windowID: window.id,
+            dataPort: nil,
+            targetFrameRate: getScreenMaxRefreshRate()
+        )
         request.mediaMaxPacketSize = resolvedRequestedMediaMaxPacketSize()
         let effectiveDisplayResolution = scaledDisplayResolution(displayResolution ?? getMainDisplayResolution())
         guard effectiveDisplayResolution.width > 0, effectiveDisplayResolution.height > 0 else {

@@ -69,7 +69,7 @@ package struct StreamScaleChangeMessage: Codable {
 package struct StreamRefreshRateChangeMessage: Codable {
     /// The stream to update
     package let streamID: StreamID
-    /// Maximum refresh rate in Hz, capped by client display capability.
+    /// Maximum refresh rate in Hz requested by the client.
     package let maxRefreshRate: Int
     /// Force a display refresh reconfiguration on the host (fallback path)
     package var forceDisplayRefresh: Bool?

@@ -390,6 +390,19 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision.resolvedBounds == cached)
     }
 
+    @Test("Placement bounds decision accepts bounded visible-frame inset drift")
+    func placementBoundsDecisionAcceptsVisibleFrameInsetDrift() {
+        let recomputed = CGRect(x: 0, y: 30, width: 1376, height: 928)
+        let decision = placementBoundsSelectionDecision(
+            cachedBounds: CGRect(x: 0, y: 0, width: 1376, height: 1032),
+            recomputedBounds: recomputed,
+            displayBounds: CGRect(x: 0, y: 0, width: 1376, height: 1032)
+        )
+
+        #expect(decision.outcome == .adoptRecomputedShrink)
+        #expect(decision.resolvedBounds == recomputed)
+    }
+
     @Test("Placement bounds decision prefers recomputed bounds when cached bounds are outside display")
     func placementBoundsDecisionPrefersRecomputedWhenCachedOutsideDisplay() {
         let recomputed = CGRect(x: 2056, y: 30, width: 1528, height: 1218)

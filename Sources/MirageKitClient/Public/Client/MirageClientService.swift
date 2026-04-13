@@ -981,7 +981,5 @@ public final class MirageClientService {
     public static var lastKnownScreenNativePixelSize: CGSize = .zero
     /// Cached active screen native scale factor.
     public static var lastKnownScreenNativeScale: CGFloat = 0
-    /// Cached max refresh rate from the active screen (for external display support).
-    public static var lastKnownScreenMaxFPS: Int = 0
     #endif
 }

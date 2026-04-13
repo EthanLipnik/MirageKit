@@ -21,6 +21,7 @@ enum HostSymbolicHotKeyResolver {
     private static let controlModifierMask: UInt = 1 << 18
     private static let optionModifierMask: UInt = 1 << 19
     private static let commandModifierMask: UInt = 1 << 20
+    private static let functionModifierMask: UInt = 1 << 23
 
     static func resolve(
         _ action: MirageHostSystemAction,
@@ -82,6 +83,7 @@ enum HostSymbolicHotKeyResolver {
         if rawValue & controlModifierMask != 0 { modifiers.insert(.control) }
         if rawValue & optionModifierMask != 0 { modifiers.insert(.option) }
         if rawValue & commandModifierMask != 0 { modifiers.insert(.command) }
+        if rawValue & functionModifierMask != 0 { modifiers.insert(.function) }
         return modifiers
     }
 

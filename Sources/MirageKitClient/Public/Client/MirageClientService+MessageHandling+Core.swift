@@ -291,9 +291,8 @@ extension MirageClientService {
                 window: resolvedWindow
             )
 
-            let screenMaxRefreshRate = getScreenMaxRefreshRate()
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
-            let desiredRefreshRate = max(existingRefreshRate, screenMaxRefreshRate)
+            let desiredRefreshRate = existingRefreshRate > 0 ? existingRefreshRate : getScreenMaxRefreshRate()
             refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(desiredRefreshRate)
 
             let dimensionToken = started.dimensionToken
@@ -546,23 +545,6 @@ extension MirageClientService {
                         }
                     }
 
-                    let forcedDowngradeThreshold = 8
-                    if requested == 120,
-                       metrics.targetFrameRate == 60,
-                       updatedCount >= forcedDowngradeThreshold {
-                        refreshRateOverridesByStream[metrics.streamID] = 60
-                        refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)
-                        refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)
-                        Task { [weak self] in
-                            try? await self?.sendStreamRefreshRateChange(
-                                streamID: metrics.streamID,
-                                maxRefreshRate: 60
-                            )
-                        }
-                        MirageLogger.client(
-                            "Refresh override downgraded to 60Hz for stream \(metrics.streamID) after sustained 120Hz mismatch"
-                        )
-                    }
                 } else {
                     refreshRateMismatchCounts.removeValue(forKey: metrics.streamID)
                     refreshRateFallbackTargets.removeValue(forKey: metrics.streamID)

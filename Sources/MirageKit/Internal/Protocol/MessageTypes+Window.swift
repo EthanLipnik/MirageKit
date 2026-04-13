@@ -41,6 +41,8 @@ package struct StartStreamMessage: Codable {
     package let windowID: WindowID
     /// UDP port the client is listening on for video data
     package let dataPort: UInt16?
+    /// Client-selected target frame rate in Hz.
+    package let targetFrameRate: Int
     /// Client's display scale factor (e.g., 2.0 for Retina Mac, ~1.72 for iPad Pro)
     /// If nil, host uses its own scale factor.
     package var scaleFactor: CGFloat?
@@ -93,6 +95,7 @@ package struct StartStreamMessage: Codable {
     enum CodingKeys: String, CodingKey {
         case windowID
         case dataPort
+        case targetFrameRate
         case scaleFactor
         case pixelWidth
         case pixelHeight
@@ -120,6 +123,7 @@ package struct StartStreamMessage: Codable {
     package init(
         windowID: WindowID,
         dataPort: UInt16? = nil,
+        targetFrameRate: Int,
         scaleFactor: CGFloat? = nil,
         pixelWidth: Int? = nil,
         pixelHeight: Int? = nil,
@@ -140,6 +144,7 @@ package struct StartStreamMessage: Codable {
     ) {
         self.windowID = windowID
         self.dataPort = dataPort
+        self.targetFrameRate = targetFrameRate
         self.scaleFactor = scaleFactor
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight

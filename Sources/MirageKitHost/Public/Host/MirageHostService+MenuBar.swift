@@ -105,11 +105,8 @@ extension MirageHostService {
                 "Desktop bitrate contract received: entered=\(enteredBitrateText) requested=\(requestedBitrateText) ceiling=\(ceilingText)"
             )
 
-            let targetFrameRate = initialStreamStartupFrameRate()
-            MirageLogger
-                .host(
-                    "Desktop stream frame rate: \(targetFrameRate)fps at startup; client sync follows after stream start"
-                )
+            let targetFrameRate = resolvedTargetFrameRate(request.targetFrameRate)
+            MirageLogger.host("Desktop stream frame rate: \(targetFrameRate)fps")
             let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
             let pathKind = clientContext.pathSnapshot.map { MirageNetworkPathClassifier.classify($0).kind }

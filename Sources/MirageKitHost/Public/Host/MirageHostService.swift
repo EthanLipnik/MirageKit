@@ -1716,7 +1716,7 @@ public final class MirageHostService {
     ///   - bitDepth: Optional client-requested stream bit depth
     ///   - captureQueueDepth: Optional ScreenCaptureKit queue depth override
     ///   - bitrate: Optional target bitrate (bits per second)
-    ///   - targetFrameRate: Optional frame rate override capped by client capability
+    ///   - targetFrameRate: Optional client-selected frame rate override
 
     // Stop a stream
     // - Parameters:

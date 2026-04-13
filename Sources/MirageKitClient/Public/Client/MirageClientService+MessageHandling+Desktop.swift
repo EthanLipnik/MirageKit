@@ -87,9 +87,8 @@ extension MirageClientService {
             if let previousStreamID, previousStreamID != streamID {
                 desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
             }
-            let screenMaxRefreshRate = getScreenMaxRefreshRate()
             let existingRefreshRate = refreshRateOverridesByStream[streamID] ?? 0
-            let desiredRefreshRate = max(existingRefreshRate, screenMaxRefreshRate)
+            let desiredRefreshRate = existingRefreshRate > 0 ? existingRefreshRate : getScreenMaxRefreshRate()
             refreshRateOverridesByStream[streamID] = MirageRenderModePolicy.normalizedTargetFPS(desiredRefreshRate)
             configureDecoderColorDepthBaseline(
                 for: streamID,

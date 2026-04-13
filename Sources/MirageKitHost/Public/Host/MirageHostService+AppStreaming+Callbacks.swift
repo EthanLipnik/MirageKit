@@ -139,29 +139,14 @@ extension MirageHostService {
     }
 
     private func refreshVisibleAppStreamCaptureCluster(
-        bundleID: String,
+        bundleID _: String,
         streamID: StreamID,
         reason: String
     ) async {
-        guard isStreamUsingVirtualDisplay(streamID: streamID),
-              let context = streamsByID[streamID] else {
-            return
-        }
-
-        do {
-            try await context.refreshSharedDisplayAppCaptureLayout(label: reason)
-            await appStreamManager.setCapturedClusterWindowIDs(
-                bundleIdentifier: bundleID,
-                streamID: streamID,
-                capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
-            )
-        } catch {
-            MirageLogger.error(
-                .host,
-                error: error,
-                message: "Failed to refresh shared-display app capture cluster: "
-            )
-        }
+        await refreshSharedDisplayAppCaptureStateBestEffort(
+            streamID: streamID,
+            reason: reason
+        )
     }
 
     func handleNewWindowFromStreamedApp(bundleID: String, candidate: AppStreamWindowCandidate) async {

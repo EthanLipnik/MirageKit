@@ -28,6 +28,10 @@ public final class MirageInputEventSender: @unchecked Sendable {
     /// Accessed only on `sendQueue`.
     private var sendInFlight = false
 
+    /// Last scheduled best-effort send task for preserving event order.
+    /// Accessed only on `sendQueue`.
+    private var lastBestEffortSendTask: Task<Void, Never>?
+
     /// Latest continuous event waiting to send (pointer move/drag, scroll changed).
     /// Replaced on each arrival — only the newest matters.
     /// Accessed only on `sendQueue`.
@@ -41,6 +45,7 @@ public final class MirageInputEventSender: @unchecked Sendable {
         if handler == nil {
             sendQueue.async { [weak self] in
                 self?.sendInFlight = false
+                self?.lastBestEffortSendTask = nil
                 self?.pendingContinuousData = nil
             }
         }
@@ -111,9 +116,12 @@ public final class MirageInputEventSender: @unchecked Sendable {
     /// Sends data immediately without awaiting completion.
     private func fireAndForgetSend(_ data: Data) {
         guard let handler = currentSendHandler() else { return }
-        Task {
+        let previousTask = lastBestEffortSendTask
+        let task = Task {
+            await previousTask?.value
             try? await handler(data, false)
         }
+        lastBestEffortSendTask = task
     }
 
     /// Schedules a drain of the pending continuous event on the next run loop tick.
