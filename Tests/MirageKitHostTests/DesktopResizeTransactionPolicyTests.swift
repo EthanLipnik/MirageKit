@@ -441,33 +441,6 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision.resolvedBounds == CGRect(x: 2056, y: 30, width: 1200, height: 900))
     }
 
-    @Test("Window placement repair backoff progression and reset")
-    func windowPlacementRepairBackoffProgressionAndReset() {
-        let step1 = windowPlacementRepairBackoffStep(currentFailureCount: 0, didSucceed: false)
-        #expect(step1.failureCount == 1)
-        #expect(abs((step1.retryDelaySeconds ?? 0) - 0.5) < 0.0001)
-
-        let step2 = windowPlacementRepairBackoffStep(currentFailureCount: step1.failureCount, didSucceed: false)
-        #expect(step2.failureCount == 2)
-        #expect(abs((step2.retryDelaySeconds ?? 0) - 1.0) < 0.0001)
-
-        let step3 = windowPlacementRepairBackoffStep(currentFailureCount: step2.failureCount, didSucceed: false)
-        #expect(step3.failureCount == 3)
-        #expect(abs((step3.retryDelaySeconds ?? 0) - 2.0) < 0.0001)
-
-        let step4 = windowPlacementRepairBackoffStep(currentFailureCount: step3.failureCount, didSucceed: false)
-        #expect(step4.failureCount == 4)
-        #expect(abs((step4.retryDelaySeconds ?? 0) - 4.0) < 0.0001)
-
-        let step5 = windowPlacementRepairBackoffStep(currentFailureCount: step4.failureCount, didSucceed: false)
-        #expect(step5.failureCount == 5)
-        #expect(abs((step5.retryDelaySeconds ?? 0) - 4.0) < 0.0001)
-
-        let reset = windowPlacementRepairBackoffStep(currentFailureCount: step5.failureCount, didSucceed: true)
-        #expect(reset.failureCount == 0)
-        #expect(reset.retryDelaySeconds == nil)
-    }
-
     @Test("Display separation anchor prefers physical original main display")
     func displaySeparationAnchorPrefersPhysicalOriginalMain() {
         let display1: CGDirectDisplayID = 1

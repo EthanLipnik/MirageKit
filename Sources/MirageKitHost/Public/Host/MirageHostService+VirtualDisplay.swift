@@ -156,6 +156,39 @@ func windowResizeNoOpDecision(
     return .apply
 }
 
+func windowResizePlacementNoOpDecision(
+    currentBounds: CGRect?,
+    displayVisibleBounds: CGRect?,
+    requestedAspectRatio: CGFloat?,
+    tolerance: CGFloat = 8
+)
+-> WindowResizeNoOpDecision {
+    guard let currentBounds,
+          let displayVisibleBounds,
+          currentBounds.width > 0,
+          currentBounds.height > 0,
+          displayVisibleBounds.width > 0,
+          displayVisibleBounds.height > 0,
+          let requestedAspectRatio,
+          requestedAspectRatio.isFinite,
+          requestedAspectRatio > 0 else {
+        return .apply
+    }
+
+    let requestedBounds = aspectFittedWindowBounds(
+        displayVisibleBounds,
+        targetAspectRatio: requestedAspectRatio
+    )
+    if abs(currentBounds.minX - requestedBounds.minX) <= tolerance,
+       abs(currentBounds.minY - requestedBounds.minY) <= tolerance,
+       abs(currentBounds.width - requestedBounds.width) <= tolerance,
+       abs(currentBounds.height - requestedBounds.height) <= tolerance {
+        return .noOp
+    }
+
+    return .apply
+}
+
 func aspectFittedWindowBounds(
     _ bounds: CGRect,
     targetAspectRatio: CGFloat?
@@ -385,7 +418,6 @@ extension MirageHostService {
                 lowLatencyHighResolutionCompressionBoost: encoderSettings
                     .lowLatencyHighResolutionCompressionBoostEnabled,
                 disableResolutionCap: disableResolutionCap,
-                allowDirectCaptureFallback: true,
                 audioConfiguration: audioConfiguration,
                 mediaMaxPacketSize: mediaMaxPacketSize
             )
@@ -558,10 +590,10 @@ extension MirageHostService {
         guard let snapshot = await context.getVirtualDisplaySnapshot() else { return }
         let existingState = getVirtualDisplayState(streamID: streamID)
 
-        var bounds = await context.getVirtualDisplayVisibleBounds()
+        var displayVisibleBounds = await context.getVirtualDisplayVisibleBounds()
+        let capturePresentationRect = await context.getVirtualDisplayCapturePresentationRect()
         var captureSourceRect = await context.getVirtualDisplayCaptureSourceRect()
-        var visiblePixelResolution = await context.getVirtualDisplayVisiblePixelResolution()
-        if bounds.isEmpty || captureSourceRect.isEmpty || visiblePixelResolution == .zero {
+        if displayVisibleBounds.isEmpty || captureSourceRect.isEmpty {
             let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
                 for: snapshot.resolution,
                 scaleFactor: max(1.0, snapshot.scaleFactor)
@@ -570,21 +602,17 @@ extension MirageHostService {
                 snapshot.displayID,
                 knownResolution: logicalResolution
             )
-            bounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            displayVisibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
                 snapshot.displayID,
                 knownBounds: displayBounds
             )
-            bounds = bounds.intersection(displayBounds)
-            if bounds.isEmpty {
-                bounds = displayBounds
+            displayVisibleBounds = displayVisibleBounds.intersection(displayBounds)
+            if displayVisibleBounds.isEmpty {
+                displayVisibleBounds = displayBounds
             }
             captureSourceRect = CGVirtualDisplayBridge.displayCaptureSourceRect(
                 snapshot.displayID,
                 knownBounds: displayBounds
-            )
-            visiblePixelResolution = CGSize(
-                width: max(1, ceil(bounds.width * max(1.0, snapshot.scaleFactor))),
-                height: max(1, ceil(bounds.height * max(1.0, snapshot.scaleFactor)))
             )
         }
         let resolvedClientScaleFactor = max(
@@ -598,22 +626,32 @@ extension MirageHostService {
             overrideAspectRatio: targetContentAspectRatioOverride
         )
         let windowID = await context.getWindowID()
-        let effectiveBounds = aspectFittedWindowBounds(
-            bounds,
-            targetAspectRatio: targetContentAspectRatio
-        )
-        let effectiveVisiblePixelResolution = CGSize(
+        let effectiveBounds = if capturePresentationRect.width > 0, capturePresentationRect.height > 0 {
+            capturePresentationRect.standardized
+        } else {
+            aspectFittedWindowBounds(
+                displayVisibleBounds,
+                targetAspectRatio: targetContentAspectRatio
+            )
+        }
+        let effectivePixelResolution = CGSize(
             width: max(1, ceil(effectiveBounds.width * max(1.0, snapshot.scaleFactor))),
             height: max(1, ceil(effectiveBounds.height * max(1.0, snapshot.scaleFactor)))
+        )
+        let displayVisiblePixelResolution = CGSize(
+            width: max(1, ceil(displayVisibleBounds.width * max(1.0, snapshot.scaleFactor))),
+            height: max(1, ceil(displayVisibleBounds.height * max(1.0, snapshot.scaleFactor)))
         )
         let state = WindowVirtualDisplayState(
             streamID: streamID,
             displayID: snapshot.displayID,
             generation: snapshot.generation,
             bounds: effectiveBounds,
+            displayVisibleBounds: displayVisibleBounds,
             targetContentAspectRatio: targetContentAspectRatio,
             captureSourceRect: captureSourceRect,
-            visiblePixelResolution: effectiveVisiblePixelResolution,
+            visiblePixelResolution: effectivePixelResolution,
+            displayVisiblePixelResolution: displayVisiblePixelResolution,
             scaleFactor: max(1.0, snapshot.scaleFactor),
             pixelResolution: snapshot.resolution,
             clientScaleFactor: resolvedClientScaleFactor
@@ -1254,7 +1292,11 @@ extension MirageHostService {
         let requestedAspectRatio = logicalResolution.width > 0 && logicalResolution.height > 0
             ? logicalResolution.width / logicalResolution.height
             : nil
-        if windowResizeNoOpDecision(
+        if windowResizePlacementNoOpDecision(
+            currentBounds: currentState?.bounds,
+            displayVisibleBounds: currentState?.displayVisibleBounds,
+            requestedAspectRatio: requestedAspectRatio
+        ) == .noOp || windowResizeNoOpDecision(
             currentVisibleResolution: currentVisibleResolution,
             currentDisplayResolution: currentDisplayResolution,
             currentEncodedResolution: nil,
@@ -1439,8 +1481,8 @@ extension MirageHostService {
                     height: max(1, ceil(visibleBounds.height * max(1.0, state.scaleFactor)))
                 )
 
-                let widthDelta = abs(currentVisiblePixels.width - state.visiblePixelResolution.width)
-                let heightDelta = abs(currentVisiblePixels.height - state.visiblePixelResolution.height)
+                let widthDelta = abs(currentVisiblePixels.width - state.displayVisiblePixelResolution.width)
+                let heightDelta = abs(currentVisiblePixels.height - state.displayVisiblePixelResolution.height)
                 let displayWidthDelta = abs(currentVisiblePixels.width - state.pixelResolution.width)
                 let displayHeightDelta = abs(currentVisiblePixels.height - state.pixelResolution.height)
                 let directVisibleMatch = widthDelta <= driftTolerancePixels && heightDelta <= driftTolerancePixels
@@ -1477,7 +1519,7 @@ extension MirageHostService {
                     MirageLogger.host(
                         "event=visible_frame_drift_stability state=candidate stream=\(streamID) " +
                             "samples=\(nextSampleCount)/\(stableDriftSampleThreshold) " +
-                            "cached=\(Int(state.visiblePixelResolution.width))x\(Int(state.visiblePixelResolution.height)) " +
+                            "cached=\(Int(state.displayVisiblePixelResolution.width))x\(Int(state.displayVisiblePixelResolution.height)) " +
                             "candidate=\(Int(currentVisiblePixels.width))x\(Int(currentVisiblePixels.height))"
                     )
                     if nextSampleCount >= stableDriftSampleThreshold {
@@ -1497,9 +1539,14 @@ extension MirageHostService {
                                 displayID: currentState.displayID,
                                 generation: currentState.generation,
                                 bounds: updatedBounds,
+                                displayVisibleBounds: visibleBounds,
                                 targetContentAspectRatio: currentState.targetContentAspectRatio,
                                 captureSourceRect: currentState.captureSourceRect,
-                                visiblePixelResolution: currentVisiblePixels,
+                                visiblePixelResolution: CGSize(
+                                    width: max(1, ceil(updatedBounds.width * max(1.0, currentState.scaleFactor))),
+                                    height: max(1, ceil(updatedBounds.height * max(1.0, currentState.scaleFactor)))
+                                ),
+                                displayVisiblePixelResolution: currentVisiblePixels,
                                 scaleFactor: currentState.scaleFactor,
                                 pixelResolution: currentState.pixelResolution,
                                 clientScaleFactor: currentState.clientScaleFactor

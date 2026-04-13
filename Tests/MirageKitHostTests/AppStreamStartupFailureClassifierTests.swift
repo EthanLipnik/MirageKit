@@ -56,8 +56,8 @@ struct AppStreamStartupFailureClassifierTests {
         #expect(!AppStreamStartupFailureClassifier.isNonRetryableVirtualDisplayAllocationError(error))
     }
 
-    @Test("Recoverable CoreGraphics virtual-display startup errors map to direct-capture fallback")
-    func recoverableCoreGraphicsVirtualDisplayFailureFallsBackToDirectCapture() {
+    @Test("Recoverable CoreGraphics virtual-display startup errors stay retryable")
+    func recoverableCoreGraphicsVirtualDisplayFailureStaysRetryable() {
         let error = NSError(domain: "CoreGraphicsErrorDomain", code: 1003)
         let failureCode = windowStreamStartFailureCode(for: error)
         let wrappedError = WindowStreamStartError.virtualDisplayStartFailed(
@@ -66,7 +66,6 @@ struct AppStreamStartupFailureClassifierTests {
         )
 
         #expect(failureCode == .windowPlacementFailed)
-        #expect(windowStreamStartShouldFallbackToDirectCapture(for: error))
         #expect(AppStreamStartupFailureClassifier.isRetryableWindowStartupError(wrappedError))
         #expect(!AppStreamStartupFailureClassifier.shouldHideFailedWindowInInventory(wrappedError))
     }

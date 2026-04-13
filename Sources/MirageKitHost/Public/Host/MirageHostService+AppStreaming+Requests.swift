@@ -807,9 +807,11 @@ extension MirageHostService {
                     displayID: virtualDisplayState.displayID,
                     generation: newGeneration,
                     bounds: virtualDisplayState.bounds,
+                    displayVisibleBounds: virtualDisplayState.displayVisibleBounds,
                     targetContentAspectRatio: virtualDisplayState.targetContentAspectRatio,
                     captureSourceRect: virtualDisplayState.captureSourceRect,
                     visiblePixelResolution: virtualDisplayState.visiblePixelResolution,
+                    displayVisiblePixelResolution: virtualDisplayState.displayVisiblePixelResolution,
                     scaleFactor: virtualDisplayState.scaleFactor,
                     pixelResolution: virtualDisplayState.pixelResolution,
                     clientScaleFactor: virtualDisplayState.clientScaleFactor
@@ -827,25 +829,7 @@ extension MirageHostService {
                 return failure("Failed to retarget shared-display app capture state: \(error.localizedDescription)")
             }
         } else {
-            let restartComponents: (
-                window: SCWindowWrapper,
-                application: SCApplicationWrapper,
-                display: SCDisplayWrapper
-            )
-            do {
-                restartComponents = try await resolveDirectWindowCaptureComponents(
-                    windowID: targetWindowID,
-                    label: "slot-swap"
-                )
-                await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: nil)
-                try await context.restartWindowCapture(
-                    windowWrapper: restartComponents.window,
-                    applicationWrapper: restartComponents.application,
-                    displayWrapper: restartComponents.display
-                )
-            } catch {
-                return failure("Failed to retarget requested hidden window into slot: \(error.localizedDescription)")
-            }
+            return failure("Missing shared-display state for slot swap; direct window capture is disabled.")
         }
 
         let targetFrame = currentWindowFrame(for: targetWindowID) ?? CGRect(
@@ -934,44 +918,6 @@ extension MirageHostService {
         )
     }
 
-    private func resolveDirectWindowCaptureComponents(
-        windowID: WindowID,
-        label: String,
-        maxAttempts: Int = 10,
-        initialDelayMs: Int = 100
-    )
-    async throws -> (
-        window: SCWindowWrapper,
-        application: SCApplicationWrapper,
-        display: SCDisplayWrapper
-    ) {
-        let attempts = max(1, maxAttempts)
-        var delayMs = max(40, initialDelayMs)
-
-        for attempt in 1 ... attempts {
-            let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
-            if let window = content.windows.first(where: { $0.windowID == CGWindowID(windowID) }),
-               let application = window.owningApplication {
-                let display = try await findMainSCDisplayWithRetry(maxAttempts: 6, delayMs: 60)
-                if attempt > 1 {
-                    MirageLogger.host("Resolved direct window-capture components for window \(windowID) on attempt \(attempt) (\(label))")
-                }
-                return (
-                    window: SCWindowWrapper(window: window),
-                    application: SCApplicationWrapper(application: application),
-                    display: display
-                )
-            }
-
-            if attempt < attempts {
-                try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
-                delayMs = min(600, Int(Double(delayMs) * 1.5))
-            }
-        }
-
-        throw MirageError.protocolError("Unable to resolve direct window-capture components for window \(windowID) (\(label))")
-    }
-
     private func startAdditionalStreamForExistingAppSession(
         app: MirageInstalledApp,
         session: MirageAppStreamSession,
@@ -1052,7 +998,6 @@ extension MirageHostService {
                     true,
                 disableResolutionCap: disableResolutionCap,
                 allowBestEffortRemap: true,
-                allowDirectCaptureFallback: false,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
                 encoderMaxWidth: selectRequest.encoderMaxWidth,
@@ -1672,7 +1617,6 @@ extension MirageHostService {
             lowLatencyHighResolutionCompressionBoost: selectRequest.lowLatencyHighResolutionCompressionBoost ?? true,
             disableResolutionCap: selectRequest.disableResolutionCap ?? false,
             allowBestEffortRemap: true,
-            allowDirectCaptureFallback: false,
             audioConfiguration: selectRequest.audioConfiguration ?? .default,
             bitrateAdaptationCeiling: selectRequest.bitrateAdaptationCeiling,
             encoderMaxWidth: selectRequest.encoderMaxWidth,

@@ -268,9 +268,11 @@ public final class MirageHostService {
         let displayID: CGDirectDisplayID
         let generation: UInt64
         let bounds: CGRect
+        let displayVisibleBounds: CGRect
         let targetContentAspectRatio: CGFloat?
         let captureSourceRect: CGRect
         let visiblePixelResolution: CGSize
+        let displayVisiblePixelResolution: CGSize
         let scaleFactor: CGFloat
         let pixelResolution: CGSize
         let clientScaleFactor: CGFloat
@@ -280,11 +282,6 @@ public final class MirageHostService {
         let candidateBounds: CGRect
         let candidateVisiblePixelResolution: CGSize
         let consecutiveSamples: Int
-    }
-
-    struct WindowPlacementRepairBackoffState: Sendable {
-        let failureCount: Int
-        let nextRetryAt: CFAbsoluteTime
     }
 
     // Per-window dedicated virtual display state for app/window streams.
@@ -301,8 +298,6 @@ public final class MirageHostService {
     var windowVisibleFrameDriftStateByStreamID: [StreamID: WindowVisibleFrameDriftState] = [:]
     // Cooldown tracking for authoritative placement repairs (window -> last repair time).
     var lastWindowPlacementRepairAtByWindowID: [WindowID: CFAbsoluteTime] = [:]
-    // Backoff tracking for non-forced maintenance placement repairs.
-    var windowPlacementRepairBackoffByWindowID: [WindowID: WindowPlacementRepairBackoffState] = [:]
     // Shared-display generation for desktop/login shared-consumer flows.
     var sharedVirtualDisplayGeneration: UInt64 = 0
     // Shared-display scale factor for desktop/login shared-consumer flows.

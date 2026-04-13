@@ -12,7 +12,7 @@ import Foundation
 public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Equatable {
     /// iPad Pro 13-inch equivalent (2752x2064 @2x).
     case standard
-    /// Vision Pro wide / 4K equivalent (3840x2160 @2x).
+    /// Mac 16:10 equivalent (3840x2400 @2x).
     case medium
     /// Studio Display / 5K equivalent (5120x2880 @2x).
     case large
@@ -23,10 +23,16 @@ public enum MirageDisplaySizePreset: String, Sendable, CaseIterable, Codable, Eq
         case .standard:
             CGSize(width: 2752, height: 2064)
         case .medium:
-            CGSize(width: 3840, height: 2160)
+            CGSize(width: 3840, height: 2400)
         case .large:
             CGSize(width: 5120, height: 2880)
         }
+    }
+
+    public var contentAspectRatio: CGFloat {
+        let resolution = pixelResolution
+        guard resolution.width > 0, resolution.height > 0 else { return 1 }
+        return resolution.width / resolution.height
     }
 
     /// Logical resolution (pixel / 2) for the shared virtual display.

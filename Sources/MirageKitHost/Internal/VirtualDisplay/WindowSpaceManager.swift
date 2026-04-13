@@ -409,6 +409,20 @@ actor WindowSpaceManager {
             }
         }
 
+        CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: currentSpaceID)
+        centerWindow(windowID, on: resolvedDisplayBounds)
+        try? await Task.sleep(for: .milliseconds(40))
+
+        if let fallbackFrame = resolvedWindowFrame(windowID, axWindow: resolvedAXWindow) {
+            let expandedBounds = resolvedDisplayBounds.insetBy(dx: -24, dy: -24)
+            if fallbackFrame.intersects(expandedBounds) {
+                MirageLogger.host(
+                    "Window \(windowID) placement fallback accepted centered frame \(fallbackFrame) in space \(currentSpaceID)"
+                )
+                return
+            }
+        }
+
         throw WindowSpaceError.moveFailed(
             windowID,
             "Placement verification failed for space \(currentSpaceID) on display \(displayID) (original space \(spaceID))"

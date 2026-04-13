@@ -18,15 +18,14 @@ enum WindowStreamStartFailureCode: Int, Sendable, Equatable, Hashable, Comparabl
     case unknown = 0
     case virtualDisplayCreationFailed = 1
     case virtualDisplayUnavailable = 2
-    case virtualDisplayDirectFallbackFailed = 3
-    case windowPlacementFailed = 4
-    case windowOwnerConflict = 5
-    case windowOwnerMismatch = 6
-    case windowAlreadyBound = 7
-    case windowNotFound = 8
-    case noSavedWindowState = 9
-    case operationTimedOut = 10
-    case runtimeConditionBlocked = 11
+    case windowPlacementFailed = 3
+    case windowOwnerConflict = 4
+    case windowOwnerMismatch = 5
+    case windowAlreadyBound = 6
+    case windowNotFound = 7
+    case noSavedWindowState = 8
+    case operationTimedOut = 9
+    case runtimeConditionBlocked = 10
 
     static func < (lhs: WindowStreamStartFailureCode, rhs: WindowStreamStartFailureCode) -> Bool {
         lhs.rawValue < rhs.rawValue
@@ -44,36 +43,6 @@ enum WindowStreamStartFailureCode: Int, Sendable, Equatable, Hashable, Comparabl
 enum WindowStreamStartError: Error {
     case virtualDisplayStartFailed(code: WindowStreamStartFailureCode, details: String)
     case windowAlreadyBound(windowID: WindowID, existingStreamID: StreamID)
-}
-
-struct WindowPlacementRepairBackoffStep: Equatable {
-    let failureCount: Int
-    let retryDelaySeconds: CFAbsoluteTime?
-}
-
-func windowPlacementRepairBackoffStep(
-    currentFailureCount: Int,
-    didSucceed: Bool
-)
--> WindowPlacementRepairBackoffStep {
-    if didSucceed {
-        return WindowPlacementRepairBackoffStep(
-            failureCount: 0,
-            retryDelaySeconds: nil
-        )
-    }
-
-    let nextFailureCount = max(0, currentFailureCount) + 1
-    let retryScheduleSeconds: [CFAbsoluteTime] = [0.5, 1.0, 2.0, 4.0]
-    let maxRetries = retryScheduleSeconds.count + 4
-    if nextFailureCount > maxRetries {
-        return WindowPlacementRepairBackoffStep(failureCount: nextFailureCount, retryDelaySeconds: nil)
-    }
-    let retryIndex = min(nextFailureCount - 1, retryScheduleSeconds.count - 1)
-    return WindowPlacementRepairBackoffStep(
-        failureCount: nextFailureCount,
-        retryDelaySeconds: retryScheduleSeconds[retryIndex]
-    )
 }
 
 extension WindowStreamStartError: LocalizedError {
@@ -124,8 +93,6 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
     if let nsError = error as NSError?,
        nsError.domain == "CoreGraphicsErrorDomain",
        nsError.code == 1003 {
-        // Dedicated virtual-display startup can race the display graph even when direct
-        // window capture remains viable. Treat this as recoverable so the host degrades.
         return .windowPlacementFailed
     }
 
@@ -151,36 +118,6 @@ func windowStreamStartFailureCode(for error: Error) -> WindowStreamStartFailureC
 
     return .unknown
 }
-
-func windowStreamStartShouldFallbackToDirectCapture(for error: Error) -> Bool {
-    let failureCode = windowStreamStartFailureCode(for: error)
-    if let windowStartError = error as? WindowStreamStartError {
-        switch windowStartError {
-        case .virtualDisplayStartFailed:
-            return !failureCode.isOwnershipConflict
-        case .windowAlreadyBound:
-            return false
-        }
-    }
-
-    switch failureCode {
-    case .virtualDisplayCreationFailed,
-         .virtualDisplayUnavailable,
-         .windowPlacementFailed,
-         .windowNotFound,
-         .operationTimedOut:
-        return true
-    case .virtualDisplayDirectFallbackFailed,
-         .windowOwnerConflict,
-         .windowOwnerMismatch,
-         .windowAlreadyBound,
-         .noSavedWindowState,
-         .runtimeConditionBlocked,
-         .unknown:
-        return false
-    }
-}
-
 @MainActor
 public extension MirageHostService {
     @discardableResult
@@ -202,7 +139,6 @@ public extension MirageHostService {
         lowLatencyHighResolutionCompressionBoost: Bool = true,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
-        allowDirectCaptureFallback: Bool = false,
         audioConfiguration: MirageAudioConfiguration? = nil,
         bitrateAdaptationCeiling: Int? = nil,
         encoderMaxWidth: Int? = nil,
@@ -434,6 +370,7 @@ public extension MirageHostService {
                 applicationWrapper: applicationWrapper,
                 displayWrapper: displayWrapper,
                 mirroredDisplaySnapshot: mirroredDisplaySnapshot,
+                sizePreset: sizePreset,
                 clientLogicalSize: clientDisplayResolution,
                 sendPacket: sendPacket,
                 onSendError: onSendError
@@ -442,46 +379,9 @@ public extension MirageHostService {
                 streamID: streamID,
                 context: context,
                 clientScaleFactorOverride: clientScaleFactor,
-                targetContentAspectRatioOverride: clientDisplayResolution.width > 0 &&
-                    clientDisplayResolution.height > 0
-                    ? clientDisplayResolution.width / clientDisplayResolution.height
-                    : nil
+                targetContentAspectRatioOverride: sizePreset.contentAspectRatio
             )
         } catch {
-            if allowDirectCaptureFallback,
-               shouldFallbackToDirectWindowCapture(error) {
-                let mirroredStartupError = error
-                MirageLogger.host(
-                    "Mirrored app-window capture start failed for stream \(streamID); retrying direct capture: \(mirroredStartupError.localizedDescription)"
-                )
-                do {
-                    try await resetMirroredWindowCaptureForDirectFallback(
-                        streamID: streamID,
-                        context: context,
-                        windowID: updatedWindow.id
-                    )
-                    try await context.start(
-                        windowWrapper: windowWrapper,
-                        applicationWrapper: applicationWrapper,
-                        displayWrapper: displayWrapper,
-                        sendPacket: sendPacket,
-                        onSendError: onSendError
-                    )
-                    clearVirtualDisplayState(windowID: updatedWindow.id)
-                    MirageLogger.host("Direct window capture fallback succeeded for stream \(streamID)")
-                    break captureStart
-                } catch {
-                    await cleanupFailedStreamStart(
-                        streamID: streamID,
-                        context: context,
-                        windowID: updatedWindow.id
-                    )
-                    throw WindowStreamStartError.virtualDisplayStartFailed(
-                        code: .virtualDisplayDirectFallbackFailed,
-                        details: "virtual display error: \(mirroredStartupError.localizedDescription); direct fallback error: \(error.localizedDescription)"
-                    )
-                }
-            }
             await cleanupFailedStreamStart(
                 streamID: streamID,
                 context: context,
@@ -637,10 +537,6 @@ public extension MirageHostService {
         windowStreamStartFailureCode(for: error)
     }
 
-    private func shouldFallbackToDirectWindowCapture(_ error: Error) -> Bool {
-        windowStreamStartShouldFallbackToDirectCapture(for: error)
-    }
-
     private func cleanupFailedStreamStart(
         streamID: StreamID,
         context: StreamContext,
@@ -673,23 +569,6 @@ public extension MirageHostService {
         }
         transportRegistry.unregisterVideoStream(streamID: streamID)
         await teardownSharedAppStreamMirroringIfIdle(displayID: mirroredDisplayID)
-    }
-
-    private func resetMirroredWindowCaptureForDirectFallback(
-        streamID: StreamID,
-        context: StreamContext,
-        windowID: WindowID
-    )
-    async throws {
-        let mirroredDisplayID = await context.getVirtualDisplayID()
-        let shouldDisableSharedMirroringBeforeStop = activeStreams.count == 1 &&
-            activeStreams.first?.id == streamID
-        if shouldDisableSharedMirroringBeforeStop, let mirroredDisplayID {
-            await disableDisplayMirroring(displayID: mirroredDisplayID)
-        }
-        await context.stop()
-        clearVirtualDisplayState(windowID: windowID)
-        clearAppStreamGovernorState(streamID: streamID)
     }
 
     private func ensureSharedAppStreamMirroring(
@@ -837,19 +716,17 @@ public extension MirageHostService {
     ) async -> Bool {
         if shouldSkipPlacementRepair(for: windowID) {
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
-            windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
             return false
         }
 
-        // Mirrored app-window capture keeps the source window on its current host display.
-        // There is no virtual-display space rebinding to repair after activation.
+        // After startup we never resize app-stream windows again here.
+        // Maintenance only recenters the current frame and refreshes the display crop.
         for (_, context) in streamsByID {
             let wID = await context.windowID
             guard wID == windowID else { continue }
             let mode = await context.captureMode
             if mode == .window {
                 lastWindowPlacementRepairAtByWindowID.removeValue(forKey: windowID)
-                windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID)
                 return false
             }
             break
@@ -858,7 +735,6 @@ public extension MirageHostService {
         guard let state = getVirtualDisplayState(windowID: windowID) else { return false }
 
         let placementBounds = state.bounds
-        let placementAspectRatio = state.targetContentAspectRatio
 
         let resolvedSpaceID = CGVirtualDisplayBridge.getSpaceForDisplay(state.displayID)
         guard resolvedSpaceID != 0 else {
@@ -876,11 +752,6 @@ public extension MirageHostService {
         guard let driftReason else { return false }
 
         let now = CFAbsoluteTimeGetCurrent()
-        if let backoffState = windowPlacementRepairBackoffByWindowID[windowID],
-           now < backoffState.nextRetryAt {
-            return false
-        }
-
         let cooldown: CFAbsoluteTime = 0.20
         if !force,
            let lastAppliedAt = lastWindowPlacementRepairAtByWindowID[windowID],
@@ -889,64 +760,23 @@ public extension MirageHostService {
         }
         lastWindowPlacementRepairAtByWindowID[windowID] = now
 
-        do {
-            try await WindowSpaceManager.shared.moveWindow(
-                windowID,
-                toSpaceID: resolvedSpaceID,
-                displayID: state.displayID,
-                displayBounds: placementBounds,
-                targetContentAspectRatio: placementAspectRatio,
-                owner: WindowSpaceManager.WindowBindingOwner(
-                    streamID: state.streamID,
-                    windowID: windowID,
-                    displayID: state.displayID,
-                    generation: state.generation
-                )
-            )
-            inputStreamCacheActor.updateWindowFrame(state.streamID, newFrame: placementBounds)
-            MirageLogger.host(
-                "Reasserted virtual-display placement for window \(windowID) on display \(state.displayID) (\(driftReason))"
-            )
-            if let previousBackoff = windowPlacementRepairBackoffByWindowID.removeValue(forKey: windowID) {
-                let resetStep = windowPlacementRepairBackoffStep(
-                    currentFailureCount: previousBackoff.failureCount,
-                    didSucceed: true
-                )
-                MirageLogger.host(
-                    "event=placement_repair_backoff reset_on_success=true " +
-                        "previous_failure_count=\(previousBackoff.failureCount) " +
-                        "failure_count=\(resetStep.failureCount) window=\(windowID) stream=\(state.streamID)"
-                )
-            }
-            await refreshSharedDisplayAppCaptureStateBestEffort(
-                streamID: state.streamID,
-                reason: force ? "forced placement reassert" : "placement repair"
-            )
-            return true
-        } catch {
-            let currentFailureCount = windowPlacementRepairBackoffByWindowID[windowID]?.failureCount ?? 0
-            let nextStep = windowPlacementRepairBackoffStep(
-                currentFailureCount: currentFailureCount,
-                didSucceed: false
-            )
-            if let retryDelaySeconds = nextStep.retryDelaySeconds {
-                windowPlacementRepairBackoffByWindowID[windowID] = WindowPlacementRepairBackoffState(
-                    failureCount: nextStep.failureCount,
-                    nextRetryAt: now + retryDelaySeconds
-                )
-                let nextRetryMilliseconds = Int((retryDelaySeconds * 1000).rounded())
-                MirageLogger.host(
-                    "event=placement_repair_backoff failure_count=\(nextStep.failureCount) " +
-                        "next_retry_ms=\(nextRetryMilliseconds) window=\(windowID) stream=\(state.streamID)"
-                )
-            }
-            MirageLogger.error(
-                .host,
-                error: error,
-                message: "Failed to reassert virtual-display placement for window \(windowID): "
-            )
-            return false
-        }
+        CGSWindowSpaceBridge.moveWindowToSpace(windowID, spaceID: resolvedSpaceID)
+        let centeringBounds = state.displayVisibleBounds.width > 0 && state.displayVisibleBounds.height > 0
+            ? state.displayVisibleBounds
+            : placementBounds
+        await WindowSpaceManager.shared.centerWindow(windowID, on: centeringBounds)
+        try? await Task.sleep(for: .milliseconds(force ? 40 : 20))
+
+        let refreshedFrame = currentWindowFrame(for: windowID) ?? placementBounds
+        inputStreamCacheActor.updateWindowFrame(state.streamID, newFrame: refreshedFrame)
+        MirageLogger.host(
+            "Recentered virtual-display placement for window \(windowID) on display \(state.displayID) without resizing (\(driftReason))"
+        )
+        await refreshSharedDisplayAppCaptureStateBestEffort(
+            streamID: state.streamID,
+            reason: force ? "forced placement reassert" : "placement repair"
+        )
+        return true
     }
 
     private func scheduleVirtualDisplayPlacementReassert(windowID: WindowID) {
@@ -1134,14 +964,12 @@ public extension MirageHostService {
            activeStreamIDByWindowID[removedSession.window.id] == streamID {
             activeStreamIDByWindowID.removeValue(forKey: removedSession.window.id)
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: removedSession.window.id)
-            windowPlacementRepairBackoffByWindowID.removeValue(forKey: removedSession.window.id)
         }
 
         if let mappedWindowID = activeWindowIDByStreamID.removeValue(forKey: streamID),
            activeStreamIDByWindowID[mappedWindowID] == streamID {
             activeStreamIDByWindowID.removeValue(forKey: mappedWindowID)
             lastWindowPlacementRepairAtByWindowID.removeValue(forKey: mappedWindowID)
-            windowPlacementRepairBackoffByWindowID.removeValue(forKey: mappedWindowID)
         }
 
         syncSharedClipboardState(reason: "app_stream_removed")

@@ -149,7 +149,6 @@ public extension MirageHostService {
         }
         windowVirtualDisplayStateByWindowID.removeAll()
         windowVisibleFrameDriftStateByStreamID.removeAll()
-        windowPlacementRepairBackoffByWindowID.removeAll()
 
         // Disconnect all clients
         for client in connectedClients {

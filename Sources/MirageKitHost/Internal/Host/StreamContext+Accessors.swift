@@ -88,6 +88,10 @@ extension StreamContext {
         virtualDisplayVisibleBounds
     }
 
+    func getVirtualDisplayCapturePresentationRect() -> CGRect {
+        virtualDisplayCapturePresentationRect
+    }
+
     func getVirtualDisplayCaptureSourceRect() -> CGRect {
         virtualDisplayCaptureSourceRect
     }

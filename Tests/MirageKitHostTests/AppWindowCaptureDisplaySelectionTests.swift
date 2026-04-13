@@ -48,8 +48,8 @@ struct AppWindowCaptureDisplaySelectionTests {
         #expect(selection.usesDisplayRefreshCadence)
     }
 
-    @Test("Mirrored app capture keeps source display placement bounds when available")
-    func mirroredAppCaptureKeepsSourceDisplayPlacementBounds() {
+    @Test("Mirrored app capture prefers mirrored visible placement bounds")
+    func mirroredAppCapturePrefersMirroredDisplayPlacementBounds() {
         let sourceBounds = CGRect(x: 100, y: 80, width: 1_440, height: 900)
         let mirroredBounds = CGRect(x: 0, y: 0, width: 1_366, height: 1_024)
 
@@ -58,7 +58,7 @@ struct AppWindowCaptureDisplaySelectionTests {
             mirroredVisibleBounds: mirroredBounds
         )
 
-        #expect(resolvedBounds == sourceBounds)
+        #expect(resolvedBounds == mirroredBounds)
     }
 
     @Test("Mirrored app capture falls back to mirrored bounds when source placement is unavailable")

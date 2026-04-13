@@ -14,16 +14,6 @@ import Testing
 
 @Suite("App Stream Recovery Parity")
 struct AppStreamRecoveryParityTests {
-    @Test("Startup target sizing fits requested client geometry into visible bounds")
-    func startupTargetSizingFitsRequestedClientGeometryIntoVisibleBounds() {
-        let targetSize = StreamContext.startupTargetWindowSize(
-            requestedLogicalSize: CGSize(width: 1_600, height: 1_042),
-            visibleBounds: CGRect(x: 0, y: 0, width: 1_376, height: 1_032)
-        )
-
-        #expect(targetSize == CGSize(width: 1_376, height: 896))
-    }
-
     @Test("Window streaming preparation restores minimized windows and exits full screen")
     func windowStreamingPreparationRestoresMinimizedWindowsAndExitsFullScreen() {
         let plan = MirageHostService.windowStreamingPreparationPlan(

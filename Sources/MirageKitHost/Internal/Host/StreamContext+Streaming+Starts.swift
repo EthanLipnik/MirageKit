@@ -15,29 +15,12 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
-    func start(
-        windowWrapper: SCWindowWrapper,
-        applicationWrapper: SCApplicationWrapper,
-        displayWrapper: SCDisplayWrapper,
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        onSendError: (@Sendable (Error) -> Void)? = nil
-    )
-    async throws {
-        try await startWindowCapture(
-            windowWrapper: windowWrapper,
-            applicationWrapper: applicationWrapper,
-            displayWrapper: displayWrapper,
-            mirroredDisplaySnapshot: nil,
-            sendPacket: sendPacket,
-            onSendError: onSendError
-        )
-    }
-
     func startMirroredAppWindowCapture(
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
         mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        sizePreset: MirageDisplaySizePreset,
         clientLogicalSize: CGSize,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
@@ -48,100 +31,11 @@ extension StreamContext {
             applicationWrapper: applicationWrapper,
             displayWrapper: displayWrapper,
             mirroredDisplaySnapshot: mirroredDisplaySnapshot,
+            sizePreset: sizePreset,
             clientLogicalSize: clientLogicalSize,
             sendPacket: sendPacket,
             onSendError: onSendError
         )
-    }
-
-    private func startWindowCapture(
-        windowWrapper: SCWindowWrapper,
-        applicationWrapper: SCApplicationWrapper,
-        displayWrapper: SCDisplayWrapper,
-        mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot?,
-        sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
-        onSendError: (@Sendable (Error) -> Void)? = nil
-    )
-    async throws {
-        guard !isRunning else { return }
-        isRunning = true
-        useVirtualDisplay = mirroredDisplaySnapshot != nil
-        virtualDisplayContext = mirroredDisplaySnapshot
-        updateWindowCaptureVirtualDisplayState(mirroredDisplaySnapshot)
-        captureFrameRateOverride = currentFrameRate
-        captureFrameRate = currentFrameRate
-
-        let window = windowWrapper.window
-        let application = applicationWrapper.application
-        let display = displayWrapper.display
-        let captureDisplaySelection = Self.windowCaptureDisplaySelection(
-            sourceDisplayID: display.displayID,
-            mirroredDisplayID: mirroredDisplaySnapshot?.displayID,
-            captureDisplayIsMirage: CGVirtualDisplayBridge.isMirageDisplay(
-                mirroredDisplaySnapshot?.displayID ?? display.displayID
-            )
-        )
-        let captureDisplayWrapper = try await resolveWindowCaptureDisplayWrapper(
-            sourceDisplayWrapper: displayWrapper,
-            mirroredDisplaySnapshot: mirroredDisplaySnapshot,
-            label: "window capture start"
-        )
-        isAppStream = true
-        applicationProcessID = application.processID
-        trafficLightMaskGeometryCache = nil
-        lastTrafficLightMaskLogTime = 0
-
-        await setupPacketSender(sendPacket: sendPacket, onSendError: onSendError)
-
-        let captureTarget = streamTargetDimensions(windowFrame: window.frame)
-        baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
-        streamScale = resolvedStreamScale(
-            for: baseCaptureSize,
-            requestedScale: requestedStreamScale,
-            logLabel: "Resolution cap"
-        )
-        let outputSize = scaledOutputSize(for: baseCaptureSize)
-        currentCaptureSize = outputSize
-        currentEncodedSize = outputSize
-        captureMode = .window
-        lastWindowFrame = window.frame
-        updateQueueLimits()
-        await applyDerivedQuality(for: outputSize, logLabel: "Stream init")
-        MirageLogger.stream(
-            "Stream init: latency=\(latencyMode.displayName), scale=\(streamScale), encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB, buffer=\(frameBufferDepth)"
-        )
-
-        try await createAndPreheatEncoder(
-            streamKind: .window,
-            width: Int(outputSize.width),
-            height: Int(outputSize.height)
-        )
-
-        await startEncoderWithSharedCallback(pinnedContentRect: nil, logPrefix: "Frame")
-
-        let captureEngine = try await setupAndStartCaptureEngine(
-            usesDisplayRefreshCadence: captureDisplaySelection.usesDisplayRefreshCadence
-        )
-        try await captureEngine.startCapture(
-            window: window,
-            application: application,
-            display: captureDisplayWrapper.display,
-            outputScale: streamScale,
-            onFrame: { [weak self] frame in
-                self?.enqueueCapturedFrame(frame)
-            },
-            onAudio: onCapturedAudioBuffer,
-            audioChannelCount: requestedAudioChannelCount
-        )
-        await refreshCaptureCadence()
-
-        if let mirroredDisplaySnapshot {
-            MirageLogger.stream(
-                "Started stream \(streamID) for window \(windowID) using mirrored app display \(mirroredDisplaySnapshot.displayID)"
-            )
-        } else {
-            MirageLogger.stream("Started stream \(streamID) for window \(windowID)")
-        }
     }
 
     func startDesktopDisplay(

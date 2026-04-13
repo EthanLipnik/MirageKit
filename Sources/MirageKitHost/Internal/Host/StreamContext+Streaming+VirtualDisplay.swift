@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Window capture on a shared virtual display.
+//  Display capture on a shared virtual display.
 //
 
 import Foundation
@@ -29,7 +29,6 @@ extension StreamContext {
 
     struct SharedDisplayAppCaptureLayout: Sendable {
         let primaryWindowWrapper: SCWindowWrapper
-        let includedWindowWrappers: [SCWindowWrapper]
         let clusterWindowIDs: [WindowID]
         let primaryRect: CGRect
         let clusterRect: CGRect
@@ -61,11 +60,65 @@ extension StreamContext {
         mirroredVisibleBounds: CGRect
     )
     -> CGRect {
+        let normalizedMirroredBounds = mirroredVisibleBounds.standardized
+        if normalizedMirroredBounds.width > 0, normalizedMirroredBounds.height > 0 {
+            return normalizedMirroredBounds
+        }
         let normalizedSourceBounds = sourceVisibleBounds.standardized
         if normalizedSourceBounds.width > 0, normalizedSourceBounds.height > 0 {
             return normalizedSourceBounds
         }
-        return mirroredVisibleBounds.standardized
+        return normalizedMirroredBounds
+    }
+
+    nonisolated static func targetWindowAspectRatio(
+        requestedLogicalSize: CGSize,
+        sizePreset: MirageDisplaySizePreset
+    ) -> CGFloat {
+        let presetAspectRatio = sizePreset.contentAspectRatio
+        guard presetAspectRatio.isFinite, presetAspectRatio > 0 else {
+            let requestedAspectRatio = requestedLogicalSize.width > 0 && requestedLogicalSize.height > 0
+                ? requestedLogicalSize.width / requestedLogicalSize.height
+                : 1
+            return requestedAspectRatio.isFinite && requestedAspectRatio > 0 ? requestedAspectRatio : 1
+        }
+        return presetAspectRatio
+    }
+
+    nonisolated static func aspectFittedFrame(
+        within bounds: CGRect,
+        aspectRatio: CGFloat?
+    ) -> CGRect {
+        let normalizedBounds = bounds.standardized
+        guard let aspectRatio,
+              aspectRatio.isFinite,
+              aspectRatio > 0,
+              normalizedBounds.width > 0,
+              normalizedBounds.height > 0 else {
+            return normalizedBounds
+        }
+
+        let boundsAspectRatio = normalizedBounds.width / normalizedBounds.height
+        guard abs(boundsAspectRatio - aspectRatio) > 0.0001 else { return normalizedBounds }
+
+        var fittedWidth = normalizedBounds.width
+        var fittedHeight = normalizedBounds.height
+
+        if boundsAspectRatio > aspectRatio {
+            fittedWidth = floor(normalizedBounds.height * aspectRatio)
+        } else {
+            fittedHeight = floor(normalizedBounds.width / aspectRatio)
+        }
+
+        fittedWidth = max(1, fittedWidth)
+        fittedHeight = max(1, fittedHeight)
+
+        return CGRect(
+            x: normalizedBounds.minX + floor((normalizedBounds.width - fittedWidth) * 0.5),
+            y: normalizedBounds.minY + floor((normalizedBounds.height - fittedHeight) * 0.5),
+            width: fittedWidth,
+            height: fittedHeight
+        )
     }
 
     nonisolated static func fixedCanvasDestinationRect(
@@ -236,7 +289,6 @@ extension StreamContext {
 
         return SharedDisplayAppCaptureLayout(
             primaryWindowWrapper: primaryWindowWrapper,
-            includedWindowWrappers: resolvedIncludedWindowWrappers,
             clusterWindowIDs: resolvedClusterWindowIDs,
             primaryRect: presentationLayout.primaryRect,
             clusterRect: presentationLayout.clusterRect,
@@ -270,16 +322,24 @@ extension StreamContext {
             outputSize: currentEncodedSize,
             label: label
         )
+        let displayBounds = displayWrapper.display.frame.standardized
+        let visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            displayWrapper.display.displayID,
+            knownBounds: displayBounds
+        )
+        let resolvedVisibleBounds = visibleBounds.isEmpty
+            ? displayBounds
+            : visibleBounds.intersection(displayBounds)
 
         lastWindowFrame = layout.primaryWindowWrapper.window.frame
         capturedWindowClusterWindowIDs = layout.clusterWindowIDs
-        virtualDisplayVisibleBounds = layout.presentationRect
+        virtualDisplayVisibleBounds = resolvedVisibleBounds
         virtualDisplayCapturePresentationRect = layout.presentationRect
         virtualDisplayCaptureSourceRect = layout.captureSourceRect
         let scaleFactor = max(1.0, virtualDisplayContext.scaleFactor)
         virtualDisplayVisiblePixelResolution = CGSize(
-            width: max(1, ceil(layout.presentationRect.width * scaleFactor)),
-            height: max(1, ceil(layout.presentationRect.height * scaleFactor))
+            width: max(1, ceil(resolvedVisibleBounds.width * scaleFactor)),
+            height: max(1, ceil(resolvedVisibleBounds.height * scaleFactor))
         )
         currentContentRect = layout.contentRect
 
@@ -288,7 +348,7 @@ extension StreamContext {
             sourceRect: layout.sourceRect,
             destinationRect: layout.destinationRect,
             contentWindowID: windowID,
-            includedWindows: layout.includedWindowWrappers.map(\.window)
+            includedWindows: []
         )
         await refreshCaptureCadence()
 
@@ -370,6 +430,7 @@ extension StreamContext {
         applicationWrapper: SCApplicationWrapper,
         displayWrapper: SCDisplayWrapper,
         mirroredDisplaySnapshot: SharedVirtualDisplayManager.DisplaySnapshot,
+        sizePreset: MirageDisplaySizePreset,
         clientLogicalSize: CGSize,
         sendPacket: @escaping @Sendable (Data, @escaping @Sendable (Error?) -> Void) -> Void,
         onSendError: (@Sendable (Error) -> Void)? = nil
@@ -426,24 +487,30 @@ extension StreamContext {
             sourceVisibleBounds: effectiveSourceVisibleBounds,
             mirroredVisibleBounds: effectiveMirroredVisibleBounds
         )
+        let targetContentAspectRatio = Self.targetWindowAspectRatio(
+            requestedLogicalSize: clientLogicalSize,
+            sizePreset: sizePreset
+        )
+        let targetWindowFrame = Self.aspectFittedFrame(
+            within: placementBounds,
+            aspectRatio: targetContentAspectRatio
+        )
         virtualDisplayVisibleBounds = placementBounds
-        virtualDisplayCapturePresentationRect = placementBounds
+        virtualDisplayCapturePresentationRect = targetWindowFrame
         virtualDisplayCaptureSourceRect = Self.sharedDisplayAppCaptureSourceRect(
-            presentationRect: placementBounds,
+            presentationRect: targetWindowFrame,
             displayBounds: mirroredDisplayBounds
         )
         virtualDisplayVisiblePixelResolution = CGSize(
             width: max(1, ceil(placementBounds.width * scaleFactor)),
             height: max(1, ceil(placementBounds.height * scaleFactor))
         )
-        let targetWindowSize = Self.startupTargetWindowSize(
-            requestedLogicalSize: clientLogicalSize,
-            visibleBounds: placementBounds
-        )
+        let targetWindowSize = targetWindowFrame.size
         MirageLogger.stream(
             "Stream \(streamID) window target: \(Int(targetWindowSize.width))x\(Int(targetWindowSize.height)) " +
             "(client requested \(Int(clientLogicalSize.width))x\(Int(clientLogicalSize.height)), " +
-            "placement visible \(Int(placementBounds.width))x\(Int(placementBounds.height)))"
+            "placement visible \(Int(placementBounds.width))x\(Int(placementBounds.height)), " +
+            "preset=\(sizePreset.displayName))"
         )
 
         _ = try await resolveSCWindowWrapper(
@@ -456,9 +523,6 @@ extension StreamContext {
             label: "mirrored app capture display"
         )
 
-        let clientAspectRatio = clientLogicalSize.width > 0 && clientLogicalSize.height > 0
-            ? clientLogicalSize.width / clientLogicalSize.height
-            : nil
         try await WindowSpaceManager.shared.prepareWindowForMirroredCapture(
             windowID,
             owner: WindowSpaceManager.WindowBindingOwner(
@@ -472,7 +536,7 @@ extension StreamContext {
         await iterativelyResizeWindow(
             windowID: windowID,
             targetSize: targetWindowSize,
-            aspectRatio: clientAspectRatio,
+            aspectRatio: targetContentAspectRatio,
             maxBounds: placementBounds.size,
             label: "startup"
         )
@@ -496,9 +560,9 @@ extension StreamContext {
         currentEncodedSize = outputSize
         captureMode = .display
         updateQueueLimits()
-        await applyDerivedQuality(for: outputSize, logLabel: "Window capture init")
+        await applyDerivedQuality(for: outputSize, logLabel: "Shared-display app capture init")
         MirageLogger.stream(
-            "Window capture init: latency=\(latencyMode.displayName), scale=\(streamScale), " +
+            "Shared-display app capture init: latency=\(latencyMode.displayName), scale=\(streamScale), " +
                 "encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
         )
 
@@ -536,7 +600,7 @@ extension StreamContext {
             sourceRect: captureLayout.sourceRect,
             destinationRect: captureLayout.destinationRect,
             contentWindowID: windowID,
-            includedWindows: captureLayout.includedWindowWrappers.map(\.window),
+            includedWindows: [],
             showsCursor: false,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
@@ -559,30 +623,15 @@ extension StreamContext {
         guard isRunning, useVirtualDisplay else { return }
         let rollbackSnapshot = makeResizeRollbackSnapshot()
 
-        // Aspect-fit the requested size into the virtual display's visible bounds
-        let effectiveSize: CGSize
-        let maxBounds: CGSize
-        if virtualDisplayVisibleBounds.width > 0, virtualDisplayVisibleBounds.height > 0 {
-            maxBounds = virtualDisplayVisibleBounds.size
-            effectiveSize = Self.aspectFitSize(requested: newLogicalSize, maxBounds: maxBounds)
-        } else if let vdContext = virtualDisplayContext {
-            let scale = max(1.0, vdContext.scaleFactor)
-            let logicalRes = SharedVirtualDisplayManager.logicalResolution(
-                for: vdContext.resolution, scaleFactor: scale
-            )
-            let dBounds = CGVirtualDisplayBridge.getDisplayBounds(
-                vdContext.displayID, knownResolution: logicalRes
-            )
-            let vBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
-                vdContext.displayID, knownBounds: dBounds
-            )
-            let visible = vBounds.isEmpty ? dBounds : vBounds.intersection(dBounds)
-            maxBounds = visible.size
-            effectiveSize = Self.aspectFitSize(requested: newLogicalSize, maxBounds: maxBounds)
-        } else {
-            maxBounds = newLogicalSize
-            effectiveSize = newLogicalSize
-        }
+        let placementBounds = resolvedVirtualDisplayPlacementBounds(for: newLogicalSize)
+        let maxBounds = placementBounds.size
+        let requestedAspectRatio = newLogicalSize.width > 0 && newLogicalSize.height > 0
+            ? newLogicalSize.width / newLogicalSize.height
+            : nil
+        let effectiveSize = Self.aspectFittedFrame(
+            within: placementBounds,
+            aspectRatio: requestedAspectRatio
+        ).size
 
         let currentSize = lastWindowFrame.size
         let sizeChanged = abs(currentSize.width - effectiveSize.width) > 2 ||
@@ -604,10 +653,6 @@ extension StreamContext {
 
         let previousWindowFrame = rollbackSnapshot.lastWindowFrame
 
-        let clientAspectRatio = newLogicalSize.width > 0 && newLogicalSize.height > 0
-            ? newLogicalSize.width / newLogicalSize.height
-            : nil
-
         MirageLogger.stream(
             "Resizing window for stream \(streamID) to \(Int(effectiveSize.width))x\(Int(effectiveSize.height)) logical " +
             "(client requested \(Int(newLogicalSize.width))x\(Int(newLogicalSize.height)))"
@@ -617,10 +662,11 @@ extension StreamContext {
         await iterativelyResizeWindow(
             windowID: windowID,
             targetSize: effectiveSize,
-            aspectRatio: clientAspectRatio,
+            aspectRatio: requestedAspectRatio,
             maxBounds: maxBounds,
             label: "resize"
         )
+        await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
 
         // Brief pause for the window to settle
         try? await Task.sleep(for: .milliseconds(80))
@@ -641,7 +687,7 @@ extension StreamContext {
                 primaryWindowWrapper: resolvedWindowWrapper,
                 label: "window resize"
             )
-            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Window resize fixed canvas")
+            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Shared-display app resize fixed canvas")
             MirageLogger.stream(
                 "Window resize updated shared-display crop for stream \(streamID) without changing encoded canvas \(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))"
             )
@@ -658,6 +704,7 @@ extension StreamContext {
                     maxBounds: maxBounds,
                     label: "rollback"
                 )
+                await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
                 try? await Task.sleep(for: .milliseconds(80))
                 if let resolvedRollbackWindowWrapper = try? await resolveSCWindowWrapper(
                     windowID: windowID,
@@ -683,27 +730,34 @@ extension StreamContext {
 
     // MARK: - Aspect-Fit Sizing
 
-    static func startupTargetWindowSize(
-        requestedLogicalSize: CGSize,
-        visibleBounds: CGRect
-    ) -> CGSize {
-        aspectFitSize(requested: requestedLogicalSize, maxBounds: visibleBounds.size)
-    }
-
-    /// Compute the largest size that fits `maxBounds` while preserving the aspect ratio of `requested`.
-    static func aspectFitSize(requested: CGSize, maxBounds: CGSize) -> CGSize {
-        let rW = requested.width
-        let rH = requested.height
-        guard rW > 0, rH > 0, maxBounds.width > 0, maxBounds.height > 0 else {
-            return CGSize(width: max(200, maxBounds.width), height: max(200, maxBounds.height))
+    private func resolvedVirtualDisplayPlacementBounds(for fallbackLogicalSize: CGSize) -> CGRect {
+        if let virtualDisplayContext {
+            let scale = max(1.0, virtualDisplayContext.scaleFactor)
+            let logicalResolution = SharedVirtualDisplayManager.logicalResolution(
+                for: virtualDisplayContext.resolution,
+                scaleFactor: scale
+            )
+            let displayBounds = CGVirtualDisplayBridge.getDisplayBounds(
+                virtualDisplayContext.displayID,
+                knownResolution: logicalResolution
+            )
+            let visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+                virtualDisplayContext.displayID,
+                knownBounds: displayBounds
+            )
+            let resolvedVisibleBounds = visibleBounds.isEmpty
+                ? displayBounds
+                : visibleBounds.intersection(displayBounds)
+            if resolvedVisibleBounds.width > 0, resolvedVisibleBounds.height > 0 {
+                return resolvedVisibleBounds
+            }
         }
-        let fs: CGFloat = (rW <= maxBounds.width && rH <= maxBounds.height)
-            ? 1.0
-            : min(maxBounds.width / rW, maxBounds.height / rH)
-        return CGSize(
-            width: max(200, (rW * fs).rounded(.down)),
-            height: max(200, (rH * fs).rounded(.down))
-        )
+
+        if virtualDisplayVisibleBounds.width > 0, virtualDisplayVisibleBounds.height > 0 {
+            return virtualDisplayVisibleBounds
+        }
+
+        return CGRect(origin: .zero, size: fallbackLogicalSize)
     }
 
     /// Iteratively resize the window to match the target aspect ratio.

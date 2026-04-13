@@ -231,7 +231,6 @@ extension MirageHostService {
                 allowRuntimeQualityAdjustment: allowRuntimeQualityAdjustment,
                 lowLatencyHighResolutionCompressionBoost: lowLatencyHighResolutionCompressionBoost,
                 disableResolutionCap: disableResolutionCap,
-                allowDirectCaptureFallback: true,
                 audioConfiguration: audioConfiguration,
                 bitrateAdaptationCeiling: request.bitrateAdaptationCeiling,
                 encoderMaxWidth: request.encoderMaxWidth,

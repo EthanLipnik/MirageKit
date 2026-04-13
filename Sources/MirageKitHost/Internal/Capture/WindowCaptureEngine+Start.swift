@@ -542,18 +542,19 @@ extension WindowCaptureEngine {
         contentFilter = filter
 
         let includedWindowIDs = includedWindows.map(\.windowID)
+        let filterMode = includedWindowIDs.isEmpty ? "fullDisplay" : "includedWindows"
         if displayUsesExplicitResolution {
             MirageLogger
                 .capture(
                     "Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID), " +
                         "sourceRect=\(String(describing: sourceRect)), destinationRect=\(String(describing: destinationRect)), " +
-                        "includedWindows=\(includedWindowIDs)"
+                        "filter=\(filterMode), includedWindows=\(includedWindowIDs)"
                 )
         } else {
             MirageLogger
                 .capture(
                     "Starting display capture with .best (no explicit dimensions) for display \(capturedDisplayID), " +
-                        "destinationRect=\(String(describing: destinationRect)), includedWindows=\(includedWindowIDs)"
+                        "destinationRect=\(String(describing: destinationRect)), filter=\(filterMode), includedWindows=\(includedWindowIDs)"
                 )
         }
 
