@@ -1,5 +1,5 @@
 //
-//  MirageMetalView+macOS.swift
+//  MirageSampleBufferView+macOS.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/23/26.
@@ -13,7 +13,7 @@ import AVFoundation
 import AppKit
 import QuartzCore
 
-public class MirageMetalView: NSView {
+public class MirageSampleBufferView: NSView {
     // MARK: - Public API
 
     var streamID: StreamID? {
@@ -65,7 +65,7 @@ public class MirageMetalView: NSView {
 
     private var displayLayer: AVSampleBufferDisplayLayer {
         guard let layer = layer as? AVSampleBufferDisplayLayer else {
-            fatalError("MirageMetalView requires AVSampleBufferDisplayLayer backing")
+            fatalError("MirageSampleBufferView requires AVSampleBufferDisplayLayer backing")
         }
         return layer
     }
@@ -276,7 +276,7 @@ public class MirageMetalView: NSView {
         presenter.setTargetFPS(target)
         applyDisplayRefreshRateLock(target)
         onRefreshRateOverrideChange?(target)
-        requestDraw()
+        requestImmediateSubmission()
     }
 
     private func applyDisplayRefreshRateLock(_ fps: Int) {

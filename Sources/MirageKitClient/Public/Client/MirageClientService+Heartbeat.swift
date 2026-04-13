@@ -35,6 +35,13 @@ func clientHeartbeatProbeDecision(
     return .sendPing
 }
 
+func clientHeartbeatHasInFlightHostOperation(
+    hostWallpaperRequestInFlight: Bool,
+    hostSupportLogExportInFlight: Bool
+) -> Bool {
+    hostWallpaperRequestInFlight || hostSupportLogExportInFlight
+}
+
 @MainActor
 extension MirageClientService {
     private static let heartbeatInterval: Duration = .seconds(5)
@@ -58,14 +65,17 @@ extension MirageClientService {
 
                 let latestInboundActivityTime = self.fastPathState.latestInboundActivityTime()
                 let inactivityDuration = max(0, CFAbsoluteTimeGetCurrent() - latestInboundActivityTime)
+                let hasInFlightHostOperation = clientHeartbeatHasInFlightHostOperation(
+                    hostWallpaperRequestInFlight: self.hostWallpaperContinuation != nil,
+                    hostSupportLogExportInFlight: self.hostSupportLogArchiveContinuation != nil
+                )
                 let decision = clientHeartbeatProbeDecision(
                     inactivityDuration: inactivityDuration,
                     inactivityThreshold: Self.heartbeatInactivityThreshold,
                     hasActiveStreams: !self.controllersByStream.isEmpty,
                     isWithinGracePeriod: self.heartbeatGraceDeadline.map { ContinuousClock.now < $0 } ?? false,
                     qualityTestActive: self.qualityTestPendingTestID != nil,
-                    hasInFlightPingOrHostOperation: !self.pingContinuations.isEmpty ||
-                        self.hostWallpaperContinuation != nil
+                    hasInFlightPingOrHostOperation: !self.pingContinuations.isEmpty || hasInFlightHostOperation
                 )
                 guard decision == .sendPing else {
                     consecutiveFailures = 0

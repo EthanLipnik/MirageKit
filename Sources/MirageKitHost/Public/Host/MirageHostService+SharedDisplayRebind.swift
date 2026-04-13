@@ -67,6 +67,18 @@ extension MirageHostService {
         displayBounds: CGRect
     )
     async {
+        var virtualDisplaySetupGuardToken: UUID?
+        defer {
+            if let token = virtualDisplaySetupGuardToken {
+                Task { @MainActor [weak self] in
+                    await self?.cancelVirtualDisplaySetupGuard(
+                        token,
+                        reason: "shared_display_generation_change_aborted"
+                    )
+                }
+            }
+        }
+
         guard let desktopStreamID, let desktopContext = desktopStreamContext else { return }
 
         desktopDisplayBounds = displayBounds
@@ -86,6 +98,9 @@ extension MirageHostService {
         guard rebindDecision == .rebind else { return }
 
         do {
+            virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
+                reason: "shared_display_generation_change"
+            )
             if desktopStreamMode == .unified {
                 await setupDisplayMirroring(targetDisplayID: newContext.displayID)
             } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
@@ -105,10 +120,13 @@ extension MirageHostService {
                 virtualResolution: newContext.resolution
             )
             inputStreamCacheActor.updateWindowFrame(desktopStreamID, newFrame: inputBounds)
-            recenterDesktopCursorAfterVirtualDisplaySetup(
-                inputBounds: inputBounds,
-                reason: "shared_display_generation_change"
-            )
+            if let token = virtualDisplaySetupGuardToken {
+                await completeVirtualDisplaySetupGuard(
+                    token,
+                    reason: "shared_display_generation_change"
+                )
+                virtualDisplaySetupGuardToken = nil
+            }
             await sendStreamScaleUpdate(streamID: desktopStreamID)
             MirageLogger
                 .host(

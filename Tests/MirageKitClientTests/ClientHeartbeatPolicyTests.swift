@@ -89,4 +89,24 @@ struct ClientHeartbeatPolicyTests {
             ) == .skipOperationInFlight
         )
     }
+
+    @Test("Host support log export counts as an in-flight host operation")
+    func hostSupportLogExportCountsAsHostOperation() {
+        #expect(
+            clientHeartbeatHasInFlightHostOperation(
+                hostWallpaperRequestInFlight: false,
+                hostSupportLogExportInFlight: true
+            )
+        )
+    }
+
+    @Test("No host operation is reported when wallpaper and host log exports are idle")
+    func idleHostOperationsReportFalse() {
+        #expect(
+            !clientHeartbeatHasInFlightHostOperation(
+                hostWallpaperRequestInFlight: false,
+                hostSupportLogExportInFlight: false
+            )
+        )
+    }
 }

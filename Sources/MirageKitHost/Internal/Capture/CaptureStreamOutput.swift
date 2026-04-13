@@ -261,6 +261,15 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         startWatchdogTimer()
     }
 
+    func updateWindowID(_ windowID: CGWindowID) {
+        expectationLock.withLock {
+            self.windowID = windowID
+        }
+        if windowID == 0 {
+            lastContentRect = .zero
+        }
+    }
+
     func telemetrySnapshot() -> TelemetrySnapshot {
         let copyTelemetry = frameCopier?.telemetrySnapshot()
         return poolLogLock.withLock {

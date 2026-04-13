@@ -4,10 +4,11 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Coverage for decode-synchronous frame selection behavior.
+//  Coverage for latest-frame cadence behavior.
 //
 
 @testable import MirageKitClient
+import CoreMedia
 import CoreVideo
 import MirageKit
 import Testing
@@ -15,72 +16,96 @@ import Testing
 #if os(macOS)
 @Suite("Render Cadence Smoothing")
 struct RenderCadenceSmoothingTests {
-    @Test("Healthy decode presents newest frame without added buffer delay")
-    func healthyDecodePresentsNewestFrame() {
+    @Test("Latest-frame path keeps only one pending frame during steady decode")
+    func latestFramePathKeepsSinglePendingFrame() {
         let streamID: StreamID = 401
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
-        for decodeTime in [1.0, 2.0, 3.0, 4.0, 5.0] {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
+        for index in 0 ..< 5 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: decodeTime,
-                metalTexture: nil,
-                texture: nil,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
         }
 
-        let frame = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
-        #expect(frame?.sequence == 5)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 5)
     }
 
-    @Test("Stress buffering keeps bounded newest window")
-    func stressBufferKeepsBoundedNewestWindow() {
+    @Test("Display-layer backpressure preserves only the newest pending frame")
+    func displayLayerBackpressureKeepsNewestPendingFrame() {
         let streamID: StreamID = 402
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
-        for decodeTime in [1.0, 2.0, 3.0, 4.0, 5.0, 6.0] {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
-                contentRect: .zero,
-                decodeTime: decodeTime,
-                metalTexture: nil,
-                texture: nil,
-                for: streamID
-            )
-        }
-
-        let first = MirageFrameCache.shared.dequeueForPresentation(
-            for: streamID,
-            policy: .buffered(maxDepth: 3)
-        )
-        #expect(first?.sequence == 4)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 2)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 5)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 6)
-    }
-
-    @Test("Underflow does not repeat previously presented frames")
-    func underflowDoesNotRepeat() {
-        let streamID: StreamID = 403
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
-
-        MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 1,
-            metalTexture: nil,
-            texture: nil,
+            presentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(seconds: 2, preferredTimescale: 600),
             for: streamID
         )
 
-        let first = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
-        let second = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.pendingFrameCount == 1)
+        #expect(telemetry.overwrittenPendingFrames == 1)
+        #expect(telemetry.displayLayerNotReadyCount == 1)
+    }
+
+    @Test("Repeated submission marks do not create unique forward progress")
+    func repeatedSubmissionMarksDoNotRepeatUniqueProgress() {
+        let streamID: StreamID = 403
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: 1,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: 1,
+            mappedPresentationTime: .zero,
+            for: streamID
+        )
+
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.submittedFPS >= 2)
+        #expect(telemetry.uniqueSubmittedFPS >= 1)
+        #expect(telemetry.uniqueSubmittedFPS < telemetry.submittedFPS)
+    }
+
+    @Test("Taking the only pending frame does not repeat on underflow")
+    func underflowDoesNotRepeatPendingFrame() {
+        let streamID: StreamID = 404
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
+
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+
+        let first = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
+        let second = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
 
         #expect(first?.sequence == 1)
         #expect(second == nil)

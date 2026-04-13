@@ -87,6 +87,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Dictation locale selection. System default follows the current device locale.
     public var dictationLocalePreference: MirageDictationLocalePreference
 
+    /// Whether the local system cursor should be hidden while streaming.
+    public var hideSystemCursor: Bool
+
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
@@ -140,6 +143,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
+        hideSystemCursor: Bool = false,
         cursorLockEnabled: Bool = false,
         allowsExtendedDesktopCursorBounds: Bool = false,
         cursorLockCanRecapture: Bool = false,
@@ -175,6 +179,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
+        self.hideSystemCursor = hideSystemCursor
         self.cursorLockEnabled = cursorLockEnabled
         self.allowsExtendedDesktopCursorBounds = allowsExtendedDesktopCursorBounds
         self.cursorLockCanRecapture = cursorLockCanRecapture
@@ -231,6 +236,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
             dictationLocalePreference: dictationLocalePreference,
+            hideSystemCursor: hideSystemCursor,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
@@ -289,6 +295,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             dictationToggleRequestID: dictationToggleRequestID,
             dictationMode: dictationMode,
             dictationLocalePreference: dictationLocalePreference,
+            hideSystemCursor: hideSystemCursor,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
             cursorLockEnabled: cursorLockEnabled,
@@ -413,6 +420,7 @@ public final class MirageStreamViewController: UIViewController {
         dictationToggleRequestID: UInt64,
         dictationMode: MirageDictationMode,
         dictationLocalePreference: MirageDictationLocalePreference,
+        hideSystemCursor: Bool,
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
         cursorLockEnabled: Bool,
@@ -437,6 +445,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.dictationToggleRequestID = dictationToggleRequestID
         captureView.dictationMode = dictationMode
         captureView.dictationLocalePreference = dictationLocalePreference
+        captureView.hideSystemCursor = hideSystemCursor
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
         captureView.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds

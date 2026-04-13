@@ -11,14 +11,12 @@ import MirageKit
 #if os(macOS)
 extension MirageHostInputController {
     private static let systemActionKeyReleaseDelay: DispatchTimeInterval = .milliseconds(50)
+    private static let systemActionInjectionDomain: HostKeyboardInjectionDomain = .hid
 
-    func executeHostSystemAction(
-        _ request: MirageHostSystemActionRequest,
-        domain: HostKeyboardInjectionDomain
-    ) {
+    func executeHostSystemAction(_ request: MirageHostSystemActionRequest) {
         switch HostSymbolicHotKeyResolver.resolve(request.action) {
         case let .shortcut(resolvedShortcut):
-            injectHostShortcut(resolvedShortcut, domain: domain)
+            injectHostShortcut(resolvedShortcut)
         case .disabled:
             MirageLogger.host(
                 "Skipping host system action \(request.action.diagnosticLabel) because the host shortcut is disabled"
@@ -33,14 +31,12 @@ extension MirageHostInputController {
             MirageLogger.host(
                 "Falling back to built-in shortcut for host system action \(request.action.diagnosticLabel)"
             )
-            injectHostShortcut(fallbackKeyEvent, domain: domain)
+            injectHostShortcut(fallbackKeyEvent)
         }
     }
 
-    private func injectHostShortcut(
-        _ keyEvent: MirageKeyEvent,
-        domain: HostKeyboardInjectionDomain
-    ) {
+    private func injectHostShortcut(_ keyEvent: MirageKeyEvent) {
+        let domain = Self.systemActionInjectionDomain
         clearUnexpectedSystemModifiers(domain: domain)
 
         if !keyEvent.modifiers.isEmpty {

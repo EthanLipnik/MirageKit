@@ -412,7 +412,7 @@ extension MirageClientService {
         if let stopped = try? message.decode(StreamStoppedMessage.self) {
             let streamID = stopped.streamID
             activeStreams.removeAll { $0.id == streamID }
-            MirageFrameCache.shared.clear(for: streamID)
+            MirageRenderStreamStore.shared.clear(for: streamID)
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
             cursorPositionStore.clear(streamID: streamID)

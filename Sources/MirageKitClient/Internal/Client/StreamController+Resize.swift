@@ -119,7 +119,7 @@ extension StreamController {
         await setClientRecoveryStatus(.hardRecovery)
         await clearResizeState()
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0

@@ -191,6 +191,19 @@ public final class MirageClientService {
         }
     }
 
+    public struct HostApplicationRestartResult: Sendable, Equatable, Codable {
+        public let accepted: Bool
+        public let message: String
+
+        public init(
+            accepted: Bool,
+            message: String
+        ) {
+            self.accepted = accepted
+            self.message = message
+        }
+    }
+
     public struct ProtocolMismatchInfo: Sendable, Equatable, Codable {
         public enum Reason: String, Sendable, Codable {
             case protocolVersionMismatch
@@ -388,6 +401,9 @@ public final class MirageClientService {
 
     /// Callback when host software update install result is received.
     public var onHostSoftwareUpdateInstallResult: ((HostSoftwareUpdateInstallResult) -> Void)?
+
+    /// Callback when a host application restart request completes.
+    public var onHostApplicationRestartResult: ((HostApplicationRestartResult) -> Void)?
 
     /// Callback when a protocol mismatch rejection includes deterministic mismatch metadata.
     public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
@@ -609,7 +625,7 @@ public final class MirageClientService {
     var hostSupportLogArchiveRequestID: UUID?
     var hostSupportLogArchiveTransferTask: Task<Void, Never>?
     var hostSupportLogArchiveTimeoutTask: Task<Void, Never>?
-    let hostSupportLogArchiveTimeout: Duration = .seconds(10)
+    let hostSupportLogArchiveTimeout: Duration = .seconds(45)
     var hostWallpaperRequestID: UUID?
     var hostWallpaperContinuation: CheckedContinuation<Void, Error>?
     var hostWallpaperTimeoutTask: Task<Void, Never>?
@@ -952,7 +968,7 @@ public final class MirageClientService {
     }
 
     #if os(iOS) || os(visionOS)
-    /// Cached drawable size from the Metal view.
+    /// Cached drawable size from the sample-buffer view.
     public static var lastKnownViewSize: CGSize = .zero
     public static var lastKnownDrawablePixelSize: CGSize = .zero
     /// Cached active screen bounds in points.

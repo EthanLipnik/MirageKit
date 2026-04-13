@@ -42,6 +42,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var lastMappedPresentationTime: CMTime = .invalid
     private var loggedLayerFailure = false
     private var lastFrameSubmissionTime: CFTimeInterval = 0
+    private(set) var currentContentReferenceSize: CGSize?
 
     var onFrameAvailable: (() -> Void)?
 
@@ -121,14 +122,15 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         guard let displayLayer else { return }
         displayLayer.flushAndRemoveImage()
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+        currentContentReferenceSize = nil
         lastSubmittedSequence = 0
     }
 
     @discardableResult
     private func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> Bool {
-        guard let streamID, let displayLayer else { return }
+        guard let streamID, let displayLayer else { return false }
         recoverDisplayLayerIfNeeded()
-        guard displayLayer.status != .failed else { return }
+        guard displayLayer.status != .failed else { return false }
 
         // Detect presentation stalls (backpressure, display sleep, window occlusion)
         // and rebase time mapping to prevent fast-forward playback on recovery
@@ -195,14 +197,23 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         let height = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
         guard width > 0, height > 0 else {
             displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
+            currentContentReferenceSize = nil
             return
         }
 
+        let resolvedContentRect: CGRect
+        if contentRect.width > 0, contentRect.height > 0 {
+            resolvedContentRect = contentRect
+        } else {
+            resolvedContentRect = CGRect(x: 0, y: 0, width: width, height: height)
+        }
+        currentContentReferenceSize = resolvedContentRect.size
+
         let normalized = CGRect(
-            x: min(max(contentRect.origin.x / width, 0), 1),
-            y: min(max(contentRect.origin.y / height, 0), 1),
-            width: min(max(contentRect.size.width / width, 0), 1),
-            height: min(max(contentRect.size.height / height, 0), 1)
+            x: min(max(resolvedContentRect.origin.x / width, 0), 1),
+            y: min(max(resolvedContentRect.origin.y / height, 0), 1),
+            width: min(max(resolvedContentRect.size.width / width, 0), 1),
+            height: min(max(resolvedContentRect.size.height / height, 0), 1)
         )
         displayLayer.contentsRect = normalized
     }

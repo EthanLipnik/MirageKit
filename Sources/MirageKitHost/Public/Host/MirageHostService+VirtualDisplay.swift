@@ -602,6 +602,10 @@ extension MirageHostService {
             bounds,
             targetAspectRatio: targetContentAspectRatio
         )
+        let effectiveVisiblePixelResolution = CGSize(
+            width: max(1, ceil(effectiveBounds.width * max(1.0, snapshot.scaleFactor))),
+            height: max(1, ceil(effectiveBounds.height * max(1.0, snapshot.scaleFactor)))
+        )
         let state = WindowVirtualDisplayState(
             streamID: streamID,
             displayID: snapshot.displayID,
@@ -609,7 +613,7 @@ extension MirageHostService {
             bounds: effectiveBounds,
             targetContentAspectRatio: targetContentAspectRatio,
             captureSourceRect: captureSourceRect,
-            visiblePixelResolution: visiblePixelResolution,
+            visiblePixelResolution: effectiveVisiblePixelResolution,
             scaleFactor: max(1.0, snapshot.scaleFactor),
             pixelResolution: snapshot.resolution,
             clientScaleFactor: resolvedClientScaleFactor
@@ -716,6 +720,17 @@ extension MirageHostService {
     )
     async {
         guard streamID == desktopStreamID, let desktopContext = desktopStreamContext else { return }
+        var virtualDisplaySetupGuardToken: UUID?
+        defer {
+            if let token = virtualDisplaySetupGuardToken {
+                Task { @MainActor [weak self] in
+                    await self?.cancelVirtualDisplaySetupGuard(
+                        token,
+                        reason: "desktop_resize_aborted"
+                    )
+                }
+            }
+        }
 
         let mirroringPlan = desktopResizeMirroringPlan(for: desktopStreamMode)
         var suspendedMirroringDisplayID: CGDirectDisplayID?
@@ -774,6 +789,9 @@ extension MirageHostService {
                     "Desktop stream resize requested (#\(requestNumber)): " +
                         "\(Int(logicalResolution.width))x\(Int(logicalResolution.height)) pts " +
                         "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px)"
+                )
+            virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
+                reason: "desktop_resize"
             )
             try ensureDesktopResizeTransactionCanContinue(streamID: streamID)
             await desktopContext.suspendEncodingForDesktopResize()
@@ -863,10 +881,13 @@ extension MirageHostService {
                 virtualResolution: effectivePixelResolution
             )
             inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
-            recenterDesktopCursorAfterVirtualDisplaySetup(
-                inputBounds: inputBounds,
-                reason: "desktop_resize"
-            )
+            if let token = virtualDisplaySetupGuardToken {
+                await completeVirtualDisplaySetupGuard(
+                    token,
+                    reason: "desktop_resize"
+                )
+                virtualDisplaySetupGuardToken = nil
+            }
             if desktopResizeShouldDisableResidualMirroring(
                 plan: mirroringPlan,
                 generationChanged: updateResult.generationChanged,
@@ -1016,10 +1037,7 @@ extension MirageHostService {
             virtualResolution: restoredSnapshot.resolution
         )
         inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
-        recenterDesktopCursorAfterVirtualDisplaySetup(
-            inputBounds: inputBounds,
-            reason: "desktop_resize_rollback"
-        )
+        performVirtualDisplaySetupWakeAndCenter(reason: "desktop_resize_rollback")
 
         let outcomeLabel: String = switch updateResult.outcome {
         case .noChange:
@@ -1185,36 +1203,15 @@ extension MirageHostService {
         let currentState = getVirtualDisplayState(streamID: streamID)
         let currentVisibleResolution = currentState?.visiblePixelResolution
         let currentDisplayResolution = currentState?.pixelResolution
-        let currentEncodedDimensions = await context.getEncodedDimensions()
-        let currentEncodedResolution = CGSize(
-            width: currentEncodedDimensions.width,
-            height: currentEncodedDimensions.height
-        )
         let requestedAspectRatio = logicalResolution.width > 0 && logicalResolution.height > 0
             ? logicalResolution.width / logicalResolution.height
             : nil
-        let requestedStreamScale = await context.requestedStreamScale
-        let encoderMaxWidth = await context.encoderMaxWidth
-        let encoderMaxHeight = await context.encoderMaxHeight
-        let disableResolutionCap = context.disableResolutionCap
-        let requestedEncodedResolution = MirageStreamGeometry.resolveEncodedPlan(
-            basePixelSize: pixelResolution,
-            requestedStreamScale: requestedStreamScale,
-            encoderMaxWidth: encoderMaxWidth ?? Int(StreamContext.maxEncodedWidth),
-            encoderMaxHeight: encoderMaxHeight ?? Int(StreamContext.maxEncodedHeight),
-            disableResolutionCap: disableResolutionCap
-        ).encodedPixelSize
-        let requiresForcedReconfigure = if currentEncodedResolution.width > 0, currentEncodedResolution.height > 0 {
-            !virtualDisplayResolutionMatches(currentEncodedResolution, requestedEncodedResolution)
-        } else {
-            false
-        }
         if windowResizeNoOpDecision(
             currentVisibleResolution: currentVisibleResolution,
             currentDisplayResolution: currentDisplayResolution,
-            currentEncodedResolution: currentEncodedResolution,
+            currentEncodedResolution: nil,
             requestedVisibleResolution: pixelResolution,
-            requestedEncodedResolution: requestedEncodedResolution
+            requestedEncodedResolution: nil
         ) == .noOp {
             await sendWindowResizeCompletion(
                 streamID: streamID,
@@ -1228,7 +1225,7 @@ extension MirageHostService {
         do {
             try await context.updateWindowCaptureResolution(
                 newLogicalSize: logicalResolution,
-                forceReconfigure: requiresForcedReconfigure
+                forceReconfigure: false
             )
             await refreshWindowVirtualDisplayState(
                 streamID: streamID,
@@ -1236,6 +1233,13 @@ extension MirageHostService {
                 clientScaleFactorOverride: clientScaleOverride,
                 targetContentAspectRatioOverride: requestedAspectRatio
             )
+            if let appSession = await appStreamManager.getSessionForStreamID(streamID) {
+                await appStreamManager.setCapturedClusterWindowIDs(
+                    bundleIdentifier: appSession.bundleIdentifier,
+                    streamID: streamID,
+                    capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
+                )
+            }
             await sendWindowResizeCompletion(
                 streamID: streamID,
                 requestNumber: requestNumber,

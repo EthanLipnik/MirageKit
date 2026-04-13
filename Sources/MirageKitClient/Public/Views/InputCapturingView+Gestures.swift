@@ -159,20 +159,13 @@ extension InputCapturingView {
 
     // MARK: - Coordinate Helpers
 
-    /// Normalize a point to 0-1 range relative to view bounds
-    /// The gesture location is in self's coordinate space, so normalize against self.bounds
-    /// This ensures correct mapping regardless of nested view hierarchy offsets
+    /// Normalize a point to 0-1 range relative to the currently presented content rect.
     func normalizedLocation(_ point: CGPoint) -> CGPoint {
-        // Normalize directly against our bounds - the view receiving the gesture
-        // Scale factors cancel out: (point * scale) / (bounds * scale) = point / bounds
-        // Default to center if bounds not ready
-        guard bounds.width > 0, bounds.height > 0 else { return CGPoint(x: 0.5, y: 0.5) }
-
-        let normalized = CGPoint(
-            x: point.x / bounds.width,
-            y: point.y / bounds.height
+        Self.normalizedLocation(
+            point,
+            in: bounds,
+            contentRect: resolvedPresentationContentRect()
         )
-        return normalized
     }
 
     func resolvedIndirectSecondaryClickLocation(_ rawLocation: CGPoint) -> CGPoint {
@@ -235,6 +228,7 @@ extension InputCapturingView {
 
     @objc
     func handleDirectTap(_ gesture: UITapGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
         if requestCursorLockRecaptureIfNeeded() { return }
         stopTouchScrollDeceleration()
@@ -261,6 +255,7 @@ extension InputCapturingView {
 
     @objc
     func handleDirectLongPress(_ gesture: UILongPressGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
         if swallowingDirectLongPressForCursorRecapture {
             if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
@@ -329,6 +324,7 @@ extension InputCapturingView {
 
     @objc
     func handleDirectTwoFingerTap(_ gesture: UITapGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
         if requestCursorLockRecaptureIfNeeded() { return }
         stopTouchScrollDeceleration()
@@ -355,6 +351,7 @@ extension InputCapturingView {
 
     @objc
     func handleDirectTwoFingerDrag(_ gesture: UIPanGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard cursorLockEnabled || directTouchInputMode == .normal else { return }
         if swallowingDirectTwoFingerDragForCursorRecapture {
             if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
@@ -421,6 +418,7 @@ extension InputCapturingView {
 
     @objc
     func handleLongPress(_ gesture: UILongPressGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         if swallowingLongPressForCursorRecapture {
             if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
                 swallowingLongPressForCursorRecapture = false
@@ -539,6 +537,7 @@ extension InputCapturingView {
 
     @objc
     func handleRightClick(_ gesture: UITapGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         if requestCursorLockRecaptureIfNeeded() { return }
 
         let location = resolvedIndirectSecondaryClickLocation(gesture.location(in: self))
@@ -561,6 +560,7 @@ extension InputCapturingView {
 
     @objc
     func handleScroll(_ gesture: UIPanGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         let translation = gesture.translation(in: self)
         let location = updatePointerLocationForScrollInteraction(gesture.location(in: self))
 
@@ -596,6 +596,7 @@ extension InputCapturingView {
 
     @objc
     func handleHover(_ gesture: UIHoverGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         let hoverStylus = stylusHoverEvent(from: gesture)
         let hoverPressure: CGFloat = hoverStylus == nil ? 1.0 : 0.0
         let location = gesture.location(in: self)
@@ -683,6 +684,7 @@ extension InputCapturingView {
 
     @objc
     func handleLockedPointerPan(_ gesture: UIPanGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard cursorLockEnabled else { return }
         let translation = gesture.translation(in: self)
         gesture.setTranslation(.zero, in: self)
@@ -705,6 +707,7 @@ extension InputCapturingView {
 
     @objc
     func handleLockedPointerPress(_ gesture: UILongPressGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard cursorLockEnabled else { return }
         setLockedCursorVisible(true)
         let location = lockedCursorActionPosition()
@@ -750,6 +753,7 @@ extension InputCapturingView {
 
     @objc
     func handleVirtualCursorPan(_ gesture: UIPanGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard usesVirtualTrackpad else { return }
         setTrackpadCursorVisible(true)
         if gesture.state == .began { stopVirtualCursorDeceleration() }
@@ -771,6 +775,7 @@ extension InputCapturingView {
 
     @objc
     func handleVirtualCursorLongPress(_ gesture: UILongPressGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard usesVirtualTrackpad else { return }
         if swallowingVirtualCursorLongPressForCursorRecapture {
             if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
@@ -814,6 +819,7 @@ extension InputCapturingView {
 
     @objc
     func handleVirtualCursorTap(_ gesture: UITapGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard usesVirtualTrackpad else { return }
         if requestCursorLockRecaptureIfNeeded() { return }
         stopVirtualCursorDeceleration()
@@ -839,6 +845,7 @@ extension InputCapturingView {
 
     @objc
     func handleVirtualCursorRightTap(_ gesture: UITapGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         guard usesVirtualTrackpad else { return }
         if requestCursorLockRecaptureIfNeeded() { return }
         stopVirtualCursorDeceleration()
@@ -866,6 +873,7 @@ extension InputCapturingView {
 
     @objc
     func handleDirectPinch(_ gesture: UIPinchGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         let phase = MirageScrollPhase(gestureState: gesture.state)
         refreshModifiersForInput()
 
@@ -894,6 +902,7 @@ extension InputCapturingView {
 
     @objc
     func handleDirectRotation(_ gesture: UIRotationGestureRecognizer) {
+        noteInteractionForResponderRecovery()
         let phase = MirageScrollPhase(gestureState: gesture.state)
         refreshModifiersForInput()
 
@@ -922,12 +931,13 @@ extension InputCapturingView {
     }
 
     func moveVirtualCursor(by translation: CGPoint) {
-        guard bounds.width > 0, bounds.height > 0 else { return }
+        let contentRect = resolvedPresentationContentRect()
+        guard contentRect.width > 0, contentRect.height > 0 else { return }
         guard translation != .zero else { return }
 
         var updated = virtualCursorPosition
-        updated.x += translation.x / bounds.width
-        updated.y += translation.y / bounds.height
+        updated.x += translation.x / contentRect.width
+        updated.y += translation.y / contentRect.height
         updateVirtualCursorPosition(updated, updateVisibility: true)
     }
 

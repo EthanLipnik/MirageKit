@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Metal view refresh rate sampler for ProMotion overrides.
+//  Sample-buffer view refresh rate sampler for ProMotion overrides.
 //
 
 import MirageKit
@@ -16,7 +16,7 @@ import UIKit
 
 @MainActor
 final class MirageRefreshRateMonitor: NSObject {
-    private weak var view: MirageMetalView?
+    private weak var view: MirageSampleBufferView?
 
     var onOverrideChange: ((Int) -> Void)?
 
@@ -38,7 +38,7 @@ final class MirageRefreshRateMonitor: NSObject {
         return view.superview != nil && !view.bounds.isEmpty
     }
 
-    init(view: MirageMetalView) {
+    init(view: MirageSampleBufferView) {
         self.view = view
     }
 

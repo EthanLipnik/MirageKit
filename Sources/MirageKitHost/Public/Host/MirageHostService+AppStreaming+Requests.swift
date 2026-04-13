@@ -110,13 +110,14 @@ extension MirageHostService {
     ) -> WindowStreamingPreparationPlan {
         let shouldRestoreWindow = !isOnScreen
         let shouldExitFullScreen = isFullScreen
+        let activationSettleDelayMilliseconds = 150
         let settleDelayMilliseconds: Int = switch (shouldRestoreWindow, shouldExitFullScreen) {
         case (true, true):
             350
         case (true, false), (false, true):
             250
         case (false, false):
-            0
+            activationSettleDelayMilliseconds
         }
 
         return WindowStreamingPreparationPlan(
@@ -366,6 +367,7 @@ extension MirageHostService {
             )
 
             await syncAppListRequestDeferralForInteractiveWorkload()
+            sendPendingAppListRequestIfPossible()
         } catch {
             if Self.isMalformedAppListRequestError(error) {
                 rejectMalformedAppListRequest(
@@ -819,6 +821,11 @@ extension MirageHostService {
             await context.updateWindowBinding(windowID: targetWindowID, ownerGeneration: newGeneration)
             activateWindow(targetWindow)
             await enforceVirtualDisplayPlacementAfterActivation(windowID: targetWindowID, force: true)
+            do {
+                try await context.refreshSharedDisplayAppCaptureLayout(label: "slot swap")
+            } catch {
+                return failure("Failed to retarget shared-display app capture layout: \(error.localizedDescription)")
+            }
         } else {
             let restartComponents: (
                 window: SCWindowWrapper,
@@ -875,7 +882,8 @@ extension MirageHostService {
             title: targetWindow.title,
             width: Int(targetWindow.frame.width),
             height: Int(targetWindow.frame.height),
-            isResizable: isResizable
+            isResizable: isResizable,
+            capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
         )
         await appStreamManager.upsertHiddenWindow(
             bundleIdentifier: bundleIdentifier,
@@ -1082,6 +1090,13 @@ extension MirageHostService {
             guard assignedSlot != nil else {
                 await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
                 return .failure("No visible slot is available for another \(app.name) window.")
+            }
+            if let context = streamsByID[streamSession.id] {
+                await appStreamManager.setCapturedClusterWindowIDs(
+                    bundleIdentifier: app.bundleIdentifier,
+                    streamID: streamSession.id,
+                    capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
+                )
             }
             await appStreamManager.noteWindowStartupSucceeded(
                 bundleID: app.bundleIdentifier,
@@ -1487,6 +1502,28 @@ extension MirageHostService {
             }
 
             do {
+                await prepareWindowForStreamingIfNeeded(
+                    currentBinding.resolvedWindow,
+                    reason: "initial app-stream startup"
+                )
+                if let reboundBinding = try await resolveCurrentInitialAppWindowBinding(
+                    bundleIdentifier: app.bundleIdentifier,
+                    preferredWindowID: currentBinding.resolvedWindow.id,
+                    deprioritizedWindowIDs: deprioritizedWindowIDs,
+                    excludedWindowIDs: excludedWindowIDs
+                ) {
+                    if reboundBinding.candidate.window.id != currentBinding.candidate.window.id ||
+                        reboundBinding.resolvedWindow.id != currentBinding.resolvedWindow.id {
+                        MirageLogger.host(
+                            "Initial app-stream slot \(preferredSlotIndex) rebound startup target " +
+                                "candidate \(currentBinding.candidate.window.id)->\(reboundBinding.candidate.window.id) " +
+                                "resolved \(currentBinding.resolvedWindow.id)->\(reboundBinding.resolvedWindow.id) after preparation"
+                        )
+                    }
+                    currentBinding = reboundBinding
+                    preferredWindowID = reboundBinding.resolvedWindow.id
+                }
+
                 let startedWindow = try await attemptStartInitialAppWindowStream(
                     app: app,
                     startupCandidate: currentBinding.candidate,
@@ -1617,10 +1654,6 @@ extension MirageHostService {
         requestedBitrateOverride: Int?,
         mediaMaxPacketSize: Int
     ) async throws -> AppStreamStartedMessage.AppStreamWindow {
-        await prepareWindowForStreamingIfNeeded(
-            preferredWindow,
-            reason: "initial app-stream startup"
-        )
         let streamSession = try await startStream(
             for: preferredWindow,
             to: clientContext.client,
@@ -1691,6 +1724,14 @@ extension MirageHostService {
             }
             throw MirageError.protocolError(
                 "Failed to bind startup window \(resolvedWindow.id) into slot \(preferredSlotIndex)"
+            )
+        }
+
+        if let context = streamsByID[streamSession.id] {
+            await appStreamManager.setCapturedClusterWindowIDs(
+                bundleIdentifier: app.bundleIdentifier,
+                streamID: streamSession.id,
+                capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
             )
         }
 

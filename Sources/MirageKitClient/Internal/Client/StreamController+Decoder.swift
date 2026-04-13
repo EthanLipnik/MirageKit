@@ -31,7 +31,7 @@ extension StreamController {
         // Drop any queued frames from the previous session to avoid BadData storms.
         await stopTierPromotionProbe()
         stopFirstPresentedFrameMonitor()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         stopFrameProcessingPipeline()
         await decoder.resetForNewSession()
         reassembler.reset()
@@ -219,7 +219,7 @@ extension StreamController {
 
     private func startTierPromotionProbe() async {
         await stopTierPromotionProbe()
-        let baselineSequence = MirageFrameCache.shared.presentationSnapshot(for: streamID).sequence
+        let baselineSequence = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID).sequence
         await setClientRecoveryStatus(.tierPromotionProbe)
         tierPromotionProbeTask = Task { [weak self] in
             await self?.runTierPromotionProbe(baselineSequence: baselineSequence)
@@ -245,7 +245,7 @@ extension StreamController {
 
         guard presentationTier == .activeLive else { return }
 
-        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
         if snapshot.sequence > baselineSequence {
             MirageLogger.client(
                 "Tier promotion probe progressed for stream \(streamID) (baseline=\(baselineSequence), latest=\(snapshot.sequence))"

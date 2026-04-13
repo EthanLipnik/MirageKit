@@ -125,4 +125,25 @@ struct ClientSoftwareUpdateHandlingTests {
         #expect(receivedResult?.status?.channel == .release)
         #expect(receivedResult?.status?.installDisposition == .installing)
     }
+
+    @MainActor
+    @Test("Host restart-result message updates client callback state")
+    func hostRestartResultCallbackReceivesMappedPayload() throws {
+        let service = MirageClientService()
+        var receivedResult: MirageClientService.HostApplicationRestartResult?
+        service.onHostApplicationRestartResult = { result in
+            receivedResult = result
+        }
+
+        let resultMessage = HostApplicationRestartResultMessage(
+            accepted: true,
+            message: "Restarting Mirage Host."
+        )
+        let envelope = try ControlMessage(type: .hostApplicationRestartResult, content: resultMessage)
+
+        service.handleHostApplicationRestartResult(envelope)
+
+        #expect(receivedResult?.accepted == true)
+        #expect(receivedResult?.message == "Restarting Mirage Host.")
+    }
 }

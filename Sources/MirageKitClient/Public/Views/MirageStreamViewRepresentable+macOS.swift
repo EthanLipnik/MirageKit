@@ -33,6 +33,9 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     /// Host display dimensions in points for 1:1 cursor delta normalization.
     public var hostDisplayPointSize: CGSize?
 
+    /// Whether the local system cursor should be hidden while streaming.
+    public var hideSystemCursor: Bool
+
     /// Whether the system cursor should be locked/hidden.
     public var cursorLockEnabled: Bool
 
@@ -81,6 +84,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
         hostDisplayPointSize: CGSize? = nil,
+        hideSystemCursor: Bool = false,
         cursorLockEnabled: Bool = false,
         allowsExtendedDesktopCursorBounds: Bool = false,
         cursorLockCanRecapture: Bool = false,
@@ -103,6 +107,7 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
         self.hostDisplayPointSize = hostDisplayPointSize
+        self.hideSystemCursor = hideSystemCursor
         self.cursorLockEnabled = cursorLockEnabled
         self.allowsExtendedDesktopCursorBounds = allowsExtendedDesktopCursorBounds
         self.cursorLockCanRecapture = cursorLockCanRecapture
@@ -130,32 +135,33 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
     public func makeNSView(context: Context) -> NSView {
         let wrapper = ScrollPhysicsCapturingNSView(frame: .zero)
 
-        // Create Metal view and add to wrapper's content view
-        let metalView = MirageMetalView(frame: .zero, device: nil)
-        metalView.translatesAutoresizingMaskIntoConstraints = false
-        wrapper.contentView.addSubview(metalView)
+        // Create sample-buffer view and add to wrapper's content view
+        let sampleBufferView = MirageSampleBufferView(frame: .zero)
+        sampleBufferView.translatesAutoresizingMaskIntoConstraints = false
+        wrapper.contentView.addSubview(sampleBufferView)
 
         NSLayoutConstraint.activate([
-            metalView.topAnchor.constraint(equalTo: wrapper.contentView.topAnchor),
-            metalView.leadingAnchor.constraint(equalTo: wrapper.contentView.leadingAnchor),
-            metalView.trailingAnchor.constraint(equalTo: wrapper.contentView.trailingAnchor),
-            metalView.bottomAnchor.constraint(equalTo: wrapper.contentView.bottomAnchor),
+            sampleBufferView.topAnchor.constraint(equalTo: wrapper.contentView.topAnchor),
+            sampleBufferView.leadingAnchor.constraint(equalTo: wrapper.contentView.leadingAnchor),
+            sampleBufferView.trailingAnchor.constraint(equalTo: wrapper.contentView.trailingAnchor),
+            sampleBufferView.bottomAnchor.constraint(equalTo: wrapper.contentView.bottomAnchor),
         ])
 
-        // Store Metal view reference in coordinator
-        context.coordinator.metalView = metalView
-        metalView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
-        metalView.onRefreshRateOverrideChange = context.coordinator.handleRefreshRateOverrideChange
-        metalView.maxDrawableSize = maxDrawableSize
-        metalView.desktopPresentationReferenceSize = hostDisplayPointSize
-        metalView.streamPresentationTier = presentationTier
-        metalView.streamID = streamID
+        // Store sample-buffer view reference in coordinator
+        context.coordinator.sampleBufferView = sampleBufferView
+        sampleBufferView.onDrawableMetricsChanged = context.coordinator.handleDrawableMetricsChanged
+        sampleBufferView.onRefreshRateOverrideChange = context.coordinator.handleRefreshRateOverrideChange
+        sampleBufferView.maxDrawableSize = maxDrawableSize
+        sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize
+        sampleBufferView.streamPresentationTier = presentationTier
+        sampleBufferView.streamID = streamID
         wrapper.onContainerSizeChanged = context.coordinator.handleContainerSizeChanged
 
         wrapper.cursorStore = cursorStore
         wrapper.cursorPositionStore = cursorPositionStore
         wrapper.desktopPresentationReferenceSize = hostDisplayPointSize
         wrapper.hostDisplayPointSize = hostDisplayPointSize
+        wrapper.hideSystemCursor = hideSystemCursor
         wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
         wrapper.cursorLockEnabled = cursorLockEnabled
         wrapper.canRecaptureCursorLock = cursorLockCanRecapture
@@ -200,16 +206,17 @@ public struct MirageStreamViewRepresentable: NSViewRepresentable {
         context.coordinator.onInputEvent = onInputEvent
         context.coordinator.onRefreshRateOverrideChange = onRefreshRateOverrideChange
 
-        if let metalView = context.coordinator.metalView { metalView.streamID = streamID }
-        if let metalView = context.coordinator.metalView { metalView.maxDrawableSize = maxDrawableSize }
-        if let metalView = context.coordinator.metalView { metalView.desktopPresentationReferenceSize = hostDisplayPointSize }
-        if let metalView = context.coordinator.metalView { metalView.streamPresentationTier = presentationTier }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamID = streamID }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.maxDrawableSize = maxDrawableSize }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.desktopPresentationReferenceSize = hostDisplayPointSize }
+        if let sampleBufferView = context.coordinator.sampleBufferView { sampleBufferView.streamPresentationTier = presentationTier }
 
         if let wrapper = nsView as? ScrollPhysicsCapturingNSView {
             wrapper.cursorStore = cursorStore
             wrapper.cursorPositionStore = cursorPositionStore
             wrapper.desktopPresentationReferenceSize = hostDisplayPointSize
             wrapper.hostDisplayPointSize = hostDisplayPointSize
+            wrapper.hideSystemCursor = hideSystemCursor
             wrapper.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
             wrapper.cursorLockEnabled = cursorLockEnabled
             wrapper.canRecaptureCursorLock = cursorLockCanRecapture

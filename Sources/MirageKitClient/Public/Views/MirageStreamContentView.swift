@@ -15,40 +15,6 @@ import AppKit
 import UIKit
 #endif
 
-func isMeaningfulAppResizeAcknowledgement(
-    _ latest: MirageClientService.StreamStartAcknowledgement?,
-    comparedTo baseline: MirageClientService.StreamStartAcknowledgement?
-) -> Bool {
-    guard let latest else { return false }
-    guard let baseline else {
-        return latest.width > 0 && latest.height > 0
-    }
-    if let latestToken = latest.dimensionToken,
-       let baselineToken = baseline.dimensionToken,
-       latestToken != baselineToken {
-        return true
-    }
-    return latest.width != baseline.width || latest.height != baseline.height
-}
-
-enum AppStreamStartAcknowledgementHandlingDecision: Equatable {
-    case ignore
-    case recheckMinimumSize
-}
-
-func appStreamStartAcknowledgementHandlingDecision(
-    awaitingResizeAcknowledgement: Bool,
-    latest: MirageClientService.StreamStartAcknowledgement?,
-    baseline: MirageClientService.StreamStartAcknowledgement?
-)
--> AppStreamStartAcknowledgementHandlingDecision {
-    guard awaitingResizeAcknowledgement,
-          isMeaningfulAppResizeAcknowledgement(latest, comparedTo: baseline) else {
-        return .ignore
-    }
-    return .recheckMinimumSize
-}
-
 /// Streaming content view that handles input, resizing, and focus.
 ///
 /// This view bridges `MirageStreamViewRepresentable` with a `MirageClientSessionStore`
@@ -103,7 +69,6 @@ public struct MirageStreamContentView: View {
     /// Whether the client is currently waiting for host to complete resize.
     @State private var isResizing: Bool = false
     @State private var desktopResizeMaskActive: Bool = false
-    @State private var resizeFallbackTask: Task<Void, Never>?
     @State private var displayResolutionTask: Task<Void, Never>?
     @State private var pendingDisplayResolutionDispatchTarget: CGSize = .zero
     /// Tracks the last requested client display resolution, not the host's encoded output size.
@@ -230,6 +195,10 @@ public struct MirageStreamContentView: View {
         !isDesktopStream || desktopCursorPresentation.rendersSyntheticClientCursor
     }
 
+    private var desktopLocalCursorHidden: Bool {
+        isDesktopStream && desktopCursorPresentation.hidesLocalCursor
+    }
+
     private var allowsExtendedDesktopCursorBounds: Bool {
         isDesktopStream && desktopStreamMode == .secondary
     }
@@ -270,10 +239,10 @@ public struct MirageStreamContentView: View {
                         sendInputEvent(event)
                     },
                     onDrawableMetricsChanged: { metrics in
-                        handleDrawableMetricsChanged(metrics)
+                        scheduleDrawableMetricsChanged(metrics)
                     },
                     onContainerSizeChanged: { size in
-                        handleContainerSizeChanged(size)
+                        scheduleContainerSizeChanged(size)
                     },
                     onRefreshRateOverrideChange: { override in
                         Task { @MainActor [clientService] in
@@ -311,6 +280,7 @@ public struct MirageStreamContentView: View {
                     onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged,
                     dictationMode: dictationMode,
                     dictationLocalePreference: dictationLocalePreference,
+                    hideSystemCursor: desktopLocalCursorHidden,
                     cursorLockEnabled: desktopCursorLockEnabled,
                     allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
                     cursorLockCanRecapture: desktopCursorLockCanRecapture,
@@ -329,10 +299,10 @@ public struct MirageStreamContentView: View {
                         sendInputEvent(event)
                     },
                     onDrawableMetricsChanged: { metrics in
-                        handleDrawableMetricsChanged(metrics)
+                        scheduleDrawableMetricsChanged(metrics)
                     },
                     onContainerSizeChanged: { size in
-                        handleContainerSizeChanged(size)
+                        scheduleContainerSizeChanged(size)
                     },
                     onRefreshRateOverrideChange: { override in
                         Task { @MainActor [clientService] in
@@ -351,6 +321,7 @@ public struct MirageStreamContentView: View {
                     cursorStore: clientService.cursorStore,
                     cursorPositionStore: clientService.cursorPositionStore,
                     hostDisplayPointSize: hostDisplayPointSize,
+                    hideSystemCursor: desktopLocalCursorHidden,
                     cursorLockEnabled: desktopCursorLockEnabled,
                     allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
                     cursorLockCanRecapture: desktopCursorLockCanRecapture,
@@ -420,18 +391,16 @@ public struct MirageStreamContentView: View {
             }
         }
         .onChange(of: clientService.appStreamStartAcknowledgementByStreamID[session.streamID]) { _, acknowledgement in
-            handleAppStreamStartAcknowledgement(acknowledgement)
+            Task { @MainActor in
+                await Task.yield()
+                handleAppStreamStartAcknowledgement(acknowledgement)
+            }
         }
         .onChange(of: awaitingPostResizeFirstFrame) { _, awaiting in
             guard isDesktopStream, !awaiting else { return }
             if flushPendingDesktopResizeIfReady() { return }
             guard latestDrawableViewSize.width > 0, latestDrawableViewSize.height > 0 else { return }
             scheduleStreamScaleUpdate(for: latestDrawableViewSize)
-        }
-        .onChange(of: session.hasPresentedFrame) { _, hasPresentedFrame in
-            guard hasPresentedFrame, !isDesktopStream else { return }
-            guard latestContainerDisplaySize.width > 0, latestContainerDisplaySize.height > 0 else { return }
-            handleContainerSizeChanged(latestContainerDisplaySize)
         }
         .onAppear {
             sessionStore.setFocusedSession(session.id)
@@ -440,8 +409,6 @@ public struct MirageStreamContentView: View {
         .onDisappear {
             resizeHoldoffTask?.cancel()
             resizeHoldoffTask = nil
-            resizeFallbackTask?.cancel()
-            resizeFallbackTask = nil
             displayResolutionTask?.cancel()
             displayResolutionTask = nil
             pendingDisplayResolutionDispatchTarget = .zero
@@ -521,7 +488,7 @@ public struct MirageStreamContentView: View {
     private var isReadyForInitialPresentation: Bool {
         switch streamPresentationTier {
         case .activeLive:
-            session.hasPresentedFrame
+            session.hasDecodedFrame || session.hasPresentedFrame
         case .passiveSnapshot:
             session.hasDecodedFrame || session.hasPresentedFrame
         }
@@ -532,8 +499,8 @@ public struct MirageStreamContentView: View {
     }
 
     private var resizeBlurRadius: CGFloat {
-        if awaitingPostResizeFirstFrame { return 24 }
-        if isResizing || desktopResizeMaskActive { return 20 }
+        if isDesktopStream, awaitingPostResizeFirstFrame { return 24 }
+        if isDesktopStream, isResizing || desktopResizeMaskActive { return 20 }
         return 0
     }
 
@@ -632,6 +599,20 @@ public struct MirageStreamContentView: View {
         MirageLogger.client("Desktop exit shortcut triggered for stream \(session.streamID)")
     }
 
+    private func scheduleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
+        Task { @MainActor in
+            await Task.yield()
+            handleDrawableMetricsChanged(metrics)
+        }
+    }
+
+    private func scheduleContainerSizeChanged(_ containerSize: CGSize) {
+        Task { @MainActor in
+            await Task.yield()
+            handleContainerSizeChanged(containerSize)
+        }
+    }
+
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {
         guard metrics.pixelSize.width > 0, metrics.pixelSize.height > 0 else { return }
 
@@ -713,19 +694,6 @@ public struct MirageStreamContentView: View {
             }
             guard resizeLifecycleState == .active else { return }
 
-            if session.hasPresentedFrame, !isDesktopStream {
-                isResizing = true
-                resizeFallbackTask?.cancel()
-                resizeFallbackTask = Task { @MainActor in
-                    do {
-                        try await Task.sleep(for: .seconds(2))
-                    } catch {
-                        return
-                    }
-                    if isResizing { isResizing = false }
-                }
-            }
-
             #if os(visionOS)
             let visionOSDisplaySize = clientService.visionOSFixedPixelCountResolution(for: targetViewSize)
             #endif
@@ -746,12 +714,6 @@ public struct MirageStreamContentView: View {
                     return
                 }
                 latestRequestedDisplaySize = baseDisplaySize
-                if !session.hasPresentedFrame {
-                    pendingAppDisplayResolutionCandidate = .zero
-                    pendingAppDisplayResolutionCandidateSince = .distantPast
-                    if !awaitingAppResizeAck, isResizing { isResizing = false }
-                    return
-                }
                 if streamPresentationTier == .passiveSnapshot {
                     displayResolutionTask?.cancel()
                     displayResolutionTask = nil
@@ -1071,8 +1033,8 @@ public struct MirageStreamContentView: View {
     }
 
     private func beginAppResizeAwaitingAck() {
-        awaitingAppResizeAck = true
         appResizeBaselineAcknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
+        awaitingAppResizeAck = true
         isResizing = true
         appResizeAckTimeoutTask?.cancel()
         appResizeAckTimeoutTask = Task { @MainActor in
@@ -1098,17 +1060,14 @@ public struct MirageStreamContentView: View {
         _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
     ) {
         guard !isDesktopStream else { return }
-        switch appStreamStartAcknowledgementHandlingDecision(
+        let decision = appStreamStartAcknowledgementHandlingDecision(
             awaitingResizeAcknowledgement: awaitingAppResizeAck,
             latest: acknowledgement,
             baseline: appResizeBaselineAcknowledgement
-        ) {
-        case .ignore:
-            return
-        case .recheckMinimumSize:
-            if let minimumSize = sessionStore.sessionMinSizes[session.id] {
-                handleResizeAcknowledgement(minimumSize)
-            }
+        )
+        guard decision == .recheckMinimumSize else { return }
+        if let minimumSize = sessionStore.sessionMinSizes[session.id] {
+            handleResizeAcknowledgement(minimumSize)
         }
     }
 
@@ -1116,13 +1075,13 @@ public struct MirageStreamContentView: View {
         guard isDesktopStream else {
             guard awaitingAppResizeAck else { return }
             guard let minSize, minSize.width > 0, minSize.height > 0 else { return }
-            let latestAcknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
-            guard isMeaningfulAppResizeAcknowledgement(
-                latestAcknowledgement,
-                comparedTo: appResizeBaselineAcknowledgement
-            ) else {
-                return
-            }
+            let acknowledgement = clientService.appStreamStartAcknowledgementByStreamID[session.streamID]
+            let decision = appStreamStartAcknowledgementHandlingDecision(
+                awaitingResizeAcknowledgement: awaitingAppResizeAck,
+                latest: acknowledgement,
+                baseline: appResizeBaselineAcknowledgement
+            )
+            guard decision == .recheckMinimumSize else { return }
             finishAppResizeAwaitingAck()
             return
         }
@@ -1431,8 +1390,6 @@ public struct MirageStreamContentView: View {
     private func cancelPendingResizeWorkForLifecycleSuspension() {
         resizeHoldoffTask?.cancel()
         resizeHoldoffTask = nil
-        resizeFallbackTask?.cancel()
-        resizeFallbackTask = nil
         displayResolutionTask?.cancel()
         displayResolutionTask = nil
         pendingDisplayResolutionDispatchTarget = .zero

@@ -494,6 +494,21 @@ struct MirageKitTests {
         #expect(decodedInstallResult.message == "Denied")
         #expect(decodedInstallResult.resultCode == .denied)
         #expect(decodedInstallResult.blockReason == .policyDenied)
+
+        let restartRequest = HostApplicationRestartRequestMessage()
+        let restartRequestEnvelope = try ControlMessage(type: .hostApplicationRestartRequest, content: restartRequest)
+        let (decodedRestartRequestEnvelope, _) = try requireParsedControlMessage(from: restartRequestEnvelope.serialize())
+        _ = try decodedRestartRequestEnvelope.decode(HostApplicationRestartRequestMessage.self)
+
+        let restartResult = HostApplicationRestartResultMessage(
+            accepted: true,
+            message: "Restarting Mirage Host."
+        )
+        let restartResultEnvelope = try ControlMessage(type: .hostApplicationRestartResult, content: restartResult)
+        let (decodedRestartResultEnvelope, _) = try requireParsedControlMessage(from: restartResultEnvelope.serialize())
+        let decodedRestartResult = try decodedRestartResultEnvelope.decode(HostApplicationRestartResultMessage.self)
+        #expect(decodedRestartResult.accepted == true)
+        #expect(decodedRestartResult.message == "Restarting Mirage Host.")
     }
 
     @Test("Audio packet header serialization")

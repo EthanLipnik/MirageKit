@@ -10,7 +10,7 @@ import MirageKit
 import UIKit
 
 /// Invisible scroll views that capture native scroll physics.
-/// The actual content (Metal view) stays pinned while scroll events are forwarded
+/// The actual content view stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingView: UIView {
     // MARK: - Safe Area Override
@@ -168,7 +168,7 @@ final class ScrollPhysicsCapturingView: UIView {
         setupScrollContent(indirectScrollContent, in: indirectScrollView)
         setupScrollContent(directTouchScrollContent, in: directTouchScrollView)
 
-        // Content view holds the actual Metal view (stays pinned to our bounds)
+        // Content view holds the actual sample-buffer view (stays pinned to our bounds)
         contentView.translatesAutoresizingMaskIntoConstraints = false
         addSubview(contentView)
 

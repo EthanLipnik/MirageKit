@@ -110,6 +110,8 @@ package enum ControlMessageType: UInt8, Codable {
     case transportRefreshRequest = 0xB6 // Host -> Client: Request immediate UDP re-registration
     case sharedClipboardStatus = 0xB7 // Host -> Client: Shared clipboard runtime state
     case sharedClipboardUpdate = 0xB8 // Host <-> Client: Shared clipboard text update
+    case hostApplicationRestartRequest = 0xB9 // Client -> Host: Request Mirage Host app relaunch
+    case hostApplicationRestartResult = 0xBA // Host -> Client: Mirage Host app relaunch request result
 
     // Stream lifecycle (background/foreground)
     case streamPauseAll = 0xC0 // Client → Host: Pause all stream encoding (client backgrounding)

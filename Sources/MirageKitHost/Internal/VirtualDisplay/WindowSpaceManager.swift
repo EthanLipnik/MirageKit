@@ -257,16 +257,11 @@ actor WindowSpaceManager {
     ) throws {
         if savedStates[windowID] == nil {
             let currentSpaces = CGSWindowSpaceBridge.getSpacesForWindow(windowID)
-            let axWindow = resolveAXWindow(for: windowID)
-            let trafficLightVisibilitySnapshot = hideTrafficLightsIfSupported(
-                windowID: windowID,
-                axWindow: axWindow
-            )
             let savedState = SavedWindowState(
                 windowID: windowID,
                 originalFrame: originalFrame,
                 originalSpaceIDs: currentSpaces,
-                trafficLightVisibilitySnapshot: trafficLightVisibilitySnapshot,
+                trafficLightVisibilitySnapshot: nil,
                 owner: owner,
                 savedAt: Date()
             )
@@ -402,7 +397,6 @@ actor WindowSpaceManager {
                 axWindow: resolvedAXWindow,
                 targetContentAspectRatio: targetContentAspectRatio
             ) {
-                ensureTrafficLightsHidden(windowID: windowID)
                 MirageLogger.host("Moved window \(windowID) to space \(currentSpaceID) at \(targetOrigin) (attempt \(attempt))")
                 return
             }
@@ -434,8 +428,6 @@ actor WindowSpaceManager {
             originalFrame: windowInfo.frame,
             owner: owner
         )
-
-        ensureTrafficLightsHidden(windowID: windowID)
     }
 
     private func resolvePlacementDisplayBounds(

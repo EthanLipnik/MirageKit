@@ -529,12 +529,13 @@ extension StreamContext {
         if frameInbox.hasPending(), inFlightCount < maxInFlightFrames { scheduleProcessingIfNeeded() }
     }
 
-    private static let trafficLightCloneStampEnabled: Bool = {
-        ProcessInfo.processInfo.environment["MIRAGE_TRAFFIC_LIGHT_CLONE_STAMP"] == "1"
-    }()
-
     func applyTrafficLightCloneStampIfNeeded(frame: CapturedFrame) async {
-        guard Self.trafficLightCloneStampEnabled, isAppStream, windowID != 0 else { return }
+        guard isAppStream,
+              useVirtualDisplay,
+              captureMode == .display,
+              windowID != 0 else {
+            return
+        }
 
         let windowFramePoints = resolvedWindowFramePointsForTrafficLightMask(frame: frame)
         guard windowFramePoints.width > 0, windowFramePoints.height > 0 else { return }
@@ -573,12 +574,19 @@ extension StreamContext {
     }
 
     func resolvedContentRectForTrafficLightMask(frame: CapturedFrame) -> CGRect {
-        if useVirtualDisplay {
-            return CGRect(
-                x: 0,
-                y: 0,
-                width: CVPixelBufferGetWidth(frame.pixelBuffer),
-                height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        let fullFrameRect = CGRect(
+            x: 0,
+            y: 0,
+            width: CVPixelBufferGetWidth(frame.pixelBuffer),
+            height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        )
+
+        if useVirtualDisplay, isAppStream, captureMode == .display {
+            return Self.sharedDisplayAppTrafficLightMaskContentRect(
+                primaryRect: lastWindowFrame,
+                presentationRect: virtualDisplayCaptureSourceRect,
+                contentRect: resolvedOutgoingContentRect(for: frame),
+                fullFrameRect: fullFrameRect
             )
         }
 
@@ -587,12 +595,55 @@ extension StreamContext {
             return contentRect
         }
 
-        return CGRect(
-            x: 0,
-            y: 0,
-            width: CVPixelBufferGetWidth(frame.pixelBuffer),
-            height: CVPixelBufferGetHeight(frame.pixelBuffer)
+        return fullFrameRect
+    }
+
+    nonisolated static func sharedDisplayAppTrafficLightMaskContentRect(
+        primaryRect: CGRect,
+        presentationRect: CGRect,
+        contentRect: CGRect,
+        fullFrameRect: CGRect
+    ) -> CGRect {
+        let resolvedFullFrameRect = fullFrameRect.standardized
+        let resolvedContentRect = contentRect
+            .intersection(resolvedFullFrameRect)
+            .standardized
+        guard resolvedContentRect.width > 0,
+              resolvedContentRect.height > 0 else {
+            return resolvedFullFrameRect
+        }
+
+        let resolvedPresentationRect = presentationRect.standardized
+        guard resolvedPresentationRect.width > 0,
+              resolvedPresentationRect.height > 0 else {
+            return resolvedContentRect
+        }
+
+        let resolvedPrimaryRect = primaryRect
+            .standardized
+            .intersection(resolvedPresentationRect)
+            .standardized
+        guard resolvedPrimaryRect.width > 0,
+              resolvedPrimaryRect.height > 0 else {
+            return resolvedContentRect
+        }
+
+        let scaleX = resolvedContentRect.width / resolvedPresentationRect.width
+        let scaleY = resolvedContentRect.height / resolvedPresentationRect.height
+        let mappedRect = CGRect(
+            x: resolvedContentRect.minX + (resolvedPrimaryRect.minX - resolvedPresentationRect.minX) * scaleX,
+            y: resolvedContentRect.minY + (resolvedPrimaryRect.minY - resolvedPresentationRect.minY) * scaleY,
+            width: resolvedPrimaryRect.width * scaleX,
+            height: resolvedPrimaryRect.height * scaleY
         )
+        let sanitizedRect = mappedRect
+            .intersection(resolvedContentRect)
+            .standardized
+        guard sanitizedRect.width > 0,
+              sanitizedRect.height > 0 else {
+            return resolvedContentRect
+        }
+        return sanitizedRect
     }
 
     func resolvedOutgoingContentRect(for frame: CapturedFrame) -> CGRect {
@@ -604,8 +655,16 @@ extension StreamContext {
         )
         guard fullFrameRect.width > 0, fullFrameRect.height > 0 else { return .zero }
 
-        if useVirtualDisplay, isAppStream, captureMode == .window {
-            return fullFrameRect
+        if useVirtualDisplay, isAppStream {
+            if captureMode == .window {
+                return fullFrameRect
+            }
+            let fixedCanvasContentRect = currentContentRect.intersection(fullFrameRect)
+            if captureMode == .display,
+               fixedCanvasContentRect.width > 0,
+               fixedCanvasContentRect.height > 0 {
+                return fixedCanvasContentRect
+            }
         }
 
         let candidate = frame.info.contentRect

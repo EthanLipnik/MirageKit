@@ -198,9 +198,9 @@ public extension MirageClientService {
                     decodedFPS: metrics.decodedFPS,
                     receivedFPS: metrics.receivedFPS,
                     droppedFrames: metrics.droppedFrames,
-                    presentedFPS: metrics.presentedFPS,
-                    uniquePresentedFPS: metrics.uniquePresentedFPS,
-                    renderBufferDepth: metrics.renderBufferDepth,
+                    submittedFPS: metrics.submittedFPS,
+                    uniqueSubmittedFPS: metrics.uniqueSubmittedFPS,
+                    pendingFrameCount: metrics.pendingFrameCount,
                     decodeHealthy: metrics.decodeHealthy
                 )
                 metricsStore.updateClientDecoderTelemetry(
@@ -369,7 +369,7 @@ public extension MirageClientService {
     }
 
     private func forceStopWindowStreamLocally(streamID: StreamID) async {
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
 
         metricsStore.clear(streamID: streamID)
@@ -411,7 +411,7 @@ public extension MirageClientService {
             controllersByStream[streamID] != nil ||
             registeredStreamIDs.contains(streamID)
 
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         desktopStreamStartTimeoutTask?.cancel()
         desktopStreamStartTimeoutTask = nil
         desktopStreamRequestStartTime = 0

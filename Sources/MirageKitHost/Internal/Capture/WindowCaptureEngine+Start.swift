@@ -364,7 +364,9 @@ extension WindowCaptureEngine {
                     display: resolvedConfig.display,
                     resolution: resolvedConfig.resolution,
                     sourceRect: resolvedConfig.sourceRect,
+                    destinationRect: resolvedConfig.destinationRect,
                     contentWindowID: resolvedConfig.windowID,
+                    includedWindows: resolvedConfig.includedWindows,
                     excludedWindows: resolvedConfig.excludedWindows,
                     showsCursor: resolvedConfig.showsCursor,
                     onFrame: onFrame,
@@ -419,7 +421,9 @@ extension WindowCaptureEngine {
         display: SCDisplay,
         resolution: CGSize? = nil,
         sourceRect: CGRect? = nil,
+        destinationRect: CGRect? = nil,
         contentWindowID: WindowID? = nil,
+        includedWindows: [SCWindow] = [],
         excludedWindows: [SCWindow] = [],
         showsCursor: Bool = true,
         onFrame: @escaping @Sendable (CapturedFrame) -> Void,
@@ -458,8 +462,10 @@ extension WindowCaptureEngine {
             outputScale: 1.0,
             resolution: resolution,
             sourceRect: sourceRect,
+            destinationRect: destinationRect,
             showsCursor: showsCursor,
             audioChannelCount: resolvedAudioChannelCount,
+            includedWindows: includedWindows,
             excludedWindows: excludedWindows
         )
         self.excludedWindows = excludedWindows
@@ -488,9 +494,11 @@ extension WindowCaptureEngine {
             streamConfig.captureResolution = .best
             MirageLogger.capture("HiDPI capture: scale=\(currentScaleFactor), forcing captureResolution=.best")
         }
-        if let sourceRect, !sourceRect.isEmpty {
-            streamConfig.sourceRect = sourceRect
-        }
+        Self.applyCaptureGeometry(
+            to: streamConfig,
+            sourceRect: sourceRect,
+            destinationRect: destinationRect
+        )
 
         // Frame rate
         streamConfig.minimumFrameInterval = resolvedMinimumFrameInterval()
@@ -526,18 +534,26 @@ extension WindowCaptureEngine {
         let capturedDisplayID = display.displayID
 
         // Create filter for the entire display
-        let filter = SCContentFilter(display: display, excludingWindows: excludedWindows)
+        let filter = Self.resolvedDisplayFilter(
+            display: display,
+            includedWindows: includedWindows,
+            excludedWindows: excludedWindows
+        )
         contentFilter = filter
 
+        let includedWindowIDs = includedWindows.map(\.windowID)
         if displayUsesExplicitResolution {
             MirageLogger
                 .capture(
-                    "Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID), sourceRect=\(String(describing: sourceRect))"
+                    "Starting display capture at \(currentWidth)x\(currentHeight) for display \(capturedDisplayID), " +
+                        "sourceRect=\(String(describing: sourceRect)), destinationRect=\(String(describing: destinationRect)), " +
+                        "includedWindows=\(includedWindowIDs)"
                 )
         } else {
             MirageLogger
                 .capture(
-                    "Starting display capture with .best (no explicit dimensions) for display \(capturedDisplayID)"
+                    "Starting display capture with .best (no explicit dimensions) for display \(capturedDisplayID), " +
+                        "destinationRect=\(String(describing: destinationRect)), includedWindows=\(includedWindowIDs)"
                 )
         }
 

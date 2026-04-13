@@ -162,9 +162,72 @@ actor WindowCaptureEngine {
         let outputScale: CGFloat
         let resolution: CGSize?
         let sourceRect: CGRect?
+        let destinationRect: CGRect?
         let showsCursor: Bool
         let audioChannelCount: Int?
+        let includedWindows: [SCWindow]
         let excludedWindows: [SCWindow]
+
+        init(
+            windowID: WindowID?,
+            applicationPID: pid_t?,
+            displayID: CGDirectDisplayID,
+            window: SCWindow?,
+            application: SCRunningApplication?,
+            display: SCDisplay,
+            outputScale: CGFloat,
+            resolution: CGSize?,
+            sourceRect: CGRect?,
+            destinationRect: CGRect? = nil,
+            showsCursor: Bool,
+            audioChannelCount: Int?,
+            includedWindows: [SCWindow] = [],
+            excludedWindows: [SCWindow] = []
+        ) {
+            self.windowID = windowID
+            self.applicationPID = applicationPID
+            self.displayID = displayID
+            self.window = window
+            self.application = application
+            self.display = display
+            self.outputScale = outputScale
+            self.resolution = resolution
+            self.sourceRect = sourceRect
+            self.destinationRect = destinationRect
+            self.showsCursor = showsCursor
+            self.audioChannelCount = audioChannelCount
+            self.includedWindows = includedWindows
+            self.excludedWindows = excludedWindows
+        }
+    }
+
+    nonisolated static func resolvedDisplayFilter(
+        display: SCDisplay,
+        includedWindows: [SCWindow],
+        excludedWindows: [SCWindow]
+    ) -> SCContentFilter {
+        if !includedWindows.isEmpty {
+            return SCContentFilter(display: display, including: includedWindows)
+        }
+        return SCContentFilter(display: display, excludingWindows: excludedWindows)
+    }
+
+    nonisolated static let captureBackgroundColor: CGColor = {
+        CGColor(gray: 0, alpha: 1)
+    }()
+
+    nonisolated static func applyCaptureGeometry(
+        to streamConfig: SCStreamConfiguration,
+        sourceRect: CGRect?,
+        destinationRect: CGRect?
+    ) {
+        if let sourceRect, !sourceRect.isEmpty {
+            streamConfig.sourceRect = sourceRect
+        }
+        if let destinationRect, !destinationRect.isEmpty {
+            streamConfig.destinationRect = destinationRect
+            streamConfig.backgroundColor = captureBackgroundColor
+        }
     }
 
     func setAdmissionDropper(_ dropper: (@Sendable () -> Bool)?) {
@@ -216,15 +279,21 @@ actor WindowCaptureEngine {
 
         let width = max(1, currentWidth)
         let height = max(1, currentHeight)
-        let filter = SCContentFilter(display: config.display, excludingWindows: config.excludedWindows)
+        let filter = Self.resolvedDisplayFilter(
+            display: config.display,
+            includedWindows: config.includedWindows,
+            excludedWindows: config.excludedWindows
+        )
         let screenshotConfiguration = SCStreamConfiguration()
         screenshotConfiguration.width = width
         screenshotConfiguration.height = height
         screenshotConfiguration.showsCursor = config.showsCursor
         screenshotConfiguration.colorSpaceName = captureColorSpaceName
-        if let sourceRect = config.sourceRect, !sourceRect.isEmpty {
-            screenshotConfiguration.sourceRect = sourceRect
-        }
+        Self.applyCaptureGeometry(
+            to: screenshotConfiguration,
+            sourceRect: config.sourceRect,
+            destinationRect: config.destinationRect
+        )
 
         let image: CGImage? = try? await withCheckedThrowingContinuation { (
             continuation: CheckedContinuation<CGImage, Error>

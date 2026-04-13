@@ -95,7 +95,7 @@ final class ClientController: MirageClientDelegate {
 
 ### SwiftUI Stream View
 
-`MirageStreamViewRepresentable` reads frames from `MirageFrameCache` and does not require SwiftUI state updates per frame.
+`MirageStreamViewRepresentable` presents the latest decoded frame through `MirageSampleBufferView` and does not require SwiftUI state updates per frame.
 
 ```swift
 import MirageKitClient

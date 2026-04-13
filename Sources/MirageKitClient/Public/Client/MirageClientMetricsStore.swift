@@ -12,9 +12,9 @@ import MirageKit
 public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var decodedFPS: Double
     public var receivedFPS: Double
-    public var presentedFPS: Double
-    public var uniquePresentedFPS: Double
-    public var renderBufferDepth: Int
+    public var submittedFPS: Double
+    public var uniqueSubmittedFPS: Double
+    public var pendingFrameCount: Int
     public var decodeHealthy: Bool
     public var clientDroppedFrames: UInt64
     public var hostEncodedFPS: Double
@@ -75,9 +75,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public init(
         decodedFPS: Double = 0,
         receivedFPS: Double = 0,
-        presentedFPS: Double = 0,
-        uniquePresentedFPS: Double = 0,
-        renderBufferDepth: Int = 0,
+        submittedFPS: Double = 0,
+        uniqueSubmittedFPS: Double = 0,
+        pendingFrameCount: Int = 0,
         decodeHealthy: Bool = true,
         clientDroppedFrames: UInt64 = 0,
         hostEncodedFPS: Double = 0,
@@ -117,9 +117,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     ) {
         self.decodedFPS = decodedFPS
         self.receivedFPS = receivedFPS
-        self.presentedFPS = presentedFPS
-        self.uniquePresentedFPS = uniquePresentedFPS
-        self.renderBufferDepth = renderBufferDepth
+        self.submittedFPS = submittedFPS
+        self.uniqueSubmittedFPS = uniqueSubmittedFPS
+        self.pendingFrameCount = pendingFrameCount
         self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
         self.hostEncodedFPS = hostEncodedFPS
@@ -170,18 +170,18 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         decodedFPS: Double,
         receivedFPS: Double,
         droppedFrames: UInt64,
-        presentedFPS: Double,
-        uniquePresentedFPS: Double,
-        renderBufferDepth: Int,
+        submittedFPS: Double,
+        uniqueSubmittedFPS: Double,
+        pendingFrameCount: Int,
         decodeHealthy: Bool
     ) {
         lock.lock()
         var snapshot = metricsByStream[streamID] ?? MirageClientMetricsSnapshot()
         snapshot.decodedFPS = decodedFPS
         snapshot.receivedFPS = receivedFPS
-        snapshot.presentedFPS = presentedFPS
-        snapshot.uniquePresentedFPS = uniquePresentedFPS
-        snapshot.renderBufferDepth = max(0, renderBufferDepth)
+        snapshot.submittedFPS = submittedFPS
+        snapshot.uniqueSubmittedFPS = uniqueSubmittedFPS
+        snapshot.pendingFrameCount = max(0, pendingFrameCount)
         snapshot.decodeHealthy = decodeHealthy
         snapshot.clientDroppedFrames = droppedFrames
         metricsByStream[streamID] = snapshot

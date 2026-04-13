@@ -695,12 +695,34 @@ public extension MirageHostService {
         colorSpace: MirageColorSpace
     )
     async throws -> SharedVirtualDisplayManager.DisplaySnapshot {
+        var virtualDisplaySetupGuardToken: UUID?
+        defer {
+            if let token = virtualDisplaySetupGuardToken {
+                Task { @MainActor [weak self] in
+                    await self?.cancelVirtualDisplaySetupGuard(
+                        token,
+                        reason: "app_stream_shared_display_aborted"
+                    )
+                }
+            }
+        }
+
+        virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
+            reason: "app_stream_shared_display"
+        )
         let snapshot = try await SharedVirtualDisplayManager.shared.acquireAppStreamDisplay(
             preset: preset,
             refreshRate: refreshRate,
             colorSpace: colorSpace
         )
         await setupDisplayMirroring(targetDisplayID: snapshot.displayID)
+        if let token = virtualDisplaySetupGuardToken {
+            await completeVirtualDisplaySetupGuard(
+                token,
+                reason: "app_stream_shared_display"
+            )
+            virtualDisplaySetupGuardToken = nil
+        }
         return snapshot
     }
 

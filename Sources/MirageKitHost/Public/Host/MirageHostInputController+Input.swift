@@ -71,7 +71,7 @@ extension MirageHostInputController {
                     app: window.application,
                     trigger: .windowFocus
                 )
-                executeHostSystemAction(request, domain: .session)
+                executeHostSystemAction(request)
             case let .keyDown(e):
                 performWindowActivation(
                     windowID: window.id,

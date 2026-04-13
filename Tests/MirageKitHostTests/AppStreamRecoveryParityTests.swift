@@ -36,8 +36,8 @@ struct AppStreamRecoveryParityTests {
         #expect(plan.settleDelayMilliseconds == 350)
     }
 
-    @Test("Window streaming preparation avoids settling when no state change is required")
-    func windowStreamingPreparationSkipsNoOpPreparation() {
+    @Test("Window streaming preparation adds a short settle after plain activation")
+    func windowStreamingPreparationAddsActivationSettleDelay() {
         let plan = MirageHostService.windowStreamingPreparationPlan(
             isOnScreen: true,
             isFullScreen: false
@@ -45,7 +45,7 @@ struct AppStreamRecoveryParityTests {
 
         #expect(plan.shouldRestoreWindow == false)
         #expect(plan.shouldExitFullScreen == false)
-        #expect(plan.settleDelayMilliseconds == 0)
+        #expect(plan.settleDelayMilliseconds == 150)
     }
 
     @MainActor

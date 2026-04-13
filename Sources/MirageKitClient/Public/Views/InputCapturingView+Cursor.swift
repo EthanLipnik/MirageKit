@@ -89,7 +89,7 @@ extension InputCapturingView {
 extension InputCapturingView: UIPointerInteractionDelegate {
     public func pointerInteraction(_: UIPointerInteraction, styleFor region: UIPointerRegion) -> UIPointerStyle? {
         // Return appropriate pointer style based on host cursor state
-        if cursorLockEnabled || cursorHiddenForTyping {
+        if hideSystemCursor || cursorLockEnabled || cursorHiddenForTyping {
             return .hidden()
         }
         guard syntheticCursorEnabled else { return nil }

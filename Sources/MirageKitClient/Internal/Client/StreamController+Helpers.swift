@@ -94,20 +94,20 @@ extension StreamController {
     }
 
     @discardableResult
-    func syncPresentationProgressFromFrameCache(now: CFAbsoluteTime? = nil) -> Bool {
-        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+    func syncPresentationProgressFromFrameStore(now: CFAbsoluteTime? = nil) -> Bool {
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
         let referenceNow = now ?? currentTime()
 
         if snapshot.sequence > lastPresentedSequenceObserved {
             lastPresentedSequenceObserved = snapshot.sequence
-            lastPresentedProgressTime = snapshot.presentedTime > 0 ? snapshot.presentedTime : referenceNow
+            lastPresentedProgressTime = snapshot.submittedTime > 0 ? snapshot.submittedTime : referenceNow
             return true
         }
 
         if lastPresentedProgressTime == 0 {
-            if snapshot.presentedTime > 0 {
+            if snapshot.submittedTime > 0 {
                 lastPresentedSequenceObserved = max(lastPresentedSequenceObserved, snapshot.sequence)
-                lastPresentedProgressTime = snapshot.presentedTime
+                lastPresentedProgressTime = snapshot.submittedTime
                 return true
             }
 
@@ -175,7 +175,7 @@ extension StreamController {
         mode: FirstPresentedFrameAwaitMode = .startup
     ) async {
         guard !hasTriggeredTerminalStartupFailure else { return }
-        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
         awaitingFirstPresentedFrame = true
         firstPresentedFrameAwaitMode = mode
         firstPresentedFrameBaselineSequence = snapshot.sequence
@@ -266,7 +266,7 @@ extension StreamController {
         if !hasDecodedFirstFrame {
             hasDecodedFirstFrame = true
         }
-        syncPresentationProgressFromFrameCache(now: now)
+        syncPresentationProgressFromFrameStore(now: now)
         await setClientRecoveryStatus(.idle)
         guard shouldNotify, let handler = onFirstFramePresented else { return }
         await MainActor.run {
@@ -288,7 +288,7 @@ extension StreamController {
         while !Task.isCancelled {
             guard awaitingFirstPresentedFrame else { return }
 
-            let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
+            let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
             if snapshot.sequence > firstPresentedFrameBaselineSequence {
                 await markFirstFramePresented()
                 return
@@ -313,14 +313,14 @@ extension StreamController {
 
         firstPresentedFrameLastWaitLogTime = now
         let elapsedMs = Int((now - firstPresentedFrameWaitStartTime) * 1000)
-        let pendingDepth = MirageFrameCache.shared.queueDepth(for: streamID)
+        let pendingDepth = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
         let awaitingKeyframe = reassembler.isAwaitingKeyframe()
         let reason = firstPresentedFrameWaitReason ?? "unknown"
         MirageLogger
             .client(
                 "Still waiting for first presented frame (\(reason)) for stream \(streamID) (+\(elapsedMs)ms, " +
                     "baseline=\(firstPresentedFrameBaselineSequence), latest=\(latestSequence), " +
-                    "queueDepth=\(pendingDepth), awaitingKeyframe=\(awaitingKeyframe))"
+                    "pendingFrames=\(pendingDepth), awaitingKeyframe=\(awaitingKeyframe))"
             )
     }
 
@@ -598,7 +598,7 @@ extension StreamController {
         let keyframeStarved = reassembler.isAwaitingKeyframe()
 
         if hasPresentedFirstFrame {
-            syncPresentationProgressFromFrameCache(now: now)
+            syncPresentationProgressFromFrameStore(now: now)
             guard lastPresentedProgressTime > 0 else { return false }
             let stalledPresentation = now - lastPresentedProgressTime >= Self.freezeTimeout
             guard stalledPresentation else { return false }
@@ -757,7 +757,7 @@ extension StreamController {
         guard hasPresentedFirstFrame,
               presentationTier == .activeLive else { return }
         let now = currentTime()
-        syncPresentationProgressFromFrameCache(now: now)
+        syncPresentationProgressFromFrameStore(now: now)
         guard lastPresentedProgressTime > 0,
               now - lastPresentedProgressTime >= Self.freezeTimeout else { return }
         guard reassembler.isAwaitingKeyframe() else { return }

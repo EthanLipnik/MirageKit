@@ -21,7 +21,7 @@ public final class MirageStreamViewCoordinator {
     var onDictationStateChanged: ((Bool) -> Void)?
     var onDictationError: ((String) -> Void)?
     var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
-    weak var metalView: MirageMetalView?
+    weak var sampleBufferView: MirageSampleBufferView?
     private var representableUpdateCount: UInt64 = 0
     private var representableUpdateLogStreamID: StreamID?
     private var lastRepresentableUpdateLogTime: CFAbsoluteTime = 0

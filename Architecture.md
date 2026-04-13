@@ -157,7 +157,7 @@ Desktop cursor presentation is also session-owned host policy for desktop stream
 
 - `Client`
   the host keeps `ScreenCaptureKit` cursor capture disabled and the client uses its own local cursor presentation
-- `Emulated`
+- `Simulated`
   the host keeps `ScreenCaptureKit` cursor capture disabled and the client renders Mirage's software cursor presentation
 - `Host`
   the host sets `showsCursor = true` on desktop display capture and keeps that value sticky across resize, refresh-rate, display-switch, and encoder reconfiguration updates
@@ -166,7 +166,7 @@ Runtime cursor-presentation overrides do not restart the desktop stream. The hos
 
 App-stream visible slots are lifecycle-bound to the app session rather than permanently bound to the first discovered host window ID. During initial startup, the host keeps trying to fill each visible slot until the startup deadline expires, re-evaluating the app's current eligible primary windows after launcher, document-picker, or first-window churn. After startup, the host preserves the current streamed primary window until that window closes or otherwise fails out of the slot lifecycle, at which point the slot-replacement path can rebind the same stream identity to another eligible primary window from the same app.
 
-The host keeps one shared app-stream virtual display mirrored from the current physical-display set, uses normal window activation and ownership switching to decide which app window is currently frontmost, and captures app windows in place. The wire/session model is window-centric: the active visible slot is the live stream, while other visible slots use the passive snapshot tier.
+The host keeps one shared app-stream virtual display mirrored from the current physical-display set. App-stream capture is display-based, not `desktopIndependentWindow`-based: each visible slot resolves a window cluster made of the selected primary window plus attached supplementary descendants, applies a display filter that includes only those windows, and crops that cluster with `sourceRect`. The encoded canvas stays fixed for the life of the slot stream; live app resize and supplementary-window churn update only the display filter plus `sourceRect` / `destinationRect`, so the client receives a stable encoded stream with a moving `contentRect` instead of a resize-driven encoder reset and recovery keyframe. The wire/session model is still window-centric: the active visible slot is the live stream, while other visible slots use the passive snapshot tier.
 
 Connection approval is also host-owned policy. `MirageHostService` distinguishes two control-plane origins:
 
@@ -223,8 +223,8 @@ Its responsibilities include:
 
 Client presentation is split from transport:
 
-- `MirageFrameCache` and the decode pipeline own frame ingestion
-- `MirageStreamViewRepresentable` owns presentation through `AVSampleBufferDisplayLayer`
+- `MirageRenderStreamStore` and the decode pipeline own latest-frame ingestion
+- `MirageStreamViewRepresentable` owns presentation through `MirageSampleBufferView` and `AVSampleBufferDisplayLayer`
 - `MirageStreamContentView` bridges presentation, focus, resize, and input capture for app UI
 
 That split keeps high-frequency media state out of SwiftUI update paths.
@@ -237,7 +237,7 @@ Desktop cursor presentation is resolved on the client from a shared `MirageDeskt
 
 - `source = client`
   suppress host cursor capture, use the platform cursor presentation on the client, and keep cursor-position updates available so the client can mirror host cursor state when needed
-- `source = emulated`
+- `source = simulated`
   suppress host cursor capture, render Mirage's software cursor presentation, always lock the local cursor for secondary-display desktop streams, and optionally lock mirrored desktop streams through `lockClientCursorWhenUsingMirageCursor`
 - `source = host`
   suppress Mirage's synthetic cursor presentation, rely on the captured host cursor in the video stream, and use `lockClientCursorWhenUsingHostCursor` as the client-lock policy

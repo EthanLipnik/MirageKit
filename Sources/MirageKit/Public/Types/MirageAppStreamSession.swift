@@ -151,6 +151,9 @@ public struct WindowStreamInfo: Sendable {
     /// Whether the host activity governor currently treats the stream as active.
     public var isActive: Bool
 
+    /// Window IDs currently included in the captured display-filter cluster for this visible slot.
+    public var capturedClusterWindowIDs: [WindowID]
+
     /// When this stream started
     public let startTime: Date
 
@@ -163,6 +166,7 @@ public struct WindowStreamInfo: Sendable {
         isResizable: Bool = true,
         isPaused: Bool = false,
         isActive: Bool = true,
+        capturedClusterWindowIDs: [WindowID] = [],
         startTime: Date = Date()
     ) {
         self.streamID = streamID
@@ -173,6 +177,7 @@ public struct WindowStreamInfo: Sendable {
         self.isResizable = isResizable
         self.isPaused = isPaused
         self.isActive = isActive
+        self.capturedClusterWindowIDs = capturedClusterWindowIDs
         self.startTime = startTime
     }
 }

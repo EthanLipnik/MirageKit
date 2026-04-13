@@ -11,7 +11,7 @@ import AppKit
 import QuartzCore
 
 /// Invisible scroll view that captures native trackpad scroll physics on macOS.
-/// The actual content (Metal view) stays pinned while scroll events are forwarded
+/// The actual content view stays pinned while scroll events are forwarded
 /// to the host with native momentum and bounce physics.
 final class ScrollPhysicsCapturingNSView: NSView {
     struct CursorSystemHooks {
@@ -65,6 +65,18 @@ final class ScrollPhysicsCapturingNSView: NSView {
     /// Cursor position store for desktop cursor sync.
     var cursorPositionStore: MirageClientCursorPositionStore? {
         didSet {
+            refreshCursorUpdates(force: true)
+        }
+    }
+
+    /// Whether the local system cursor should be hidden while streaming.
+    var hideSystemCursor: Bool = false {
+        didSet {
+            guard hideSystemCursor != oldValue else { return }
+            updateSystemCursorVisibility()
+            updateLockedCursorViewVisibility()
+            updateLockedCursorViewPosition()
+            invalidateHostCursorRects()
             refreshCursorUpdates(force: true)
         }
     }
@@ -271,6 +283,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private var shouldMirrorHostCursorAppearanceToSystemCursor: Bool {
         guard isInputProcessingActive else { return false }
+        guard !hideSystemCursor else { return false }
         return !cursorLockEnabled || !syntheticCursorEnabled
     }
 
@@ -360,7 +373,8 @@ final class ScrollPhysicsCapturingNSView: NSView {
 
     private var shouldHideSystemCursor: Bool {
         guard isInputProcessingActive else { return false }
-        return (cursorLockEnabled && syntheticCursorEnabled) ||
+        return hideSystemCursor ||
+            (cursorLockEnabled && syntheticCursorEnabled) ||
             cursorHiddenForTyping ||
             (shouldMirrorHostCursorPositionToSystemCursor && !mirroredSystemCursorVisible)
     }
@@ -378,7 +392,9 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func updateLockedCursorViewVisibility() {
-        let shouldShow = cursorLockEnabled && syntheticCursorEnabled && !cursorHiddenForTyping
+        let shouldShow = syntheticCursorEnabled &&
+            !cursorHiddenForTyping &&
+            ((cursorLockEnabled && lockedCursorVisible) || (hideSystemCursor && mirroredSystemCursorVisible))
         lockedCursorView.isHidden = !shouldShow
     }
 
@@ -517,7 +533,7 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func refreshMirroredSystemCursorIfNeeded(force: Bool = false) -> Bool {
-        guard shouldMirrorHostCursorAppearanceToSystemCursor, let streamID else { return false }
+        guard isInputProcessingActive, let streamID else { return false }
 
         let positionSnapshot = cursorPositionStore?.snapshot(for: streamID)
         let cursorSnapshot = cursorStore?.snapshot(for: streamID)
@@ -625,11 +641,11 @@ final class ScrollPhysicsCapturingNSView: NSView {
     }
 
     private func updateLockedCursorViewPosition() {
-        guard cursorLockEnabled, !lockedCursorView.isHidden else { return }
+        guard !lockedCursorView.isHidden else { return }
         let contentRect = resolvedDesktopPresentationContentRect()
         guard contentRect.width > 0, contentRect.height > 0 else { return }
         let point = Self.localPoint(
-            forNormalizedCursorPosition: lockedCursorPosition,
+            forNormalizedCursorPosition: cursorLockEnabled ? lockedCursorPosition : mirroredSystemCursorPosition,
             in: bounds,
             contentRect: contentRect
         )

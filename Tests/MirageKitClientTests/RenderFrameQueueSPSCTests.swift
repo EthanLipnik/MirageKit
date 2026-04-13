@@ -4,206 +4,161 @@
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Coverage for per-stream render queue behavior through MirageFrameCache.
+//  Coverage for latest-frame render store behavior.
 //
 
 @testable import MirageKitClient
+import CoreMedia
 import CoreVideo
 import Foundation
 import Testing
 
 #if os(macOS)
-@Suite("Render Frame Queue SPSC")
+@Suite("Render Stream Store")
 struct RenderFrameQueueSPSCTests {
-    @Test("Frames dequeue in FIFO order")
-    func fifoDequeueOrder() {
+    @Test("Newest pending frame overwrites older unsent frame")
+    func newestPendingFrameOverwritesOlderFrame() {
         let streamID: StreamID = 301
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
-        for decodeTime in [1.0, 2.0, 3.0] {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
-                contentRect: .zero,
-                decodeTime: decodeTime,
-                metalTexture: nil,
-                texture: nil,
-                for: streamID
-            )
-        }
+        let first = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 1,
+            presentationTime: .zero,
+            for: streamID
+        )
+        let second = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
+            contentRect: .zero,
+            decodeTime: 2,
+            presentationTime: CMTime(seconds: 1, preferredTimescale: 600),
+            for: streamID
+        )
 
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 1)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 2)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 3)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID) == nil)
+        #expect(first.overwrittenPendingFrames == 0)
+        #expect(second.overwrittenPendingFrames == 1)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 1)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamID)?.sequence == 2)
     }
 
-    @Test("Latest-frame presentation trims queue to newest frame")
-    func latestFramePresentationTrimsQueue() {
+    @Test("Taking a pending frame returns only the newest frame")
+    func takePendingFrameReturnsNewestOnly() {
         let streamID: StreamID = 302
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
         for index in 0 ..< 5 {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: 1 + Double(index),
-                metalTexture: nil,
-                texture: nil,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
         }
 
-        let presented = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
-        #expect(presented?.sequence == 5)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
+        let frame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID)
+        #expect(frame?.sequence == 5)
+        #expect(MirageRenderStreamStore.shared.takePendingFrame(for: streamID) == nil)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
     }
 
-    @Test("Buffered presentation keeps newest bounded window")
-    func bufferedPresentationBoundedWindow() {
+    @Test("Submission snapshot does not regress on older sequence marks")
+    func submissionSnapshotDoesNotRegress() {
         let streamID: StreamID = 303
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
-        for index in 0 ..< 7 {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
-                contentRect: .zero,
-                decodeTime: 1 + Double(index),
-                metalTexture: nil,
-                texture: nil,
-                for: streamID
-            )
-        }
-
-        let presented = MirageFrameCache.shared.dequeueForPresentation(
-            for: streamID,
-            policy: .buffered(maxDepth: 3)
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: 3,
+            mappedPresentationTime: CMTime(seconds: 3, preferredTimescale: 600),
+            for: streamID
         )
-        #expect(presented?.sequence == 5)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 2)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 6)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 7)
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: 2,
+            mappedPresentationTime: CMTime(seconds: 2, preferredTimescale: 600),
+            for: streamID
+        )
+
+        let snapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        #expect(snapshot.sequence == 3)
+        #expect(CMTimeCompare(snapshot.mappedPresentationTime, CMTime(seconds: 3, preferredTimescale: 600)) == 0)
     }
 
-    @Test("Queue overflow drops oldest entries at fixed capacity")
-    func overflowDropsOldestEntries() {
+    @Test("Render telemetry reports submitted cadence and resets per-snapshot counters")
+    func renderTelemetrySnapshot() {
         let streamID: StreamID = 304
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
+        MirageRenderStreamStore.shared.clear(for: streamID)
+        defer { MirageRenderStreamStore.shared.clear(for: streamID) }
 
-        var observedOverflowDrops = 0
-        for index in 0 ..< 30 {
-            let result = MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
+        MirageRenderStreamStore.shared.setTargetFPS(for: streamID, targetFPS: 60)
+        for index in 0 ..< 3 {
+            _ = MirageRenderStreamStore.shared.enqueue(
+                pixelBuffer: makePixelBuffer(),
                 contentRect: .zero,
-                decodeTime: 1 + Double(index),
-                metalTexture: nil,
-                texture: nil,
+                decodeTime: Double(index),
+                presentationTime: CMTime(seconds: Double(index), preferredTimescale: 600),
                 for: streamID
             )
-            observedOverflowDrops += result.emergencyDrops
         }
+        MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+        MirageRenderStreamStore.shared.markSubmitted(
+            sequence: 3,
+            mappedPresentationTime: CMTime(seconds: 3, preferredTimescale: 600),
+            for: streamID
+        )
 
-        #expect(observedOverflowDrops >= 6)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 24)
-        #expect(MirageFrameCache.shared.dequeue(for: streamID)?.sequence == 7)
+        let telemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(telemetry.decodeFPS >= 1)
+        #expect(telemetry.submittedFPS >= 1)
+        #expect(telemetry.uniqueSubmittedFPS >= 1)
+        #expect(telemetry.pendingFrameCount == 1)
+        #expect(telemetry.overwrittenPendingFrames == 2)
+        #expect(telemetry.displayLayerNotReadyCount == 1)
+        #expect(telemetry.targetFPS == 60)
+
+        let secondSnapshot = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        #expect(secondSnapshot.overwrittenPendingFrames == 0)
+        #expect(secondSnapshot.displayLayerNotReadyCount == 0)
     }
 
-    @Test("Per-stream queues stay isolated")
+    @Test("Per-stream pending frames stay isolated")
     func perStreamIsolation() {
         let streamA: StreamID = 305
         let streamB: StreamID = 306
-        MirageFrameCache.shared.clear(for: streamA)
-        MirageFrameCache.shared.clear(for: streamB)
+        MirageRenderStreamStore.shared.clear(for: streamA)
+        MirageRenderStreamStore.shared.clear(for: streamB)
         defer {
-            MirageFrameCache.shared.clear(for: streamA)
-            MirageFrameCache.shared.clear(for: streamB)
+            MirageRenderStreamStore.shared.clear(for: streamA)
+            MirageRenderStreamStore.shared.clear(for: streamB)
         }
 
-        MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 1,
-            metalTexture: nil,
-            texture: nil,
+            presentationTime: .zero,
             for: streamA
         )
-        MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 2,
-            metalTexture: nil,
-            texture: nil,
+            presentationTime: CMTime(seconds: 2, preferredTimescale: 600),
             for: streamA
         )
-        MirageFrameCache.shared.enqueue(
-            makePixelBuffer(),
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
             decodeTime: 1,
-            metalTexture: nil,
-            texture: nil,
+            presentationTime: .zero,
             for: streamB
         )
 
-        #expect(MirageFrameCache.shared.dequeue(for: streamB)?.sequence == 1)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamA) == 2)
-        #expect(MirageFrameCache.shared.dequeue(for: streamA)?.sequence == 1)
-    }
-
-    @Test("Presentation snapshot reflects markPresented updates")
-    func presentationSnapshotUpdates() {
-        let streamID: StreamID = 307
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
-
-        for decodeTime in [1.0, 2.0, 3.0] {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
-                contentRect: .zero,
-                decodeTime: decodeTime,
-                metalTexture: nil,
-                texture: nil,
-                for: streamID
-            )
-        }
-
-        MirageFrameCache.shared.markPresented(sequence: 2, for: streamID)
-        let snapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
-
-        #expect(snapshot.sequence == 2)
-        #expect(snapshot.presentedTime > 0)
-    }
-
-    @Test("Render telemetry reports decode and presentation cadence")
-    func renderTelemetrySnapshot() {
-        let streamID: StreamID = 308
-        MirageFrameCache.shared.clear(for: streamID)
-        defer { MirageFrameCache.shared.clear(for: streamID) }
-
-        MirageFrameCache.shared.setTargetFPS(60, for: streamID)
-        for decodeTime in [1.0, 1.01, 1.02] {
-            MirageFrameCache.shared.enqueue(
-                makePixelBuffer(),
-                contentRect: .zero,
-                decodeTime: decodeTime,
-                metalTexture: nil,
-                texture: nil,
-                for: streamID
-            )
-        }
-
-        let presented = MirageFrameCache.shared.dequeueForPresentation(for: streamID, policy: .latest)
-        if let presented {
-            MirageFrameCache.shared.markPresented(sequence: presented.sequence, for: streamID)
-        }
-
-        let telemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)
-        #expect(telemetry.decodeFPS >= 1)
-        #expect(telemetry.presentedFPS >= 1)
-        #expect(telemetry.uniquePresentedFPS >= 1)
-        #expect(telemetry.targetFPS == 60)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamA)?.sequence == 2)
+        #expect(MirageRenderStreamStore.shared.peekPendingFrame(for: streamB)?.sequence == 1)
     }
 
     private func makePixelBuffer() -> CVPixelBuffer {

@@ -17,7 +17,7 @@ struct AudioSyncDelayPolicyTests {
     @Test("Runtime policy does not add sync delay")
     func runtimePolicyNoExtraDelay() {
         let snapshot = MirageClientMetricsSnapshot(
-            renderBufferDepth: 3,
+            pendingFrameCount: 3,
             decodeHealthy: false,
             hostTargetFrameRate: 60
         )
@@ -33,7 +33,7 @@ struct AudioSyncDelayPolicyTests {
     @Test("Healthy decode keeps sync delay at zero")
     func healthyDecodeNoExtraDelay() {
         let snapshot = MirageClientMetricsSnapshot(
-            renderBufferDepth: 3,
+            pendingFrameCount: 3,
             decodeHealthy: true,
             hostTargetFrameRate: 60
         )

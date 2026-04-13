@@ -172,9 +172,9 @@ actor StreamController {
         let decodedFPS: Double
         let receivedFPS: Double
         let droppedFrames: UInt64
-        let presentedFPS: Double
-        let uniquePresentedFPS: Double
-        let renderBufferDepth: Int
+        let submittedFPS: Double
+        let uniqueSubmittedFPS: Double
+        let pendingFrameCount: Int
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
         let decoderOutputPixelFormat: String?
@@ -413,7 +413,7 @@ actor StreamController {
     /// Called when a frame is decoded (for delegate notification)
     /// This callback notifies AppState that a frame was decoded for UI state tracking.
     /// Does NOT pass the pixel buffer (CVPixelBuffer isn't Sendable).
-    /// The delegate should read from MirageFrameCache if it needs the actual frame.
+    /// The delegate should read from MirageRenderStreamStore if it needs the actual frame.
     private(set) var onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)?
 
     /// Called when the first frame is decoded for a stream.
@@ -517,9 +517,9 @@ actor StreamController {
         hasTriggeredTerminalStartupFailure = false
         await setClientRecoveryStatus(.idle)
         stopFreezeMonitor()
-        let presentationSnapshot = MirageFrameCache.shared.presentationSnapshot(for: streamID)
-        lastPresentedSequenceObserved = presentationSnapshot.sequence
-        lastPresentedProgressTime = presentationSnapshot.presentedTime
+        let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+        lastPresentedSequenceObserved = submissionSnapshot.sequence
+        lastPresentedProgressTime = submissionSnapshot.submittedTime
 
         // Set up error recovery - request keyframe when decode errors exceed threshold
         await decoder.setErrorThresholdHandler { [weak self] in
@@ -545,13 +545,11 @@ actor StreamController {
             let decodeTime = CFAbsoluteTimeGetCurrent()
             let handledByUpscaler = false
             if !handledByUpscaler {
-                MirageFrameCache.shared.store(
-                    pixelBuffer,
+                _ = MirageRenderStreamStore.shared.enqueue(
+                    pixelBuffer: pixelBuffer,
                     contentRect: contentRect,
                     decodeTime: decodeTime,
                     presentationTime: presentationTime,
-                    metalTexture: nil,
-                    texture: nil,
                     for: capturedStreamID
                 )
             }
@@ -1001,7 +999,7 @@ actor StreamController {
         lastDecodeErrorLogTime = 0
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         await decoder.setErrorThresholdHandler {}
         await decoder.setDimensionChangeHandler {}
         await decoder.stopDecoding()
@@ -1030,13 +1028,13 @@ actor StreamController {
 
     private func dispatchMetrics() async {
         let now = currentTime()
-        let presentationProgressed = syncPresentationProgressFromFrameCache(now: now)
+        let presentationProgressed = syncPresentationProgressFromFrameStore(now: now)
         if presentationProgressed, hasPresentedFirstFrame {
             await clearTransientRecoveryStateAfterPresentationProgress()
         }
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
-        let renderTelemetry = MirageFrameCache.shared.renderTelemetrySnapshot(for: streamID)
+        let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
         evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
         await evaluateDecodeSubmissionLimit(
             decodedFPS: snapshot.decodedFPS,
@@ -1051,9 +1049,9 @@ actor StreamController {
             decodedFPS: snapshot.decodedFPS,
             receivedFPS: snapshot.receivedFPS,
             droppedFrames: droppedFrames,
-            presentedFPS: renderTelemetry.presentedFPS,
-            uniquePresentedFPS: renderTelemetry.uniquePresentedFPS,
-            renderBufferDepth: renderTelemetry.queueDepth,
+            submittedFPS: renderTelemetry.submittedFPS,
+            uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
+            pendingFrameCount: renderTelemetry.pendingFrameCount,
             decodeHealthy: renderTelemetry.decodeHealthy,
             activeJitterHoldMs: adaptiveJitterHoldMs,
             decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),

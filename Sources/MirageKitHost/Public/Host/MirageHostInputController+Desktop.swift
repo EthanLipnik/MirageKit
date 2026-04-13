@@ -103,7 +103,7 @@ extension MirageHostInputController {
             case let .scrollWheel(e):
                 injectDesktopScrollEvent(e, bounds: bounds)
             case let .hostSystemAction(request):
-                executeHostSystemAction(request, domain: .hid)
+                executeHostSystemAction(request)
             case let .keyDown(e):
                 injectKeyEvent(isKeyDown: true, e, domain: .hid, app: nil)
             case let .keyUp(e):

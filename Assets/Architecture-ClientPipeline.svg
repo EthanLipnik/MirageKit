@@ -85,13 +85,13 @@
     <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
     <rect x="22" y="24" width="20" height="16" rx="2" class="icon" />
     <path d="M 26 24 v -4 h 12 v 4" class="icon" />
-    <text x="64" y="37" class="text text-bold">MirageFrameCache</text>
+    <text x="64" y="37" class="text text-bold">MirageRenderStreamStore</text>
   </g>
   <g transform="translate(1700, 110)">
     <rect width="220" height="64" rx="12" class="box-inner" />
     <rect x="12" y="12" width="40" height="40" rx="10" class="icon-bg" />
     <path d="M 20 26 h 24 v 14 h -24 z M 28 40 v 4 M 36 40 v 4 M 24 44 h 16" class="icon" />
-    <text x="64" y="37" class="text text-bold">MirageMetalView</text>
+    <text x="64" y="37" class="text text-bold">MirageSampleBufferView</text>
   </g>
 
   <!-- Connections -->

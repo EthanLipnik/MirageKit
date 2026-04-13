@@ -72,9 +72,10 @@ struct MirageClientAudioSessionCoordinatorTests {
         let driver = RecordingAudioSessionDriver(isApplicationActive: false)
         let coordinator = MirageClientAudioSessionCoordinator(driver: driver)
 
-        Task {
+        Task.detached {
             try? await Task.sleep(for: .milliseconds(150))
             driver.isApplicationActiveValue = true
+            await coordinator.handleApplicationDidBecomeActive()
         }
 
         #expect(await coordinator.requestDictationSession())

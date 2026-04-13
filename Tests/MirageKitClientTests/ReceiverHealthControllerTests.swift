@@ -238,8 +238,8 @@ struct ReceiverHealthControllerTests {
         snapshot.hostEncodedFPS = 43
         snapshot.receivedFPS = 43
         snapshot.decodedFPS = 43
-        snapshot.presentedFPS = 43
-        snapshot.uniquePresentedFPS = 43
+        snapshot.submittedFPS = 43
+        snapshot.uniqueSubmittedFPS = 43
 
         _ = controller.advance(
             snapshots: [snapshot],
@@ -264,8 +264,8 @@ struct ReceiverHealthControllerTests {
         snapshot.hostEncodedFPS = 60
         snapshot.receivedFPS = 58
         snapshot.decodedFPS = 58
-        snapshot.presentedFPS = 58
-        snapshot.uniquePresentedFPS = 58
+        snapshot.submittedFPS = 58
+        snapshot.uniqueSubmittedFPS = 58
 
         _ = controller.advance(
             snapshots: [snapshot],
@@ -365,9 +365,9 @@ struct ReceiverHealthControllerTests {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: 60,
             receivedFPS: 60,
-            presentedFPS: 60,
-            uniquePresentedFPS: 60,
-            renderBufferDepth: 0,
+            submittedFPS: 60,
+            uniqueSubmittedFPS: 60,
+            pendingFrameCount: 0,
             decodeHealthy: true,
             hostActiveQuality: activeQuality,
             hostTargetFrameRate: 60,
@@ -403,8 +403,8 @@ struct ReceiverHealthControllerTests {
     private func decodeStalledButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.decodedFPS = 0
-        snapshot.presentedFPS = 0
-        snapshot.uniquePresentedFPS = 0
+        snapshot.submittedFPS = 0
+        snapshot.uniqueSubmittedFPS = 0
         snapshot.decodeHealthy = false
         return snapshot
     }

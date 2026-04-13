@@ -36,8 +36,8 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.receivedFPS = 42
         snapshot.decodedFPS = 42
-        snapshot.presentedFPS = 42
-        snapshot.uniquePresentedFPS = 42
+        snapshot.submittedFPS = 42
+        snapshot.uniqueSubmittedFPS = 42
         snapshot.hostSendQueueBytes = 1_200_000
         snapshot.hostSendStartDelayAverageMs = 3
 
@@ -76,8 +76,8 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = baselineSnapshot()
         snapshot.decodeHealthy = false
         snapshot.decodedFPS = 38
-        snapshot.presentedFPS = 38
-        snapshot.uniquePresentedFPS = 38
+        snapshot.submittedFPS = 38
+        snapshot.uniqueSubmittedFPS = 38
 
         #expect(snapshot.bottleneckKind == .decodeBound)
     }
@@ -98,9 +98,9 @@ struct MirageStreamBottleneckKindTests {
         var snapshot = MirageClientMetricsSnapshot(
             decodedFPS: 60,
             receivedFPS: 60,
-            presentedFPS: 60,
-            uniquePresentedFPS: 60,
-            renderBufferDepth: 0,
+            submittedFPS: 60,
+            uniqueSubmittedFPS: 60,
+            pendingFrameCount: 0,
             decodeHealthy: true,
             hostEncodedFPS: 60,
             hostActiveQuality: 0.85,

@@ -71,9 +71,15 @@ extension WindowCaptureEngine {
                     outputScale: config.outputScale,
                     resolution: config.resolution,
                     sourceRect: config.sourceRect,
+                    destinationRect: config.destinationRect,
                     showsCursor: config.showsCursor,
                     audioChannelCount: config.audioChannelCount,
-                    excludedWindows: config.excludedWindows
+                    includedWindows: config.includedWindows.compactMap { existingWindow in
+                        content.windows.first(where: { $0.windowID == existingWindow.windowID })
+                    },
+                    excludedWindows: config.excludedWindows.compactMap { existingWindow in
+                        content.windows.first(where: { $0.windowID == existingWindow.windowID })
+                    }
                 )
 
                 if hasResolvedDisplay, hasResolvedWindowTargets {

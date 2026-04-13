@@ -26,9 +26,4 @@ struct RenderModePolicyTests {
         #expect(MirageRenderModePolicy.healthyDecodeRatio == 0.95)
         #expect(MirageRenderModePolicy.stressedDecodeRatio == 0.80)
     }
-
-    @Test("Stress buffer depth stays bounded")
-    func stressBufferDepth() {
-        #expect(MirageRenderModePolicy.maxStressBufferDepth == 3)
-    }
 }

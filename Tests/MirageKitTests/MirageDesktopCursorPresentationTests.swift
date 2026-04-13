@@ -19,8 +19,21 @@ struct MirageDesktopCursorPresentationTests {
         )
 
         #expect(presentation.capturesHostCursor == false)
+        #expect(presentation.hidesLocalCursor == false)
         #expect(presentation.rendersSyntheticClientCursor == false)
         #expect(presentation.requiresCursorPositionUpdates)
+    }
+
+    @Test("Emulated cursor hides the local cursor without host capture")
+    func emulatedCursorHidesLocalCursor() {
+        let presentation = MirageDesktopCursorPresentation(
+            source: .emulated,
+            lockClientCursorWhenUsingMirageCursor: false,
+            lockClientCursorWhenUsingHostCursor: true
+        )
+
+        #expect(presentation.hidesLocalCursor)
+        #expect(presentation.capturesHostCursor == false)
     }
 
     @Test("Emulated cursor stays unlocked for mirrored desktop")
@@ -64,6 +77,7 @@ struct MirageDesktopCursorPresentationTests {
             lockClientCursorWhenUsingHostCursor: true
         )
 
+        #expect(presentation.hidesLocalCursor)
         #expect(presentation.locksClientCursor(for: .unified))
     }
 
@@ -75,6 +89,7 @@ struct MirageDesktopCursorPresentationTests {
             lockClientCursorWhenUsingHostCursor: false
         )
 
+        #expect(presentation.hidesLocalCursor)
         #expect(presentation.locksClientCursor(for: .secondary) == false)
     }
 }

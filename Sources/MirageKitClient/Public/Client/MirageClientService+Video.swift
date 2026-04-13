@@ -489,7 +489,7 @@ extension MirageClientService {
 
         MirageLogger.client("Stream recovery requested for stream \(streamID) trigger=\(trigger.logLabel)")
 
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         cancelRecoveryKeyframeRetry(for: streamID)
         if trigger.awaitFirstPresentedFrame {
             startRecoveryKeyframeRetry(for: streamID, controller: controller, trigger: trigger)

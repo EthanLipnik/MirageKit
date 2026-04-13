@@ -94,6 +94,18 @@ extension MirageHostService {
         codec: MirageVideoCodec? = nil
     )
     async throws {
+        var virtualDisplaySetupGuardToken: UUID?
+        defer {
+            if let token = virtualDisplaySetupGuardToken {
+                Task { @MainActor [weak self] in
+                    await self?.cancelVirtualDisplaySetupGuard(
+                        token,
+                        reason: "desktop_stream_start_aborted"
+                    )
+                }
+            }
+        }
+
         guard findClientContext(sessionID: clientContext.sessionID)?.client.id == clientContext.client.id else {
             throw MirageError.protocolError("Desktop stream client disconnected during startup")
         }
@@ -241,9 +253,9 @@ extension MirageHostService {
             "Desktop capture pressure profile: \(capturePressureProfile.rawValue)"
         )
 
-        // Wake the display if sleeping — the display subsystem must be active
-        // for virtual display creation and CGDisplayConfiguration to succeed.
-        PowerAssertionManager.wakeDisplay()
+        virtualDisplaySetupGuardToken = await beginVirtualDisplaySetupGuard(
+            reason: "desktop_stream_start"
+        )
 
         // Acquire virtual display at the resolved streaming resolution.
         // The 5K cap is applied at the encoding layer, not the virtual display.
@@ -612,10 +624,13 @@ extension MirageHostService {
             windowLayer: 0
         )
         inputStreamCacheActor.set(streamID, window: desktopWindow, client: activeClientContext.client)
-        recenterDesktopCursorAfterVirtualDisplaySetup(
-            inputBounds: inputBounds,
-            reason: "desktop_stream_start"
-        )
+        if let token = virtualDisplaySetupGuardToken {
+            await completeVirtualDisplaySetupGuard(
+                token,
+                reason: "desktop_stream_start"
+            )
+            virtualDisplaySetupGuardToken = nil
+        }
 
         // Enable power assertion
         await PowerAssertionManager.shared.enable()

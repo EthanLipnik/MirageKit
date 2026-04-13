@@ -25,9 +25,6 @@ public extension MirageClientService {
         let requestID = UUID()
         let request = HostSupportLogArchiveRequestMessage(requestID: requestID)
 
-        // Suppress heartbeat pings while the host is compressing logs.
-        heartbeatGraceDeadline = ContinuousClock.now + hostSupportLogArchiveTimeout
-
         return try await withCheckedThrowingContinuation { continuation in
             hostSupportLogArchiveRequestID = requestID
             hostSupportLogArchiveContinuation = continuation
@@ -35,13 +32,13 @@ public extension MirageClientService {
             hostSupportLogArchiveTransferTask = nil
             hostSupportLogArchiveTimeoutTask?.cancel()
             hostSupportLogArchiveTimeoutTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: self?.hostSupportLogArchiveTimeout ?? .seconds(30))
+                try? await Task.sleep(for: self?.hostSupportLogArchiveTimeout ?? .seconds(45))
                 guard let self,
                       self.hostSupportLogArchiveContinuation != nil else {
                     return
                 }
                 completeHostSupportLogArchiveRequest(
-                    .failure(MirageError.protocolError("Timed out waiting for host support logs"))
+                    .failure(MirageError.protocolError("Timed out exporting host support logs"))
                 )
             }
             Task { @MainActor [weak self] in
@@ -61,7 +58,6 @@ extension MirageClientService {
         hostSupportLogArchiveRequestID = nil
         hostSupportLogArchiveTransferTask?.cancel()
         hostSupportLogArchiveTransferTask = nil
-        heartbeatGraceDeadline = nil
         guard let continuation = hostSupportLogArchiveContinuation else { return }
         hostSupportLogArchiveContinuation = nil
         hostSupportLogArchiveTimeoutTask?.cancel()
@@ -76,7 +72,7 @@ extension MirageClientService {
         let rid = requestID.uuidString.lowercased()
         MirageLogger.client("Downloading host support log archive requestID=\(rid) using active Loom session")
 
-        guard let transferEngine else {
+        guard transferEngine != nil else {
             throw MirageError.protocolError("Missing authenticated Loom transfer engine for host support logs")
         }
         let incomingTransfer = try await awaitIncomingTransfer(

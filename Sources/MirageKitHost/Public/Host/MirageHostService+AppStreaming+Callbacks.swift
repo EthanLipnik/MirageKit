@@ -117,6 +117,50 @@ extension MirageHostService {
                     await self?.handleStreamedAppTerminated(bundleID: bundleID)
                 }
             }
+
+            await appStreamManager.setOnAuxiliaryWindowDetected { [weak self] bundleID, candidate in
+                Task { @MainActor in
+                    await self?.handleAuxiliaryWindowDetectedFromStreamedApp(
+                        bundleID: bundleID,
+                        candidate: candidate
+                    )
+                }
+            }
+
+            await appStreamManager.setOnAuxiliaryWindowClosed { [weak self] bundleID, windowID in
+                Task { @MainActor in
+                    await self?.handleAuxiliaryWindowClosedFromStreamedApp(
+                        bundleID: bundleID,
+                        windowID: windowID
+                    )
+                }
+            }
+        }
+    }
+
+    private func refreshVisibleAppStreamCaptureCluster(
+        bundleID: String,
+        streamID: StreamID,
+        reason: String
+    ) async {
+        guard isStreamUsingVirtualDisplay(streamID: streamID),
+              let context = streamsByID[streamID] else {
+            return
+        }
+
+        do {
+            try await context.refreshSharedDisplayAppCaptureLayout(label: reason)
+            await appStreamManager.setCapturedClusterWindowIDs(
+                bundleIdentifier: bundleID,
+                streamID: streamID,
+                capturedClusterWindowIDs: await context.getCapturedClusterWindowIDs()
+            )
+        } catch {
+            MirageLogger.error(
+                .host,
+                error: error,
+                message: "Failed to refresh shared-display app capture cluster: "
+            )
         }
     }
 
@@ -176,6 +220,37 @@ extension MirageHostService {
         MirageLogger.host("Tracked new primary window \(windowID) in hidden inventory for \(bundleID)")
     }
 
+    func handleAuxiliaryWindowDetectedFromStreamedApp(
+        bundleID: String,
+        candidate: AppStreamWindowCandidate
+    ) async {
+        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleID),
+              case .streaming = session.state else {
+            return
+        }
+        guard let parentWindowID = candidate.parentWindowID else { return }
+
+        let streamIDForClusterParent = await appStreamManager.streamIDForCapturedClusterWindow(
+            bundleIdentifier: bundleID,
+            windowID: parentWindowID
+        )
+        let directParentStreamID = await appStreamManager.streamIDForWindow(
+            bundleIdentifier: bundleID,
+            windowID: parentWindowID
+        )
+        let streamID = streamIDForClusterParent ?? directParentStreamID
+        guard let streamID else { return }
+
+        MirageLogger.host(
+            "Detected attached auxiliary window \(candidate.window.id) for visible app stream \(streamID) in \(bundleID); refreshing shared-display capture cluster"
+        )
+        await refreshVisibleAppStreamCaptureCluster(
+            bundleID: bundleID,
+            streamID: streamID,
+            reason: "auxiliary window detected"
+        )
+    }
+
     func handleWindowClosedFromStreamedApp(bundleID: String, windowID: WindowID) async {
         guard let session = await appStreamManager.getSession(bundleIdentifier: bundleID),
               findClientContext(clientID: session.clientID) != nil else { return }
@@ -221,6 +296,24 @@ extension MirageHostService {
         await recomputeAppSessionBitrateBudget(bundleIdentifier: bundleID, reason: "window closed cooldown")
         MirageLogger.host(
             "Window \(windowID) closed for app stream \(bundleID); entered 5s replacement cooldown for stream \(windowInfo.streamID)"
+        )
+    }
+
+    func handleAuxiliaryWindowClosedFromStreamedApp(bundleID: String, windowID: WindowID) async {
+        guard let streamID = await appStreamManager.streamIDForCapturedClusterWindow(
+            bundleIdentifier: bundleID,
+            windowID: windowID
+        ) else {
+            return
+        }
+
+        MirageLogger.host(
+            "Attached auxiliary window \(windowID) closed for visible app stream \(streamID) in \(bundleID); refreshing shared-display capture cluster"
+        )
+        await refreshVisibleAppStreamCaptureCluster(
+            bundleID: bundleID,
+            streamID: streamID,
+            reason: "auxiliary window closed"
         )
     }
 

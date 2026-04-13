@@ -102,6 +102,9 @@ public final class MirageHostService {
     /// Provider used for client-initiated host support log archive export.
     public var hostSupportLogArchiveProvider: (@MainActor @Sendable () async throws -> URL)?
 
+    /// Handler used for client-initiated Mirage Host app relaunch requests.
+    public var hostApplicationRestartHandler: (@MainActor @Sendable () -> Void)?
+
     /// Identity manager for signed handshake envelopes.
     public var identityManager: LoomIdentityManager? = MirageKit.identityManager {
         didSet {
@@ -333,6 +336,7 @@ public final class MirageHostService {
     var desktopPrimaryPhysicalDisplayID: CGDirectDisplayID?
     var desktopPrimaryPhysicalBounds: CGRect?
     var desktopMirroredVirtualResolution: CGSize?
+    var activeVirtualDisplaySetupGuard: VirtualDisplaySetupGuardState?
 
     /// Cursor monitoring - internal for extension access
     var cursorMonitor: CursorMonitor?
@@ -1438,15 +1442,117 @@ public final class MirageHostService {
         remoteControlPort = port
     }
 
-    func recenterDesktopCursorAfterVirtualDisplaySetup(
-        inputBounds: CGRect,
-        reason: String
-    ) {
-        guard let point = Self.resolvedDesktopCursorStartPoint(inputBounds: inputBounds) else { return }
+    struct VirtualDisplaySetupGuardState {
+        let token: UUID
+        let periodicTask: Task<Void, Never>
+    }
+
+    func resolvedPrimaryPhysicalDisplayVisibleBounds() -> CGRect? {
+        let displayID = desktopPrimaryPhysicalDisplayID ?? resolvePrimaryPhysicalDisplayID() ?? CGMainDisplayID()
+        let fullBounds = CGDisplayBounds(displayID)
+        guard fullBounds.width > 0, fullBounds.height > 0 else { return nil }
+
+        desktopPrimaryPhysicalDisplayID = displayID
+        desktopPrimaryPhysicalBounds = fullBounds
+
+        var visibleBounds = CGVirtualDisplayBridge.getDisplayVisibleBounds(
+            displayID,
+            knownBounds: fullBounds
+        )
+        visibleBounds = visibleBounds.intersection(fullBounds)
+        if visibleBounds.isEmpty {
+            visibleBounds = fullBounds
+        }
+        return visibleBounds
+    }
+
+    func centerCursorOnPrimaryPhysicalDisplay(reason: String) {
+        guard let visibleBounds = resolvedPrimaryPhysicalDisplayVisibleBounds() else { return }
+        let point = CGPoint(x: visibleBounds.midX, y: visibleBounds.midY)
         CGWarpMouseCursorPosition(point)
         MirageLogger.host(
-            "Desktop cursor recentered after virtual display setup reason=\(reason) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
+            "Virtual display setup cursor centered reason=\(reason) x=\(Int(point.x.rounded())) y=\(Int(point.y.rounded()))"
         )
+    }
+
+    func performVirtualDisplaySetupWakeAndCenter(reason: String) {
+        PowerAssertionManager.wakeDisplay()
+        centerCursorOnPrimaryPhysicalDisplay(reason: reason)
+    }
+
+    func beginVirtualDisplaySetupGuard(reason: String) async -> UUID {
+        if let existing = activeVirtualDisplaySetupGuard {
+            await cancelVirtualDisplaySetupGuard(existing.token, reason: "superseded:\(reason)")
+        }
+
+        await PowerAssertionManager.shared.enable()
+        performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):begin")
+
+        let token = UUID()
+        let periodicTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .milliseconds(350))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled else { return }
+                self?.performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):keepalive")
+            }
+        }
+
+        activeVirtualDisplaySetupGuard = VirtualDisplaySetupGuardState(
+            token: token,
+            periodicTask: periodicTask
+        )
+        MirageLogger.host("Virtual display setup guard started reason=\(reason) token=\(token.uuidString)")
+        return token
+    }
+
+    func completeVirtualDisplaySetupGuard(
+        _ token: UUID?,
+        reason: String
+    ) async {
+        guard let token,
+              let activeGuard = activeVirtualDisplaySetupGuard,
+              activeGuard.token == token else {
+            return
+        }
+
+        activeGuard.periodicTask.cancel()
+        activeVirtualDisplaySetupGuard = nil
+        performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):settled")
+        MirageLogger.host("Virtual display setup guard completed reason=\(reason) token=\(token.uuidString)")
+
+        Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: .milliseconds(250))
+            } catch {
+                await PowerAssertionManager.shared.disable()
+                return
+            }
+
+            if self?.activeVirtualDisplaySetupGuard == nil {
+                self?.performVirtualDisplaySetupWakeAndCenter(reason: "\(reason):delayed")
+            }
+            await PowerAssertionManager.shared.disable()
+        }
+    }
+
+    func cancelVirtualDisplaySetupGuard(
+        _ token: UUID?,
+        reason: String
+    ) async {
+        guard let token,
+              let activeGuard = activeVirtualDisplaySetupGuard,
+              activeGuard.token == token else {
+            return
+        }
+
+        activeGuard.periodicTask.cancel()
+        activeVirtualDisplaySetupGuard = nil
+        await PowerAssertionManager.shared.disable()
+        MirageLogger.host("Virtual display setup guard cancelled reason=\(reason) token=\(token.uuidString)")
     }
 
     /// Resolve the current virtual display bounds for secondary desktop streaming.

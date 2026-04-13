@@ -1,5 +1,5 @@
 //
-//  MirageMetalView+iOS.swift
+//  MirageSampleBufferView+iOS.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 1/23/26.
@@ -13,7 +13,7 @@ import AVFoundation
 import QuartzCore
 import UIKit
 
-public class MirageMetalView: UIView {
+public class MirageSampleBufferView: UIView {
     // MARK: - Safe Area Override
 
     override public var safeAreaInsets: UIEdgeInsets { .zero }
@@ -75,7 +75,7 @@ public class MirageMetalView: UIView {
 
     var displayLayer: AVSampleBufferDisplayLayer {
         guard let layer = layer as? AVSampleBufferDisplayLayer else {
-            fatalError("MirageMetalView requires AVSampleBufferDisplayLayer backing")
+            fatalError("MirageSampleBufferView requires AVSampleBufferDisplayLayer backing")
         }
         return layer
     }
@@ -167,6 +167,19 @@ public class MirageMetalView: UIView {
 
     public var hasDisplayLayerFailure: Bool {
         presenter.hasDisplayLayerFailure
+    }
+
+    var currentPresentationReferenceSize: CGSize? {
+        presenter.currentContentReferenceSize
+    }
+
+    func resolvedPresentedContentRect(in bounds: CGRect) -> CGRect {
+        guard bounds.width > 0, bounds.height > 0 else { return .zero }
+        guard prefersLocalAspectFitPresentation else { return bounds }
+        return DesktopPresentationGeometry.resolvedContentRect(
+            referenceSize: currentPresentationReferenceSize,
+            in: bounds
+        )
     }
 
     public func suspendRendering(clearCurrentFrame: Bool) {

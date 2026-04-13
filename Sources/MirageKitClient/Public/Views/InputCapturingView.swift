@@ -14,13 +14,13 @@ import UIKit
 import GameController
 #endif
 
-/// A view that wraps MirageMetalView and captures all input events
+/// A view that wraps MirageSampleBufferView and captures all input events
 public class InputCapturingView: UIView {
-    public let metalView: MirageMetalView
+    public let sampleBufferView: MirageSampleBufferView
 
     // MARK: - Safe Area Override
 
-    /// Override safe area insets to ensure Metal view fills entire screen.
+    /// Override safe area insets to ensure the sample-buffer view fills the entire screen.
     /// SwiftUI's .ignoresSafeArea() doesn't propagate through UIViewRepresentable boundaries,
     /// so we must explicitly return zero insets at the UIKit layer.
     override public var safeAreaInsets: UIEdgeInsets { .zero }
@@ -44,7 +44,7 @@ public class InputCapturingView: UIView {
     /// Callback when drawable metrics change - reports pixel size and scale factor
     public var onDrawableMetricsChanged: ((MirageDrawableMetrics) -> Void)? {
         didSet {
-            metalView.onDrawableMetricsChanged = onDrawableMetricsChanged
+            sampleBufferView.onDrawableMetricsChanged = onDrawableMetricsChanged
         }
     }
 
@@ -60,36 +60,36 @@ public class InputCapturingView: UIView {
     /// Optional cap for drawable pixel dimensions.
     public var maxDrawableSize: CGSize? {
         didSet {
-            metalView.maxDrawableSize = maxDrawableSize
+            sampleBufferView.maxDrawableSize = maxDrawableSize
         }
     }
 
     /// Whether the stream should present locally using aspect fit.
     public var prefersLocalAspectFitPresentation: Bool = false {
         didSet {
-            metalView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
+            sampleBufferView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
         }
     }
 
     /// Callback when the view decides on a refresh rate override.
     public var onRefreshRateOverrideChange: ((Int) -> Void)? {
         didSet {
-            metalView.onRefreshRateOverrideChange = onRefreshRateOverrideChange
+            sampleBufferView.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         }
     }
 
     /// Active vs passive presentation tier for local rendering cadence.
     public var presentationTier: StreamPresentationTier = .activeLive {
         didSet {
-            metalView.streamPresentationTier = presentationTier
+            sampleBufferView.streamPresentationTier = presentationTier
         }
     }
 
-    /// Stream ID for direct frame cache access (iOS gesture tracking support)
-    /// Forwards to the underlying Metal view
+    /// Stream ID for direct frame-store access (iOS gesture tracking support)
+    /// Forwards to the underlying sample-buffer view
     public var streamID: StreamID? {
         didSet {
-            metalView.streamID = streamID
+            sampleBufferView.streamID = streamID
             let previousID = registeredCursorStreamID
             if let previousID, previousID != streamID { MirageCursorUpdateRouter.shared.unregister(streamID: previousID) }
             registeredCursorStreamID = streamID
@@ -114,6 +114,14 @@ public class InputCapturingView: UIView {
             lockedCursorSequence = 0
             lockedCursorConfirmedHostPosition = nil
             refreshLockedCursorIfNeeded(force: true)
+        }
+    }
+
+    /// Whether the system cursor should be hidden even when pointer lock is off.
+    public var hideSystemCursor: Bool = false {
+        didSet {
+            guard hideSystemCursor != oldValue else { return }
+            pointerInteraction?.invalidate()
         }
     }
 
@@ -252,6 +260,32 @@ public class InputCapturingView: UIView {
     private(set) var hardwareKeyboardPresent: Bool = false
     private var didResignActiveSinceLastActivation = false
     private var didEnterBackgroundSinceLastActive = false
+    private lazy var responderRecoveryController = InputCapturingResponderRecoveryController(
+        contextProvider: { [weak self] trigger in
+            self?.responderRecoverySnapshot(for: trigger) ?? (
+                target: .captureView,
+                context: InputCapturingResponderRecoveryContext(
+                    hasWindow: false,
+                    isKeyWindow: false,
+                    sceneActivationState: nil,
+                    targetIsFirstResponder: false
+                )
+            )
+        },
+        attemptHandler: { [weak self] target in
+            self?.attemptResponderRecovery(for: target) ?? false
+        },
+        logHandler: { [weak self] trigger, target, context, decision, attempt, didBecomeFirstResponder in
+            self?.logResponderRecovery(
+                trigger: trigger,
+                target: target,
+                context: context,
+                decision: decision,
+                attempt: attempt,
+                didBecomeFirstResponder: didBecomeFirstResponder
+            )
+        }
+    )
 
     // Virtual cursor state (direct touch trackpad mode)
     private let virtualCursorView = UIImageView()
@@ -776,13 +810,13 @@ public class InputCapturingView: UIView {
     }
 
     override public init(frame: CGRect) {
-        metalView = MirageMetalView(frame: frame, device: nil)
+        sampleBufferView = MirageSampleBufferView(frame: frame)
         super.init(frame: frame)
         setup()
     }
 
     required init?(coder: NSCoder) {
-        metalView = MirageMetalView(frame: .zero, device: nil)
+        sampleBufferView = MirageSampleBufferView(frame: .zero)
         super.init(coder: coder)
         setup()
     }
@@ -791,14 +825,14 @@ public class InputCapturingView: UIView {
         // Ensure this view doesn't respect safe area insets
         insetsLayoutMarginsFromSafeArea = false
 
-        // Create scroll physics view to wrap the Metal view
+        // Create scroll physics view to wrap the sample-buffer view
         // This provides native trackpad scrolling physics (momentum, bounce)
         scrollPhysicsView = ScrollPhysicsCapturingView(frame: .zero)
         scrollPhysicsView!.translatesAutoresizingMaskIntoConstraints = false
 
         // Add metal view to the scroll physics view's content view
-        metalView.translatesAutoresizingMaskIntoConstraints = false
-        scrollPhysicsView!.contentView.addSubview(metalView)
+        sampleBufferView.translatesAutoresizingMaskIntoConstraints = false
+        scrollPhysicsView!.contentView.addSubview(sampleBufferView)
 
         // Add scroll physics view to self
         addSubview(scrollPhysicsView!)
@@ -810,17 +844,18 @@ public class InputCapturingView: UIView {
             scrollPhysicsView!.trailingAnchor.constraint(equalTo: trailingAnchor),
             scrollPhysicsView!.bottomAnchor.constraint(equalTo: bottomAnchor),
 
-            // Metal view fills the content view
-            metalView.topAnchor.constraint(equalTo: scrollPhysicsView!.contentView.topAnchor),
-            metalView.leadingAnchor.constraint(equalTo: scrollPhysicsView!.contentView.leadingAnchor),
-            metalView.trailingAnchor.constraint(equalTo: scrollPhysicsView!.contentView.trailingAnchor),
-            metalView.bottomAnchor.constraint(equalTo: scrollPhysicsView!.contentView.bottomAnchor),
+            // The sample-buffer view fills the content view
+            sampleBufferView.topAnchor.constraint(equalTo: scrollPhysicsView!.contentView.topAnchor),
+            sampleBufferView.leadingAnchor.constraint(equalTo: scrollPhysicsView!.contentView.leadingAnchor),
+            sampleBufferView.trailingAnchor.constraint(equalTo: scrollPhysicsView!.contentView.trailingAnchor),
+            sampleBufferView.bottomAnchor.constraint(equalTo: scrollPhysicsView!.contentView.bottomAnchor),
         ])
 
         // Configure scroll physics callback
         // Scroll events don't have a gesture recognizer with modifierFlags, so use keyboard state only
         scrollPhysicsView!.onScroll = { [weak self] deltaX, deltaY, phase, momentumPhase in
             guard let self else { return }
+            noteInteractionForResponderRecovery()
             refreshModifiersForInput()
             let modifiers = keyboardModifiers
             sendModifierSnapshotIfNeeded(modifiers)
@@ -839,6 +874,7 @@ public class InputCapturingView: UIView {
         // Configure trackpad rotation callback
         scrollPhysicsView!.onRotation = { [weak self] rotation, phase in
             guard let self else { return }
+            noteInteractionForResponderRecovery()
             refreshModifiersForInput()
             let event = MirageRotateEvent(rotation: rotation, phase: phase)
             onInputEvent?(.rotate(event))
@@ -875,6 +911,108 @@ public class InputCapturingView: UIView {
         updateVirtualTrackpadMode()
         updateCursorLockMode()
         setupSceneLifecycleObservers()
+    }
+
+    func responderRecoveryTarget() -> InputCapturingResponderTarget {
+        InputCapturingResponderRecoveryPolicy.target(
+            softwareKeyboardVisible: softwareKeyboardVisible,
+            hardwareKeyboardPresent: hardwareKeyboardPresent
+        )
+    }
+
+    func responderRecoveryResponder(
+        for target: InputCapturingResponderTarget
+    ) -> UIResponder? {
+        switch target {
+        case .captureView:
+            self
+        case .softwareKeyboardField:
+            softwareKeyboardField
+        }
+    }
+
+    func responderRecoverySnapshot(
+        for trigger: InputCapturingResponderRecoveryTrigger
+    ) -> (target: InputCapturingResponderTarget, context: InputCapturingResponderRecoveryContext) {
+        let target = responderRecoveryTarget()
+        let targetResponder = responderRecoveryResponder(for: target)
+        return (
+            target: target,
+            context: InputCapturingResponderRecoveryContext(
+                hasWindow: window != nil,
+                isKeyWindow: window?.isKeyWindow == true,
+                sceneActivationState: window?.windowScene?.activationState,
+                targetIsFirstResponder: targetResponder?.isFirstResponder == true
+            )
+        )
+    }
+
+    func requestResponderRecovery(
+        _ trigger: InputCapturingResponderRecoveryTrigger
+    ) {
+        responderRecoveryController.requestRecovery(trigger)
+    }
+
+    func cancelPendingResponderRecovery() {
+        responderRecoveryController.cancel()
+    }
+
+    func noteInteractionForResponderRecovery() {
+        requestResponderRecovery(.interaction)
+    }
+
+    func attemptResponderRecovery(
+        for target: InputCapturingResponderTarget
+    ) -> Bool {
+        guard let responder = responderRecoveryResponder(for: target) else { return false }
+        let didBecomeFirstResponder = responder.becomeFirstResponder()
+        return didBecomeFirstResponder || responder.isFirstResponder
+    }
+
+    private func logResponderRecovery(
+        trigger: InputCapturingResponderRecoveryTrigger,
+        target: InputCapturingResponderTarget,
+        context: InputCapturingResponderRecoveryContext,
+        decision: InputCapturingResponderRecoveryDecision,
+        attempt: Int,
+        didBecomeFirstResponder: Bool?
+    ) {
+        if case .skip(.targetAlreadyFirstResponder) = decision { return }
+
+        let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+        let decisionText: String = switch decision {
+        case .recover:
+            "recover"
+        case .skip(let reason):
+            "skip(\(reason.rawValue))"
+        }
+        let sceneStateText: String = switch context.sceneActivationState {
+        case .foregroundActive:
+            "foreground_active"
+        case .foregroundInactive:
+            "foreground_inactive"
+        case .background:
+            "background"
+        case .unattached:
+            "unattached"
+        case nil:
+            "nil"
+        @unknown default:
+            "unknown"
+        }
+        let successText = didBecomeFirstResponder.map(String.init(describing:)) ?? "nil"
+        MirageLogger.client(
+            "Responder recovery \(decisionText): " +
+                "stream=\(streamIDText), " +
+                "trigger=\(trigger.rawValue), " +
+                "attempt=\(attempt), " +
+                "target=\(target.rawValue), " +
+                "hasWindow=\(context.hasWindow), " +
+                "keyWindow=\(context.isKeyWindow), " +
+                "sceneState=\(sceneStateText), " +
+                "targetIsFirstResponder=\(context.targetIsFirstResponder), " +
+                "success=\(successText)"
+        )
     }
 
     private func setupVirtualCursorView() {
@@ -1005,9 +1143,14 @@ public class InputCapturingView: UIView {
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard !virtualCursorView.isHidden else { return }
         let hotspot = currentCursorType.cursorHotspot
+        let point = Self.localPoint(
+            forNormalizedPosition: virtualCursorPosition,
+            in: bounds,
+            contentRect: resolvedPresentationContentRect()
+        )
         virtualCursorView.frame.origin = CGPoint(
-            x: virtualCursorPosition.x * bounds.width - hotspot.x,
-            y: virtualCursorPosition.y * bounds.height - hotspot.y
+            x: point.x - hotspot.x,
+            y: point.y - hotspot.y
         )
     }
 
@@ -1063,6 +1206,45 @@ public class InputCapturingView: UIView {
         guard cursorLockEnabled else { return false }
         onCursorLockEscapeRequested?()
         return true
+    }
+
+    func resolvedPresentationContentRect() -> CGRect {
+        sampleBufferView.resolvedPresentedContentRect(in: bounds)
+    }
+
+    nonisolated static func normalizedLocation(
+        _ point: CGPoint,
+        in bounds: CGRect,
+        contentRect: CGRect? = nil
+    ) -> CGPoint {
+        let resolvedContentRect = (contentRect ?? bounds).standardized
+        guard resolvedContentRect.width > 0, resolvedContentRect.height > 0 else {
+            return CGPoint(x: 0.5, y: 0.5)
+        }
+
+        let clampedX = min(max(point.x, resolvedContentRect.minX), resolvedContentRect.maxX)
+        let clampedY = min(max(point.y, resolvedContentRect.minY), resolvedContentRect.maxY)
+        return CGPoint(
+            x: (clampedX - resolvedContentRect.minX) / resolvedContentRect.width,
+            y: (clampedY - resolvedContentRect.minY) / resolvedContentRect.height
+        )
+    }
+
+    nonisolated static func localPoint(
+        forNormalizedPosition position: CGPoint,
+        in bounds: CGRect,
+        contentRect: CGRect? = nil
+    ) -> CGPoint {
+        let resolvedContentRect = (contentRect ?? bounds).standardized
+        guard resolvedContentRect.width > 0, resolvedContentRect.height > 0 else {
+            return CGPoint(x: bounds.midX, y: bounds.midY)
+        }
+
+        let clampedPosition = DesktopPresentationGeometry.clampedNormalizedPosition(position)
+        return CGPoint(
+            x: resolvedContentRect.minX + clampedPosition.x * resolvedContentRect.width,
+            y: resolvedContentRect.minY + clampedPosition.y * resolvedContentRect.height
+        )
     }
 
     func updatePointerLocationForLocalContact(_ location: CGPoint) {
@@ -1472,6 +1654,24 @@ public class InputCapturingView: UIView {
             name: UIApplication.didBecomeActiveNotification,
             object: nil
         )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sceneDidActivate(_:)),
+            name: UIScene.didActivateNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(sceneWillEnterForeground(_:)),
+            name: UIScene.willEnterForegroundNotification,
+            object: nil
+        )
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidBecomeKey(_:)),
+            name: UIWindow.didBecomeKeyNotification,
+            object: nil
+        )
 
         #if canImport(GameController)
         NotificationCenter.default.addObserver(
@@ -1507,6 +1707,7 @@ public class InputCapturingView: UIView {
     @objc
     private func appWillResignActive() {
         didResignActiveSinceLastActivation = true
+        cancelPendingResponderRecovery()
         // Clear all modifier and key repeat state when app loses focus
         stopAllKeyRepeats()
         resetAllModifiers()
@@ -1524,18 +1725,18 @@ public class InputCapturingView: UIView {
         didEnterBackgroundSinceLastActive = true
         // Ordinary app backgrounding should suspend the display layer so we
         // can resume from the last presented frame if the display layer stays healthy.
-        metalView.suspendRendering(clearCurrentFrame: false)
+        sampleBufferView.suspendRendering(clearCurrentFrame: false)
     }
 
     @objc
     private func appDidBecomeActive() {
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
-        let displayLayerFailed = metalView.hasDisplayLayerFailure
+        let displayLayerFailed = sampleBufferView.hasDisplayLayerFailure
         let shouldRequestRecovery = displayLayerFailed
 
         if window != nil {
-            metalView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)
+            sampleBufferView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)
         }
         Task {
             await MirageClientAudioSessionCoordinator.shared.handleApplicationDidBecomeActive()
@@ -1547,6 +1748,7 @@ public class InputCapturingView: UIView {
         updateHardwareKeyboardPresence(GCKeyboard.coalesced != nil)
         updateMouseInputHandler()
         #endif
+        requestResponderRecovery(.applicationDidBecomeActive)
 
         didResignActiveSinceLastActivation = false
         didEnterBackgroundSinceLastActive = false
@@ -1593,12 +1795,37 @@ public class InputCapturingView: UIView {
     }
     #endif
 
+    @objc
+    private func sceneDidActivate(_ notification: Notification) {
+        guard let scene = notification.object as? UIScene else { return }
+        guard scene === window?.windowScene else { return }
+        requestResponderRecovery(.sceneDidActivate)
+    }
+
+    @objc
+    private func sceneWillEnterForeground(_ notification: Notification) {
+        guard let scene = notification.object as? UIScene else { return }
+        guard scene === window?.windowScene else { return }
+        requestResponderRecovery(.sceneWillEnterForeground)
+    }
+
+    @objc
+    private func windowDidBecomeKey(_ notification: Notification) {
+        guard let notifiedWindow = notification.object as? UIWindow else { return }
+        guard notifiedWindow === window else { return }
+        requestResponderRecovery(.windowDidBecomeKey)
+    }
+
     override public var canBecomeFirstResponder: Bool { true }
 
     override public func didMoveToWindow() {
         super.didMoveToWindow()
         reportContainerSizeIfChanged(force: true)
-        if window != nil { becomeFirstResponder() }
+        if window != nil {
+            requestResponderRecovery(.didMoveToWindow)
+        } else {
+            cancelPendingResponderRecovery()
+        }
     }
 
     override public func layoutSubviews() {
@@ -1709,6 +1936,7 @@ public class InputCapturingView: UIView {
 
     private func handlePencilTouchesBegan(_ touches: Set<UITouch>, event _: UIEvent?) {
         guard !touches.isEmpty else { return }
+        noteInteractionForResponderRecovery()
         if let touch = touches.first, activePencilTouchID == nil {
             activePencilTouchID = ObjectIdentifier(touch)
             beginPencilInteraction(for: touch)
@@ -2049,6 +2277,7 @@ public class InputCapturingView: UIView {
     }
 
     deinit {
+        cancelPendingResponderRecovery()
         stopDictation()
         stopModifierRefresh()
         stopVirtualCursorDeceleration()

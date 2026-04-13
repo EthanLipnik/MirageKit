@@ -14,10 +14,33 @@ import MirageKit
 import ScreenCaptureKit
 
 extension StreamContext {
+    struct SharedDisplayAppPresentationLayout: Sendable, Equatable {
+        let primaryRect: CGRect
+        let clusterRect: CGRect
+        let presentationRect: CGRect
+        let destinationRect: CGRect
+        let contentRect: CGRect
+    }
+
     struct WindowCaptureDisplaySelection: Equatable {
         let captureDisplayID: CGDirectDisplayID
         let usesDisplayRefreshCadence: Bool
     }
+
+    struct SharedDisplayAppCaptureLayout: Sendable {
+        let primaryWindowWrapper: SCWindowWrapper
+        let includedWindowWrappers: [SCWindowWrapper]
+        let clusterWindowIDs: [WindowID]
+        let primaryRect: CGRect
+        let clusterRect: CGRect
+        let presentationRect: CGRect
+        let destinationRect: CGRect
+
+        var sourceRect: CGRect { presentationRect }
+        var contentRect: CGRect { destinationRect }
+    }
+
+    private static let sharedDisplayAppAutoWidenTolerance: CGFloat = 8
 
     nonisolated static func windowCaptureDisplaySelection(
         sourceDisplayID: CGDirectDisplayID,
@@ -42,6 +65,199 @@ extension StreamContext {
             return normalizedSourceBounds
         }
         return mirroredVisibleBounds.standardized
+    }
+
+    nonisolated static func fixedCanvasDestinationRect(
+        sourceRect: CGRect,
+        outputSize: CGSize
+    ) -> CGRect {
+        guard sourceRect.width > 0,
+              sourceRect.height > 0,
+              outputSize.width > 0,
+              outputSize.height > 0 else {
+            return CGRect(origin: .zero, size: outputSize)
+        }
+
+        let scale = min(outputSize.width / sourceRect.width, outputSize.height / sourceRect.height)
+        let fittedSize = CGSize(
+            width: max(1, floor(sourceRect.width * scale)),
+            height: max(1, floor(sourceRect.height * scale))
+        )
+        return CGRect(
+            x: floor((outputSize.width - fittedSize.width) * 0.5),
+            y: floor((outputSize.height - fittedSize.height) * 0.5),
+            width: fittedSize.width,
+            height: fittedSize.height
+        )
+    }
+
+    nonisolated static func sharedDisplayAppShouldAutoWiden(
+        primaryRect: CGRect,
+        clusterRect: CGRect,
+        tolerance: CGFloat = sharedDisplayAppAutoWidenTolerance
+    ) -> Bool {
+        guard primaryRect.width > 0,
+              primaryRect.height > 0,
+              clusterRect.width > 0,
+              clusterRect.height > 0 else {
+            return false
+        }
+
+        return clusterRect.minX < (primaryRect.minX - tolerance) ||
+            clusterRect.minY < (primaryRect.minY - tolerance) ||
+            clusterRect.maxX > (primaryRect.maxX + tolerance) ||
+            clusterRect.maxY > (primaryRect.maxY + tolerance)
+    }
+
+    nonisolated static func sharedDisplayAppPresentationLayout(
+        primaryRect: CGRect,
+        clusterRect: CGRect,
+        outputSize: CGSize,
+        autoWidenTolerance: CGFloat = sharedDisplayAppAutoWidenTolerance
+    ) -> SharedDisplayAppPresentationLayout {
+        let normalizedPrimaryRect = primaryRect.standardized
+        let normalizedClusterRect = clusterRect.standardized
+
+        let resolvedPrimaryRect: CGRect
+        if normalizedPrimaryRect.width > 0, normalizedPrimaryRect.height > 0 {
+            resolvedPrimaryRect = normalizedPrimaryRect
+        } else {
+            resolvedPrimaryRect = normalizedClusterRect
+        }
+
+        let resolvedClusterRect: CGRect
+        if normalizedClusterRect.width > 0, normalizedClusterRect.height > 0 {
+            resolvedClusterRect = normalizedClusterRect
+        } else {
+            resolvedClusterRect = resolvedPrimaryRect
+        }
+
+        let presentationRect = sharedDisplayAppShouldAutoWiden(
+            primaryRect: resolvedPrimaryRect,
+            clusterRect: resolvedClusterRect,
+            tolerance: autoWidenTolerance
+        ) ? resolvedClusterRect : resolvedPrimaryRect
+        let destinationRect = fixedCanvasDestinationRect(
+            sourceRect: presentationRect,
+            outputSize: outputSize
+        )
+
+        return SharedDisplayAppPresentationLayout(
+            primaryRect: resolvedPrimaryRect,
+            clusterRect: resolvedClusterRect,
+            presentationRect: presentationRect,
+            destinationRect: destinationRect,
+            contentRect: destinationRect
+        )
+    }
+
+    private func resolveSharedDisplayAppCaptureLayout(
+        primaryWindowID: WindowID,
+        primaryWindowWrapper fallbackPrimaryWindowWrapper: SCWindowWrapper? = nil,
+        displayWrapper: SCDisplayWrapper,
+        outputSize: CGSize,
+        label: String
+    ) async throws -> SharedDisplayAppCaptureLayout {
+        let primaryWindowWrapper = if let fallbackPrimaryWindowWrapper {
+            fallbackPrimaryWindowWrapper
+        } else {
+            try await resolveSCWindowWrapper(windowID: primaryWindowID, label: label)
+        }
+
+        let normalizedBundleIdentifier = appStreamBundleIdentifier?.lowercased() ??
+            primaryWindowWrapper.window.owningApplication?.bundleIdentifier.lowercased()
+        var clusterWindowIDs = [primaryWindowID]
+        if let normalizedBundleIdentifier,
+           let candidates = try? await AppStreamWindowCatalog.catalog(for: [normalizedBundleIdentifier])[normalizedBundleIdentifier],
+           let cluster = AppStreamWindowCatalog.capturedWindowCluster(
+               primaryWindowID: primaryWindowID,
+               candidates: candidates
+           ) {
+            clusterWindowIDs = cluster.windowIDs
+        }
+
+        let content = try await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: false)
+        let windowsByID = Dictionary(uniqueKeysWithValues: content.windows.map { (WindowID($0.windowID), $0) })
+        let includedWindowWrappers = clusterWindowIDs.compactMap { windowID in
+            windowsByID[windowID].map { SCWindowWrapper(window: $0) }
+        }
+        let resolvedIncludedWindowWrappers = includedWindowWrappers.isEmpty ? [primaryWindowWrapper] : includedWindowWrappers
+        let resolvedClusterWindowIDs = resolvedIncludedWindowWrappers.map { WindowID($0.window.windowID) }
+        let displayBounds = displayWrapper.display.frame.standardized
+        let primaryDisplayRect = primaryWindowWrapper.window.frame
+            .standardized
+            .intersection(displayBounds)
+            .standardized
+        let sourceUnionRect = resolvedIncludedWindowWrappers
+            .map { $0.window.frame.standardized }
+            .reduce(CGRect.null) { partialResult, rect in
+                partialResult.isNull ? rect : partialResult.union(rect)
+            }
+        let clusterDisplayRect = sourceUnionRect
+            .intersection(displayBounds)
+            .standardized
+        let presentationLayout = Self.sharedDisplayAppPresentationLayout(
+            primaryRect: primaryDisplayRect,
+            clusterRect: clusterDisplayRect,
+            outputSize: outputSize
+        )
+
+        return SharedDisplayAppCaptureLayout(
+            primaryWindowWrapper: primaryWindowWrapper,
+            includedWindowWrappers: resolvedIncludedWindowWrappers,
+            clusterWindowIDs: resolvedClusterWindowIDs,
+            primaryRect: presentationLayout.primaryRect,
+            clusterRect: presentationLayout.clusterRect,
+            presentationRect: presentationLayout.presentationRect,
+            destinationRect: presentationLayout.destinationRect
+        )
+    }
+
+    func refreshSharedDisplayAppCaptureLayout(
+        primaryWindowWrapper: SCWindowWrapper? = nil,
+        label: String
+    ) async throws {
+        guard isRunning,
+              isAppStream,
+              useVirtualDisplay,
+              captureMode == .display,
+              let captureEngine,
+              let virtualDisplayContext else {
+            return
+        }
+
+        let displayWrapper = try await resolveSCDisplayWrapper(
+            displayID: virtualDisplayContext.displayID,
+            label: "\(label) mirrored app capture display"
+        )
+        let layout = try await resolveSharedDisplayAppCaptureLayout(
+            primaryWindowID: windowID,
+            primaryWindowWrapper: primaryWindowWrapper,
+            displayWrapper: displayWrapper,
+            outputSize: currentEncodedSize,
+            label: label
+        )
+
+        lastWindowFrame = layout.primaryWindowWrapper.window.frame
+        capturedWindowClusterWindowIDs = layout.clusterWindowIDs
+        virtualDisplayCaptureSourceRect = layout.presentationRect
+        currentContentRect = layout.contentRect
+
+        try await captureEngine.updateDisplayCaptureLayout(
+            display: displayWrapper.display,
+            sourceRect: layout.sourceRect,
+            destinationRect: layout.destinationRect,
+            contentWindowID: windowID,
+            includedWindows: layout.includedWindowWrappers.map(\.window)
+        )
+        await refreshCaptureCadence()
+
+        MirageLogger.stream(
+            "Updated shared-display app capture layout for stream \(streamID): " +
+                "primary=\(windowID), cluster=\(layout.clusterWindowIDs), primaryRect=\(layout.primaryRect), " +
+                "clusterRect=\(layout.clusterRect), presentationRect=\(layout.presentationRect), " +
+                "destinationRect=\(layout.destinationRect)"
+        )
     }
 
     func updateWindowCaptureVirtualDisplayState(_ snapshot: SharedVirtualDisplayManager.DisplaySnapshot?) {
@@ -101,10 +317,10 @@ extension StreamContext {
         )
     }
 
-    /// Starts window capture on an already-acquired shared app-stream virtual display.
+    /// Starts shared-display capture for an app-stream virtual display.
     ///
-    /// Mirrored app streaming keeps the host window on its current display, normalizes
-    /// its size/state locally, and captures it individually via `desktopIndependentWindow`.
+    /// Mirrored app streaming normalizes the host window onto the shared app-stream display,
+    /// then captures that display filtered to the visible window cluster for the selected app slot.
     func startSharedDisplayWindowCapture(
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
@@ -124,6 +340,7 @@ extension StreamContext {
         let application = applicationWrapper.application
         isAppStream = true
         applicationProcessID = application.processID
+        appStreamBundleIdentifier = application.bundleIdentifier.lowercased()
         trafficLightMaskGeometryCache = nil
         lastTrafficLightMaskLogTime = 0
 
@@ -229,14 +446,25 @@ extension StreamContext {
         let outputSize = scaledOutputSize(for: baseCaptureSize)
         currentCaptureSize = outputSize
         currentEncodedSize = outputSize
-        captureMode = .window
-        lastWindowFrame = settledWindowWrapper.window.frame
+        captureMode = .display
         updateQueueLimits()
         await applyDerivedQuality(for: outputSize, logLabel: "Window capture init")
         MirageLogger.stream(
             "Window capture init: latency=\(latencyMode.displayName), scale=\(streamScale), " +
                 "encoded=\(Int(outputSize.width))x\(Int(outputSize.height)), queue=\(maxQueuedBytes / 1024)KB"
         )
+
+        let captureLayout = try await resolveSharedDisplayAppCaptureLayout(
+            primaryWindowID: windowID,
+            primaryWindowWrapper: settledWindowWrapper,
+            displayWrapper: resolvedDisplayWrapper,
+            outputSize: outputSize,
+            label: "shared-display app capture start"
+        )
+        lastWindowFrame = captureLayout.primaryWindowWrapper.window.frame
+        capturedWindowClusterWindowIDs = captureLayout.clusterWindowIDs
+        virtualDisplayCaptureSourceRect = captureLayout.presentationRect
+        currentContentRect = captureLayout.contentRect
 
         try await createAndPreheatEncoder(
             streamKind: .window,
@@ -253,11 +481,14 @@ extension StreamContext {
         let captureEngine = try await setupAndStartCaptureEngine(
             usesDisplayRefreshCadence: captureDisplaySelection.usesDisplayRefreshCadence
         )
-        try await captureEngine.startCapture(
-            window: settledWindowWrapper.window,
-            application: applicationWrapper.application,
+        try await captureEngine.startDisplayCapture(
             display: resolvedDisplayWrapper.display,
-            outputScale: streamScale,
+            resolution: outputSize,
+            sourceRect: captureLayout.sourceRect,
+            destinationRect: captureLayout.destinationRect,
+            contentWindowID: windowID,
+            includedWindows: captureLayout.includedWindowWrappers.map(\.window),
+            showsCursor: false,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)
             },
@@ -267,7 +498,7 @@ extension StreamContext {
         await refreshCaptureCadence()
 
         MirageLogger.stream(
-            "Started stream \(streamID) with window capture on shared display \(mirroredDisplaySnapshot.displayID) for window \(windowID)"
+            "Started stream \(streamID) with shared-display app capture on display \(mirroredDisplaySnapshot.displayID) for window \(windowID) cluster=\(captureLayout.clusterWindowIDs)"
         )
     }
 
@@ -278,49 +509,6 @@ extension StreamContext {
     ) async throws {
         guard isRunning, useVirtualDisplay else { return }
         let rollbackSnapshot = makeResizeRollbackSnapshot()
-
-        let currentSize = baseCaptureSize
-        let requestedPixels = MirageStreamGeometry.resolve(
-            logicalSize: newLogicalSize,
-            displayScaleFactor: virtualDisplayContext?.scaleFactor ?? 1.0
-        )
-        .displayPixelSize
-        let sizeChanged = abs(currentSize.width - requestedPixels.width) > 4 ||
-            abs(currentSize.height - requestedPixels.height) > 4
-        guard sizeChanged || forceReconfigure else {
-            MirageLogger.stream(
-                "Skipping window resize for stream \(streamID): size unchanged"
-            )
-            return
-        }
-        if forceReconfigure, !sizeChanged {
-            MirageLogger.stream(
-                "Forcing window resize reconfiguration for stream \(streamID) despite unchanged logical size"
-            )
-        }
-
-        isResizing = true
-        defer { isResizing = false }
-
-        // Pause encoding and flush pipeline state before reconfiguring the encoder.
-        // This prevents the race where VT callbacks from the old session's invalidation
-        // interleave with new-session encodes via actor suspension points.
-        let wasEncoding = shouldEncodeFrames
-        let previousWindowFrame = rollbackSnapshot.lastWindowFrame
-        if wasEncoding {
-            shouldEncodeFrames = false
-            frameInbox.clear()
-            resetPipelineStateForReconfiguration(reason: "window resize")
-        }
-        defer {
-            if wasEncoding {
-                shouldEncodeFrames = true
-            }
-        }
-
-        currentContentRect = .zero
-        dimensionToken &+= 1
-        await packetSender?.bumpGeneration(reason: "window resize")
 
         // Aspect-fit the requested size into the virtual display's visible bounds
         let effectiveSize: CGSize
@@ -346,6 +534,26 @@ extension StreamContext {
             maxBounds = newLogicalSize
             effectiveSize = newLogicalSize
         }
+
+        let currentSize = lastWindowFrame.size
+        let sizeChanged = abs(currentSize.width - effectiveSize.width) > 2 ||
+            abs(currentSize.height - effectiveSize.height) > 2
+        guard sizeChanged || forceReconfigure else {
+            MirageLogger.stream(
+                "Skipping window resize for stream \(streamID): size unchanged"
+            )
+            return
+        }
+        if forceReconfigure {
+            MirageLogger.stream(
+                "Preserving fixed-canvas app capture during resize for stream \(streamID); ignoring encoder reconfigure request"
+            )
+        }
+
+        isResizing = true
+        defer { isResizing = false }
+
+        let previousWindowFrame = rollbackSnapshot.lastWindowFrame
 
         let clientAspectRatio = newLogicalSize.width > 0 && newLogicalSize.height > 0
             ? newLogicalSize.width / newLogicalSize.height
@@ -374,43 +582,20 @@ extension StreamContext {
             label: "window resize"
         )
         let windowFrame = resolvedWindowWrapper.window.frame
-
-        let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
-        baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
-        streamScale = resolvedStreamScale(
-            for: baseCaptureSize,
-            requestedScale: requestedStreamScale,
-            logLabel: "Resolution cap"
-        )
-        let outputSize = scaledOutputSize(for: baseCaptureSize)
-        currentCaptureSize = outputSize
-        currentEncodedSize = outputSize
-        lastWindowFrame = windowFrame
-        updateQueueLimits()
         do {
-            if let captureEngine {
-                try await captureEngine.updateDimensions(
-                    windowFrame: windowFrame,
-                    outputScale: streamScale
-                )
-            }
-
-            if let encoder {
-                try await encoder.updateDimensions(
-                    width: Int(outputSize.width),
-                    height: Int(outputSize.height)
-                )
-                activePixelFormat = await encoder.getActivePixelFormat()
-                MirageLogger.encoder(
-                    "Encoder updated in place to \(Int(outputSize.width))x\(Int(outputSize.height)) for window resize"
-                )
-            }
-
-            await applyDerivedQuality(for: outputSize, logLabel: "Window resize")
-            await refreshCaptureCadence()
-            await encoder?.forceKeyframe()
-
-            MirageLogger.stream("Window resize complete in place for stream \(streamID)")
+            let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
+            baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
+            lastWindowFrame = windowFrame
+            currentCaptureSize = currentEncodedSize
+            updateQueueLimits()
+            try await refreshSharedDisplayAppCaptureLayout(
+                primaryWindowWrapper: resolvedWindowWrapper,
+                label: "window resize"
+            )
+            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Window resize fixed canvas")
+            MirageLogger.stream(
+                "Window resize updated shared-display crop for stream \(streamID) without changing encoded canvas \(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))"
+            )
         } catch {
             var restoredWindowFrame = previousWindowFrame
             if !previousWindowFrame.isEmpty {

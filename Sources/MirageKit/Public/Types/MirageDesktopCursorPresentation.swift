@@ -23,7 +23,7 @@ public enum MirageDesktopCursorSource: String, Codable, Sendable, CaseIterable, 
         case .client:
             "Client"
         case .emulated:
-            "Emulated"
+            "Simulated"
         case .host:
             "Host"
         }
@@ -34,7 +34,7 @@ public enum MirageDesktopCursorSource: String, Codable, Sendable, CaseIterable, 
         case .client:
             "Client uses your local cursor."
         case .emulated:
-            "Emulated draws Mirage's software cursor."
+            "Simulated draws Mirage's software cursor."
         case .host:
             "Host captures the real Mac cursor inside the stream."
         }
@@ -75,6 +75,15 @@ public struct MirageDesktopCursorPresentation: Codable, Equatable, Sendable, Has
 
     public var requiresCursorPositionUpdates: Bool {
         source != .emulated
+    }
+
+    public var hidesLocalCursor: Bool {
+        switch source {
+        case .client:
+            false
+        case .emulated, .host:
+            true
+        }
     }
 
     public func lockClientCursorPreference(for source: MirageDesktopCursorSource? = nil) -> Bool {

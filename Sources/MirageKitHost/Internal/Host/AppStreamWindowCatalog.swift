@@ -54,6 +54,12 @@ struct AppStreamWindowCandidate: Sendable {
     }
 }
 
+struct AppStreamCapturedWindowCluster: Sendable, Equatable {
+    let primaryWindowID: WindowID
+    let windowIDs: [WindowID]
+    let sourceRect: CGRect
+}
+
 enum AppStreamWindowCatalog {
     struct StartupCandidateSelection: Sendable {
         let candidates: [AppStreamWindowCandidate]
@@ -188,6 +194,48 @@ enum AppStreamWindowCatalog {
         }
 
         return StartupCandidateSelection(candidates: sortedCandidates, usedFallback: !sortedCandidates.isEmpty)
+    }
+
+    static func capturedWindowCluster(
+        primaryWindowID: WindowID,
+        candidates: [AppStreamWindowCandidate]
+    ) -> AppStreamCapturedWindowCluster? {
+        let candidatesByID = Dictionary(uniqueKeysWithValues: candidates.map { ($0.window.id, $0) })
+        guard let primaryCandidate = candidatesByID[primaryWindowID] else { return nil }
+
+        let childrenByParent = Dictionary(grouping: candidates) { $0.parentWindowID }
+        var visited = Set<WindowID>([primaryWindowID])
+        var queue: [WindowID] = [primaryWindowID]
+        var memberCandidates: [AppStreamWindowCandidate] = [primaryCandidate]
+
+        while !queue.isEmpty {
+            let nextParentID = queue.removeFirst()
+            for childCandidate in childrenByParent[nextParentID] ?? [] {
+                let childWindowID = childCandidate.window.id
+                guard visited.insert(childWindowID).inserted else { continue }
+                memberCandidates.append(childCandidate)
+                queue.append(childWindowID)
+            }
+        }
+
+        let orderedMembers = memberCandidates.sorted { lhs, rhs in
+            if lhs.window.id == primaryWindowID { return true }
+            if rhs.window.id == primaryWindowID { return false }
+            return preferredOrder(lhs: lhs, rhs: rhs)
+        }
+        let sourceRect = orderedMembers
+            .map(\.window.frame.standardized)
+            .reduce(CGRect.null) { partialResult, rect in
+                partialResult.isNull ? rect : partialResult.union(rect)
+            }
+            .standardized
+
+        guard !sourceRect.isNull, sourceRect.width > 0, sourceRect.height > 0 else { return nil }
+        return AppStreamCapturedWindowCluster(
+            primaryWindowID: primaryWindowID,
+            windowIDs: orderedMembers.map(\.window.id),
+            sourceRect: sourceRect
+        )
     }
 
     static func classifyWindow(

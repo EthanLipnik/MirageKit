@@ -100,6 +100,10 @@ extension StreamContext {
         windowID
     }
 
+    func getCapturedClusterWindowIDs() -> [WindowID] {
+        capturedWindowClusterWindowIDs
+    }
+
     func updateWindowBinding(windowID: WindowID, ownerGeneration: UInt64?) {
         self.windowID = windowID
         if let ownerGeneration,

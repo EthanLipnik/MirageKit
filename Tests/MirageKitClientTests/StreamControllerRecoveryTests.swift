@@ -9,6 +9,7 @@
 
 @testable import MirageKit
 @testable import MirageKitClient
+import CoreMedia
 import CoreVideo
 import Foundation
 import Testing
@@ -203,7 +204,7 @@ struct StreamControllerRecoveryTests {
         let keyframeCounter = LockedCounter()
         let streamID: StreamID = 92
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -221,12 +222,12 @@ struct StreamControllerRecoveryTests {
         await controller.updatePresentationTier(.passiveSnapshot)
         await controller.updatePresentationTier(.activeLive)
         try await Task.sleep(for: .milliseconds(100))
-        MirageFrameCache.shared.markPresented(sequence: 1, for: streamID)
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
         try await Task.sleep(for: .milliseconds(300))
         #expect(keyframeCounter.value == 0)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Passive to active promotion forces keyframe recovery when keyframe-starved")
@@ -262,7 +263,7 @@ struct StreamControllerRecoveryTests {
         let keyframeCounter = LockedCounter()
         let streamID: StreamID = 94
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -285,7 +286,7 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Reset re-arms first-frame callback for post-resize transitions")
@@ -350,21 +351,20 @@ struct StreamControllerRecoveryTests {
         let owner = NSObject()
         let signalCounter = LockedCounter()
 
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
         MirageRenderStreamStore.shared.registerFrameListener(for: streamID, owner: owner) {
             signalCounter.increment()
         }
         defer {
             MirageRenderStreamStore.shared.unregisterFrameListener(for: streamID, owner: owner)
-            MirageFrameCache.shared.clear(for: streamID)
+            MirageRenderStreamStore.shared.clear(for: streamID)
         }
 
-        MirageFrameCache.shared.store(
-            makePixelBuffer(),
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: makePixelBuffer(),
             contentRect: .zero,
             decodeTime: CFAbsoluteTimeGetCurrent(),
-            metalTexture: nil,
-            texture: nil,
+            presentationTime: .zero,
             for: streamID
         )
 
@@ -474,7 +474,7 @@ struct StreamControllerRecoveryTests {
         let streamID: StreamID = 44
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -491,7 +491,7 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value == 0)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Decode threshold requests recovery after sustained freeze")
@@ -499,7 +499,7 @@ struct StreamControllerRecoveryTests {
         let streamID: StreamID = 144
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -520,7 +520,7 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Decode threshold before first presented frame requests immediate startup recovery")
@@ -528,7 +528,7 @@ struct StreamControllerRecoveryTests {
         let streamID: StreamID = 146
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -549,7 +549,7 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value == 1)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Post-resize decode threshold waits through grace window before recovery")
@@ -562,7 +562,7 @@ struct StreamControllerRecoveryTests {
             maxPayloadSize: 1200,
             nowProvider: { clock.now }
         )
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -587,7 +587,7 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Recovery dispatch helper enforces minimum intervals")
@@ -679,7 +679,7 @@ struct StreamControllerRecoveryTests {
         let keyframeCounter = LockedCounter()
         let streamID: StreamID = 148
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -690,7 +690,7 @@ struct StreamControllerRecoveryTests {
 
         await controller.updatePresentationTier(.activeLive)
         await controller.recordDecodedFrame()
-        MirageFrameCache.shared.markPresented(sequence: 1, for: streamID)
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
         await controller.markFirstFramePresented()
 
         #expect(await controller.lastPresentedProgressTime > 0)
@@ -704,7 +704,7 @@ struct StreamControllerRecoveryTests {
         #expect(keyframeCounter.value >= 1)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("First-frame watchdog requests bootstrap recovery when startup stalls")
@@ -829,7 +829,7 @@ struct StreamControllerRecoveryTests {
             maxPayloadSize: 1200,
             nowProvider: { clock.now }
         )
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.requestRecovery(
             reason: .startupKeyframeTimeout,
@@ -839,14 +839,14 @@ struct StreamControllerRecoveryTests {
         )
         #expect(await controller.startupHardRecoveryCount == 1)
 
-        MirageFrameCache.shared.markPresented(sequence: 1, for: streamID)
+        MirageRenderStreamStore.shared.markSubmitted(sequence: 1, mappedPresentationTime: .zero, for: streamID)
         await controller.markFirstFramePresented()
 
         #expect(await controller.startupHardRecoveryCount == 0)
         #expect(!(await controller.hasTriggeredTerminalStartupFailure))
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Recovery requests are ignored after the controller stops")
@@ -981,7 +981,7 @@ struct StreamControllerRecoveryTests {
         let streamID: StreamID = 5
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
 
         await controller.setCallbacks(
             onKeyframeNeeded: {
@@ -995,12 +995,11 @@ struct StreamControllerRecoveryTests {
         )
 
         let pixelBuffer = makePixelBuffer()
-        MirageFrameCache.shared.enqueue(
-            pixelBuffer,
+        _ = MirageRenderStreamStore.shared.enqueue(
+            pixelBuffer: pixelBuffer,
             contentRect: .zero,
             decodeTime: CFAbsoluteTimeGetCurrent() - 10,
-            metalTexture: nil,
-            texture: nil,
+            presentationTime: .zero,
             for: streamID
         )
 
@@ -1010,10 +1009,10 @@ struct StreamControllerRecoveryTests {
 
         try await Task.sleep(for: .seconds(11))
         #expect(keyframeCounter.value >= 2)
-        #expect(MirageFrameCache.shared.queueDepth(for: streamID) == 0)
+        #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
 
         await controller.stop()
-        MirageFrameCache.shared.clear(for: streamID)
+        MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
     @Test("Packet-starved stalls escalate from bounded recovery to hard recovery")

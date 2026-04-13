@@ -96,7 +96,8 @@ public extension AppStreamManager {
         height: Int,
         isResizable: Bool,
         slotIndex: Int? = nil,
-        isActive: Bool = true
+        isActive: Bool = true,
+        capturedClusterWindowIDs: [WindowID] = []
     ) -> Int? {
         let key = bundleIdentifier.lowercased()
         guard var session = sessions[key] else { return nil }
@@ -132,7 +133,8 @@ public extension AppStreamManager {
             height: height,
             isResizable: isResizable,
             isPaused: false,
-            isActive: isActive
+            isActive: isActive,
+            capturedClusterWindowIDs: capturedClusterWindowIDs
         )
 
         session.windowStreams[windowID] = windowInfo
@@ -155,7 +157,8 @@ public extension AppStreamManager {
         title: String?,
         width: Int,
         height: Int,
-        isResizable: Bool
+        isResizable: Bool,
+        capturedClusterWindowIDs: [WindowID] = []
     ) -> (oldWindowID: WindowID, slotIndex: Int, isActive: Bool)? {
         let key = bundleIdentifier.lowercased()
         guard var session = sessions[key] else { return nil }
@@ -177,7 +180,8 @@ public extension AppStreamManager {
             height: height,
             isResizable: isResizable,
             isPaused: false,
-            isActive: isActive
+            isActive: isActive,
+            capturedClusterWindowIDs: capturedClusterWindowIDs
         )
         session.streamActivityByStreamID[streamID] = isActive
         sessions[key] = session
@@ -281,6 +285,32 @@ public extension AppStreamManager {
 
     func streamIDForWindow(bundleIdentifier: String, windowID: WindowID) -> StreamID? {
         sessions[bundleIdentifier.lowercased()]?.windowStreams[windowID]?.streamID
+    }
+
+    func streamIDForCapturedClusterWindow(
+        bundleIdentifier: String,
+        windowID: WindowID
+    ) -> StreamID? {
+        sessions[bundleIdentifier.lowercased()]?.windowStreams.values.first { info in
+            info.capturedClusterWindowIDs.contains(windowID)
+        }?.streamID
+    }
+
+    func setCapturedClusterWindowIDs(
+        bundleIdentifier: String,
+        streamID: StreamID,
+        capturedClusterWindowIDs: [WindowID]
+    ) {
+        let key = bundleIdentifier.lowercased()
+        guard var session = sessions[key] else { return }
+        guard let windowID = session.windowStreams.first(where: { $0.value.streamID == streamID })?.key,
+              var info = session.windowStreams[windowID] else {
+            return
+        }
+
+        info.capturedClusterWindowIDs = capturedClusterWindowIDs
+        session.windowStreams[windowID] = info
+        sessions[key] = session
     }
 
     func markStreamActivity(bundleIdentifier: String, streamID: StreamID, isActive: Bool) {

@@ -1,10 +1,10 @@
 //
-//  MirageMetalView+iOS+Configuration.swift
+//  MirageSampleBufferView+iOS+Configuration.swift
 //  MirageKit
 //
 //  Created by Ethan Lipnik on 2/17/26.
 //
-//  Layout and refresh-rate helpers for MirageMetalView.
+//  Layout and refresh-rate helpers for MirageSampleBufferView.
 //
 
 import MirageKit
@@ -12,7 +12,7 @@ import MirageKit
 import QuartzCore
 import UIKit
 
-extension MirageMetalView {
+extension MirageSampleBufferView {
     // MARK: - Metrics / Layout
 
     func reportDrawableMetricsIfChanged() {
@@ -145,7 +145,7 @@ extension MirageMetalView {
         let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
         refreshRateMonitor.isProMotionEnabled = proMotionEnabled
         updateFrameRatePreference(proMotionEnabled: proMotionEnabled)
-        requestDraw()
+        requestImmediateSubmission()
     }
 
     private func updateFrameRatePreference(proMotionEnabled: Bool) {
