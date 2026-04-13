@@ -164,7 +164,7 @@ Clients can supply per-stream overrides with `MirageEncoderOverrides` (keyframe 
 
 - Use `.highQuality` or `.balanced` defaults.
 - Use `withOverrides` to apply client-specific intervals or encoder quality.
-- Use `withTargetFrameRate` to request the client's target FPS (60/120 based on display capabilities).
+- Use `withTargetFrameRate` to request the client's target FPS, capped by the active display.
 - `frameQuality` targets inter-frame quality and maps to QP bounds when supported.
 - `keyframeQuality` targets keyframe quality and should stay below `frameQuality`.
 

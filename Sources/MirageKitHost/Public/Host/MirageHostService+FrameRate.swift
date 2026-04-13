@@ -17,10 +17,7 @@ extension MirageHostService {
     }
 
     func resolvedTargetFrameRate(_ requested: Int) -> Int {
-        guard requested > 0 else { return 60 }
-        if requested >= 120 { return 120 }
-        if requested <= 30 { return 30 }
-        return 60
+        max(1, min(120, requested))
     }
 }
 #endif

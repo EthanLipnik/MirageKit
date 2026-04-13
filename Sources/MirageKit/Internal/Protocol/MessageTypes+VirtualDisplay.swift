@@ -65,11 +65,11 @@ package struct StreamScaleChangeMessage: Codable {
 }
 
 /// Stream refresh rate override sent from client to host
-/// Controls whether the host targets 60 Hz or 120 Hz for this stream
+/// Controls the maximum frame rate the host should target for this stream
 package struct StreamRefreshRateChangeMessage: Codable {
     /// The stream to update
     package let streamID: StreamID
-    /// Maximum refresh rate in Hz (60/120 based on client capability)
+    /// Maximum refresh rate in Hz, capped by client display capability.
     package let maxRefreshRate: Int
     /// Force a display refresh reconfiguration on the host (fallback path)
     package var forceDisplayRefresh: Bool?

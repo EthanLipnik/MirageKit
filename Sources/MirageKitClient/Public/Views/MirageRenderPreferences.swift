@@ -8,7 +8,26 @@
 import Foundation
 
 enum MirageRenderPreferences {
-    static func proMotionEnabled() -> Bool {
-        UserDefaults.standard.object(forKey: "enableProMotion") as? Bool ?? false
+    private static let frameRatePresetKey = "frameratePreset"
+
+    static func preferredMaximumRefreshRate() -> Int {
+        preferredMaximumRefreshRate(frameratePresetRawValue: UserDefaults.standard.string(forKey: frameRatePresetKey))
+    }
+
+    static func preferredMaximumRefreshRate(frameratePresetRawValue: String?) -> Int {
+        switch frameratePresetRawValue {
+        case "20fps":
+            20
+        case "30fps":
+            30
+        case "60fps":
+            60
+        case "90fps":
+            90
+        case "120fps":
+            120
+        default:
+            60
+        }
     }
 }

@@ -14,6 +14,6 @@ enum MirageRenderModePolicy {
     static let stressedDecodeRatio = 0.80
 
     static func normalizedTargetFPS(_ fps: Int) -> Int {
-        fps >= 120 ? 120 : 60
+        max(1, min(120, fps))
     }
 }

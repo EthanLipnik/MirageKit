@@ -73,8 +73,6 @@ public struct MirageStreamContentView: View {
     @State private var pendingDisplayResolutionDispatchTarget: CGSize = .zero
     /// Tracks the last requested client display resolution, not the host's encoded output size.
     @State private var lastSentDisplayResolution: CGSize = .zero
-    @State private var pendingAppDisplayResolutionCandidate: CGSize = .zero
-    @State private var pendingAppDisplayResolutionCandidateSince: Date = .distantPast
     @State private var streamScaleTask: Task<Void, Never>?
     @State private var lastSentEncodedPixelSize: CGSize = .zero
     @State private var awaitingAppResizeAck: Bool = false
@@ -412,8 +410,6 @@ public struct MirageStreamContentView: View {
             displayResolutionTask?.cancel()
             displayResolutionTask = nil
             pendingDisplayResolutionDispatchTarget = .zero
-            pendingAppDisplayResolutionCandidate = .zero
-            pendingAppDisplayResolutionCandidateSince = .distantPast
             streamScaleTask?.cancel()
             streamScaleTask = nil
             appResizeAckTimeoutTask?.cancel()
@@ -674,8 +670,6 @@ public struct MirageStreamContentView: View {
             return
         case .ignoreInvalidMetrics:
             if !isDesktopStream {
-                pendingAppDisplayResolutionCandidate = .zero
-                pendingAppDisplayResolutionCandidateSince = .distantPast
                 if !awaitingAppResizeAck, isResizing { isResizing = false }
             }
             return
@@ -708,8 +702,6 @@ public struct MirageStreamContentView: View {
                 #endif
                 guard baseDisplaySize.width > 0, baseDisplaySize.height > 0 else {
                     latestRequestedDisplaySize = .zero
-                    pendingAppDisplayResolutionCandidate = .zero
-                    pendingAppDisplayResolutionCandidateSince = .distantPast
                     if isResizing, !awaitingAppResizeAck { isResizing = false }
                     return
                 }
@@ -718,8 +710,6 @@ public struct MirageStreamContentView: View {
                     displayResolutionTask?.cancel()
                     displayResolutionTask = nil
                     pendingDisplayResolutionDispatchTarget = .zero
-                    pendingAppDisplayResolutionCandidate = .zero
-                    pendingAppDisplayResolutionCandidateSince = .distantPast
                     if awaitingAppResizeAck {
                         finishAppResizeAwaitingAck()
                     } else if isResizing {
@@ -734,30 +724,9 @@ public struct MirageStreamContentView: View {
                 streamScaleTask = nil
                 lastSentEncodedPixelSize = .zero
                 guard lastSentDisplayResolution != baseDisplaySize else {
-                    pendingAppDisplayResolutionCandidate = .zero
-                    pendingAppDisplayResolutionCandidateSince = .distantPast
                     if isResizing, !awaitingAppResizeAck { isResizing = false }
                     return
                 }
-
-                let now = Date()
-                let stabilizationDuration = appDisplayResolutionStabilizationDuration(
-                    from: lastSentDisplayResolution,
-                    to: baseDisplaySize
-                )
-                if stabilizationDuration > 0 {
-                    if pendingAppDisplayResolutionCandidate != baseDisplaySize {
-                        pendingAppDisplayResolutionCandidate = baseDisplaySize
-                        pendingAppDisplayResolutionCandidateSince = now
-                        return
-                    }
-                    if now.timeIntervalSince(pendingAppDisplayResolutionCandidateSince) < stabilizationDuration {
-                        return
-                    }
-                }
-
-                pendingAppDisplayResolutionCandidate = .zero
-                pendingAppDisplayResolutionCandidateSince = .distantPast
                 guard pendingDisplayResolutionDispatchTarget != baseDisplaySize else { return }
                 displayResolutionTask?.cancel()
                 pendingDisplayResolutionDispatchTarget = baseDisplaySize
@@ -768,15 +737,9 @@ public struct MirageStreamContentView: View {
                             pendingDisplayResolutionDispatchTarget = .zero
                         }
                     }
-                    do {
-                        try await Task.sleep(for: .milliseconds(200))
-                    } catch {
-                        return
-                    }
+                    await Task.yield()
 
                     guard lastSentDisplayResolution != baseDisplaySize else {
-                        pendingAppDisplayResolutionCandidate = .zero
-                        pendingAppDisplayResolutionCandidateSince = .distantPast
                         if isResizing, !awaitingAppResizeAck { isResizing = false }
                         return
                     }
@@ -1335,37 +1298,6 @@ public struct MirageStreamContentView: View {
         }
     }
 
-    private func appDisplayResolutionStabilizationDuration(
-        from previous: CGSize,
-        to proposed: CGSize
-    )
-    -> TimeInterval {
-        guard previous.width > 0, previous.height > 0 else { return 0 }
-        guard proposed.width > 0, proposed.height > 0 else { return 0 }
-
-        let previousArea = previous.width * previous.height
-        let proposedArea = proposed.width * proposed.height
-        guard previousArea > 0, proposedArea > 0 else { return 0 }
-
-        let areaDelta = abs(proposedArea - previousArea) / previousArea
-        let widthDelta = abs(proposed.width - previous.width) / previous.width
-        let heightDelta = abs(proposed.height - previous.height) / previous.height
-        let widthRatio = proposed.width / previous.width
-        let heightRatio = proposed.height / previous.height
-
-        if widthRatio < 0.75 || heightRatio < 0.75 {
-            // Guard against transient drawable/layout drops that can collapse app streams
-            // to quarter-size if propagated immediately to host display resolution.
-            return 1.2
-        }
-
-        if areaDelta > 0.28 || widthDelta > 0.20 || heightDelta > 0.20 {
-            return 0.6
-        }
-
-        return 0
-    }
-
     private func approximatelyEqualPixelSizes(
         _ lhs: CGSize,
         _ rhs: CGSize,
@@ -1393,8 +1325,6 @@ public struct MirageStreamContentView: View {
         displayResolutionTask?.cancel()
         displayResolutionTask = nil
         pendingDisplayResolutionDispatchTarget = .zero
-        pendingAppDisplayResolutionCandidate = .zero
-        pendingAppDisplayResolutionCandidateSince = .distantPast
         streamScaleTask?.cancel()
         streamScaleTask = nil
         appResizeAckTimeoutTask?.cancel()

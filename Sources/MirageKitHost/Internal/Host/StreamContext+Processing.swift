@@ -584,7 +584,7 @@ extension StreamContext {
         if useVirtualDisplay, isAppStream, captureMode == .display {
             return Self.sharedDisplayAppTrafficLightMaskContentRect(
                 primaryRect: lastWindowFrame,
-                presentationRect: virtualDisplayCaptureSourceRect,
+                presentationRect: virtualDisplayCapturePresentationRect,
                 contentRect: resolvedOutgoingContentRect(for: frame),
                 fullFrameRect: fullFrameRect
             )

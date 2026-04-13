@@ -734,7 +734,7 @@ public final class MirageClientService {
     /// Minimum window sizes per stream (from host)
     var streamMinSizes: [StreamID: (minWidth: Int, minHeight: Int)] = [:]
 
-    // Per-stream refresh rate overrides (60/120 only).
+    // Per-stream refresh rate overrides keyed by stream ID.
     var refreshRateOverridesByStream: [StreamID: Int] = [:]
     var refreshRateMismatchCounts: [StreamID: Int] = [:]
     var refreshRateFallbackTargets: [StreamID: Int] = [:]

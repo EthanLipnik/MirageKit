@@ -53,6 +53,16 @@ struct SharedDisplayAppPresentationLayoutTests {
         #expect(layout.contentRect == CGRect(x: 0, y: 96, width: 2256, height: 1504))
     }
 
+    @Test("Capture source rect uses display-local coordinates")
+    func captureSourceRectUsesDisplayLocalCoordinates() {
+        let sourceRect = StreamContext.sharedDisplayAppCaptureSourceRect(
+            presentationRect: CGRect(x: 1700, y: 80, width: 800, height: 600),
+            displayBounds: CGRect(x: 1600, y: 0, width: 1440, height: 900)
+        )
+
+        #expect(sourceRect == CGRect(x: 100, y: 80, width: 800, height: 600))
+    }
+
     @Test("Traffic-light mask content rect stays anchored to the primary window within a widened frame")
     func trafficLightMaskContentRectAnchorsToPrimaryWindowWithinWidenedFrame() {
         let mappedContentRect = StreamContext.sharedDisplayAppTrafficLightMaskContentRect(

@@ -142,19 +142,12 @@ extension MirageSampleBufferView {
     // MARK: - Preferences
 
     func applyRenderPreferences() {
-        let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
-        refreshRateMonitor.isProMotionEnabled = proMotionEnabled
-        updateFrameRatePreference(proMotionEnabled: proMotionEnabled)
+        refreshRateMonitor.preferredMaximumRefreshRate = MirageRenderPreferences.preferredMaximumRefreshRate()
         requestImmediateSubmission()
     }
 
-    private func updateFrameRatePreference(proMotionEnabled: Bool) {
-        let desired = proMotionEnabled ? 120 : 60
-        applyRefreshRateOverride(desired)
-    }
-
     func applyRefreshRateOverride(_ override: Int) {
-        let clamped = max(1, min(120, override))
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(override)
         maxRenderFPS = clamped
         presenter.setTargetFPS(clamped)
         applyDisplayRefreshRateLock(clamped)
@@ -162,7 +155,7 @@ extension MirageSampleBufferView {
     }
 
     func applyDisplayRefreshRateLock(_ fps: Int) {
-        let clamped = max(1, min(120, fps))
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
         let localFPS = resolvedLocalDisplayLinkFPS(baseFPS: clamped)
         let changed = appliedRefreshRateLock != clamped
         appliedRefreshRateLock = clamped
@@ -177,7 +170,7 @@ extension MirageSampleBufferView {
     }
 
     func configureDisplayLinkRate(_ displayLink: CADisplayLink, fps: Int) {
-        let clamped = max(1, min(120, fps))
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
         if #available(iOS 15.0, visionOS 1.0, *) {
             let preferred = Float(clamped)
             displayLink.preferredFrameRateRange = CAFrameRateRange(
@@ -194,7 +187,7 @@ extension MirageSampleBufferView {
         if streamPresentationTier == .passiveSnapshot {
             return 1
         }
-        return max(1, min(120, baseFPS))
+        return MirageRenderModePolicy.normalizedTargetFPS(baseFPS)
     }
 
     func startObservingPreferences() {

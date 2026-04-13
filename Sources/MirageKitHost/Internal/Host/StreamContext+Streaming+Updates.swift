@@ -1012,6 +1012,7 @@ extension StreamContext {
             virtualDisplayContext = nil
             virtualDisplayVisibleBounds = .zero
             virtualDisplayCaptureSourceRect = .zero
+            virtualDisplayCapturePresentationRect = .zero
             virtualDisplayVisiblePixelResolution = .zero
         }
         useVirtualDisplay = false

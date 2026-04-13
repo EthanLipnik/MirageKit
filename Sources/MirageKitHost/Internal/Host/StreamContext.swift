@@ -74,6 +74,7 @@ actor StreamContext {
     var virtualDisplayContext: SharedVirtualDisplayManager.DisplaySnapshot?
     var virtualDisplayVisibleBounds: CGRect = .zero
     var virtualDisplayCaptureSourceRect: CGRect = .zero
+    var virtualDisplayCapturePresentationRect: CGRect = .zero
     var virtualDisplayVisiblePixelResolution: CGSize = .zero
     var displayP3CoverageStatusOverride: MirageDisplayP3CoverageStatus?
     var useVirtualDisplay: Bool = true

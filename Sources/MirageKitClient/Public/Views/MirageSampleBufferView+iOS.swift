@@ -133,6 +133,9 @@ public class MirageSampleBufferView: UIView {
     override public func didMoveToWindow() {
         super.didMoveToWindow()
         applyPresentationVideoGravity()
+        if window != nil {
+            refreshRateMonitor.start()
+        }
         applyDisplayRefreshRateLock(maxRenderFPS)
         setNeedsLayout()
     }

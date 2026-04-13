@@ -12,11 +12,12 @@ import Testing
 
 @Suite("Render Mode Policy")
 struct RenderModePolicyTests {
-    @Test("Target FPS normalization uses 60/120 buckets")
+    @Test("Target FPS normalization clamps to the supported range")
     func normalizedTargetFPS() {
-        #expect(MirageRenderModePolicy.normalizedTargetFPS(1) == 60)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(1) == 1)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(30) == 30)
         #expect(MirageRenderModePolicy.normalizedTargetFPS(60) == 60)
-        #expect(MirageRenderModePolicy.normalizedTargetFPS(90) == 60)
+        #expect(MirageRenderModePolicy.normalizedTargetFPS(90) == 90)
         #expect(MirageRenderModePolicy.normalizedTargetFPS(120) == 120)
         #expect(MirageRenderModePolicy.normalizedTargetFPS(144) == 120)
     }

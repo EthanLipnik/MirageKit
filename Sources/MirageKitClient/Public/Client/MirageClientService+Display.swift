@@ -230,17 +230,22 @@ extension MirageClientService {
             defaultScreenMax: 60
         )
         #else
-        let screenMax: Int
+        let preferredRefreshRate = MirageRenderPreferences.preferredMaximumRefreshRate()
+        let defaultScreenMax: Int
         #if os(macOS)
-        screenMax = MirageRenderPreferences.proMotionEnabled() ? 120 : 60
+        defaultScreenMax = max(1, NSScreen.main?.maximumFramesPerSecond ?? preferredRefreshRate)
         #elseif os(visionOS)
-        screenMax = 120
+        defaultScreenMax = 90
         #else
-        screenMax = 60
+        defaultScreenMax = 60
         #endif
 
-        if let override = maxRefreshRateOverride { return override }
-        return screenMax
+        return Self.resolvedScreenMaxRefreshRate(
+            override: maxRefreshRateOverride,
+            liveScreenMax: nil,
+            cachedScreenMax: nil,
+            defaultScreenMax: min(preferredRefreshRate, defaultScreenMax)
+        )
         #endif
     }
 
@@ -263,7 +268,7 @@ extension MirageClientService {
     }
 
     public func updateMaxRefreshRateOverride(_ newValue: Int) {
-        let clamped = clampRefreshRate(newValue)
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(newValue)
         guard maxRefreshRateOverride != clamped else { return }
         maxRefreshRateOverride = clamped
     }
@@ -345,7 +350,7 @@ extension MirageClientService {
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
-        let clamped = clampRefreshRate(maxRefreshRate)
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(maxRefreshRate)
         let request = StreamRefreshRateChangeMessage(
             streamID: streamID,
             maxRefreshRate: clamped,
@@ -356,7 +361,7 @@ extension MirageClientService {
     }
 
     func updateStreamRefreshRateOverride(streamID: StreamID, maxRefreshRate: Int) {
-        let clamped = clampRefreshRate(maxRefreshRate)
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(maxRefreshRate)
         let existing = refreshRateOverridesByStream[streamID]
         guard existing != clamped else { return }
         refreshRateOverridesByStream[streamID] = clamped
@@ -372,13 +377,6 @@ extension MirageClientService {
         refreshRateOverridesByStream.removeValue(forKey: streamID)
         refreshRateMismatchCounts.removeValue(forKey: streamID)
         refreshRateFallbackTargets.removeValue(forKey: streamID)
-    }
-
-    private func clampRefreshRate(_ rate: Int) -> Int {
-        guard rate > 0 else { return 60 }
-        if rate >= 120 { return 120 }
-        if rate <= 30 { return 30 }
-        return 60
     }
 
     #if os(iOS) || os(visionOS)

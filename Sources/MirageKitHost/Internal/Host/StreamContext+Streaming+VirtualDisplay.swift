@@ -34,9 +34,10 @@ extension StreamContext {
         let primaryRect: CGRect
         let clusterRect: CGRect
         let presentationRect: CGRect
+        let captureSourceRect: CGRect
         let destinationRect: CGRect
 
-        var sourceRect: CGRect { presentationRect }
+        var sourceRect: CGRect { captureSourceRect }
         var contentRect: CGRect { destinationRect }
     }
 
@@ -88,6 +89,33 @@ extension StreamContext {
             y: floor((outputSize.height - fittedSize.height) * 0.5),
             width: fittedSize.width,
             height: fittedSize.height
+        )
+    }
+
+    nonisolated static func sharedDisplayAppCaptureSourceRect(
+        presentationRect: CGRect,
+        displayBounds: CGRect
+    ) -> CGRect {
+        let resolvedDisplayBounds = displayBounds.standardized
+        guard resolvedDisplayBounds.width > 0,
+              resolvedDisplayBounds.height > 0 else {
+            return .zero
+        }
+
+        let resolvedPresentationRect = presentationRect
+            .standardized
+            .intersection(resolvedDisplayBounds)
+            .standardized
+        guard resolvedPresentationRect.width > 0,
+              resolvedPresentationRect.height > 0 else {
+            return .zero
+        }
+
+        return CGRect(
+            x: max(0, resolvedPresentationRect.minX - resolvedDisplayBounds.minX),
+            y: max(0, resolvedPresentationRect.minY - resolvedDisplayBounds.minY),
+            width: resolvedPresentationRect.width,
+            height: resolvedPresentationRect.height
         )
     }
 
@@ -201,6 +229,10 @@ extension StreamContext {
             clusterRect: clusterDisplayRect,
             outputSize: outputSize
         )
+        let captureSourceRect = Self.sharedDisplayAppCaptureSourceRect(
+            presentationRect: presentationLayout.presentationRect,
+            displayBounds: displayBounds
+        )
 
         return SharedDisplayAppCaptureLayout(
             primaryWindowWrapper: primaryWindowWrapper,
@@ -209,6 +241,7 @@ extension StreamContext {
             primaryRect: presentationLayout.primaryRect,
             clusterRect: presentationLayout.clusterRect,
             presentationRect: presentationLayout.presentationRect,
+            captureSourceRect: captureSourceRect,
             destinationRect: presentationLayout.destinationRect
         )
     }
@@ -240,7 +273,8 @@ extension StreamContext {
 
         lastWindowFrame = layout.primaryWindowWrapper.window.frame
         capturedWindowClusterWindowIDs = layout.clusterWindowIDs
-        virtualDisplayCaptureSourceRect = layout.presentationRect
+        virtualDisplayCapturePresentationRect = layout.presentationRect
+        virtualDisplayCaptureSourceRect = layout.captureSourceRect
         currentContentRect = layout.contentRect
 
         try await captureEngine.updateDisplayCaptureLayout(
@@ -264,6 +298,7 @@ extension StreamContext {
         guard let snapshot else {
             virtualDisplayVisibleBounds = .zero
             virtualDisplayCaptureSourceRect = .zero
+            virtualDisplayCapturePresentationRect = .zero
             virtualDisplayVisiblePixelResolution = .zero
             return
         }
@@ -294,7 +329,10 @@ extension StreamContext {
             snapshot.displayID,
             knownBounds: displayBounds
         )
-        virtualDisplayCaptureSourceRect = captureSourceRect.isEmpty ? displayBounds : captureSourceRect
+        virtualDisplayCapturePresentationRect = visibleBounds
+        virtualDisplayCaptureSourceRect = captureSourceRect.isEmpty
+            ? CGRect(origin: .zero, size: displayBounds.size)
+            : captureSourceRect
         virtualDisplayVisiblePixelResolution = CGSize(
             width: max(1, ceil(visibleBounds.width * scaleFactor)),
             height: max(1, ceil(visibleBounds.height * scaleFactor))
@@ -383,7 +421,11 @@ extension StreamContext {
             mirroredVisibleBounds: effectiveMirroredVisibleBounds
         )
         virtualDisplayVisibleBounds = placementBounds
-        virtualDisplayCaptureSourceRect = placementBounds
+        virtualDisplayCapturePresentationRect = placementBounds
+        virtualDisplayCaptureSourceRect = Self.sharedDisplayAppCaptureSourceRect(
+            presentationRect: placementBounds,
+            displayBounds: mirroredDisplayBounds
+        )
         virtualDisplayVisiblePixelResolution = CGSize(
             width: max(1, ceil(placementBounds.width * scaleFactor)),
             height: max(1, ceil(placementBounds.height * scaleFactor))
@@ -463,7 +505,8 @@ extension StreamContext {
         )
         lastWindowFrame = captureLayout.primaryWindowWrapper.window.frame
         capturedWindowClusterWindowIDs = captureLayout.clusterWindowIDs
-        virtualDisplayCaptureSourceRect = captureLayout.presentationRect
+        virtualDisplayCapturePresentationRect = captureLayout.presentationRect
+        virtualDisplayCaptureSourceRect = captureLayout.captureSourceRect
         currentContentRect = captureLayout.contentRect
 
         try await createAndPreheatEncoder(

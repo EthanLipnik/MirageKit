@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 1/24/26.
 //
-//  Sample-buffer view refresh rate sampler for ProMotion overrides.
+//  Sample-buffer view refresh rate sampler for dynamic display refresh overrides.
 //
 
 import MirageKit
@@ -20,7 +20,7 @@ final class MirageRefreshRateMonitor: NSObject {
 
     var onOverrideChange: ((Int) -> Void)?
 
-    var isProMotionEnabled: Bool = false {
+    var preferredMaximumRefreshRate: Int = 60 {
         didSet {
             updateMode()
         }
@@ -51,8 +51,9 @@ final class MirageRefreshRateMonitor: NSObject {
     }
 
     private func updateMode() {
-        guard isProMotionEnabled else {
-            setOverride(60)
+        let preferredFPS = MirageRenderModePolicy.normalizedTargetFPS(preferredMaximumRefreshRate)
+        guard preferredFPS > 60 else {
+            setOverride(preferredFPS)
             stopPolling()
             return
         }
@@ -65,8 +66,10 @@ final class MirageRefreshRateMonitor: NSObject {
         pollTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                if isProMotionEnabled, isViewReadyForSampling { evaluateScreenMaxFPS() } else if !isProMotionEnabled {
-                    setOverride(60)
+                if preferredMaximumRefreshRate > 60, isViewReadyForSampling {
+                    evaluateScreenMaxFPS()
+                } else if preferredMaximumRefreshRate <= 60 {
+                    setOverride(preferredMaximumRefreshRate)
                 }
 
                 do {
@@ -88,7 +91,10 @@ final class MirageRefreshRateMonitor: NSObject {
         if maxFPS != lastScreenMaxFPS { lastScreenMaxFPS = maxFPS }
         guard maxFPS > 0 else { return }
         MirageClientService.lastKnownScreenMaxFPS = maxFPS
-        let target = maxFPS >= 120 ? 120 : 60
+        let target = min(
+            MirageRenderModePolicy.normalizedTargetFPS(preferredMaximumRefreshRate),
+            maxFPS
+        )
         setOverride(target)
     }
 
@@ -108,7 +114,7 @@ final class MirageRefreshRateMonitor: NSObject {
     }
 
     private func setOverride(_ newValue: Int) {
-        let clamped = newValue >= 120 ? 120 : 60
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(newValue)
         guard currentOverride != clamped else { return }
         currentOverride = clamped
         onOverrideChange?(clamped)

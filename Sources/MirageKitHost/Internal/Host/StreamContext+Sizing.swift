@@ -23,6 +23,8 @@ struct StreamResizeRollbackSnapshot: Sendable {
     let captureMode: StreamContext.CaptureMode
     let dimensionToken: UInt16
     let currentContentRect: CGRect
+    let virtualDisplayCaptureSourceRect: CGRect
+    let virtualDisplayCapturePresentationRect: CGRect
 }
 
 extension StreamContext {
@@ -42,7 +44,9 @@ extension StreamContext {
             requestedStreamScale: requestedStreamScale,
             captureMode: captureMode,
             dimensionToken: dimensionToken,
-            currentContentRect: currentContentRect
+            currentContentRect: currentContentRect,
+            virtualDisplayCaptureSourceRect: virtualDisplayCaptureSourceRect,
+            virtualDisplayCapturePresentationRect: virtualDisplayCapturePresentationRect
         )
     }
 
@@ -60,6 +64,8 @@ extension StreamContext {
         captureMode = snapshot.captureMode
         dimensionToken = snapshot.dimensionToken
         currentContentRect = snapshot.currentContentRect
+        virtualDisplayCaptureSourceRect = snapshot.virtualDisplayCaptureSourceRect
+        virtualDisplayCapturePresentationRect = snapshot.virtualDisplayCapturePresentationRect
         updateQueueLimits()
     }
 

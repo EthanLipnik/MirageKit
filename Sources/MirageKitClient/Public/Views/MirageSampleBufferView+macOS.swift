@@ -270,9 +270,9 @@ public class MirageSampleBufferView: NSView {
     // MARK: - Preferences
 
     private func applyRenderPreferences() {
-        let proMotionEnabled = MirageRenderPreferences.proMotionEnabled()
+        let preferredRefreshRate = MirageRenderPreferences.preferredMaximumRefreshRate()
         let screenMax = window?.screen?.maximumFramesPerSecond ?? 60
-        let target = proMotionEnabled ? (screenMax >= 120 ? 120 : 60) : 60
+        let target = min(preferredRefreshRate, max(1, screenMax))
         maxRenderFPS = target
         presenter.setTargetFPS(target)
         applyDisplayRefreshRateLock(target)
@@ -296,7 +296,7 @@ public class MirageSampleBufferView: NSView {
     }
 
     private func configureDisplayLinkRate(_ displayLink: CADisplayLink, fps: Int) {
-        let clamped = max(1, min(120, fps))
+        let clamped = MirageRenderModePolicy.normalizedTargetFPS(fps)
         if #available(macOS 14.0, *) {
             let preferred = Float(clamped)
             displayLink.preferredFrameRateRange = CAFrameRateRange(
