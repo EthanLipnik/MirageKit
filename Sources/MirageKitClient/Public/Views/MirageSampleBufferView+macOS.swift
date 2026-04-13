@@ -20,6 +20,7 @@ public class MirageSampleBufferView: NSView {
         didSet {
             guard streamID != oldValue else { return }
             presenter.setStreamID(streamID)
+            presentationScheduler.setStreamID(streamID)
             requestImmediateSubmission()
         }
     }
@@ -27,6 +28,7 @@ public class MirageSampleBufferView: NSView {
     var streamPresentationTier: StreamPresentationTier = .activeLive {
         didSet {
             guard streamPresentationTier != oldValue else { return }
+            presentationScheduler.setPresentationTier(streamPresentationTier)
             applyDisplayRefreshRateLock(appliedRefreshRateLock > 0 ? appliedRefreshRateLock : maxRenderFPS)
             requestImmediateSubmission()
         }
@@ -55,6 +57,7 @@ public class MirageSampleBufferView: NSView {
     private let preferencesObserver = MirageUserDefaultsObserver()
     private var activeDisplayLink: CADisplayLink?
     private var presenter: MirageSampleBufferPresenter!
+    @MainActor private var presentationScheduler: MirageRenderPresentationScheduler!
     private var maxRenderFPS: Int = 60
     private var appliedRefreshRateLock: Int = 0
     private var lastReportedDrawableSize: CGSize = .zero
@@ -120,10 +123,12 @@ public class MirageSampleBufferView: NSView {
 
     func suspendRendering() {
         presenter.setRenderingSuspended(true, clearCurrentFrame: true)
+        presentationScheduler.setRenderingSuspended(true)
     }
 
     func resumeRendering() {
         presenter.setRenderingSuspended(false, clearCurrentFrame: false)
+        presentationScheduler.setRenderingSuspended(false)
         requestImmediateSubmission()
     }
 
@@ -141,6 +146,12 @@ public class MirageSampleBufferView: NSView {
         applyPresentationVideoGravity()
 
         presenter = MirageSampleBufferPresenter(displayLayer: displayLayer)
+        presentationScheduler = MirageRenderPresentationScheduler(
+            submit: { [weak presenter] referenceTime in
+                presenter?.submitPendingFrameIfPossible(referenceTime: referenceTime) ?? false
+            }
+        )
+        presentationScheduler.setPresentationTier(streamPresentationTier)
         presenter.onFrameAvailable = { [weak self] in
             self?.handleFrameAvailable()
         }
@@ -161,30 +172,18 @@ public class MirageSampleBufferView: NSView {
     // MARK: - Draw Path
 
     func requestImmediateSubmission() {
-        presenter.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
+        presentationScheduler.requestImmediateSubmission(referenceTime: CACurrentMediaTime())
     }
 
     @objc private func displayLinkTick(_ link: CADisplayLink) {
         let renderTargetFPS = streamPresentationTier == .activeLive ? maxRenderFPS : 1
         let interval = link.targetTimestamp - link.timestamp
-        let displayRefreshRate = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
-        presenter.displayLinkTick(
-            referenceTime: link.timestamp,
-            displayRefreshRate: displayRefreshRate
-        )
+        _ = interval > 0 ? (1.0 / interval) : Double(renderTargetFPS)
+        presentationScheduler.displayLinkTick(referenceTime: link.timestamp)
     }
 
     private func handleFrameAvailable() {
-        presenter.handleFrameAvailable(
-            referenceTime: CACurrentMediaTime(),
-            allowImmediateSubmission: allowsImmediateFrameAvailableSubmission
-        )
-    }
-
-    private var allowsImmediateFrameAvailableSubmission: Bool {
-        if streamPresentationTier != .activeLive { return true }
-        if activeDisplayLink == nil { return true }
-        return !presenter.hasSubmittedFrame
+        presentationScheduler.handleFrameAvailable(referenceTime: CACurrentMediaTime())
     }
 
     private func startDisplayLinkIfNeeded() {
@@ -195,11 +194,13 @@ public class MirageSampleBufferView: NSView {
         configureDisplayLinkRate(link, fps: localFPS)
         link.add(to: .main, forMode: .common)
         activeDisplayLink = link
+        presentationScheduler.setDisplayLinkActive(true)
     }
 
     private func stopDisplayLink() {
         activeDisplayLink?.invalidate()
         activeDisplayLink = nil
+        presentationScheduler.setDisplayLinkActive(false)
     }
 
     // MARK: - Metrics
@@ -308,7 +309,9 @@ public class MirageSampleBufferView: NSView {
 
     private func startObservingPreferences() {
         preferencesObserver.start { [weak self] in
-            self?.applyRenderPreferences()
+            Task { @MainActor [weak self] in
+                self?.applyRenderPreferences()
+            }
         }
     }
 
@@ -319,7 +322,9 @@ public class MirageSampleBufferView: NSView {
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.applyRenderPreferences()
+            Task { @MainActor [weak self] in
+                self?.applyRenderPreferences()
+            }
         }
     }
 

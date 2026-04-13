@@ -175,6 +175,9 @@ actor StreamController {
         let submittedFPS: Double
         let uniqueSubmittedFPS: Double
         let pendingFrameCount: Int
+        let pendingFrameAgeMs: Double
+        let overwrittenPendingFrames: UInt64
+        let displayLayerNotReadyCount: UInt64
         let decodeHealthy: Bool
         let activeJitterHoldMs: Int
         let decoderOutputPixelFormat: String?
@@ -277,6 +280,7 @@ actor StreamController {
     static let decodeStormThreshold: Int = 2
     static let adaptiveFallbackCooldown: CFAbsoluteTime = 15.0
     static let recoveryRequestDispatchCooldown: CFAbsoluteTime = 0.5
+    static let backgroundDecodeErrorLogInterval: CFAbsoluteTime = 2.0
     static let decodeErrorLogInterval: CFAbsoluteTime = 15.0
     static let decodeErrorEscalationThreshold: Int = 3
     static let postResizeDecodeErrorGraceInterval: CFAbsoluteTime = 0.75
@@ -358,6 +362,8 @@ actor StreamController {
     var recoveryRequestTimestamps: [CFAbsoluteTime] = []
     var decodeThresholdTimestamps: [CFAbsoluteTime] = []
     var decodeRecoveryEscalationTimestamps: [CFAbsoluteTime] = []
+    var lastBackgroundDecodeErrorSignature: String?
+    var lastBackgroundDecodeErrorLogTime: CFAbsoluteTime = 0
     var consecutiveDecodeErrors: Int = 0
     var lastDecodeErrorSignature: String?
     var lastDecodeErrorLogTime: CFAbsoluteTime = 0
@@ -398,6 +404,7 @@ actor StreamController {
     var consecutiveFreezeRecoveries: Int = 0
     var freezeMonitorTask: Task<Void, Never>?
     private let nowProvider: @Sendable () -> CFAbsoluteTime
+    private let applicationForegroundProvider: @Sendable () async -> Bool
 
     // MARK: - Callbacks
 
@@ -427,8 +434,6 @@ actor StreamController {
     private(set) var onStallEvent: (@MainActor @Sendable () -> Void)?
     /// Called when client recovery state changes.
     private(set) var onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)?
-    /// Called when decode errors occur while the app is backgrounded, signaling the stream should stop.
-    private(set) var onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)?
     /// Called when bounded startup recovery is exhausted before the first frame is presented.
     private(set) var onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)?
 
@@ -446,7 +451,6 @@ actor StreamController {
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
         onRecoveryStatusChanged: (@MainActor @Sendable (MirageStreamClientRecoveryStatus) -> Void)? = nil,
-        onBackgroundDecodeFailure: (@MainActor @Sendable () -> Void)? = nil,
         onTerminalStartupFailure: (@MainActor @Sendable (TerminalStartupFailure) -> Void)? = nil
     ) {
         self.onKeyframeNeeded = onKeyframeNeeded
@@ -458,7 +462,6 @@ actor StreamController {
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
         self.onStallEvent = onStallEvent
         self.onRecoveryStatusChanged = onRecoveryStatusChanged
-        self.onBackgroundDecodeFailure = onBackgroundDecodeFailure
         self.onTerminalStartupFailure = onTerminalStartupFailure
     }
 
@@ -477,12 +480,20 @@ actor StreamController {
     init(
         streamID: StreamID,
         maxPayloadSize: Int,
-        nowProvider: @escaping @Sendable () -> CFAbsoluteTime = CFAbsoluteTimeGetCurrent
+        nowProvider: @escaping @Sendable () -> CFAbsoluteTime = CFAbsoluteTimeGetCurrent,
+        applicationForegroundProvider: (@Sendable () async -> Bool)? = nil
     ) {
         self.streamID = streamID
         decoder = VideoDecoder()
         reassembler = FrameReassembler(streamID: streamID, maxPayloadSize: maxPayloadSize)
         self.nowProvider = nowProvider
+        if let applicationForegroundProvider {
+            self.applicationForegroundProvider = applicationForegroundProvider
+        } else {
+            self.applicationForegroundProvider = {
+                await StreamController.defaultApplicationForegroundProvider()
+            }
+        }
     }
 
     func currentTime() -> CFAbsoluteTime {
@@ -579,6 +590,8 @@ actor StreamController {
         lastQueueDropLogTime = 0
         decodeThresholdTimestamps.removeAll(keepingCapacity: false)
         decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+        lastBackgroundDecodeErrorSignature = nil
+        lastBackgroundDecodeErrorLogTime = 0
         consecutiveDecodeErrors = 0
         lastDecodeErrorSignature = nil
         lastDecodeErrorLogTime = 0
@@ -673,28 +686,38 @@ actor StreamController {
 
     private func recordDecodeSuccessIfNeeded() {
         guard isRunning, !isStopping else {
+            lastBackgroundDecodeErrorSignature = nil
+            lastBackgroundDecodeErrorLogTime = 0
             consecutiveDecodeErrors = 0
             lastDecodeErrorSignature = nil
             lastDecodeErrorLogTime = 0
             return
         }
-        guard consecutiveDecodeErrors > 0 else { return }
+        guard consecutiveDecodeErrors > 0 ||
+            lastBackgroundDecodeErrorSignature != nil ||
+            lastBackgroundDecodeErrorLogTime > 0 else { return }
         MirageLogger.debug(
             .client,
             "Decode pipeline recovered after \(consecutiveDecodeErrors) consecutive error(s)"
         )
+        lastBackgroundDecodeErrorSignature = nil
+        lastBackgroundDecodeErrorLogTime = 0
         consecutiveDecodeErrors = 0
         lastDecodeErrorSignature = nil
         lastDecodeErrorLogTime = 0
     }
 
-    private func recordDecodeFailure(_ error: Error) {
+    private func recordDecodeFailure(_ error: Error) async {
         guard isRunning, !isStopping else { return }
         guard !hasTriggeredTerminalStartupFailure else { return }
 
-        if let onBackgroundDecodeFailure, !isApplicationForeground() {
-            MirageLogger.client("Decode error while backgrounded; requesting stream stop")
-            Task { @MainActor in onBackgroundDecodeFailure() }
+        if Self.shouldSuppressDecodeFailureRecovery(
+            isApplicationForeground: await applicationForegroundProvider()
+        ) {
+            recordBackgroundDecodeFailureIfNeeded(error)
+            consecutiveDecodeErrors = 0
+            lastDecodeErrorSignature = nil
+            lastDecodeErrorLogTime = 0
             return
         }
 
@@ -742,6 +765,29 @@ actor StreamController {
                 }
             }
         }
+    }
+
+    nonisolated static func shouldSuppressDecodeFailureRecovery(
+        isApplicationForeground: Bool
+    ) -> Bool {
+        !isApplicationForeground
+    }
+
+    private func recordBackgroundDecodeFailureIfNeeded(_ error: Error) {
+        let metadata = LoomDiagnosticsErrorMetadata(error: error)
+        let signature = "\(metadata.domain):\(metadata.code)"
+        let now = currentTime()
+        let shouldLog = signature != lastBackgroundDecodeErrorSignature ||
+            now - lastBackgroundDecodeErrorLogTime >= Self.backgroundDecodeErrorLogInterval
+
+        guard shouldLog else { return }
+
+        lastBackgroundDecodeErrorSignature = signature
+        lastBackgroundDecodeErrorLogTime = now
+        MirageLogger.client(
+            "Decode error while backgrounded; suppressing recovery until foreground " +
+                "[\(Self.decodeFailureDiagnosticSummary(for: error))]"
+        )
     }
 
     nonisolated static func decodeFailureLogMessage(for error: Error, attempt: Int) -> String {
@@ -994,6 +1040,8 @@ actor StreamController {
         lastHardRecoveryStartTime = 0
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
+        lastBackgroundDecodeErrorSignature = nil
+        lastBackgroundDecodeErrorLogTime = 0
         consecutiveDecodeErrors = 0
         lastDecodeErrorSignature = nil
         lastDecodeErrorLogTime = 0
@@ -1052,6 +1100,9 @@ actor StreamController {
             submittedFPS: renderTelemetry.submittedFPS,
             uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
             pendingFrameCount: renderTelemetry.pendingFrameCount,
+            pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
+            overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+            displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
             decodeHealthy: renderTelemetry.decodeHealthy,
             activeJitterHoldMs: adaptiveJitterHoldMs,
             decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),

@@ -46,11 +46,10 @@ extension InputCapturingView {
         currentCursorType = type
         cursorIsVisible = isVisible
 
-        if typeChanged {
-            updateCursorImage()
-            updateVirtualCursorViewPosition()
-            updateLockedCursorViewPosition()
-        }
+        if typeChanged { updateCursorImage() }
+        updateVirtualCursorViewPosition()
+        updateLockedCursorViewVisibility()
+        updateLockedCursorViewPosition()
 
         // Invalidate the pointer interaction to force it to re-query the style
         // This is required because UIPointerInteraction only calls its delegate

@@ -347,6 +347,8 @@ extension MirageClientService {
         controllersByStream.removeAll()
         startupAttemptIDByStream.removeAll()
         registeredStreamIDs.removeAll()
+        desktopStreamStopTimeoutTask?.cancel()
+        desktopStreamStopTimeoutTask = nil
         desktopStreamRequestStartTime = 0
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()

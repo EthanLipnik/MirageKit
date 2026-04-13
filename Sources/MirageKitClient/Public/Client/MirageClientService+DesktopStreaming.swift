@@ -186,12 +186,14 @@ public extension MirageClientService {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         guard let streamID = desktopStreamID else {
+            cancelDesktopStreamStopTimeout()
             MirageLogger.client("No active desktop stream to stop")
             return
         }
 
         let request = StopDesktopStreamMessage(streamID: streamID)
         try await sendControlMessage(.stopDesktopStream, content: request)
+        scheduleDesktopStreamStopTimeout(for: streamID)
 
         MirageLogger.client("Requested stop desktop stream: \(streamID)")
     }

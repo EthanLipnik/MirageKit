@@ -43,9 +43,9 @@ struct HostRemoteClientStreamOptionsTests {
 
         #expect(host.remoteClientDesktopCursorLockMode == .off)
 
-        await host.setRemoteClientDesktopCursorLockMode(.allDesktopStreams)
+        await host.setRemoteClientDesktopCursorLockMode(.on)
 
-        #expect(host.remoteClientDesktopCursorLockMode == .allDesktopStreams)
+        #expect(host.remoteClientDesktopCursorLockMode == .on)
     }
 }
 #endif

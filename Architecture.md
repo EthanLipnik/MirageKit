@@ -224,6 +224,8 @@ Its responsibilities include:
 Client presentation is split from transport:
 
 - `MirageRenderStreamStore` and the decode pipeline own latest-frame ingestion
+- `MirageRenderPresentationScheduler` owns main-actor submission policy, coalescing, and display-link fallback for interactive streams
+- `MirageSampleBufferPresenter` owns sample-buffer mapping and `AVSampleBufferDisplayLayer` enqueue
 - `MirageStreamViewRepresentable` owns presentation through `MirageSampleBufferView` and `AVSampleBufferDisplayLayer`
 - `MirageStreamContentView` bridges presentation, focus, resize, and input capture for app UI
 

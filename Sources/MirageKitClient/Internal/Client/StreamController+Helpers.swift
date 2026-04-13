@@ -768,17 +768,7 @@ extension StreamController {
         await requestKeyframeRecovery(reason: .freezeTimeout)
     }
 
-    nonisolated func isApplicationForeground() -> Bool {
-        #if canImport(UIKit)
-        DispatchQueue.main.sync {
-            UIApplication.shared.applicationState == .active
-        }
-        #else
-        true
-        #endif
-    }
-
-    private func isApplicationActiveForFreezeMonitoring() async -> Bool {
+    nonisolated static func defaultApplicationForegroundProvider() async -> Bool {
         #if canImport(UIKit)
         return await MainActor.run {
             UIApplication.shared.applicationState == .active
@@ -788,8 +778,12 @@ extension StreamController {
             NSApp?.isActive ?? true
         }
         #else
-        true
+        return true
         #endif
+    }
+
+    private func isApplicationActiveForFreezeMonitoring() async -> Bool {
+        await Self.defaultApplicationForegroundProvider()
     }
 
     private func maybeTriggerFreezeRecovery(

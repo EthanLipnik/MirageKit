@@ -63,6 +63,28 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
+    @Test("Presentation-bound samples do not probe upward when transport is healthy")
+    func presentationBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = presentationBoundButTransportHealthySnapshot()
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 0
+        )
+        let secondAction = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 20_000_000,
+            ceilingBps: 300_000_000,
+            now: 2
+        )
+
+        #expect(secondAction == .none)
+        #expect(controller.state == .stable)
+    }
+
     @Test("Decode stalls do not block upward probing when transport is healthy")
     func decodeStallsDoNotBlockUpwardProbingWhenTransportIsHealthy() {
         var controller = MirageReceiverHealthController()
@@ -419,6 +441,16 @@ struct ReceiverHealthControllerTests {
     private func packetPacerOnlySnapshot() -> MirageClientMetricsSnapshot {
         var snapshot = healthySnapshot(activeQuality: 0.62)
         snapshot.hostPacketPacerAverageSleepMs = 1.0
+        return snapshot
+    }
+
+    private func presentationBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.submittedFPS = 43
+        snapshot.uniqueSubmittedFPS = 43
+        snapshot.clientOverwrittenPendingFrames = 2
+        snapshot.clientDisplayLayerNotReadyCount = 1
+        snapshot.clientPendingFrameAgeMs = 24
         return snapshot
     }
 }

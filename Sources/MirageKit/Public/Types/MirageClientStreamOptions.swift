@@ -26,7 +26,6 @@ public enum MirageStreamOptionsDisplayMode: String, CaseIterable, Codable, Senda
 public enum MirageDesktopCursorLockMode: String, CaseIterable, Codable, Sendable {
     case on
     case secondaryOnly = "secondary_only"
-    case allDesktopStreams = "all_desktop_streams"
     case off
 
     public var displayName: String {
@@ -35,8 +34,6 @@ public enum MirageDesktopCursorLockMode: String, CaseIterable, Codable, Sendable
             "On"
         case .secondaryOnly:
             "Secondary Only"
-        case .allDesktopStreams:
-            "All Desktop Streams"
         case .off:
             "Off"
         }
@@ -45,11 +42,9 @@ public enum MirageDesktopCursorLockMode: String, CaseIterable, Codable, Sendable
     public func locksClientCursor(for mode: MirageDesktopStreamMode) -> Bool {
         switch self {
         case .on:
-            mode == .unified
+            true
         case .secondaryOnly:
             mode == .secondary
-        case .allDesktopStreams:
-            true
         case .off:
             false
         }

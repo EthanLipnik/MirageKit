@@ -111,6 +111,20 @@ struct StreamControllerRecoveryTests {
         )
     }
 
+    @Test("Background decode failures suppress recovery until foreground")
+    func backgroundDecodeFailuresSuppressRecoveryUntilForeground() {
+        #expect(
+            StreamController.shouldSuppressDecodeFailureRecovery(
+                isApplicationForeground: false
+            )
+        )
+        #expect(
+            StreamController.shouldSuppressDecodeFailureRecovery(
+                isApplicationForeground: true
+            ) == false
+        )
+    }
+
     @Test("Decode failure log message includes wrapped underlying error details")
     func decodeFailureLogMessageIncludesWrappedUnderlyingErrorDetails() {
         let underlyingError = NSError(

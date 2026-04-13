@@ -58,10 +58,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayer?.status == .failed
     }
 
-    var hasSubmittedFrame: Bool {
-        lastSubmittedSequence > 0
-    }
-
     func setTargetFPS(_ fps: Int) {
         let normalized = MirageRenderModePolicy.normalizedTargetFPS(fps)
         maxRenderFPS = normalized
@@ -96,28 +92,6 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         clearCurrentFrameState()
     }
 
-    func requestImmediateSubmission(referenceTime: CFTimeInterval) {
-        guard !renderingSuspended else { return }
-        _ = submitPendingFrameIfPossible(referenceTime: referenceTime)
-    }
-
-    func handleFrameAvailable(
-        referenceTime: CFTimeInterval,
-        allowImmediateSubmission: Bool
-    ) {
-        guard !renderingSuspended else { return }
-        guard allowImmediateSubmission else { return }
-        _ = submitPendingFrameIfPossible(referenceTime: referenceTime)
-    }
-
-    func displayLinkTick(
-        referenceTime: CFTimeInterval,
-        displayRefreshRate _: Double
-    ) {
-        guard !renderingSuspended else { return }
-        _ = submitPendingFrameIfPossible(referenceTime: referenceTime)
-    }
-
     private func clearCurrentFrameState() {
         guard let displayLayer else { return }
         displayLayer.flushAndRemoveImage()
@@ -127,8 +101,9 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     }
 
     @discardableResult
-    private func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> Bool {
+    func submitPendingFrameIfPossible(referenceTime: CFTimeInterval) -> Bool {
         guard let streamID, let displayLayer else { return false }
+        guard !renderingSuspended else { return false }
         recoverDisplayLayerIfNeeded()
         guard displayLayer.status != .failed else { return false }
 

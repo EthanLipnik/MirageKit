@@ -189,6 +189,7 @@ extension MirageClientService {
         do {
             let stopped = try message.decode(DesktopStreamStoppedMessage.self)
             let streamID = stopped.streamID
+            cancelDesktopStreamStopTimeout()
             let hadLocalDesktopState = desktopStreamID == streamID ||
                 controllersByStream[streamID] != nil ||
                 registeredStreamIDs.contains(streamID)

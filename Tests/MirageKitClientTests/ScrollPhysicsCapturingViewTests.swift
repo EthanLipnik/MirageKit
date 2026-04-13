@@ -130,6 +130,27 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Unlocked synthetic desktop cursor reuses the tracked local pointer position")
+    func unlockedSyntheticDesktopCursorUsesTrackedPointerPosition() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.hideSystemCursor = true
+        view.syntheticCursorEnabled = true
+        view.cursorIsVisible = true
+        view.lastCursorPosition = CGPoint(x: 0.25, y: 0.75)
+
+        view.updateLockedCursorViewVisibility()
+        view.updateLockedCursorViewPosition()
+
+        let lockedCursorView = try #require(view.subviews.last as? UIImageView)
+        let hotspot = view.currentCursorType.cursorHotspot
+
+        #expect(!lockedCursorView.isHidden)
+        #expect(
+            lockedCursorView.frame.origin ==
+                CGPoint(x: 80 - hotspot.x, y: 180 - hotspot.y)
+        )
+    }
+
     @Test("Indirect secondary click reuses the tracked pointer location")
     func indirectSecondaryClickReusesTrackedPointerLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

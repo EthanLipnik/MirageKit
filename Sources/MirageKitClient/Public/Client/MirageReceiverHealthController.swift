@@ -289,6 +289,7 @@ public struct MirageReceiverHealthController: Sendable {
                 deliverySevereRatio: Self.encodedDeliverySevereRatio
             )
         )
+        let presentationBound = snapshot.bottleneckKind == .presentationBound
         let pacingOnlyStress = transportAssessment.isPacerOnlyStress
         let streamIsActive = max(
             hostEncodedFPS,
@@ -301,7 +302,7 @@ public struct MirageReceiverHealthController: Sendable {
             isSevere: severe,
             isStress: severe || sustainedLoss,
             isHealthy: healthy,
-            allowsProbePromotion: streamIsActive
+            allowsProbePromotion: streamIsActive && !presentationBound
         )
     }
 

@@ -201,6 +201,9 @@ public extension MirageClientService {
                     submittedFPS: metrics.submittedFPS,
                     uniqueSubmittedFPS: metrics.uniqueSubmittedFPS,
                     pendingFrameCount: metrics.pendingFrameCount,
+                    pendingFrameAgeMs: metrics.pendingFrameAgeMs,
+                    overwrittenPendingFrames: metrics.overwrittenPendingFrames,
+                    displayLayerNotReadyCount: metrics.displayLayerNotReadyCount,
                     decodeHealthy: metrics.decodeHealthy
                 )
                 metricsStore.updateClientDecoderTelemetry(
@@ -231,10 +234,6 @@ public extension MirageClientService {
             },
             onRecoveryStatusChanged: { [weak self] status in
                 self?.sessionStore.setClientRecoveryStatus(for: capturedStreamID, status: status)
-            },
-            onBackgroundDecodeFailure: { [weak self] in
-                MirageLogger.client("Stopping stream \(capturedStreamID) due to background decode failure")
-                Task { try? await self?.stopDesktopStream() }
             },
             onTerminalStartupFailure: { [weak self] failure in
                 Task {
@@ -368,6 +367,51 @@ public extension MirageClientService {
         delegate?.clientService(self, didEncounterError: error)
     }
 
+    func cancelDesktopStreamStopTimeout() {
+        desktopStreamStopTimeoutTask?.cancel()
+        desktopStreamStopTimeoutTask = nil
+    }
+
+    nonisolated static func shouldForceLocalDesktopStopAfterTimeout(
+        requestedStreamID: StreamID,
+        activeDesktopStreamID: StreamID?,
+        hasController: Bool,
+        isRegistered: Bool
+    ) -> Bool {
+        activeDesktopStreamID == requestedStreamID || hasController || isRegistered
+    }
+
+    func scheduleDesktopStreamStopTimeout(for streamID: StreamID) {
+        cancelDesktopStreamStopTimeout()
+        desktopStreamStopTimeoutTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                try await Task.sleep(for: self.desktopStreamStopTimeout)
+            } catch {
+                return
+            }
+
+            guard Self.shouldForceLocalDesktopStopAfterTimeout(
+                requestedStreamID: streamID,
+                activeDesktopStreamID: self.desktopStreamID,
+                hasController: self.controllersByStream[streamID] != nil,
+                isRegistered: self.registeredStreamIDs.contains(streamID)
+            ) else {
+                self.desktopStreamStopTimeoutTask = nil
+                return
+            }
+
+            MirageLogger.client(
+                "Desktop stop acknowledgement timed out for stream \(streamID); forcing local teardown"
+            )
+            await self.forceStopDesktopStreamLocally(
+                streamID: streamID,
+                notifyStopReason: .clientRequested
+            )
+            self.desktopStreamStopTimeoutTask = nil
+        }
+    }
+
     private func forceStopWindowStreamLocally(streamID: StreamID) async {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
@@ -407,6 +451,7 @@ public extension MirageClientService {
         streamID: StreamID,
         notifyStopReason: DesktopStreamStopReason? = nil
     ) async {
+        cancelDesktopStreamStopTimeout()
         let hadLocalState = desktopStreamID == streamID ||
             controllersByStream[streamID] != nil ||
             registeredStreamIDs.contains(streamID)

@@ -222,7 +222,7 @@ extension InputCapturingView {
             return trackpadCursorPosition()
         }
 
-        lastCursorPosition = location
+        updatePointerLocationForLocalContact(location)
         return location
     }
 
@@ -433,6 +433,7 @@ extension InputCapturingView {
 
         let rawLocation = gesture.location(in: self)
         let location = normalizedLocation(rawLocation)
+        updatePointerLocationForLocalContact(location)
         let eventModifiers = modifiers(from: gesture)
 
         if gesture.numberOfTouches > 1 {
@@ -450,18 +451,6 @@ extension InputCapturingView {
             longPressCancelledForMultiTouch = true
             resetPrimaryClickTracking()
             return
-        }
-
-        if cursorLockEnabled {
-            lockedCursorPosition = location
-            noteLockedCursorLocalInput()
-            setLockedCursorVisible(true)
-            updateLockedCursorViewPosition()
-        }
-
-        if usesVirtualTrackpad {
-            setVirtualCursorVisible(false)
-            updateVirtualCursorPosition(location, updateVisibility: false)
         }
 
         switch gesture.state {
@@ -660,6 +649,8 @@ extension InputCapturingView {
 
             // Track cursor position for scroll events
             lastCursorPosition = normalized
+            updateLockedCursorViewVisibility()
+            updateLockedCursorViewPosition()
 
             if Self.shouldEmitPassiveHoverMove(
                 pointerMoved: pointerMoved,

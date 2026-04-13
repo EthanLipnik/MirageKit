@@ -122,6 +122,8 @@ public class InputCapturingView: UIView {
         didSet {
             guard hideSystemCursor != oldValue else { return }
             pointerInteraction?.invalidate()
+            updateLockedCursorViewVisibility()
+            updateLockedCursorViewPosition()
         }
     }
 
@@ -1261,6 +1263,8 @@ public class InputCapturingView: UIView {
         }
 
         lastCursorPosition = cursorLockEnabled ? lockedCursorPosition : location
+        updateLockedCursorViewVisibility()
+        updateLockedCursorViewPosition()
     }
 
     func handleDirectTouchLocationChange(_ rawLocation: CGPoint) {
@@ -1398,8 +1402,23 @@ public class InputCapturingView: UIView {
         updateLockedCursorViewPosition()
     }
 
+    var unlockedSyntheticCursorPosition: CGPoint? {
+        guard syntheticCursorEnabled,
+              hideSystemCursor,
+              !cursorLockEnabled,
+              !usesVisibleVirtualCursor,
+              cursorIsVisible,
+              let lastCursorPosition else {
+            return nil
+        }
+
+        return lastCursorPosition
+    }
+
     func updateLockedCursorViewVisibility() {
-        let shouldShow = cursorLockEnabled && syntheticCursorEnabled && lockedCursorVisible && !cursorHiddenForTyping
+        let shouldShow = !cursorHiddenForTyping &&
+            ((cursorLockEnabled && syntheticCursorEnabled && lockedCursorVisible) ||
+                unlockedSyntheticCursorPosition != nil)
         lockedCursorView.isHidden = !shouldShow
     }
 
@@ -1429,9 +1448,16 @@ public class InputCapturingView: UIView {
     func updateLockedCursorViewPosition() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard !lockedCursorView.isHidden else { return }
+        let position = if cursorLockEnabled {
+            lockedCursorPosition
+        } else if let unlockedSyntheticCursorPosition {
+            unlockedSyntheticCursorPosition
+        } else {
+            lockedCursorPosition
+        }
         let clamped = CGPoint(
-            x: min(max(lockedCursorPosition.x, 0), 1),
-            y: min(max(lockedCursorPosition.y, 0), 1)
+            x: min(max(position.x, 0), 1),
+            y: min(max(position.y, 0), 1)
         )
         let hotspot = currentCursorType.cursorHotspot
         lockedCursorView.frame.origin = CGPoint(

@@ -61,7 +61,7 @@ struct RemoteClientStreamOptionsTests {
             displayMode: .inStream,
             statusOverlayEnabled: false,
             desktopCursorLockAvailable: true,
-            desktopCursorLockMode: .allDesktopStreams
+            desktopCursorLockMode: .on
         )
 
         let data = try JSONEncoder().encode(state)
@@ -70,6 +70,6 @@ struct RemoteClientStreamOptionsTests {
         #expect(decoded.displayMode == .inStream)
         #expect(decoded.statusOverlayEnabled == false)
         #expect(decoded.desktopCursorLockAvailable == true)
-        #expect(decoded.desktopCursorLockMode == .allDesktopStreams)
+        #expect(decoded.desktopCursorLockMode == .on)
     }
 }

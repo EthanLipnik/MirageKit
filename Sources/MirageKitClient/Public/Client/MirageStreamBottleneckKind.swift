@@ -12,6 +12,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
     case encodeBound
     case networkBound
     case decodeBound
+    case presentationBound
     case mixed
     case unknown
 
@@ -25,6 +26,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             "Network-bound"
         case .decodeBound:
             "Decode-bound"
+        case .presentationBound:
+            "Presentation-bound"
         case .mixed:
             "Mixed"
         case .unknown:
@@ -41,7 +44,9 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         case .networkBound:
             "Transport pressure is dropping cadence before frames reach the client."
         case .decodeBound:
-            "Frames reach the client faster than the decoder or presenter can consume them."
+            "Frames reach the client faster than the decoder can sustain."
+        case .presentationBound:
+            "Decode keeps up, but the client render path is not presenting the newest frames at target cadence."
         case .mixed:
             "More than one stage is limiting the stream at once."
         case .unknown:
@@ -58,6 +63,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
         let decodedFPS = max(0, snapshot.decodedFPS)
+        let submittedFPS = max(0, snapshot.submittedFPS)
+        let uniqueSubmittedFPS = max(0, snapshot.uniqueSubmittedFPS)
         let captureIngressFPS = max(0, snapshot.hostCaptureIngressFPS ?? 0)
         let captureFPS = max(0, snapshot.hostCaptureFPS ?? 0)
         let encodeAttemptFPS = max(0, snapshot.hostEncodeAttemptFPS ?? 0)
@@ -94,11 +101,23 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         )
         let fpsGapGrace = max(4.0, targetFPS * 0.08)
         let decodeGapGrace = max(5.0, targetFPS * 0.10)
+        let presentationGapGrace = max(4.0, targetFPS * 0.10)
+        let presentationPendingAgeMsThreshold = max(20.0, (1_000.0 / targetFPS) * 1.5)
 
         let networkBound = transportAssessment.isStress && !transportAssessment.isPacerOnlyStress
 
         let decodeBound = (!snapshot.decodeHealthy && receivedFPS > 0 && decodedFPS + decodeGapGrace < receivedFPS) ||
             (receivedFPS >= targetFPS * 0.75 && decodedFPS + decodeGapGrace < receivedFPS)
+
+        let decodeKeepsUp = snapshot.decodeHealthy &&
+            decodedFPS >= targetFPS * 0.75 &&
+            (receivedFPS <= 0 || decodedFPS + decodeGapGrace >= receivedFPS)
+        let submissionLaggingDecode = (submittedFPS + presentationGapGrace < decodedFPS) ||
+            (uniqueSubmittedFPS + presentationGapGrace < decodedFPS)
+        let presentationBackpressure = snapshot.clientOverwrittenPendingFrames > 0 ||
+            snapshot.clientDisplayLayerNotReadyCount > 0 ||
+            snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
+        let presentationBound = decodeKeepsUp && submissionLaggingDecode && presentationBackpressure
 
         let captureBound = (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
             (captureFPS > 0 && captureFPS < targetFPS * 0.90 && encodeAttemptFPS <= captureFPS + 3.0)
@@ -113,6 +132,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             encodeBound ? .encodeBound : nil,
             networkBound ? .networkBound : nil,
             decodeBound ? .decodeBound : nil,
+            presentationBound ? .presentationBound : nil,
         ]
         .compactMap { $0 }
 

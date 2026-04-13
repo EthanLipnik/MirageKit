@@ -15,6 +15,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     public var submittedFPS: Double
     public var uniqueSubmittedFPS: Double
     public var pendingFrameCount: Int
+    public var clientPendingFrameAgeMs: Double
+    public var clientOverwrittenPendingFrames: UInt64
+    public var clientDisplayLayerNotReadyCount: UInt64
     public var decodeHealthy: Bool
     public var clientDroppedFrames: UInt64
     public var hostEncodedFPS: Double
@@ -78,6 +81,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         submittedFPS: Double = 0,
         uniqueSubmittedFPS: Double = 0,
         pendingFrameCount: Int = 0,
+        clientPendingFrameAgeMs: Double = 0,
+        clientOverwrittenPendingFrames: UInt64 = 0,
+        clientDisplayLayerNotReadyCount: UInt64 = 0,
         decodeHealthy: Bool = true,
         clientDroppedFrames: UInt64 = 0,
         hostEncodedFPS: Double = 0,
@@ -120,6 +126,9 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
         self.submittedFPS = submittedFPS
         self.uniqueSubmittedFPS = uniqueSubmittedFPS
         self.pendingFrameCount = pendingFrameCount
+        self.clientPendingFrameAgeMs = clientPendingFrameAgeMs
+        self.clientOverwrittenPendingFrames = clientOverwrittenPendingFrames
+        self.clientDisplayLayerNotReadyCount = clientDisplayLayerNotReadyCount
         self.decodeHealthy = decodeHealthy
         self.clientDroppedFrames = clientDroppedFrames
         self.hostEncodedFPS = hostEncodedFPS
@@ -173,6 +182,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         submittedFPS: Double,
         uniqueSubmittedFPS: Double,
         pendingFrameCount: Int,
+        pendingFrameAgeMs: Double,
+        overwrittenPendingFrames: UInt64,
+        displayLayerNotReadyCount: UInt64,
         decodeHealthy: Bool
     ) {
         lock.lock()
@@ -182,6 +194,9 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.submittedFPS = submittedFPS
         snapshot.uniqueSubmittedFPS = uniqueSubmittedFPS
         snapshot.pendingFrameCount = max(0, pendingFrameCount)
+        snapshot.clientPendingFrameAgeMs = max(0, pendingFrameAgeMs)
+        snapshot.clientOverwrittenPendingFrames = overwrittenPendingFrames
+        snapshot.clientDisplayLayerNotReadyCount = displayLayerNotReadyCount
         snapshot.decodeHealthy = decodeHealthy
         snapshot.clientDroppedFrames = droppedFrames
         metricsByStream[streamID] = snapshot

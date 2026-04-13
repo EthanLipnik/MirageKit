@@ -82,6 +82,17 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind == .decodeBound)
     }
 
+    @Test("Presentation-bound classification prefers render backpressure with healthy decode")
+    func presentationBoundClassificationPrefersRenderBackpressure() {
+        var snapshot = baselineSnapshot()
+        snapshot.submittedFPS = 44
+        snapshot.uniqueSubmittedFPS = 44
+        snapshot.clientPendingFrameAgeMs = 28
+        snapshot.clientOverwrittenPendingFrames = 3
+
+        #expect(snapshot.bottleneckKind == .presentationBound)
+    }
+
     @Test("Mixed classification reports multiple active constraints")
     func mixedClassificationReportsMultipleActiveConstraints() {
         var snapshot = baselineSnapshot()
@@ -89,7 +100,9 @@ struct MirageStreamBottleneckKindTests {
         snapshot.hostCaptureFPS = 42
         snapshot.hostEncodeAttemptFPS = 42
         snapshot.hostEncodedFPS = 42
-        snapshot.hostSendQueueBytes = 1_200_000
+        snapshot.submittedFPS = 44
+        snapshot.uniqueSubmittedFPS = 44
+        snapshot.clientDisplayLayerNotReadyCount = 2
 
         #expect(snapshot.bottleneckKind == .mixed)
     }
