@@ -91,7 +91,8 @@ extension InputCapturingView: UIPointerInteractionDelegate {
         if hideSystemCursor || cursorLockEnabled || cursorHiddenForTyping {
             return .hidden()
         }
-        guard syntheticCursorEnabled else { return nil }
+        let shouldStyleVisibleSystemPointer = !syntheticCursorEnabled && !hideSystemCursor
+        guard syntheticCursorEnabled || shouldStyleVisibleSystemPointer else { return nil }
         guard cursorIsVisible else {
             // Cursor is outside the host window, use default pointer
             return nil

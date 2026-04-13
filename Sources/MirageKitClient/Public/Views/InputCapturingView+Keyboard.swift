@@ -17,10 +17,47 @@ private struct ShortcutCommandIdentity: Hashable {
     let modifiers: MirageModifierFlags
 }
 
+#if canImport(GameController)
+enum GCKeyboardKeyRoutingDecision: Equatable {
+    case ignore
+    case action
+    case clientShortcut
+    case passthroughShortcut
+    case forwardKey
+}
+#endif
+
 extension InputCapturingView {
     // MARK: - GCKeyboard Key Event Handling
 
     #if canImport(GameController)
+    nonisolated static func gcKeyboardKeyRoutingDecision(
+        hasHeldModifiers: Bool,
+        hasAction: Bool,
+        hasClientShortcut: Bool,
+        hasPassthroughShortcut: Bool
+    ) -> GCKeyboardKeyRoutingDecision {
+        guard hasHeldModifiers else { return .ignore }
+        if hasAction { return .action }
+        if hasClientShortcut { return .clientShortcut }
+        if hasPassthroughShortcut { return .passthroughShortcut }
+        return .forwardKey
+    }
+
+    private func gcKeyboardKeyEvent(
+        hidUsage: UIKeyboardHIDUsage,
+        modifiers: MirageModifierFlags
+    ) -> MirageKeyEvent {
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
+        return MirageKeyEvent(
+            keyCode: macKeyCode,
+            characters: character,
+            charactersIgnoringModifiers: character,
+            modifiers: modifiers
+        )
+    }
+
     /// Handle a non-modifier key event from GCKeyboard.
     /// Only claims the event when modifiers are held — without modifiers, pressesBegan
     /// provides richer character data and is the better source.
@@ -32,48 +69,63 @@ extension InputCapturingView {
             guard gcClaimedKeyCodes.remove(keyCode) != nil else { return }
             if clientShortcutClaimedKeyCodes.remove(hidUsage) != nil { return }
             if passthroughClaimedKeyCodes.remove(hidUsage) != nil { return }
-            let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
-            let character = Self.characterToMacKeyCodeMap.first { $0.value == macKeyCode }?.key
-            let keyEvent = MirageKeyEvent(
-                keyCode: macKeyCode,
-                characters: character,
-                charactersIgnoringModifiers: character,
-                modifiers: keyboardModifiers
-            )
+            let keyEvent = gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: keyboardModifiers)
             onInputEvent?(.keyUp(keyEvent))
             return
         }
 
-        // Only claim modifier+key combos; unmodified keys flow through pressesBegan
-        guard !heldModifierKeys.isEmpty,
-              let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue))
-        else { return }
+        guard let hidUsage = UIKeyboardHIDUsage(rawValue: Int(keyCode.rawValue)) else { return }
 
-        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
         let eventModifiers = keyboardModifiers
-        if let action = matchingAction(keyCode: macKeyCode, modifiers: eventModifiers) {
+        let macKeyCode = MirageKeyEvent.hidToMacKeyCode(hidUsage)
+        let decision = Self.gcKeyboardKeyRoutingDecision(
+            hasHeldModifiers: !heldModifierKeys.isEmpty,
+            hasAction: matchingAction(keyCode: macKeyCode, modifiers: eventModifiers) != nil,
+            hasClientShortcut: clientShortcut(
+                keyCode: macKeyCode,
+                modifiers: eventModifiers
+            ) != nil,
+            hasPassthroughShortcut: MirageInterceptedShortcutPolicy.shortcut(
+                keyCode: macKeyCode,
+                modifiers: eventModifiers
+            ) != nil
+        )
+
+        switch decision {
+        case .ignore:
+            return
+
+        case .action:
             gcClaimedKeyCodes.insert(keyCode)
             clientShortcutClaimedKeyCodes.insert(hidUsage)
-            performAction(action, source: .hardwareKey)
-            return
-        }
-        if let shortcut = clientShortcut(
-            keyCode: macKeyCode,
-            modifiers: eventModifiers
-        ) {
+            if let action = matchingAction(keyCode: macKeyCode, modifiers: eventModifiers) {
+                performAction(action, source: .hardwareKey)
+            }
+
+        case .clientShortcut:
             gcClaimedKeyCodes.insert(keyCode)
             clientShortcutClaimedKeyCodes.insert(hidUsage)
-            performClientShortcut(shortcut, source: .hardwareKey)
-            return
-        }
-        if let shortcut = MirageInterceptedShortcutPolicy.shortcut(
-            keyCode: macKeyCode,
-            modifiers: eventModifiers
-        ) {
+            if let shortcut = clientShortcut(
+                keyCode: macKeyCode,
+                modifiers: eventModifiers
+            ) {
+                performClientShortcut(shortcut, source: .hardwareKey)
+            }
+
+        case .passthroughShortcut:
             gcClaimedKeyCodes.insert(keyCode)
             passthroughClaimedKeyCodes.insert(hidUsage)
-            performPassthroughShortcut(shortcut, source: .hardwareKey)
-            return
+            if let shortcut = MirageInterceptedShortcutPolicy.shortcut(
+                keyCode: macKeyCode,
+                modifiers: eventModifiers
+            ) {
+                performPassthroughShortcut(shortcut, source: .hardwareKey)
+            }
+
+        case .forwardKey:
+            gcClaimedKeyCodes.insert(keyCode)
+            hideCursorForTypingUntilPointerMovement()
+            onInputEvent?(.keyDown(gcKeyboardKeyEvent(hidUsage: hidUsage, modifiers: eventModifiers)))
         }
     }
     #endif

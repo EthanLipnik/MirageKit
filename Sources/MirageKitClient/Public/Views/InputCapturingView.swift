@@ -262,6 +262,11 @@ public class InputCapturingView: UIView {
     private(set) var hardwareKeyboardPresent: Bool = false
     private var didResignActiveSinceLastActivation = false
     private var didEnterBackgroundSinceLastActive = false
+    private var pendingApplicationActivationRecovery = false
+    private var pendingApplicationActivationResetPresentation = false
+    private var pendingActivationResignedActive = false
+    private var pendingActivationBackgrounded = false
+    private var pendingActivationDisplayLayerFailed = false
     private lazy var responderRecoveryController = InputCapturingResponderRecoveryController(
         contextProvider: { [weak self] trigger in
             self?.responderRecoverySnapshot(for: trigger) ?? (
@@ -657,6 +662,100 @@ public class InputCapturingView: UIView {
     func resetSecondaryClickTracking() {
         lastCompletedRightClickCount = 0
         lastRightTapTime = 0
+    }
+
+    func pointerReleaseLocation() -> CGPoint {
+        if pencilButtonDown {
+            return pencilCurrentLocation
+        }
+        if lockedPointerButtonDown {
+            return lockedCursorActionPosition()
+        }
+        if virtualDragActive {
+            return trackpadCursorActionPosition()
+        }
+        if longPressButtonDown || directLongPressButtonDown || directTwoFingerDragButtonDown {
+            return lastPanLocation
+        }
+        if cursorLockEnabled {
+            return lockedCursorActionPosition()
+        }
+        if usesVirtualTrackpad {
+            return trackpadCursorPosition()
+        }
+        if let lastCursorPosition {
+            return lastCursorPosition
+        }
+        return CGPoint(x: 0.5, y: 0.5)
+    }
+
+    func releaseActivePointerButtonsIfNeeded(reason: String) {
+        let shouldReleasePrimaryButton = longPressButtonDown ||
+            directLongPressButtonDown ||
+            directTwoFingerDragButtonDown ||
+            lockedPointerButtonDown ||
+            virtualDragActive ||
+            pencilButtonDown
+        guard shouldReleasePrimaryButton else { return }
+
+        let mouseEvent = MirageMouseEvent(
+            button: .left,
+            location: pointerReleaseLocation(),
+            clickCount: max(1, currentClickCount),
+            modifiers: keyboardModifiers
+        )
+        onInputEvent?(.mouseUp(mouseEvent))
+        MirageLogger.client("Released active primary pointer state (\(reason))")
+
+        longPressButtonDown = false
+        directLongPressButtonDown = false
+        directTwoFingerDragButtonDown = false
+        lockedPointerButtonDown = false
+        lockedPointerDraggedSinceDown = false
+        virtualDragActive = false
+        pencilButtonDown = false
+        longPressCancelledForMultiTouch = false
+        isDragging = false
+    }
+
+    private func recordPendingApplicationActivationRecovery(
+        resignedActive: Bool,
+        backgrounded: Bool,
+        displayLayerFailed: Bool
+    ) {
+        pendingApplicationActivationRecovery = true
+        pendingApplicationActivationResetPresentation = true
+        pendingActivationResignedActive = pendingActivationResignedActive || resignedActive
+        pendingActivationBackgrounded = pendingActivationBackgrounded || backgrounded
+        pendingActivationDisplayLayerFailed = pendingActivationDisplayLayerFailed || displayLayerFailed
+    }
+
+    private func applyPendingApplicationActivationRecoveryIfPossible() {
+        let shouldResetPresentation = pendingApplicationActivationResetPresentation
+        let shouldRequestRecovery = pendingApplicationActivationRecovery
+        guard shouldResetPresentation || shouldRequestRecovery else { return }
+        guard window != nil else { return }
+
+        sampleBufferView.resumeRenderingAfterApplicationActivation(
+            resetPresentationState: shouldResetPresentation
+        )
+
+        if shouldRequestRecovery {
+            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+            MirageLogger.client(
+                "Activation recovery requested for stream \(streamIDText) " +
+                    "(resignedActive=\(pendingActivationResignedActive), " +
+                    "backgrounded=\(pendingActivationBackgrounded), " +
+                    "displayLayerFailed=\(pendingActivationDisplayLayerFailed))"
+            )
+            onBecomeActive?()
+        }
+
+        pendingApplicationActivationRecovery = false
+        pendingApplicationActivationResetPresentation = false
+        pendingActivationResignedActive = false
+        pendingActivationBackgrounded = false
+        pendingActivationDisplayLayerFailed = false
     }
 
     func clickDistanceInPoints(from source: CGPoint, to target: CGPoint) -> CGFloat {
@@ -1734,6 +1833,7 @@ public class InputCapturingView: UIView {
     private func appWillResignActive() {
         didResignActiveSinceLastActivation = true
         cancelPendingResponderRecovery()
+        releaseActivePointerButtonsIfNeeded(reason: "application_will_resign_active")
         // Clear all modifier and key repeat state when app loses focus
         stopAllKeyRepeats()
         resetAllModifiers()
@@ -1759,10 +1859,17 @@ public class InputCapturingView: UIView {
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
         let displayLayerFailed = sampleBufferView.hasDisplayLayerFailure
-        let shouldRequestRecovery = displayLayerFailed
+        let shouldRequestRecovery = resignedActive || backgrounded || displayLayerFailed
 
-        if window != nil {
-            sampleBufferView.resumeRenderingAfterApplicationActivation(resetPresentationState: shouldRequestRecovery)
+        if shouldRequestRecovery {
+            recordPendingApplicationActivationRecovery(
+                resignedActive: resignedActive,
+                backgrounded: backgrounded,
+                displayLayerFailed: displayLayerFailed
+            )
+            applyPendingApplicationActivationRecoveryIfPossible()
+        } else if window != nil {
+            sampleBufferView.resumeRenderingAfterApplicationActivation(resetPresentationState: false)
         }
         Task {
             await MirageClientAudioSessionCoordinator.shared.handleApplicationDidBecomeActive()
@@ -1778,14 +1885,6 @@ public class InputCapturingView: UIView {
 
         didResignActiveSinceLastActivation = false
         didEnterBackgroundSinceLastActive = false
-        guard shouldRequestRecovery else { return }
-
-        let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
-        MirageLogger.client(
-            "Activation recovery requested for stream \(streamIDText) " +
-                "(resignedActive=\(resignedActive), backgrounded=\(backgrounded), displayLayerFailed=\(displayLayerFailed))"
-        )
-        onBecomeActive?()
     }
 
     #if canImport(GameController)
@@ -1826,6 +1925,7 @@ public class InputCapturingView: UIView {
         guard let scene = notification.object as? UIScene else { return }
         guard scene === window?.windowScene else { return }
         requestResponderRecovery(.sceneDidActivate)
+        applyPendingApplicationActivationRecoveryIfPossible()
     }
 
     @objc
@@ -1833,6 +1933,7 @@ public class InputCapturingView: UIView {
         guard let scene = notification.object as? UIScene else { return }
         guard scene === window?.windowScene else { return }
         requestResponderRecovery(.sceneWillEnterForeground)
+        applyPendingApplicationActivationRecoveryIfPossible()
     }
 
     @objc
@@ -1840,6 +1941,7 @@ public class InputCapturingView: UIView {
         guard let notifiedWindow = notification.object as? UIWindow else { return }
         guard notifiedWindow === window else { return }
         requestResponderRecovery(.windowDidBecomeKey)
+        applyPendingApplicationActivationRecoveryIfPossible()
     }
 
     override public var canBecomeFirstResponder: Bool { true }
@@ -1849,6 +1951,7 @@ public class InputCapturingView: UIView {
         reportContainerSizeIfChanged(force: true)
         if window != nil {
             requestResponderRecovery(.didMoveToWindow)
+            applyPendingApplicationActivationRecoveryIfPossible()
         } else {
             cancelPendingResponderRecovery()
         }

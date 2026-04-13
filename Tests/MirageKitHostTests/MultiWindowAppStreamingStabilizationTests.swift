@@ -415,24 +415,42 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(MirageHostService.initialAppWindowDiscoveryRetryDelay(afterAttempt: 30) == .seconds(1))
     }
 
-    @Test("Initial startup requests a new app window only once after repeated misses")
-    func initialStartupRequestsNewWindowOnlyOnceAfterRepeatedMisses() {
+    @Test("Initial startup requests new app windows on an extended bounded schedule")
+    func initialStartupRequestsNewWindowOnExtendedBoundedSchedule() {
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 1,
-                hasRequestedNewWindow: false
+                newWindowRequestAttempts: 0
             ) == false
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
-                discoveryAttempt: 3,
-                hasRequestedNewWindow: false
+                discoveryAttempt: 2,
+                newWindowRequestAttempts: 0
             ) == true
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
-                discoveryAttempt: 8,
-                hasRequestedNewWindow: true
+                discoveryAttempt: 4,
+                newWindowRequestAttempts: 1
+            ) == false
+        )
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 5,
+                newWindowRequestAttempts: 1
+            ) == true
+        )
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 11,
+                newWindowRequestAttempts: 3
+            ) == true
+        )
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 14,
+                newWindowRequestAttempts: 4
             ) == false
         )
     }

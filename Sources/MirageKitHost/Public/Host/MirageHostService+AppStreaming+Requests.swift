@@ -168,10 +168,11 @@ extension MirageHostService {
 
     nonisolated static func shouldRequestNewAppWindowOnInitialDiscovery(
         discoveryAttempt: Int,
-        hasRequestedNewWindow: Bool
+        newWindowRequestAttempts: Int
     ) -> Bool {
-        guard !hasRequestedNewWindow else { return false }
-        return discoveryAttempt >= 3
+        let requestSchedule = [2, 5, 8, 11]
+        guard newWindowRequestAttempts < requestSchedule.count else { return false }
+        return discoveryAttempt >= requestSchedule[newWindowRequestAttempts]
     }
 
     nonisolated static func standaloneAuxiliaryFallbackCandidates(
@@ -1148,7 +1149,7 @@ extension MirageHostService {
         requestedDisplayResolution: CGSize,
         mediaMaxPacketSize: Int
     ) async -> InitialAppWindowStartupResult {
-        let maxDiscoveryAttempts = 10
+        let maxDiscoveryAttempts = 14
         let maxConcurrentWindowStarts = 2
         let normalizedBundleID = app.bundleIdentifier.lowercased()
         var startedWindows: [AppStreamStartedMessage.AppStreamWindow] = []
@@ -1161,7 +1162,7 @@ extension MirageHostService {
         }
         var startupCandidates: [AppStreamWindowCandidate] = []
         var usedBestEffortStartupFallback = false
-        var requestedNewWindow = false
+        var newWindowRequestAttempts = 0
 
         for discoveryAttempt in 1 ... maxDiscoveryAttempts {
             if streamSetupCancelled {
@@ -1184,12 +1185,16 @@ extension MirageHostService {
                 if !startupCandidates.isEmpty { break }
                 if Self.shouldRequestNewAppWindowOnInitialDiscovery(
                     discoveryAttempt: discoveryAttempt,
-                    hasRequestedNewWindow: requestedNewWindow
+                    newWindowRequestAttempts: newWindowRequestAttempts
                 ) {
-                    requestedNewWindow = true
-                    await appStreamManager.requestNewWindow(bundleIdentifier: app.bundleIdentifier)
+                    newWindowRequestAttempts += 1
+                    await appStreamManager.requestNewWindow(
+                        bundleIdentifier: app.bundleIdentifier,
+                        path: app.path
+                    )
                     MirageLogger.host(
-                        "Initial app-stream startup requested a new window for \(app.bundleIdentifier) after discovery attempt \(discoveryAttempt)"
+                        "Initial app-stream startup requested a new window for \(app.bundleIdentifier) after discovery attempt \(discoveryAttempt) " +
+                            "(request \(newWindowRequestAttempts))"
                     )
                 }
                 failureNotes.append("discovery \(discoveryAttempt): no startup-eligible app windows found")

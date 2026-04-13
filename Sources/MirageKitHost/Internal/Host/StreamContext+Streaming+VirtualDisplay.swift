@@ -236,6 +236,7 @@ extension StreamContext {
     private func resolveSharedDisplayAppCaptureLayout(
         primaryWindowID: WindowID,
         primaryWindowWrapper fallbackPrimaryWindowWrapper: SCWindowWrapper? = nil,
+        primaryWindowFrameOverride: CGRect? = nil,
         displayWrapper: SCDisplayWrapper,
         outputSize: CGSize,
         label: String
@@ -266,12 +267,25 @@ extension StreamContext {
         let resolvedIncludedWindowWrappers = includedWindowWrappers.isEmpty ? [primaryWindowWrapper] : includedWindowWrappers
         let resolvedClusterWindowIDs = resolvedIncludedWindowWrappers.map { WindowID($0.window.windowID) }
         let displayBounds = displayWrapper.display.frame.standardized
-        let primaryDisplayRect = primaryWindowWrapper.window.frame
+        let resolvedPrimaryWindowFrame: CGRect = if let primaryWindowFrameOverride, !primaryWindowFrameOverride.isEmpty {
+            primaryWindowFrameOverride.standardized
+        } else {
+            primaryWindowWrapper.window.frame.standardized
+        }
+        let primaryDisplayRect = resolvedPrimaryWindowFrame
             .standardized
             .intersection(displayBounds)
             .standardized
         let sourceUnionRect = resolvedIncludedWindowWrappers
-            .map { $0.window.frame.standardized }
+            .map { wrapper in
+                let wrapperWindowID = WindowID(wrapper.window.windowID)
+                if wrapperWindowID == primaryWindowID,
+                   let primaryWindowFrameOverride,
+                   !primaryWindowFrameOverride.isEmpty {
+                    return primaryWindowFrameOverride.standardized
+                }
+                return wrapper.window.frame.standardized
+            }
             .reduce(CGRect.null) { partialResult, rect in
                 partialResult.isNull ? rect : partialResult.union(rect)
             }
@@ -302,6 +316,7 @@ extension StreamContext {
 
     func refreshSharedDisplayAppCaptureLayout(
         primaryWindowWrapper: SCWindowWrapper? = nil,
+        primaryWindowFrameOverride: CGRect? = nil,
         label: String
     ) async throws {
         guard isRunning,
@@ -320,6 +335,7 @@ extension StreamContext {
         let layout = try await resolveSharedDisplayAppCaptureLayout(
             primaryWindowID: windowID,
             primaryWindowWrapper: primaryWindowWrapper,
+            primaryWindowFrameOverride: primaryWindowFrameOverride,
             displayWrapper: displayWrapper,
             outputSize: currentEncodedSize,
             label: label
@@ -333,7 +349,11 @@ extension StreamContext {
             ? displayBounds
             : visibleBounds.intersection(displayBounds)
 
-        lastWindowFrame = layout.primaryWindowWrapper.window.frame
+        lastWindowFrame = if let primaryWindowFrameOverride, !primaryWindowFrameOverride.isEmpty {
+            primaryWindowFrameOverride.standardized
+        } else {
+            layout.primaryWindowWrapper.window.frame.standardized
+        }
         capturedWindowClusterWindowIDs = layout.clusterWindowIDs
         virtualDisplayVisibleBounds = resolvedVisibleBounds
         virtualDisplayCapturePresentationRect = layout.presentationRect
@@ -535,7 +555,7 @@ extension StreamContext {
             )
         )
 
-        await iterativelyResizeWindow(
+        _ = await iterativelyResizeWindow(
             windowID: windowID,
             targetSize: targetWindowSize,
             aspectRatio: targetContentAspectRatio,
@@ -543,14 +563,15 @@ extension StreamContext {
             label: "startup"
         )
         await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
-        try? await Task.sleep(for: .milliseconds(60))
+        try? await Task.sleep(for: .milliseconds(24))
 
         let settledWindowWrapper = try await resolveSCWindowWrapper(
             windowID: windowID,
             label: "post-prepare window capture"
         )
+        let settledWindowFrame = Self.queryWindowFrame(windowID)?.standardized ?? settledWindowWrapper.window.frame.standardized
 
-        let captureTarget = streamTargetDimensions(windowFrame: settledWindowWrapper.window.frame)
+        let captureTarget = streamTargetDimensions(windowFrame: settledWindowFrame)
         baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
         streamScale = resolvedStreamScale(
             for: baseCaptureSize,
@@ -571,11 +592,12 @@ extension StreamContext {
         let captureLayout = try await resolveSharedDisplayAppCaptureLayout(
             primaryWindowID: windowID,
             primaryWindowWrapper: settledWindowWrapper,
+            primaryWindowFrameOverride: settledWindowFrame,
             displayWrapper: resolvedDisplayWrapper,
             outputSize: outputSize,
             label: "shared-display app capture start"
         )
-        lastWindowFrame = captureLayout.primaryWindowWrapper.window.frame
+        lastWindowFrame = settledWindowFrame
         capturedWindowClusterWindowIDs = captureLayout.clusterWindowIDs
         virtualDisplayCapturePresentationRect = captureLayout.presentationRect
         virtualDisplayCaptureSourceRect = captureLayout.captureSourceRect
@@ -620,6 +642,7 @@ extension StreamContext {
     /// Updates window size for a resolution change (no virtual display reconfiguration needed).
     func updateWindowCaptureResolution(
         newLogicalSize: CGSize,
+        targetAspectRatioOverride: CGFloat? = nil,
         forceReconfigure: Bool = false
     ) async throws {
         guard isRunning, useVirtualDisplay else { return }
@@ -627,9 +650,16 @@ extension StreamContext {
 
         let placementBounds = resolvedVirtualDisplayPlacementBounds(for: newLogicalSize)
         let maxBounds = placementBounds.size
-        let requestedAspectRatio = newLogicalSize.width > 0 && newLogicalSize.height > 0
-            ? newLogicalSize.width / newLogicalSize.height
-            : nil
+        let requestedAspectRatio: CGFloat?
+        if let targetAspectRatioOverride,
+           targetAspectRatioOverride.isFinite,
+           targetAspectRatioOverride > 0 {
+            requestedAspectRatio = targetAspectRatioOverride
+        } else if newLogicalSize.width > 0, newLogicalSize.height > 0 {
+            requestedAspectRatio = newLogicalSize.width / newLogicalSize.height
+        } else {
+            requestedAspectRatio = nil
+        }
         let effectiveSize = Self.aspectFittedFrame(
             within: placementBounds,
             aspectRatio: requestedAspectRatio
@@ -661,7 +691,7 @@ extension StreamContext {
         )
 
         // Iteratively resize the window to match target aspect ratio
-        await iterativelyResizeWindow(
+        _ = await iterativelyResizeWindow(
             windowID: windowID,
             targetSize: effectiveSize,
             aspectRatio: requestedAspectRatio,
@@ -671,14 +701,14 @@ extension StreamContext {
         await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
 
         // Brief pause for the window to settle
-        try? await Task.sleep(for: .milliseconds(80))
+        try? await Task.sleep(for: .milliseconds(24))
 
         // Re-resolve the SCWindow and display for new capture
         let resolvedWindowWrapper = try await resolveSCWindowWrapper(
             windowID: windowID,
             label: "window resize"
         )
-        let windowFrame = resolvedWindowWrapper.window.frame
+        let windowFrame = Self.queryWindowFrame(windowID)?.standardized ?? resolvedWindowWrapper.window.frame.standardized
         do {
             let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
             baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
@@ -687,6 +717,7 @@ extension StreamContext {
             updateQueueLimits()
             try await refreshSharedDisplayAppCaptureLayout(
                 primaryWindowWrapper: resolvedWindowWrapper,
+                primaryWindowFrameOverride: windowFrame,
                 label: "window resize"
             )
             await applyDerivedQuality(for: currentEncodedSize, logLabel: "Shared-display app resize fixed canvas")
@@ -699,7 +730,7 @@ extension StreamContext {
                 let previousAspectRatio = previousWindowFrame.width > 0 && previousWindowFrame.height > 0
                     ? previousWindowFrame.width / previousWindowFrame.height
                     : nil
-                await iterativelyResizeWindow(
+                _ = await iterativelyResizeWindow(
                     windowID: windowID,
                     targetSize: previousWindowFrame.size,
                     aspectRatio: previousAspectRatio,
@@ -707,12 +738,13 @@ extension StreamContext {
                     label: "rollback"
                 )
                 await WindowSpaceManager.shared.centerWindow(windowID, on: placementBounds)
-                try? await Task.sleep(for: .milliseconds(80))
+                try? await Task.sleep(for: .milliseconds(24))
                 if let resolvedRollbackWindowWrapper = try? await resolveSCWindowWrapper(
                     windowID: windowID,
                     label: "window resize rollback"
                 ) {
-                    restoredWindowFrame = resolvedRollbackWindowWrapper.window.frame
+                    restoredWindowFrame = Self.queryWindowFrame(windowID)?.standardized ??
+                        resolvedRollbackWindowWrapper.window.frame.standardized
                 }
             }
             do {
@@ -765,17 +797,19 @@ extension StreamContext {
     /// Iteratively resize the window to match the target aspect ratio.
     /// Starts at `targetSize` and shrinks proportionally if the app rejects the size.
     /// Gives up after a few attempts — the window will be whatever the app accepted.
+    @discardableResult
     func iterativelyResizeWindow(
         windowID: WindowID,
         targetSize: CGSize,
         aspectRatio: CGFloat?,
         maxBounds: CGSize,
         label: String
-    ) async {
+    ) async -> CGRect {
         let ar = aspectRatio ?? (targetSize.width / max(1, targetSize.height))
         var candidateW = targetSize.width
         var candidateH = targetSize.height
-        let maxAttempts = 4
+        let maxAttempts = 6
+        var lastResolvedFrame = Self.queryWindowFrame(windowID)?.standardized ?? .zero
 
         for attempt in 1 ... maxAttempts {
             let candidate = CGSize(
@@ -785,13 +819,14 @@ extension StreamContext {
             await WindowSpaceManager.shared.resizeWindow(windowID, to: candidate)
 
             // Brief settle
-            try? await Task.sleep(for: .milliseconds(30))
+            try? await Task.sleep(for: .milliseconds(24))
 
             // Check actual compositor size via CGWindowList
             let windowFrame = Self.queryWindowFrame(windowID)
             if let windowFrame {
                 let actualW = windowFrame.width
                 let actualH = windowFrame.height
+                lastResolvedFrame = windowFrame.standardized
                 let actualAR = actualW / max(1, actualH)
                 let arDelta = abs(actualAR - ar) / max(0.001, ar)
 
@@ -801,25 +836,32 @@ extension StreamContext {
                         "Window \(windowID) accepted \(Int(actualW))x\(Int(actualH)) at attempt \(attempt) " +
                         "(target AR \(String(format: "%.3f", ar)), actual AR \(String(format: "%.3f", actualAR)), \(label))"
                     )
-                    return
+                    return lastResolvedFrame
                 }
 
                 // App rejected our size — it may have a minimum constraint.
                 // Shrink the limiting dimension while preserving aspect ratio.
                 if attempt < maxAttempts {
-                    // Use the app's actual height (which is the constrained axis) and compute width from AR
-                    if actualH < candidate.height {
-                        // Height was constrained — use it and compute width
-                        candidateH = actualH
-                        candidateW = min(maxBounds.width, actualH * ar)
-                    } else if actualW < candidate.width {
-                        // Width was constrained — use it and compute height
-                        candidateW = actualW
-                        candidateH = min(maxBounds.height, actualW / ar)
+                    let constrainedBounds = CGRect(
+                        origin: .zero,
+                        size: CGSize(
+                            width: min(maxBounds.width, actualW),
+                            height: min(maxBounds.height, actualH)
+                        )
+                    )
+                    let fittedCandidate = Self.aspectFittedFrame(
+                        within: constrainedBounds,
+                        aspectRatio: ar
+                    ).size
+                    if abs(fittedCandidate.width - candidate.width) > 1 ||
+                        abs(fittedCandidate.height - candidate.height) > 1 {
+                        candidateW = fittedCandidate.width
+                        candidateH = fittedCandidate.height
                     } else {
-                        // Both accepted but AR doesn't match — scale down uniformly
-                        candidateW *= 0.92
-                        candidateH *= 0.92
+                        let shrunkWidth = min(maxBounds.width, max(200, floor(candidate.width * 0.96)))
+                        let shrunkHeight = min(maxBounds.height, max(200, floor(shrunkWidth / max(ar, 0.001))))
+                        candidateW = shrunkWidth
+                        candidateH = shrunkHeight
                     }
                     MirageLogger.stream(
                         "Window \(windowID) AR mismatch at \(Int(actualW))x\(Int(actualH)) " +
@@ -828,9 +870,11 @@ extension StreamContext {
                     )
                 }
             } else {
-                return // Can't query window, bail
+                return lastResolvedFrame
             }
         }
+
+        return lastResolvedFrame
     }
 
     /// Query a window's frame via CGWindowList.

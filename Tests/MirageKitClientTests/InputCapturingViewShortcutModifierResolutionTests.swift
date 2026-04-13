@@ -40,5 +40,17 @@ struct InputCapturingViewShortcutModifierResolutionTests {
             MirageClientShortcut.normalizedShortcutModifiers(resolvedModifiers) == [.command, .shift]
         )
     }
+
+    @Test("Modified GC keyboard keys that are not shortcuts are forwarded to the host")
+    func modifiedGCKeyboardKeysWithoutShortcutBindingsAreForwarded() {
+        let decision = InputCapturingView.gcKeyboardKeyRoutingDecision(
+            hasHeldModifiers: true,
+            hasAction: false,
+            hasClientShortcut: false,
+            hasPassthroughShortcut: false
+        )
+
+        #expect(decision == .forwardKey)
+    }
 }
 #endif

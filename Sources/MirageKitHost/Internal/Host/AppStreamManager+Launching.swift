@@ -15,6 +15,17 @@ import Foundation
 public extension AppStreamManager {
     // MARK: - App Launching
 
+    private func resolvedApplicationURL(
+        bundleIdentifier: String,
+        path: String?
+    ) -> URL? {
+        if let path, !path.isEmpty, FileManager.default.fileExists(atPath: path) {
+            return URL(fileURLWithPath: path)
+        }
+
+        return NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier)
+    }
+
     /// Launch an app if not running
     /// - Parameter bundleIdentifier: The app to launch
     /// - Returns: True if app was launched or already running
@@ -27,11 +38,15 @@ public extension AppStreamManager {
             return true
         }
 
-        let url = URL(fileURLWithPath: path)
+        guard let url = resolvedApplicationURL(bundleIdentifier: bundleIdentifier, path: path) else {
+            logger.error("Failed to resolve launch URL for app \(bundleIdentifier)")
+            return false
+        }
 
         do {
             let config = NSWorkspace.OpenConfiguration()
             config.activates = true
+            config.createsNewApplicationInstance = false
             _ = try await NSWorkspace.shared.openApplication(at: url, configuration: config)
             logger.info("Launched app: \(bundleIdentifier)")
             return true
@@ -53,14 +68,14 @@ public extension AppStreamManager {
     }
 
     /// Request a new window from an app (for apps that are running but have no windows)
-    func requestNewWindow(bundleIdentifier: String) async {
+    func requestNewWindow(bundleIdentifier: String, path: String? = nil) async {
         if let runningApp = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier?.lowercased() == bundleIdentifier.lowercased()
         }) {
-            _ = runningApp.activate()
+            runningApp.activate()
 
             guard let appURL = runningApp.bundleURL ??
-                NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+                resolvedApplicationURL(bundleIdentifier: bundleIdentifier, path: path) else {
                 logger.warning("Failed to resolve app URL for reopen request: \(bundleIdentifier)")
                 return
             }
@@ -73,24 +88,41 @@ public extension AppStreamManager {
                 _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
                 logger.info("Requested reopen/new window for app: \(bundleIdentifier)")
             } catch {
-                logger.warning("Failed to request reopen/new window for app \(bundleIdentifier): \(error)")
+                logger.warning(
+                    "openApplication reopen failed for app \(bundleIdentifier): \(error); trying open(url) fallback"
+                )
+                do {
+                    _ = try await NSWorkspace.shared.open(appURL, configuration: configuration)
+                    logger.info("Requested reopen/new window via open(url) fallback for app: \(bundleIdentifier)")
+                } catch {
+                    logger.warning("Failed to request reopen/new window for app \(bundleIdentifier): \(error)")
+                }
             }
             return
         }
 
-        guard let appURL = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else {
+        guard let appURL = resolvedApplicationURL(bundleIdentifier: bundleIdentifier, path: path) else {
             logger.warning("Failed to resolve app URL for launch request: \(bundleIdentifier)")
             return
         }
 
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
+        configuration.createsNewApplicationInstance = false
 
         do {
             _ = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
             logger.info("Launched app while requesting first window: \(bundleIdentifier)")
         } catch {
-            logger.warning("Failed to launch app \(bundleIdentifier) while requesting first window: \(error)")
+            logger.warning(
+                "openApplication launch failed for \(bundleIdentifier) while requesting first window: \(error); trying open(url) fallback"
+            )
+            do {
+                _ = try await NSWorkspace.shared.open(appURL, configuration: configuration)
+                logger.info("Launched app via open(url) fallback while requesting first window: \(bundleIdentifier)")
+            } catch {
+                logger.warning("Failed to launch app \(bundleIdentifier) while requesting first window: \(error)")
+            }
         }
     }
 }

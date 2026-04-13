@@ -50,6 +50,11 @@ private enum MirageClientStreamRecoveryTrigger: Sendable {
     }
 }
 
+enum RecoveryKeyframeRetryDisposition: Equatable {
+    case recovered
+    case retry(packetFlowResumed: Bool, awaitingKeyframe: Bool)
+}
+
 enum IncomingMediaStreamKind: Equatable {
     case video(StreamID)
     case audio(StreamID)
@@ -517,6 +522,9 @@ extension MirageClientService {
             defer { self.finishRecoveryKeyframeRetry(for: streamID, token: token) }
 
             let reassembler = await controller.getReassembler()
+            let baselineSubmittedSequence = MirageRenderStreamStore.shared
+                .submissionSnapshot(for: streamID)
+                .sequence
             var lastPacketTime = reassembler.latestPacketReceivedTime()
 
             for attempt in 1...self.recoveryKeyframeRetryLimit {
@@ -532,22 +540,56 @@ extension MirageClientService {
                 }
 
                 let latestPacketTime = reassembler.latestPacketReceivedTime()
-                if latestPacketTime > lastPacketTime {
+                let latestSubmittedSequence = MirageRenderStreamStore.shared
+                    .submissionSnapshot(for: streamID)
+                    .sequence
+                let disposition = Self.recoveryKeyframeRetryDisposition(
+                    baselineSubmittedSequence: baselineSubmittedSequence,
+                    latestSubmittedSequence: latestSubmittedSequence,
+                    previousPacketTime: lastPacketTime,
+                    latestPacketTime: latestPacketTime,
+                    awaitingKeyframe: reassembler.isAwaitingKeyframe()
+                )
+
+                switch disposition {
+                case .recovered:
                     MirageLogger.client(
-                        "Recovery packet flow resumed for stream \(streamID); ending retry loop trigger=\(trigger.logLabel)"
+                        "Recovery presentation resumed for stream \(streamID); ending retry loop trigger=\(trigger.logLabel)"
                     )
                     return
+
+                case let .retry(packetFlowResumed, awaitingKeyframe):
+                    let packetFlowText = packetFlowResumed ? "flowing" : "stalled"
+                    let keyframeText = awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
+                    MirageLogger.client(
+                        "Recovery not yet presented for stream \(streamID); retrying keyframe " +
+                            "(\(attempt)/\(self.recoveryKeyframeRetryLimit), packets=\(packetFlowText), state=\(keyframeText)) " +
+                            "trigger=\(trigger.logLabel)"
+                    )
                 }
 
-                MirageLogger.client(
-                    "Recovery packet flow stalled for stream \(streamID); retrying keyframe (\(attempt)/\(self.recoveryKeyframeRetryLimit)) trigger=\(trigger.logLabel)"
-                )
                 self.sendKeyframeRequest(for: streamID)
                 lastPacketTime = latestPacketTime
             }
         }
 
         recoveryKeyframeRetryTasks[streamID] = (token: token, task: task)
+    }
+
+    nonisolated static func recoveryKeyframeRetryDisposition(
+        baselineSubmittedSequence: UInt64,
+        latestSubmittedSequence: UInt64,
+        previousPacketTime: CFAbsoluteTime,
+        latestPacketTime: CFAbsoluteTime,
+        awaitingKeyframe: Bool
+    ) -> RecoveryKeyframeRetryDisposition {
+        if latestSubmittedSequence > baselineSubmittedSequence {
+            return .recovered
+        }
+        return .retry(
+            packetFlowResumed: latestPacketTime > previousPacketTime,
+            awaitingKeyframe: awaitingKeyframe
+        )
     }
 
     func cancelRecoveryKeyframeRetry(for streamID: StreamID) {

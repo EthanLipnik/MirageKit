@@ -238,6 +238,26 @@ func resolvedWindowTargetContentAspectRatio(
     return nil
 }
 
+func resolvedAppStreamResizeAspectRatio(
+    existingAspectRatio: CGFloat?,
+    requestedLogicalResolution: CGSize
+) -> CGFloat? {
+    if let existingAspectRatio,
+       existingAspectRatio.isFinite,
+       existingAspectRatio > 0 {
+        return existingAspectRatio
+    }
+
+    guard requestedLogicalResolution.width > 0,
+          requestedLogicalResolution.height > 0 else {
+        return nil
+    }
+
+    let requestedAspectRatio = requestedLogicalResolution.width / requestedLogicalResolution.height
+    guard requestedAspectRatio.isFinite, requestedAspectRatio > 0 else { return nil }
+    return requestedAspectRatio
+}
+
 func requestedAspectRatioForWindowFit(
     requestedPixelResolution: CGSize,
     visiblePixelResolution: CGSize,
@@ -1289,9 +1309,10 @@ extension MirageHostService {
         let currentState = getVirtualDisplayState(streamID: streamID)
         let currentVisibleResolution = currentState?.visiblePixelResolution
         let currentDisplayResolution = currentState?.pixelResolution
-        let requestedAspectRatio = logicalResolution.width > 0 && logicalResolution.height > 0
-            ? logicalResolution.width / logicalResolution.height
-            : nil
+        let requestedAspectRatio = resolvedAppStreamResizeAspectRatio(
+            existingAspectRatio: currentState?.targetContentAspectRatio,
+            requestedLogicalResolution: logicalResolution
+        )
         if windowResizePlacementNoOpDecision(
             currentBounds: currentState?.bounds,
             displayVisibleBounds: currentState?.displayVisibleBounds,
@@ -1315,6 +1336,7 @@ extension MirageHostService {
         do {
             try await context.updateWindowCaptureResolution(
                 newLogicalSize: logicalResolution,
+                targetAspectRatioOverride: requestedAspectRatio,
                 forceReconfigure: false
             )
             await refreshWindowVirtualDisplayState(

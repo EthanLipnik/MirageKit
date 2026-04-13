@@ -220,7 +220,7 @@ public struct MirageStreamContentView: View {
     }
 
     private var prefersLocalAspectFitPresentation: Bool {
-        !isDesktopStream && softwareKeyboardVisible && keyboardAvoidanceEnabled
+        softwareKeyboardVisible && keyboardAvoidanceEnabled
     }
 
     public var body: some View {
@@ -727,33 +727,7 @@ public struct MirageStreamContentView: View {
                     if isResizing, !awaitingAppResizeAck { isResizing = false }
                     return
                 }
-                guard pendingDisplayResolutionDispatchTarget != baseDisplaySize else { return }
-                displayResolutionTask?.cancel()
-                pendingDisplayResolutionDispatchTarget = baseDisplaySize
-                let scheduledTarget = baseDisplaySize
-                displayResolutionTask = Task { @MainActor in
-                    defer {
-                        if pendingDisplayResolutionDispatchTarget == scheduledTarget {
-                            pendingDisplayResolutionDispatchTarget = .zero
-                        }
-                    }
-                    await Task.yield()
-
-                    guard lastSentDisplayResolution != baseDisplaySize else {
-                        if isResizing, !awaitingAppResizeAck { isResizing = false }
-                        return
-                    }
-                    lastSentDisplayResolution = baseDisplaySize
-                    beginAppResizeAwaitingAck()
-                    do {
-                        try await clientService.sendDisplayResolutionChange(
-                            streamID: session.streamID,
-                            newResolution: baseDisplaySize
-                        )
-                    } catch {
-                        finishAppResizeAwaitingAck()
-                    }
-                }
+                enqueueImmediateAppDisplayResolutionChange(baseDisplaySize)
                 return
             }
 
@@ -993,6 +967,48 @@ public struct MirageStreamContentView: View {
             )
         }
         return true
+    }
+
+    private func enqueueImmediateAppDisplayResolutionChange(_ targetDisplaySize: CGSize) {
+        guard targetDisplaySize.width > 0, targetDisplaySize.height > 0 else { return }
+        guard pendingDisplayResolutionDispatchTarget != targetDisplaySize || displayResolutionTask == nil else { return }
+
+        pendingDisplayResolutionDispatchTarget = targetDisplaySize
+        guard displayResolutionTask == nil else { return }
+
+        displayResolutionTask = Task { @MainActor [clientService] in
+            defer {
+                displayResolutionTask = nil
+                if pendingDisplayResolutionDispatchTarget == .zero, isResizing, !awaitingAppResizeAck {
+                    isResizing = false
+                }
+            }
+
+            while !Task.isCancelled {
+                let dispatchedTarget = pendingDisplayResolutionDispatchTarget
+                pendingDisplayResolutionDispatchTarget = .zero
+                guard dispatchedTarget.width > 0, dispatchedTarget.height > 0 else { break }
+
+                guard lastSentDisplayResolution != dispatchedTarget else {
+                    if pendingDisplayResolutionDispatchTarget == .zero { break }
+                    continue
+                }
+
+                lastSentDisplayResolution = dispatchedTarget
+                beginAppResizeAwaitingAck()
+                do {
+                    try await clientService.sendDisplayResolutionChange(
+                        streamID: session.streamID,
+                        newResolution: dispatchedTarget
+                    )
+                } catch {
+                    finishAppResizeAwaitingAck()
+                }
+
+                if pendingDisplayResolutionDispatchTarget == .zero { break }
+                await Task.yield()
+            }
+        }
     }
 
     private func beginAppResizeAwaitingAck() {

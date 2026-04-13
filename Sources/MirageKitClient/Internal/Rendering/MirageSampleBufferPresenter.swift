@@ -26,6 +26,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     static let cmTimeScale: CMTimeScale = 1_000_000_000
     static let presentationRebaseThresholdSeconds: CFTimeInterval = 1.0
     static let stallRecoveryThresholdSeconds: CFTimeInterval = 0.5
+    static let displayLayerLivenessResetThresholdSeconds: CFTimeInterval = 0.75
 
     private weak var displayLayer: AVSampleBufferDisplayLayer?
 
@@ -42,6 +43,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
     private var lastMappedPresentationTime: CMTime = .invalid
     private var loggedLayerFailure = false
     private var lastFrameSubmissionTime: CFTimeInterval = 0
+    private var displayLayerNotReadyStartTime: CFTimeInterval = 0
     private(set) var currentContentReferenceSize: CGSize?
 
     var onFrameAvailable: (() -> Void)?
@@ -84,11 +86,13 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         clearCurrentFrameState()
     }
 
-    func resetPresentationState() {
+    func resetPresentationState(preserveLoggedLayerFailure: Bool = false) {
         cachedFormatKey = nil
         cachedFormatDescription = nil
         resetSequenceTrackingState()
-        loggedLayerFailure = false
+        if !preserveLoggedLayerFailure {
+            loggedLayerFailure = false
+        }
         clearCurrentFrameState()
     }
 
@@ -98,6 +102,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayer.contentsRect = CGRect(x: 0, y: 0, width: 1, height: 1)
         currentContentReferenceSize = nil
         lastSubmittedSequence = 0
+        displayLayerNotReadyStartTime = 0
     }
 
     @discardableResult
@@ -119,8 +124,10 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
 
         guard displayLayer.isReadyForMoreMediaData else {
             MirageRenderStreamStore.shared.noteDisplayLayerNotReady(for: streamID)
+            recoverDisplayLayerLivenessIfNeeded(streamID: streamID, now: now)
             return false
         }
+        displayLayerNotReadyStartTime = 0
         guard let frame = MirageRenderStreamStore.shared.takePendingFrame(for: streamID) else {
             return false
         }
@@ -150,6 +157,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         displayLayer.enqueue(sampleBuffer)
         lastSubmittedSequence = frame.sequence
         lastFrameSubmissionTime = CACurrentMediaTime()
+        displayLayerNotReadyStartTime = 0
         MirageRenderStreamStore.shared.markSubmitted(
             sequence: frame.sequence,
             mappedPresentationTime: mappedPresentationTime,
@@ -164,6 +172,7 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         localPresentationOrigin = nil
         lastMappedPresentationTime = .invalid
         lastFrameSubmissionTime = 0
+        displayLayerNotReadyStartTime = 0
     }
 
     private func updateLayerContentRect(_ contentRect: CGRect, pixelBuffer: CVPixelBuffer) {
@@ -351,6 +360,30 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
         registerFrameListener(for: streamID)
     }
 
+    private func recoverDisplayLayerLivenessIfNeeded(
+        streamID: StreamID,
+        now: CFTimeInterval
+    ) {
+        let pendingFrameCount = MirageRenderStreamStore.shared.pendingFrameCount(for: streamID)
+        guard pendingFrameCount > 0 else {
+            displayLayerNotReadyStartTime = 0
+            return
+        }
+
+        if displayLayerNotReadyStartTime == 0 {
+            displayLayerNotReadyStartTime = now
+            return
+        }
+
+        let lastProgressTime = max(displayLayerNotReadyStartTime, lastFrameSubmissionTime)
+        guard now - lastProgressTime >= Self.displayLayerLivenessResetThresholdSeconds else { return }
+
+        MirageLogger.renderer(
+            "Display layer remained not-ready with \(pendingFrameCount) pending frame(s); resetting presentation pipeline"
+        )
+        resetPresentationState()
+    }
+
     private func recoverDisplayLayerIfNeeded() {
         guard let displayLayer, displayLayer.status == .failed else { return }
         if !loggedLayerFailure {
@@ -361,9 +394,9 @@ final class MirageSampleBufferPresenter: @unchecked Sendable {
                 let description = displayLayer.error?.localizedDescription ?? "unknown error"
                 MirageLogger.error(.renderer, "AVSampleBufferDisplayLayer failure: \(description)")
             }
-            loggedLayerFailure = true
+                loggedLayerFailure = true
         }
-        displayLayer.flushAndRemoveImage()
+        resetPresentationState(preserveLoggedLayerFailure: true)
     }
 
     private nonisolated static func isExpectedDisplayLayerFailure(_ error: Error?) -> Bool {
