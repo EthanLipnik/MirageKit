@@ -29,6 +29,7 @@ extension StreamContext {
 
     struct SharedDisplayAppCaptureLayout: Sendable {
         let primaryWindowWrapper: SCWindowWrapper
+        let includedWindowWrappers: [SCWindowWrapper]
         let clusterWindowIDs: [WindowID]
         let primaryRect: CGRect
         let clusterRect: CGRect
@@ -289,6 +290,7 @@ extension StreamContext {
 
         return SharedDisplayAppCaptureLayout(
             primaryWindowWrapper: primaryWindowWrapper,
+            includedWindowWrappers: resolvedIncludedWindowWrappers,
             clusterWindowIDs: resolvedClusterWindowIDs,
             primaryRect: presentationLayout.primaryRect,
             clusterRect: presentationLayout.clusterRect,
@@ -348,7 +350,7 @@ extension StreamContext {
             sourceRect: layout.sourceRect,
             destinationRect: layout.destinationRect,
             contentWindowID: windowID,
-            includedWindows: []
+            includedWindows: layout.includedWindowWrappers.map(\.window)
         )
         await refreshCaptureCadence()
 
@@ -424,7 +426,7 @@ extension StreamContext {
     /// Starts shared-display capture for an app-stream virtual display.
     ///
     /// Mirrored app streaming normalizes the host window onto the shared app-stream display,
-    /// then captures that display filtered to the visible window cluster for the selected app slot.
+    /// then captures that display with a display filter limited to the selected window cluster.
     func startSharedDisplayWindowCapture(
         windowWrapper: SCWindowWrapper,
         applicationWrapper: SCApplicationWrapper,
@@ -600,7 +602,7 @@ extension StreamContext {
             sourceRect: captureLayout.sourceRect,
             destinationRect: captureLayout.destinationRect,
             contentWindowID: windowID,
-            includedWindows: [],
+            includedWindows: captureLayout.includedWindowWrappers.map(\.window),
             showsCursor: false,
             onFrame: { [weak self] frame in
                 self?.enqueueCapturedFrame(frame)

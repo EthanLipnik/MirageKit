@@ -244,23 +244,6 @@ extension MirageClientService {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let scaledResolution = scaledDisplayResolution(newResolution)
-        let now = CFAbsoluteTimeGetCurrent()
-        if Self.shouldSuppressDuplicateDisplayResolutionChange(
-            lastResolution: lastDisplayResolutionRequestByStream[streamID],
-            lastRequestTime: lastDisplayResolutionRequestTimeByStream[streamID],
-            newResolution: scaledResolution,
-            now: now,
-            suppressionWindow: duplicateDisplayResolutionSuppressionWindow
-        ) {
-            MirageLogger
-                .client(
-                    "Skipping duplicate display size change for stream \(streamID): " +
-                        "\(Int(scaledResolution.width))x\(Int(scaledResolution.height)) pts"
-                )
-            return
-        }
-        lastDisplayResolutionRequestByStream[streamID] = scaledResolution
-        lastDisplayResolutionRequestTimeByStream[streamID] = now
 
         let pixelResolution = virtualDisplayPixelResolution(for: scaledResolution)
         let request = DisplayResolutionChangeMessage(
@@ -276,20 +259,6 @@ extension MirageClientService {
             )
 
         try await sendControlMessage(.displayResolutionChange, content: request)
-    }
-
-    nonisolated static func shouldSuppressDuplicateDisplayResolutionChange(
-        lastResolution: CGSize?,
-        lastRequestTime: CFAbsoluteTime?,
-        newResolution: CGSize,
-        now: CFAbsoluteTime,
-        suppressionWindow: CFAbsoluteTime
-    )
-    -> Bool {
-        guard suppressionWindow > 0 else { return false }
-        guard let lastResolution, let lastRequestTime else { return false }
-        guard lastResolution == newResolution else { return false }
-        return now - lastRequestTime < suppressionWindow
     }
 
     public func sendStreamScaleChange(

@@ -343,7 +343,7 @@ extension WindowCaptureEngine {
             targetFrameRate: currentFrameRate
         )
         let includedWindowList = includedWindows.map(\.windowID)
-        let filterMode = includedWindowList.isEmpty ? "fullDisplay" : "includedWindows"
+        let filterMode = includedWindowList.isEmpty ? "displayFullFrame" : "displayIncludedWindows"
         MirageLogger.capture(
             "Updated display capture layout for display \(resolvedDisplay.displayID), sourceRect=\(String(describing: resolvedSourceRect)), destinationRect=\(String(describing: resolvedDestinationRect)), filter=\(filterMode), includedWindows=\(includedWindowList)"
         )

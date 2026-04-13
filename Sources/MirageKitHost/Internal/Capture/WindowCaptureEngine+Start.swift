@@ -542,7 +542,7 @@ extension WindowCaptureEngine {
         contentFilter = filter
 
         let includedWindowIDs = includedWindows.map(\.windowID)
-        let filterMode = includedWindowIDs.isEmpty ? "fullDisplay" : "includedWindows"
+        let filterMode = includedWindowIDs.isEmpty ? "displayFullFrame" : "displayIncludedWindows"
         if displayUsesExplicitResolution {
             MirageLogger
                 .capture(

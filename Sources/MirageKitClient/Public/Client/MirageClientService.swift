@@ -602,9 +602,6 @@ public final class MirageClientService {
     var recoveryKeyframeRetryTasks: [StreamID: (token: UUID, task: Task<Void, Never>)] = [:]
     let recoveryKeyframeRetryInterval: Duration = .seconds(1)
     let recoveryKeyframeRetryLimit: Int = 2
-    var lastDisplayResolutionRequestByStream: [StreamID: CGSize] = [:]
-    var lastDisplayResolutionRequestTimeByStream: [StreamID: CFAbsoluteTime] = [:]
-    let duplicateDisplayResolutionSuppressionWindow: CFAbsoluteTime = 0.2
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
