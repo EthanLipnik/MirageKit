@@ -15,6 +15,12 @@ import MirageKit
 extension MirageClientService {
     private func handleDesktopResizeCommit(_ started: DesktopStreamStartedMessage) async -> Bool {
         let streamID = started.streamID
+        guard desktopSessionID == started.desktopSessionID else {
+            MirageLogger.client(
+                "Ignoring stale desktop resize commit for stream \(streamID): session=\(started.desktopSessionID.uuidString)"
+            )
+            return false
+        }
         guard desktopResizeCoordinator.acceptTransition(
             streamID: streamID,
             transitionID: started.transitionID
@@ -79,6 +85,7 @@ extension MirageClientService {
                 return
             }
             let streamID = started.streamID
+            let receivedDesktopSessionID = started.desktopSessionID
             let startupAttemptID = started.startupAttemptID
             guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
                 MirageLogger.client(
@@ -86,15 +93,28 @@ extension MirageClientService {
                 )
                 return
             }
+            let requestStartPending = desktopStreamRequestStartTime > 0
             let previousStreamID = desktopStreamID
+            let previousDesktopSessionID = desktopSessionID
             let hasController = controllersByStream[streamID] != nil
-            let previousDimensionToken = desktopDimensionTokenByStream[streamID]
+            if let previousDesktopSessionID,
+               previousDesktopSessionID != receivedDesktopSessionID,
+               !requestStartPending {
+                MirageLogger.client(
+                    "Ignoring stale desktopStreamStarted for stream \(streamID): session=\(receivedDesktopSessionID.uuidString) activeSession=\(previousDesktopSessionID.uuidString)"
+                )
+                return
+            }
+            let isActiveDesktopSession = previousDesktopSessionID == receivedDesktopSessionID
+            let previousDimensionToken = isActiveDesktopSession
+                ? desktopDimensionTokenByStream[streamID]
+                : nil
             let dimensionToken = started.dimensionToken
             let acceptanceDecision = desktopStreamStartAcceptanceDecision(
                 streamID: streamID,
-                previousStreamID: previousStreamID,
-                hasController: hasController,
-                requestStartPending: desktopStreamRequestStartTime > 0,
+                previousStreamID: isActiveDesktopSession ? previousStreamID : nil,
+                hasController: isActiveDesktopSession ? hasController : false,
+                requestStartPending: requestStartPending,
                 previousDimensionToken: previousDimensionToken,
                 receivedDimensionToken: dimensionToken
             )
@@ -120,9 +140,9 @@ extension MirageClientService {
             let isResizeTokenAdvance = acceptanceDecision == .acceptResizeAdvance
             let resetDecision = desktopStreamStartResetDecision(
                 streamID: streamID,
-                previousStreamID: previousStreamID,
-                hasController: hasController,
-                requestStartPending: desktopStreamRequestStartTime > 0,
+                previousStreamID: isActiveDesktopSession ? previousStreamID : nil,
+                hasController: isActiveDesktopSession ? hasController : false,
+                requestStartPending: requestStartPending,
                 previousDimensionToken: previousDimensionToken,
                 receivedDimensionToken: dimensionToken
             )
@@ -138,7 +158,18 @@ extension MirageClientService {
             if isResizeTokenAdvance {
                 sessionStore.beginPostResizeTransition(for: streamID)
             }
+            if previousDesktopSessionID != receivedDesktopSessionID {
+                desktopDimensionTokenByStream.removeValue(forKey: streamID)
+                if let previousStreamID {
+                    clearDesktopResizeState(streamID: previousStreamID)
+                    desktopDimensionTokenByStream.removeValue(forKey: previousStreamID)
+                } else {
+                    desktopResizeCoordinator.clearAllState()
+                }
+                cancelDesktopStreamStopTimeout()
+            }
             desktopStreamID = streamID
+            desktopSessionID = receivedDesktopSessionID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
             activeStreamCodecs[streamID] = started.codec
             if let dimensionToken {
@@ -249,6 +280,18 @@ extension MirageClientService {
         do {
             let stopped = try message.decode(DesktopStreamStoppedMessage.self)
             let streamID = stopped.streamID
+            guard desktopSessionID == stopped.desktopSessionID else {
+                MirageLogger.client(
+                    "Ignoring stale desktopStreamStopped for stream \(streamID): session=\(stopped.desktopSessionID.uuidString) activeSession=\(desktopSessionID?.uuidString ?? "nil")"
+                )
+                return
+            }
+            guard desktopStreamID == nil || desktopStreamID == streamID else {
+                MirageLogger.client(
+                    "Ignoring desktopStreamStopped for mismatched active stream \(streamID): activeStream=\(desktopStreamID.map(String.init) ?? "nil")"
+                )
+                return
+            }
             cancelDesktopStreamStopTimeout()
             let hadLocalDesktopState = desktopStreamID == streamID ||
                 controllersByStream[streamID] != nil ||
@@ -256,6 +299,7 @@ extension MirageClientService {
             MirageLogger.client("Desktop stream stopped: stream=\(streamID), reason=\(stopped.reason)")
 
             desktopStreamID = nil
+            desktopSessionID = nil
             desktopStreamResolution = nil
             desktopStreamMode = nil
             desktopCursorPresentation = nil

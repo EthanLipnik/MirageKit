@@ -162,9 +162,12 @@ package struct DesktopCursorPresentationChangeMessage: Codable {
 package struct StopDesktopStreamMessage: Codable {
     /// The desktop stream ID to stop
     package let streamID: StreamID
+    /// Session identifier for the active desktop stream.
+    package let desktopSessionID: UUID
 
-    package init(streamID: StreamID) {
+    package init(streamID: StreamID, desktopSessionID: UUID) {
         self.streamID = streamID
+        self.desktopSessionID = desktopSessionID
     }
 }
 
@@ -189,6 +192,8 @@ package enum MirageDesktopTransitionOutcome: String, Codable, Sendable {
 package struct DesktopStreamStartedMessage: Codable {
     /// Stream ID for the desktop stream
     package let streamID: StreamID
+    /// Session identifier for the active desktop stream.
+    package let desktopSessionID: UUID
     /// Resolution of the virtual display
     package let width: Int
     package let height: Int
@@ -214,6 +219,7 @@ package struct DesktopStreamStartedMessage: Codable {
 
     package init(
         streamID: StreamID,
+        desktopSessionID: UUID,
         width: Int,
         height: Int,
         frameRate: Int,
@@ -227,6 +233,7 @@ package struct DesktopStreamStartedMessage: Codable {
         transitionOutcome: MirageDesktopTransitionOutcome? = nil
     ) {
         self.streamID = streamID
+        self.desktopSessionID = desktopSessionID
         self.width = width
         self.height = height
         self.frameRate = frameRate
@@ -245,11 +252,18 @@ package struct DesktopStreamStartedMessage: Codable {
 package struct DesktopStreamStoppedMessage: Codable {
     /// The stream ID that was stopped
     package let streamID: StreamID
+    /// Session identifier for the desktop stream that stopped.
+    package let desktopSessionID: UUID
     /// Why the stream was stopped
     package let reason: DesktopStreamStopReason
 
-    package init(streamID: StreamID, reason: DesktopStreamStopReason) {
+    package init(
+        streamID: StreamID,
+        desktopSessionID: UUID,
+        reason: DesktopStreamStopReason
+    ) {
         self.streamID = streamID
+        self.desktopSessionID = desktopSessionID
         self.reason = reason
     }
 }

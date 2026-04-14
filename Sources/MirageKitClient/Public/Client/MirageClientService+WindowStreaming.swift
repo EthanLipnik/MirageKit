@@ -400,22 +400,33 @@ public extension MirageClientService {
         let error = MirageError.protocolError(failure.errorMessage)
 
         if desktopStreamID == streamID {
-            if pendingLocalDesktopStopStreamID == streamID {
+            if pendingLocalDesktopStopStreamID == streamID,
+               pendingLocalDesktopStopSessionID == desktopSessionID {
                 MirageLogger.client(
                     "Suppressing terminal startup failure for stream \(streamID) while a local desktop stop is pending"
                 )
                 await forceStopDesktopStreamLocally(
                     streamID: streamID,
+                    desktopSessionID: desktopSessionID,
                     notifyStopReason: .clientRequested
                 )
                 return
             }
 
-            let request = StopDesktopStreamMessage(streamID: streamID)
-            if let message = try? ControlMessage(type: .stopDesktopStream, content: request) {
-                sendControlMessageBestEffort(message)
+            if let desktopSessionID {
+                let request = StopDesktopStreamMessage(
+                    streamID: streamID,
+                    desktopSessionID: desktopSessionID
+                )
+                if let message = try? ControlMessage(type: .stopDesktopStream, content: request) {
+                    sendControlMessageBestEffort(message)
+                }
             }
-            await forceStopDesktopStreamLocally(streamID: streamID, notifyStopReason: .error)
+            await forceStopDesktopStreamLocally(
+                streamID: streamID,
+                desktopSessionID: desktopSessionID,
+                notifyStopReason: .error
+            )
             delegate?.clientService(self, didEncounterError: error)
             return
         }
@@ -439,18 +450,25 @@ public extension MirageClientService {
         desktopStreamStopTimeoutTask?.cancel()
         desktopStreamStopTimeoutTask = nil
         pendingLocalDesktopStopStreamID = nil
+        pendingLocalDesktopStopSessionID = nil
     }
 
     nonisolated static func shouldForceLocalDesktopStopAfterTimeout(
         requestedStreamID: StreamID,
+        requestedDesktopSessionID: UUID,
         activeDesktopStreamID: StreamID?,
+        activeDesktopSessionID: UUID?,
         hasController: Bool,
         isRegistered: Bool
     ) -> Bool {
-        activeDesktopStreamID == requestedStreamID || hasController || isRegistered
+        if let activeDesktopSessionID,
+           activeDesktopSessionID != requestedDesktopSessionID {
+            return false
+        }
+        return activeDesktopStreamID == requestedStreamID || hasController || isRegistered
     }
 
-    func scheduleDesktopStreamStopTimeout(for streamID: StreamID) {
+    func scheduleDesktopStreamStopTimeout(for streamID: StreamID, desktopSessionID: UUID) {
         cancelDesktopStreamStopTimeout()
         desktopStreamStopTimeoutTask = Task { [weak self] in
             guard let self else { return }
@@ -462,20 +480,27 @@ public extension MirageClientService {
 
             guard Self.shouldForceLocalDesktopStopAfterTimeout(
                 requestedStreamID: streamID,
+                requestedDesktopSessionID: desktopSessionID,
                 activeDesktopStreamID: self.desktopStreamID,
+                activeDesktopSessionID: self.desktopSessionID,
                 hasController: self.controllersByStream[streamID] != nil,
                 isRegistered: self.registeredStreamIDs.contains(streamID)
             ) else {
                 self.desktopStreamStopTimeoutTask = nil
-                self.pendingLocalDesktopStopStreamID = nil
+                if self.pendingLocalDesktopStopStreamID == streamID,
+                   self.pendingLocalDesktopStopSessionID == desktopSessionID {
+                    self.pendingLocalDesktopStopStreamID = nil
+                    self.pendingLocalDesktopStopSessionID = nil
+                }
                 return
             }
 
             MirageLogger.client(
-                "Desktop stop acknowledgement timed out for stream \(streamID); forcing local teardown"
+                "Desktop stop acknowledgement timed out for stream \(streamID), session=\(desktopSessionID.uuidString); forcing local teardown"
             )
             await self.forceStopDesktopStreamLocally(
                 streamID: streamID,
+                desktopSessionID: desktopSessionID,
                 notifyStopReason: .clientRequested
             )
             self.desktopStreamStopTimeoutTask = nil
@@ -519,8 +544,17 @@ public extension MirageClientService {
 
     private func forceStopDesktopStreamLocally(
         streamID: StreamID,
+        desktopSessionID expectedDesktopSessionID: UUID? = nil,
         notifyStopReason: DesktopStreamStopReason? = nil
     ) async {
+        if let expectedDesktopSessionID,
+           let activeDesktopSessionID = desktopSessionID,
+           activeDesktopSessionID != expectedDesktopSessionID {
+            MirageLogger.client(
+                "Skipping local desktop teardown for superseded session \(expectedDesktopSessionID.uuidString); activeSession=\(activeDesktopSessionID.uuidString)"
+            )
+            return
+        }
         cancelDesktopStreamStopTimeout()
         let hadLocalState = desktopStreamID == streamID ||
             controllersByStream[streamID] != nil ||
@@ -532,6 +566,7 @@ public extension MirageClientService {
         desktopStreamRequestStartTime = 0
         if desktopStreamID == streamID {
             desktopStreamID = nil
+            desktopSessionID = nil
             desktopStreamResolution = nil
             desktopStreamMode = nil
             desktopCursorPresentation = nil

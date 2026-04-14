@@ -13,6 +13,16 @@ import MirageKit
 
 // MARK: - Menu Bar Passthrough
 
+func shouldAcceptStopDesktopStreamRequest(
+    requestedStreamID: StreamID,
+    requestedDesktopSessionID: UUID,
+    activeDesktopStreamID: StreamID?,
+    activeDesktopSessionID: UUID?
+) -> Bool {
+    requestedStreamID == activeDesktopStreamID &&
+        requestedDesktopSessionID == activeDesktopSessionID
+}
+
 extension MirageHostService {
     /// Handle a menu action request from a client
     func handleMenuActionRequest(
@@ -196,11 +206,19 @@ extension MirageHostService {
     func handleStopDesktopStream(_ message: ControlMessage) async {
         do {
             let request = try message.decode(StopDesktopStreamMessage.self)
-            MirageLogger.host("Client requested stop desktop stream: \(request.streamID)")
+            MirageLogger.host(
+                "Client requested stop desktop stream: stream=\(request.streamID), session=\(request.desktopSessionID.uuidString)"
+            )
 
-            // Verify the stream ID matches
-            guard request.streamID == desktopStreamID else {
-                MirageLogger.host("Desktop stream ID mismatch: \(request.streamID) vs \(desktopStreamID ?? 0)")
+            guard shouldAcceptStopDesktopStreamRequest(
+                requestedStreamID: request.streamID,
+                requestedDesktopSessionID: request.desktopSessionID,
+                activeDesktopStreamID: desktopStreamID,
+                activeDesktopSessionID: desktopSessionID
+            ) else {
+                MirageLogger.host(
+                    "Ignoring stale desktop stop request: requestedStream=\(request.streamID), requestedSession=\(request.desktopSessionID.uuidString), activeStream=\(desktopStreamID.map(String.init) ?? "nil"), activeSession=\(desktopSessionID?.uuidString ?? "nil")"
+                )
                 return
             }
 

@@ -202,8 +202,10 @@ extension MirageHostService {
 
         // Clear any stuck modifiers from previous streams
         inputController.clearAllModifiers()
+        let desktopSessionID = UUID()
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
+        self.desktopSessionID = desktopSessionID
         resetDesktopResizeTransactionState()
 
         // Configure encoder with optional overrides
@@ -785,6 +787,7 @@ extension MirageHostService {
         let startupAttemptID = UUID()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
+            desktopSessionID: desktopSessionID,
             width: Int(startedDisplayResolution.width),
             height: Int(startedDisplayResolution.height),
             frameRate: targetFrameRate,
@@ -833,6 +836,7 @@ extension MirageHostService {
         desktopStreamContext = nil
         desktopStreamClientContext = nil
         desktopStreamID = nil
+        desktopSessionID = nil
         desktopRequestedScaleFactor = nil
         desktopStreamMode = .unified
         desktopCursorPresentation = .emulatedCursor
@@ -873,7 +877,11 @@ extension MirageHostService {
         }
 
         cancelPendingStartupAttempt(streamID: streamID)
-        MirageLogger.host("Stopping desktop stream: streamID=\(streamID), reason=\(reason)")
+        let stoppedDesktopSessionID = desktopSessionID
+        let stoppedClientContext = desktopStreamClientContext
+        MirageLogger.host(
+            "Stopping desktop stream: streamID=\(streamID), session=\(stoppedDesktopSessionID?.uuidString ?? "nil"), reason=\(reason)"
+        )
         beginDesktopSharedDisplayTransition()
         defer { endDesktopSharedDisplayTransition() }
         resetDesktopResizeTransactionState()
@@ -886,14 +894,20 @@ extension MirageHostService {
             await disableDisplayMirroring(displayID: sharedDisplayID)
         }
 
-        if let clientContext = desktopStreamClientContext {
-            let message = DesktopStreamStoppedMessage(streamID: streamID, reason: reason)
+        if let clientContext = stoppedClientContext,
+           let stoppedDesktopSessionID {
+            let message = DesktopStreamStoppedMessage(
+                streamID: streamID,
+                desktopSessionID: stoppedDesktopSessionID,
+                reason: reason
+            )
             try? await clientContext.send(.desktopStreamStopped, content: message)
         }
 
         // Clean up
         desktopStreamContext = nil
         desktopStreamID = nil
+        desktopSessionID = nil
         desktopStreamClientContext = nil
         desktopDisplayBounds = nil
         desktopVirtualDisplayID = nil

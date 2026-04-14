@@ -30,6 +30,7 @@ extension MirageClientService {
         desktopStreamStartTimeoutTask?.cancel()
         desktopStreamStartTimeoutTask = nil
         desktopStreamRequestStartTime = 0
+        desktopSessionID = nil
         desktopStreamMode = nil
         desktopCursorPresentation = nil
         pendingDesktopRequestedColorDepth = nil

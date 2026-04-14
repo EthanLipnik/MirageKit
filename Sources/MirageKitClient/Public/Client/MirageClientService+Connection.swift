@@ -421,6 +421,7 @@ extension MirageClientService {
             desktopResizeCoordinator.clearAllState()
         }
         desktopStreamID = nil
+        desktopSessionID = nil
         desktopStreamResolution = nil
         desktopStreamMode = nil
         desktopCursorPresentation = nil

@@ -170,6 +170,17 @@ public class InputCapturingView: UIView {
     /// Used to trigger stream recovery after app switching.
     public var onBecomeActive: (() -> Void)?
 
+    /// Session identifier for the active desktop stream represented by this view.
+    public var desktopSessionID: UUID? {
+        didSet {
+            guard desktopSessionID != oldValue else { return }
+            clearPendingApplicationActivationHandling(reason: "desktop_session_changed")
+        }
+    }
+
+    /// Whether the represented desktop session has already presented its first frame.
+    public var hasPresentedFrameForActivationRecovery: Bool = false
+
     /// Callback when hardware keyboard presence changes.
     public var onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? {
         didSet {
@@ -271,6 +282,7 @@ public class InputCapturingView: UIView {
     private var pendingActivationResignedActive = false
     private var pendingActivationBackgrounded = false
     private var pendingActivationDisplayLayerFailed = false
+    private var pendingActivationDesktopSessionID: UUID?
     private lazy var responderRecoveryController = InputCapturingResponderRecoveryController(
         contextProvider: { [weak self] trigger in
             self?.responderRecoverySnapshot(for: trigger) ?? (
@@ -736,11 +748,43 @@ public class InputCapturingView: UIView {
         pendingActivationResignedActive = pendingActivationResignedActive || resignedActive
         pendingActivationBackgrounded = pendingActivationBackgrounded || backgrounded
         pendingActivationDisplayLayerFailed = pendingActivationDisplayLayerFailed || displayLayerFailed
+        if let desktopSessionID {
+            pendingActivationDesktopSessionID = desktopSessionID
+        }
+    }
+
+    private func clearPendingApplicationActivationHandling(reason: String? = nil) {
+        if let reason,
+           pendingApplicationActivationDecision != nil {
+            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+            MirageLogger.client(
+                "Clearing pending activation handling for stream \(streamIDText) (\(reason))"
+            )
+        }
+        pendingApplicationActivationDecision = nil
+        pendingActivationResignedActive = false
+        pendingActivationBackgrounded = false
+        pendingActivationDisplayLayerFailed = false
+        pendingActivationDesktopSessionID = nil
     }
 
     private func applyPendingApplicationActivationHandlingIfPossible() {
         guard let activationDecision = pendingApplicationActivationDecision else { return }
         guard window != nil else { return }
+        let recoveryDisposition = inputCapturingPendingActivationRecoveryDisposition(
+            activationDecision: activationDecision,
+            pendingDesktopSessionID: pendingActivationDesktopSessionID,
+            activeDesktopSessionID: desktopSessionID,
+            hasPresentedFrame: hasPresentedFrameForActivationRecovery
+        )
+        guard recoveryDisposition == .applyPendingHandling else {
+            let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
+            MirageLogger.client(
+                "Discarding pending activation recovery for stream \(streamIDText): pendingSession=\(pendingActivationDesktopSessionID?.uuidString ?? "nil"), activeSession=\(desktopSessionID?.uuidString ?? "nil"), hasPresentedFrame=\(hasPresentedFrameForActivationRecovery)"
+            )
+            clearPendingApplicationActivationHandling()
+            return
+        }
 
         sampleBufferView.resumeRenderingAfterApplicationActivation(
             resetPresentationState: activationDecision.shouldResetPresentationState
@@ -752,15 +796,13 @@ public class InputCapturingView: UIView {
                 "Activation recovery requested for stream \(streamIDText) " +
                     "(resignedActive=\(pendingActivationResignedActive), " +
                     "backgrounded=\(pendingActivationBackgrounded), " +
-                    "displayLayerFailed=\(pendingActivationDisplayLayerFailed))"
+                    "displayLayerFailed=\(pendingActivationDisplayLayerFailed), " +
+                    "session=\(pendingActivationDesktopSessionID?.uuidString ?? "nil"))"
             )
             onBecomeActive?()
         }
 
-        pendingApplicationActivationDecision = nil
-        pendingActivationResignedActive = false
-        pendingActivationBackgrounded = false
-        pendingActivationDisplayLayerFailed = false
+        clearPendingApplicationActivationHandling()
     }
 
     func clickDistanceInPoints(from source: CGPoint, to target: CGPoint) -> CGFloat {

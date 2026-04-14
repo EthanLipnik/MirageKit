@@ -14,41 +14,22 @@ import AppKit
 
 @_spi(HostApp)
 public enum MirageHostCaptureBenchmarkModeSelection: String, Codable, CaseIterable, Sendable, Identifiable {
-    case auto
-    case always
-    case onBattery
+    case lowPowerOn
+    case lowPowerOff
 
     public var id: String { rawValue }
 
     public var displayName: String {
         switch self {
-        case .auto:
-            "Auto"
-        case .always:
-            "Always"
-        case .onBattery:
-            "On Battery"
+        case .lowPowerOn:
+            "Low Power On"
+        case .lowPowerOff:
+            "Low Power Off"
         }
     }
 
-    public var lowPowerPreference: MirageCodecLowPowerModePreference {
-        switch self {
-        case .auto:
-            .auto
-        case .always:
-            .on
-        case .onBattery:
-            .onlyOnBattery
-        }
-    }
-
-    public static func supportedModes(
-        supportsBatteryPolicy: Bool
-    ) -> [MirageHostCaptureBenchmarkModeSelection] {
-        if supportsBatteryPolicy {
-            return [.auto, .always, .onBattery]
-        }
-        return [.auto, .always]
+    public var lowPowerEnabled: Bool {
+        self == .lowPowerOn
     }
 }
 
@@ -149,7 +130,7 @@ public struct MirageHostCaptureBenchmarkConfiguration: Codable, Hashable, Sendab
     }
 
     public static var standard: MirageHostCaptureBenchmarkConfiguration {
-        MirageHostCaptureBenchmarkConfiguration(modeSelections: [.auto])
+        MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
     }
 
     public var cacheKey: String {
@@ -204,6 +185,8 @@ public struct MirageHostCaptureBenchmarkSummary: Codable, Hashable, Sendable {
 public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable {
     public let stage: MirageHostCaptureBenchmarkStage
     public let status: MirageHostCaptureBenchmarkStageStatus
+    public let actualPixelWidth: Int?
+    public let actualPixelHeight: Int?
     public let captureFPS: Double?
     public let encodeFPS: Double?
     public let effectiveFPS: Double?
@@ -220,9 +203,17 @@ public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable
     public let unsupportedReason: String?
     public let failureDescription: String?
 
+    public var actualPixelDescription: String? {
+        guard let actualPixelWidth, let actualPixelHeight else { return nil }
+        let actual = "\(actualPixelWidth)x\(actualPixelHeight)"
+        return actual != stage.pixelDescription ? actual : nil
+    }
+
     public init(
         stage: MirageHostCaptureBenchmarkStage,
         status: MirageHostCaptureBenchmarkStageStatus,
+        actualPixelWidth: Int? = nil,
+        actualPixelHeight: Int? = nil,
         captureFPS: Double? = nil,
         encodeFPS: Double? = nil,
         effectiveFPS: Double? = nil,
@@ -241,6 +232,8 @@ public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable
     ) {
         self.stage = stage
         self.status = status
+        self.actualPixelWidth = actualPixelWidth
+        self.actualPixelHeight = actualPixelHeight
         self.captureFPS = captureFPS
         self.encodeFPS = encodeFPS
         self.effectiveFPS = effectiveFPS
@@ -433,6 +426,7 @@ public final class MirageHostCaptureBenchmarkWindowConfiguration {
 
 enum MirageHostCaptureBenchmarkDisplayValidationResult: Equatable {
     case exact
+    case accepted(actualWidth: Int, actualHeight: Int)
     case unsupported(String)
 }
 
@@ -445,19 +439,17 @@ func captureBenchmarkDisplayValidationResult(
     let actualHeight = Int(actualResolution.height.rounded())
     let actualRefresh = Int(actualRefreshRate.rounded())
 
-    guard actualWidth == requestedStage.pixelWidth, actualHeight == requestedStage.pixelHeight else {
-        return .unsupported(
-            "Requested \(requestedStage.pixelWidth)x\(requestedStage.pixelHeight) but acquired \(actualWidth)x\(actualHeight)."
-        )
-    }
-
     guard actualRefresh == requestedStage.refreshRate else {
         return .unsupported(
             "Requested \(requestedStage.refreshRate)Hz but acquired \(actualRefresh)Hz."
         )
     }
 
-    return .exact
+    if actualWidth == requestedStage.pixelWidth, actualHeight == requestedStage.pixelHeight {
+        return .exact
+    }
+
+    return .accepted(actualWidth: actualWidth, actualHeight: actualHeight)
 }
 
 func captureBenchmarkShouldContinue(

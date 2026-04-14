@@ -117,10 +117,16 @@ struct DesktopStreamStartResetDecisionTests {
     @Test("Desktop stop clears tracked token for stream")
     func desktopStopClearsTrackedToken() throws {
         let service = MirageClientService()
+        let desktopSessionID = UUID()
+        service.desktopSessionID = desktopSessionID
         service.desktopDimensionTokenByStream[9] = 22
         service.desktopDimensionTokenByStream[11] = 5
 
-        let stopped = DesktopStreamStoppedMessage(streamID: 9, reason: .clientRequested)
+        let stopped = DesktopStreamStoppedMessage(
+            streamID: 9,
+            desktopSessionID: desktopSessionID,
+            reason: .clientRequested
+        )
         let envelope = try ControlMessage(type: .desktopStreamStopped, content: stopped)
         service.handleDesktopStreamStopped(envelope)
 
@@ -136,6 +142,7 @@ struct DesktopStreamStartResetDecisionTests {
         let initialResolution = CGSize(width: 1984, height: 2192)
         let activeTransitionID = UUID()
         service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
         service.desktopStreamResolution = initialResolution
         service.desktopDimensionTokenByStream[streamID] = 4
         service.controllersByStream[streamID] = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -158,6 +165,7 @@ struct DesktopStreamStartResetDecisionTests {
 
         let staleStarted = DesktopStreamStartedMessage(
             streamID: streamID,
+            desktopSessionID: service.desktopSessionID!,
             width: 3200,
             height: 2400,
             frameRate: 60,
@@ -191,6 +199,7 @@ struct DesktopStreamStartResetDecisionTests {
         let transitionID = UUID()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
         service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
         service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
         service.controllersByStream[streamID] = controller
         service.desktopResizeCoordinator.beginTransition(
@@ -207,6 +216,7 @@ struct DesktopStreamStartResetDecisionTests {
 
         let started = DesktopStreamStartedMessage(
             streamID: streamID,
+            desktopSessionID: service.desktopSessionID!,
             width: 3024,
             height: 1964,
             frameRate: 60,
@@ -228,6 +238,59 @@ struct DesktopStreamStartResetDecisionTests {
         #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
 
         await controller.stop()
+    }
+
+    @MainActor
+    @Test("Late desktop stop for an old session is ignored after a new session starts")
+    func lateDesktopStopForOldSessionIsIgnoredAfterNewSessionStarts() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 31
+        let oldDesktopSessionID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+        let newDesktopSessionID = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!
+
+        service.desktopStreamID = streamID
+        service.desktopSessionID = oldDesktopSessionID
+        service.desktopStreamMode = .unified
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.controllersByStream[streamID] = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.pendingLocalDesktopStopStreamID = streamID
+        service.pendingLocalDesktopStopSessionID = oldDesktopSessionID
+        service.desktopDimensionTokenByStream[streamID] = 4
+        service.desktopStreamRequestStartTime = CFAbsoluteTimeGetCurrent()
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: newDesktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionPhase: .startup
+        )
+        let startedEnvelope = try ControlMessage(type: .desktopStreamStarted, content: started)
+        await service.handleDesktopStreamStarted(startedEnvelope)
+
+        let lateStopped = DesktopStreamStoppedMessage(
+            streamID: streamID,
+            desktopSessionID: oldDesktopSessionID,
+            reason: .clientRequested
+        )
+        let stoppedEnvelope = try ControlMessage(type: .desktopStreamStopped, content: lateStopped)
+        service.handleDesktopStreamStopped(stoppedEnvelope)
+
+        #expect(service.desktopStreamID == streamID)
+        #expect(service.desktopSessionID == newDesktopSessionID)
+        #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
+        #expect(service.desktopDimensionTokenByStream[streamID] == 8)
+        #expect(service.pendingLocalDesktopStopStreamID == nil)
+        #expect(service.pendingLocalDesktopStopSessionID == nil)
+
+        if let controller = service.controllersByStream[streamID] {
+            await controller.stop()
+        }
     }
 }
 #endif

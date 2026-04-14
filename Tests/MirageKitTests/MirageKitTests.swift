@@ -144,9 +144,11 @@ struct MirageKitTests {
 
     @Test("Desktop-stream started serializes resize transition metadata")
     func desktopStreamStartedSerializesResizeTransitionMetadata() throws {
+        let desktopSessionID = UUID()
         let transitionID = UUID()
         let payload = DesktopStreamStartedMessage(
             streamID: 71,
+            desktopSessionID: desktopSessionID,
             width: 3024,
             height: 1964,
             frameRate: 120,
@@ -165,12 +167,40 @@ struct MirageKitTests {
         let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
 
         #expect(decodedPayload.streamID == 71)
+        #expect(decodedPayload.desktopSessionID == desktopSessionID)
         #expect(decodedPayload.width == 3024)
         #expect(decodedPayload.height == 1964)
         #expect(decodedPayload.dimensionToken == 7)
         #expect(decodedPayload.transitionID == transitionID)
         #expect(decodedPayload.transitionPhase == .resize)
         #expect(decodedPayload.transitionOutcome == .rolledBack)
+    }
+
+    @Test("Desktop stream stop messages serialize desktop session identifiers")
+    func desktopStreamStopMessagesSerializeDesktopSessionIdentifiers() throws {
+        let desktopSessionID = UUID()
+
+        let stopRequest = StopDesktopStreamMessage(
+            streamID: 33,
+            desktopSessionID: desktopSessionID
+        )
+        let stopRequestEnvelope = try ControlMessage(type: .stopDesktopStream, content: stopRequest)
+        let (decodedStopRequestEnvelope, _) = try requireParsedControlMessage(from: stopRequestEnvelope.serialize())
+        let decodedStopRequest = try decodedStopRequestEnvelope.decode(StopDesktopStreamMessage.self)
+        #expect(decodedStopRequest.streamID == 33)
+        #expect(decodedStopRequest.desktopSessionID == desktopSessionID)
+
+        let stopped = DesktopStreamStoppedMessage(
+            streamID: 33,
+            desktopSessionID: desktopSessionID,
+            reason: .clientRequested
+        )
+        let stoppedEnvelope = try ControlMessage(type: .desktopStreamStopped, content: stopped)
+        let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
+        let decodedStopped = try decodedStoppedEnvelope.decode(DesktopStreamStoppedMessage.self)
+        #expect(decodedStopped.streamID == 33)
+        #expect(decodedStopped.desktopSessionID == desktopSessionID)
+        #expect(decodedStopped.reason == .clientRequested)
     }
 
     @Test("Control parser returns needMoreData for truncated payload")
@@ -770,6 +800,7 @@ struct MirageKitTests {
 
         let desktopStarted = DesktopStreamStartedMessage(
             streamID: 77,
+            desktopSessionID: UUID(),
             width: 3008,
             height: 1692,
             frameRate: 60,

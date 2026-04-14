@@ -814,11 +814,16 @@ extension MirageHostService {
 
         if streamID == desktopStreamID {
             if let clientContext = desktopStreamClientContext {
+                guard let desktopSessionID else {
+                    MirageLogger.error(.host, "Missing desktop session ID for desktopStreamStarted update on stream \(streamID)")
+                    return
+                }
                 let displayResolution = await currentDesktopStartedResolution(
                     fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
                 )
                 let message = await DesktopStreamStartedMessage(
                     streamID: streamID,
+                    desktopSessionID: desktopSessionID,
                     width: Int(displayResolution.width),
                     height: Int(displayResolution.height),
                     frameRate: context.getTargetFrameRate(),
@@ -1352,6 +1357,10 @@ extension MirageHostService {
     )
     async {
         guard let clientContext = desktopStreamClientContext else { return }
+        guard let desktopSessionID else {
+            MirageLogger.error(.host, "Missing desktop session ID for resize completion on stream \(streamID)")
+            return
+        }
 
         let dimensionToken = await context.getDimensionToken()
         let encodedDimensions = await context.getEncodedDimensions()
@@ -1363,6 +1372,7 @@ extension MirageHostService {
         let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
         let message = DesktopStreamStartedMessage(
             streamID: streamID,
+            desktopSessionID: desktopSessionID,
             width: Int(displayResolution.width),
             height: Int(displayResolution.height),
             frameRate: updatedTargetFrameRate,

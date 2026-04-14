@@ -26,8 +26,10 @@ struct DesktopStopFailureSuppressionTests {
 
         service.delegate = delegate
         service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
         service.desktopStreamMode = .unified
         service.pendingLocalDesktopStopStreamID = streamID
+        service.pendingLocalDesktopStopSessionID = service.desktopSessionID
 
         let failure = StreamController.TerminalStartupFailure(
             reason: .startupKeyframeTimeout,
@@ -39,8 +41,10 @@ struct DesktopStopFailureSuppressionTests {
 
         #expect(delegate.errorCount == 0)
         #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
         #expect(service.desktopStreamMode == nil)
         #expect(service.pendingLocalDesktopStopStreamID == nil)
+        #expect(service.pendingLocalDesktopStopSessionID == nil)
     }
 }
 

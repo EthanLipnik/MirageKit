@@ -194,12 +194,22 @@ public extension MirageClientService {
             return
         }
 
-        let request = StopDesktopStreamMessage(streamID: streamID)
-        try await sendControlMessage(.stopDesktopStream, content: request)
-        scheduleDesktopStreamStopTimeout(for: streamID)
-        pendingLocalDesktopStopStreamID = streamID
+        guard let desktopSessionID else {
+            throw MirageError.protocolError("Desktop stream missing session identifier")
+        }
 
-        MirageLogger.client("Requested stop desktop stream: \(streamID)")
+        let request = StopDesktopStreamMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID
+        )
+        try await sendControlMessage(.stopDesktopStream, content: request)
+        scheduleDesktopStreamStopTimeout(for: streamID, desktopSessionID: desktopSessionID)
+        pendingLocalDesktopStopStreamID = streamID
+        pendingLocalDesktopStopSessionID = desktopSessionID
+
+        MirageLogger.client(
+            "Requested stop desktop stream: stream=\(streamID), session=\(desktopSessionID.uuidString)"
+        )
     }
 
     /// Cancel any in-progress stream setup on the host.

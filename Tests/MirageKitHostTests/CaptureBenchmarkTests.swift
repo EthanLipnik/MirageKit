@@ -31,20 +31,20 @@ struct CaptureBenchmarkTests {
     @Test("Configuration cache keys normalize mode selection ordering and duplicates")
     func configurationCacheKeyNormalizesModeSelections() {
         let normalizedConfiguration = MirageHostCaptureBenchmarkConfiguration(
-            modeSelections: [.always, .auto, .always]
+            modeSelections: [.lowPowerOff, .lowPowerOn, .lowPowerOff]
         )
         let reorderedConfiguration = MirageHostCaptureBenchmarkConfiguration(
-            modeSelections: [.auto, .always]
+            modeSelections: [.lowPowerOn, .lowPowerOff]
         )
 
-        #expect(normalizedConfiguration.modeSelections == [.always, .auto])
+        #expect(normalizedConfiguration.modeSelections == [.lowPowerOff, .lowPowerOn])
         #expect(normalizedConfiguration.cacheKey == reorderedConfiguration.cacheKey)
         #expect(normalizedConfiguration == reorderedConfiguration)
     }
 
     @Test("Report reuse requires matching machine, software environment, configuration, and a completed run")
     func reportReuseRequiresMatchingEnvironment() {
-        let configuration = MirageHostCaptureBenchmarkConfiguration(modeSelections: [.auto])
+        let configuration = MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
         let machineID = UUID()
         let report = MirageHostCaptureBenchmarkReport(
             machineID: machineID,
@@ -110,7 +110,7 @@ struct CaptureBenchmarkTests {
                 machineID: machineID,
                 appVersion: "2.4",
                 operatingSystemVersion: "macOS 15.4 (24E214)",
-                configuration: MirageHostCaptureBenchmarkConfiguration(modeSelections: [.always])
+                configuration: MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOn])
             )
         )
         #expect(
@@ -166,8 +166,8 @@ struct CaptureBenchmarkTests {
         #expect(!captureBenchmarkShouldContinue(after: .cancelled))
     }
 
-    @Test("Display validation rejects degraded resolution and refresh rate")
-    func displayValidationRejectsDegradedTargets() {
+    @Test("Display validation accepts close-enough resolutions")
+    func displayValidationAcceptsCloseResolutions() {
         #expect(
             captureBenchmarkDisplayValidationResult(
                 requestedStage: .benchmark5K,
@@ -176,29 +176,61 @@ struct CaptureBenchmarkTests {
             ) == .exact
         )
 
-        switch captureBenchmarkDisplayValidationResult(
-            requestedStage: .benchmark5K,
-            actualResolution: .init(width: 3840, height: 2160),
-            actualRefreshRate: 120
-        ) {
-        case .exact:
-            Issue.record("Expected the degraded resolution to be rejected.")
-        case let .unsupported(reason):
-            #expect(reason.contains("Requested 5120x2880"))
-            #expect(reason.contains("acquired 3840x2160"))
-        }
+        #expect(
+            captureBenchmarkDisplayValidationResult(
+                requestedStage: .benchmark4K,
+                actualResolution: .init(width: 3840, height: 2156),
+                actualRefreshRate: 120
+            ) == .accepted(actualWidth: 3840, actualHeight: 2156)
+        )
 
+        #expect(
+            captureBenchmarkDisplayValidationResult(
+                requestedStage: .benchmark5K,
+                actualResolution: .init(width: 3840, height: 2160),
+                actualRefreshRate: 120
+            ) == .accepted(actualWidth: 3840, actualHeight: 2160)
+        )
+    }
+
+    @Test("Display validation rejects degraded refresh rate")
+    func displayValidationRejectsDegradedRefreshRate() {
         switch captureBenchmarkDisplayValidationResult(
             requestedStage: .benchmark6K,
             actualResolution: .init(width: 6016, height: 3384),
             actualRefreshRate: 60
         ) {
-        case .exact:
+        case .exact, .accepted:
             Issue.record("Expected the degraded refresh rate to be rejected.")
         case let .unsupported(reason):
             #expect(reason.contains("Requested 120Hz"))
             #expect(reason.contains("acquired 60Hz"))
         }
+    }
+
+    @Test("Mode selections resolve low power enabled correctly")
+    func modeSelectionsResolveLowPower() {
+        #expect(MirageHostCaptureBenchmarkModeSelection.lowPowerOn.lowPowerEnabled)
+        #expect(!MirageHostCaptureBenchmarkModeSelection.lowPowerOff.lowPowerEnabled)
+    }
+
+    @Test("Stage result tracks actual resolution when different from requested")
+    func stageResultTracksActualResolution() {
+        let exactResult = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark4K,
+            status: .completed,
+            actualPixelWidth: 3840,
+            actualPixelHeight: 2160
+        )
+        #expect(exactResult.actualPixelDescription == nil)
+
+        let tolerantResult = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark4K,
+            status: .completed,
+            actualPixelWidth: 3840,
+            actualPixelHeight: 2156
+        )
+        #expect(tolerantResult.actualPixelDescription == "3840x2156")
     }
 }
 #endif

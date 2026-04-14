@@ -216,6 +216,11 @@ public struct MirageStreamContentView: View {
         softwareKeyboardVisible && keyboardAvoidanceEnabled
     }
 
+    private var activeDesktopSessionID: UUID? {
+        guard isDesktopStream, clientService.desktopStreamID == session.streamID else { return nil }
+        return clientService.desktopSessionID
+    }
+
     public var body: some View {
         ZStack {
             Rectangle()
@@ -251,6 +256,8 @@ public struct MirageStreamContentView: View {
                     },
                     cursorStore: clientService.cursorStore,
                     cursorPositionStore: clientService.cursorPositionStore,
+                    desktopSessionID: activeDesktopSessionID,
+                    hasPresentedFrameForActivationRecovery: session.hasPresentedFrame,
                     onBecomeActive: {
                         handleForegroundRecovery()
                     },
@@ -925,6 +932,20 @@ public struct MirageStreamContentView: View {
                 "Foreground recovery skipped for stale stream \(session.streamID)"
             )
             return
+        }
+        if isDesktopStream {
+            guard let desktopSessionID = activeDesktopSessionID else {
+                MirageLogger.client(
+                    "Foreground recovery skipped for inactive desktop stream \(session.streamID)"
+                )
+                return
+            }
+            guard session.hasPresentedFrame else {
+                MirageLogger.client(
+                    "Foreground recovery skipped before first frame for stream \(session.streamID), session=\(desktopSessionID.uuidString)"
+                )
+                return
+            }
         }
 
         scheduleResizeHoldoff()

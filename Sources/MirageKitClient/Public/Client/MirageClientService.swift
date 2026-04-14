@@ -268,6 +268,9 @@ public final class MirageClientService {
     /// Desktop stream ID (when streaming full virtual display)
     public internal(set) var desktopStreamID: StreamID?
 
+    /// Session identifier for the active desktop stream.
+    public internal(set) var desktopSessionID: UUID?
+
     /// Desktop stream resolution
     public internal(set) var desktopStreamResolution: CGSize?
 
@@ -608,6 +611,7 @@ public final class MirageClientService {
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
     var pendingLocalDesktopStopStreamID: StreamID?
+    var pendingLocalDesktopStopSessionID: UUID?
     let desktopStreamStopTimeout: Duration = .seconds(2)
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []

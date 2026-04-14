@@ -7,6 +7,9 @@
 
 import Darwin
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#endif
 
 public enum MirageSupportInfo {
     public static func appVersion() -> String? {
@@ -33,20 +36,38 @@ public enum MirageSupportInfo {
         }
     }
 
+    public static func deviceDisplayName() -> String {
+#if os(visionOS)
+        return "Apple Vision Pro"
+#elseif os(iOS)
+        switch UIDevice.current.userInterfaceIdiom {
+        case .phone:
+            return "iPhone"
+        case .pad:
+            return "iPad"
+        default:
+            let hardwareIdentifier = hardwareModel()
+            let displayName = deviceDisplayName(for: hardwareIdentifier)
+            if displayName != "Unknown" {
+                return displayName
+            }
+
+            return trimmedValue(UIDevice.current.model) ?? "iOS Device"
+        }
+#elseif os(macOS)
+        let displayName = deviceDisplayName(for: hardwareModel())
+        return displayName == "Unknown" ? "Mac" : displayName
+#else
+        let hardwareIdentifier = hardwareModel()
+        let displayName = deviceDisplayName(for: hardwareIdentifier)
+        return displayName == "Unknown" ? displayValue(hardwareIdentifier) : displayName
+#endif
+    }
+
     public static func hardwareModel() -> String {
-        var size = 0
-        guard sysctlbyname("hw.model", nil, &size, nil, 0) == 0 || sysctlbyname("hw.machine", nil, &size, nil, 0) == 0,
-              size > 0 else {
-            return "Unknown"
-        }
-
-        var machine = [CChar](repeating: 0, count: size)
-        if sysctlbyname("hw.model", &machine, &size, nil, 0) == 0 ||
-            sysctlbyname("hw.machine", &machine, &size, nil, 0) == 0 {
-            return String.mirageDecodedCString(machine)
-        }
-
-        return "Unknown"
+        readSysctlString(preferredHardwareIdentifierKey())
+            ?? readSysctlString(fallbackHardwareIdentifierKey())
+            ?? "Unknown"
     }
 
     public static func displayValue(_ value: String?) -> String {
@@ -59,6 +80,74 @@ public enum MirageSupportInfo {
             return nil
         }
         return trimmed
+    }
+
+    static func deviceDisplayName(for hardwareIdentifier: String) -> String {
+        guard let normalizedIdentifier = trimmedValue(hardwareIdentifier)?.lowercased() else {
+            return "Unknown"
+        }
+
+        switch normalizedIdentifier {
+        case let identifier where identifier.hasPrefix("iphone"):
+            return "iPhone"
+        case let identifier where identifier.hasPrefix("ipad"):
+            return "iPad"
+        case let identifier where identifier.hasPrefix("realitydevice"),
+             let identifier where identifier.hasPrefix("vision"),
+             let identifier where identifier.hasPrefix("n301"):
+            return "Apple Vision Pro"
+        case let identifier where identifier.hasPrefix("macbookair"):
+            return "MacBook Air"
+        case let identifier where identifier.hasPrefix("macbookpro"):
+            return "MacBook Pro"
+        case let identifier where identifier.hasPrefix("macbook"):
+            return "MacBook"
+        case let identifier where identifier.hasPrefix("macmini"):
+            return "Mac mini"
+        case let identifier where identifier.hasPrefix("macstudio"):
+            return "Mac Studio"
+        case let identifier where identifier.hasPrefix("macpro"):
+            return "Mac Pro"
+        case let identifier where identifier.hasPrefix("imac"):
+            return "iMac"
+        case let identifier where identifier.hasPrefix("virtualmac"),
+             let identifier where identifier.hasPrefix("mac"):
+            return "Mac"
+        default:
+            return "Unknown"
+        }
+    }
+
+    private static func preferredHardwareIdentifierKey() -> String {
+#if os(macOS)
+        "hw.model"
+#else
+        "hw.machine"
+#endif
+    }
+
+    private static func fallbackHardwareIdentifierKey() -> String {
+#if os(macOS)
+        "hw.machine"
+#else
+        "hw.model"
+#endif
+    }
+
+    private static func readSysctlString(_ key: String) -> String? {
+        var size = 0
+        let probeStatus = key.withCString { sysctlbyname($0, nil, &size, nil, 0) }
+        guard probeStatus == 0, size > 1 else {
+            return nil
+        }
+
+        var buffer = [CChar](repeating: 0, count: size)
+        let readStatus = key.withCString { sysctlbyname($0, &buffer, &size, nil, 0) }
+        guard readStatus == 0 else {
+            return nil
+        }
+
+        return trimmedValue(String.mirageDecodedCString(buffer))
     }
 }
 

@@ -315,6 +315,7 @@ public final class MirageHostService {
     // Desktop stream (full virtual display mirroring) - internal for extension access
     var desktopStreamContext: StreamContext?
     var desktopStreamID: StreamID?
+    var desktopSessionID: UUID?
     var desktopStreamClientContext: ClientContext?
     var desktopDisplayBounds: CGRect?
     var desktopVirtualDisplayID: CGDirectDisplayID?

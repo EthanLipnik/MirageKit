@@ -81,10 +81,7 @@ extension MirageHostService {
                 break
             }
 
-            let lowPowerEnabled = modeSelection.lowPowerPreference.resolvesToLowPowerMode(
-                isSystemLowPowerModeEnabled: encoderPowerStateSnapshot.isSystemLowPowerModeEnabled,
-                isOnBattery: encoderPowerStateSnapshot.isOnBattery
-            )
+            let lowPowerEnabled = modeSelection.lowPowerEnabled
             var stageResults: [MirageHostCaptureBenchmarkStageResult] = []
 
             for stage in configuration.stages {
@@ -223,13 +220,22 @@ extension MirageHostService {
                 allowActiveUpdate: true
             )
 
-            switch captureBenchmarkDisplayValidationResult(
+            let validationResult = captureBenchmarkDisplayValidationResult(
                 requestedStage: stage,
                 actualResolution: displaySnapshot.resolution,
                 actualRefreshRate: displaySnapshot.refreshRate
-            ) {
+            )
+
+            let captureWidth: Int
+            let captureHeight: Int
+
+            switch validationResult {
             case .exact:
-                break
+                captureWidth = stage.pixelWidth
+                captureHeight = stage.pixelHeight
+            case let .accepted(actualWidth, actualHeight):
+                captureWidth = actualWidth
+                captureHeight = actualHeight
             case let .unsupported(reason):
                 return MirageHostCaptureBenchmarkStageResult(
                     stage: stage,
@@ -269,7 +275,7 @@ extension MirageHostService {
                 maximizePowerEfficiencyEnabled: lowPowerEnabled
             )
             encoder = stageEncoder
-            try await stageEncoder.createSession(width: stage.pixelWidth, height: stage.pixelHeight)
+            try await stageEncoder.createSession(width: captureWidth, height: captureHeight)
             _ = try await stageEncoder.preheatWithFallback()
 
             let activePixelFormat = await stageEncoder.getActivePixelFormat()
@@ -392,6 +398,8 @@ extension MirageHostService {
             return MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
                 status: .completed,
+                actualPixelWidth: captureWidth,
+                actualPixelHeight: captureHeight,
                 captureFPS: captureFPS,
                 encodeFPS: encodeFPS,
                 effectiveFPS: effectiveFPS,

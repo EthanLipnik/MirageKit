@@ -5,6 +5,8 @@
 //  Created by Ethan Lipnik on 4/14/26.
 //
 
+import Foundation
+
 struct InputCapturingActivationRecoveryDecision: Equatable {
     let shouldResetPresentationState: Bool
     let shouldRequestStreamRecovery: Bool
@@ -22,6 +24,11 @@ struct InputCapturingActivationRecoveryDecision: Equatable {
     }
 }
 
+enum InputCapturingPendingActivationRecoveryDisposition: Equatable {
+    case applyPendingHandling
+    case clearPendingHandling
+}
+
 func inputCapturingActivationRecoveryDecision(
     resignedActive: Bool,
     backgrounded: Bool,
@@ -34,4 +41,22 @@ func inputCapturingActivationRecoveryDecision(
         shouldRequestStreamRecovery: shouldRequestRecovery,
         shouldResumeRenderingWithoutRecovery: shouldResumeWithoutRecovery
     )
+}
+
+func inputCapturingPendingActivationRecoveryDisposition(
+    activationDecision: InputCapturingActivationRecoveryDecision,
+    pendingDesktopSessionID: UUID?,
+    activeDesktopSessionID: UUID?,
+    hasPresentedFrame: Bool
+) -> InputCapturingPendingActivationRecoveryDisposition {
+    guard activationDecision.shouldRequestStreamRecovery else {
+        return .applyPendingHandling
+    }
+    guard let pendingDesktopSessionID else {
+        return .applyPendingHandling
+    }
+    guard activeDesktopSessionID == pendingDesktopSessionID, hasPresentedFrame else {
+        return .clearPendingHandling
+    }
+    return .applyPendingHandling
 }

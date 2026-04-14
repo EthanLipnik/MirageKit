@@ -7,6 +7,7 @@
 
 import MirageKit
 #if os(iOS) || os(visionOS)
+import Foundation
 import SwiftUI
 
 // MARK: - SwiftUI Representable (iOS)
@@ -31,6 +32,12 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
 
     /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore?
+
+    /// Session identifier for the active desktop stream rendered by this view.
+    public var desktopSessionID: UUID?
+
+    /// Whether the active desktop stream has presented its first frame.
+    public var hasPresentedFrameForActivationRecovery: Bool
 
     /// Callback when the active scene requires stream recovery after activation.
     public var onBecomeActive: (() -> Void)?
@@ -127,6 +134,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onRefreshRateOverrideChange: ((Int) -> Void)? = nil,
         cursorStore: MirageClientCursorStore? = nil,
         cursorPositionStore: MirageClientCursorPositionStore? = nil,
+        desktopSessionID: UUID? = nil,
+        hasPresentedFrameForActivationRecovery: Bool = false,
         onBecomeActive: (() -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
@@ -164,6 +173,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.onRefreshRateOverrideChange = onRefreshRateOverrideChange
         self.cursorStore = cursorStore
         self.cursorPositionStore = cursorPositionStore
+        self.desktopSessionID = desktopSessionID
+        self.hasPresentedFrameForActivationRecovery = hasPresentedFrameForActivationRecovery
         self.onBecomeActive = onBecomeActive
         self.onHardwareKeyboardPresenceChanged = onHardwareKeyboardPresenceChanged
         self.onSoftwareKeyboardVisibilityChanged = onSoftwareKeyboardVisibilityChanged
@@ -245,6 +256,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             hideSystemCursor: hideSystemCursor,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
+            desktopSessionID: desktopSessionID,
+            hasPresentedFrameForActivationRecovery: hasPresentedFrameForActivationRecovery,
             cursorLockEnabled: cursorLockEnabled,
             allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
             cursorLockCanRecapture: cursorLockCanRecapture,
@@ -306,6 +319,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             hideSystemCursor: hideSystemCursor,
             cursorStore: cursorStore,
             cursorPositionStore: cursorPositionStore,
+            desktopSessionID: desktopSessionID,
+            hasPresentedFrameForActivationRecovery: hasPresentedFrameForActivationRecovery,
             cursorLockEnabled: cursorLockEnabled,
             allowsExtendedDesktopCursorBounds: allowsExtendedDesktopCursorBounds,
             cursorLockCanRecapture: cursorLockCanRecapture,
@@ -433,6 +448,8 @@ public final class MirageStreamViewController: UIViewController {
         hideSystemCursor: Bool,
         cursorStore: MirageClientCursorStore?,
         cursorPositionStore: MirageClientCursorPositionStore?,
+        desktopSessionID: UUID?,
+        hasPresentedFrameForActivationRecovery: Bool,
         cursorLockEnabled: Bool,
         allowsExtendedDesktopCursorBounds: Bool,
         cursorLockCanRecapture: Bool,
@@ -458,6 +475,8 @@ public final class MirageStreamViewController: UIViewController {
         captureView.hideSystemCursor = hideSystemCursor
         captureView.cursorStore = cursorStore
         captureView.cursorPositionStore = cursorPositionStore
+        captureView.desktopSessionID = desktopSessionID
+        captureView.hasPresentedFrameForActivationRecovery = hasPresentedFrameForActivationRecovery
         captureView.allowsExtendedCursorBounds = allowsExtendedDesktopCursorBounds
         captureView.cursorLockEnabled = cursorLockEnabled
         captureView.canRecaptureCursorLock = cursorLockCanRecapture
