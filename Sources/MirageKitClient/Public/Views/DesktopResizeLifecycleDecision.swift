@@ -4,7 +4,7 @@
 //
 //  Created by Ethan Lipnik on 3/30/26.
 //
-//  Desktop resize lifecycle policy for foreground/background suppression.
+//  Desktop resize lifecycle policy for background suppression.
 //
 
 enum DesktopResizeLifecycleState: Equatable {
@@ -14,7 +14,6 @@ enum DesktopResizeLifecycleState: Equatable {
 }
 
 enum DesktopResizeLifecycleEvent: Equatable {
-    case didResignActive
     case didEnterBackground
     case foregroundHoldoffElapsed
     case drawableMetricsChanged
@@ -30,7 +29,7 @@ func desktopResizeLifecycleDecision(
     event: DesktopResizeLifecycleEvent
 ) -> DesktopResizeLifecycleDecision {
     switch (state, event) {
-    case (_, .didResignActive), (_, .didEnterBackground):
+    case (_, .didEnterBackground):
         return DesktopResizeLifecycleDecision(
             nextState: .suspended,
             shouldProcessDrawableMetrics: false

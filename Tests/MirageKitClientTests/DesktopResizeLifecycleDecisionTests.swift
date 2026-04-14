@@ -11,28 +11,28 @@ import Testing
 #if os(macOS)
 @Suite("Desktop Resize Lifecycle Decision")
 struct DesktopResizeLifecycleDecisionTests {
-    @Test("Inactive and background metrics are ignored")
-    func inactiveAndBackgroundMetricsAreIgnored() {
-        let resigned = desktopResizeLifecycleDecision(
+    @Test("Only backgrounding suspends drawable-metric processing")
+    func onlyBackgroundingSuspendsDrawableMetricProcessing() {
+        let activeMetrics = desktopResizeLifecycleDecision(
             state: .active,
-            event: .didResignActive
-        )
-        #expect(resigned.nextState == .suspended)
-        #expect(resigned.shouldProcessDrawableMetrics == false)
-
-        let ignoredWhileSuspended = desktopResizeLifecycleDecision(
-            state: resigned.nextState,
             event: .drawableMetricsChanged
         )
-        #expect(ignoredWhileSuspended.nextState == .suspended)
-        #expect(ignoredWhileSuspended.shouldProcessDrawableMetrics == false)
+        #expect(activeMetrics.nextState == .active)
+        #expect(activeMetrics.shouldProcessDrawableMetrics)
 
         let backgrounded = desktopResizeLifecycleDecision(
-            state: .awaitingFreshActiveMetrics,
+            state: .active,
             event: .didEnterBackground
         )
         #expect(backgrounded.nextState == .suspended)
         #expect(backgrounded.shouldProcessDrawableMetrics == false)
+
+        let ignoredWhileSuspended = desktopResizeLifecycleDecision(
+            state: backgrounded.nextState,
+            event: .drawableMetricsChanged
+        )
+        #expect(ignoredWhileSuspended.nextState == .suspended)
+        #expect(ignoredWhileSuspended.shouldProcessDrawableMetrics == false)
     }
 
     @Test("Foreground holdoff requires a fresh active metrics sample before dispatch resumes")

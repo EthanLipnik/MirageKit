@@ -427,9 +427,6 @@ public struct MirageStreamContentView: View {
             #endif
         }
         #if os(iOS) || os(visionOS)
-        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
-            handleResizeLifecycleSuspension(event: .didResignActive)
-        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             handleResizeLifecycleSuspension(event: .didEnterBackground)
         }

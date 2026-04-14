@@ -64,8 +64,11 @@ extension DecodeErrorTracker {
     func recordSuccess() {
         lock.lock()
 
-        let wasInRecoveryState = thresholdFired || consecutiveErrors > 0 || sessionRecreationAttempted
-        if thresholdFired || sessionRecreationAttempted {
+        let wasInRecoveryState = thresholdFired ||
+            consecutiveErrors > 0 ||
+            sessionRecreationAttempted ||
+            recoveryTrackingArmed
+        if thresholdFired || sessionRecreationAttempted || recoveryTrackingArmed {
             recoverySuccessCount += 1
             if recoverySuccessCount < recoverySuccessThreshold {
                 if recoverySuccessCount == 1 || recoverySuccessCount == recoverySuccessThreshold - 1 {
@@ -80,12 +83,14 @@ extension DecodeErrorTracker {
         if consecutiveErrors > 0 || sessionRecreationAttempted || wasInRecoveryState {
             MirageLogger
                 .decoder(
-                    "Decode recovered after \(consecutiveErrors) consecutive errors (sessionRecreated=\(sessionRecreationAttempted))"
+                    "Decode recovered after \(consecutiveErrors) consecutive errors " +
+                        "(sessionRecreated=\(sessionRecreationAttempted), trackingArmed=\(recoveryTrackingArmed))"
                 )
         }
         consecutiveErrors = 0
         thresholdFired = false
         sessionRecreationAttempted = false
+        recoveryTrackingArmed = false
         recoverySuccessCount = 0
 
         lock.unlock()
@@ -126,8 +131,17 @@ extension DecodeErrorTracker {
         lock.lock()
         defer { lock.unlock() }
         sessionRecreationAttempted = true
+        recoveryTrackingArmed = false
         lastSessionRecreationTime = CFAbsoluteTimeGetCurrent()
         MirageLogger.decoder("Session recreation attempted - awaiting successful decode")
+    }
+
+    func beginRecoveryTracking() {
+        lock.lock()
+        defer { lock.unlock() }
+        recoveryTrackingArmed = true
+        recoverySuccessCount = 0
+        MirageLogger.decoder("Decode recovery tracking armed")
     }
 
     func clearForDimensionChange() {
@@ -136,6 +150,7 @@ extension DecodeErrorTracker {
         consecutiveErrors = 0
         thresholdFired = false
         sessionRecreationAttempted = false
+        recoveryTrackingArmed = false
         lastSessionRecreationTime = 0
         recoverySuccessCount = 0
         MirageLogger.decoder("Error tracking cleared for dimension change")
@@ -147,6 +162,7 @@ extension DecodeErrorTracker {
         consecutiveErrors = 0
         thresholdFired = false
         sessionRecreationAttempted = false
+        recoveryTrackingArmed = false
         lastSessionRecreationTime = 0
         recoverySuccessCount = 0
         MirageLogger.decoder("Error tracking cleared for session reset")

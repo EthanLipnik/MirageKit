@@ -86,11 +86,14 @@ extension VideoDecoder {
         }
     }
 
-    func setErrorThresholdHandler(_ handler: @escaping @Sendable () -> Void) {
+    func setErrorThresholdHandler(
+        _ handler: @escaping @Sendable () -> Void,
+        onRecovery: (@Sendable () -> Void)? = nil
+    ) {
         errorTracker = DecodeErrorTracker(
             maxErrors: maxConsecutiveErrors,
             onThresholdReached: handler,
-            onRecovery: nil
+            onRecovery: onRecovery
         )
     }
 
@@ -125,6 +128,10 @@ extension VideoDecoder {
             expectedDimensions = nil
         }
         MirageLogger.decoder("Dimension change expected - discarding P-frames until keyframe")
+    }
+
+    func beginRecoveryTracking() {
+        errorTracker?.beginRecoveryTracking()
     }
 
     func clearPendingState() {

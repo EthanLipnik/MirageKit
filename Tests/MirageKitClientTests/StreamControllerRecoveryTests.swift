@@ -54,18 +54,18 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Post-resize decode admission stays keyframe-only until first frame")
-    func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstFrame() {
+    @Test("Post-resize decode admission stays keyframe-only until first presented frame")
+    func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstPresentedFrame() {
         let dropDecision = StreamController.postResizeDecodeAdmissionDecision(
-            awaitingFirstFrameAfterResize: true,
+            awaitingFirstPresentedFrameAfterResize: true,
             isKeyframe: false
         )
         let acceptKeyframeDecision = StreamController.postResizeDecodeAdmissionDecision(
-            awaitingFirstFrameAfterResize: true,
+            awaitingFirstPresentedFrameAfterResize: true,
             isKeyframe: true
         )
         let acceptNormalDecision = StreamController.postResizeDecodeAdmissionDecision(
-            awaitingFirstFrameAfterResize: false,
+            awaitingFirstPresentedFrameAfterResize: false,
             isKeyframe: false
         )
 
@@ -361,13 +361,16 @@ struct StreamControllerRecoveryTests {
         }
 
         #expect(await controller.hasPresentedFirstFrame)
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.handleDecoderRecoverySignal()
         #expect(!(await controller.awaitingFirstFrameAfterResize))
 
         await controller.stop()
     }
 
-    @Test("Post-resize transition stays armed until first presented frame")
-    func postResizeTransitionStaysArmedUntilFirstPresentedFrame() async {
+    @Test("Post-resize transition stays armed until decoder recovery completes")
+    func postResizeTransitionStaysArmedUntilDecoderRecoveryCompletes() async {
         let controller = StreamController(streamID: 190, maxPayloadSize: 1200)
 
         await controller.beginPostResizeTransition()
@@ -377,9 +380,78 @@ struct StreamControllerRecoveryTests {
         #expect(await controller.awaitingFirstFrameAfterResize)
 
         await controller.markFirstFramePresented()
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.handleDecoderRecoverySignal()
         #expect(!(await controller.awaitingFirstFrameAfterResize))
 
         await controller.stop()
+    }
+
+    @Test("Post-resize decoder recovery signal does not clear recovery before presentation")
+    func postResizeDecoderRecoverySignalDoesNotClearRecoveryBeforePresentation() async {
+        let controller = StreamController(streamID: 191, maxPayloadSize: 1200)
+
+        await controller.beginPostResizeTransition()
+        await controller.handleDecoderRecoverySignal()
+
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.markFirstFramePresented()
+        #expect(!(await controller.awaitingFirstFrameAfterResize))
+
+        await controller.stop()
+    }
+
+    @Test("New resize re-arms post-resize presentation gating while recovery is still active")
+    func newResizeRearmsPostResizePresentationGating() async {
+        let controller = StreamController(streamID: 192, maxPayloadSize: 1200)
+
+        await controller.beginPostResizeTransition()
+        await controller.markFirstFramePresented()
+
+        #expect(!(await controller.awaitingFirstPresentedFrameAfterResize))
+        #expect(await controller.awaitingFirstFrameAfterResize)
+
+        await controller.beginPostResizeTransition()
+
+        #expect(await controller.awaitingFirstPresentedFrameAfterResize)
+        #expect(await controller.awaitingFirstFrameAfterResize)
+        #expect(await controller.postResizeDecodeRecoverySuccessCount == 0)
+
+        await controller.stop()
+    }
+
+    @Test("Stale post-resize soft recovery follow-up is ignored after a newer resize episode starts")
+    func stalePostResizeSoftRecoveryFollowUpIsIgnored() {
+        #expect(
+            StreamController.isStalePostResizeSoftRecoveryRequest(
+                capturedEpisodeID: 1,
+                currentEpisodeID: 2,
+                awaitingFirstFrameAfterResize: true
+            )
+        )
+        #expect(
+            StreamController.isStalePostResizeSoftRecoveryRequest(
+                capturedEpisodeID: 1,
+                currentEpisodeID: 1,
+                awaitingFirstFrameAfterResize: false
+            )
+        )
+        #expect(
+            !StreamController.isStalePostResizeSoftRecoveryRequest(
+                capturedEpisodeID: 1,
+                currentEpisodeID: 1,
+                awaitingFirstFrameAfterResize: true
+            )
+        )
+        #expect(
+            !StreamController.isStalePostResizeSoftRecoveryRequest(
+                capturedEpisodeID: nil,
+                currentEpisodeID: 3,
+                awaitingFirstFrameAfterResize: false
+            )
+        )
     }
 
     @Test("Decode enqueue signals render listeners through stream store")

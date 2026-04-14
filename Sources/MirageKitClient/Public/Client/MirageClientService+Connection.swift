@@ -441,8 +441,11 @@ extension MirageClientService {
 
         let attempts = controlSessionAttempts(for: host)
         var lastFailureReason: String?
+        var retriedCurrentBootstrapTransportLossAttemptIndices: Set<Int> = []
+        var attemptIndex = 0
 
-        for (attemptIndex, attempt) in attempts.enumerated() {
+        while attemptIndex < attempts.count {
+            let attempt = attempts[attemptIndex]
             try throwIfConnectAttemptIsStale(attemptID)
 
             var openedSession: LoomAuthenticatedSession?
@@ -470,8 +473,11 @@ extension MirageClientService {
                     await openedSession.cancel()
                 }
 
-                let classification = Self.classifyControlSessionFailure(error)
-                if error is CancellationError || classification == .cancelled {
+                guard let classification = Self.classifyBootstrappedControlSessionFailure(
+                    error,
+                    isCurrentAttempt: isCurrentConnectAttempt(attemptID),
+                    taskIsCancelled: Task.isCancelled
+                ) else {
                     throw error
                 }
 
@@ -482,12 +488,27 @@ extension MirageClientService {
                 )
                 lastFailureReason = failureReason
 
+                if Self.shouldRetryCurrentBootstrappedControlSessionAttempt(
+                    classification: classification,
+                    controlChannelOpened: openedChannel != nil,
+                    hasRetriedCurrentAttempt: retriedCurrentBootstrapTransportLossAttemptIndices.contains(
+                        attemptIndex
+                    )
+                ) {
+                    retriedCurrentBootstrapTransportLossAttemptIndices.insert(attemptIndex)
+                    MirageLogger.client(
+                        "\(failureReason); retrying same transport once before transport fallback"
+                    )
+                    continue
+                }
+
                 if Self.shouldRetryLaterControlSessionAttempt(
                     classification: classification,
                     attempts: attempts,
                     currentAttemptIndex: attemptIndex
                 ) {
                     MirageLogger.client("\(failureReason); retrying over next advertised transport")
+                    attemptIndex += 1
                     continue
                 }
 
@@ -932,6 +953,32 @@ extension MirageClientService {
         return .other
     }
 
+    internal static func classifyBootstrappedControlSessionFailure(
+        _ error: Error,
+        isCurrentAttempt: Bool,
+        taskIsCancelled: Bool
+    ) -> ControlSessionFailureClassification? {
+        guard isCurrentAttempt, !taskIsCancelled else {
+            return nil
+        }
+
+        let classification = classifyControlSessionFailure(error)
+        if classification == .cancelled {
+            return .transportLoss
+        }
+        return classification
+    }
+
+    internal static func shouldRetryCurrentBootstrappedControlSessionAttempt(
+        classification: ControlSessionFailureClassification,
+        controlChannelOpened: Bool,
+        hasRetriedCurrentAttempt: Bool
+    ) -> Bool {
+        guard controlChannelOpened else { return false }
+        guard classification == .transportLoss else { return false }
+        return !hasRetriedCurrentAttempt
+    }
+
     internal static func shouldRetryLaterControlSessionAttempt(
         classification: ControlSessionFailureClassification,
         attempts: [ControlSessionAttempt],
@@ -1040,7 +1087,6 @@ extension MirageClientService {
         let localWiFi = Set(localNetwork.wifiSubnetSignatures)
         let localWired = Set(localNetwork.wiredSubnetSignatures)
         let hostWiFi = Set(hostNetwork.wifiSubnetSignatures)
-        let hostWired = Set(hostNetwork.wiredSubnetSignatures)
         let anyOverlap = !localNetwork.allSubnetSignatures.intersection(hostNetwork.allSubnetSignatures).isEmpty
 
         switch localNetwork.currentPathKind {
@@ -1072,6 +1118,8 @@ extension MirageClientService {
         case .dns:
             return .addressUnavailable
         case .tls:
+            return .other
+        case .wifiAware:
             return .other
         @unknown default:
             return .other

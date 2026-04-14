@@ -123,7 +123,7 @@ extension StreamController {
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
-        postResizeDecodeErrorGraceDeadline = 0
+        resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastFreezeRecoveryTime = 0
         consecutiveFreezeRecoveries = 0
         stopFrameProcessingPipeline()
@@ -133,7 +133,6 @@ extension StreamController {
             stopFirstPresentedFrameMonitor()
             hasDecodedFirstFrame = false
             hasPresentedFirstFrame = false
-            awaitingFirstFrameAfterResize = false
         }
         reassembler.enterKeyframeOnlyMode()
         if restartRecoveryLoop, presentationTier == .activeLive {

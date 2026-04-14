@@ -143,6 +143,49 @@ extension StreamController {
         awaitingFirstFrameAfterResize && graceDeadline > 0 && now < graceDeadline
     }
 
+    func resetPostResizeRecoveryTracking(clearResizeRecovery: Bool) {
+        postResizeDecodeRecoverySuccessCount = 0
+        if clearResizeRecovery {
+            awaitingFirstFrameAfterResize = false
+            awaitingFirstPresentedFrameAfterResize = false
+            postResizeDecodeErrorGraceDeadline = 0
+        }
+    }
+
+    func armPostResizeRecoveryWindow(reason: String) async {
+        postResizeRecoveryEpisodeID &+= 1
+        awaitingFirstFrameAfterResize = true
+        awaitingFirstPresentedFrameAfterResize = true
+        postResizeDecodeRecoverySuccessCount = 0
+        postResizeDecodeErrorGraceDeadline = currentTime() + Self.postResizeDecodeErrorGraceInterval
+        await decoder.beginRecoveryTracking()
+        await setClientRecoveryStatus(.postResizeAwaitingFirstFrame)
+        if presentationTier == .activeLive {
+            await armFirstPresentedFrameAwaiter(reason: reason, mode: .recovery)
+        }
+    }
+
+    func handleDecoderRecoverySignal() async {
+        guard awaitingFirstFrameAfterResize else { return }
+        postResizeDecodeRecoverySuccessCount = Self.postResizeDecodeRecoverySuccessThreshold
+        MirageLogger.client(
+            "Post-resize decoder recovery streak complete for stream \(streamID)"
+        )
+        await maybeCompletePostResizeRecovery()
+    }
+
+    func maybeCompletePostResizeRecovery() async {
+        guard awaitingFirstFrameAfterResize else { return }
+        guard !awaitingFirstPresentedFrameAfterResize else { return }
+        guard postResizeDecodeRecoverySuccessCount >= Self.postResizeDecodeRecoverySuccessThreshold else { return }
+        awaitingFirstFrameAfterResize = false
+        postResizeDecodeErrorGraceDeadline = 0
+        MirageLogger.client("Post-resize recovery stabilized for stream \(streamID)")
+        if clientRecoveryStatus == .postResizeAwaitingFirstFrame {
+            await setClientRecoveryStatus(.idle)
+        }
+    }
+
     func clearTransientRecoveryStateAfterPresentationProgress() async {
         guard Self.shouldClearRecoveryStatusOnPresentationProgress(clientRecoveryStatus) else { return }
 
@@ -217,10 +260,6 @@ extension StreamController {
         }
 
         if awaitingFirstFrameAfterResize {
-            postResizeDecodeErrorGraceDeadline = max(
-                postResizeDecodeErrorGraceDeadline,
-                currentTime() + Self.postResizeDecodeErrorGraceInterval
-            )
             MirageLogger.client("Post-resize first frame decoded for stream \(streamID)")
         }
 
@@ -235,7 +274,6 @@ extension StreamController {
         let wasAwaitingFirstPresentation = awaitingFirstPresentedFrame
         let waitStart = firstPresentedFrameWaitStartTime
 
-        postResizeDecodeErrorGraceDeadline = 0
         awaitingFirstPresentedFrame = false
         firstPresentedFrameBaselineSequence = 0
         firstPresentedFrameWaitStartTime = 0
@@ -247,8 +285,7 @@ extension StreamController {
         reassembler.setStartupKeyframeTimeoutOverrideEnabled(false)
 
         if awaitingFirstFrameAfterResize {
-            awaitingFirstFrameAfterResize = false
-            postResizeDecodeErrorGraceDeadline = 0
+            awaitingFirstPresentedFrameAfterResize = false
             if waitStart > 0 {
                 let elapsedMs = Int((now - waitStart) * 1000)
                 MirageLogger.client(
@@ -267,7 +304,11 @@ extension StreamController {
             hasDecodedFirstFrame = true
         }
         syncPresentationProgressFromFrameStore(now: now)
-        await setClientRecoveryStatus(.idle)
+        if awaitingFirstFrameAfterResize {
+            await maybeCompletePostResizeRecovery()
+        } else {
+            await setClientRecoveryStatus(.idle)
+        }
         guard shouldNotify, let handler = onFirstFramePresented else { return }
         await MainActor.run {
             handler()
@@ -503,6 +544,9 @@ extension StreamController {
     func handleDecodeErrorThresholdSignal() async {
         guard !hasTriggeredTerminalStartupFailure else { return }
         recordDecodeThresholdEvent()
+        if awaitingFirstFrameAfterResize {
+            resetPostResizeRecoveryTracking(clearResizeRecovery: false)
+        }
 
         if presentationTier == .passiveSnapshot {
             await requestSoftRecovery(reason: .decodeErrorThreshold)
@@ -515,6 +559,14 @@ extension StreamController {
             graceDeadline: postResizeDecodeErrorGraceDeadline,
             now: now
         ) {
+            return
+        }
+        if awaitingFirstFrameAfterResize {
+            decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
+            MirageLogger.client(
+                "Post-resize decode error threshold exceeded after grace for stream \(streamID); requesting immediate soft recovery"
+            )
+            await requestSoftRecovery(reason: .decodeErrorThreshold)
             return
         }
         if shouldAttemptStartupDecodeErrorRecovery(now: now) {
@@ -628,8 +680,18 @@ extension StreamController {
         decodeRecoveryEscalationTimestamps.removeAll { $0 < oldestAllowed }
     }
 
+    nonisolated static func isStalePostResizeSoftRecoveryRequest(
+        capturedEpisodeID: UInt64?,
+        currentEpisodeID: UInt64,
+        awaitingFirstFrameAfterResize: Bool
+    ) -> Bool {
+        guard let capturedEpisodeID else { return false }
+        return !awaitingFirstFrameAfterResize || currentEpisodeID != capturedEpisodeID
+    }
+
     private func requestSoftRecovery(reason: RecoveryReason) async {
         let now = currentTime()
+        let capturedPostResizeRecoveryEpisodeID = awaitingFirstFrameAfterResize ? postResizeRecoveryEpisodeID : nil
         if !Self.shouldDispatchRecovery(
             lastDispatchTime: lastSoftRecoveryRequestTime,
             now: now,
@@ -657,8 +719,26 @@ extension StreamController {
             await setClientRecoveryStatus(.keyframeRecovery)
         }
         await clearResizeState()
+        let postResizeRecoveryActive = capturedPostResizeRecoveryEpisodeID != nil &&
+            !Self.isStalePostResizeSoftRecoveryRequest(
+                capturedEpisodeID: capturedPostResizeRecoveryEpisodeID,
+                currentEpisodeID: postResizeRecoveryEpisodeID,
+                awaitingFirstFrameAfterResize: awaitingFirstFrameAfterResize
+            )
+        if capturedPostResizeRecoveryEpisodeID != nil, !postResizeRecoveryActive {
+            MirageLogger.client(
+                "Skipping stale post-resize soft recovery follow-up for stream \(streamID)"
+            )
+            return
+        }
+        if postResizeRecoveryActive {
+            resetPostResizeRecoveryTracking(clearResizeRecovery: false)
+        }
         clearQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
+        if postResizeRecoveryActive {
+            await armPostResizeRecoveryWindow(reason: "post-resize-soft-recovery")
+        }
         if presentationTier == .activeLive {
             await startKeyframeRecoveryLoopIfNeeded()
         }

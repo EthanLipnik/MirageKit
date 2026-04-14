@@ -38,10 +38,9 @@ extension StreamController {
         metricsTracker.reset()
         hasDecodedFirstFrame = false
         hasPresentedFirstFrame = false
-        awaitingFirstFrameAfterResize = false
+        resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
-        postResizeDecodeErrorGraceDeadline = 0
         lastMetricsLogTime = 0
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
@@ -74,8 +73,7 @@ extension StreamController {
         await decoder.resetForNewSession()
         reassembler.reset()
         clearQueuedFramesForRecovery()
-        awaitingFirstFrameAfterResize = false
-        postResizeDecodeErrorGraceDeadline = 0
+        resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         lastDecodedFrameTime = 0
         lastPresentedProgressTime = 0
         lastPresentedSequenceObserved = 0
@@ -83,15 +81,12 @@ extension StreamController {
         await startFrameProcessingPipeline()
     }
 
-    /// Enter keyframe-only decode admission until a post-resize first frame is decoded.
+    /// Enter post-resize recovery, re-arming keyframe-only decode admission for each resize episode.
     func beginPostResizeTransition() async {
-        guard !awaitingFirstFrameAfterResize else { return }
-        awaitingFirstFrameAfterResize = true
-        postResizeDecodeErrorGraceDeadline = currentTime() + Self.postResizeDecodeErrorGraceInterval
+        resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         clearQueuedFramesForRecovery()
         reassembler.enterKeyframeOnlyMode()
-        await setClientRecoveryStatus(.postResizeAwaitingFirstFrame)
-        await armFirstPresentedFrameAwaiter(reason: "post-resize", mode: .recovery)
+        await armPostResizeRecoveryWindow(reason: "post-resize")
         MirageLogger.client("Post-resize transition armed for stream \(streamID) (keyframe-only decode admission)")
     }
 

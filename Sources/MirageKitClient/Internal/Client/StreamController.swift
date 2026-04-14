@@ -125,11 +125,11 @@ actor StreamController {
     }
 
     nonisolated static func postResizeDecodeAdmissionDecision(
-        awaitingFirstFrameAfterResize: Bool,
+        awaitingFirstPresentedFrameAfterResize: Bool,
         isKeyframe: Bool
     )
     -> PostResizeDecodeAdmissionDecision {
-        if awaitingFirstFrameAfterResize, !isKeyframe {
+        if awaitingFirstPresentedFrameAfterResize, !isKeyframe {
             return .dropNonKeyframeWhileAwaitingFirstFrame
         }
         return .accept
@@ -269,6 +269,7 @@ actor StreamController {
     static let decodeErrorLogInterval: CFAbsoluteTime = 15.0
     static let decodeErrorEscalationThreshold: Int = 3
     static let postResizeDecodeErrorGraceInterval: CFAbsoluteTime = 0.75
+    static let postResizeDecodeRecoverySuccessThreshold: Int = 3
     static let decodeSubmissionMaximumLimit: Int = 3
     static let decodeSubmissionStressThreshold: Double = 0.80
     static let decodeSubmissionHealthyThreshold: Double = 0.95
@@ -297,10 +298,16 @@ actor StreamController {
     var hasDecodedFirstFrame = false
     /// Whether we've presented at least one frame.
     var hasPresentedFirstFrame = false
-    /// True while the decoder should remain keyframe-only for a post-resize transition.
+    /// True while post-resize recovery remains active.
     var awaitingFirstFrameAfterResize = false
+    /// True while post-resize decode admission should still drop non-keyframes.
+    var awaitingFirstPresentedFrameAfterResize = false
     /// Suppresses immediate post-resize decode-threshold recovery until presentation has a chance to resume.
     var postResizeDecodeErrorGraceDeadline: CFAbsoluteTime = 0
+    /// Monotonic identifier for the current post-resize recovery episode.
+    var postResizeRecoveryEpisodeID: UInt64 = 0
+    /// Decoder-confirmed post-resize recovery streak progress for the active resize episode.
+    var postResizeDecodeRecoverySuccessCount: Int = 0
     /// True while UI gating waits for the first newly presented frame.
     var awaitingFirstPresentedFrame = false
     /// Startup watchdog vs recovery watchdog mode for the first-frame awaiter.
@@ -515,12 +522,17 @@ actor StreamController {
         lastPresentedProgressTime = submissionSnapshot.submittedTime
 
         // Set up error recovery - request keyframe when decode errors exceed threshold
-        await decoder.setErrorThresholdHandler { [weak self] in
+        await decoder.setErrorThresholdHandler({ [weak self] in
             guard let self else { return }
             Task {
                 await self.handleDecodeErrorThresholdSignal()
             }
-        }
+        }, onRecovery: { [weak self] in
+            guard let self else { return }
+            Task {
+                await self.handleDecoderRecoverySignal()
+            }
+        })
 
         // Set up dimension change handler - reset reassembler when dimensions change
         let capturedStreamID = streamID
@@ -881,7 +893,7 @@ actor StreamController {
 
     private func enqueueFrameInOrder(_ frame: FrameData) async {
         if Self.postResizeDecodeAdmissionDecision(
-            awaitingFirstFrameAfterResize: awaitingFirstFrameAfterResize,
+            awaitingFirstPresentedFrameAfterResize: awaitingFirstPresentedFrameAfterResize,
             isKeyframe: frame.isKeyframe
         ) == .dropNonKeyframeWhileAwaitingFirstFrame {
             frame.releaseBuffer()
@@ -1022,6 +1034,7 @@ actor StreamController {
         lastDecodeErrorLogTime = 0
         tierPromotionProbeTask?.cancel()
         tierPromotionProbeTask = nil
+        resetPostResizeRecoveryTracking(clearResizeRecovery: true)
         MirageRenderStreamStore.shared.clear(for: streamID)
         await decoder.setErrorThresholdHandler {}
         await decoder.setDimensionChangeHandler {}

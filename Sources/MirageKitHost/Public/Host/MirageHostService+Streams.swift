@@ -1015,6 +1015,7 @@ public extension MirageHostService {
             await disableDisplayMirroring(displayID: mirroredDisplayID)
         }
         await context.stop()
+        await WindowSpaceManager.shared.restoreAllWindowsOwned(by: session.id)
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)
         unregisterTypingBurstRoute(streamID: session.id)

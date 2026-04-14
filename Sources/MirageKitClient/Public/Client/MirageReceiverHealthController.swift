@@ -255,8 +255,11 @@ public struct MirageReceiverHealthController: Sendable {
     private static func sample(
         from snapshot: MirageClientMetricsSnapshot
     ) -> Sample {
+        let targetFPS = Double(max(1, snapshot.hostTargetFrameRate > 0 ? snapshot.hostTargetFrameRate : 60))
         let hostEncodedFPS = max(0, snapshot.hostEncodedFPS)
         let receivedFPS = max(0, snapshot.receivedFPS)
+        let submittedFPS = max(0, snapshot.submittedFPS)
+        let uniqueSubmittedFPS = max(0, snapshot.uniqueSubmittedFPS)
         let queueBytes = max(0, snapshot.hostSendQueueBytes ?? 0)
         let sendStartDelayAverageMs = max(0, snapshot.hostSendStartDelayAverageMs ?? 0)
         let sendCompletionAverageMs = max(0, snapshot.hostSendCompletionAverageMs ?? 0)
@@ -298,11 +301,24 @@ public struct MirageReceiverHealthController: Sendable {
         let severe = transportAssessment.isSevere && !pacingOnlyStress
         let sustainedLoss = transportAssessment.isStress && !pacingOnlyStress
         let healthy = !severe && !sustainedLoss
+        let submittedCadenceHealthy = submittedFPS >= targetFPS * 0.95
+        let uniqueSubmittedCadenceHealthy = uniqueSubmittedFPS >= targetFPS * 0.95
+        let bottleneckAllowsProbePromotion: Bool = switch snapshot.bottleneckKind {
+        case .unknown, .networkBound:
+            true
+        case .captureBound, .encodeBound, .decodeBound, .presentationBound, .mixed:
+            false
+        }
         return Sample(
             isSevere: severe,
             isStress: severe || sustainedLoss,
             isHealthy: healthy,
-            allowsProbePromotion: streamIsActive && !presentationBound
+            allowsProbePromotion: streamIsActive &&
+                snapshot.decodeHealthy &&
+                submittedCadenceHealthy &&
+                uniqueSubmittedCadenceHealthy &&
+                bottleneckAllowsProbePromotion &&
+                !presentationBound
         )
     }
 

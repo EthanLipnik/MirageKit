@@ -32,8 +32,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Cursor position store for desktop cursor sync.
     public var cursorPositionStore: MirageClientCursorPositionStore?
 
-    /// Callback when app becomes active (returns from background).
-    /// Used to trigger stream recovery after app switching.
+    /// Callback when the active scene requires stream recovery after activation.
     public var onBecomeActive: (() -> Void)?
 
     /// Callback when hardware keyboard presence changes.

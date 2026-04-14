@@ -41,6 +41,10 @@ enum EncodeAdmission {
     case skipped(EncodeSkipReason)
 }
 
+private struct SendableEncodeInfoToken: @unchecked Sendable {
+    let rawPointer: UnsafeMutableRawPointer
+}
+
 extension VideoEncoder {
     /// Returns `true` if the encoder produced at least one valid output frame.
     @discardableResult
@@ -166,7 +170,7 @@ extension VideoEncoder {
     }
 
     func startEncoding(
-        onEncodedFrame: @escaping (Data, Bool, CMTime) -> Void,
+        onEncodedFrame: @escaping @Sendable (Data, Bool, CMTime) -> Void,
         onFrameComplete: @escaping @Sendable () -> Void
     ) {
         encodedFrameHandler = onEncodedFrame
@@ -175,6 +179,8 @@ extension VideoEncoder {
     }
 
     func stopEncoding() {
+        sessionVersion &+= 1
+        resetEncoderSlots()
         isEncoding = false
         encodedFrameHandler = nil
         frameCompletionHandler = nil
@@ -255,7 +261,9 @@ extension VideoEncoder {
         )
         frameNumber += 1
 
-        let opaqueInfo = Unmanaged.passRetained(encodeInfo).toOpaque()
+        let encodeInfoToken = SendableEncodeInfoToken(
+            rawPointer: Unmanaged.passRetained(encodeInfo).toOpaque()
+        )
 
         let status = VTCompressionSessionEncodeFrame(
             session,
@@ -265,7 +273,7 @@ extension VideoEncoder {
             frameProperties: properties.isEmpty ? nil : properties as CFDictionary,
             infoFlagsOut: nil
         ) { status, infoFlags, sampleBuffer in
-            let info = Unmanaged<EncodeInfo>.fromOpaque(opaqueInfo).takeRetainedValue()
+            let info = Unmanaged<EncodeInfo>.fromOpaque(encodeInfoToken.rawPointer).takeRetainedValue()
             defer {
                 self.releaseEncoderSlot()
                 info.completion?()
@@ -406,7 +414,7 @@ extension VideoEncoder {
         }
 
         if status != noErr {
-            Unmanaged<EncodeInfo>.fromOpaque(opaqueInfo).release()
+            Unmanaged<EncodeInfo>.fromOpaque(encodeInfoToken.rawPointer).release()
             encodeInfo.completion?()
             releaseEncoderSlot()
             throw MirageError.encodingError(NSError(domain: NSOSStatusErrorDomain, code: Int(status)))

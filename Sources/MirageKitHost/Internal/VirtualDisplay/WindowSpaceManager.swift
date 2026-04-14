@@ -245,6 +245,16 @@ actor WindowSpaceManager {
         })
     }
 
+    nonisolated static func windowIDsOwned(
+        by streamID: StreamID,
+        from savedStates: [WindowID: SavedWindowState]
+    ) -> Set<WindowID> {
+        Set(savedStates.compactMap { windowID, state in
+            guard state.owner?.streamID == streamID else { return nil }
+            return windowID
+        })
+    }
+
     // MARK: - State
 
     /// Saved window states keyed by window ID
@@ -1210,6 +1220,33 @@ actor WindowSpaceManager {
                     "stale_owner_cleared_after_restore_failure window=\(windowID) ownerStreamID=\(streamID) error=\(renderedDetail)"
                 )
                 return .staleOwnerClearedAfterRestoreFailure(streamID: streamID)
+            }
+        }
+    }
+
+    func restoreAllWindowsOwned(by streamID: StreamID) async {
+        let windowIDs = Array(
+            Self.windowIDsOwned(by: streamID, from: savedStates)
+        )
+        .sorted()
+
+        guard !windowIDs.isEmpty else { return }
+
+        MirageLogger.host(
+            "Restoring \(windowIDs.count) saved window claim(s) for stopped stream \(streamID)"
+        )
+
+        for windowID in windowIDs {
+            let expectedOwner = savedStates[windowID]?.owner
+            do {
+                try await restoreWindow(windowID, expectedOwner: expectedOwner)
+            } catch {
+                clearSavedState(for: windowID)
+                let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
+                let renderedDetail = detail.isEmpty ? String(describing: error) : detail
+                MirageLogger.host(
+                    "owner_cleanup_cleared_saved_state window=\(windowID) ownerStreamID=\(streamID) error=\(renderedDetail)"
+                )
             }
         }
     }

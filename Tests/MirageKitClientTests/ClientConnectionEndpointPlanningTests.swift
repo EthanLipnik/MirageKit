@@ -362,6 +362,65 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Client retries unexpected bootstrap cancellations as transport loss")
+    func bootstrappedControlSessionFailureClassificationRetriesUnexpectedCancellation() {
+        #expect(
+            MirageClientService.classifyBootstrappedControlSessionFailure(
+                CancellationError(),
+                isCurrentAttempt: true,
+                taskIsCancelled: false
+            ) == .transportLoss
+        )
+        #expect(
+            MirageClientService.classifyBootstrappedControlSessionFailure(
+                CancellationError(),
+                isCurrentAttempt: false,
+                taskIsCancelled: false
+            ) == nil
+        )
+        #expect(
+            MirageClientService.classifyBootstrappedControlSessionFailure(
+                CancellationError(),
+                isCurrentAttempt: true,
+                taskIsCancelled: true
+            ) == nil
+        )
+    }
+
+    @MainActor
+    @Test("Client retries the current transport once after bootstrap transport loss")
+    func bootstrappedControlSessionRetryPolicyRetriesCurrentTransportOnce() {
+        #expect(
+            MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
+                classification: .transportLoss,
+                controlChannelOpened: true,
+                hasRetriedCurrentAttempt: false
+            )
+        )
+        #expect(
+            !MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
+                classification: .transportLoss,
+                controlChannelOpened: true,
+                hasRetriedCurrentAttempt: true
+            )
+        )
+        #expect(
+            !MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
+                classification: .transportLoss,
+                controlChannelOpened: false,
+                hasRetriedCurrentAttempt: false
+            )
+        )
+        #expect(
+            !MirageClientService.shouldRetryCurrentBootstrappedControlSessionAttempt(
+                classification: .timeout,
+                controlChannelOpened: true,
+                hasRetriedCurrentAttempt: false
+            )
+        )
+    }
+
+    @MainActor
     @Test("Client control session failure reasons include transport, endpoint, and interface context")
     func controlSessionFailureReasonIncludesContext() throws {
         let port = try #require(NWEndpoint.Port(rawValue: 61_003))

@@ -85,8 +85,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Decode stalls do not block upward probing when transport is healthy")
-    func decodeStallsDoNotBlockUpwardProbingWhenTransportIsHealthy() {
+    @Test("Decode-bound samples do not probe upward when transport is healthy")
+    func decodeBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
         var controller = MirageReceiverHealthController()
         let snapshot = decodeStalledButTransportHealthySnapshot()
 
@@ -103,7 +103,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
+        #expect(secondAction == .none)
     }
 
     @Test("Delay-only bursts do not trigger backoff or block probing")
@@ -223,16 +223,10 @@ struct ReceiverHealthControllerTests {
         #expect(probe == .probe(targetBitrateBps: 472_500_000))
     }
 
-    @Test("Healthy transport still probes upward when host encode is already over budget")
-    func healthyTransportStillProbesWhenHostEncodeIsOverBudget() {
+    @Test("Encode-bound samples do not probe upward when transport is healthy")
+    func encodeBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
         var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.70)
-        snapshot.hostCaptureIngressFPS = 60
-        snapshot.hostCaptureFPS = 60
-        snapshot.hostEncodeAttemptFPS = 60
-        snapshot.hostEncodedFPS = 42
-        snapshot.hostFrameBudgetMs = 16.67
-        snapshot.hostAverageEncodeMs = 21
+        let snapshot = encodeBoundButTransportHealthySnapshot()
 
         _ = controller.advance(
             snapshots: [snapshot],
@@ -247,21 +241,13 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 300_000_000))
+        #expect(action == .none)
     }
 
-    @Test("Source-paced low cadence still probes upward when transport is healthy")
-    func sourcePacedLowCadenceStillProbesUpwardWhenTransportIsHealthy() {
+    @Test("Capture-bound samples do not probe upward when transport is healthy")
+    func captureBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
         var controller = MirageReceiverHealthController()
-        var snapshot = healthySnapshot(activeQuality: 0.70)
-        snapshot.hostCaptureIngressFPS = 44
-        snapshot.hostCaptureFPS = 43
-        snapshot.hostEncodeAttemptFPS = 43
-        snapshot.hostEncodedFPS = 43
-        snapshot.receivedFPS = 43
-        snapshot.decodedFPS = 43
-        snapshot.submittedFPS = 43
-        snapshot.uniqueSubmittedFPS = 43
+        let snapshot = captureBoundButTransportHealthySnapshot()
 
         _ = controller.advance(
             snapshots: [snapshot],
@@ -276,7 +262,28 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 128_000_000))
+        #expect(action == .none)
+    }
+
+    @Test("Mixed-bound samples do not probe upward when transport is healthy")
+    func mixedBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+        var controller = MirageReceiverHealthController()
+        let snapshot = mixedBoundButTransportHealthySnapshot()
+
+        _ = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 0
+        )
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 2
+        )
+
+        #expect(action == .none)
     }
 
     @Test("Minor delivery drift still probes upward when transport is otherwise clean")
@@ -427,6 +434,43 @@ struct ReceiverHealthControllerTests {
         snapshot.decodedFPS = 0
         snapshot.submittedFPS = 0
         snapshot.uniqueSubmittedFPS = 0
+        snapshot.decodeHealthy = false
+        return snapshot
+    }
+
+    private func captureBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = healthySnapshot(activeQuality: 0.70)
+        snapshot.hostCaptureIngressFPS = 44
+        snapshot.hostCaptureFPS = 43
+        snapshot.hostEncodeAttemptFPS = 43
+        snapshot.hostEncodedFPS = 43
+        snapshot.receivedFPS = 43
+        snapshot.decodedFPS = 43
+        snapshot.submittedFPS = 43
+        snapshot.uniqueSubmittedFPS = 43
+        return snapshot
+    }
+
+    private func encodeBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = healthySnapshot(activeQuality: 0.70)
+        snapshot.hostCaptureIngressFPS = 60
+        snapshot.hostCaptureFPS = 60
+        snapshot.hostEncodeAttemptFPS = 60
+        snapshot.hostEncodedFPS = 42
+        snapshot.hostFrameBudgetMs = 16.67
+        snapshot.hostAverageEncodeMs = 21
+        snapshot.receivedFPS = 42
+        snapshot.decodedFPS = 42
+        snapshot.submittedFPS = 42
+        snapshot.uniqueSubmittedFPS = 42
+        return snapshot
+    }
+
+    private func mixedBoundButTransportHealthySnapshot() -> MirageClientMetricsSnapshot {
+        var snapshot = encodeBoundButTransportHealthySnapshot()
+        snapshot.decodedFPS = 18
+        snapshot.submittedFPS = 18
+        snapshot.uniqueSubmittedFPS = 18
         snapshot.decodeHealthy = false
         return snapshot
     }

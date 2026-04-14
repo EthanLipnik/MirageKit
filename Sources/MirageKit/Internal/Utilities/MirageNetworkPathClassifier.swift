@@ -100,9 +100,12 @@ package enum MirageNetworkPathClassifier {
             .map { $0.lowercased() }
             .sorted()
         let hasAWDLInterface = sortedNames.contains { $0.hasPrefix("awdl") }
+        let hasOverlayInterface = sortedNames.contains { $0.hasPrefix("utun") }
         let kind: MirageNetworkPathKind
         if hasAWDLInterface {
             kind = .awdl
+        } else if hasOverlayInterface {
+            kind = .other
         } else if usesWiFi {
             kind = .wifi
         } else if usesWired {

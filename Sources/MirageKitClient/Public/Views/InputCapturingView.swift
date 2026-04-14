@@ -267,8 +267,7 @@ public class InputCapturingView: UIView {
     private(set) var hardwareKeyboardPresent: Bool = false
     private var didResignActiveSinceLastActivation = false
     private var didEnterBackgroundSinceLastActive = false
-    private var pendingApplicationActivationRecovery = false
-    private var pendingApplicationActivationResetPresentation = false
+    private var pendingApplicationActivationDecision: InputCapturingActivationRecoveryDecision?
     private var pendingActivationResignedActive = false
     private var pendingActivationBackgrounded = false
     private var pendingActivationDisplayLayerFailed = false
@@ -723,29 +722,31 @@ public class InputCapturingView: UIView {
         isDragging = false
     }
 
-    private func recordPendingApplicationActivationRecovery(
+    private func recordPendingApplicationActivationHandling(
+        _ decision: InputCapturingActivationRecoveryDecision,
         resignedActive: Bool,
         backgrounded: Bool,
         displayLayerFailed: Bool
     ) {
-        pendingApplicationActivationRecovery = true
-        pendingApplicationActivationResetPresentation = true
+        if let existingDecision = pendingApplicationActivationDecision {
+            pendingApplicationActivationDecision = existingDecision.merged(with: decision)
+        } else {
+            pendingApplicationActivationDecision = decision
+        }
         pendingActivationResignedActive = pendingActivationResignedActive || resignedActive
         pendingActivationBackgrounded = pendingActivationBackgrounded || backgrounded
         pendingActivationDisplayLayerFailed = pendingActivationDisplayLayerFailed || displayLayerFailed
     }
 
-    private func applyPendingApplicationActivationRecoveryIfPossible() {
-        let shouldResetPresentation = pendingApplicationActivationResetPresentation
-        let shouldRequestRecovery = pendingApplicationActivationRecovery
-        guard shouldResetPresentation || shouldRequestRecovery else { return }
+    private func applyPendingApplicationActivationHandlingIfPossible() {
+        guard let activationDecision = pendingApplicationActivationDecision else { return }
         guard window != nil else { return }
 
         sampleBufferView.resumeRenderingAfterApplicationActivation(
-            resetPresentationState: shouldResetPresentation
+            resetPresentationState: activationDecision.shouldResetPresentationState
         )
 
-        if shouldRequestRecovery {
+        if activationDecision.shouldRequestStreamRecovery {
             let streamIDText = streamID.map(String.init(describing:)) ?? "unbound"
             MirageLogger.client(
                 "Activation recovery requested for stream \(streamIDText) " +
@@ -756,8 +757,7 @@ public class InputCapturingView: UIView {
             onBecomeActive?()
         }
 
-        pendingApplicationActivationRecovery = false
-        pendingApplicationActivationResetPresentation = false
+        pendingApplicationActivationDecision = nil
         pendingActivationResignedActive = false
         pendingActivationBackgrounded = false
         pendingActivationDisplayLayerFailed = false
@@ -1864,15 +1864,21 @@ public class InputCapturingView: UIView {
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
         let displayLayerFailed = sampleBufferView.hasDisplayLayerFailure
-        let shouldRequestRecovery = resignedActive || backgrounded || displayLayerFailed
+        let activationDecision = inputCapturingActivationRecoveryDecision(
+            resignedActive: resignedActive,
+            backgrounded: backgrounded,
+            displayLayerFailed: displayLayerFailed
+        )
 
-        if shouldRequestRecovery {
-            recordPendingApplicationActivationRecovery(
+        if activationDecision.shouldRequestStreamRecovery ||
+            activationDecision.shouldResumeRenderingWithoutRecovery {
+            recordPendingApplicationActivationHandling(
+                activationDecision,
                 resignedActive: resignedActive,
                 backgrounded: backgrounded,
                 displayLayerFailed: displayLayerFailed
             )
-            applyPendingApplicationActivationRecoveryIfPossible()
+            applyPendingApplicationActivationHandlingIfPossible()
         } else if window != nil {
             sampleBufferView.resumeRenderingAfterApplicationActivation(resetPresentationState: false)
         }
@@ -1930,7 +1936,7 @@ public class InputCapturingView: UIView {
         guard let scene = notification.object as? UIScene else { return }
         guard scene === window?.windowScene else { return }
         requestResponderRecovery(.sceneDidActivate)
-        applyPendingApplicationActivationRecoveryIfPossible()
+        applyPendingApplicationActivationHandlingIfPossible()
     }
 
     @objc
@@ -1938,7 +1944,7 @@ public class InputCapturingView: UIView {
         guard let scene = notification.object as? UIScene else { return }
         guard scene === window?.windowScene else { return }
         requestResponderRecovery(.sceneWillEnterForeground)
-        applyPendingApplicationActivationRecoveryIfPossible()
+        applyPendingApplicationActivationHandlingIfPossible()
     }
 
     @objc
@@ -1946,7 +1952,7 @@ public class InputCapturingView: UIView {
         guard let notifiedWindow = notification.object as? UIWindow else { return }
         guard notifiedWindow === window else { return }
         requestResponderRecovery(.windowDidBecomeKey)
-        applyPendingApplicationActivationRecoveryIfPossible()
+        applyPendingApplicationActivationHandlingIfPossible()
     }
 
     override public var canBecomeFirstResponder: Bool { true }
@@ -1956,7 +1962,7 @@ public class InputCapturingView: UIView {
         reportContainerSizeIfChanged(force: true)
         if window != nil {
             requestResponderRecovery(.didMoveToWindow)
-            applyPendingApplicationActivationRecoveryIfPossible()
+            applyPendingApplicationActivationHandlingIfPossible()
         } else {
             cancelPendingResponderRecovery()
         }

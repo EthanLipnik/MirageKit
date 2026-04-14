@@ -74,4 +74,17 @@ extension MirageClientService {
         guard let loomSession else { return nil }
         return await loomSession.pathSnapshot
     }
+
+    /// Refresh the cached control-path classification from the active Loom session.
+    /// This is useful immediately before automatic stream startup so the first
+    /// request does not rely on an `.unknown` path while the observer is still warming up.
+    @discardableResult
+    public func refreshCurrentControlPathKind() async -> MirageNetworkPathKind? {
+        guard let snapshot = await currentControlPathSnapshot() else {
+            return currentControlPathKind
+        }
+        let classifiedSnapshot = MirageNetworkPathClassifier.classify(snapshot)
+        handleControlPathUpdate(classifiedSnapshot)
+        return classifiedSnapshot.kind
+    }
 }

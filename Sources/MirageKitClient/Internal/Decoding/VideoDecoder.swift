@@ -324,6 +324,11 @@ final class DecodeErrorTracker: @unchecked Sendable {
     /// Prevents rapid recreation on consecutive keyframes.
     var sessionRecreationAttempted = false
 
+    /// Synthetic recovery-tracking state used for resize stabilization windows.
+    /// When armed, a short streak of successful decode callbacks is required before
+    /// the tracker reports recovery complete through `onRecovery`.
+    var recoveryTrackingArmed = false
+
     /// Time of last session recreation attempt (for cooldown)
     var lastSessionRecreationTime: CFAbsoluteTime = 0
 

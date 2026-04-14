@@ -503,7 +503,7 @@ private func subtractCounter(_ end: UInt64, _ start: UInt64) -> UInt64 {
 private func captureBenchmarkEncodedFrameHandler(
     measurementWindow: Locked<MirageHostCaptureBenchmarkMeasurementWindow?>,
     encodedFrameCount: Locked<UInt64>
-) -> (Data, Bool, CMTime) -> Void {
+) -> @Sendable (Data, Bool, CMTime) -> Void {
     { _, _, _ in
         let now = CFAbsoluteTimeGetCurrent()
         let shouldCount = measurementWindow.read { window in

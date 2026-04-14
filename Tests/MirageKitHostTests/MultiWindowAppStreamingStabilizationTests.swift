@@ -374,6 +374,63 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(plan.unresolvedCandidates.map(\.window.id) == [candidate.window.id])
     }
 
+    @Test("Stopped-stream cleanup targets every saved window owned by that stream")
+    func stoppedStreamCleanupTargetsEverySavedWindowOwnedByThatStream() {
+        let firstOwnedWindowID = WindowID(7010)
+        let secondOwnedWindowID = WindowID(7011)
+        let otherStreamWindowID = WindowID(7012)
+        let stoppedStreamID = StreamID(44)
+        let otherStreamID = StreamID(55)
+        let savedStates: [WindowID: WindowSpaceManager.SavedWindowState] = [
+            firstOwnedWindowID: WindowSpaceManager.SavedWindowState(
+                windowID: firstOwnedWindowID,
+                originalFrame: .zero,
+                originalSpaceIDs: [],
+                trafficLightVisibilitySnapshot: nil,
+                owner: WindowSpaceManager.WindowBindingOwner(
+                    streamID: stoppedStreamID,
+                    windowID: firstOwnedWindowID,
+                    displayID: 1,
+                    generation: 1
+                ),
+                savedAt: Date()
+            ),
+            secondOwnedWindowID: WindowSpaceManager.SavedWindowState(
+                windowID: secondOwnedWindowID,
+                originalFrame: .zero,
+                originalSpaceIDs: [],
+                trafficLightVisibilitySnapshot: nil,
+                owner: WindowSpaceManager.WindowBindingOwner(
+                    streamID: stoppedStreamID,
+                    windowID: secondOwnedWindowID,
+                    displayID: 1,
+                    generation: 2
+                ),
+                savedAt: Date()
+            ),
+            otherStreamWindowID: WindowSpaceManager.SavedWindowState(
+                windowID: otherStreamWindowID,
+                originalFrame: .zero,
+                originalSpaceIDs: [],
+                trafficLightVisibilitySnapshot: nil,
+                owner: WindowSpaceManager.WindowBindingOwner(
+                    streamID: otherStreamID,
+                    windowID: otherStreamWindowID,
+                    displayID: 1,
+                    generation: 1
+                ),
+                savedAt: Date()
+            ),
+        ]
+
+        let ownedWindowIDs = WindowSpaceManager.windowIDsOwned(
+            by: stoppedStreamID,
+            from: savedStates
+        )
+
+        #expect(ownedWindowIDs == [firstOwnedWindowID, secondOwnedWindowID])
+    }
+
     @Test("Partial startup policy keeps session alive and failed windows retry")
     func partialStartupPolicyKeepsSessionAndRetriesFailures() async {
         #expect(MirageHostService.initialAppWindowStartupDecision(startedWindowCount: 1) == .continueStreaming)

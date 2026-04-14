@@ -91,45 +91,39 @@ extension StreamContext {
             MirageLogger.stream("startEncoderWithSharedCallback skipped — stream \(streamID) already stopped")
             return
         }
-        var localFrameNumber: UInt32 = 0
-        var localSequenceNumber: UInt32 = 0
-        var pFrameDiagnosticCounter: UInt32 = 0
+        let callbackSequencer = StreamEncodingCallbackSequencer()
+        let baseFrameFlags = self.baseFrameFlags
 
         await encoder.startEncoding(
             onEncodedFrame: { [weak self] encodedData, isKeyframe, presentationTime in
                 guard let self else { return }
 
+                let now = CFAbsoluteTimeGetCurrent()
+                let fecBlockSize = self.resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
+                let reservation = callbackSequencer.reserve(
+                    frameByteCount: encodedData.count,
+                    maxPayloadSize: self.maxPayloadSize,
+                    fecBlockSize: fecBlockSize,
+                    isKeyframe: isKeyframe
+                )
+
                 if isKeyframe {
                     MirageLogger.stream(
-                        "Keyframe encoded: size=\(encodedData.count), frame=\(localFrameNumber), stream=\(streamID)"
+                        "Keyframe encoded: size=\(encodedData.count), frame=\(reservation.frameNumber), stream=\(streamID)"
                     )
-                } else {
-                    pFrameDiagnosticCounter += 1
-                    if pFrameDiagnosticCounter % 60 == 1 {
-                        let crc = CRC32.calculate(encodedData)
-                        let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-                        MirageLogger.stream("Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)")
-                    }
+                } else if reservation.shouldLogPFrameDiagnostic {
+                    let crc = CRC32.calculate(encodedData)
+                    let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                    MirageLogger.stream("Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)")
                 }
 
-                let contentRect = pinnedContentRect ?? currentContentRect
-                let frameNum = localFrameNumber
-                let seqStart = localSequenceNumber
-
-                let now = CFAbsoluteTimeGetCurrent()
-                let fecBlockSize = resolvedFECBlockSize(isKeyframe: isKeyframe, now: now)
+                let contentRect = pinnedContentRect ?? self.currentContentRect
                 let pacingOverride = isKeyframe ? startupKeyframePacingOverride(now: now) : nil
                 let frameByteCount = encodedData.count
-                let dataFragments = (frameByteCount + maxPayloadSize - 1) / maxPayloadSize
-                let parityFragments = fecBlockSize > 1 ? (dataFragments + fecBlockSize - 1) / fecBlockSize : 0
-                let totalFragments = dataFragments + parityFragments
-                let wireBytes = frameByteCount + parityFragments * maxPayloadSize
-                localSequenceNumber += UInt32(totalFragments)
-                localFrameNumber += 1
 
-                let flags = baseFrameFlags.union(dynamicFrameFlags)
-                let dimToken = dimensionToken
-                let epoch = epoch
+                let flags = baseFrameFlags.union(self.dynamicFrameFlags)
+                let dimToken = self.dimensionToken
+                let epoch = self.epoch
 
                 let generation = packetSender.currentGenerationSnapshot()
                 if isKeyframe {
@@ -145,13 +139,13 @@ extension StreamContext {
                     presentationTime: presentationTime,
                     contentRect: contentRect,
                     streamID: streamID,
-                    frameNumber: frameNum,
-                    sequenceNumberStart: seqStart,
+                    frameNumber: reservation.frameNumber,
+                    sequenceNumberStart: reservation.sequenceNumberStart,
                     additionalFlags: flags,
                     dimensionToken: dimToken,
                     epoch: epoch,
                     fecBlockSize: fecBlockSize,
-                    wireBytes: wireBytes,
+                    wireBytes: reservation.wireBytes,
                     logPrefix: logPrefix,
                     generation: generation,
                     encodedAt: now,

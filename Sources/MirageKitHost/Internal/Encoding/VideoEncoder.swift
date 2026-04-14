@@ -62,8 +62,8 @@ actor VideoEncoder {
 
     var isEncoding = false
     var frameNumber: UInt64 = 0
-    var encodedFrameHandler: ((Data, Bool, CMTime) -> Void)?
-    var frameCompletionHandler: (() -> Void)?
+    var encodedFrameHandler: (@Sendable (Data, Bool, CMTime) -> Void)?
+    var frameCompletionHandler: (@Sendable () -> Void)?
     var forceNextKeyframe = false
     var isUpdatingDimensions = false
 
@@ -213,22 +213,22 @@ final class EncodePerformanceTracker: @unchecked Sendable {
 /// Info passed through the encode callback
 final class EncodeInfo: @unchecked Sendable {
     let frameNumber: UInt64
-    let handler: ((Data, Bool, CMTime) -> Void)?
+    let handler: (@Sendable (Data, Bool, CMTime) -> Void)?
     let encodeStartTime: CFAbsoluteTime
     let sessionVersion: UInt64
     let performanceTracker: EncodePerformanceTracker?
-    let completion: (() -> Void)?
+    let completion: (@Sendable () -> Void)?
     let isProRes: Bool
     /// Closure to check current session version (captures encoder reference)
     let getCurrentVersion: () -> UInt64
 
     init(
         frameNumber: UInt64,
-        handler: ((Data, Bool, CMTime) -> Void)?,
+        handler: (@Sendable (Data, Bool, CMTime) -> Void)?,
         encodeStartTime: CFAbsoluteTime = 0,
         sessionVersion: UInt64 = 0,
         performanceTracker: EncodePerformanceTracker?,
-        completion: (() -> Void)?,
+        completion: (@Sendable () -> Void)?,
         isProRes: Bool = false,
         getCurrentVersion: @escaping () -> UInt64
     ) {

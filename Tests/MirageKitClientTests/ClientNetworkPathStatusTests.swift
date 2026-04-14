@@ -61,6 +61,26 @@ struct ClientNetworkPathStatusTests {
         #expect(status.displayName == "VPN / Overlay")
     }
 
+    @Test("Tunnel interface names win over Wi-Fi path flags")
+    func overlayClassifierWinsOverWiFiFlags() {
+        let snapshot = MirageNetworkPathClassifier.classify(
+            interfaceNames: ["en0", "utun4"],
+            usesWiFi: true,
+            usesWired: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            status: "satisfied",
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: true
+        )
+
+        #expect(snapshot.kind == .other)
+        #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "VPN / Overlay")
+    }
+
     @Test("Interface type summary combines active flags")
     func interfaceTypeSummary() {
         let status = MirageClientNetworkPathStatus(
