@@ -792,7 +792,8 @@ extension MirageHostService {
             startupAttemptID: startupAttemptID,
             displayCount: 1,
             dimensionToken: dimensionToken,
-            acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize
+            acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize,
+            transitionPhase: .startup
         )
         do {
             registerPendingStartupAttempt(

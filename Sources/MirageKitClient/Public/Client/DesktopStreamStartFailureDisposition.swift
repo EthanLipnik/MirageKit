@@ -33,5 +33,6 @@ extension MirageClientService {
         desktopStreamMode = nil
         desktopCursorPresentation = nil
         pendingDesktopRequestedColorDepth = nil
+        desktopResizeCoordinator.clearAllState()
     }
 }

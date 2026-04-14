@@ -20,6 +20,7 @@ public final class MirageStreamViewCoordinator {
     var onDirectTouchActivity: (() -> Void)?
     var onDictationStateChanged: ((Bool) -> Void)?
     var onDictationError: ((String) -> Void)?
+    var onDictationInputLevelChanged: ((Float) -> Void)?
     var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
     weak var sampleBufferView: MirageSampleBufferView?
     private var representableUpdateCount: UInt64 = 0
@@ -38,6 +39,7 @@ public final class MirageStreamViewCoordinator {
         onDirectTouchActivity: (() -> Void)? = nil,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
+        onDictationInputLevelChanged: ((Float) -> Void)? = nil,
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil
     ) {
         self.onInputEvent = onInputEvent
@@ -50,6 +52,7 @@ public final class MirageStreamViewCoordinator {
         self.onDirectTouchActivity = onDirectTouchActivity
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
+        self.onDictationInputLevelChanged = onDictationInputLevelChanged
         self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
     }
 
@@ -91,6 +94,10 @@ public final class MirageStreamViewCoordinator {
 
     func handleDictationError(_ message: String) {
         onDictationError?(message)
+    }
+
+    func handleDictationInputLevelChanged(_ level: Float) {
+        onDictationInputLevelChanged?(level)
     }
 
     func handleResolvedPointerLockStateChanged(_ state: MirageResolvedPointerLockState) {

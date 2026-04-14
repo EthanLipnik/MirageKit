@@ -78,6 +78,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Callback when dictation fails with a user-facing message.
     public var onDictationError: ((String) -> Void)?
 
+    /// Callback when dictation microphone input level changes.
+    public var onDictationInputLevelChanged: ((Float) -> Void)?
+
     /// Callback when UIKit resolves pointer-lock availability for the current scene.
     public var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
 
@@ -140,6 +143,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         dictationToggleRequestID: UInt64 = 0,
         onDictationStateChanged: ((Bool) -> Void)? = nil,
         onDictationError: ((String) -> Void)? = nil,
+        onDictationInputLevelChanged: ((Float) -> Void)? = nil,
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)? = nil,
         dictationMode: MirageDictationMode = .best,
         dictationLocalePreference: MirageDictationLocalePreference = .system,
@@ -176,6 +180,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.dictationToggleRequestID = dictationToggleRequestID
         self.onDictationStateChanged = onDictationStateChanged
         self.onDictationError = onDictationError
+        self.onDictationInputLevelChanged = onDictationInputLevelChanged
         self.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         self.dictationMode = dictationMode
         self.dictationLocalePreference = dictationLocalePreference
@@ -203,6 +208,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onDirectTouchActivity: onDirectTouchActivity,
             onDictationStateChanged: onDictationStateChanged,
             onDictationError: onDictationError,
+            onDictationInputLevelChanged: onDictationInputLevelChanged,
             onResolvedPointerLockStateChanged: onResolvedPointerLockStateChanged
         )
     }
@@ -223,6 +229,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onPencilGestureAction: onPencilGestureAction,
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError,
+            onDictationInputLevelChanged: context.coordinator.handleDictationInputLevelChanged,
             onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
         )
         controller.updateState(
@@ -264,6 +271,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         context.coordinator.onDirectTouchActivity = onDirectTouchActivity
         context.coordinator.onDictationStateChanged = onDictationStateChanged
         context.coordinator.onDictationError = onDictationError
+        context.coordinator.onDictationInputLevelChanged = onDictationInputLevelChanged
         context.coordinator.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
         context.coordinator.noteRepresentableUpdate(for: streamID)
 
@@ -281,6 +289,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             onPencilGestureAction: onPencilGestureAction,
             onDictationStateChanged: context.coordinator.handleDictationStateChanged,
             onDictationError: context.coordinator.handleDictationError,
+            onDictationInputLevelChanged: context.coordinator.handleDictationInputLevelChanged,
             onResolvedPointerLockStateChanged: context.coordinator.handleResolvedPointerLockStateChanged
         )
 
@@ -392,6 +401,7 @@ public final class MirageStreamViewController: UIViewController {
         onPencilGestureAction: ((MiragePencilGestureAction) -> Void)?,
         onDictationStateChanged: ((Bool) -> Void)?,
         onDictationError: ((String) -> Void)?,
+        onDictationInputLevelChanged: ((Float) -> Void)?,
         onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
     ) {
         captureView.onInputEvent = onInputEvent
@@ -407,6 +417,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onPencilGestureAction = onPencilGestureAction
         captureView.onDictationStateChanged = onDictationStateChanged
         captureView.onDictationError = onDictationError
+        captureView.onDictationInputLevelChanged = onDictationInputLevelChanged
         captureView.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
     }
 

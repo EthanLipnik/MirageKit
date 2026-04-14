@@ -498,6 +498,8 @@ public final class MirageClientService {
 
     /// Session store for UI state and stream coordination.
     public let sessionStore: MirageClientSessionStore
+    /// Durable desktop resize state shared across SwiftUI view lifecycles.
+    let desktopResizeCoordinator = DesktopResizeCoordinator()
     /// Metrics store for stream telemetry (decoupled from SwiftUI).
     public let metricsStore = MirageClientMetricsStore()
     /// Cursor store for pointer updates (decoupled from SwiftUI).
@@ -605,6 +607,7 @@ public final class MirageClientService {
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
+    var pendingLocalDesktopStopStreamID: StreamID?
     let desktopStreamStopTimeout: Duration = .seconds(2)
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []

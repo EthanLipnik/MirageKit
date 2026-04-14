@@ -263,6 +263,59 @@ public extension MirageClientService {
             )
     }
 
+    internal func prepareControllerForDesktopResize(
+        _ streamID: StreamID,
+        codec: MirageVideoCodec,
+        streamDimensions: (width: Int, height: Int)?,
+        mediaMaxPacketSize: Int?
+    )
+    async {
+        let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
+        let previousMediaMaxPacketSize = mediaMaxPacketSizeByStream[streamID] ?? mirageDefaultMaxPacketSize
+        guard previousMediaMaxPacketSize == acceptedMediaMaxPacketSize else {
+            if let existingController = controllersByStream[streamID] {
+                await existingController.stop()
+                controllersByStream.removeValue(forKey: streamID)
+                mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
+            }
+            MirageLogger.client(
+                "Recreating controller for desktop resize on stream \(streamID) due to media packet size change \(previousMediaMaxPacketSize)B -> \(acceptedMediaMaxPacketSize)B"
+            )
+            return await setupControllerForStream(
+                streamID,
+                beginPostResizeTransition: true,
+                codec: codec,
+                streamDimensions: streamDimensions,
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize
+            )
+        }
+
+        guard let existingController = controllersByStream[streamID] else {
+            return await setupControllerForStream(
+                streamID,
+                beginPostResizeTransition: true,
+                codec: codec,
+                streamDimensions: streamDimensions,
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize
+            )
+        }
+
+        let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
+        await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
+        await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
+        await existingController.prepareForResize(
+            codec: codec,
+            streamDimensions: streamDimensions
+        )
+        await existingController.beginPostResizeTransition()
+        await existingController.updatePresentationTier(sessionStore.presentationTier(for: streamID))
+        decoderCompatibilityFallbackLastAppliedTime[streamID] = 0
+        mediaMaxPacketSizeByStream[streamID] = acceptedMediaMaxPacketSize
+        MirageLogger.client(
+            "Prepared existing controller for desktop resize on stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
+        )
+    }
+
     func resolvedRequestedMediaMaxPacketSize() -> Int {
         miragePreferredMediaMaxPacketSize(for: controlPathSnapshot?.kind)
     }
@@ -333,7 +386,7 @@ public extension MirageClientService {
         await forceStopWindowStreamLocally(streamID: streamID)
     }
 
-    private func handleTerminalStartupFailure(
+    internal func handleTerminalStartupFailure(
         _ failure: StreamController.TerminalStartupFailure,
         for streamID: StreamID
     ) async {
@@ -347,6 +400,17 @@ public extension MirageClientService {
         let error = MirageError.protocolError(failure.errorMessage)
 
         if desktopStreamID == streamID {
+            if pendingLocalDesktopStopStreamID == streamID {
+                MirageLogger.client(
+                    "Suppressing terminal startup failure for stream \(streamID) while a local desktop stop is pending"
+                )
+                await forceStopDesktopStreamLocally(
+                    streamID: streamID,
+                    notifyStopReason: .clientRequested
+                )
+                return
+            }
+
             let request = StopDesktopStreamMessage(streamID: streamID)
             if let message = try? ControlMessage(type: .stopDesktopStream, content: request) {
                 sendControlMessageBestEffort(message)
@@ -374,6 +438,7 @@ public extension MirageClientService {
     func cancelDesktopStreamStopTimeout() {
         desktopStreamStopTimeoutTask?.cancel()
         desktopStreamStopTimeoutTask = nil
+        pendingLocalDesktopStopStreamID = nil
     }
 
     nonisolated static func shouldForceLocalDesktopStopAfterTimeout(
@@ -402,6 +467,7 @@ public extension MirageClientService {
                 isRegistered: self.registeredStreamIDs.contains(streamID)
             ) else {
                 self.desktopStreamStopTimeoutTask = nil
+                self.pendingLocalDesktopStopStreamID = nil
                 return
             }
 

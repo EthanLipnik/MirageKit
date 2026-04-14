@@ -284,6 +284,15 @@ public final class MirageHostService {
         let consecutiveSamples: Int
     }
 
+    struct DesktopResizeRequestState: Sendable, Equatable {
+        let logicalResolution: CGSize
+        let transitionID: UUID?
+        let requestedDisplayScaleFactor: CGFloat?
+        let requestedStreamScale: CGFloat?
+        let encoderMaxWidth: Int?
+        let encoderMaxHeight: Int?
+    }
+
     // Per-window dedicated virtual display state for app/window streams.
     var windowVirtualDisplayStateByWindowID: [WindowID: WindowVirtualDisplayState] = [:]
     // Per-stream queued resize targets for dedicated app/window displays.
@@ -312,9 +321,8 @@ public final class MirageHostService {
     var desktopRequestedScaleFactor: CGFloat?
     var desktopUsesHostResolution: Bool = false
     var desktopStreamMode: MirageDesktopStreamMode = .unified
-    var pendingDesktopResizeResolution: CGSize?
-    var desktopResizeInFlight: Bool = false
-    var desktopResizeRequestCounter: UInt64 = 0
+    var activeDesktopResizeRequest: DesktopResizeRequestState?
+    var queuedDesktopResizeRequest: DesktopResizeRequestState?
     var desktopSharedDisplayTransitionDepth: Int = 0
 
     /// Set when the client cancels stream setup before a stream ID is established.
@@ -635,7 +643,7 @@ public final class MirageHostService {
             "host.availableWindowsCount": .int(availableWindows.count),
             "host.desktopStreamActive": .bool(desktopStreamID != nil),
 
-            "host.desktopResizeInFlight": .bool(desktopResizeInFlight),
+            "host.desktopResizeInFlight": .bool(activeDesktopResizeRequest != nil),
             "host.desktopSharedDisplayTransitionInFlight": .bool(desktopSharedDisplayTransitionInFlight),
             "host.windowVirtualDisplayCount": .int(windowVirtualDisplayStateByWindowID.count)
         ]

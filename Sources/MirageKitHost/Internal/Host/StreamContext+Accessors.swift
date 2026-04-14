@@ -182,6 +182,30 @@ extension StreamContext {
         streamScale
     }
 
+    func getRequestedStreamScale() -> CGFloat {
+        requestedStreamScale
+    }
+
+    func getEncoderMaxDimensions() -> (width: Int?, height: Int?) {
+        (encoderMaxWidth, encoderMaxHeight)
+    }
+
+    func updateDesktopResizeGeometryRequest(
+        requestedStreamScale: CGFloat?,
+        encoderMaxWidth: Int?,
+        encoderMaxHeight: Int?
+    ) {
+        if let requestedStreamScale {
+            self.requestedStreamScale = StreamContext.clampStreamScale(requestedStreamScale)
+        }
+        if let encoderMaxWidth, encoderMaxWidth > 0 {
+            self.encoderMaxWidth = encoderMaxWidth
+        }
+        if let encoderMaxHeight, encoderMaxHeight > 0 {
+            self.encoderMaxHeight = encoderMaxHeight
+        }
+    }
+
     func isResolutionCapDisabled() -> Bool {
         disableResolutionCap
     }

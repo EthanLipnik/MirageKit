@@ -355,8 +355,11 @@ extension StreamContext {
 
         let nextCount = recoveryRequestCount + 1
         let useHardRecovery = nextCount >= hardRecoveryThreshold
-        let requiresReset = useHardRecovery && performanceMode != .game
         let reason = useHardRecovery ? "Keyframe request (hard)" : "Keyframe request (soft)"
+
+        if coalesceKeyframeRecoveryForFreshnessBurst(reason: reason) { return }
+
+        let requiresReset = useHardRecovery && performanceMode != .game
 
         let queued = queueKeyframe(
             reason: reason,

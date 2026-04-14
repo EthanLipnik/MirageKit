@@ -271,7 +271,12 @@ extension MirageHostService {
             let baseResolution = CGSize(width: request.displayWidth, height: request.displayHeight)
             await handleDisplayResolutionChange(
                 streamID: request.streamID,
-                newResolution: baseResolution
+                newResolution: baseResolution,
+                transitionID: request.transitionID,
+                requestedDisplayScaleFactor: request.requestedDisplayScaleFactor,
+                requestedStreamScale: request.requestedStreamScale,
+                encoderMaxWidth: request.encoderMaxWidth,
+                encoderMaxHeight: request.encoderMaxHeight
             )
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle displayResolutionChange: ")
@@ -423,6 +428,7 @@ extension MirageHostService {
         let contextCount = streamsByID.count
         guard contextCount > 0 else { return }
         MirageLogger.host("Pausing all streams (\(contextCount)) for client background")
+        resetDesktopResizeTransactionState()
         for (_, context) in streamsByID {
             await context.pauseForClientBackground()
         }

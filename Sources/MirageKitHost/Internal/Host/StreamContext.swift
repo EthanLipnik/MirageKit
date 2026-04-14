@@ -172,6 +172,11 @@ actor StreamContext {
     var typingBurstDeadline: CFAbsoluteTime = 0
     var typingBurstActive = false
     var typingBurstExpiryTask: Task<Void, Never>?
+    var freshnessBurstActive = false
+    var freshnessBurstEntryCount: UInt64 = 0
+    var freshnessBurstQueueResetCount: UInt64 = 0
+    var freshnessBurstRecoveryKeyframeCount: UInt64 = 0
+    var freshnessBurstCoalescedKeyframeCount: UInt64 = 0
     var latencyBurstActive = false
     var latencyBurstDrainsNewestFrames = false
     var latencyBurstCaptureQueueDepthOverride: Int?
@@ -250,9 +255,6 @@ actor StreamContext {
     var backpressureActive: Bool = false
     nonisolated(unsafe) var backpressureActiveSnapshot: Bool = false
     var backpressureActivatedAt: CFAbsoluteTime = 0
-    var lastBackpressureRecoveryTime: CFAbsoluteTime = 0
-    let backpressureRecoveryThreshold: CFAbsoluteTime = 0.75
-    let backpressureRecoveryCooldown: CFAbsoluteTime = 2.0
     var transportSendErrorTimestamps: [CFAbsoluteTime] = []
     var lastTransportSendErrorRecoveryTime: CFAbsoluteTime = 0
     let transportSendErrorWindow: CFAbsoluteTime = 1.0

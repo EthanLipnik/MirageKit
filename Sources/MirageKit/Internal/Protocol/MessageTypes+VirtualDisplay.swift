@@ -42,11 +42,35 @@ package struct DisplayResolutionChangeMessage: Codable {
     /// New display size in points (logical view bounds)
     package let displayWidth: Int
     package let displayHeight: Int
+    /// Desktop-only transition identifier for stale resize suppression.
+    package var transitionID: UUID?
+    /// Desktop-only requested backing scale factor for logical -> pixel mapping.
+    package var requestedDisplayScaleFactor: CGFloat?
+    /// Desktop-only requested stream scale before host-side capping.
+    package var requestedStreamScale: CGFloat?
+    /// Desktop-only maximum encoded width in pixels for host-side geometry resolution.
+    package var encoderMaxWidth: Int?
+    /// Desktop-only maximum encoded height in pixels for host-side geometry resolution.
+    package var encoderMaxHeight: Int?
 
-    package init(streamID: StreamID, displayWidth: Int, displayHeight: Int) {
+    package init(
+        streamID: StreamID,
+        displayWidth: Int,
+        displayHeight: Int,
+        transitionID: UUID? = nil,
+        requestedDisplayScaleFactor: CGFloat? = nil,
+        requestedStreamScale: CGFloat? = nil,
+        encoderMaxWidth: Int? = nil,
+        encoderMaxHeight: Int? = nil
+    ) {
         self.streamID = streamID
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
+        self.transitionID = transitionID
+        self.requestedDisplayScaleFactor = requestedDisplayScaleFactor
+        self.requestedStreamScale = requestedStreamScale
+        self.encoderMaxWidth = encoderMaxWidth
+        self.encoderMaxHeight = encoderMaxHeight
     }
 }
 

@@ -42,7 +42,6 @@ extension StreamController {
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
         postResizeDecodeErrorGraceDeadline = 0
-        decodePausedForLocalResize = false
         lastMetricsLogTime = 0
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
@@ -61,25 +60,27 @@ extension StreamController {
         }
     }
 
-    /// Freeze decode admission while local resize orchestration is in-flight.
-    func suspendDecodeForLocalResize() {
-        guard !decodePausedForLocalResize else { return }
-        decodePausedForLocalResize = true
+    /// Prepare decoder/reassembler state for an in-place desktop resize without
+    /// clearing steady-state metrics or startup history for the active stream.
+    func prepareForResize(
+        codec: MirageVideoCodec,
+        streamDimensions: (width: Int, height: Int)? = nil
+    )
+    async {
+        await stopTierPromotionProbe()
+        stopFirstPresentedFrameMonitor()
+        stopFrameProcessingPipeline()
+        await decoder.setCodec(codec, streamDimensions: streamDimensions)
+        await decoder.resetForNewSession()
+        reassembler.reset()
         clearQueuedFramesForRecovery()
-        MirageLogger.client("Local resize decode pause enabled for stream \(streamID)")
-    }
-
-    /// Resume decode after local resize orchestration.
-    /// Optionally requests an immediate recovery keyframe to reduce first-frame latency.
-    func resumeDecodeAfterLocalResize(requestRecoveryKeyframe: Bool) async {
-        if decodePausedForLocalResize {
-            decodePausedForLocalResize = false
-            MirageLogger.client("Local resize decode pause cleared for stream \(streamID)")
-        }
-
-        guard requestRecoveryKeyframe else { return }
-        await beginPostResizeTransition()
-        await requestKeyframeRecovery(reason: .manualRecovery)
+        awaitingFirstFrameAfterResize = false
+        postResizeDecodeErrorGraceDeadline = 0
+        lastDecodedFrameTime = 0
+        lastPresentedProgressTime = 0
+        lastPresentedSequenceObserved = 0
+        stopFreezeMonitor()
+        await startFrameProcessingPipeline()
     }
 
     /// Enter keyframe-only decode admission until a post-resize first frame is decoded.

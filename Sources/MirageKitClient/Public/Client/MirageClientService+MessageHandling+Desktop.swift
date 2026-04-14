@@ -13,11 +13,71 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    private func handleDesktopResizeCommit(_ started: DesktopStreamStartedMessage) async -> Bool {
+        let streamID = started.streamID
+        guard desktopResizeCoordinator.acceptTransition(
+            streamID: streamID,
+            transitionID: started.transitionID
+        ) else {
+            MirageLogger.client(
+                "Ignoring stale desktop resize commit for stream \(streamID): transition=\(started.transitionID?.uuidString ?? "nil")"
+            )
+            return false
+        }
+
+        guard desktopStreamID == streamID || controllersByStream[streamID] != nil else {
+            MirageLogger.client(
+                "Ignoring desktop resize commit for inactive stream \(streamID): transition=\(started.transitionID?.uuidString ?? "nil")"
+            )
+            clearDesktopResizeState(streamID: streamID)
+            return false
+        }
+
+        desktopStreamID = streamID
+        desktopStreamResolution = CGSize(width: started.width, height: started.height)
+        activeStreamCodecs[streamID] = started.codec
+        if let dimensionToken = started.dimensionToken {
+            desktopDimensionTokenByStream[streamID] = dimensionToken
+        }
+
+        let desktopMinSize = CGSize(width: started.width, height: started.height)
+        sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
+        onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
+        onDesktopStreamStarted?(streamID, desktopMinSize, started.displayCount)
+
+        let outcome = started.transitionOutcome ?? .resized
+        if outcome == .noChange {
+            sessionStore.clearPostResizeTransition(for: streamID)
+            desktopResizeCoordinator.finishTransition(outcome: outcome)
+            await dispatchQueuedDesktopResizeIfNeeded(streamID: streamID)
+            return true
+        }
+
+        await prepareControllerForDesktopResize(
+            streamID,
+            codec: started.codec,
+            streamDimensions: (width: started.width, height: started.height),
+            mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
+        )
+        if let dimensionToken = started.dimensionToken,
+           let controller = controllersByStream[streamID] {
+            let reassembler = await controller.getReassembler()
+            reassembler.updateExpectedDimensionToken(dimensionToken)
+        }
+        sessionStore.beginPostResizeTransition(for: streamID)
+        desktopResizeCoordinator.finishTransition(outcome: outcome)
+        return true
+    }
+
     func handleDesktopStreamStarted(_ message: ControlMessage) async {
         do {
             let started = try message.decode(DesktopStreamStartedMessage.self)
             MirageLogger
                 .client("Desktop stream started: stream=\(started.streamID), \(started.width)x\(started.height)")
+            if started.transitionPhase == .resize || started.transitionID != nil {
+                _ = await handleDesktopResizeCommit(started)
+                return
+            }
             let streamID = started.streamID
             let startupAttemptID = started.startupAttemptID
             guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
@@ -168,6 +228,7 @@ extension MirageClientService {
             MirageLogger.error(.client, "Desktop stream start failed: \(failed.reason)")
             if let streamID = desktopStreamID {
                 clearStartupAttempt(for: streamID)
+                clearDesktopResizeState(streamID: streamID)
             }
             clearPendingDesktopStreamStartState()
             delegate?.clientService(
@@ -200,7 +261,7 @@ extension MirageClientService {
             desktopCursorPresentation = nil
             desktopDimensionTokenByStream.removeValue(forKey: streamID)
             clearStartupAttempt(for: streamID)
-            sessionStore.clearPostResizeTransition(for: streamID)
+            clearDesktopResizeState(streamID: streamID)
             metricsStore.clear(streamID: streamID)
             cursorStore.clear(streamID: streamID)
             cursorPositionStore.clear(streamID: streamID)

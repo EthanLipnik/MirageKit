@@ -30,6 +30,7 @@ extension InputCapturingView {
         guard !isDictationActive else { return }
         MirageLogger.client("Dictation start requested mode=\(dictationMode.rawValue)")
         dictationResultBuffer.reset()
+        let inputLevelHandler = beginDictationInputLevelSession()
 
         dictationFinalizeTask?.cancel()
         dictationFinalizeTask = nil
@@ -47,10 +48,16 @@ extension InputCapturingView {
 
                 if #available(iOS 26.0, visionOS 26.0, *) {
                     MirageLogger.client("Starting modern dictation analyzer locale=\(dictationLocale.identifier)")
-                    try await startSpeechAnalyzerDictationModern(locale: dictationLocale)
+                    try await startSpeechAnalyzerDictationModern(
+                        locale: dictationLocale,
+                        inputLevelHandler: inputLevelHandler
+                    )
                 } else {
                     MirageLogger.client("Starting legacy dictation recognizer locale=\(dictationLocale.identifier)")
-                    try startSpeechRecognizerDictationLegacy(locale: dictationLocale)
+                    try startSpeechRecognizerDictationLegacy(
+                        locale: dictationLocale,
+                        inputLevelHandler: inputLevelHandler
+                    )
                 }
 
                 isDictationActive = true
@@ -136,6 +143,7 @@ extension InputCapturingView {
             engine.stop()
         }
         dictationAudioEngine = nil
+        endDictationInputLevelSession()
 
         if !(dictationMode == .best && hasModernAnalyzer) {
             dictationResultBuffer.reset()
@@ -179,8 +187,34 @@ extension InputCapturingView {
         return locale
     }
 
+    private func beginDictationInputLevelSession() -> ((AVAudioPCMBuffer) -> Void)? {
+        dictationInputLevelGeneration &+= 1
+        _ = dictationInputLevelMeter.reset()
+
+        guard onDictationInputLevelChanged != nil else { return nil }
+        let generation = dictationInputLevelGeneration
+        let meter = dictationInputLevelMeter
+
+        return { [weak self, meter] buffer in
+            guard let level = meter.process(buffer) else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.dictationInputLevelGeneration == generation else { return }
+                self.onDictationInputLevelChanged?(level)
+            }
+        }
+    }
+
+    private func endDictationInputLevelSession() {
+        dictationInputLevelGeneration &+= 1
+        let resetLevel = dictationInputLevelMeter.reset()
+        onDictationInputLevelChanged?(resetLevel)
+    }
+
     @available(iOS 26.0, visionOS 26.0, *)
-    private func startSpeechAnalyzerDictationModern(locale: Locale) async throws {
+    private func startSpeechAnalyzerDictationModern(
+        locale: Locale,
+        inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
+    ) async throws {
         let moduleChoice = DictationModuleChoice(locale: locale, mode: dictationMode)
         MirageLogger.client("Dictation analyzer module=\(String(describing: moduleChoice)) locale=\(locale.identifier)")
         dictationResultBuffer.reset()
@@ -230,7 +264,11 @@ extension InputCapturingView {
             onBus: 0,
             bufferSize: 1024,
             format: nil,
-            block: makeAnalyzerInputTapBlock(sink: analyzerSink, converter: analyzerConverter)
+            block: makeAnalyzerInputTapBlock(
+                sink: analyzerSink,
+                converter: analyzerConverter,
+                inputLevelHandler: inputLevelHandler
+            )
         )
 
         try engine.start()
@@ -280,7 +318,10 @@ extension InputCapturingView {
         }
     }
 
-    private func startSpeechRecognizerDictationLegacy(locale: Locale) throws {
+    private func startSpeechRecognizerDictationLegacy(
+        locale: Locale,
+        inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
+    ) throws {
         dictationResultBuffer.reset()
 
         guard let recognizer = SFSpeechRecognizer(locale: locale), recognizer.isAvailable else {
@@ -322,7 +363,10 @@ extension InputCapturingView {
             onBus: 0,
             bufferSize: 1024,
             format: inputFormat,
-            block: makeLegacyRecognitionTapBlock(request: recognitionRequest)
+            block: makeLegacyRecognitionTapBlock(
+                request: recognitionRequest,
+                inputLevelHandler: inputLevelHandler
+            )
         )
 
         try engine.start()
@@ -548,9 +592,11 @@ private final class DictationAnalyzerConverter: @unchecked Sendable {
 @available(iOS 26.0, visionOS 26.0, *)
 private func makeAnalyzerInputTapBlock(
     sink: AnalyzerInputSink,
-    converter: DictationAnalyzerConverter
+    converter: DictationAnalyzerConverter,
+    inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
 ) -> AVAudioNodeTapBlock {
     { buffer, _ in
+        inputLevelHandler?(buffer)
         guard let copiedBuffer = copyPCMBufferForDictation(buffer) else { return }
         guard let convertedBuffer = converter.convert(copiedBuffer) else { return }
         sink.yield(convertedBuffer)
@@ -558,9 +604,11 @@ private func makeAnalyzerInputTapBlock(
 }
 
 private func makeLegacyRecognitionTapBlock(
-    request: SFSpeechAudioBufferRecognitionRequest
+    request: SFSpeechAudioBufferRecognitionRequest,
+    inputLevelHandler: ((AVAudioPCMBuffer) -> Void)?
 ) -> AVAudioNodeTapBlock {
     { buffer, _ in
+        inputLevelHandler?(buffer)
         request.append(buffer)
     }
 }

@@ -347,8 +347,7 @@ extension MirageClientService {
         controllersByStream.removeAll()
         startupAttemptIDByStream.removeAll()
         registeredStreamIDs.removeAll()
-        desktopStreamStopTimeoutTask?.cancel()
-        desktopStreamStopTimeoutTask = nil
+        cancelDesktopStreamStopTimeout()
         desktopStreamRequestStartTime = 0
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()
@@ -416,6 +415,11 @@ extension MirageClientService {
         hasCompletedBootstrap = false
         negotiatedFeatures = []
         mediaPayloadEncryptionEnabled = true
+        if let desktopStreamID {
+            clearDesktopResizeState(streamID: desktopStreamID)
+        } else {
+            desktopResizeCoordinator.clearAllState()
+        }
         desktopStreamID = nil
         desktopStreamResolution = nil
         desktopStreamMode = nil

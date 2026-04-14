@@ -151,7 +151,6 @@ extension StreamContext {
         backpressureActive = false
         backpressureActiveSnapshot = false
         backpressureActivatedAt = 0
-        lastBackpressureRecoveryTime = 0
         lastCapturedFrame = nil
         cachedStartupFrame = nil
         lastCapturedFrameTime = 0
@@ -163,6 +162,7 @@ extension StreamContext {
         typingBurstExpiryTask = nil
         typingBurstActive = false
         typingBurstDeadline = 0
+        freshnessBurstActive = false
         if latencyBurstCaptureQueueDepthOverride != nil {
             encoderConfig.captureQueueDepth = preLatencyBurstCaptureQueueDepthOverride
         }
@@ -186,37 +186,6 @@ extension StreamContext {
         guard hadBackpressure, log, let queueBytes else { return }
         let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
         MirageLogger.stream("Backpressure cleared (queue \(queuedKB)KB)")
-    }
-
-    func triggerBackpressureRecoveryIfNeeded(queueBytes: Int, now: CFAbsoluteTime) async -> Bool {
-        // Sunshine-style game-mode behavior prefers a steady encode/send pipeline over
-        // queue-reset discontinuities. Keep recovery soft in game mode.
-        guard performanceMode != .game else { return false }
-        guard backpressureActive else { return false }
-        let activationTime = backpressureActivatedAt > 0 ? backpressureActivatedAt : now
-        if backpressureActivatedAt == 0 { backpressureActivatedAt = now }
-        guard now - activationTime >= backpressureRecoveryThreshold else { return false }
-        if lastBackpressureRecoveryTime > 0, now - lastBackpressureRecoveryTime < backpressureRecoveryCooldown {
-            return false
-        }
-
-        lastBackpressureRecoveryTime = now
-        backpressureActivatedAt = now
-
-        let queuedKB = Int((Double(queueBytes) / 1024.0).rounded())
-        MirageLogger.stream("Backpressure recovery: queue reset at \(queuedKB)KB")
-        noteLossEvent(reason: "backpressure recovery", enablePFrameFEC: true)
-
-        await packetSender?.resetQueue(reason: "backpressure recovery")
-        clearBackpressureState(log: false)
-        keyframeSendDeadline = 0
-        lastKeyframeRequestTime = 0
-        queueKeyframe(
-            reason: "Backpressure recovery keyframe",
-            checkInFlight: false,
-            urgent: true
-        )
-        return true
     }
 
     private func scheduleEncoderResetRetry(after delaySeconds: Double, reason: String) {
@@ -270,9 +239,14 @@ extension StreamContext {
         // Capture admission drops can keep this loop alive without enqueued frames.
         // Re-check sender queue state so backpressure can clear even when we are not
         // currently processing a frame.
-        if backpressureActive {
-            let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
-            if queueBytes <= queuePressureBytes { clearBackpressureState(queueBytes: queueBytes) }
+        let queueBytesSnapshot = packetSender?.queuedBytesSnapshot() ?? 0
+        if freshnessBurstActive {
+            _ = await exitFreshnessBurstIfNeeded(
+                queueBytes: queueBytesSnapshot,
+                reason: "queue recovered"
+            )
+        } else if backpressureActive {
+            if queueBytesSnapshot <= queuePressureBytes { clearBackpressureState(queueBytes: queueBytesSnapshot) }
         }
 
         while inFlightCount < maxInFlightFrames {
@@ -364,7 +338,6 @@ extension StreamContext {
             }
 
             let queueBytes = packetSender?.queuedBytesSnapshot() ?? 0
-            await adjustQualityForQueue(queueBytes: queueBytes)
             let backpressureTriggerBytes = performanceMode == .game
                 ? max(maxQueuedBytes, Self.gameModeBackpressureTriggerBytes)
                 : maxQueuedBytes
@@ -389,6 +362,7 @@ extension StreamContext {
             if !forceKeyframe { forceKeyframe = shouldEmitPendingKeyframe(queueBytes: queueBytes) }
 
             if performanceMode == .game {
+                await adjustQualityForQueue(queueBytes: queueBytes)
                 if queueBytes > backpressureTriggerBytes, !forceKeyframe {
                     // Sunshine-style behavior: do not enter sticky backpressure/reset loops.
                     // Drop only the current frame when transport backlog spikes.
@@ -400,31 +374,38 @@ extension StreamContext {
                     await logStreamStatsIfNeeded()
                     continue
                 }
-            } else if backpressureActive {
-                if queueBytes <= queuePressureBytes {
-                    clearBackpressureState(queueBytes: queueBytes)
-                } else if await triggerBackpressureRecoveryIfNeeded(
-                    queueBytes: queueBytes,
-                    now: CFAbsoluteTimeGetCurrent()
-                ) {
+            } else {
+                if freshnessBurstActive {
+                    if await exitFreshnessBurstIfNeeded(
+                        queueBytes: queueBytes,
+                        reason: "queue recovered"
+                    ) {
+                        await logStreamStatsIfNeeded()
+                    } else if queueBytes > backpressureTriggerBytes, !forceKeyframe {
+                        backpressureDropIntervalCount += 1
+                        droppedFrameCount += 1
+                        await logStreamStatsIfNeeded()
+                        continue
+                    }
+                } else if queueBytes > backpressureTriggerBytes {
+                    _ = await enterFreshnessBurstIfNeeded(
+                        queueBytes: queueBytes,
+                        reason: "severe queue pressure"
+                    )
                     await logStreamStatsIfNeeded()
                     continue
-                } else {
+                }
+
+                if !freshnessBurstActive {
+                    await adjustQualityForQueue(queueBytes: queueBytes)
+                }
+
+                if queueBytes > backpressureTriggerBytes, freshnessBurstActive, !forceKeyframe {
                     backpressureDropIntervalCount += 1
                     droppedFrameCount += 1
                     await logStreamStatsIfNeeded()
                     continue
                 }
-            } else if queueBytes > backpressureTriggerBytes, !forceKeyframe {
-                backpressureActive = true
-                backpressureActiveSnapshot = true
-                if backpressureActivatedAt == 0 { backpressureActivatedAt = CFAbsoluteTimeGetCurrent() }
-                backpressureDropIntervalCount += 1
-                droppedFrameCount += 1
-                let queuedKB = (Double(queueBytes) / 1024.0).rounded()
-                MirageLogger.stream("Backpressure: pausing encode (queue \(Int(queuedKB))KB)")
-                await logStreamStatsIfNeeded()
-                continue
             }
 
             if shouldQueueScheduledKeyframe(queueBytes: queueBytes) { queueKeyframe(reason: "Scheduled keyframe", checkInFlight: true) }

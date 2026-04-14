@@ -97,7 +97,7 @@ actor SharedVirtualDisplayManager {
     enum DisplayConsumer: Hashable, Sendable {
         case unlockKeyboard
         case desktopStream
-        case qualityTest
+        case benchmark
     }
 
     enum DisplayCreationPolicy: Sendable, Equatable {

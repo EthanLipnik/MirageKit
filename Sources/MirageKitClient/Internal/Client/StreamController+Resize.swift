@@ -134,7 +134,6 @@ extension StreamController {
             hasDecodedFirstFrame = false
             hasPresentedFirstFrame = false
             awaitingFirstFrameAfterResize = false
-            decodePausedForLocalResize = false
         }
         reassembler.enterKeyframeOnlyMode()
         if restartRecoveryLoop, presentationTier == .activeLive {

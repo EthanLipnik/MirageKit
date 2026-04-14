@@ -174,6 +174,17 @@ package struct CancelStreamSetupMessage: Codable {
     package init() {}
 }
 
+package enum MirageDesktopTransitionPhase: String, Codable, Sendable {
+    case startup
+    case resize
+}
+
+package enum MirageDesktopTransitionOutcome: String, Codable, Sendable {
+    case noChange
+    case resized
+    case rolledBack
+}
+
 /// Confirmation that desktop streaming has started (Host → Client)
 package struct DesktopStreamStartedMessage: Codable {
     /// Stream ID for the desktop stream
@@ -194,6 +205,12 @@ package struct DesktopStreamStartedMessage: Codable {
     package var dimensionToken: UInt16?
     /// Media packet size accepted by the host for this stream.
     package var acceptedMediaMaxPacketSize: Int?
+    /// Optional transition identifier for resize commits.
+    package var transitionID: UUID?
+    /// Whether this packet describes initial startup or a live resize transition.
+    package var transitionPhase: MirageDesktopTransitionPhase?
+    /// Optional resize outcome metadata.
+    package var transitionOutcome: MirageDesktopTransitionOutcome?
 
     package init(
         streamID: StreamID,
@@ -204,7 +221,10 @@ package struct DesktopStreamStartedMessage: Codable {
         startupAttemptID: UUID? = nil,
         displayCount: Int,
         dimensionToken: UInt16? = nil,
-        acceptedMediaMaxPacketSize: Int? = nil
+        acceptedMediaMaxPacketSize: Int? = nil,
+        transitionID: UUID? = nil,
+        transitionPhase: MirageDesktopTransitionPhase? = nil,
+        transitionOutcome: MirageDesktopTransitionOutcome? = nil
     ) {
         self.streamID = streamID
         self.width = width
@@ -215,6 +235,9 @@ package struct DesktopStreamStartedMessage: Codable {
         self.displayCount = displayCount
         self.dimensionToken = dimensionToken
         self.acceptedMediaMaxPacketSize = acceptedMediaMaxPacketSize
+        self.transitionID = transitionID
+        self.transitionPhase = transitionPhase
+        self.transitionOutcome = transitionOutcome
     }
 }
 

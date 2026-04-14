@@ -129,15 +129,27 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
-    @Test("Stale desktop resize completion does not mutate active acknowledgement state")
-    func staleDesktopResizeCompletionDoesNotMutateActiveAcknowledgementState() async throws {
+    @Test("Stale desktop resize commit does not mutate active transition state")
+    func staleDesktopResizeCommitDoesNotMutateActiveTransitionState() async throws {
         let service = MirageClientService()
         let streamID: StreamID = 17
         let initialResolution = CGSize(width: 1984, height: 2192)
+        let activeTransitionID = UUID()
         service.desktopStreamID = streamID
         service.desktopStreamResolution = initialResolution
         service.desktopDimensionTokenByStream[streamID] = 4
         service.controllersByStream[streamID] = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: activeTransitionID,
+            target: DesktopResizeCoordinator.RequestGeometry(
+                logicalResolution: CGSize(width: 992, height: 1096),
+                displayScaleFactor: 2.0,
+                requestedStreamScale: 1.0,
+                encoderMaxWidth: 2048,
+                encoderMaxHeight: 1536
+            )
+        )
 
         var callbackCount = 0
         service.onDesktopStreamStarted = { _, _, _ in
@@ -152,7 +164,10 @@ struct DesktopStreamStartResetDecisionTests {
             codec: .hevc,
             displayCount: 1,
             dimensionToken: 3,
-            acceptedMediaMaxPacketSize: 1400
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: UUID(),
+            transitionPhase: .resize,
+            transitionOutcome: .resized
         )
         let envelope = try ControlMessage(type: .desktopStreamStarted, content: staleStarted)
 
@@ -160,11 +175,59 @@ struct DesktopStreamStartResetDecisionTests {
 
         #expect(service.desktopStreamResolution == initialResolution)
         #expect(service.desktopDimensionTokenByStream[streamID] == 4)
+        #expect(service.desktopResizeCoordinator.activeTransition?.transitionID == activeTransitionID)
         #expect(callbackCount == 0)
 
         if let controller = service.controllersByStream[streamID] {
             await controller.stop()
         }
+    }
+
+    @MainActor
+    @Test("Matching desktop resize commit updates resolution and begins post-resize gating")
+    func matchingDesktopResizeCommitUpdatesResolutionAndBeginsPostResizeGating() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 23
+        let transitionID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopStreamID = streamID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.controllersByStream[streamID] = controller
+        service.desktopResizeCoordinator.beginTransition(
+            streamID: streamID,
+            transitionID: transitionID,
+            target: DesktopResizeCoordinator.RequestGeometry(
+                logicalResolution: CGSize(width: 1512, height: 982),
+                displayScaleFactor: 2.0,
+                requestedStreamScale: 1.0,
+                encoderMaxWidth: 2360,
+                encoderMaxHeight: 1640
+            )
+        )
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 8,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: transitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .resized
+        )
+        let envelope = try ControlMessage(type: .desktopStreamStarted, content: started)
+
+        await service.handleDesktopStreamStarted(envelope)
+
+        #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
+        #expect(service.desktopDimensionTokenByStream[streamID] == 8)
+        #expect(service.desktopResizeCoordinator.activeTransition == nil)
+        #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        await controller.stop()
     }
 }
 #endif

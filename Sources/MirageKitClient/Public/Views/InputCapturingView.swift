@@ -224,6 +224,9 @@ public class InputCapturingView: UIView {
     /// Callback when dictation fails with a user-facing message.
     public var onDictationError: ((String) -> Void)?
 
+    /// Callback when dictation microphone input level changes.
+    public var onDictationInputLevelChanged: ((Float) -> Void)?
+
     /// Callback when UIKit resolves pointer-lock availability for the current scene.
     public var onResolvedPointerLockStateChanged: ((MirageResolvedPointerLockState) -> Void)?
 
@@ -245,6 +248,8 @@ public class InputCapturingView: UIView {
     var dictationRecognitionTask: SFSpeechRecognitionTask?
     var dictationReservedLocale: Locale?
     var dictationResultBuffer = MirageDictationResultBuffer()
+    var dictationInputLevelMeter = MirageDictationInputLevelMeter()
+    var dictationInputLevelGeneration: UInt64 = 0
 
     // Cursor state from host
     var currentCursorType: MirageCursorType = .arrow

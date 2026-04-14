@@ -41,7 +41,7 @@ extension SharedVirtualDisplayManager {
             )
     }
 
-    /// Acquire the shared virtual display for a non-stream purpose (login display, unlock, desktop stream)
+    /// Acquire the shared virtual display for a non-stream purpose (unlock, desktop stream, benchmark)
     /// Creates the display if this is the first consumer, otherwise returns existing
     /// - Parameters:
     ///   - consumer: The consumer type acquiring the display

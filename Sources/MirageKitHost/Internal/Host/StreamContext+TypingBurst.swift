@@ -115,7 +115,9 @@ extension StreamContext {
         typingBurstExpiryTask = nil
 
         await encoder?.updateAutoTypingBurstLowLatency(false)
-        await exitLatencyBurst(now: now, reason: "auto typing burst")
+        if !freshnessBurstActive {
+            await exitLatencyBurst(now: now, reason: "auto typing burst")
+        }
 
         let restoredInFlight = resolvedPostTypingBurstInFlightLimit()
         if maxInFlightFrames != restoredInFlight {
@@ -141,7 +143,7 @@ extension StreamContext {
         return min(max(minInFlightFrames, 1), maxInFlightFramesCap)
     }
 
-    private func enterLatencyBurst(now: CFAbsoluteTime, reason: String) async {
+    func enterLatencyBurst(now: CFAbsoluteTime, reason: String) async {
         let clearedBacklog = frameInbox.clear()
         if clearedBacklog > 0 {
             MirageLogger.metrics(
@@ -190,7 +192,7 @@ extension StreamContext {
         )
     }
 
-    private func exitLatencyBurst(now: CFAbsoluteTime, reason: String) async {
+    func exitLatencyBurst(now: CFAbsoluteTime, reason: String) async {
         guard latencyBurstActive else { return }
 
         latencyBurstActive = false
@@ -222,7 +224,7 @@ extension StreamContext {
         lastInFlightAdjustmentTime = now
     }
 
-    private func updateLatencyBurstCaptureQueueDepthOverride(
+    func updateLatencyBurstCaptureQueueDepthOverride(
         _ overrideDepth: Int?,
         reason: String
     ) async throws {

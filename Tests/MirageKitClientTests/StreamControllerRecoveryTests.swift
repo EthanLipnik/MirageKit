@@ -15,6 +15,16 @@ import Foundation
 import Testing
 
 #if os(macOS)
+private extension StreamController {
+    func testSeedResizeRecoveryState(
+        startupHardRecoveryCount: Int,
+        hasTriggeredTerminalStartupFailure: Bool
+    ) {
+        self.startupHardRecoveryCount = startupHardRecoveryCount
+        self.hasTriggeredTerminalStartupFailure = hasTriggeredTerminalStartupFailure
+    }
+}
+
 @Suite("Stream Controller Recovery", .serialized)
 struct StreamControllerRecoveryTests {
     @Test("Freeze monitor uses tightened timeout and poll interval")
@@ -62,19 +72,6 @@ struct StreamControllerRecoveryTests {
         #expect(dropDecision == .dropNonKeyframeWhileAwaitingFirstFrame)
         #expect(acceptKeyframeDecision == .accept)
         #expect(acceptNormalDecision == .accept)
-    }
-
-    @Test("Local-resize decode admission drops while paused")
-    func localResizeDecodeAdmissionDropsWhilePaused() {
-        let dropDecision = StreamController.localResizeDecodeAdmissionDecision(
-            decodePausedForLocalResize: true
-        )
-        let acceptDecision = StreamController.localResizeDecodeAdmissionDecision(
-            decodePausedForLocalResize: false
-        )
-
-        #expect(dropDecision == .dropWhileLocalResizePaused)
-        #expect(acceptDecision == .accept)
     }
 
     @Test("Decode failure telemetry waits for actionable recovery state")
@@ -144,15 +141,41 @@ struct StreamControllerRecoveryTests {
         #expect(message.contains("Decoder callback bad data"))
     }
 
-    @Test("Suspend and resume local-resize decode toggles pause state")
-    func suspendAndResumeLocalResizeDecodeTogglesPauseState() async {
+    @Test("Prepare-for-resize preserves presentation tier and clears post-resize gating")
+    func prepareForResizePreservesPresentationTierAndClearsPostResizeGating() async {
         let controller = StreamController(streamID: 91, maxPayloadSize: 1200)
 
-        await controller.suspendDecodeForLocalResize()
-        #expect(await controller.decodePausedForLocalResize)
+        await controller.updatePresentationTier(.passiveSnapshot, targetFPS: 1)
+        await controller.updateDecodeSubmissionLimit(targetFrameRate: 60)
+        await controller.beginPostResizeTransition()
+        await controller.prepareForResize(
+            codec: .hevc,
+            streamDimensions: (width: 1920, height: 1080)
+        )
 
-        await controller.resumeDecodeAfterLocalResize(requestRecoveryKeyframe: false)
-        #expect(!(await controller.decodePausedForLocalResize))
+        #expect(await controller.presentationTier == .passiveSnapshot)
+        #expect(!(await controller.awaitingFirstFrameAfterResize))
+        #expect(!(await controller.awaitingFirstPresentedFrame))
+        #expect(await controller.hasPresentedFirstFrame == false)
+
+        await controller.stop()
+    }
+
+    @Test("Prepare-for-resize preserves recovery counters")
+    func prepareForResizePreservesRecoveryCounters() async {
+        let controller = StreamController(streamID: 93, maxPayloadSize: 1200)
+
+        await controller.testSeedResizeRecoveryState(
+            startupHardRecoveryCount: 3,
+            hasTriggeredTerminalStartupFailure: true
+        )
+        await controller.prepareForResize(
+            codec: .hevc,
+            streamDimensions: (width: 2560, height: 1440)
+        )
+
+        #expect(await controller.startupHardRecoveryCount == 3)
+        #expect(await controller.hasTriggeredTerminalStartupFailure)
 
         await controller.stop()
     }

@@ -113,6 +113,66 @@ struct MirageKitTests {
         #expect(decodedPayload.testID == payload.testID)
     }
 
+    @Test("Display-resolution change serializes desktop resize transition metadata")
+    func displayResolutionChangeSerializesDesktopResizeTransitionMetadata() throws {
+        let transitionID = UUID()
+        let payload = DisplayResolutionChangeMessage(
+            streamID: 41,
+            displayWidth: 1440,
+            displayHeight: 900,
+            transitionID: transitionID,
+            requestedDisplayScaleFactor: 2.0,
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 2360,
+            encoderMaxHeight: 1640
+        )
+        let envelope = try ControlMessage(type: .displayResolutionChange, content: payload)
+
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        let decodedPayload = try decodedEnvelope.decode(DisplayResolutionChangeMessage.self)
+
+        #expect(decodedPayload.streamID == 41)
+        #expect(decodedPayload.displayWidth == 1440)
+        #expect(decodedPayload.displayHeight == 900)
+        #expect(decodedPayload.transitionID == transitionID)
+        #expect(decodedPayload.requestedDisplayScaleFactor == 2.0)
+        #expect(decodedPayload.requestedStreamScale == 1.0)
+        #expect(decodedPayload.encoderMaxWidth == 2360)
+        #expect(decodedPayload.encoderMaxHeight == 1640)
+    }
+
+    @Test("Desktop-stream started serializes resize transition metadata")
+    func desktopStreamStartedSerializesResizeTransitionMetadata() throws {
+        let transitionID = UUID()
+        let payload = DesktopStreamStartedMessage(
+            streamID: 71,
+            width: 3024,
+            height: 1964,
+            frameRate: 120,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 7,
+            acceptedMediaMaxPacketSize: 1400,
+            transitionID: transitionID,
+            transitionPhase: .resize,
+            transitionOutcome: .rolledBack
+        )
+        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+
+        let (decodedEnvelope, consumed) = try requireParsedControlMessage(from: envelope.serialize())
+        #expect(consumed == envelope.serialize().count)
+        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+
+        #expect(decodedPayload.streamID == 71)
+        #expect(decodedPayload.width == 3024)
+        #expect(decodedPayload.height == 1964)
+        #expect(decodedPayload.dimensionToken == 7)
+        #expect(decodedPayload.transitionID == transitionID)
+        #expect(decodedPayload.transitionPhase == .resize)
+        #expect(decodedPayload.transitionOutcome == .rolledBack)
+    }
+
     @Test("Control parser returns needMoreData for truncated payload")
     func controlParserReturnsNeedMoreDataForTruncatedPayload() {
         var data = Data([ControlMessageType.sessionBootstrapRequest.rawValue])

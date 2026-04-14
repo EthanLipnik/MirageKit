@@ -135,21 +135,6 @@ actor StreamController {
         return .accept
     }
 
-    enum LocalResizeDecodeAdmissionDecision: Equatable, Sendable {
-        case accept
-        case dropWhileLocalResizePaused
-    }
-
-    nonisolated static func localResizeDecodeAdmissionDecision(
-        decodePausedForLocalResize: Bool
-    )
-    -> LocalResizeDecodeAdmissionDecision {
-        if decodePausedForLocalResize {
-            return .dropWhileLocalResizePaused
-        }
-        return .accept
-    }
-
     /// Information needed to send a resize event
     struct ResizeEvent: Sendable {
         let aspectRatio: CGFloat
@@ -336,9 +321,6 @@ actor StreamController {
     var startupHardRecoveryCount: Int = 0
     /// True after the controller has concluded startup recovery cannot succeed.
     var hasTriggeredTerminalStartupFailure = false
-    /// True while local client resize orchestration keeps decode paused pre-ack.
-    var decodePausedForLocalResize = false
-
     /// Bounded queue of frames waiting to be decoded.
     var queuedFrames = MirageRingBuffer<FrameData>(minimumCapacity: 32)
     /// Frames received from callback tasks before their ordered enqueue slot is ready.
@@ -898,13 +880,6 @@ actor StreamController {
     }
 
     private func enqueueFrameInOrder(_ frame: FrameData) async {
-        if Self.localResizeDecodeAdmissionDecision(
-            decodePausedForLocalResize: decodePausedForLocalResize
-        ) == .dropWhileLocalResizePaused {
-            frame.releaseBuffer()
-            return
-        }
-
         if Self.postResizeDecodeAdmissionDecision(
             awaitingFirstFrameAfterResize: awaitingFirstFrameAfterResize,
             isKeyframe: frame.isKeyframe

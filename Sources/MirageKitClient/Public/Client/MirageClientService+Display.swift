@@ -261,6 +261,47 @@ extension MirageClientService {
         try await sendControlMessage(.displayResolutionChange, content: request)
     }
 
+    func sendDesktopResizeRequest(
+        streamID: StreamID,
+        newResolution: CGSize,
+        transitionID: UUID,
+        requestedDisplayScaleFactor: CGFloat,
+        requestedStreamScale: CGFloat,
+        encoderMaxWidth: Int?,
+        encoderMaxHeight: Int?
+    )
+    async throws {
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+
+        let scaledResolution = scaledDisplayResolution(newResolution)
+        let clampedDisplayScaleFactor = max(1.0, requestedDisplayScaleFactor)
+        let clampedStreamScale = clampStreamScale(requestedStreamScale)
+        let pixelResolution = MirageStreamGeometry.resolve(
+            logicalSize: scaledResolution,
+            displayScaleFactor: clampedDisplayScaleFactor
+        ).displayPixelSize
+
+        let request = DisplayResolutionChangeMessage(
+            streamID: streamID,
+            displayWidth: Int(scaledResolution.width),
+            displayHeight: Int(scaledResolution.height),
+            transitionID: transitionID,
+            requestedDisplayScaleFactor: clampedDisplayScaleFactor,
+            requestedStreamScale: clampedStreamScale,
+            encoderMaxWidth: encoderMaxWidth,
+            encoderMaxHeight: encoderMaxHeight
+        )
+        MirageLogger.client(
+            "Sending desktop resize request for stream \(streamID): " +
+                "\(Int(scaledResolution.width))x\(Int(scaledResolution.height)) pts " +
+                "(\(Int(pixelResolution.width))x\(Int(pixelResolution.height)) px), " +
+                "transition=\(transitionID.uuidString), " +
+                "displayScale=\(String(format: "%.3f", clampedDisplayScaleFactor)), " +
+                "streamScale=\(String(format: "%.3f", clampedStreamScale))"
+        )
+        try await sendControlMessage(.displayResolutionChange, content: request)
+    }
+
     public func sendStreamScaleChange(
         streamID: StreamID,
         scale: CGFloat

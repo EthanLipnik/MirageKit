@@ -197,6 +197,7 @@ public extension MirageClientService {
         let request = StopDesktopStreamMessage(streamID: streamID)
         try await sendControlMessage(.stopDesktopStream, content: request)
         scheduleDesktopStreamStopTimeout(for: streamID)
+        pendingLocalDesktopStopStreamID = streamID
 
         MirageLogger.client("Requested stop desktop stream: \(streamID)")
     }

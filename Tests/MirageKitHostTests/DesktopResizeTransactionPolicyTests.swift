@@ -20,8 +20,10 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = desktopResizeNoOpDecision(
             currentResolution: CGSize(width: 6016, height: 3384),
             currentRefreshRate: 120,
+            currentEncodedResolution: CGSize(width: 6016, height: 3384),
             requestedResolution: CGSize(width: 6016, height: 3384),
-            requestedRefreshRate: 120
+            requestedRefreshRate: 120,
+            requestedEncodedResolution: CGSize(width: 6016, height: 3384)
         )
 
         #expect(decision == .noOp)
@@ -32,8 +34,10 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = desktopResizeNoOpDecision(
             currentResolution: CGSize(width: 6016, height: 3384),
             currentRefreshRate: 120,
+            currentEncodedResolution: CGSize(width: 6016, height: 3384),
             requestedResolution: CGSize(width: 5120, height: 2880),
-            requestedRefreshRate: 60
+            requestedRefreshRate: 60,
+            requestedEncodedResolution: CGSize(width: 5120, height: 2880)
         )
 
         #expect(decision == .apply)
@@ -44,8 +48,10 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = desktopResizeNoOpDecision(
             currentResolution: CGSize(width: 2474, height: 1752),
             currentRefreshRate: 60,
+            currentEncodedResolution: CGSize(width: 2474, height: 1752),
             requestedResolution: CGSize(width: 2474, height: 1764),
-            requestedRefreshRate: 60
+            requestedRefreshRate: 60,
+            requestedEncodedResolution: CGSize(width: 2474, height: 1764)
         )
 
         #expect(decision == .apply)
@@ -56,8 +62,10 @@ struct DesktopResizeTransactionPolicyTests {
         let decision = desktopResizeNoOpDecision(
             currentResolution: CGSize(width: 2474, height: 1752),
             currentRefreshRate: 60,
+            currentEncodedResolution: CGSize(width: 2474, height: 1752),
             requestedResolution: CGSize(width: 2474, height: 1752),
-            requestedRefreshRate: 120
+            requestedRefreshRate: 120,
+            requestedEncodedResolution: CGSize(width: 2474, height: 1752)
         )
 
         #expect(decision == .apply)
