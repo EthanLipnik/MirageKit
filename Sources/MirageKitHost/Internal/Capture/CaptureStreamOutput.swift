@@ -137,7 +137,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var fallbackStartTime: CFAbsoluteTime = 0 // When fallback mode started
     private let fallbackLock = NSLock()
     private let startupReadinessLock = NSLock()
-    private var displayStartupReadinessState = DisplayStartupReadinessState()
+    private var startupReadinessState = CaptureStartupReadinessState()
 
     /// Only request keyframe if fallback lasted longer than this threshold.
     /// Short fallback blips are common during menu tracking and focus churn and
@@ -148,7 +148,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     /// forcing expensive keyframes.
     private let fallbackResumeKeyframeGapMultiplier: CFAbsoluteTime = 2.5
 
-    private struct DisplayStartupReadinessState {
+    private struct CaptureStartupReadinessState {
         var hasObservedSample = false
         var hasUsableFrame = false
         var hasIdleFrame = false
@@ -226,12 +226,20 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         watchdogTimer = nil
     }
 
+    func captureStartupReadiness() -> DisplayCaptureStartupReadiness {
+        startupReadinessLock.withLock { startupReadinessState.readiness }
+    }
+
+    func hasObservedStartupSample() -> Bool {
+        startupReadinessLock.withLock { startupReadinessState.hasObservedSample }
+    }
+
     func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
-        startupReadinessLock.withLock { displayStartupReadinessState.readiness }
+        captureStartupReadiness()
     }
 
     func hasObservedDisplayStartupSample() -> Bool {
-        startupReadinessLock.withLock { displayStartupReadinessState.hasObservedSample }
+        hasObservedStartupSample()
     }
 
     func updateExpectations(
@@ -603,9 +611,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let status = resolvedFrameStatus(from: attachments)
         let isValidSampleBuffer = CMSampleBufferIsValid(sampleBuffer)
         if let status {
-            noteDisplayStartupSample(status: status)
+            noteCaptureStartupSample(status: status)
         } else if tracksFrameStatus, windowID == 0, isValidSampleBuffer {
-            noteObservedDisplayStartupSample()
+            noteObservedStartupSample()
         }
 
         // Validate the sample buffer
@@ -620,7 +628,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
         if !tracksFrameStatus {
             if status == nil {
-                noteDisplayStartupSample(status: .complete)
+                noteCaptureStartupSample(status: .complete)
             }
             updateDeliveryState(captureTime: captureTime, isComplete: true)
             if diagnosticsEnabled {
@@ -694,7 +702,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
 
         let effectiveStatus = status ?? .complete
         if status == nil {
-            noteDisplayStartupSample(status: effectiveStatus)
+            noteCaptureStartupSample(status: effectiveStatus)
         }
         guard effectiveStatus == .complete || effectiveStatus == .idle else { return }
         if effectiveStatus == .idle { isIdleFrame = true }
@@ -801,38 +809,36 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo, captureTime: captureTime)
     }
 
-    private func noteDisplayStartupSample(status: SCFrameStatus) {
-        guard windowID == 0 else { return }
-
+    private func noteCaptureStartupSample(status: SCFrameStatus) {
         var blankOrSuspendedStatusName: String?
         var lifecycleStatusName: String?
         startupReadinessLock.withLock {
-            displayStartupReadinessState.hasObservedSample = true
+            startupReadinessState.hasObservedSample = true
             switch status {
             case .complete:
-                displayStartupReadinessState.hasUsableFrame = true
+                startupReadinessState.hasUsableFrame = true
             case .idle:
-                displayStartupReadinessState.hasIdleFrame = true
+                startupReadinessState.hasIdleFrame = true
             case .blank:
-                displayStartupReadinessState.blankOrSuspendedCount &+= 1
-                if !displayStartupReadinessState.hasLoggedBlankOrSuspended {
-                    displayStartupReadinessState.hasLoggedBlankOrSuspended = true
+                startupReadinessState.blankOrSuspendedCount &+= 1
+                if windowID == 0, !startupReadinessState.hasLoggedBlankOrSuspended {
+                    startupReadinessState.hasLoggedBlankOrSuspended = true
                     blankOrSuspendedStatusName = "blank"
                 }
             case .suspended:
-                displayStartupReadinessState.blankOrSuspendedCount &+= 1
-                if !displayStartupReadinessState.hasLoggedBlankOrSuspended {
-                    displayStartupReadinessState.hasLoggedBlankOrSuspended = true
+                startupReadinessState.blankOrSuspendedCount &+= 1
+                if windowID == 0, !startupReadinessState.hasLoggedBlankOrSuspended {
+                    startupReadinessState.hasLoggedBlankOrSuspended = true
                     blankOrSuspendedStatusName = "suspended"
                 }
             case .started:
-                if !displayStartupReadinessState.hasLoggedLifecycleSample {
-                    displayStartupReadinessState.hasLoggedLifecycleSample = true
+                if windowID == 0, !startupReadinessState.hasLoggedLifecycleSample {
+                    startupReadinessState.hasLoggedLifecycleSample = true
                     lifecycleStatusName = "started"
                 }
             case .stopped:
-                if !displayStartupReadinessState.hasLoggedLifecycleSample {
-                    displayStartupReadinessState.hasLoggedLifecycleSample = true
+                if windowID == 0, !startupReadinessState.hasLoggedLifecycleSample {
+                    startupReadinessState.hasLoggedLifecycleSample = true
                     lifecycleStatusName = "stopped"
                 }
             default:
@@ -852,10 +858,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
     }
 
-    private func noteObservedDisplayStartupSample() {
-        guard windowID == 0 else { return }
+    private func noteObservedStartupSample() {
         startupReadinessLock.withLock {
-            displayStartupReadinessState.hasObservedSample = true
+            startupReadinessState.hasObservedSample = true
         }
     }
 

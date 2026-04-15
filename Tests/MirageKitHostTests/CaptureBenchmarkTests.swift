@@ -13,6 +13,20 @@ import Testing
 #if os(macOS)
 @Suite("Capture Benchmark")
 struct CaptureBenchmarkTests {
+    private func phaseResult(
+        kind: MirageHostCaptureBenchmarkPhaseKind,
+        callbackFPS: Double? = nil,
+        presentationFPS: Double? = nil,
+        startupReadiness: MirageHostCaptureBenchmarkStartupReadiness? = .usableFrameSeen
+    ) -> MirageHostCaptureBenchmarkPhaseResult {
+        MirageHostCaptureBenchmarkPhaseResult(
+            kind: kind,
+            callbackFPS: callbackFPS,
+            presentationFPS: presentationFPS,
+            startupReadiness: startupReadiness
+        )
+    }
+
     @Test("Benchmark stages use the expected resolutions and 120 fps cadence")
     func benchmarkStageCatalogUsesExpectedSizes() {
         let stages = MirageHostCaptureBenchmarkStage.allStages
@@ -45,6 +59,8 @@ struct CaptureBenchmarkTests {
 
     @Test("Report reuse requires matching machine, software environment, configuration, and a completed run")
     func reportReuseRequiresMatchingEnvironment() {
+        #expect(MirageHostCaptureBenchmarkReport.currentVersion == 3)
+
         let configuration = MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
         let machineID = UUID()
         let report = MirageHostCaptureBenchmarkReport(
@@ -124,39 +140,37 @@ struct CaptureBenchmarkTests {
         )
     }
 
-    @Test("Summary uses a 95 percent sustain threshold")
-    func summaryUsesSustainThreshold() {
+    @Test("Summary tracks the highest valid stage and highest sustained 120 fps stage")
+    func summaryTracksValidAnd120Stages() {
         let summary = captureBenchmarkSummary(
             stageResults: [
                 MirageHostCaptureBenchmarkStageResult(
                     stage: .benchmark1080p,
                     status: .completed,
-                    encodeFPS: 118.6,
-                    effectiveFPS: 118.6,
                     validatedCapabilityFPS: 119.8
                 ),
                 MirageHostCaptureBenchmarkStageResult(
                     stage: .benchmark2K,
                     status: .completed,
-                    encodeFPS: 114.0,
-                    effectiveFPS: 114.0,
-                    validatedCapabilityFPS: 117.2
+                    validatedCapabilityFPS: 76.4
                 ),
                 MirageHostCaptureBenchmarkStageResult(
                     stage: .benchmark4K,
                     status: .completed,
-                    encodeFPS: 113.9,
-                    effectiveFPS: 113.9,
-                    validatedCapabilityFPS: 113.9
+                    validatedCapabilityFPS: 59.9
                 ),
             ]
         )
 
         #expect(summary.targetFrameRate == 120)
+        #expect(summary.validThresholdFPS == 60)
         #expect(summary.sustainThresholdFPS == 114)
-        #expect(summary.highestSustainedStageID == MirageHostCaptureBenchmarkStage.benchmark2K.id)
-        #expect(summary.highestSustainedStageTitle == "2K")
-        #expect(summary.highestSustainedResolution == "2560x1440")
+        #expect(summary.highestValidStageID == MirageHostCaptureBenchmarkStage.benchmark2K.id)
+        #expect(summary.highestValidStageTitle == "2K")
+        #expect(summary.highestValidResolution == "2560x1440")
+        #expect(summary.highest120FPSStageID == MirageHostCaptureBenchmarkStage.benchmark1080p.id)
+        #expect(summary.highest120FPSStageTitle == "1080p")
+        #expect(summary.highest120FPSResolution == "1920x1080")
     }
 
     @Test("Stage continuation stops only after cancellation")
@@ -233,48 +247,89 @@ struct CaptureBenchmarkTests {
             actualPixelHeight: 2156
         )
         #expect(tolerantResult.actualPixelDescription == "3840x2156")
+
+        let refreshAdjustedResult = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark4K,
+            status: .completed,
+            actualPixelWidth: 3840,
+            actualPixelHeight: 2156,
+            reportedDisplayRefreshRate: 120
+        )
+        #expect(refreshAdjustedResult.actualDisplayModeDescription == "3840x2156")
     }
 
     @Test("Invalid measurement reason rejects blank startup")
     func invalidMeasurementReasonRejectsBlankStartup() {
         let reason = captureBenchmarkInvalidMeasurementReason(
             startupReadiness: .blankOrSuspendedOnly,
-            validateSourceCadence: false,
             targetFrameRate: 120
         )
 
         #expect(reason?.contains("blank or suspended") == true)
     }
 
-    @Test("Invalid measurement reason rejects low source cadence")
-    func invalidMeasurementReasonRejectsLowSourceCadence() {
+    @Test("Invalid measurement reason rejects display cadence probe failures")
+    func invalidMeasurementReasonRejectsDisplayCadenceProbeFailure() {
         let reason = captureBenchmarkInvalidMeasurementReason(
-            startupReadiness: .usableFrameSeen,
-            sourceFPS: 92,
+            displayCadenceProbeFailed: true,
             targetFrameRate: 120
         )
 
-        #expect(reason?.contains("92.0 fps") == true)
-        #expect(reason?.contains("114.0 fps") == true)
+        #expect(reason?.contains("cadence probe failed") == true)
+    }
+
+    @Test("Invalid measurement reason does not reject valid but subtarget throughput")
+    func invalidMeasurementReasonAllowsSubtargetThroughput() {
+        let reason = captureBenchmarkInvalidMeasurementReason(
+            startupReadiness: .usableFrameSeen,
+            targetFrameRate: 120
+        )
+
+        #expect(reason == nil)
     }
 
     @Test("Capability fps uses the lowest validated bottleneck and caps at 120")
     func capabilityFPSUsesValidatedBottleneck() {
         let capability = captureBenchmarkValidatedCapabilityFPS(
-            sourceFPS: 121,
-            capturePresentationFPS: 118.4,
+            sourcePhase: phaseResult(
+                kind: .source,
+                callbackFPS: 121,
+                presentationFPS: 120.4
+            ),
+            displayPhase: phaseResult(
+                kind: .display,
+                callbackFPS: 118.4,
+                presentationFPS: 118.0
+            ),
             encodeFPS: 97.2,
             targetFrameRate: 120
         )
         let capped = captureBenchmarkValidatedCapabilityFPS(
-            sourceFPS: 144,
-            capturePresentationFPS: 136,
+            sourcePhase: phaseResult(
+                kind: .source,
+                callbackFPS: 144,
+                presentationFPS: 141
+            ),
+            displayPhase: phaseResult(
+                kind: .display,
+                callbackFPS: 136,
+                presentationFPS: 132
+            ),
             encodeFPS: 132,
+            targetFrameRate: 120
+        )
+        let displayCapability = captureBenchmarkDisplayCapabilityFPS(
+            displayPhase: phaseResult(
+                kind: .display,
+                callbackFPS: 118.4,
+                presentationFPS: 116.8
+            ),
             targetFrameRate: 120
         )
 
         #expect(capability == 97.2)
         #expect(capped == 120)
+        #expect(displayCapability == 116.8)
     }
 
     @Test("Stage result badges derive from validated capability")
@@ -294,6 +349,31 @@ struct CaptureBenchmarkTests {
         #expect(!meets60Only.meets120FPS)
         #expect(meets120.meets60FPS)
         #expect(meets120.meets120FPS)
+    }
+
+    @Test("Warning classification distinguishes cadence, source, capture, and encode limits")
+    func warningClassificationDistinguishesBottlenecks() {
+        let warnings = captureBenchmarkWarnings(
+            stage: .benchmark1080p,
+            reportedDisplayRefreshRate: 120,
+            observedDisplayCadenceFPS: 60,
+            sourcePhase: phaseResult(
+                kind: .source,
+                callbackFPS: 100,
+                presentationFPS: 98
+            ),
+            displayPhase: phaseResult(
+                kind: .display,
+                callbackFPS: 112,
+                presentationFPS: 111
+            ),
+            encodeFPS: 90
+        )
+
+        #expect(warnings.contains(.displayCadenceMismatch))
+        #expect(warnings.contains(.sourceLimited))
+        #expect(warnings.contains(.captureBelowTarget))
+        #expect(warnings.contains(.encodeBelowTarget))
     }
 
     @Test("Observed shared display mode accepts requested mode after in-place update")

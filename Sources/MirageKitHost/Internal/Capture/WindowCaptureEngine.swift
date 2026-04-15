@@ -243,13 +243,40 @@ actor WindowCaptureEngine {
     }
 
     func displayStartupReadiness() -> DisplayCaptureStartupReadiness {
-        guard captureMode == .display else { return .noScreenSamples }
+        guard captureMode == .display else { return captureStartupReadiness() }
         return streamOutput?.displayStartupReadiness() ?? .noScreenSamples
     }
 
     func hasObservedDisplayStartupSample() -> Bool {
-        guard captureMode == .display else { return false }
+        guard captureMode == .display else { return hasObservedCaptureStartupSample() }
         return streamOutput?.hasObservedDisplayStartupSample() ?? false
+    }
+
+    func captureStartupReadiness() -> DisplayCaptureStartupReadiness {
+        streamOutput?.captureStartupReadiness() ?? .noScreenSamples
+    }
+
+    func hasObservedCaptureStartupSample() -> Bool {
+        streamOutput?.hasObservedStartupSample() ?? false
+    }
+
+    func waitForCaptureStartupReadiness(
+        timeout: Duration,
+        pollInterval: Duration = .milliseconds(50)
+    ) async -> DisplayCaptureStartupReadiness {
+        let deadline = ContinuousClock.now + timeout
+        while !Task.isCancelled {
+            let readiness = captureStartupReadiness()
+            switch readiness {
+            case .usableFrameSeen, .idleFrameSeen:
+                return readiness
+            case .blankOrSuspendedOnly, .noScreenSamples:
+                break
+            }
+            guard ContinuousClock.now < deadline else { return readiness }
+            try? await Task.sleep(for: pollInterval)
+        }
+        return captureStartupReadiness()
     }
 
     func waitForDisplayStartupReadiness(
