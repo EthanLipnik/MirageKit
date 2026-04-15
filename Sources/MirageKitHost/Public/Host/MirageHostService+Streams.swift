@@ -1037,13 +1037,27 @@ public extension MirageHostService {
         if minimizeWindow { WindowManager.minimizeWindow(windowID) }
 
         if updateAppSession {
-            await removeStoppedWindowFromAppSessionIfNeeded(windowID: windowID)
+            let removedAppWindowID: WindowID
+            if let appSessionForStoppedWindow,
+               let reboundWindowID = await appStreamManager.windowIDForStream(
+                    bundleIdentifier: appSessionForStoppedWindow.bundleIdentifier,
+                    streamID: session.id
+               ) {
+                removedAppWindowID = reboundWindowID
+            } else {
+                removedAppWindowID = windowID
+            }
+            await removeStoppedWindowFromAppSessionIfNeeded(
+                streamID: session.id,
+                fallbackWindowID: removedAppWindowID
+            )
             if let appSessionForStoppedWindow,
                let clientContext = findClientContext(clientID: appSessionForStoppedWindow.clientID) {
                 await emitWindowRemovedFromStream(
                     to: clientContext,
                     bundleIdentifier: appSessionForStoppedWindow.bundleIdentifier,
-                    windowID: windowID,
+                    streamID: session.id,
+                    windowID: removedAppWindowID,
                     reason: .noLongerEligible
                 )
             }

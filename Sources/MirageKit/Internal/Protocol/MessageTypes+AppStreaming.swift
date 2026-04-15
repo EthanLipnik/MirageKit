@@ -353,6 +353,22 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
         self.slots = slots
         self.hiddenWindows = hiddenWindows
     }
+
+    public func removingWindow(windowID: WindowID) -> AppWindowInventoryMessage? {
+        let remainingSlots = slots.filter { $0.window.windowID != windowID }
+        let remainingHiddenWindows = hiddenWindows.filter { $0.windowID != windowID }
+
+        guard !remainingSlots.isEmpty || !remainingHiddenWindows.isEmpty else {
+            return nil
+        }
+
+        return AppWindowInventoryMessage(
+            bundleIdentifier: bundleIdentifier,
+            maxVisibleSlots: maxVisibleSlots,
+            slots: remainingSlots,
+            hiddenWindows: remainingHiddenWindows
+        )
+    }
 }
 
 package struct AppWindowSwapRequestMessage: Codable {
@@ -503,6 +519,8 @@ public struct WindowAddedToStreamMessage: Codable, Sendable {
 public struct WindowRemovedFromStreamMessage: Codable, Sendable {
     /// Bundle identifier of the app
     public let bundleIdentifier: String
+    /// The stream that was removed.
+    public let streamID: StreamID?
     /// The window that was removed
     public let windowID: WindowID
     /// Why it was removed
@@ -517,8 +535,14 @@ public struct WindowRemovedFromStreamMessage: Codable, Sendable {
         case appTerminated
     }
 
-    package init(bundleIdentifier: String, windowID: WindowID, reason: RemovalReason) {
+    package init(
+        bundleIdentifier: String,
+        streamID: StreamID? = nil,
+        windowID: WindowID,
+        reason: RemovalReason
+    ) {
         self.bundleIdentifier = bundleIdentifier
+        self.streamID = streamID
         self.windowID = windowID
         self.reason = reason
     }

@@ -12,6 +12,19 @@ import Foundation
 
 // MARK: - Desktop Streaming Messages
 
+package func legacyDesktopSessionID(for streamID: StreamID) -> UUID {
+    UUID(
+        uuid: (
+            0x4D, 0x49, 0x52, 0x41,
+            0x47, 0x45, 0x44, 0x54,
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00,
+            UInt8((streamID >> 8) & 0xFF),
+            UInt8(streamID & 0xFF)
+        )
+    )
+}
+
 /// Request to start streaming the desktop (Client → Host)
 /// This can stream the unified desktop or run as a secondary display
 package struct StartDesktopStreamMessage: Codable {
@@ -165,9 +178,22 @@ package struct StopDesktopStreamMessage: Codable {
     /// Session identifier for the active desktop stream.
     package let desktopSessionID: UUID
 
+    enum CodingKeys: String, CodingKey {
+        case streamID
+        case desktopSessionID
+    }
+
     package init(streamID: StreamID, desktopSessionID: UUID) {
         self.streamID = streamID
         self.desktopSessionID = desktopSessionID
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let streamID = try container.decode(StreamID.self, forKey: .streamID)
+        self.streamID = streamID
+        desktopSessionID = try container.decodeIfPresent(UUID.self, forKey: .desktopSessionID) ??
+            legacyDesktopSessionID(for: streamID)
     }
 }
 
@@ -217,6 +243,22 @@ package struct DesktopStreamStartedMessage: Codable {
     /// Optional resize outcome metadata.
     package var transitionOutcome: MirageDesktopTransitionOutcome?
 
+    enum CodingKeys: String, CodingKey {
+        case streamID
+        case desktopSessionID
+        case width
+        case height
+        case frameRate
+        case codec
+        case startupAttemptID
+        case displayCount
+        case dimensionToken
+        case acceptedMediaMaxPacketSize
+        case transitionID
+        case transitionPhase
+        case transitionOutcome
+    }
+
     package init(
         streamID: StreamID,
         desktopSessionID: UUID,
@@ -246,6 +288,28 @@ package struct DesktopStreamStartedMessage: Codable {
         self.transitionPhase = transitionPhase
         self.transitionOutcome = transitionOutcome
     }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let streamID = try container.decode(StreamID.self, forKey: .streamID)
+        self.streamID = streamID
+        desktopSessionID = try container.decodeIfPresent(UUID.self, forKey: .desktopSessionID) ??
+            legacyDesktopSessionID(for: streamID)
+        width = try container.decode(Int.self, forKey: .width)
+        height = try container.decode(Int.self, forKey: .height)
+        frameRate = try container.decode(Int.self, forKey: .frameRate)
+        codec = try container.decode(MirageVideoCodec.self, forKey: .codec)
+        startupAttemptID = try container.decodeIfPresent(UUID.self, forKey: .startupAttemptID)
+        displayCount = try container.decodeIfPresent(Int.self, forKey: .displayCount) ?? 1
+        dimensionToken = try container.decodeIfPresent(UInt16.self, forKey: .dimensionToken)
+        acceptedMediaMaxPacketSize = try container.decodeIfPresent(Int.self, forKey: .acceptedMediaMaxPacketSize)
+        transitionID = try container.decodeIfPresent(UUID.self, forKey: .transitionID)
+        transitionPhase = try container.decodeIfPresent(MirageDesktopTransitionPhase.self, forKey: .transitionPhase)
+        transitionOutcome = try container.decodeIfPresent(
+            MirageDesktopTransitionOutcome.self,
+            forKey: .transitionOutcome
+        )
+    }
 }
 
 /// Desktop stream stopped notification (Host → Client)
@@ -257,6 +321,12 @@ package struct DesktopStreamStoppedMessage: Codable {
     /// Why the stream was stopped
     package let reason: DesktopStreamStopReason
 
+    enum CodingKeys: String, CodingKey {
+        case streamID
+        case desktopSessionID
+        case reason
+    }
+
     package init(
         streamID: StreamID,
         desktopSessionID: UUID,
@@ -265,6 +335,15 @@ package struct DesktopStreamStoppedMessage: Codable {
         self.streamID = streamID
         self.desktopSessionID = desktopSessionID
         self.reason = reason
+    }
+
+    package init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let streamID = try container.decode(StreamID.self, forKey: .streamID)
+        self.streamID = streamID
+        desktopSessionID = try container.decodeIfPresent(UUID.self, forKey: .desktopSessionID) ??
+            legacyDesktopSessionID(for: streamID)
+        reason = try container.decode(DesktopStreamStopReason.self, forKey: .reason)
     }
 }
 

@@ -67,8 +67,15 @@ extension MirageHostService {
         }
     }
 
-    func removeStoppedWindowFromAppSessionIfNeeded(windowID: WindowID) async {
-        guard let session = await appStreamManager.getSessionForWindow(windowID) else { return }
+    func removeStoppedWindowFromAppSessionIfNeeded(
+        streamID: StreamID,
+        fallbackWindowID: WindowID
+    ) async {
+        guard let session = await appStreamManager.getSessionForStreamID(streamID) else { return }
+        let windowID = await appStreamManager.windowIDForStream(
+            bundleIdentifier: session.bundleIdentifier,
+            streamID: streamID
+        ) ?? fallbackWindowID
 
         await appStreamManager.removeWindowFromSession(
             bundleIdentifier: session.bundleIdentifier,

@@ -1112,9 +1112,14 @@ public class InputCapturingView: UIView {
     func attemptResponderRecovery(
         for target: InputCapturingResponderTarget
     ) -> Bool {
-        guard let responder = responderRecoveryResponder(for: target) else { return false }
-        let didBecomeFirstResponder = responder.becomeFirstResponder()
-        return didBecomeFirstResponder || responder.isFirstResponder
+        switch target {
+        case .captureView:
+            let didBecomeFirstResponder = becomeFirstResponder()
+            return didBecomeFirstResponder || isFirstResponder
+        case .softwareKeyboardField:
+            updateSoftwareKeyboardVisibility(allowDismissalReset: true)
+            return softwareKeyboardField?.isFirstResponder == true
+        }
     }
 
     private func logResponderRecovery(

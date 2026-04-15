@@ -323,6 +323,7 @@ extension MirageHostService {
             await emitWindowRemovedFromStream(
                 to: clientContext,
                 bundleIdentifier: bundleID,
+                streamID: session.windowStreams[windowID]?.streamID,
                 windowID: windowID,
                 reason: .appTerminated
             )
@@ -466,11 +467,13 @@ extension MirageHostService {
     func emitWindowRemovedFromStream(
         to clientContext: ClientContext,
         bundleIdentifier: String,
+        streamID: StreamID? = nil,
         windowID: WindowID,
         reason: WindowRemovedFromStreamMessage.RemovalReason
     ) async {
         let response = WindowRemovedFromStreamMessage(
             bundleIdentifier: bundleIdentifier,
+            streamID: streamID,
             windowID: windowID,
             reason: reason
         )

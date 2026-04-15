@@ -203,6 +203,63 @@ struct MirageKitTests {
         #expect(decodedStopped.reason == .clientRequested)
     }
 
+    @Test("Legacy desktop stream messages derive a stable desktop session identifier")
+    func legacyDesktopStreamMessagesDeriveStableDesktopSessionIdentifier() throws {
+        struct LegacyDesktopStreamStartedMessage: Encodable {
+            let streamID: StreamID
+            let width: Int
+            let height: Int
+            let frameRate: Int
+            let codec: MirageVideoCodec
+            let displayCount: Int
+        }
+
+        struct LegacyStopDesktopStreamMessage: Encodable {
+            let streamID: StreamID
+        }
+
+        struct LegacyDesktopStreamStoppedMessage: Encodable {
+            let streamID: StreamID
+            let reason: DesktopStreamStopReason
+        }
+
+        let legacySessionID = legacyDesktopSessionID(for: 33)
+
+        let startedEnvelope = try ControlMessage(
+            type: .desktopStreamStarted,
+            content: LegacyDesktopStreamStartedMessage(
+                streamID: 33,
+                width: 3024,
+                height: 1964,
+                frameRate: 60,
+                codec: .hevc,
+                displayCount: 1
+            )
+        )
+        let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
+        let decodedStarted = try decodedStartedEnvelope.decode(DesktopStreamStartedMessage.self)
+        #expect(decodedStarted.desktopSessionID == legacySessionID)
+        #expect(decodedStarted.streamID == 33)
+
+        let stopRequestEnvelope = try ControlMessage(
+            type: .stopDesktopStream,
+            content: LegacyStopDesktopStreamMessage(streamID: 33)
+        )
+        let (decodedStopRequestEnvelope, _) = try requireParsedControlMessage(from: stopRequestEnvelope.serialize())
+        let decodedStopRequest = try decodedStopRequestEnvelope.decode(StopDesktopStreamMessage.self)
+        #expect(decodedStopRequest.desktopSessionID == legacySessionID)
+        #expect(decodedStopRequest.streamID == 33)
+
+        let stoppedEnvelope = try ControlMessage(
+            type: .desktopStreamStopped,
+            content: LegacyDesktopStreamStoppedMessage(streamID: 33, reason: .error)
+        )
+        let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
+        let decodedStopped = try decodedStoppedEnvelope.decode(DesktopStreamStoppedMessage.self)
+        #expect(decodedStopped.desktopSessionID == legacySessionID)
+        #expect(decodedStopped.reason == .error)
+    }
+
     @Test("Control parser returns needMoreData for truncated payload")
     func controlParserReturnsNeedMoreDataForTruncatedPayload() {
         var data = Data([ControlMessageType.sessionBootstrapRequest.rawValue])
@@ -818,6 +875,7 @@ struct MirageKitTests {
     func windowRemovedFromStreamSerialization() throws {
         let payload = WindowRemovedFromStreamMessage(
             bundleIdentifier: "com.apple.dt.Xcode",
+            streamID: 27,
             windowID: 12615,
             reason: .noLongerEligible
         )
@@ -826,8 +884,78 @@ struct MirageKitTests {
         let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
         let decoded = try decodedEnvelope.decode(WindowRemovedFromStreamMessage.self)
         #expect(decoded.bundleIdentifier == "com.apple.dt.Xcode")
+        #expect(decoded.streamID == 27)
         #expect(decoded.windowID == 12615)
         #expect(decoded.reason == .noLongerEligible)
+    }
+
+    @Test("App window inventory removes closed windows from visible and hidden entries")
+    func appWindowInventoryRemovesClosedWindows() {
+        let inventory = AppWindowInventoryMessage(
+            bundleIdentifier: "com.apple.dt.Xcode",
+            maxVisibleSlots: 3,
+            slots: [
+                .init(
+                    slotIndex: 0,
+                    streamID: 27,
+                    window: .init(
+                        windowID: 12615,
+                        title: "Editor",
+                        width: 1440,
+                        height: 900,
+                        isResizable: true
+                    )
+                ),
+                .init(
+                    slotIndex: 1,
+                    streamID: 28,
+                    window: .init(
+                        windowID: 12616,
+                        title: "Canvas",
+                        width: 1440,
+                        height: 900,
+                        isResizable: true
+                    )
+                ),
+            ],
+            hiddenWindows: [
+                .init(
+                    windowID: 12617,
+                    title: "Welcome",
+                    width: 900,
+                    height: 700,
+                    isResizable: true
+                ),
+            ]
+        )
+
+        let visibleRemoval = inventory.removingWindow(windowID: 12615)
+        #expect(visibleRemoval?.slots.map(\.window.windowID) == [12616])
+        #expect(visibleRemoval?.hiddenWindows.map(\.windowID) == [12617])
+
+        let hiddenRemoval = inventory.removingWindow(windowID: 12617)
+        #expect(hiddenRemoval?.slots.map(\.window.windowID) == [12615, 12616])
+        #expect(hiddenRemoval?.hiddenWindows.isEmpty == true)
+
+        let emptyInventory = AppWindowInventoryMessage(
+            bundleIdentifier: "com.apple.dt.Xcode",
+            maxVisibleSlots: 1,
+            slots: [
+                .init(
+                    slotIndex: 0,
+                    streamID: 27,
+                    window: .init(
+                        windowID: 12615,
+                        title: "Editor",
+                        width: 1440,
+                        height: 900,
+                        isResizable: true
+                    )
+                ),
+            ],
+            hiddenWindows: []
+        )
+        #expect(emptyInventory.removingWindow(windowID: 12615) == nil)
     }
 
     @Test("Window stream failed payload serialization")

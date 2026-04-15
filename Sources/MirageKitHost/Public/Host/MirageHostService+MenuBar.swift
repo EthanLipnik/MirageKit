@@ -19,8 +19,13 @@ func shouldAcceptStopDesktopStreamRequest(
     activeDesktopStreamID: StreamID?,
     activeDesktopSessionID: UUID?
 ) -> Bool {
-    requestedStreamID == activeDesktopStreamID &&
-        requestedDesktopSessionID == activeDesktopSessionID
+    guard requestedStreamID == activeDesktopStreamID,
+          let activeDesktopSessionID else {
+        return false
+    }
+
+    return requestedDesktopSessionID == activeDesktopSessionID ||
+        requestedDesktopSessionID == legacyDesktopSessionID(for: requestedStreamID)
 }
 
 extension MirageHostService {

@@ -147,7 +147,10 @@ struct HostStageManagerControllerTests {
             isResizable: true
         )
 
-        await host.removeStoppedWindowFromAppSessionIfNeeded(windowID: 42)
+        await host.removeStoppedWindowFromAppSessionIfNeeded(
+            streamID: 7,
+            fallbackWindowID: 42
+        )
 
         let sessions = await host.appStreamManager.getAllSessions()
         #expect(sessions.isEmpty)
