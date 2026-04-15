@@ -5,6 +5,7 @@
 //  Created by Ethan Lipnik on 4/13/26.
 //
 
+import CoreGraphics
 import Foundation
 @_spi(HostApp) @testable import MirageKitHost
 import Testing
@@ -130,23 +131,23 @@ struct CaptureBenchmarkTests {
                 MirageHostCaptureBenchmarkStageResult(
                     stage: .benchmark1080p,
                     status: .completed,
-                    captureFPS: 119.8,
                     encodeFPS: 118.6,
-                    effectiveFPS: 118.6
+                    effectiveFPS: 118.6,
+                    validatedCapabilityFPS: 119.8
                 ),
                 MirageHostCaptureBenchmarkStageResult(
                     stage: .benchmark2K,
                     status: .completed,
-                    captureFPS: 117.2,
                     encodeFPS: 114.0,
-                    effectiveFPS: 114.0
+                    effectiveFPS: 114.0,
+                    validatedCapabilityFPS: 117.2
                 ),
                 MirageHostCaptureBenchmarkStageResult(
                     stage: .benchmark4K,
                     status: .completed,
-                    captureFPS: 116.5,
                     encodeFPS: 113.9,
-                    effectiveFPS: 113.9
+                    effectiveFPS: 113.9,
+                    validatedCapabilityFPS: 113.9
                 ),
             ]
         )
@@ -161,6 +162,7 @@ struct CaptureBenchmarkTests {
     @Test("Stage continuation stops only after cancellation")
     func continuationStopsOnlyForCancelledStages() {
         #expect(captureBenchmarkShouldContinue(after: .completed))
+        #expect(captureBenchmarkShouldContinue(after: .invalid))
         #expect(captureBenchmarkShouldContinue(after: .unsupported))
         #expect(captureBenchmarkShouldContinue(after: .failed))
         #expect(!captureBenchmarkShouldContinue(after: .cancelled))
@@ -202,7 +204,7 @@ struct CaptureBenchmarkTests {
         ) {
         case .exact, .accepted:
             Issue.record("Expected the degraded refresh rate to be rejected.")
-        case let .unsupported(reason):
+        case let .invalid(reason):
             #expect(reason.contains("Requested 120Hz"))
             #expect(reason.contains("acquired 60Hz"))
         }
@@ -231,6 +233,113 @@ struct CaptureBenchmarkTests {
             actualPixelHeight: 2156
         )
         #expect(tolerantResult.actualPixelDescription == "3840x2156")
+    }
+
+    @Test("Invalid measurement reason rejects blank startup")
+    func invalidMeasurementReasonRejectsBlankStartup() {
+        let reason = captureBenchmarkInvalidMeasurementReason(
+            startupReadiness: .blankOrSuspendedOnly,
+            validateSourceCadence: false,
+            targetFrameRate: 120
+        )
+
+        #expect(reason?.contains("blank or suspended") == true)
+    }
+
+    @Test("Invalid measurement reason rejects low source cadence")
+    func invalidMeasurementReasonRejectsLowSourceCadence() {
+        let reason = captureBenchmarkInvalidMeasurementReason(
+            startupReadiness: .usableFrameSeen,
+            sourceFPS: 92,
+            targetFrameRate: 120
+        )
+
+        #expect(reason?.contains("92.0 fps") == true)
+        #expect(reason?.contains("114.0 fps") == true)
+    }
+
+    @Test("Capability fps uses the lowest validated bottleneck and caps at 120")
+    func capabilityFPSUsesValidatedBottleneck() {
+        let capability = captureBenchmarkValidatedCapabilityFPS(
+            sourceFPS: 121,
+            capturePresentationFPS: 118.4,
+            encodeFPS: 97.2,
+            targetFrameRate: 120
+        )
+        let capped = captureBenchmarkValidatedCapabilityFPS(
+            sourceFPS: 144,
+            capturePresentationFPS: 136,
+            encodeFPS: 132,
+            targetFrameRate: 120
+        )
+
+        #expect(capability == 97.2)
+        #expect(capped == 120)
+    }
+
+    @Test("Stage result badges derive from validated capability")
+    func stageResultBadgesDeriveFromValidatedCapability() {
+        let meets60Only = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark2K,
+            status: .completed,
+            validatedCapabilityFPS: 76.4
+        )
+        let meets120 = MirageHostCaptureBenchmarkStageResult(
+            stage: .benchmark2K,
+            status: .completed,
+            validatedCapabilityFPS: 114.2
+        )
+
+        #expect(meets60Only.meets60FPS)
+        #expect(!meets60Only.meets120FPS)
+        #expect(meets120.meets60FPS)
+        #expect(meets120.meets120FPS)
+    }
+
+    @Test("Observed shared display mode accepts requested mode after in-place update")
+    func observedSharedDisplayModeAcceptsRequestedMode() async {
+        let validated = await SharedVirtualDisplayManager.shared.validatedObservedDisplayMode(
+            requestedResolution: CGSize(width: 3840, height: 2160),
+            requestedRefreshRate: 120,
+            observedMode: SharedVirtualDisplayManager.ObservedDisplayMode(
+                logicalResolution: CGSize(width: 1920, height: 1080),
+                pixelResolution: CGSize(width: 3840, height: 2160),
+                refreshRate: 120
+            )
+        )
+
+        #expect(validated?.pixelResolution == CGSize(width: 3840, height: 2160))
+        #expect(validated?.refreshRate == 120)
+    }
+
+    @Test("Observed shared display mode rejects refresh mismatches after in-place update")
+    func observedSharedDisplayModeRejectsRefreshMismatch() async {
+        let validated = await SharedVirtualDisplayManager.shared.validatedObservedDisplayMode(
+            requestedResolution: CGSize(width: 3840, height: 2160),
+            requestedRefreshRate: 120,
+            observedMode: SharedVirtualDisplayManager.ObservedDisplayMode(
+                logicalResolution: CGSize(width: 1920, height: 1080),
+                pixelResolution: CGSize(width: 3840, height: 2160),
+                refreshRate: 60
+            )
+        )
+
+        #expect(validated == nil)
+    }
+
+    @Test("Observed shared display mode rejects resolution mismatches after in-place update")
+    func observedSharedDisplayModeRejectsResolutionMismatch() async {
+        let validated = await SharedVirtualDisplayManager.shared.validatedObservedDisplayMode(
+            requestedResolution: CGSize(width: 3840, height: 2160),
+            requestedRefreshRate: 120,
+            observedMode: SharedVirtualDisplayManager.ObservedDisplayMode(
+                logicalResolution: CGSize(width: 1920, height: 1080),
+                pixelResolution: CGSize(width: 3200, height: 1800),
+                refreshRate: 120
+            )
+        )
+
+        #expect(validated == nil)
     }
 }
 #endif

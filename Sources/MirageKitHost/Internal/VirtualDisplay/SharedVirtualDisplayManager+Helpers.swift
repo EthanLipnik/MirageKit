@@ -15,6 +15,12 @@ import Foundation
 extension SharedVirtualDisplayManager {
     // MARK: - Private Helpers
 
+    struct ObservedDisplayMode: Sendable, Equatable {
+        let logicalResolution: CGSize
+        let pixelResolution: CGSize
+        let refreshRate: Double
+    }
+
     enum DisplayValidationOutcome: Sendable, Equatable {
         case ready
         case screenCaptureKitVisibilityDelayed(CGDirectDisplayID)
@@ -187,10 +193,46 @@ extension SharedVirtualDisplayManager {
         return widthDiff > 2 || heightDiff > 2
     }
 
+    func observedDisplayMode(
+        displayID: CGDirectDisplayID
+    ) -> ObservedDisplayMode? {
+        guard let modeSizes = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID),
+              let refreshRate = CGDisplayCopyDisplayMode(displayID)?.refreshRate else {
+            return nil
+        }
+        return ObservedDisplayMode(
+            logicalResolution: modeSizes.logical,
+            pixelResolution: modeSizes.pixel,
+            refreshRate: refreshRate
+        )
+    }
+
+    func validatedObservedDisplayMode(
+        requestedResolution: CGSize,
+        requestedRefreshRate: Int,
+        observedMode: ObservedDisplayMode?
+    ) -> ObservedDisplayMode? {
+        guard let observedMode else { return nil }
+        guard !needsResize(
+            currentResolution: observedMode.pixelResolution,
+            targetResolution: requestedResolution
+        ) else {
+            return nil
+        }
+
+        let refreshTolerance = 1.0
+        guard abs(observedMode.refreshRate - Double(requestedRefreshRate)) <= refreshTolerance else {
+            return nil
+        }
+
+        return observedMode
+    }
+
     func validateDisplayMode(
         displayID: CGDirectDisplayID,
         expectedLogicalResolution: CGSize,
-        expectedPixelResolution: CGSize
+        expectedPixelResolution: CGSize,
+        expectedRefreshRate: Double? = nil
     )
     async -> DisplayValidationOutcome {
         guard expectedLogicalResolution.width > 0,
@@ -205,13 +247,14 @@ extension SharedVirtualDisplayManager {
         for attempt in 1 ... maxAttempts {
             let bounds = CGDisplayBounds(displayID)
             let boundsReady = bounds.width > 0 && bounds.height > 0
-            let modeSizes = CGVirtualDisplayBridge.currentDisplayModeSizes(displayID)
+            let observedMode = observedDisplayMode(displayID: displayID)
 
             do {
                 let scDisplay = try await findSCDisplay(displayID: displayID, maxAttempts: 1)
                 let scSize = CGSize(width: CGFloat(scDisplay.display.width), height: CGFloat(scDisplay.display.height))
-                let modeLogicalSize = modeSizes?.logical ?? .zero
-                let modePixelSize = modeSizes?.pixel ?? .zero
+                let modeLogicalSize = observedMode?.logicalResolution ?? .zero
+                let modePixelSize = observedMode?.pixelResolution ?? .zero
+                let modeRefreshRate = observedMode?.refreshRate ?? 0
 
                 let scMatchesLogical = abs(scSize.width - expectedLogicalResolution.width) <= 1 &&
                     abs(scSize.height - expectedLogicalResolution.height) <= 1
@@ -230,19 +273,24 @@ extension SharedVirtualDisplayManager {
 
                 let sizeMatches = scMatchesLogical || scMatchesPixel || boundsMatchesLogical || boundsMatchesPixel
                 let modeMatches = modeMatchesLogical && modeMatchesPixel
+                let refreshMatches = if let expectedRefreshRate {
+                    abs(modeRefreshRate - expectedRefreshRate) <= 1.0
+                } else {
+                    true
+                }
                 let expectsOneX = abs(expectedLogicalResolution.width - expectedPixelResolution.width) <= 1 &&
                     abs(expectedLogicalResolution.height - expectedPixelResolution.height) <= 1
 
-                if boundsReady, sizeMatches, modeMatches {
+                if boundsReady, sizeMatches, modeMatches, refreshMatches {
                     return .ready
                 }
 
-                if expectsOneX, boundsReady, sizeMatches {
+                if expectsOneX, boundsReady, sizeMatches, refreshMatches {
                     MirageLogger
                         .host(
                             "Virtual display \(displayID) accepted using lenient 1x validation: " +
                                 "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
-                                "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), " +
+                                "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate), " +
                                 "expected=\(expectedPixelResolution)"
                         )
                     return .ready
@@ -252,8 +300,8 @@ extension SharedVirtualDisplayManager {
                     .host(
                         "Virtual display \(displayID) size mismatch (attempt \(attempt)/\(maxAttempts)): " +
                             "bounds=\(bounds.size), sc=\(scDisplay.display.width)x\(scDisplay.display.height), " +
-                            "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), " +
-                            "expectedLogical=\(expectedLogicalResolution), expectedPixel=\(expectedPixelResolution)"
+                            "modeLogical=\(modeLogicalSize), modePixel=\(modePixelSize), modeRefresh=\(modeRefreshRate), " +
+                            "expectedLogical=\(expectedLogicalResolution), expectedPixel=\(expectedPixelResolution), expectedRefresh=\(expectedRefreshRate ?? 0)"
                     )
             } catch let error as SharedDisplayError {
                 switch error {
@@ -356,10 +404,14 @@ extension SharedVirtualDisplayManager {
         guard display.colorSpace == colorSpace else { return nil }
 
         let useHiDPI = display.scaleFactor > 1.5
+        let normalizedResolution = Self.normalizedPixelResolution(newResolution)
+        let expectedLogicalResolution = useHiDPI
+            ? Self.logicalResolution(for: normalizedResolution, scaleFactor: display.scaleFactor)
+            : normalizedResolution
         let success = CGVirtualDisplayBridge.updateDisplayResolution(
             display: display.displayRef.value,
-            width: Int(newResolution.width),
-            height: Int(newResolution.height),
+            width: Int(normalizedResolution.width),
+            height: Int(normalizedResolution.height),
             refreshRate: Double(refreshRate),
             hiDPI: useHiDPI,
             colorSpace: display.colorSpace,
@@ -367,13 +419,28 @@ extension SharedVirtualDisplayManager {
         )
         guard success else { return nil }
 
+        let validationOutcome = await validateDisplayMode(
+            displayID: display.displayID,
+            expectedLogicalResolution: expectedLogicalResolution,
+            expectedPixelResolution: normalizedResolution,
+            expectedRefreshRate: Double(refreshRate)
+        )
+        guard validationOutcome == .ready,
+              let observedMode = validatedObservedDisplayMode(
+                  requestedResolution: normalizedResolution,
+                  requestedRefreshRate: refreshRate,
+                  observedMode: observedDisplayMode(displayID: display.displayID)
+              ) else {
+            return nil
+        }
+
         let updatedScaleFactor = resolvedScaleFactor(displayID: display.displayID, fallback: display.scaleFactor)
         let updatedDisplay = ManagedDisplayContext(
             displayID: display.displayID,
             spaceID: display.spaceID,
-            resolution: newResolution,
+            resolution: observedMode.pixelResolution,
             scaleFactor: updatedScaleFactor,
-            refreshRate: Double(refreshRate),
+            refreshRate: observedMode.refreshRate,
             colorSpace: display.colorSpace,
             displayP3CoverageStatus: display.displayP3CoverageStatus,
             generation: display.generation,
@@ -506,7 +573,8 @@ extension SharedVirtualDisplayManager {
             let validationOutcome = await validateDisplayMode(
                 displayID: displayContext.displayID,
                 expectedLogicalResolution: validatedLogicalResolution,
-                expectedPixelResolution: validatedPixelResolution
+                expectedPixelResolution: validatedPixelResolution,
+                expectedRefreshRate: Double(refreshRate)
             )
             guard validationOutcome == .ready else {
                 lastValidationOutcome = validationOutcome
@@ -523,12 +591,17 @@ extension SharedVirtualDisplayManager {
                 displayID: displayContext.displayID,
                 fallback: validatedScaleHint
             )
+            let observedMode = validatedObservedDisplayMode(
+                requestedResolution: validatedPixelResolution,
+                requestedRefreshRate: refreshRate,
+                observedMode: observedDisplayMode(displayID: displayContext.displayID)
+            )
             let managedContext = ManagedDisplayContext(
                 displayID: displayContext.displayID,
                 spaceID: spaceID,
-                resolution: validatedPixelResolution,
+                resolution: observedMode?.pixelResolution ?? validatedPixelResolution,
                 scaleFactor: displayScaleFactor,
-                refreshRate: displayContext.refreshRate,
+                refreshRate: observedMode?.refreshRate ?? displayContext.refreshRate,
                 colorSpace: displayContext.colorSpace,
                 displayP3CoverageStatus: displayContext.displayP3CoverageStatus,
                 generation: generation,

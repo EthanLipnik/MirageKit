@@ -40,6 +40,25 @@ private struct MirageHostCaptureBenchmarkMeasurementWindow {
     }
 }
 
+private struct MirageHostCaptureBenchmarkPresentationCounter {
+    var frameCount: UInt64 = 0
+    var lastPresentationSeconds: Double?
+
+    mutating func record(_ presentationTime: CMTime) {
+        let presentationSeconds = CMTimeGetSeconds(presentationTime)
+        guard presentationSeconds.isFinite, presentationSeconds >= 0 else {
+            frameCount &+= 1
+            return
+        }
+        if let lastPresentationSeconds,
+           abs(presentationSeconds - lastPresentationSeconds) < 0.000_1 {
+            return
+        }
+        self.lastPresentationSeconds = presentationSeconds
+        frameCount &+= 1
+    }
+}
+
 private struct MirageHostCaptureBenchmarkTelemetryDelta {
     let averageCallbackTimeMs: Double?
     let maximumCallbackTimeMs: Double?
@@ -190,10 +209,12 @@ extension MirageHostService {
         let measurementWindow = Locked<MirageHostCaptureBenchmarkMeasurementWindow?>(nil)
         let capturedFrameCount = Locked<UInt64>(0)
         let encodedFrameCount = Locked<UInt64>(0)
+        let presentationCounter = Locked(MirageHostCaptureBenchmarkPresentationCounter())
         let frameContinuation = Locked<AsyncStream<CapturedFrame>.Continuation?>(nil)
         var encoder: VideoEncoder?
         var captureEngine: WindowCaptureEngine?
         var encodeTask: Task<Void, Never>?
+        let sourceRuntime = MirageHostCaptureBenchmarkSourceRuntime()
 
         func cleanupStageResources() async {
             measurementWindow.withLock { $0 = nil }
@@ -213,11 +234,11 @@ extension MirageHostService {
         }
 
         do {
+            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.benchmark)
             let displaySnapshot = try await SharedVirtualDisplayManager.shared.acquireDisplayForConsumer(
                 .benchmark,
                 resolution: stage.pixelSize,
-                refreshRate: stage.refreshRate,
-                allowActiveUpdate: true
+                refreshRate: stage.refreshRate
             )
 
             let validationResult = captureBenchmarkDisplayValidationResult(
@@ -236,11 +257,14 @@ extension MirageHostService {
             case let .accepted(actualWidth, actualHeight):
                 captureWidth = actualWidth
                 captureHeight = actualHeight
-            case let .unsupported(reason):
+            case let .invalid(reason):
                 return MirageHostCaptureBenchmarkStageResult(
                     stage: stage,
-                    status: .unsupported,
-                    unsupportedReason: reason
+                    status: .invalid,
+                    actualPixelWidth: Int(displaySnapshot.resolution.width.rounded()),
+                    actualPixelHeight: Int(displaySnapshot.resolution.height.rounded()),
+                    observedDisplayRefreshRate: displaySnapshot.refreshRate,
+                    invalidMeasurementReason: reason
                 )
             }
 
@@ -256,7 +280,8 @@ extension MirageHostService {
                 displayID: displaySnapshot.displayID,
                 displayBounds: displayBounds,
                 pixelSize: displaySnapshot.resolution,
-                spaceID: displaySnapshot.spaceID
+                spaceID: displaySnapshot.spaceID,
+                sourceRuntime: sourceRuntime
             )
             try await prepareSourceWindow(windowConfiguration)
 
@@ -325,6 +350,9 @@ extension MirageHostService {
                     }
                     if shouldCount {
                         capturedFrameCount.withLock { $0 &+= 1 }
+                        presentationCounter.withLock { counter in
+                            counter.record(frame.presentationTime)
+                        }
                     }
                     frameContinuation.read { $0 }?.yield(frame)
                 }
@@ -349,8 +377,26 @@ extension MirageHostService {
             )
             try await sleepForBenchmark(durationSeconds: warmupDurationSeconds)
 
+            let startupReadiness = await stageCaptureEngine.displayStartupReadiness()
+            if let invalidReason = captureBenchmarkInvalidMeasurementReason(
+                startupReadiness: startupReadiness,
+                validateSourceCadence: false,
+                targetFrameRate: stage.targetFrameRate
+            ) {
+                await cleanupStageResources()
+                return MirageHostCaptureBenchmarkStageResult(
+                    stage: stage,
+                    status: .invalid,
+                    actualPixelWidth: captureWidth,
+                    actualPixelHeight: captureHeight,
+                    observedDisplayRefreshRate: displaySnapshot.refreshRate,
+                    invalidMeasurementReason: invalidReason
+                )
+            }
+
             let measurementStart = CFAbsoluteTimeGetCurrent()
             let measurementEnd = measurementStart + measurementDurationSeconds
+            sourceRuntime.beginMeasurement()
             measurementWindow.withLock {
                 $0 = MirageHostCaptureBenchmarkMeasurementWindow(
                     startTime: measurementStart,
@@ -372,13 +418,34 @@ extension MirageHostService {
             try await sleepForBenchmark(durationSeconds: measurementDurationSeconds)
 
             measurementWindow.withLock { $0 = nil }
+            let sourceMeasurement = sourceRuntime.completeMeasurement(
+                durationSeconds: measurementDurationSeconds
+            )
             let telemetryFinal = await stageCaptureEngine.captureTelemetrySnapshot()
             await cleanupStageResources()
 
             let measurementDuration = max(0.001, measurementEnd - measurementStart)
             let captureFPS = Double(capturedFrameCount.read { $0 }) / measurementDuration
+            let capturePresentationFPS = Double(
+                presentationCounter.read { $0.frameCount }
+            ) / measurementDuration
             let encodeFPS = Double(encodedFrameCount.read { $0 }) / measurementDuration
-            let effectiveFPS = min(captureFPS, encodeFPS)
+            let effectiveFPS = min(capturePresentationFPS, encodeFPS)
+            let sourceFPS = sourceMeasurement.observedFPS
+            let invalidMeasurementReason = captureBenchmarkInvalidMeasurementReason(
+                sourceFPS: sourceFPS,
+                targetFrameRate: stage.targetFrameRate
+            )
+            let capabilityFPS: Double? = if invalidMeasurementReason == nil {
+                captureBenchmarkValidatedCapabilityFPS(
+                    sourceFPS: sourceFPS,
+                    capturePresentationFPS: capturePresentationFPS,
+                    encodeFPS: encodeFPS,
+                    targetFrameRate: stage.targetFrameRate
+                )
+            } else {
+                nil
+            }
             let telemetryDelta = captureBenchmarkTelemetryDelta(
                 baseline: telemetryBaseline,
                 final: telemetryFinal
@@ -397,12 +464,16 @@ extension MirageHostService {
 
             return MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
-                status: .completed,
+                status: invalidMeasurementReason == nil ? .completed : .invalid,
                 actualPixelWidth: captureWidth,
                 actualPixelHeight: captureHeight,
+                observedDisplayRefreshRate: displaySnapshot.refreshRate,
+                observedSourceFPS: sourceFPS,
                 captureFPS: captureFPS,
+                observedCapturePresentationFPS: capturePresentationFPS,
                 encodeFPS: encodeFPS,
                 effectiveFPS: effectiveFPS,
+                validatedCapabilityFPS: capabilityFPS,
                 averageEncodeTimeMs: await stageEncoder.getAverageEncodeTimeMs(),
                 averageCaptureCallbackTimeMs: telemetryDelta.averageCallbackTimeMs,
                 maximumCaptureCallbackTimeMs: telemetryDelta.maximumCallbackTimeMs,
@@ -412,9 +483,11 @@ extension MirageHostService {
                 poolDropCount: telemetryDelta.poolDropCount,
                 inFlightDropCount: telemetryDelta.inFlightDropCount,
                 admissionDropCount: telemetryDelta.admissionDropCount,
-                copyFailureCount: telemetryDelta.copyFailureCount
+                copyFailureCount: telemetryDelta.copyFailureCount,
+                invalidMeasurementReason: invalidMeasurementReason
             )
         } catch is CancellationError {
+            sourceRuntime.cancelMeasurement()
             await cleanupStageResources()
             return MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
@@ -422,6 +495,7 @@ extension MirageHostService {
                 failureDescription: "Benchmark cancelled."
             )
         } catch {
+            sourceRuntime.cancelMeasurement()
             await cleanupStageResources()
             return MirageHostCaptureBenchmarkStageResult(
                 stage: stage,
