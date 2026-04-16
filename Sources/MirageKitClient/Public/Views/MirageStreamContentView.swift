@@ -110,7 +110,7 @@ public struct MirageStreamContentView: View {
         clientService: MirageClientService,
         isDesktopStream: Bool = false,
         desktopStreamMode: MirageDesktopStreamMode = .unified,
-        desktopCursorPresentation: MirageDesktopCursorPresentation = .emulatedCursor,
+        desktopCursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
         onExitDesktopStream: (() -> Void)? = nil,
         onToggleDictationShortcut: (() -> Void)? = nil,
         desktopExitShortcut: MirageClientShortcut = .defaultDesktopExit,

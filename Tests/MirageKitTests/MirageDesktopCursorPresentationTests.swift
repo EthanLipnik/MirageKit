@@ -10,6 +10,13 @@ import Testing
 
 @Suite("Desktop Cursor Presentation")
 struct MirageDesktopCursorPresentationTests {
+    @Test("Cursor source raw values match UI labels")
+    func cursorSourceRawValuesMatchUILabels() {
+        #expect(MirageDesktopCursorSource.client.rawValue == "client")
+        #expect(MirageDesktopCursorSource.simulated.rawValue == "simulated")
+        #expect(MirageDesktopCursorSource.host.rawValue == "host")
+    }
+
     @Test("Client cursor uses local presentation without host capture")
     func clientCursorUsesLocalPresentation() {
         let presentation = MirageDesktopCursorPresentation(
@@ -24,10 +31,10 @@ struct MirageDesktopCursorPresentationTests {
         #expect(presentation.requiresCursorPositionUpdates)
     }
 
-    @Test("Emulated cursor hides the local cursor without host capture")
-    func emulatedCursorHidesLocalCursor() {
+    @Test("Simulated cursor hides the local cursor without host capture")
+    func simulatedCursorHidesLocalCursor() {
         let presentation = MirageDesktopCursorPresentation(
-            source: .emulated,
+            source: .simulated,
             lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: true
         )
@@ -36,10 +43,10 @@ struct MirageDesktopCursorPresentationTests {
         #expect(presentation.capturesHostCursor == false)
     }
 
-    @Test("Emulated cursor stays unlocked for mirrored desktop")
-    func emulatedCursorMirroredDesktopDoesNotLock() {
+    @Test("Simulated cursor stays unlocked for mirrored desktop")
+    func simulatedCursorMirroredDesktopDoesNotLock() {
         let presentation = MirageDesktopCursorPresentation(
-            source: .emulated,
+            source: .simulated,
             lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: true
         )
@@ -47,10 +54,10 @@ struct MirageDesktopCursorPresentationTests {
         #expect(presentation.locksClientCursor(for: .unified) == false)
     }
 
-    @Test("Emulated cursor honors mirrored desktop lock preference")
-    func emulatedCursorMirroredDesktopHonorsLockPreference() {
+    @Test("Simulated cursor honors mirrored desktop lock preference")
+    func simulatedCursorMirroredDesktopHonorsLockPreference() {
         let presentation = MirageDesktopCursorPresentation(
-            source: .emulated,
+            source: .simulated,
             lockClientCursorWhenUsingMirageCursor: true,
             lockClientCursorWhenUsingHostCursor: true
         )
@@ -58,10 +65,10 @@ struct MirageDesktopCursorPresentationTests {
         #expect(presentation.locksClientCursor(for: .unified))
     }
 
-    @Test("Emulated cursor always locks for secondary desktop")
-    func emulatedCursorSecondaryDesktopLocks() {
+    @Test("Simulated cursor always locks for secondary desktop")
+    func simulatedCursorSecondaryDesktopLocks() {
         let presentation = MirageDesktopCursorPresentation(
-            source: .emulated,
+            source: .simulated,
             lockClientCursorWhenUsingMirageCursor: false,
             lockClientCursorWhenUsingHostCursor: false
         )

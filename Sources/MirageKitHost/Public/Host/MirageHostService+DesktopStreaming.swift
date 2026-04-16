@@ -72,7 +72,7 @@ extension MirageHostService {
         displayResolution: CGSize,
         clientScaleFactor: CGFloat? = nil,
         mode: MirageDesktopStreamMode,
-        cursorPresentation: MirageDesktopCursorPresentation = .emulatedCursor,
+        cursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
         keyFrameInterval: Int?,
         colorDepth: MirageStreamColorDepth?,
         captureQueueDepth: Int?,
@@ -839,7 +839,7 @@ extension MirageHostService {
         desktopSessionID = nil
         desktopRequestedScaleFactor = nil
         desktopStreamMode = .unified
-        desktopCursorPresentation = .emulatedCursor
+        desktopCursorPresentation = .simulatedCursor
         if let vdID = desktopVirtualDisplayID {
             if mode == .unified {
                 await disableDisplayMirroring(displayID: vdID)
@@ -918,7 +918,7 @@ extension MirageHostService {
         desktopUsesHostResolution = false
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .unified
-        desktopCursorPresentation = .emulatedCursor
+        desktopCursorPresentation = .simulatedCursor
         streamsByID.removeValue(forKey: streamID)
         unregisterTypingBurstRoute(streamID: streamID)
         unregisterStallWindowPointerRoute(streamID: streamID)

@@ -65,7 +65,7 @@ public final class MirageHostService {
     public internal(set) var isEncoderLowPowerModeActive: Bool = false
 
     /// Effective cursor presentation for the active desktop stream.
-    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .emulatedCursor
+    public internal(set) var desktopCursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor
 
     /// Latest client-owned stream-option state mirrored back to the host UI.
     public internal(set) var remoteClientStreamStatusOverlayEnabled = false

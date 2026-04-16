@@ -20,7 +20,7 @@ struct HostCursorPositionUpdatePolicyTests {
             streamID: 42,
             desktopStreamID: 42,
             desktopStreamMode: .secondary,
-            desktopCursorPresentation: .emulatedCursor
+            desktopCursorPresentation: .simulatedCursor
         )
 
         #expect(shouldSend)
@@ -66,7 +66,7 @@ struct HostCursorPositionUpdatePolicyTests {
             streamID: 7,
             desktopStreamID: 7,
             desktopStreamMode: .unified,
-            desktopCursorPresentation: .emulatedCursor
+            desktopCursorPresentation: .simulatedCursor
         )
 
         #expect(shouldSend == false)

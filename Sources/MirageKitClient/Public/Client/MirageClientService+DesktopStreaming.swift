@@ -25,7 +25,7 @@ public extension MirageClientService {
         scaleFactor: CGFloat? = nil,
         displayResolution: CGSize? = nil,
         mode: MirageDesktopStreamMode = .unified,
-        cursorPresentation: MirageDesktopCursorPresentation = .emulatedCursor,
+        cursorPresentation: MirageDesktopCursorPresentation = .simulatedCursor,
         keyFrameInterval: Int? = nil,
         encoderOverrides: MirageEncoderOverrides? = nil,
         audioConfiguration: MirageAudioConfiguration? = nil,
