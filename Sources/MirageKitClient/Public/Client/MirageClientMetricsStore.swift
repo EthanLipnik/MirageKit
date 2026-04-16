@@ -59,10 +59,6 @@ public struct MirageClientMetricsSnapshot: Sendable, Equatable {
     package var hostPreEncodeWaitMaxMs: Double? = nil
     package var hostCaptureCallbackAverageMs: Double? = nil
     package var hostCaptureCallbackMaxMs: Double? = nil
-    package var hostCaptureCopyAverageMs: Double? = nil
-    package var hostCaptureCopyMaxMs: Double? = nil
-    package var hostCaptureCopyPoolDrops: UInt64? = nil
-    package var hostCaptureCopyInFlightDrops: UInt64? = nil
     package var hostSendQueueBytes: Int? = nil
     package var hostSendStartDelayAverageMs: Double? = nil
     package var hostSendStartDelayMaxMs: Double? = nil
@@ -283,10 +279,6 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         preEncodeWaitMaxMs: Double?,
         captureCallbackAverageMs: Double?,
         captureCallbackMaxMs: Double?,
-        captureCopyAverageMs: Double?,
-        captureCopyMaxMs: Double?,
-        captureCopyPoolDrops: UInt64?,
-        captureCopyInFlightDrops: UInt64?,
         sendQueueBytes: Int?,
         sendStartDelayAverageMs: Double?,
         sendStartDelayMaxMs: Double?,
@@ -306,10 +298,6 @@ public final class MirageClientMetricsStore: @unchecked Sendable {
         snapshot.hostPreEncodeWaitMaxMs = preEncodeWaitMaxMs
         snapshot.hostCaptureCallbackAverageMs = captureCallbackAverageMs
         snapshot.hostCaptureCallbackMaxMs = captureCallbackMaxMs
-        snapshot.hostCaptureCopyAverageMs = captureCopyAverageMs
-        snapshot.hostCaptureCopyMaxMs = captureCopyMaxMs
-        snapshot.hostCaptureCopyPoolDrops = captureCopyPoolDrops
-        snapshot.hostCaptureCopyInFlightDrops = captureCopyInFlightDrops
         snapshot.hostSendQueueBytes = sendQueueBytes
         snapshot.hostSendStartDelayAverageMs = sendStartDelayAverageMs
         snapshot.hostSendStartDelayMaxMs = sendStartDelayMaxMs

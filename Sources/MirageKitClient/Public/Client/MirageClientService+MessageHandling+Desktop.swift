@@ -59,18 +59,14 @@ extension MirageClientService {
             return true
         }
 
+        sessionStore.beginPostResizeTransition(for: streamID)
         await prepareControllerForDesktopResize(
             streamID,
             codec: started.codec,
             streamDimensions: (width: started.width, height: started.height),
-            mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
+            mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
+            dimensionToken: started.dimensionToken
         )
-        if let dimensionToken = started.dimensionToken,
-           let controller = controllersByStream[streamID] {
-            let reassembler = await controller.getReassembler()
-            reassembler.updateExpectedDimensionToken(dimensionToken)
-        }
-        sessionStore.beginPostResizeTransition(for: streamID)
         desktopResizeCoordinator.finishTransition(outcome: outcome)
         return true
     }
@@ -205,15 +201,11 @@ extension MirageClientService {
                     beginPostResizeTransition: isResizeTokenAdvance,
                     codec: started.codec,
                     streamDimensions: (width: started.width, height: started.height),
-                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
+                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
+                    dimensionToken: dimensionToken
                 )
             }
             self.addActiveStreamID(streamID)
-
-            if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
-                let reassembler = await controller.getReassembler()
-                reassembler.updateExpectedDimensionToken(token)
-            }
 
             if let startupAttemptID {
                 await self.sendStreamReadyAck(

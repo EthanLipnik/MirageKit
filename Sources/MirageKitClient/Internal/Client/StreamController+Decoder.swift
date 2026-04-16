@@ -26,6 +26,26 @@ extension StreamController {
         await decoder.setPreferredOutputColorDepth(colorDepth)
     }
 
+    func primeForIncomingResize(
+        dimensionToken: UInt16?,
+        streamDimensions: (width: Int, height: Int)? = nil
+    )
+    async {
+        clearQueuedFramesForRecovery()
+        if let dimensionToken {
+            reassembler.updateExpectedDimensionToken(dimensionToken)
+        }
+        reassembler.enterKeyframeOnlyMode()
+        await decoder.prepareForDimensionChange(
+            expectedWidth: streamDimensions?.width,
+            expectedHeight: streamDimensions?.height
+        )
+        MirageLogger.client(
+            "Primed resize admission fence for stream \(streamID) " +
+                "(dimensionToken=\(dimensionToken.map(String.init) ?? "nil"))"
+        )
+    }
+
     /// Reset decoder for new session (e.g., after resize or reconnection)
     func resetForNewSession() async {
         // Drop any queued frames from the previous session to avoid BadData storms.
@@ -44,9 +64,13 @@ extension StreamController {
         lastMetricsLogTime = 0
         decodeSubmissionStressStreak = 0
         decodeSubmissionHealthyStreak = 0
+        latestHostMetricsMessage = nil
         lastDecodeSubmissionConstraintWasSourceBound = nil
         lastSourceBoundDiagnosticSignature = nil
         latestHostCadencePressureSample = nil
+        latestRenderTelemetrySnapshot = nil
+        lastStreamingAnomalyDiagnosticSignature = nil
+        lastStreamingAnomalyDiagnosticTime = 0
         lastDecodedFrameTime = 0
         lastPresentedSequenceObserved = 0
         lastPresentedProgressTime = 0
@@ -92,14 +116,13 @@ extension StreamController {
 
     func logMetricsIfNeeded(decodedFPS: Double, receivedFPS: Double, droppedFrames: UInt64) {
         let now = currentTime()
-        guard MirageLogger.isEnabled(.client) else { return }
+        guard MirageLogger.isEnabled(.metrics) else { return }
         guard lastMetricsLogTime == 0 || now - lastMetricsLogTime > 2.0 else { return }
         let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))
         let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
-        MirageLogger
-            .client(
-                "Client FPS: decoded=\(decodedText), received=\(receivedText), dropped=\(droppedFrames), stream=\(streamID)"
-            )
+        MirageLogger.metrics(
+            "Client FPS: decoded=\(decodedText), received=\(receivedText), dropped=\(droppedFrames), stream=\(streamID)"
+        )
         lastMetricsLogTime = now
     }
 

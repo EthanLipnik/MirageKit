@@ -63,32 +63,42 @@ private struct MirageHostCaptureBenchmarkPresentationCounter {
 }
 
 private struct MirageHostCaptureBenchmarkTelemetryDelta {
+    let rawCallbackCount: UInt64
+    let validSampleCount: UInt64
+    let renderableSampleCount: UInt64
+    let completeSampleCount: UInt64
+    let idleSampleCount: UInt64
+    let blankSampleCount: UInt64
+    let suspendedSampleCount: UInt64
+    let startedSampleCount: UInt64
+    let stoppedSampleCount: UInt64
+    let cadenceAdmittedCount: UInt64
+    let deliveryCount: UInt64
     let averageCallbackTimeMs: Double?
     let maximumCallbackTimeMs: Double?
     let cadenceDropCount: UInt64
-    let poolDropCount: UInt64
-    let inFlightDropCount: UInt64
     let admissionDropCount: UInt64
-    let averageCopyTimeMs: Double?
-    let maximumCopyTimeMs: Double?
-    let copyFailureCount: UInt64
 }
 
 private struct MirageHostCaptureBenchmarkResolvedSource {
     let windowWrapper: SCWindowWrapper
     let applicationWrapper: SCApplicationWrapper
     let displayWrapper: SCDisplayWrapper
+    let sourceClock: MirageHostCaptureBenchmarkSourceClock?
 }
 
 private struct MirageHostCaptureBenchmarkPhaseMeasurement {
     let phase: MirageHostCaptureBenchmarkPhaseResult
     let observedDisplayCadenceFPS: Double?
+    let sourceGenerationFPS: Double?
+    let capturePolicy: MirageHostCaptureBenchmarkCapturePolicy?
 }
 
 private struct MirageHostCaptureBenchmarkDisplayMeasurement {
     let phase: MirageHostCaptureBenchmarkPhaseResult
     let encodeFPS: Double?
     let averageEncodeTimeMs: Double?
+    let capturePolicy: MirageHostCaptureBenchmarkCapturePolicy?
 }
 
 @MainActor
@@ -357,6 +367,14 @@ extension MirageHostService {
             let displayPhase = displayMeasurement.phase
             let encodeFPS = displayMeasurement.encodeFPS
             let observedDisplayCadenceFPS = sourceMeasurement.observedDisplayCadenceFPS
+            let sourceGenerationFPS = sourceMeasurement.sourceGenerationFPS
+            let bottleneck = captureBenchmarkBottleneck(
+                stage: stage,
+                sourceGenerationFPS: sourceGenerationFPS,
+                sourcePhase: sourcePhase,
+                displayPhase: displayPhase,
+                encodeFPS: encodeFPS
+            )
 
             stageWarnings = deduplicatedBenchmarkWarnings(
                 stageWarnings +
@@ -364,9 +382,7 @@ extension MirageHostService {
                         stage: stage,
                         reportedDisplayRefreshRate: displaySnapshot.refreshRate,
                         observedDisplayCadenceFPS: observedDisplayCadenceFPS,
-                        sourcePhase: sourcePhase,
-                        displayPhase: displayPhase,
-                        encodeFPS: encodeFPS
+                        bottleneck: bottleneck
                     )
             )
 
@@ -375,6 +391,7 @@ extension MirageHostService {
                 targetFrameRate: stage.targetFrameRate
             )
             let validatedCapabilityFPS = captureBenchmarkValidatedCapabilityFPS(
+                sourceGenerationFPS: sourceGenerationFPS,
                 sourcePhase: sourcePhase,
                 displayPhase: displayPhase,
                 encodeFPS: encodeFPS,
@@ -399,9 +416,13 @@ extension MirageHostService {
                 actualPixelHeight: actualPixelHeight,
                 reportedDisplayRefreshRate: displaySnapshot.refreshRate,
                 observedDisplayCadenceFPS: observedDisplayCadenceFPS,
+                sourceGenerationFPS: sourceGenerationFPS,
                 sourcePhase: sourcePhase,
                 displayPhase: displayPhase,
                 encodeFPS: encodeFPS,
+                sourceCapturePolicy: sourceMeasurement.capturePolicy,
+                displayCapturePolicy: displayMeasurement.capturePolicy,
+                bottleneck: bottleneck,
                 displayCaptureCapabilityFPS: displayCaptureCapabilityFPS,
                 validatedCapabilityFPS: validatedCapabilityFPS,
                 averageEncodeTimeMs: displayMeasurement.averageEncodeTimeMs,
@@ -448,6 +469,8 @@ extension MirageHostService {
     ) async throws -> MirageHostCaptureBenchmarkResolvedSource {
         let attempts = max(1, maxAttempts)
         var delayMs = max(40, initialDelayMs)
+        var settledObservationCount = 0
+        var lastFailureReason = "Benchmark source window \(preparedSource.windowID) did not surface in ScreenCaptureKit."
 
         for attempt in 1 ... attempts {
             do {
@@ -460,19 +483,39 @@ extension MirageHostService {
                    let resolvedApplication = content.applications.first(where: {
                        $0.processID == preparedSource.applicationPID
                    }) ?? resolvedWindow.owningApplication,
-                   let resolvedDisplay = content.displays.first(where: {
+                   let targetDisplay = content.displays.first(where: {
                        $0.displayID == preparedSource.displayID
                    }) ?? content.displays.first(where: {
                        $0.displayID == fallbackDisplayID
-                   }) ?? resolveDisplayForBenchmarkSourceWindow(
-                       resolvedWindow,
-                       displays: content.displays
-                   ) {
-                    return MirageHostCaptureBenchmarkResolvedSource(
-                        windowWrapper: SCWindowWrapper(window: resolvedWindow),
-                        applicationWrapper: SCApplicationWrapper(application: resolvedApplication),
-                        displayWrapper: SCDisplayWrapper(display: resolvedDisplay)
-                    )
+                   }) {
+                    let resolvedDisplay = resolveDisplayForBenchmarkSourceWindow(
+                        resolvedWindow,
+                        displays: content.displays
+                    ) ?? targetDisplay
+                    if let geometryMismatchReason = benchmarkSourceGeometryMismatchReason(
+                        preparedSource: preparedSource,
+                        resolvedWindow: resolvedWindow,
+                        resolvedDisplayID: resolvedDisplay.displayID
+                    ) {
+                        settledObservationCount = 0
+                        lastFailureReason = geometryMismatchReason
+                    } else {
+                        settledObservationCount += 1
+                        if settledObservationCount >= 2 || attempts == 1 {
+                            return MirageHostCaptureBenchmarkResolvedSource(
+                                windowWrapper: SCWindowWrapper(window: resolvedWindow),
+                                applicationWrapper: SCApplicationWrapper(application: resolvedApplication),
+                                displayWrapper: SCDisplayWrapper(display: resolvedDisplay),
+                                sourceClock: preparedSource.sourceClock
+                            )
+                        }
+                        lastFailureReason =
+                            "Benchmark source window geometry is still settling at \(benchmarkFrameDescription(resolvedWindow.frame))."
+                    }
+                } else {
+                    settledObservationCount = 0
+                    lastFailureReason =
+                        "Benchmark source window \(preparedSource.windowID) did not surface in ScreenCaptureKit."
                 }
 
                 if attempt < attempts {
@@ -480,9 +523,12 @@ extension MirageHostService {
                     delayMs = min(500, Int(Double(delayMs) * 1.5))
                 }
             } catch {
+                settledObservationCount = 0
+                lastFailureReason =
+                    "Benchmark source window \(preparedSource.windowID) did not surface in ScreenCaptureKit."
                 if attempt >= attempts {
                     throw MirageHostCaptureBenchmarkError.measurementInvalid(
-                        "Benchmark source window \(preparedSource.windowID) did not surface in ScreenCaptureKit."
+                        lastFailureReason
                     )
                 }
                 try? await Task.sleep(for: .milliseconds(Int64(delayMs)))
@@ -491,8 +537,36 @@ extension MirageHostService {
         }
 
         throw MirageHostCaptureBenchmarkError.measurementInvalid(
-            "Benchmark source window \(preparedSource.windowID) did not surface in ScreenCaptureKit."
+            lastFailureReason
         )
+    }
+
+    private func benchmarkSourceGeometryMismatchReason(
+        preparedSource: MirageHostCaptureBenchmarkPreparedSource,
+        resolvedWindow: SCWindow,
+        resolvedDisplayID: CGDirectDisplayID
+    ) -> String? {
+        if resolvedDisplayID != preparedSource.displayID {
+            return "Benchmark source window surfaced on display \(resolvedDisplayID) instead of \(preparedSource.displayID)."
+        }
+
+        if let expectedWindowFrame = preparedSource.expectedWindowFrame,
+           !captureBenchmarkSourceFrameMatchesExpected(
+               expectedFrame: expectedWindowFrame,
+               actualFrame: resolvedWindow.frame
+           ) {
+            return "Benchmark source window geometry did not settle. Expected \(benchmarkFrameDescription(expectedWindowFrame)), observed \(benchmarkFrameDescription(resolvedWindow.frame))."
+        }
+
+        return nil
+    }
+
+    private func benchmarkFrameDescription(_ frame: CGRect) -> String {
+        let originX = Int(frame.origin.x.rounded())
+        let originY = Int(frame.origin.y.rounded())
+        let width = Int(frame.width.rounded())
+        let height = Int(frame.height.rounded())
+        return "\(width)x\(height)@(\(originX),\(originY))"
     }
 
     private func resolveDisplayForBenchmarkSourceWindow(
@@ -532,9 +606,6 @@ extension MirageHostService {
         totalStageCount: Int,
         progressHandler: (@MainActor @Sendable (MirageHostCaptureBenchmarkProgress?) -> Void)?
     ) async throws -> MirageHostCaptureBenchmarkPhaseMeasurement {
-        let measurementWindow = Locked<MirageHostCaptureBenchmarkMeasurementWindow?>(nil)
-        let callbackCount = Locked<UInt64>(0)
-        let presentationCounter = Locked(MirageHostCaptureBenchmarkPresentationCounter())
         let captureConfiguration = MirageEncoderConfiguration.highQuality
             .withTargetFrameRate(stage.targetFrameRate)
             .withInternalOverrides(pixelFormat: .bgra8, colorSpace: .sRGB)
@@ -547,7 +618,7 @@ extension MirageHostService {
         )
 
         defer {
-            measurementWindow.withLock { $0 = nil }
+            source.sourceClock?.cancelMeasurement()
             cadenceProbe.cancelMeasurement()
         }
 
@@ -556,20 +627,11 @@ extension MirageHostService {
                 window: source.windowWrapper.window,
                 application: source.applicationWrapper.application,
                 display: source.displayWrapper.display,
-                onFrame: { frame in
-                    let now = CFAbsoluteTimeGetCurrent()
-                    let shouldCount = measurementWindow.read { window in
-                        window?.contains(now) ?? false
-                    }
-                    guard shouldCount else { return }
-                    callbackCount.withLock { $0 &+= 1 }
-                    presentationCounter.withLock { counter in
-                        counter.record(frame.presentationTime)
-                    }
-                }
+                onFrame: { _ in }
             )
 
             _ = await captureEngine.waitForCaptureStartupReadiness(timeout: .seconds(1))
+            let capturePolicy = await captureEngine.capturePolicySnapshot().benchmarkPolicy
 
             progressHandler?(
                 MirageHostCaptureBenchmarkProgress(
@@ -593,20 +655,17 @@ extension MirageHostService {
 
             let measurementStart = CFAbsoluteTimeGetCurrent()
             let measurementEnd = measurementStart + measurementDurationSeconds
-            measurementWindow.withLock {
-                $0 = MirageHostCaptureBenchmarkMeasurementWindow(
-                    startTime: measurementStart,
-                    endTime: measurementEnd
-                )
-            }
+            source.sourceClock?.beginMeasurement()
             cadenceProbe.beginMeasurement()
             let telemetryBaseline = await captureEngine.captureTelemetrySnapshot()
 
             try await sleepForBenchmark(durationSeconds: measurementDurationSeconds)
 
-            measurementWindow.withLock { $0 = nil }
             let telemetryFinal = await captureEngine.captureTelemetrySnapshot()
             let observedDisplayCadenceFPS = cadenceProbe.completeMeasurement(
+                durationSeconds: measurementDurationSeconds
+            )
+            let sourceGenerationFPS = source.sourceClock?.completeMeasurement(
                 durationSeconds: measurementDurationSeconds
             )
 
@@ -617,25 +676,36 @@ extension MirageHostService {
             )
             let phase = MirageHostCaptureBenchmarkPhaseResult(
                 kind: .source,
-                callbackFPS: Double(callbackCount.read { $0 }) / measurementDuration,
-                presentationFPS: Double(presentationCounter.read { $0.frameCount }) / measurementDuration,
+                rawIngressFPS: Double(telemetryDelta.rawCallbackCount) / measurementDuration,
+                validSampleFPS: Double(telemetryDelta.validSampleCount) / measurementDuration,
+                renderableIngressFPS: Double(telemetryDelta.renderableSampleCount) / measurementDuration,
+                cadenceAdmittedFPS: Double(telemetryDelta.cadenceAdmittedCount) / measurementDuration,
+                deliveryFPS: Double(telemetryDelta.deliveryCount) / measurementDuration,
                 startupReadiness: MirageHostCaptureBenchmarkStartupReadiness(startupReadiness),
                 averageCallbackTimeMs: telemetryDelta.averageCallbackTimeMs,
                 maximumCallbackTimeMs: telemetryDelta.maximumCallbackTimeMs,
-                averageCopyTimeMs: telemetryDelta.averageCopyTimeMs,
-                maximumCopyTimeMs: telemetryDelta.maximumCopyTimeMs,
+                rawCallbackCount: telemetryDelta.rawCallbackCount,
+                validSampleCount: telemetryDelta.validSampleCount,
+                renderableSampleCount: telemetryDelta.renderableSampleCount,
+                completeSampleCount: telemetryDelta.completeSampleCount,
+                idleSampleCount: telemetryDelta.idleSampleCount,
+                blankSampleCount: telemetryDelta.blankSampleCount,
+                suspendedSampleCount: telemetryDelta.suspendedSampleCount,
+                startedSampleCount: telemetryDelta.startedSampleCount,
+                stoppedSampleCount: telemetryDelta.stoppedSampleCount,
+                cadenceAdmittedCount: telemetryDelta.cadenceAdmittedCount,
+                deliveryCount: telemetryDelta.deliveryCount,
                 cadenceDropCount: telemetryDelta.cadenceDropCount,
-                poolDropCount: telemetryDelta.poolDropCount,
-                inFlightDropCount: telemetryDelta.inFlightDropCount,
-                admissionDropCount: telemetryDelta.admissionDropCount,
-                copyFailureCount: telemetryDelta.copyFailureCount
+                admissionDropCount: telemetryDelta.admissionDropCount
             )
 
             await captureEngine.stopCapture()
 
             return MirageHostCaptureBenchmarkPhaseMeasurement(
                 phase: phase,
-                observedDisplayCadenceFPS: observedDisplayCadenceFPS
+                observedDisplayCadenceFPS: observedDisplayCadenceFPS,
+                sourceGenerationFPS: sourceGenerationFPS,
+                capturePolicy: capturePolicy
             )
         } catch {
             await captureEngine.stopCapture()
@@ -656,9 +726,7 @@ extension MirageHostService {
         progressHandler: (@MainActor @Sendable (MirageHostCaptureBenchmarkProgress?) -> Void)?
     ) async throws -> MirageHostCaptureBenchmarkDisplayMeasurement {
         let measurementWindow = Locked<MirageHostCaptureBenchmarkMeasurementWindow?>(nil)
-        let callbackCount = Locked<UInt64>(0)
         let encodedFrameCount = Locked<UInt64>(0)
-        let presentationCounter = Locked(MirageHostCaptureBenchmarkPresentationCounter())
         let frameContinuation = Locked<AsyncStream<CapturedFrame>.Continuation?>(nil)
 
         var encoder: VideoEncoder?
@@ -740,21 +808,12 @@ extension MirageHostService {
                 resolution: resolution,
                 showsCursor: false,
                 onFrame: { frame in
-                    let now = CFAbsoluteTimeGetCurrent()
-                    let shouldCount = measurementWindow.read { window in
-                        window?.contains(now) ?? false
-                    }
-                    if shouldCount {
-                        callbackCount.withLock { $0 &+= 1 }
-                        presentationCounter.withLock { counter in
-                            counter.record(frame.presentationTime)
-                        }
-                    }
                     frameContinuation.read { $0 }?.yield(frame)
                 }
             )
 
             _ = await stageCaptureEngine.waitForDisplayStartupReadiness(timeout: .seconds(1))
+            let capturePolicy = await stageCaptureEngine.capturePolicySnapshot().benchmarkPolicy
 
             progressHandler?(
                 MirageHostCaptureBenchmarkProgress(
@@ -799,18 +858,27 @@ extension MirageHostService {
             )
             let phase = MirageHostCaptureBenchmarkPhaseResult(
                 kind: .display,
-                callbackFPS: Double(callbackCount.read { $0 }) / measurementDuration,
-                presentationFPS: Double(presentationCounter.read { $0.frameCount }) / measurementDuration,
+                rawIngressFPS: Double(telemetryDelta.rawCallbackCount) / measurementDuration,
+                validSampleFPS: Double(telemetryDelta.validSampleCount) / measurementDuration,
+                renderableIngressFPS: Double(telemetryDelta.renderableSampleCount) / measurementDuration,
+                cadenceAdmittedFPS: Double(telemetryDelta.cadenceAdmittedCount) / measurementDuration,
+                deliveryFPS: Double(telemetryDelta.deliveryCount) / measurementDuration,
                 startupReadiness: MirageHostCaptureBenchmarkStartupReadiness(startupReadiness),
                 averageCallbackTimeMs: telemetryDelta.averageCallbackTimeMs,
                 maximumCallbackTimeMs: telemetryDelta.maximumCallbackTimeMs,
-                averageCopyTimeMs: telemetryDelta.averageCopyTimeMs,
-                maximumCopyTimeMs: telemetryDelta.maximumCopyTimeMs,
+                rawCallbackCount: telemetryDelta.rawCallbackCount,
+                validSampleCount: telemetryDelta.validSampleCount,
+                renderableSampleCount: telemetryDelta.renderableSampleCount,
+                completeSampleCount: telemetryDelta.completeSampleCount,
+                idleSampleCount: telemetryDelta.idleSampleCount,
+                blankSampleCount: telemetryDelta.blankSampleCount,
+                suspendedSampleCount: telemetryDelta.suspendedSampleCount,
+                startedSampleCount: telemetryDelta.startedSampleCount,
+                stoppedSampleCount: telemetryDelta.stoppedSampleCount,
+                cadenceAdmittedCount: telemetryDelta.cadenceAdmittedCount,
+                deliveryCount: telemetryDelta.deliveryCount,
                 cadenceDropCount: telemetryDelta.cadenceDropCount,
-                poolDropCount: telemetryDelta.poolDropCount,
-                inFlightDropCount: telemetryDelta.inFlightDropCount,
-                admissionDropCount: telemetryDelta.admissionDropCount,
-                copyFailureCount: telemetryDelta.copyFailureCount
+                admissionDropCount: telemetryDelta.admissionDropCount
             )
             let encodeFPS = Double(encodedFrameCount.read { $0 }) / measurementDuration
 
@@ -819,7 +887,8 @@ extension MirageHostService {
             return MirageHostCaptureBenchmarkDisplayMeasurement(
                 phase: phase,
                 encodeFPS: encodeFPS,
-                averageEncodeTimeMs: averageEncodeTimeMs
+                averageEncodeTimeMs: averageEncodeTimeMs,
+                capturePolicy: capturePolicy
             )
         } catch {
             await cleanupResources()
@@ -845,12 +914,9 @@ func captureBenchmarkWarnings(
     stage: MirageHostCaptureBenchmarkStage,
     reportedDisplayRefreshRate: Double?,
     observedDisplayCadenceFPS: Double?,
-    sourcePhase: MirageHostCaptureBenchmarkPhaseResult?,
-    displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
-    encodeFPS: Double?
+    bottleneck: MirageHostCaptureBenchmarkBottleneck?
 ) -> [MirageHostCaptureBenchmarkWarning] {
     var warnings: [MirageHostCaptureBenchmarkWarning] = []
-    let targetThreshold = captureBenchmarkSustainThreshold(targetFrameRate: stage.targetFrameRate)
 
     if let reportedDisplayRefreshRate,
        Int(reportedDisplayRefreshRate.rounded()) >= stage.refreshRate,
@@ -861,16 +927,21 @@ func captureBenchmarkWarnings(
         warnings.append(.displayCadenceMismatch)
     }
 
-    if let sourceCapability = sourcePhase?.measuredCapabilityFPS, sourceCapability < targetThreshold {
-        warnings.append(.sourceLimited)
-    }
-
-    if let displayCapability = displayPhase?.measuredCapabilityFPS, displayCapability < targetThreshold {
-        warnings.append(.captureBelowTarget)
-    }
-
-    if let encodeFPS, encodeFPS < targetThreshold {
+    switch bottleneck {
+    case .sourceGeneration:
+        warnings.append(.sourceGenerationBelowTarget)
+    case .windowIngress:
+        warnings.append(.windowIngressBelowTarget)
+    case .windowDelivery:
+        warnings.append(.windowDeliveryBelowTarget)
+    case .displayIngress:
+        warnings.append(.displayIngressBelowTarget)
+    case .displayDelivery:
+        warnings.append(.displayDeliveryBelowTarget)
+    case .encode:
         warnings.append(.encodeBelowTarget)
+    case .balanced, .none:
+        break
     }
 
     return warnings
@@ -899,25 +970,63 @@ private func captureBenchmarkTelemetryDelta(
         ? finalCallbackSamples - baselineCallbackSamples
         : 0
     let callbackTotalDelta = max(0, finalCallbackTotal - baselineCallbackTotal)
-
-    let baselineCopy = baseline?.copyTelemetry
-    let finalCopy = final?.copyTelemetry
-    let copySuccessDelta: UInt64 = {
-        let start = baselineCopy?.copySuccesses ?? 0
-        let end = finalCopy?.copySuccesses ?? 0
-        return end >= start ? end - start : 0
-    }()
-    let copyDurationDelta = max(
-        0,
-        (finalCopy?.durationTotalMs ?? 0) - (baselineCopy?.durationTotalMs ?? 0)
+    let rawCallbackCount = subtractCounter(
+        final?.rawScreenCallbackCount ?? 0,
+        baseline?.rawScreenCallbackCount ?? 0
     )
-    let copyFailureDelta: UInt64 = {
-        let start = baselineCopy?.copyFailures ?? 0
-        let end = finalCopy?.copyFailures ?? 0
-        return end >= start ? end - start : 0
-    }()
+    let validSampleCount = subtractCounter(
+        final?.validScreenSampleCount ?? 0,
+        baseline?.validScreenSampleCount ?? 0
+    )
+    let renderableSampleCount = subtractCounter(
+        final?.renderableScreenSampleCount ?? 0,
+        baseline?.renderableScreenSampleCount ?? 0
+    )
+    let completeSampleCount = subtractCounter(
+        final?.completeFrameCount ?? 0,
+        baseline?.completeFrameCount ?? 0
+    )
+    let idleSampleCount = subtractCounter(
+        final?.idleFrameCount ?? 0,
+        baseline?.idleFrameCount ?? 0
+    )
+    let blankSampleCount = subtractCounter(
+        final?.blankFrameCount ?? 0,
+        baseline?.blankFrameCount ?? 0
+    )
+    let suspendedSampleCount = subtractCounter(
+        final?.suspendedFrameCount ?? 0,
+        baseline?.suspendedFrameCount ?? 0
+    )
+    let startedSampleCount = subtractCounter(
+        final?.startedFrameCount ?? 0,
+        baseline?.startedFrameCount ?? 0
+    )
+    let stoppedSampleCount = subtractCounter(
+        final?.stoppedFrameCount ?? 0,
+        baseline?.stoppedFrameCount ?? 0
+    )
+    let cadenceAdmittedCount = subtractCounter(
+        final?.cadenceAdmittedFrameCount ?? 0,
+        baseline?.cadenceAdmittedFrameCount ?? 0
+    )
+    let deliveryCount = subtractCounter(
+        final?.deliveredFrameCount ?? 0,
+        baseline?.deliveredFrameCount ?? 0
+    )
 
     return MirageHostCaptureBenchmarkTelemetryDelta(
+        rawCallbackCount: rawCallbackCount,
+        validSampleCount: validSampleCount,
+        renderableSampleCount: renderableSampleCount,
+        completeSampleCount: completeSampleCount,
+        idleSampleCount: idleSampleCount,
+        blankSampleCount: blankSampleCount,
+        suspendedSampleCount: suspendedSampleCount,
+        startedSampleCount: startedSampleCount,
+        stoppedSampleCount: stoppedSampleCount,
+        cadenceAdmittedCount: cadenceAdmittedCount,
+        deliveryCount: deliveryCount,
         averageCallbackTimeMs: callbackSampleDelta > 0
             ? callbackTotalDelta / Double(callbackSampleDelta)
             : nil,
@@ -926,23 +1035,10 @@ private func captureBenchmarkTelemetryDelta(
             final?.cadenceDropCount ?? 0,
             baseline?.cadenceDropCount ?? 0
         ),
-        poolDropCount: subtractCounter(
-            final?.poolDropCount ?? 0,
-            baseline?.poolDropCount ?? 0
-        ),
-        inFlightDropCount: subtractCounter(
-            final?.inFlightDropCount ?? 0,
-            baseline?.inFlightDropCount ?? 0
-        ),
         admissionDropCount: subtractCounter(
             final?.admissionDropCount ?? 0,
             baseline?.admissionDropCount ?? 0
-        ),
-        averageCopyTimeMs: copySuccessDelta > 0
-            ? copyDurationDelta / Double(copySuccessDelta)
-            : nil,
-        maximumCopyTimeMs: finalCopy?.durationMaxMs,
-        copyFailureCount: copyFailureDelta
+        )
     )
 }
 

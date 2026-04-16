@@ -285,10 +285,6 @@ package struct StreamMetricsMessage: Codable, Sendable {
     package let preEncodeWaitMaxMs: Double?
     package let captureCallbackAverageMs: Double?
     package let captureCallbackMaxMs: Double?
-    package let captureCopyAverageMs: Double?
-    package let captureCopyMaxMs: Double?
-    package let captureCopyPoolDrops: UInt64?
-    package let captureCopyInFlightDrops: UInt64?
     package let sendQueueBytes: Int?
     package let sendStartDelayAverageMs: Double?
     package let sendStartDelayMaxMs: Double?
@@ -339,10 +335,6 @@ package struct StreamMetricsMessage: Codable, Sendable {
         preEncodeWaitMaxMs: Double? = nil,
         captureCallbackAverageMs: Double? = nil,
         captureCallbackMaxMs: Double? = nil,
-        captureCopyAverageMs: Double? = nil,
-        captureCopyMaxMs: Double? = nil,
-        captureCopyPoolDrops: UInt64? = nil,
-        captureCopyInFlightDrops: UInt64? = nil,
         sendQueueBytes: Int? = nil,
         sendStartDelayAverageMs: Double? = nil,
         sendStartDelayMaxMs: Double? = nil,
@@ -392,10 +384,6 @@ package struct StreamMetricsMessage: Codable, Sendable {
         self.preEncodeWaitMaxMs = preEncodeWaitMaxMs
         self.captureCallbackAverageMs = captureCallbackAverageMs
         self.captureCallbackMaxMs = captureCallbackMaxMs
-        self.captureCopyAverageMs = captureCopyAverageMs
-        self.captureCopyMaxMs = captureCopyMaxMs
-        self.captureCopyPoolDrops = captureCopyPoolDrops
-        self.captureCopyInFlightDrops = captureCopyInFlightDrops
         self.sendQueueBytes = sendQueueBytes
         self.sendStartDelayAverageMs = sendStartDelayAverageMs
         self.sendStartDelayMaxMs = sendStartDelayMaxMs

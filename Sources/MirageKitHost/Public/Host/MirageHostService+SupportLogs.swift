@@ -54,9 +54,10 @@ extension MirageHostService {
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed to handle host support log archive request: ")
             let requestID = (try? message.decode(HostSupportLogArchiveRequestMessage.self))?.requestID
+            let errorMessage = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             let response = HostSupportLogArchiveMessage(
                 requestID: requestID,
-                errorMessage: "Failed to export host logs."
+                errorMessage: errorMessage.isEmpty ? "Failed to export host logs." : errorMessage
             )
             try? await clientContext.send(.hostSupportLogArchive, content: response)
         }

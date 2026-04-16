@@ -168,9 +168,12 @@ public enum MirageHostCaptureBenchmarkPhaseKind: String, Codable, Hashable, Send
 @_spi(HostApp)
 public enum MirageHostCaptureBenchmarkWarning: String, Codable, CaseIterable, Sendable {
     case quantizedResolution
-    case sourceLimited
     case displayCadenceMismatch
-    case captureBelowTarget
+    case sourceGenerationBelowTarget
+    case windowIngressBelowTarget
+    case windowDeliveryBelowTarget
+    case displayIngressBelowTarget
+    case displayDeliveryBelowTarget
     case encodeBelowTarget
 }
 
@@ -183,55 +186,122 @@ public enum MirageHostCaptureBenchmarkStartupReadiness: String, Codable, Hashabl
 }
 
 @_spi(HostApp)
+public enum MirageHostCaptureBenchmarkBottleneck: String, Codable, CaseIterable, Hashable, Sendable {
+    case sourceGeneration
+    case windowIngress
+    case windowDelivery
+    case displayIngress
+    case displayDelivery
+    case encode
+    case balanced
+}
+
+@_spi(HostApp)
+public struct MirageHostCaptureBenchmarkCapturePolicy: Codable, Hashable, Sendable {
+    public let effectiveCaptureRate: Int
+    public let minimumFrameIntervalRate: Int
+    public let usesNativeRefreshMinimumFrameInterval: Bool
+    public let sckQueueDepth: Int
+    public let usesDisplayRefreshCadence: Bool
+
+    public init(
+        effectiveCaptureRate: Int,
+        minimumFrameIntervalRate: Int,
+        usesNativeRefreshMinimumFrameInterval: Bool,
+        sckQueueDepth: Int,
+        usesDisplayRefreshCadence: Bool
+    ) {
+        self.effectiveCaptureRate = effectiveCaptureRate
+        self.minimumFrameIntervalRate = minimumFrameIntervalRate
+        self.usesNativeRefreshMinimumFrameInterval = usesNativeRefreshMinimumFrameInterval
+        self.sckQueueDepth = sckQueueDepth
+        self.usesDisplayRefreshCadence = usesDisplayRefreshCadence
+    }
+}
+
+@_spi(HostApp)
 public struct MirageHostCaptureBenchmarkPhaseResult: Codable, Hashable, Sendable {
     public let kind: MirageHostCaptureBenchmarkPhaseKind
-    public let callbackFPS: Double?
-    public let presentationFPS: Double?
+    public let rawIngressFPS: Double?
+    public let validSampleFPS: Double?
+    public let renderableIngressFPS: Double?
+    public let cadenceAdmittedFPS: Double?
+    public let deliveryFPS: Double?
     public let startupReadiness: MirageHostCaptureBenchmarkStartupReadiness?
     public let averageCallbackTimeMs: Double?
     public let maximumCallbackTimeMs: Double?
-    public let averageCopyTimeMs: Double?
-    public let maximumCopyTimeMs: Double?
+    public let rawCallbackCount: UInt64
+    public let validSampleCount: UInt64
+    public let renderableSampleCount: UInt64
+    public let completeSampleCount: UInt64
+    public let idleSampleCount: UInt64
+    public let blankSampleCount: UInt64
+    public let suspendedSampleCount: UInt64
+    public let startedSampleCount: UInt64
+    public let stoppedSampleCount: UInt64
+    public let cadenceAdmittedCount: UInt64
+    public let deliveryCount: UInt64
     public let cadenceDropCount: UInt64
-    public let poolDropCount: UInt64
-    public let inFlightDropCount: UInt64
     public let admissionDropCount: UInt64
-    public let copyFailureCount: UInt64
 
-    public var measuredCapabilityFPS: Double? {
-        let measurements = [callbackFPS, presentationFPS].compactMap { $0 }
+    public var ingressCapabilityFPS: Double? {
+        let measurements = [rawIngressFPS, renderableIngressFPS].compactMap { $0 }
+        guard let measuredFloor = measurements.min() else { return nil }
+        return measuredFloor
+    }
+
+    public var deliveryCapabilityFPS: Double? {
+        let measurements = [ingressCapabilityFPS, deliveryFPS].compactMap { $0 }
         guard let measuredFloor = measurements.min() else { return nil }
         return measuredFloor
     }
 
     public init(
         kind: MirageHostCaptureBenchmarkPhaseKind,
-        callbackFPS: Double? = nil,
-        presentationFPS: Double? = nil,
+        rawIngressFPS: Double? = nil,
+        validSampleFPS: Double? = nil,
+        renderableIngressFPS: Double? = nil,
+        cadenceAdmittedFPS: Double? = nil,
+        deliveryFPS: Double? = nil,
         startupReadiness: MirageHostCaptureBenchmarkStartupReadiness? = nil,
         averageCallbackTimeMs: Double? = nil,
         maximumCallbackTimeMs: Double? = nil,
-        averageCopyTimeMs: Double? = nil,
-        maximumCopyTimeMs: Double? = nil,
+        rawCallbackCount: UInt64 = 0,
+        validSampleCount: UInt64 = 0,
+        renderableSampleCount: UInt64 = 0,
+        completeSampleCount: UInt64 = 0,
+        idleSampleCount: UInt64 = 0,
+        blankSampleCount: UInt64 = 0,
+        suspendedSampleCount: UInt64 = 0,
+        startedSampleCount: UInt64 = 0,
+        stoppedSampleCount: UInt64 = 0,
+        cadenceAdmittedCount: UInt64 = 0,
+        deliveryCount: UInt64 = 0,
         cadenceDropCount: UInt64 = 0,
-        poolDropCount: UInt64 = 0,
-        inFlightDropCount: UInt64 = 0,
-        admissionDropCount: UInt64 = 0,
-        copyFailureCount: UInt64 = 0
+        admissionDropCount: UInt64 = 0
     ) {
         self.kind = kind
-        self.callbackFPS = callbackFPS
-        self.presentationFPS = presentationFPS
+        self.rawIngressFPS = rawIngressFPS
+        self.validSampleFPS = validSampleFPS
+        self.renderableIngressFPS = renderableIngressFPS
+        self.cadenceAdmittedFPS = cadenceAdmittedFPS
+        self.deliveryFPS = deliveryFPS
         self.startupReadiness = startupReadiness
         self.averageCallbackTimeMs = averageCallbackTimeMs
         self.maximumCallbackTimeMs = maximumCallbackTimeMs
-        self.averageCopyTimeMs = averageCopyTimeMs
-        self.maximumCopyTimeMs = maximumCopyTimeMs
+        self.rawCallbackCount = rawCallbackCount
+        self.validSampleCount = validSampleCount
+        self.renderableSampleCount = renderableSampleCount
+        self.completeSampleCount = completeSampleCount
+        self.idleSampleCount = idleSampleCount
+        self.blankSampleCount = blankSampleCount
+        self.suspendedSampleCount = suspendedSampleCount
+        self.startedSampleCount = startedSampleCount
+        self.stoppedSampleCount = stoppedSampleCount
+        self.cadenceAdmittedCount = cadenceAdmittedCount
+        self.deliveryCount = deliveryCount
         self.cadenceDropCount = cadenceDropCount
-        self.poolDropCount = poolDropCount
-        self.inFlightDropCount = inFlightDropCount
         self.admissionDropCount = admissionDropCount
-        self.copyFailureCount = copyFailureCount
     }
 }
 
@@ -278,9 +348,13 @@ public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable
     public let actualPixelHeight: Int?
     public let reportedDisplayRefreshRate: Double?
     public let observedDisplayCadenceFPS: Double?
+    public let sourceGenerationFPS: Double?
     public let sourcePhase: MirageHostCaptureBenchmarkPhaseResult?
     public let displayPhase: MirageHostCaptureBenchmarkPhaseResult?
     public let encodeFPS: Double?
+    public let sourceCapturePolicy: MirageHostCaptureBenchmarkCapturePolicy?
+    public let displayCapturePolicy: MirageHostCaptureBenchmarkCapturePolicy?
+    public let bottleneck: MirageHostCaptureBenchmarkBottleneck?
     public let displayCaptureCapabilityFPS: Double?
     public let validatedCapabilityFPS: Double?
     public let averageEncodeTimeMs: Double?
@@ -331,9 +405,13 @@ public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable
         actualPixelHeight: Int? = nil,
         reportedDisplayRefreshRate: Double? = nil,
         observedDisplayCadenceFPS: Double? = nil,
+        sourceGenerationFPS: Double? = nil,
         sourcePhase: MirageHostCaptureBenchmarkPhaseResult? = nil,
         displayPhase: MirageHostCaptureBenchmarkPhaseResult? = nil,
         encodeFPS: Double? = nil,
+        sourceCapturePolicy: MirageHostCaptureBenchmarkCapturePolicy? = nil,
+        displayCapturePolicy: MirageHostCaptureBenchmarkCapturePolicy? = nil,
+        bottleneck: MirageHostCaptureBenchmarkBottleneck? = nil,
         displayCaptureCapabilityFPS: Double? = nil,
         validatedCapabilityFPS: Double? = nil,
         averageEncodeTimeMs: Double? = nil,
@@ -348,9 +426,13 @@ public struct MirageHostCaptureBenchmarkStageResult: Codable, Hashable, Sendable
         self.actualPixelHeight = actualPixelHeight
         self.reportedDisplayRefreshRate = reportedDisplayRefreshRate
         self.observedDisplayCadenceFPS = observedDisplayCadenceFPS
+        self.sourceGenerationFPS = sourceGenerationFPS
         self.sourcePhase = sourcePhase
         self.displayPhase = displayPhase
         self.encodeFPS = encodeFPS
+        self.sourceCapturePolicy = sourceCapturePolicy
+        self.displayCapturePolicy = displayCapturePolicy
+        self.bottleneck = bottleneck
         self.displayCaptureCapabilityFPS = displayCaptureCapabilityFPS
         self.validatedCapabilityFPS = validatedCapabilityFPS
         self.averageEncodeTimeMs = averageEncodeTimeMs
@@ -382,7 +464,7 @@ public struct MirageHostCaptureBenchmarkModeResult: Codable, Hashable, Sendable 
 
 @_spi(HostApp)
 public struct MirageHostCaptureBenchmarkReport: Codable, Hashable, Sendable {
-    public static let currentVersion = 3
+    public static let currentVersion = 2
 
     public let version: Int
     public let machineID: UUID
@@ -534,19 +616,65 @@ public final class MirageHostCaptureBenchmarkWindowConfiguration {
 }
 
 @_spi(HostApp)
-public struct MirageHostCaptureBenchmarkPreparedSource: Hashable, Sendable {
+public final class MirageHostCaptureBenchmarkSourceClock: @unchecked Sendable {
+    private let stateLock = NSLock()
+    private var displayTickCount: UInt64 = 0
+    private var measurementStartTickCount: UInt64 = 0
+
+    public init() {}
+
+    public func noteDisplayTick() {
+        stateLock.withLock {
+            displayTickCount &+= 1
+        }
+    }
+
+    public func beginMeasurement() {
+        stateLock.withLock {
+            measurementStartTickCount = displayTickCount
+        }
+    }
+
+    public func cancelMeasurement() {
+        stateLock.withLock {
+            measurementStartTickCount = displayTickCount
+        }
+    }
+
+    public func completeMeasurement(durationSeconds: Double) -> Double? {
+        let clampedDuration = max(0.001, durationSeconds)
+        let tickDelta = stateLock.withLock { () -> UInt64 in
+            let delta = displayTickCount >= measurementStartTickCount
+                ? displayTickCount - measurementStartTickCount
+                : 0
+            measurementStartTickCount = displayTickCount
+            return delta
+        }
+        guard tickDelta > 0 else { return nil }
+        return Double(tickDelta) / clampedDuration
+    }
+}
+
+@_spi(HostApp)
+public struct MirageHostCaptureBenchmarkPreparedSource: Sendable {
     public let windowID: CGWindowID
     public let applicationPID: pid_t
     public let displayID: CGDirectDisplayID
+    public let expectedWindowFrame: CGRect?
+    public let sourceClock: MirageHostCaptureBenchmarkSourceClock?
 
     public init(
         windowID: CGWindowID,
         applicationPID: pid_t,
-        displayID: CGDirectDisplayID
+        displayID: CGDirectDisplayID,
+        expectedWindowFrame: CGRect? = nil,
+        sourceClock: MirageHostCaptureBenchmarkSourceClock? = nil
     ) {
         self.windowID = windowID
         self.applicationPID = applicationPID
         self.displayID = displayID
+        self.expectedWindowFrame = expectedWindowFrame
+        self.sourceClock = sourceClock
     }
 }
 
@@ -601,6 +729,20 @@ func captureBenchmarkDisplayCadenceMismatchThreshold(targetFrameRate: Int) -> Do
     max(captureBenchmarkValidThresholdFPS(), Double(targetFrameRate) * 0.75)
 }
 
+func captureBenchmarkSourceFrameMatchesExpected(
+    expectedFrame: CGRect,
+    actualFrame: CGRect,
+    pointTolerance: CGFloat = 2
+) -> Bool {
+    let expectedWidth = max(1, expectedFrame.width.rounded())
+    let expectedHeight = max(1, expectedFrame.height.rounded())
+    let actualWidth = max(1, actualFrame.width.rounded())
+    let actualHeight = max(1, actualFrame.height.rounded())
+
+    return abs(actualWidth - expectedWidth) <= pointTolerance &&
+        abs(actualHeight - expectedHeight) <= pointTolerance
+}
+
 func captureBenchmarkInvalidMeasurementReason(
     displayValidationResult: MirageHostCaptureBenchmarkDisplayValidationResult? = nil,
     displayCadenceProbeFailed: Bool = false,
@@ -633,23 +775,62 @@ func captureBenchmarkDisplayCapabilityFPS(
     displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
     targetFrameRate: Int
 ) -> Double? {
-    guard let measuredFloor = displayPhase?.measuredCapabilityFPS else { return nil }
+    guard let measuredFloor = displayPhase?.deliveryCapabilityFPS else { return nil }
     return min(measuredFloor, Double(targetFrameRate))
 }
 
 func captureBenchmarkValidatedCapabilityFPS(
+    sourceGenerationFPS: Double?,
     sourcePhase: MirageHostCaptureBenchmarkPhaseResult?,
     displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
     encodeFPS: Double?,
     targetFrameRate: Int
 ) -> Double? {
     let measurements = [
-        sourcePhase?.measuredCapabilityFPS,
-        displayPhase?.measuredCapabilityFPS,
+        sourceGenerationFPS,
+        sourcePhase?.ingressCapabilityFPS,
+        sourcePhase?.deliveryCapabilityFPS,
+        displayPhase?.ingressCapabilityFPS,
+        displayPhase?.deliveryCapabilityFPS,
         encodeFPS,
     ].compactMap { $0 }
     guard let measuredFloor = measurements.min() else { return nil }
     return min(measuredFloor, Double(targetFrameRate))
+}
+
+func captureBenchmarkBottleneck(
+    stage: MirageHostCaptureBenchmarkStage,
+    sourceGenerationFPS: Double?,
+    sourcePhase: MirageHostCaptureBenchmarkPhaseResult?,
+    displayPhase: MirageHostCaptureBenchmarkPhaseResult?,
+    encodeFPS: Double?
+) -> MirageHostCaptureBenchmarkBottleneck? {
+    let targetThreshold = captureBenchmarkSustainThreshold(targetFrameRate: stage.targetFrameRate)
+
+    if let sourceGenerationFPS, sourceGenerationFPS < targetThreshold {
+        return .sourceGeneration
+    }
+    if let sourceIngressFPS = sourcePhase?.ingressCapabilityFPS, sourceIngressFPS < targetThreshold {
+        return .windowIngress
+    }
+    if let sourceDeliveryFPS = sourcePhase?.deliveryCapabilityFPS, sourceDeliveryFPS < targetThreshold {
+        return .windowDelivery
+    }
+    if let displayIngressFPS = displayPhase?.ingressCapabilityFPS, displayIngressFPS < targetThreshold {
+        return .displayIngress
+    }
+    if let displayDeliveryFPS = displayPhase?.deliveryCapabilityFPS, displayDeliveryFPS < targetThreshold {
+        return .displayDelivery
+    }
+    if let encodeFPS, encodeFPS < targetThreshold {
+        return .encode
+    }
+
+    let hasMeasurement = sourceGenerationFPS != nil ||
+        sourcePhase != nil ||
+        displayPhase != nil ||
+        encodeFPS != nil
+    return hasMeasurement ? .balanced : nil
 }
 
 func captureBenchmarkSummary(

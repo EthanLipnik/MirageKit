@@ -27,13 +27,7 @@ extension VideoDecoder {
         isDecoding = false
         decodedFrameHandler = nil
 
-        if let session = decompressionSession { VTDecompressionSessionInvalidate(session) }
-        decompressionSession = nil
-        formatDescription = nil
-        pendingOutputTelemetryGeneration = 0
-        lastDecodedOutputPixelFormat = nil
-        usingHardwareDecoder = nil
-        decoderHardwareStatusRefreshAttempts = 0
+        invalidateActiveSession(resetFormatDescription: true)
 
         // Clear cached parameter sets
         cachedVPS = nil
@@ -47,14 +41,8 @@ extension VideoDecoder {
 
     func resetForNewSession() {
         // Invalidate current session - will be recreated on next keyframe
-        if let session = decompressionSession { VTDecompressionSessionInvalidate(session) }
-        decompressionSession = nil
-        formatDescription = nil
+        invalidateActiveSession(resetFormatDescription: true)
         outputPixelFormat = preferredOutputPixelFormat(for: preferredOutputColorDepth)
-        pendingOutputTelemetryGeneration = 0
-        lastDecodedOutputPixelFormat = nil
-        usingHardwareDecoder = nil
-        decoderHardwareStatusRefreshAttempts = 0
 
         // Clear cached parameter sets so next keyframe is used fresh
         cachedVPS = nil
@@ -99,15 +87,18 @@ extension VideoDecoder {
 
         // If keyframe, extract format description and strip parameter sets
         if isKeyframe {
-            MirageLogger.decoder("Received keyframe (\(data.count) bytes)")
-            // Diagnostic: log first 16 bytes to verify format
-            let keyframeHeader = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-            MirageLogger.decoder("Keyframe header: \(keyframeHeader)")
+            let shouldLogDecoderDiagnostics = MirageLogger.isEnabled(.decoder)
+            if shouldLogDecoderDiagnostics {
+                MirageLogger.decoder("Received keyframe (\(data.count) bytes)")
+                let keyframeHeader = data.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                MirageLogger.decoder("Keyframe header: \(keyframeHeader)")
+            }
             let result = try extractFormatDescriptionAndStripParameterSets(from: data)
             frameData = result
-            // Diagnostic: log first 16 bytes after stripping param sets + SEI
-            let strippedHeader = frameData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-            MirageLogger.decoder("IDR slice header (after strip): \(strippedHeader)")
+            if shouldLogDecoderDiagnostics {
+                let strippedHeader = frameData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
+                MirageLogger.decoder("IDR slice header (after strip): \(strippedHeader)")
+            }
         }
 
         // HEVC AVCC validation — skip for ProRes (not NAL-based)
@@ -245,6 +236,7 @@ extension VideoDecoder {
             data: frameData
         )
         let opaqueInfo = SendableOpaquePointer(value: Unmanaged.passRetained(decodeInfo).toOpaque())
+        let callbackGenerationFence = decodeCallbackGenerationFence
 
         let decodeStatus = VTDecompressionSessionDecodeFrame(
             session,
@@ -252,10 +244,25 @@ extension VideoDecoder {
             flags: [._EnableAsynchronousDecompression],
             infoFlagsOut: &flags
         ) { [weak self] status, _, imageBuffer, presentationTime, _ in
+            let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
+            let activeGeneration = callbackGenerationFence.currentGeneration()
+            if Self.shouldIgnoreDecodeCallback(
+                callbackGeneration: info.sessionGeneration,
+                activeGeneration: activeGeneration
+            ) {
+                if status != noErr {
+                    let errorName = Self.callbackFailureName(for: status)
+                    MirageLogger.decoder(
+                        "Ignoring stale decode callback failure (\(errorName), callback generation \(info.sessionGeneration), active generation \(activeGeneration))"
+                    )
+                }
+                info.onCompletion?()
+                return
+            }
+
             if status != noErr {
                 let errorName = Self.callbackFailureName(for: status)
                 let decodeError = NSError(domain: NSOSStatusErrorDomain, code: Int(status))
-                let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
                 if Self.shouldSuppressNonFatalCallbackFailure(status: status) {
                     MirageLogger.decoder(
                         "Decode callback failed (\(errorName)); suppressing non-fatal report while recovery is in progress"
@@ -277,7 +284,6 @@ extension VideoDecoder {
             }
             guard let pixelBuffer = imageBuffer else {
                 MirageLogger.error(.decoder, "Decode callback: no image buffer")
-                let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
                 info.errorTracker?.recordError()
                 info.onCompletion?()
                 return
@@ -285,7 +291,6 @@ extension VideoDecoder {
 
             MirageSignpost.emitEvent("DecodeOutput")
 
-            let info = Unmanaged<DecodeInfo>.fromOpaque(opaqueInfo.value).takeRetainedValue()
             // Successful decode - reset error counter
             info.errorTracker?.recordSuccess()
             let decodeDurationMs = (CFAbsoluteTimeGetCurrent() - info.decodeStartTime) * 1000

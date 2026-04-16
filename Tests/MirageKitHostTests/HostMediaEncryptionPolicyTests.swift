@@ -9,6 +9,7 @@
 
 @testable import MirageKit
 @testable import MirageKitHost
+import Network
 import Testing
 
 #if os(macOS)
@@ -50,6 +51,42 @@ struct HostMediaEncryptionPolicyTests {
 
         #expect(host.mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: true))
         #expect(host.mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: false))
+    }
+
+    @MainActor
+    @Test("Client-declared local origin metadata does not disable encryption for remote sessions")
+    func clientDeclaredLocalOriginDoesNotDisableEncryptionForRemoteSessions() {
+        let host = MirageHostService()
+        let remoteEndpoint = NWEndpoint.hostPort(
+            host: NWEndpoint.Host("203.0.113.8"),
+            port: NWEndpoint.Port(rawValue: 9851) ?? .any
+        )
+        let pathSnapshot = LoomSessionNetworkPathSnapshot(
+            status: .satisfied,
+            interfaceNames: ["utun2"],
+            isExpensive: false,
+            isConstrained: false,
+            supportsIPv4: true,
+            supportsIPv6: false,
+            usesWiFi: false,
+            usesWiredEthernet: false,
+            usesCellular: false,
+            usesLoopback: false,
+            usesOther: true,
+            localEndpoint: nil,
+            remoteEndpoint: remoteEndpoint
+        )
+        let advertisement = LoomPeerAdvertisement(
+            metadata: ["mirage.connection-origin": "local"]
+        )
+
+        #expect(
+            host.resolveAcceptedSessionMediaEncryptionPolicy(
+                peerAdvertisement: advertisement,
+                remoteEndpoint: remoteEndpoint,
+                pathSnapshot: pathSnapshot
+            )
+        )
     }
 }
 #endif

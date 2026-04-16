@@ -441,7 +441,7 @@ extension FrameReassembler {
             let output = frame.buffer.finalize(length: frame.expectedTotalBytes)
 
             // Diagnostic: log CRC32 of reassembled P-frames (throttled to every 60th)
-            if !frame.isKeyframe {
+            if !frame.isKeyframe, MirageLogger.isEnabled(.frameAssembly) {
                 diagnosticCRCLogCounter += 1
                 if diagnosticCRCLogCounter % 60 == 1 {
                     let crc = CRC32.calculate(output)

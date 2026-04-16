@@ -954,11 +954,11 @@ actor StreamPacketSender {
     }
 
     private func logPacketPacingIfNeeded(now: CFAbsoluteTime) {
-        guard MirageLogger.isEnabled(.stream) else { return }
+        guard MirageLogger.isEnabled(.network) else { return }
         guard pacerSleepPacketCount > 0 else { return }
         guard pacerLastLogTime == 0 || now - pacerLastLogTime >= Self.packetPacerLogIntervalSeconds else { return }
 
-        MirageLogger.stream(
+        MirageLogger.network(
             "Packet pacer: sleeps=\(pacerSleepPacketCount), totalMs=\(pacerSleepTotalMs), maxMs=\(pacerSleepMaxMs)"
         )
         pacerLastLogTime = now

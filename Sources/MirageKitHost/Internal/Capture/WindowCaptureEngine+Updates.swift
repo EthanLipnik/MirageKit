@@ -69,7 +69,7 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -78,7 +78,6 @@ extension WindowCaptureEngine {
 
         // Update the stream configuration
         try await stream.updateConfiguration(streamConfig)
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         MirageLogger.capture("Stream configuration updated to \(newWidth)x\(newHeight)")
     }
 
@@ -126,13 +125,12 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         if let sourceRect = captureSessionConfig?.sourceRect, !sourceRect.isEmpty {
             streamConfig.sourceRect = sourceRect
         }
 
         try await stream.updateConfiguration(streamConfig)
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         MirageLogger.capture("Resolution updated to client dimensions: \(width)x\(height)")
     }
 
@@ -192,7 +190,7 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: resolvedSourceRect,
@@ -202,7 +200,6 @@ extension WindowCaptureEngine {
         // Apply both filter and configuration updates
         try await stream.updateContentFilter(newFilter)
         try await stream.updateConfiguration(streamConfig)
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         let captureRate = effectiveCaptureRate()
         let stallPolicy = resolvedStallPolicy(
@@ -315,7 +312,7 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = existingConfig.showsCursor
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: resolvedSourceRect,
@@ -362,7 +359,7 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -370,7 +367,6 @@ extension WindowCaptureEngine {
         )
 
         try await stream.updateConfiguration(streamConfig)
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
         let mode = captureMode ?? .window
@@ -420,7 +416,7 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = showsCursor
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -445,7 +441,7 @@ extension WindowCaptureEngine {
         streamConfig.pixelFormat = pixelFormatType
         streamConfig.colorSpaceName = captureColorSpaceName
         streamConfig.showsCursor = captureSessionConfig?.showsCursor ?? false
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         Self.applyCaptureGeometry(
             to: streamConfig,
             sourceRect: captureSessionConfig?.sourceRect,
@@ -453,7 +449,6 @@ extension WindowCaptureEngine {
         )
 
         try await stream.updateConfiguration(streamConfig)
-        streamOutput?.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
         let captureRate = effectiveCaptureRate()
         let resolvedWindowID = captureSessionConfig?.windowID ?? 0
         let mode = captureMode ?? .window
@@ -473,7 +468,7 @@ extension WindowCaptureEngine {
         MirageLogger
             .capture(
                 "Capture configuration updated: pixelFormat=\(configuration.pixelFormat.displayName), " +
-                    "color=\(configuration.colorSpace.displayName), queue=\(captureQueueDepth)"
+                    "color=\(configuration.colorSpace.displayName), queue=\(sckQueueDepth)"
             )
     }
 

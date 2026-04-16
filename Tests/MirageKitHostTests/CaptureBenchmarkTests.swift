@@ -15,14 +15,19 @@ import Testing
 struct CaptureBenchmarkTests {
     private func phaseResult(
         kind: MirageHostCaptureBenchmarkPhaseKind,
-        callbackFPS: Double? = nil,
-        presentationFPS: Double? = nil,
+        rawIngressFPS: Double? = nil,
+        renderableIngressFPS: Double? = nil,
+        cadenceAdmittedFPS: Double? = nil,
+        deliveryFPS: Double? = nil,
         startupReadiness: MirageHostCaptureBenchmarkStartupReadiness? = .usableFrameSeen
     ) -> MirageHostCaptureBenchmarkPhaseResult {
         MirageHostCaptureBenchmarkPhaseResult(
             kind: kind,
-            callbackFPS: callbackFPS,
-            presentationFPS: presentationFPS,
+            rawIngressFPS: rawIngressFPS,
+            validSampleFPS: rawIngressFPS,
+            renderableIngressFPS: renderableIngressFPS,
+            cadenceAdmittedFPS: cadenceAdmittedFPS,
+            deliveryFPS: deliveryFPS,
             startupReadiness: startupReadiness
         )
     }
@@ -59,7 +64,7 @@ struct CaptureBenchmarkTests {
 
     @Test("Report reuse requires matching machine, software environment, configuration, and a completed run")
     func reportReuseRequiresMatchingEnvironment() {
-        #expect(MirageHostCaptureBenchmarkReport.currentVersion == 3)
+        #expect(MirageHostCaptureBenchmarkReport.currentVersion == 2)
 
         let configuration = MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff])
         let machineID = UUID()
@@ -89,9 +94,31 @@ struct CaptureBenchmarkTests {
             modeResults: [],
             didCancel: true
         )
+        let staleReport = MirageHostCaptureBenchmarkReport(
+            version: 0,
+            machineID: machineID,
+            hostName: "Bench Mac",
+            hardwareModelIdentifier: "Mac16,7",
+            hardwareMachineFamily: "MacBook Pro",
+            appVersion: "2.4",
+            buildVersion: "812",
+            operatingSystemVersion: "macOS 15.4 (24E214)",
+            configuration: configuration,
+            measuredAt: .now,
+            modeResults: [],
+            didCancel: false
+        )
 
         #expect(
             report.isReusable(
+                machineID: machineID,
+                appVersion: "2.4",
+                operatingSystemVersion: "macOS 15.4 (24E214)",
+                configuration: configuration
+            )
+        )
+        #expect(
+            !staleReport.isReusable(
                 machineID: machineID,
                 appVersion: "2.4",
                 operatingSystemVersion: "macOS 15.4 (24E214)",
@@ -278,6 +305,30 @@ struct CaptureBenchmarkTests {
         #expect(reason?.contains("cadence probe failed") == true)
     }
 
+    @Test("Source frame matching requires the settled stage size but ignores global origin")
+    func sourceFrameMatchingRequiresSettledStageSize() {
+        let expectedFrame = CGRect(x: 2880, y: 0, width: 960, height: 536)
+
+        #expect(
+            captureBenchmarkSourceFrameMatchesExpected(
+                expectedFrame: expectedFrame,
+                actualFrame: CGRect(x: 0, y: 0, width: 960, height: 536)
+            )
+        )
+        #expect(
+            !captureBenchmarkSourceFrameMatchesExpected(
+                expectedFrame: expectedFrame,
+                actualFrame: CGRect(x: 0, y: 0, width: 8, height: 8)
+            )
+        )
+        #expect(
+            !captureBenchmarkSourceFrameMatchesExpected(
+                expectedFrame: expectedFrame,
+                actualFrame: CGRect(x: 0, y: 0, width: 1280, height: 720)
+            )
+        )
+    }
+
     @Test("Invalid measurement reason does not reject valid but subtarget throughput")
     func invalidMeasurementReasonAllowsSubtargetThroughput() {
         let reason = captureBenchmarkInvalidMeasurementReason(
@@ -288,32 +339,61 @@ struct CaptureBenchmarkTests {
         #expect(reason == nil)
     }
 
-    @Test("Capability fps uses the lowest validated bottleneck and caps at 120")
+    @Test("Capability fps uses source generation, ingress, delivery, and encode floors")
     func capabilityFPSUsesValidatedBottleneck() {
-        let capability = captureBenchmarkValidatedCapabilityFPS(
+        let sourceGenerationLimited = captureBenchmarkValidatedCapabilityFPS(
+            sourceGenerationFPS: 92.5,
             sourcePhase: phaseResult(
                 kind: .source,
-                callbackFPS: 121,
-                presentationFPS: 120.4
+                rawIngressFPS: 121,
+                renderableIngressFPS: 120.4,
+                cadenceAdmittedFPS: 120.0,
+                deliveryFPS: 119.8
             ),
             displayPhase: phaseResult(
                 kind: .display,
-                callbackFPS: 118.4,
-                presentationFPS: 118.0
+                rawIngressFPS: 118.4,
+                renderableIngressFPS: 118.0,
+                cadenceAdmittedFPS: 117.8,
+                deliveryFPS: 117.6
+            ),
+            encodeFPS: 117.2,
+            targetFrameRate: 120
+        )
+        let encodeLimited = captureBenchmarkValidatedCapabilityFPS(
+            sourceGenerationFPS: 121,
+            sourcePhase: phaseResult(
+                kind: .source,
+                rawIngressFPS: 121,
+                renderableIngressFPS: 120.4,
+                cadenceAdmittedFPS: 120.0,
+                deliveryFPS: 119.8
+            ),
+            displayPhase: phaseResult(
+                kind: .display,
+                rawIngressFPS: 118.4,
+                renderableIngressFPS: 118.0,
+                cadenceAdmittedFPS: 117.8,
+                deliveryFPS: 117.6
             ),
             encodeFPS: 97.2,
             targetFrameRate: 120
         )
         let capped = captureBenchmarkValidatedCapabilityFPS(
+            sourceGenerationFPS: 144,
             sourcePhase: phaseResult(
                 kind: .source,
-                callbackFPS: 144,
-                presentationFPS: 141
+                rawIngressFPS: 144,
+                renderableIngressFPS: 141,
+                cadenceAdmittedFPS: 140,
+                deliveryFPS: 139
             ),
             displayPhase: phaseResult(
                 kind: .display,
-                callbackFPS: 136,
-                presentationFPS: 132
+                rawIngressFPS: 136,
+                renderableIngressFPS: 132,
+                cadenceAdmittedFPS: 131,
+                deliveryFPS: 130
             ),
             encodeFPS: 132,
             targetFrameRate: 120
@@ -321,13 +401,16 @@ struct CaptureBenchmarkTests {
         let displayCapability = captureBenchmarkDisplayCapabilityFPS(
             displayPhase: phaseResult(
                 kind: .display,
-                callbackFPS: 118.4,
-                presentationFPS: 116.8
+                rawIngressFPS: 118.4,
+                renderableIngressFPS: 117.2,
+                cadenceAdmittedFPS: 116.9,
+                deliveryFPS: 116.8
             ),
             targetFrameRate: 120
         )
 
-        #expect(capability == 97.2)
+        #expect(sourceGenerationLimited == 92.5)
+        #expect(encodeLimited == 97.2)
         #expect(capped == 120)
         #expect(displayCapability == 116.8)
     }
@@ -351,29 +434,144 @@ struct CaptureBenchmarkTests {
         #expect(meets120.meets120FPS)
     }
 
-    @Test("Warning classification distinguishes cadence, source, capture, and encode limits")
+    @Test("Bottleneck classification is ordered across source, ingress, delivery, and encode")
+    func bottleneckClassificationIsOrdered() {
+        let healthySource = phaseResult(
+            kind: .source,
+            rawIngressFPS: 120,
+            renderableIngressFPS: 120,
+            cadenceAdmittedFPS: 120,
+            deliveryFPS: 120
+        )
+        let healthyDisplay = phaseResult(
+            kind: .display,
+            rawIngressFPS: 120,
+            renderableIngressFPS: 120,
+            cadenceAdmittedFPS: 120,
+            deliveryFPS: 120
+        )
+
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 100,
+                sourcePhase: healthySource,
+                displayPhase: healthyDisplay,
+                encodeFPS: 120
+            ) == .sourceGeneration
+        )
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 120,
+                sourcePhase: phaseResult(
+                    kind: .source,
+                    rawIngressFPS: 110,
+                    renderableIngressFPS: 109,
+                    cadenceAdmittedFPS: 109,
+                    deliveryFPS: 109
+                ),
+                displayPhase: healthyDisplay,
+                encodeFPS: 120
+            ) == .windowIngress
+        )
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 120,
+                sourcePhase: phaseResult(
+                    kind: .source,
+                    rawIngressFPS: 120,
+                    renderableIngressFPS: 120,
+                    cadenceAdmittedFPS: 110,
+                    deliveryFPS: 109
+                ),
+                displayPhase: healthyDisplay,
+                encodeFPS: 120
+            ) == .windowDelivery
+        )
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 120,
+                sourcePhase: healthySource,
+                displayPhase: phaseResult(
+                    kind: .display,
+                    rawIngressFPS: 110,
+                    renderableIngressFPS: 109,
+                    cadenceAdmittedFPS: 109,
+                    deliveryFPS: 109
+                ),
+                encodeFPS: 120
+            ) == .displayIngress
+        )
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 120,
+                sourcePhase: healthySource,
+                displayPhase: phaseResult(
+                    kind: .display,
+                    rawIngressFPS: 120,
+                    renderableIngressFPS: 120,
+                    cadenceAdmittedFPS: 110,
+                    deliveryFPS: 109
+                ),
+                encodeFPS: 120
+            ) == .displayDelivery
+        )
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 120,
+                sourcePhase: healthySource,
+                displayPhase: healthyDisplay,
+                encodeFPS: 100
+            ) == .encode
+        )
+        #expect(
+            captureBenchmarkBottleneck(
+                stage: .benchmark1080p,
+                sourceGenerationFPS: 120,
+                sourcePhase: healthySource,
+                displayPhase: healthyDisplay,
+                encodeFPS: 120
+            ) == .balanced
+        )
+    }
+
+    @Test("Warning classification derives from bottleneck and cadence mismatch")
     func warningClassificationDistinguishesBottlenecks() {
         let warnings = captureBenchmarkWarnings(
             stage: .benchmark1080p,
             reportedDisplayRefreshRate: 120,
             observedDisplayCadenceFPS: 60,
-            sourcePhase: phaseResult(
-                kind: .source,
-                callbackFPS: 100,
-                presentationFPS: 98
-            ),
-            displayPhase: phaseResult(
-                kind: .display,
-                callbackFPS: 112,
-                presentationFPS: 111
-            ),
-            encodeFPS: 90
+            bottleneck: .displayDelivery
+        )
+        let balancedWarnings = captureBenchmarkWarnings(
+            stage: .benchmark1080p,
+            reportedDisplayRefreshRate: 120,
+            observedDisplayCadenceFPS: 119,
+            bottleneck: .balanced
         )
 
         #expect(warnings.contains(.displayCadenceMismatch))
-        #expect(warnings.contains(.sourceLimited))
-        #expect(warnings.contains(.captureBelowTarget))
-        #expect(warnings.contains(.encodeBelowTarget))
+        #expect(warnings.contains(.displayDeliveryBelowTarget))
+        #expect(!warnings.contains(.encodeBelowTarget))
+        #expect(balancedWarnings.isEmpty)
+    }
+
+    @Test("Source clock measures source generation separately from capture delivery")
+    func sourceClockMeasuresSourceGeneration() {
+        let sourceClock = MirageHostCaptureBenchmarkSourceClock()
+        sourceClock.beginMeasurement()
+        for _ in 0 ..< 240 {
+            sourceClock.noteDisplayTick()
+        }
+        let fps = sourceClock.completeMeasurement(durationSeconds: 2.0)
+
+        #expect(fps != nil)
+        #expect(abs((fps ?? 0) - 120) < 0.000_1)
     }
 
     @Test("Observed shared display mode accepts requested mode after in-place update")

@@ -43,6 +43,24 @@ actor WindowCaptureEngine {
         let cancellationGrace: CFAbsoluteTime
     }
 
+    struct CapturePolicySnapshot: Sendable, Equatable {
+        let effectiveCaptureRate: Int
+        let minimumFrameIntervalRate: Int
+        let usesNativeRefreshMinimumFrameInterval: Bool
+        let sckQueueDepth: Int
+        let usesDisplayRefreshCadence: Bool
+
+        var benchmarkPolicy: MirageHostCaptureBenchmarkCapturePolicy {
+            MirageHostCaptureBenchmarkCapturePolicy(
+                effectiveCaptureRate: effectiveCaptureRate,
+                minimumFrameIntervalRate: minimumFrameIntervalRate,
+                usesNativeRefreshMinimumFrameInterval: usesNativeRefreshMinimumFrameInterval,
+                sckQueueDepth: sckQueueDepth,
+                usesDisplayRefreshCadence: usesDisplayRefreshCadence
+            )
+        }
+    }
+
     enum CaptureKeyframeRequestReason: Sendable, Equatable {
         case fallbackResume
         case captureRestart(restartStreak: Int, shouldEscalateRecovery: Bool)
@@ -240,6 +258,19 @@ actor WindowCaptureEngine {
 
     func captureTelemetrySnapshot() -> CaptureStreamOutput.TelemetrySnapshot? {
         streamOutput?.telemetrySnapshot()
+    }
+
+    func capturePolicySnapshot() -> CapturePolicySnapshot {
+        let effectiveCaptureRate = effectiveCaptureRate()
+        let minimumFrameIntervalRate = minimumFrameIntervalRate()
+        let usesNativeRefreshMinimumFrameInterval = usesNativeRefreshMinimumFrameInterval()
+        return CapturePolicySnapshot(
+            effectiveCaptureRate: effectiveCaptureRate,
+            minimumFrameIntervalRate: minimumFrameIntervalRate,
+            usesNativeRefreshMinimumFrameInterval: usesNativeRefreshMinimumFrameInterval,
+            sckQueueDepth: sckQueueDepth,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        )
     }
 
     func displayStartupReadiness() -> DisplayCaptureStartupReadiness {

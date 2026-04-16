@@ -180,6 +180,24 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
+    @Test("Incoming resize priming fences packets before the full reset")
+    func incomingResizePrimingFencesPacketsBeforeReset() async {
+        let controller = StreamController(streamID: 94, maxPayloadSize: 1200)
+
+        await controller.primeForIncomingResize(
+            dimensionToken: 42,
+            streamDimensions: (width: 1920, height: 1080)
+        )
+
+        let reassembler = await controller.getReassembler()
+        #expect(reassembler.isAwaitingKeyframe())
+        #expect(await controller.decoder.awaitingDimensionChange)
+        #expect(await controller.decoder.expectedDimensions?.width == 1920)
+        #expect(await controller.decoder.expectedDimensions?.height == 1080)
+
+        await controller.stop()
+    }
+
     @Test("Passive tier keeps decode submission limit fixed at one")
     func passiveTierKeepsDecodeSubmissionLimitFixed() async {
         let controller = StreamController(streamID: 95, maxPayloadSize: 1200)

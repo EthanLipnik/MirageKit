@@ -39,14 +39,29 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     struct TelemetrySnapshot: Sendable, Equatable {
+        let rawScreenCallbackCount: UInt64
+        let validScreenSampleCount: UInt64
+        let renderableScreenSampleCount: UInt64
+        let completeFrameCount: UInt64
+        let idleFrameCount: UInt64
+        let blankFrameCount: UInt64
+        let suspendedFrameCount: UInt64
+        let startedFrameCount: UInt64
+        let stoppedFrameCount: UInt64
+        let cadenceAdmittedFrameCount: UInt64
+        let deliveredFrameCount: UInt64
         let callbackDurationTotalMs: Double
         let callbackDurationMaxMs: Double
         let callbackSampleCount: UInt64
         let cadenceDropCount: UInt64
-        let poolDropCount: UInt64
-        let inFlightDropCount: UInt64
         let admissionDropCount: UInt64
-        let copyTelemetry: CaptureFrameCopier.TelemetrySnapshot?
+    }
+
+    struct CadenceDecision: Sendable, Equatable {
+        let shouldDrop: Bool
+        let originPresentationTime: Double?
+        let admittedSlotIndex: Int64
+        let expectedPresentationTime: Double?
     }
 
     private let onFrame: @Sendable (CapturedFrame) -> Void
@@ -56,7 +71,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let shouldDropFrame: (@Sendable () -> Bool)?
     private let usesDetailedMetadata: Bool
     private let tracksFrameStatus: Bool
-    private let capturePressureProfile: WindowCaptureEngine.CapturePressureProfile
     private var frameCount: UInt64 = 0
     private var skippedIdleFrames: UInt64 = 0
 
@@ -68,9 +82,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private var lastFPSLogTime: CFAbsoluteTime = 0
     private var presentationWindowCount: UInt64 = 0
     private var presentationWindowStartTime: Double = 0
-    private var deliveredFrameCount: UInt64 = 0
-    private var deliveredCompleteCount: UInt64 = 0
-    private var deliveredIdleCount: UInt64 = 0
+    private var deliveredFrameWindowCount: UInt64 = 0
+    private var deliveredCompleteWindowCount: UInt64 = 0
+    private var deliveredIdleWindowCount: UInt64 = 0
     private var callbackDurationTotalMs: Double = 0
     private var callbackDurationMaxMs: Double = 0
     private var callbackSampleCount: UInt64 = 0
@@ -102,8 +116,20 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let deliveryStateLock = NSLock()
     private var rawFrameWindowCount: UInt64 = 0
     private var rawFrameWindowStartTime: CFAbsoluteTime = 0
+    private var rawScreenCallbackCountCumulative: UInt64 = 0
+    private var validScreenSampleCountCumulative: UInt64 = 0
+    private var renderableScreenSampleCountCumulative: UInt64 = 0
+    private var completeFrameCountCumulative: UInt64 = 0
+    private var idleFrameCountCumulative: UInt64 = 0
+    private var blankFrameCountCumulative: UInt64 = 0
+    private var suspendedFrameCountCumulative: UInt64 = 0
+    private var startedFrameCountCumulative: UInt64 = 0
+    private var stoppedFrameCountCumulative: UInt64 = 0
+    private var cadenceAdmittedFrameCountCumulative: UInt64 = 0
+    private var deliveredFrameCountCumulative: UInt64 = 0
+    private var cadenceOriginPresentationTime: Double = 0
     private var lastCadenceAdmittedPresentationTime: Double = 0
-    private var nextCadenceAdmitPresentationTime: Double = 0
+    private var lastCadenceAdmittedSlotIndex: Int64 = -1
     private var cadenceDropCount: UInt64 = 0
     private var cadenceDropTotalCount: UInt64 = 0
     private var cadencePassCount: UInt64 = 0
@@ -116,20 +142,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     private let windowStallThreshold: CFAbsoluteTime = 8.0
     private let displayStallThreshold: CFAbsoluteTime = 0.6
 
-    private let poolMinimumBufferCount: Int
-    private let frameCopier: CaptureFrameCopier?
-    private var loggedCopyFallback = false
-    private var poolDropCount: UInt64 = 0
-    private var poolDropTotalCount: UInt64 = 0
-    private var lastPoolLogTime: CFAbsoluteTime = 0
-    private var inFlightDropCount: UInt64 = 0
-    private var inFlightDropTotalCount: UInt64 = 0
-    private var lastInFlightLogTime: CFAbsoluteTime = 0
     private var admissionDropCount: UInt64 = 0
     private var admissionDropTotalCount: UInt64 = 0
     private var lastAdmissionLogTime: CFAbsoluteTime = 0
     private let poolLogLock = NSLock()
-    private var loggedPoolWarmFailure = false
 
     // Track if we've been in fallback mode - when SCK resumes, we may need a keyframe
     // to prevent decode errors from reference frame discontinuity
@@ -177,9 +193,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         softStallThreshold: CFAbsoluteTime = 1.0,
         hardRestartThreshold: CFAbsoluteTime? = nil,
         expectedFrameRate: Double = 0,
-        targetFrameRate: Int = 0,
-        poolMinimumBufferCount: Int = 6,
-        capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline
+        targetFrameRate: Int = 0
     ) {
         self.onFrame = onFrame
         self.onAudio = onAudio
@@ -194,9 +208,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
         self.expectedFrameRate = expectedFrameRate
         self.targetFrameRate = Double(max(0, targetFrameRate))
-        self.poolMinimumBufferCount = max(2, poolMinimumBufferCount)
-        self.capturePressureProfile = capturePressureProfile
-        frameCopier = CaptureFrameCopier()
         super.init()
         startWatchdogTimer()
     }
@@ -255,8 +266,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             frameGapThreshold = gapThreshold
             self.softStallThreshold = softStallThreshold
             self.hardRestartThreshold = hardRestartThreshold ?? softStallThreshold
+            cadenceOriginPresentationTime = 0
             lastCadenceAdmittedPresentationTime = 0
-            nextCadenceAdmitPresentationTime = 0
+            lastCadenceAdmittedSlotIndex = -1
             cadencePassCount = 0
             cadenceSkewTotalMs = 0
             cadenceSkewSampleCount = 0
@@ -279,17 +291,24 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
     }
 
     func telemetrySnapshot() -> TelemetrySnapshot {
-        let copyTelemetry = frameCopier?.telemetrySnapshot()
         return poolLogLock.withLock {
             TelemetrySnapshot(
+                rawScreenCallbackCount: rawScreenCallbackCountCumulative,
+                validScreenSampleCount: validScreenSampleCountCumulative,
+                renderableScreenSampleCount: renderableScreenSampleCountCumulative,
+                completeFrameCount: completeFrameCountCumulative,
+                idleFrameCount: idleFrameCountCumulative,
+                blankFrameCount: blankFrameCountCumulative,
+                suspendedFrameCount: suspendedFrameCountCumulative,
+                startedFrameCount: startedFrameCountCumulative,
+                stoppedFrameCount: stoppedFrameCountCumulative,
+                cadenceAdmittedFrameCount: cadenceAdmittedFrameCountCumulative,
+                deliveredFrameCount: deliveredFrameCountCumulative,
                 callbackDurationTotalMs: callbackDurationTotalCumulativeMs,
                 callbackDurationMaxMs: callbackDurationMaxCumulativeMs,
                 callbackSampleCount: callbackSampleCountCumulative,
                 cadenceDropCount: cadenceDropTotalCount,
-                poolDropCount: poolDropTotalCount,
-                inFlightDropCount: inFlightDropTotalCount,
-                admissionDropCount: admissionDropTotalCount,
-                copyTelemetry: copyTelemetry
+                admissionDropCount: admissionDropTotalCount
             )
         }
     }
@@ -302,8 +321,9 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         fallbackLock.unlock()
         lastContentRect = .zero
         expectationLock.withLock {
+            cadenceOriginPresentationTime = 0
             lastCadenceAdmittedPresentationTime = 0
-            nextCadenceAdmitPresentationTime = 0
+            lastCadenceAdmittedSlotIndex = -1
             cadencePassCount = 0
             cadenceSkewTotalMs = 0
             cadenceSkewSampleCount = 0
@@ -345,22 +365,6 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             return min(max(configuredStallLimit, minDisplayThreshold), maxDisplayThreshold)
         }
         return max(configuredStallLimit, windowStallThreshold)
-    }
-
-    func prepareBufferPool(width: Int, height: Int, pixelFormat: OSType) {
-        guard let frameCopier else { return }
-        let success = frameCopier.preparePool(
-            width: width,
-            height: height,
-            pixelFormat: pixelFormat,
-            minimumBufferCount: poolMinimumBufferCount
-        )
-        guard !success else { return }
-        poolLogLock.withLock {
-            guard !loggedPoolWarmFailure else { return }
-            loggedPoolWarmFailure = true
-            MirageLogger.capture("Capture copy pool prewarm failed")
-        }
     }
 
     /// Check if SCK has stopped delivering frames and trigger fallback
@@ -554,12 +558,10 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         dispatchPrecondition(condition: .notOnQueue(.main))
         #endif
         let diagnosticsEnabled = MirageLogger.isEnabled(.capture)
-        let callbackStartTime = diagnosticsEnabled ? CFAbsoluteTimeGetCurrent() : 0
+        let callbackStartTime = CFAbsoluteTimeGetCurrent()
         defer {
-            if diagnosticsEnabled {
-                let durationMs = (CFAbsoluteTimeGetCurrent() - callbackStartTime) * 1000
-                recordCallbackDuration(durationMs)
-            }
+            let durationMs = (CFAbsoluteTimeGetCurrent() - callbackStartTime) * 1000
+            recordCallbackDuration(durationMs)
         }
 
         let wallTime = CFAbsoluteTimeGetCurrent() // Timing: when SCK delivered the frame
@@ -571,6 +573,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
 
         guard type == .screen else { return }
+        recordRawScreenCallback()
 
         // DIAGNOSTIC: Track frame delivery gaps to detect drag/menu freeze
         if lastFrameTime > 0 {
@@ -612,6 +615,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let isValidSampleBuffer = CMSampleBufferIsValid(sampleBuffer)
         if let status {
             noteCaptureStartupSample(status: status)
+            recordFrameStatus(status)
         } else if tracksFrameStatus, windowID == 0, isValidSampleBuffer {
             noteObservedStartupSample()
         }
@@ -621,6 +625,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
               let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
             return
         }
+        recordValidScreenSample()
 
         if diagnosticsEnabled {
             updatePresentationFPS(presentationTime: CMSampleBufferGetPresentationTimeStamp(sampleBuffer))
@@ -629,16 +634,18 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         if !tracksFrameStatus {
             if status == nil {
                 noteCaptureStartupSample(status: .complete)
+                recordFrameStatus(.complete)
             }
+            recordRenderableScreenSample()
             updateDeliveryState(captureTime: captureTime, isComplete: true)
             if diagnosticsEnabled {
-                deliveredFrameCount += 1
+                deliveredFrameWindowCount += 1
                 if lastFPSLogTime == 0 { lastFPSLogTime = captureTime } else if captureTime - lastFPSLogTime > 2.0 {
                     let elapsed = captureTime - lastFPSLogTime
-                    let fps = Double(deliveredFrameCount) / elapsed
+                    let fps = Double(deliveredFrameWindowCount) / elapsed
                     let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
                     MirageLogger.capture("Capture fps: \(fpsText)")
-                    deliveredFrameCount = 0
+                    deliveredFrameWindowCount = 0
                     lastFPSLogTime = captureTime
                 }
             }
@@ -658,7 +665,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
                 dirtyPercentage: 100,
                 isIdleFrame: false
             )
-            emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo, captureTime: captureTime)
+            emitFrame(
+                sampleBuffer: sampleBuffer,
+                sourcePixelBuffer: pixelBuffer,
+                frameInfo: frameInfo,
+                captureTime: captureTime,
+                attachments: attachments
+            )
             return
         }
 
@@ -703,25 +716,27 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         let effectiveStatus = status ?? .complete
         if status == nil {
             noteCaptureStartupSample(status: effectiveStatus)
+            recordFrameStatus(effectiveStatus)
         }
         guard effectiveStatus == .complete || effectiveStatus == .idle else { return }
         if effectiveStatus == .idle { isIdleFrame = true }
+        recordRenderableScreenSample()
 
         updateDeliveryState(captureTime: captureTime, isComplete: effectiveStatus == .complete)
         if diagnosticsEnabled {
-            deliveredFrameCount += 1
-            if effectiveStatus == .idle { deliveredIdleCount += 1 } else {
-                deliveredCompleteCount += 1
+            deliveredFrameWindowCount += 1
+            if effectiveStatus == .idle { deliveredIdleWindowCount += 1 } else {
+                deliveredCompleteWindowCount += 1
             }
             if lastFPSLogTime == 0 { lastFPSLogTime = captureTime } else if captureTime - lastFPSLogTime > 2.0 {
                 let elapsed = captureTime - lastFPSLogTime
-                let fps = Double(deliveredFrameCount) / elapsed
+                let fps = Double(deliveredFrameWindowCount) / elapsed
                 let fpsText = fps.formatted(.number.precision(.fractionLength(1)))
                 MirageLogger
-                    .capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteCount), idle=\(deliveredIdleCount))")
-                deliveredFrameCount = 0
-                deliveredCompleteCount = 0
-                deliveredIdleCount = 0
+                    .capture("Capture fps: \(fpsText) (complete=\(deliveredCompleteWindowCount), idle=\(deliveredIdleWindowCount))")
+                deliveredFrameWindowCount = 0
+                deliveredCompleteWindowCount = 0
+                deliveredIdleWindowCount = 0
                 lastFPSLogTime = captureTime
             }
         }
@@ -806,7 +821,13 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             isIdleFrame: isIdleFrame
         )
 
-        emitFrame(sampleBuffer: sampleBuffer, sourcePixelBuffer: pixelBuffer, frameInfo: frameInfo, captureTime: captureTime)
+        emitFrame(
+            sampleBuffer: sampleBuffer,
+            sourcePixelBuffer: pixelBuffer,
+            frameInfo: frameInfo,
+            captureTime: captureTime,
+            attachments: attachments
+        )
     }
 
     private func noteCaptureStartupSample(status: SCFrameStatus) {
@@ -901,6 +922,7 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             callbackDurationTotalCumulativeMs += durationMs
             callbackDurationMaxCumulativeMs = max(callbackDurationMaxCumulativeMs, durationMs)
             callbackSampleCountCumulative &+= 1
+            guard MirageLogger.isEnabled(.capture) else { return }
             if lastCallbackLogTime == 0 {
                 lastCallbackLogTime = now
                 return
@@ -914,6 +936,57 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             callbackDurationMaxMs = 0
             callbackSampleCount = 0
             lastCallbackLogTime = now
+        }
+    }
+
+    private func recordRawScreenCallback() {
+        poolLogLock.withLock {
+            rawScreenCallbackCountCumulative &+= 1
+        }
+    }
+
+    private func recordValidScreenSample() {
+        poolLogLock.withLock {
+            validScreenSampleCountCumulative &+= 1
+        }
+    }
+
+    private func recordFrameStatus(_ status: SCFrameStatus) {
+        poolLogLock.withLock {
+            switch status {
+            case .complete:
+                completeFrameCountCumulative &+= 1
+            case .idle:
+                idleFrameCountCumulative &+= 1
+            case .blank:
+                blankFrameCountCumulative &+= 1
+            case .suspended:
+                suspendedFrameCountCumulative &+= 1
+            case .started:
+                startedFrameCountCumulative &+= 1
+            case .stopped:
+                stoppedFrameCountCumulative &+= 1
+            @unknown default:
+                break
+            }
+        }
+    }
+
+    private func recordRenderableScreenSample() {
+        poolLogLock.withLock {
+            renderableScreenSampleCountCumulative &+= 1
+        }
+    }
+
+    private func recordCadenceAdmittedFrame() {
+        poolLogLock.withLock {
+            cadenceAdmittedFrameCountCumulative &+= 1
+        }
+    }
+
+    private func recordDeliveredFrame() {
+        poolLogLock.withLock {
+            deliveredFrameCountCumulative &+= 1
         }
     }
 
@@ -1005,161 +1078,103 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         sampleBuffer: CMSampleBuffer,
         sourcePixelBuffer: CVPixelBuffer,
         frameInfo: CapturedFrameInfo,
-        captureTime: CFAbsoluteTime
+        captureTime: CFAbsoluteTime,
+        attachments: [SCStreamFrameInfo: Any]?
     ) {
         let presentationTime = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
-        let presentationSeconds = CMTimeGetSeconds(presentationTime)
+        let cadenceTimestamp = resolvedCadenceTimestamp(
+            presentationTime: presentationTime,
+            attachments: attachments,
+            captureTime: captureTime
+        )
         if shouldDropForTargetCadence(
-            presentationSeconds: presentationSeconds,
+            cadenceTimestamp: cadenceTimestamp,
             captureTime: captureTime,
             isIdleFrame: frameInfo.isIdleFrame
         ) {
             logCadenceDrop()
             return
         }
+        recordCadenceAdmittedFrame()
 
         let duration = CMSampleBufferGetDuration(sampleBuffer)
-        let emitFrame: @Sendable (CVPixelBuffer) -> Void = { [onFrame] pixelBuffer in
-            let frame = CapturedFrame(
-                pixelBuffer: pixelBuffer,
-                presentationTime: presentationTime,
-                duration: duration,
-                captureTime: captureTime,
-                info: frameInfo
-            )
-            onFrame(frame)
-        }
-
-        if let frameCopier {
-            let inFlightLimit = Self.resolvedCopyInFlightLimit(
-                expectedFrameRate: expectedFrameRate,
-                poolMinimumBufferCount: poolMinimumBufferCount,
-                pressureProfile: capturePressureProfile
-            )
-            let scheduleResult = frameCopier.scheduleCopy(
-                pixelBuffer: sourcePixelBuffer,
-                minimumBufferCount: poolMinimumBufferCount,
-                inFlightLimit: inFlightLimit
-            ) { [weak self] result in
-                guard let self else { return }
-                switch result {
-                case let .copied(copiedBuffer):
-                    emitFrame(copiedBuffer)
-                case .poolExhausted:
-                    logPoolDrop()
-                case .unsupported:
-                    logCopyFallback("Capture copy failed: dropping frame")
-                }
-            }
-
-            switch scheduleResult {
-            case .scheduled:
-                return
-            case .inFlightLimit:
-                logInFlightDrop()
-                return
-            case .poolExhausted:
-                logPoolDrop()
-                return
-            case .unsupported:
-                logCopyFallback("Capture copy unsupported: dropping frame")
-            }
-        } else {
-            logCopyFallback("Capture copy disabled: dropping frame")
-        }
-    }
-
-    nonisolated static func resolvedCopyInFlightLimit(
-        expectedFrameRate: Double,
-        poolMinimumBufferCount: Int,
-        pressureProfile: WindowCaptureEngine.CapturePressureProfile
-    ) -> Int {
-        // Keep SCK surface ownership bounded so a slow copy backend cannot
-        // starve the capture pipeline for multiple frame intervals.
-        let baselineCap = expectedFrameRate >= 120 ? 6 : 4
-        let baselineDepth = max(2, poolMinimumBufferCount - 4)
-        var limit = min(baselineCap, baselineDepth)
-        guard pressureProfile == .tuned else { return limit }
-
-        // Tuned profile tightens ownership in lowest-latency stress paths.
-        // Gate on larger pools so lower-resolution sessions keep baseline behavior.
-        let highPressureCapture = poolMinimumBufferCount >= 10
-        guard highPressureCapture else { return limit }
-
-        let tunedCap = expectedFrameRate >= 120 ? 5 : 3
-        let tunedDepth = max(2, poolMinimumBufferCount - 5)
-        limit = min(tunedCap, tunedDepth)
-        return max(2, limit)
+        let frame = CapturedFrame(
+            pixelBuffer: sourcePixelBuffer,
+            presentationTime: presentationTime,
+            duration: duration,
+            captureTime: captureTime,
+            info: frameInfo,
+            backingSampleBuffer: sampleBuffer
+        )
+        recordDeliveredFrame()
+        onFrame(frame)
     }
 
     nonisolated static func cadenceDecision(
-        nextEmitPresentationTime: Double?,
+        originPresentationTime: Double?,
+        lastAdmittedSlotIndex: Int64,
         presentationTime: Double,
         targetFrameRate: Double,
         isIdleFrame: Bool,
         earlyToleranceFloor: Double = 0.001,
-        earlyToleranceFraction: Double = 0.10
-    ) -> (shouldDrop: Bool, nextEmitPresentationTime: Double?) {
+        earlyToleranceFraction: Double = 0.20
+    ) -> CadenceDecision {
         guard !isIdleFrame else {
-            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+            return CadenceDecision(
+                shouldDrop: false,
+                originPresentationTime: originPresentationTime,
+                admittedSlotIndex: lastAdmittedSlotIndex,
+                expectedPresentationTime: nil
+            )
         }
         guard targetFrameRate > 0 else {
-            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+            return CadenceDecision(
+                shouldDrop: false,
+                originPresentationTime: originPresentationTime,
+                admittedSlotIndex: lastAdmittedSlotIndex,
+                expectedPresentationTime: nil
+            )
         }
         guard presentationTime.isFinite, presentationTime >= 0 else {
-            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+            return CadenceDecision(
+                shouldDrop: false,
+                originPresentationTime: originPresentationTime,
+                admittedSlotIndex: lastAdmittedSlotIndex,
+                expectedPresentationTime: nil
+            )
         }
 
         let expectedInterval = 1.0 / targetFrameRate
         guard expectedInterval > 0 else {
-            return (shouldDrop: false, nextEmitPresentationTime: nextEmitPresentationTime)
+            return CadenceDecision(
+                shouldDrop: false,
+                originPresentationTime: originPresentationTime,
+                admittedSlotIndex: lastAdmittedSlotIndex,
+                expectedPresentationTime: nil
+            )
         }
 
+        let originPresentationTime = originPresentationTime ?? presentationTime
         let tolerance = max(earlyToleranceFloor, expectedInterval * max(0.0, earlyToleranceFraction))
-        if let nextEmitPresentationTime, presentationTime + tolerance < nextEmitPresentationTime {
-            return (shouldDrop: true, nextEmitPresentationTime: nextEmitPresentationTime)
+        let slotProgress = (presentationTime - originPresentationTime + tolerance) / expectedInterval
+        let slotIndex = Int64(floor(max(0.0, slotProgress)))
+        let expectedPresentationTime = originPresentationTime + (Double(slotIndex) * expectedInterval)
+
+        if slotIndex <= lastAdmittedSlotIndex {
+            return CadenceDecision(
+                shouldDrop: true,
+                originPresentationTime: originPresentationTime,
+                admittedSlotIndex: lastAdmittedSlotIndex,
+                expectedPresentationTime: expectedPresentationTime
+            )
         }
 
-        if let nextEmitPresentationTime {
-            let next: Double
-            if presentationTime >= nextEmitPresentationTime {
-                let intervalsAhead = floor((presentationTime - nextEmitPresentationTime) / expectedInterval) + 1.0
-                next = nextEmitPresentationTime + (intervalsAhead * expectedInterval)
-            } else {
-                next = nextEmitPresentationTime + expectedInterval
-            }
-            return (shouldDrop: false, nextEmitPresentationTime: next)
-        } else {
-            return (shouldDrop: false, nextEmitPresentationTime: presentationTime + expectedInterval)
-        }
-    }
-
-    private func logPoolDrop() {
-        poolLogLock.withLock {
-            poolDropCount += 1
-            poolDropTotalCount &+= 1
-            guard MirageLogger.isEnabled(.capture) else { return }
-            let now = CFAbsoluteTimeGetCurrent()
-            if lastPoolLogTime == 0 || now - lastPoolLogTime > 2.0 {
-                MirageLogger.capture("Capture pool exhausted: dropped \(poolDropCount) frames")
-                poolDropCount = 0
-                lastPoolLogTime = now
-            }
-        }
-    }
-
-    private func logInFlightDrop() {
-        poolLogLock.withLock {
-            inFlightDropCount += 1
-            inFlightDropTotalCount &+= 1
-            guard MirageLogger.isEnabled(.capture) else { return }
-            let now = CFAbsoluteTimeGetCurrent()
-            if lastInFlightLogTime == 0 || now - lastInFlightLogTime > 2.0 {
-                MirageLogger.capture("Capture copy in-flight limit: dropped \(inFlightDropCount) frames")
-                inFlightDropCount = 0
-                lastInFlightLogTime = now
-            }
-        }
+        return CadenceDecision(
+            shouldDrop: false,
+            originPresentationTime: originPresentationTime,
+            admittedSlotIndex: slotIndex,
+            expectedPresentationTime: expectedPresentationTime
+        )
     }
 
     private func logAdmissionDrop() {
@@ -1176,31 +1191,24 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
         }
     }
 
-    private func logCopyFallback(_ message: String) {
-        poolLogLock.withLock {
-            guard !loggedCopyFallback else { return }
-            loggedCopyFallback = true
-            MirageLogger.capture(message)
-        }
-    }
-
     private func shouldDropForTargetCadence(
-        presentationSeconds: Double,
+        cadenceTimestamp: Double,
         captureTime: CFAbsoluteTime,
         isIdleFrame: Bool
     )
     -> Bool {
         return expectationLock.withLock {
-            let resolvedPresentationTime: Double = if presentationSeconds.isFinite, presentationSeconds >= 0 {
-                presentationSeconds
+            let resolvedPresentationTime: Double = if cadenceTimestamp.isFinite, cadenceTimestamp >= 0 {
+                cadenceTimestamp
             } else {
                 captureTime
             }
-            let nextEmitPresentationTime: Double? = nextCadenceAdmitPresentationTime > 0
-                ? nextCadenceAdmitPresentationTime
+            let originPresentationTime: Double? = cadenceOriginPresentationTime > 0
+                ? cadenceOriginPresentationTime
                 : nil
             let decision = Self.cadenceDecision(
-                nextEmitPresentationTime: nextEmitPresentationTime,
+                originPresentationTime: originPresentationTime,
+                lastAdmittedSlotIndex: lastCadenceAdmittedSlotIndex,
                 presentationTime: resolvedPresentationTime,
                 targetFrameRate: targetFrameRate,
                 isIdleFrame: isIdleFrame
@@ -1211,17 +1219,63 @@ final class CaptureStreamOutput: NSObject, SCStreamOutput, @unchecked Sendable {
             }
 
             if !isIdleFrame, targetFrameRate > 0 {
-                if let nextEmitPresentationTime {
-                    let skewMs = abs(resolvedPresentationTime - nextEmitPresentationTime) * 1000.0
+                if let expectedPresentationTime = decision.expectedPresentationTime {
+                    let skewMs = abs(resolvedPresentationTime - expectedPresentationTime) * 1000.0
                     cadenceSkewTotalMs += skewMs
                     cadenceSkewSampleCount += 1
                 }
                 cadencePassCount += 1
+                cadenceOriginPresentationTime = decision.originPresentationTime ?? 0
                 lastCadenceAdmittedPresentationTime = resolvedPresentationTime
-                nextCadenceAdmitPresentationTime = decision.nextEmitPresentationTime ?? 0
+                lastCadenceAdmittedSlotIndex = decision.admittedSlotIndex
             }
             return false
         }
+    }
+
+    private func resolvedCadenceTimestamp(
+        presentationTime: CMTime,
+        attachments: [SCStreamFrameInfo: Any]?,
+        captureTime: CFAbsoluteTime
+    ) -> Double {
+        if let displayTimeSeconds = resolvedDisplayTimeSeconds(from: attachments) {
+            return displayTimeSeconds
+        }
+        let presentationSeconds = CMTimeGetSeconds(presentationTime)
+        if presentationSeconds.isFinite, presentationSeconds >= 0 {
+            return presentationSeconds
+        }
+        return captureTime
+    }
+
+    private func resolvedDisplayTimeSeconds(
+        from attachments: [SCStreamFrameInfo: Any]?
+    ) -> Double? {
+        guard let attachments,
+              let rawValue = attachments[.displayTime] else {
+            return nil
+        }
+
+        let hostTime: UInt64? = if let value = rawValue as? UInt64 {
+            value
+        } else if let value = rawValue as? NSNumber {
+            value.uint64Value
+        } else if let value = rawValue as? Int {
+            UInt64(max(0, value))
+        } else {
+            nil
+        }
+
+        guard let hostTime, hostTime > 0 else {
+            return nil
+        }
+
+        let hostTimeCM = CMClockMakeHostTimeFromSystemUnits(hostTime)
+        let seconds = CMTimeGetSeconds(hostTimeCM)
+        guard seconds.isFinite, seconds >= 0 else {
+            return nil
+        }
+        return seconds
     }
 
     private func logCadenceDrop() {

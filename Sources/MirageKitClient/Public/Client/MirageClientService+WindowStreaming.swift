@@ -127,7 +127,8 @@ public extension MirageClientService {
         beginPostResizeTransition: Bool = false,
         codec: MirageVideoCodec = .hevc,
         streamDimensions: (width: Int, height: Int)? = nil,
-        mediaMaxPacketSize: Int? = nil
+        mediaMaxPacketSize: Int? = nil,
+        dimensionToken: UInt16? = nil
     )
     async {
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
@@ -148,10 +149,20 @@ public extension MirageClientService {
                     beginPostResizeTransition: beginPostResizeTransition,
                     codec: codec,
                     streamDimensions: streamDimensions,
-                    mediaMaxPacketSize: acceptedMediaMaxPacketSize
+                    mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                    dimensionToken: dimensionToken
                 )
             }
 
+            if beginPostResizeTransition {
+                await existingController.primeForIncomingResize(
+                    dimensionToken: dimensionToken,
+                    streamDimensions: streamDimensions
+                )
+            } else if let dimensionToken {
+                let reassembler = await existingController.getReassembler()
+                reassembler.updateExpectedDimensionToken(dimensionToken)
+            }
             await existingController.setDecoderCodec(codec, streamDimensions: streamDimensions)
             await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
             await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
@@ -185,6 +196,10 @@ public extension MirageClientService {
         await controller.setDecoderCodec(codec, streamDimensions: streamDimensions)
         await controller.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
         await controller.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
+        if let dimensionToken {
+            let reassembler = await controller.getReassembler()
+            reassembler.updateExpectedDimensionToken(dimensionToken)
+        }
 
         let capturedStreamID = streamID
         await controller.setCallbacks(
@@ -267,7 +282,8 @@ public extension MirageClientService {
         _ streamID: StreamID,
         codec: MirageVideoCodec,
         streamDimensions: (width: Int, height: Int)?,
-        mediaMaxPacketSize: Int?
+        mediaMaxPacketSize: Int?,
+        dimensionToken: UInt16?
     )
     async {
         let acceptedMediaMaxPacketSize = resolvedAcceptedMediaMaxPacketSize(mediaMaxPacketSize)
@@ -286,7 +302,8 @@ public extension MirageClientService {
                 beginPostResizeTransition: true,
                 codec: codec,
                 streamDimensions: streamDimensions,
-                mediaMaxPacketSize: acceptedMediaMaxPacketSize
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                dimensionToken: dimensionToken
             )
         }
 
@@ -296,13 +313,18 @@ public extension MirageClientService {
                 beginPostResizeTransition: true,
                 codec: codec,
                 streamDimensions: streamDimensions,
-                mediaMaxPacketSize: acceptedMediaMaxPacketSize
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                dimensionToken: dimensionToken
             )
         }
 
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
         await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
         await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
+        await existingController.primeForIncomingResize(
+            dimensionToken: dimensionToken,
+            streamDimensions: streamDimensions
+        )
         await existingController.prepareForResize(
             codec: codec,
             streamDimensions: streamDimensions

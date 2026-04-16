@@ -257,6 +257,7 @@ extension VideoEncoder {
             performanceTracker: performanceTracker,
             completion: frameCompletionHandler,
             isProRes: isProRes,
+            retainedSampleBuffer: frame.backingSampleBuffer,
             getCurrentVersion: { [weak self] in self?.sessionVersion ?? 0 }
         )
         frameNumber += 1

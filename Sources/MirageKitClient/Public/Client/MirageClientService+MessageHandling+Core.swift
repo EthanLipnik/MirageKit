@@ -369,17 +369,13 @@ extension MirageClientService {
                 await self.setupControllerForStream(
                     streamID,
                     beginPostResizeTransition: shouldBeginPostResizeTransition,
-                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize
+                    mediaMaxPacketSize: started.acceptedMediaMaxPacketSize,
+                    dimensionToken: dimensionToken
                 )
             }
             self.addActiveStreamID(streamID)
             if isAppCentricStream, shouldSetupController {
                 MirageLogger.client("Controller set up for app-centric stream \(streamID)")
-            }
-
-            if let token = dimensionToken, let controller = self.controllersByStream[streamID] {
-                let reassembler = await controller.getReassembler()
-                reassembler.updateExpectedDimensionToken(token)
             }
 
             if let startupAttemptID {
@@ -450,9 +446,8 @@ extension MirageClientService {
     func handleStreamMetricsUpdate(_ message: ControlMessage) {
         if let metrics = try? message.decode(StreamMetricsMessage.self) {
             if let controller = controllersByStream[metrics.streamID] {
-                let hostCadencePressureSample = HostCadencePressureDiagnosticSample(metrics: metrics)
                 Task {
-                    await controller.updateHostCadencePressureSample(hostCadencePressureSample)
+                    await controller.updateHostMetrics(metrics)
                     await controller.updateDecodeSubmissionLimit(targetFrameRate: metrics.targetFrameRate)
                 }
             }
@@ -498,10 +493,6 @@ extension MirageClientService {
                 preEncodeWaitMaxMs: metrics.preEncodeWaitMaxMs,
                 captureCallbackAverageMs: metrics.captureCallbackAverageMs,
                 captureCallbackMaxMs: metrics.captureCallbackMaxMs,
-                captureCopyAverageMs: metrics.captureCopyAverageMs,
-                captureCopyMaxMs: metrics.captureCopyMaxMs,
-                captureCopyPoolDrops: metrics.captureCopyPoolDrops,
-                captureCopyInFlightDrops: metrics.captureCopyInFlightDrops,
                 sendQueueBytes: metrics.sendQueueBytes,
                 sendStartDelayAverageMs: metrics.sendStartDelayAverageMs,
                 sendStartDelayMaxMs: metrics.sendStartDelayMaxMs,
@@ -647,7 +638,7 @@ extension MirageClientService {
         lastCursorControlSampleTime = now
         guard updateCount > 0 || positionCount > 0 else { return }
 
-        MirageLogger.client(
+        MirageLogger.network(
             "Cursor control sample (1s): cursorUpdates=\(updateCount), cursorPositions=\(positionCount)"
         )
     }

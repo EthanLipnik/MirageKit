@@ -219,6 +219,8 @@ final class EncodeInfo: @unchecked Sendable {
     let performanceTracker: EncodePerformanceTracker?
     let completion: (@Sendable () -> Void)?
     let isProRes: Bool
+    /// Retains the originating capture sample buffer until VT finishes with the frame.
+    let retainedSampleBuffer: CMSampleBuffer?
     /// Closure to check current session version (captures encoder reference)
     let getCurrentVersion: () -> UInt64
 
@@ -230,6 +232,7 @@ final class EncodeInfo: @unchecked Sendable {
         performanceTracker: EncodePerformanceTracker?,
         completion: (@Sendable () -> Void)?,
         isProRes: Bool = false,
+        retainedSampleBuffer: CMSampleBuffer? = nil,
         getCurrentVersion: @escaping () -> UInt64
     ) {
         self.frameNumber = frameNumber
@@ -239,6 +242,7 @@ final class EncodeInfo: @unchecked Sendable {
         self.performanceTracker = performanceTracker
         self.completion = completion
         self.isProRes = isProRes
+        self.retainedSampleBuffer = retainedSampleBuffer
         self.getCurrentVersion = getCurrentVersion
     }
 

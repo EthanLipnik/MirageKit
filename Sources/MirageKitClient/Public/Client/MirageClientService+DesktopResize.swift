@@ -153,4 +153,16 @@ extension MirageClientService {
             sessionStore.clearPostResizeTransition(for: streamID)
         }
     }
+
+    func cancelQueuedDesktopResizeForLocalPresentation(streamID: StreamID) {
+        guard desktopStreamID == streamID else { return }
+        let coordinator = desktopResizeCoordinator
+        coordinator.displayResolutionTask?.cancel()
+        coordinator.displayResolutionTask = nil
+        coordinator.latestRequestedTarget = nil
+        coordinator.queuedTarget = nil
+        if coordinator.activeTransition == nil {
+            coordinator.clearLocalPresentationState()
+        }
+    }
 }

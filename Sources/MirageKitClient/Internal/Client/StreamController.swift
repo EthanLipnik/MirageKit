@@ -368,7 +368,11 @@ actor StreamController {
     var currentDecodeSubmissionLimit: Int = 2
     var lastDecodeSubmissionConstraintWasSourceBound: Bool?
     var lastSourceBoundDiagnosticSignature: String?
+    var latestHostMetricsMessage: StreamMetricsMessage?
     var latestHostCadencePressureSample: HostCadencePressureDiagnosticSample?
+    var latestRenderTelemetrySnapshot: MirageRenderStreamStore.RenderTelemetrySnapshot?
+    var lastStreamingAnomalyDiagnosticSignature: String?
+    var lastStreamingAnomalyDiagnosticTime: CFAbsoluteTime = 0
     var presentationTier: StreamPresentationTier = .activeLive
     var isRunning = false
     var isStopping = false
@@ -376,6 +380,7 @@ actor StreamController {
     let metricsTracker = ClientFrameMetricsTracker()
     var metricsTask: Task<Void, Never>?
     var lastMetricsLogTime: CFAbsoluteTime = 0
+    static let streamingAnomalyLogCooldown: CFAbsoluteTime = 5.0
     static let metricsDispatchInterval: Duration = .milliseconds(500)
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     var awdlTransportActive: Bool = false
@@ -1027,6 +1032,11 @@ actor StreamController {
         lastHardRecoveryStartTime = 0
         startupHardRecoveryCount = 0
         hasTriggeredTerminalStartupFailure = false
+        latestHostMetricsMessage = nil
+        latestHostCadencePressureSample = nil
+        latestRenderTelemetrySnapshot = nil
+        lastStreamingAnomalyDiagnosticSignature = nil
+        lastStreamingAnomalyDiagnosticTime = 0
         lastBackgroundDecodeErrorSignature = nil
         lastBackgroundDecodeErrorLogTime = 0
         consecutiveDecodeErrors = 0
@@ -1071,6 +1081,7 @@ actor StreamController {
         let snapshot = metricsTracker.snapshot(now: now)
         let droppedFrames = reassembler.getDroppedFrameCount() + snapshot.queueDroppedFrames
         let renderTelemetry = MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        latestRenderTelemetrySnapshot = renderTelemetry
         evaluateAdaptiveJitterHold(receivedFPS: snapshot.receivedFPS)
         await evaluateDecodeSubmissionLimit(
             decodedFPS: snapshot.decodedFPS,
@@ -1128,10 +1139,10 @@ actor StreamController {
         if ratio < Self.decodeSubmissionStressThreshold {
             if decodeBound {
                 if lastDecodeSubmissionConstraintWasSourceBound != false {
-                    let decodedText = decodedFPS.formatted(.number.precision(.fractionLength(1)))
-                    let receivedText = receivedFPS.formatted(.number.precision(.fractionLength(1)))
-                    MirageLogger.client(
-                        "Decode submission stress classified as decode-bound (decoded \(decodedText)fps, received \(receivedText)fps, target \(targetFPS)fps)"
+                    await maybeLogStreamingAnomalyDiagnostic(
+                        trigger: "decode-submission",
+                        decodedFPS: decodedFPS,
+                        receivedFPS: receivedFPS
                     )
                 }
                 lastDecodeSubmissionConstraintWasSourceBound = false
@@ -1143,13 +1154,10 @@ actor StreamController {
                 if sourceBound,
                    lastDecodeSubmissionConstraintWasSourceBound != true ||
                    lastSourceBoundDiagnosticSignature != sourceDiagnosticSignature {
-                    MirageLogger.client(
-                        sourceBoundDecodeSubmissionDiagnosticMessage(
-                            decodedFPS: decodedFPS,
-                            receivedFPS: receivedFPS,
-                            targetFPS: targetFPS,
-                            hostCadencePressure: hostCadencePressure
-                        )
+                    await maybeLogStreamingAnomalyDiagnostic(
+                        trigger: "decode-submission",
+                        decodedFPS: decodedFPS,
+                        receivedFPS: receivedFPS
                     )
                     lastDecodeSubmissionConstraintWasSourceBound = true
                     lastSourceBoundDiagnosticSignature = sourceDiagnosticSignature

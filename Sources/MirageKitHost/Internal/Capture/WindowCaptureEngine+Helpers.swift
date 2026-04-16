@@ -27,99 +27,42 @@ extension WindowCaptureEngine {
         return safeWidth * safeHeight >= highResolutionPixelThreshold
     }
 
-    nonisolated static func resolveCaptureQueueDepth(
+    nonisolated static func resolveSCKQueueDepth(
         width: Int,
         height: Int,
         frameRate: Int,
         latencyMode: MirageStreamLatencyMode,
-        profile: CapturePressureProfile,
         overrideDepth: Int?
     ) -> Int {
         if let overrideDepth, overrideDepth > 0 {
-            return min(max(1, overrideDepth), 8)
+            return min(max(3, overrideDepth), 8)
         }
 
         let safeWidth = max(1, width)
         let safeHeight = max(1, height)
-        let pixelCount = max(1, safeWidth * safeHeight)
-        let basePixels = 1920 * 1080
-        let extraPixels = max(0, pixelCount - basePixels)
-        let extraDepth = extraPixels / 2_500_000
+        if frameRate >= 120 {
+            // Native-refresh capture is where SCK is most sensitive to queue starvation.
+            // Keep the stream queue at the platform-supported ceiling and use Mirage's
+            // own pool/in-flight tuning to reduce downstream pressure instead.
+            return 8
+        }
 
-        var depth = 3 + extraDepth
-        if frameRate >= 120 { depth += 1 }
+        var depth = 6
+        if isHighResolutionCapture(width: safeWidth, height: safeHeight) {
+            depth += 1
+        }
+        if safeWidth * safeHeight >= 5_120 * 2_880 {
+            depth += 1
+        }
 
         switch latencyMode {
         case .lowestLatency:
-            depth -= 1
-        case .auto:
-            depth += 1
-        case .smoothest:
+            break
+        case .auto, .smoothest:
             depth += 1
         }
 
-        let tunedHighResLowestLatency = profile == .tuned &&
-            latencyMode == .lowestLatency &&
-            isHighResolutionCapture(width: safeWidth, height: safeHeight)
-        if tunedHighResLowestLatency {
-            depth -= frameRate >= 120 ? 3 : 2
-        }
-
-        let minDepth: Int = {
-            switch latencyMode {
-            case .lowestLatency:
-                if profile == .tuned,
-                   isHighResolutionCapture(width: safeWidth, height: safeHeight) {
-                    return 1
-                }
-                return 2
-            case .auto:
-                return 4
-            case .smoothest:
-                return 4
-            }
-        }()
-
-        depth = max(depth, minDepth)
-
-        if tunedHighResLowestLatency {
-            let tunedCap = frameRate >= 120 ? 5 : 4
-            return min(max(1, depth), tunedCap)
-        }
-
-        return min(max(1, depth), 8)
-    }
-
-    nonisolated static func resolveBufferPoolMinimumCount(
-        queueDepth: Int,
-        frameRate: Int,
-        latencyMode: MirageStreamLatencyMode,
-        profile: CapturePressureProfile,
-        highResolutionCapture: Bool
-    ) -> Int {
-        var extra: Int = switch latencyMode {
-        case .lowestLatency:
-            frameRate >= 120 ? 3 : 2
-        case .auto:
-            frameRate >= 120 ? 6 : 5
-        case .smoothest:
-            frameRate >= 120 ? 6 : 5
-        }
-
-        var minimum = 6
-        if profile == .tuned,
-           latencyMode == .lowestLatency,
-           highResolutionCapture {
-            if frameRate >= 120 {
-                extra = max(1, extra - 3)
-                minimum = 4
-            } else {
-                extra = max(1, extra - 2)
-                minimum = 3
-            }
-        }
-
-        return max(minimum, queueDepth + extra)
+        return min(max(3, depth), 8)
     }
 
     nonisolated static func resolveStallPolicy(
@@ -196,25 +139,13 @@ extension WindowCaptureEngine {
         )
     }
 
-    var captureQueueDepth: Int {
-        Self.resolveCaptureQueueDepth(
+    var sckQueueDepth: Int {
+        Self.resolveSCKQueueDepth(
             width: currentWidth,
             height: currentHeight,
             frameRate: currentFrameRate,
             latencyMode: latencyMode,
-            profile: capturePressureProfile,
             overrideDepth: configuration.captureQueueDepth
-        )
-    }
-
-    var bufferPoolMinimumCount: Int {
-        let highResolutionCapture = Self.isHighResolutionCapture(width: currentWidth, height: currentHeight)
-        return Self.resolveBufferPoolMinimumCount(
-            queueDepth: captureQueueDepth,
-            frameRate: currentFrameRate,
-            latencyMode: latencyMode,
-            profile: capturePressureProfile,
-            highResolutionCapture: highResolutionCapture
         )
     }
 
@@ -229,16 +160,79 @@ extension WindowCaptureEngine {
         }
     }
 
+    nonisolated static func resolvedEffectiveCaptureRate(
+        requestedFrameRate: Int,
+        displayRefreshRate: Int?,
+        usesDisplayRefreshCadence: Bool
+    ) -> Int {
+        let requestedFrameRate = max(1, requestedFrameRate)
+        guard usesDisplayRefreshCadence,
+              let displayRefreshRate,
+              displayRefreshRate > 0 else {
+            return requestedFrameRate
+        }
+        return max(1, min(requestedFrameRate, displayRefreshRate))
+    }
+
+    nonisolated static func usesNativeRefreshMinimumFrameInterval(
+        requestedFrameRate: Int,
+        displayRefreshRate: Int?,
+        usesDisplayRefreshCadence: Bool
+    ) -> Bool {
+        guard usesDisplayRefreshCadence,
+              let displayRefreshRate,
+              displayRefreshRate > 0 else {
+            return false
+        }
+        return max(1, requestedFrameRate) >= displayRefreshRate
+    }
+
+    nonisolated static func resolvedMinimumFrameInterval(
+        requestedFrameRate: Int,
+        displayRefreshRate: Int?,
+        usesDisplayRefreshCadence: Bool
+    ) -> CMTime {
+        if usesNativeRefreshMinimumFrameInterval(
+            requestedFrameRate: requestedFrameRate,
+            displayRefreshRate: displayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        ) {
+            return .zero
+        }
+        let effectiveRate = resolvedEffectiveCaptureRate(
+            requestedFrameRate: requestedFrameRate,
+            displayRefreshRate: displayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        )
+        return CMTime(value: 1, timescale: CMTimeScale(effectiveRate))
+    }
+
     func minimumFrameIntervalRate() -> Int {
-        currentFrameRate
+        Self.resolvedEffectiveCaptureRate(
+            requestedFrameRate: currentFrameRate,
+            displayRefreshRate: currentDisplayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        )
     }
 
     func effectiveCaptureRate() -> Int {
-        return currentFrameRate
+        minimumFrameIntervalRate()
+    }
+
+    func usesNativeRefreshMinimumFrameInterval() -> Bool {
+        Self.usesNativeRefreshMinimumFrameInterval(
+            requestedFrameRate: currentFrameRate,
+            displayRefreshRate: currentDisplayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        )
     }
 
     func resolvedMinimumFrameInterval() -> CMTime {
-        return CMTime(value: 1, timescale: CMTimeScale(minimumFrameIntervalRate()))
+        Self.resolvedMinimumFrameInterval(
+            requestedFrameRate: currentFrameRate,
+            displayRefreshRate: currentDisplayRefreshRate,
+            usesDisplayRefreshCadence: usesDisplayRefreshCadence
+        )
     }
 
     func frameGapThreshold(for frameRate: Int) -> CFAbsoluteTime {

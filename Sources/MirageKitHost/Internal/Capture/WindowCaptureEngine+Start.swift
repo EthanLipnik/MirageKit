@@ -101,13 +101,12 @@ extension WindowCaptureEngine {
             streamConfig.sampleRate = 48_000
             streamConfig.channelCount = resolvedAudioChannelCount
         }
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         if let override = configuration.captureQueueDepth, override > 0 { MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)") }
         let queueDepth = streamConfig.queueDepth
-        let poolMinimumCount = bufferPoolMinimumCount
         MirageLogger
             .capture(
-                "Capture buffering: latency=\(latencyMode.displayName), queue=\(queueDepth), pool=\(poolMinimumCount)"
+                "Capture buffering: latency=\(latencyMode.displayName), queue=\(queueDepth), handoff=zeroCopy"
             )
 
         // Use window-level capture for precise dimensions (captures just this window)
@@ -158,14 +157,11 @@ extension WindowCaptureEngine {
             softStallThreshold: stallPolicy.softStallThreshold,
             hardRestartThreshold: stallPolicy.hardRestartThreshold,
             expectedFrameRate: Double(captureRate),
-            targetFrameRate: currentFrameRate,
-            poolMinimumBufferCount: bufferPoolMinimumCount,
-            capturePressureProfile: capturePressureProfile
+            targetFrameRate: currentFrameRate
         )
         guard let output = streamOutput else {
             throw MirageError.captureSetupFailed("streamOutput was not initialized")
         }
-        output.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
         try stream.addStreamOutput(
@@ -521,13 +517,12 @@ extension WindowCaptureEngine {
             streamConfig.sampleRate = 48_000
             streamConfig.channelCount = resolvedAudioChannelCount
         }
-        streamConfig.queueDepth = captureQueueDepth
+        streamConfig.queueDepth = sckQueueDepth
         if let override = configuration.captureQueueDepth, override > 0 { MirageLogger.capture("Using capture queue depth override: \(streamConfig.queueDepth)") }
         let queueDepth = streamConfig.queueDepth
-        let poolMinimumCount = bufferPoolMinimumCount
         MirageLogger
             .capture(
-                "Capture buffering: latency=\(latencyMode.displayName), queue=\(queueDepth), pool=\(poolMinimumCount)"
+                "Capture buffering: latency=\(latencyMode.displayName), queue=\(queueDepth), handoff=zeroCopy"
             )
 
         // Capture displayID before creating filter (for logging after)
@@ -595,14 +590,11 @@ extension WindowCaptureEngine {
             softStallThreshold: stallPolicy.softStallThreshold,
             hardRestartThreshold: stallPolicy.hardRestartThreshold,
             expectedFrameRate: Double(captureRate),
-            targetFrameRate: currentFrameRate,
-            poolMinimumBufferCount: bufferPoolMinimumCount,
-            capturePressureProfile: capturePressureProfile
+            targetFrameRate: currentFrameRate
         )
         guard let output = streamOutput else {
             throw MirageError.captureSetupFailed("streamOutput was not initialized")
         }
-        output.prepareBufferPool(width: currentWidth, height: currentHeight, pixelFormat: pixelFormatType)
 
         // Use a high-priority capture queue so SCK delivery doesn't contend with UI work
         try stream.addStreamOutput(

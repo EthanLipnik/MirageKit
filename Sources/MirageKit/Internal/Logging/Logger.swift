@@ -418,13 +418,12 @@ public struct MirageLogger: Sendable {
     }
 
     /// Parse MIRAGE_LOG environment variable
-    private static func parseEnvironment() -> Set<MirageLogCategory> {
-        guard let envValue = ProcessInfo.processInfo.environment["MIRAGE_LOG"] else {
-            // Default: essential connection + client render/decode lifecycle logs
-            return [.host, .client, .appState, .stream, .decoder, .renderer]
+    static func parsedEnabledCategories(environmentValue: String?) -> Set<MirageLogCategory> {
+        guard let environmentValue else {
+            return [.host, .client, .appState]
         }
 
-        let trimmed = envValue.trimmingCharacters(in: .whitespaces).lowercased()
+        let trimmed = environmentValue.trimmingCharacters(in: .whitespaces).lowercased()
 
         switch trimmed {
         case "all":
@@ -433,7 +432,6 @@ public struct MirageLogger: Sendable {
              "none":
             return []
         default:
-            // Parse comma-separated list
             let names = trimmed.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }
             var categories: Set<MirageLogCategory> = []
             for name in names {
@@ -441,6 +439,10 @@ public struct MirageLogger: Sendable {
             }
             return categories
         }
+    }
+
+    private static func parseEnvironment() -> Set<MirageLogCategory> {
+        parsedEnabledCategories(environmentValue: ProcessInfo.processInfo.environment["MIRAGE_LOG"])
     }
 }
 

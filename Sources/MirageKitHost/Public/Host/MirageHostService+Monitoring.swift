@@ -169,7 +169,7 @@ extension MirageHostService {
         lastCursorControlSampleTime = now
         guard updateCount > 0 || positionCount > 0 || droppedUpdateCount > 0 || droppedPositionCount > 0 else { return }
 
-        MirageLogger.host(
+        MirageLogger.network(
             """
             Cursor control sample (1s): \
             cursorUpdatesSent=\(updateCount), \

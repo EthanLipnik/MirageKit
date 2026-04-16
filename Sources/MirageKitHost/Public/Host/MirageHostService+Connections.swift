@@ -433,10 +433,6 @@ extension MirageHostService {
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
     ) -> MirageHostConnectionOrigin {
-        if let metadataValue = peerAdvertisement.metadata[mirageConnectionOriginMetadataKey],
-           let origin = MirageHostConnectionOrigin(metadataValue: metadataValue) {
-            return origin
-        }
         return ClientContext.isPeerToPeerConnection(
             remoteEndpoint: remoteEndpoint,
             pathSnapshot: pathSnapshot
@@ -541,10 +537,6 @@ extension MirageHostService {
         remoteEndpoint: NWEndpoint?,
         pathSnapshot: LoomSessionNetworkPathSnapshot?
     ) -> Bool {
-        if let metadataValue = peerAdvertisement.metadata[mirageConnectionOriginMetadataKey],
-           let origin = MirageHostConnectionOrigin(metadataValue: metadataValue) {
-            return mediaEncryptionEnabledForAcceptedSession(isPeerToPeer: origin == .local)
-        }
         return mediaEncryptionEnabledForAcceptedSession(
             isPeerToPeer: ClientContext.isPeerToPeerConnection(
                 remoteEndpoint: remoteEndpoint,
@@ -713,14 +705,6 @@ extension MirageHostService {
         if singleClientSessionID == sessionID {
             singleClientSessionID = nil
         }
-    }
-}
-
-private let mirageConnectionOriginMetadataKey = "mirage.connection-origin"
-
-private extension MirageHostConnectionOrigin {
-    init?(metadataValue: String) {
-        self.init(rawValue: metadataValue.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
     }
 }
 

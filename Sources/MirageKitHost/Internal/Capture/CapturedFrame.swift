@@ -23,7 +23,7 @@ struct CapturedFrameInfo: Sendable {
     let isIdleFrame: Bool
 }
 
-/// Captured frame with owned pixel buffer and timing metadata.
+/// Captured frame with timing metadata and optional sample-buffer ownership.
 struct CapturedFrame: @unchecked Sendable {
     let pixelBuffer: CVPixelBuffer
     let presentationTime: CMTime
@@ -31,6 +31,24 @@ struct CapturedFrame: @unchecked Sendable {
     /// Host wall time when the frame was received from SCK (used for pacing).
     let captureTime: CFAbsoluteTime
     let info: CapturedFrameInfo
+    /// Retains the originating sample buffer for zero-copy ScreenCaptureKit frames.
+    let backingSampleBuffer: CMSampleBuffer?
+
+    init(
+        pixelBuffer: CVPixelBuffer,
+        presentationTime: CMTime,
+        duration: CMTime,
+        captureTime: CFAbsoluteTime,
+        info: CapturedFrameInfo,
+        backingSampleBuffer: CMSampleBuffer? = nil
+    ) {
+        self.pixelBuffer = pixelBuffer
+        self.presentationTime = presentationTime
+        self.duration = duration
+        self.captureTime = captureTime
+        self.info = info
+        self.backingSampleBuffer = backingSampleBuffer
+    }
 }
 
 /// Captured audio buffer copied from ScreenCaptureKit output.

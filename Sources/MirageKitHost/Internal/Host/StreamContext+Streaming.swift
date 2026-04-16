@@ -111,10 +111,14 @@ extension StreamContext {
                     MirageLogger.stream(
                         "Keyframe encoded: size=\(encodedData.count), frame=\(reservation.frameNumber), stream=\(streamID)"
                     )
-                } else if reservation.shouldLogPFrameDiagnostic {
+                } else if reservation.shouldLogPFrameDiagnostic,
+                          MirageLogger.isEnabled(.frameAssembly) {
                     let crc = CRC32.calculate(encodedData)
                     let header = encodedData.prefix(16).map { String(format: "%02X", $0) }.joined(separator: " ")
-                    MirageLogger.stream("Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)")
+                    MirageLogger.log(
+                        .frameAssembly,
+                        "Encoded P-frame CRC=\(String(format: "%08X", crc)), size=\(encodedData.count), header: \(header)"
+                    )
                 }
 
                 let contentRect = pinnedContentRect ?? self.currentContentRect

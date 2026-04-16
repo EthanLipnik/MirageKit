@@ -50,11 +50,8 @@ extension VideoDecoder {
             return
         }
 
-        if let session = decompressionSession {
-            VTDecompressionSessionInvalidate(session)
-            decompressionSession = nil
-            pendingOutputTelemetryGeneration = 0
-            lastDecodedOutputPixelFormat = nil
+        if decompressionSession != nil {
+            invalidateActiveSession(resetFormatDescription: false)
             MirageLogger.decoder(
                 "MetalFX output override set to \(enabled); invalidated active session for format change to \(Self.pixelFormatName(desiredPixelFormat))"
             )
@@ -73,11 +70,8 @@ extension VideoDecoder {
 
         guard formatChanged else { return }
 
-        if let session = decompressionSession {
-            VTDecompressionSessionInvalidate(session)
-            decompressionSession = nil
-            pendingOutputTelemetryGeneration = 0
-            lastDecodedOutputPixelFormat = nil
+        if decompressionSession != nil {
+            invalidateActiveSession(resetFormatDescription: false)
             MirageLogger.decoder(
                 "Decoder preferred output color depth set to \(colorDepth.displayName); invalidated active session"
             )

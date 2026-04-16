@@ -124,7 +124,7 @@ public final class MirageStreamViewCoordinator {
         let updates = representableUpdateCount
         representableUpdateCount = 0
         lastRepresentableUpdateLogTime = now
-        MirageLogger.client(
+        MirageLogger.metrics(
             "Stream view representable updates: stream=\(streamID), updates=\(updates), windowSeconds=5"
         )
     }

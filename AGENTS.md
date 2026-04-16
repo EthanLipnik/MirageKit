@@ -16,7 +16,8 @@
 - Never increase inflight for low latency mode.
 - In Network.framework, enabling peer-to-peer transport also allows AWDL paths over wired USB-C links when the system exposes them that way; account for that when reasoning about path selection and diagnostics.
 - Comments and README text should be static descriptions of current behavior.
-- When architecture, message flow, transport behavior, or subsystem boundaries change, update `Architecture.md` in the same change so diagrams and descriptions match current code.
+- When architecture, message flow, transport behavior, or subsystem boundaries change, update `Architecture.md` in the same change.
+- `Architecture.md` is a high-level overview only. Keep it focused on capture, encode, transport, decode, display, input translation, and shared package boundaries. Do not turn it into a type inventory or implementation-detail dump.
 
 ## Coding Standards
 - 4-space indentation; `UpperCamelCase` types; `lowerCamelCase` members.

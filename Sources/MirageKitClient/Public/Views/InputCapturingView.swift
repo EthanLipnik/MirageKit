@@ -506,7 +506,7 @@ public class InputCapturingView: UIView {
         softwareModifierSyncRequestCount = 0
         softwareModifierVisualUpdateCount = 0
         lastSoftwareModifierSyncLogTime = now
-        MirageLogger.client(
+        MirageLogger.metrics(
             "Software modifier sync stats: requests=\(requests), visualUpdates=\(visualUpdates), windowSeconds=5"
         )
     }
@@ -523,7 +523,7 @@ public class InputCapturingView: UIView {
         let suppressedCount = suppressedOnInputEventRebindCount
         suppressedOnInputEventRebindCount = 0
         lastOnInputEventRebindLogTime = now
-        MirageLogger.client(
+        MirageLogger.metrics(
             "Input callback rebind suppressed: count=\(suppressedCount), windowSeconds=5"
         )
     }

@@ -42,15 +42,15 @@ extension VideoDecoder {
 
         outputPixelFormat = activeOutputPixelFormat
 
-        decompressionSessionGeneration &+= 1
-        pendingOutputTelemetryGeneration = decompressionSessionGeneration
+        let sessionGeneration = advanceDecodeCallbackGeneration()
+        pendingOutputTelemetryGeneration = sessionGeneration
         lastDecodedOutputPixelFormat = nil
 
         let requestedName = Self.pixelFormatName(requestedOutputPixelFormat)
         let activeName = Self.pixelFormatName(activeOutputPixelFormat)
         MirageLogger
             .decoder(
-                "Decoder session configured: preferred=\(preferredOutputColorDepth.displayName), requested=\(requestedName), active=\(activeName), generation=\(decompressionSessionGeneration)"
+                "Decoder session configured: preferred=\(preferredOutputColorDepth.displayName), requested=\(requestedName), active=\(activeName), generation=\(sessionGeneration)"
             )
         if Self.shouldWarnOutputFormatFallback(
             preferredColorDepth: preferredOutputColorDepth,
@@ -94,6 +94,21 @@ extension VideoDecoder {
         decompressionSession = session
     }
 
+    func invalidateActiveSession(resetFormatDescription: Bool) {
+        if let session = decompressionSession {
+            VTDecompressionSessionInvalidate(session)
+        }
+        decompressionSession = nil
+        if resetFormatDescription {
+            formatDescription = nil
+        }
+        _ = advanceDecodeCallbackGeneration()
+        pendingOutputTelemetryGeneration = 0
+        lastDecodedOutputPixelFormat = nil
+        usingHardwareDecoder = nil
+        decoderHardwareStatusRefreshAttempts = 0
+    }
+
     nonisolated static func fallbackOutputPixelFormat(for outputPixelFormat: OSType) -> OSType? {
         switch outputPixelFormat {
         case kCVPixelFormatType_444YpCbCr10BiPlanarFullRange:
@@ -113,14 +128,8 @@ extension VideoDecoder {
 
     func invalidateSessionIfCurrent(afterCallbackFailure reason: String, sessionGeneration: UInt64) {
         guard sessionGeneration == decompressionSessionGeneration else { return }
-        guard let session = decompressionSession else { return }
-
-        VTDecompressionSessionInvalidate(session)
-        decompressionSession = nil
-        pendingOutputTelemetryGeneration = 0
-        lastDecodedOutputPixelFormat = nil
-        usingHardwareDecoder = nil
-        decoderHardwareStatusRefreshAttempts = 0
+        guard decompressionSession != nil else { return }
+        invalidateActiveSession(resetFormatDescription: false)
 
         MirageLogger.decoder(
             "Decoder session invalidated after callback failure (\(reason), generation \(sessionGeneration))"

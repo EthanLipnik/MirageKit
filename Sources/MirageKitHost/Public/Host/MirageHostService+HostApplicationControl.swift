@@ -43,6 +43,28 @@ extension MirageHostService {
             return
         }
 
+        if let authorizer = hostApplicationRestartAuthorizer {
+            let isAuthorized = await authorizer(clientContext.client)
+            guard isAuthorized else {
+                let response = HostApplicationRestartResultMessage(
+                    accepted: false,
+                    message: "Local authorization is required to restart Mirage Host."
+                )
+                do {
+                    try await clientContext.send(.hostApplicationRestartResult, content: response)
+                } catch {
+                    await handleControlChannelSendFailure(
+                        client: clientContext.client,
+                        error: error,
+                        operation: "Host application restart authorization result",
+                        sessionID: clientContext.sessionID
+                    )
+                }
+                MirageLogger.host("Denied host application restart request from \(clientContext.client.name)")
+                return
+            }
+        }
+
         let response = HostApplicationRestartResultMessage(
             accepted: true,
             message: "Restarting Mirage Host."

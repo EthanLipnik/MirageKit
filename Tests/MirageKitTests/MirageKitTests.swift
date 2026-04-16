@@ -1185,10 +1185,6 @@ struct MirageKitTests {
             preEncodeWaitMaxMs: 12.4,
             captureCallbackAverageMs: 1.8,
             captureCallbackMaxMs: 4.2,
-            captureCopyAverageMs: 2.4,
-            captureCopyMaxMs: 5.7,
-            captureCopyPoolDrops: 2,
-            captureCopyInFlightDrops: 3,
             sendQueueBytes: 262_144,
             sendStartDelayAverageMs: 3.7,
             sendStartDelayMaxMs: 8.8,
@@ -1216,7 +1212,6 @@ struct MirageKitTests {
         let decoded = try decodedEnvelope.decode(StreamMetricsMessage.self)
         #expect(decoded.averageEncodeMs == 13.2)
         #expect(decoded.captureIngressAverageMs == 4.1)
-        #expect(decoded.captureCopyPoolDrops == 2)
         #expect(decoded.sendQueueBytes == 262_144)
         #expect(decoded.sendCompletionMaxMs == 21.1)
         #expect(decoded.nonKeyframeHoldDrops == 4)

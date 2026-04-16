@@ -26,8 +26,52 @@ extension StreamController {
 
     // MARK: - Private Helpers
 
-    func updateHostCadencePressureSample(_ sample: HostCadencePressureDiagnosticSample?) {
-        latestHostCadencePressureSample = sample
+    func updateHostMetrics(_ metrics: StreamMetricsMessage?) {
+        latestHostMetricsMessage = metrics
+        latestHostCadencePressureSample = metrics.map(HostCadencePressureDiagnosticSample.init(metrics:))
+    }
+
+    func maybeLogStreamingAnomalyDiagnostic(
+        trigger: String,
+        decodedFPS: Double,
+        receivedFPS: Double
+    ) async {
+        guard MirageLogger.isEnabled(.client) else { return }
+
+        let renderTelemetry = latestRenderTelemetrySnapshot ??
+            MirageRenderStreamStore.shared.renderTelemetrySnapshot(for: streamID)
+        let diagnostic = clientStreamingAnomalyDiagnostic(
+            sample: ClientStreamingAnomalySample(
+                streamID: streamID,
+                trigger: trigger,
+                decodedFPS: decodedFPS,
+                receivedFPS: receivedFPS,
+                submittedFPS: renderTelemetry.submittedFPS,
+                uniqueSubmittedFPS: renderTelemetry.uniqueSubmittedFPS,
+                pendingFrameCount: renderTelemetry.pendingFrameCount,
+                pendingFrameAgeMs: renderTelemetry.pendingFrameAgeMs,
+                overwrittenPendingFrames: renderTelemetry.overwrittenPendingFrames,
+                displayLayerNotReadyCount: renderTelemetry.displayLayerNotReadyCount,
+                decodeHealthy: renderTelemetry.decodeHealthy,
+                decodeSubmissionLimit: currentDecodeSubmissionLimit,
+                presentationTier: presentationTier,
+                decoderOutputPixelFormat: await decoder.decodedOutputPixelFormatName(),
+                usingHardwareDecoder: await decoder.currentHardwareDecoderStatus(),
+                targetFrameRate: max(1, latestHostMetricsMessage?.targetFrameRate ?? decodeSchedulerTargetFPS),
+                hostMetrics: latestHostMetricsMessage
+            )
+        )
+        let signature = "\(trigger)|\(diagnostic.signature)"
+        let now = currentTime()
+        if signature == lastStreamingAnomalyDiagnosticSignature,
+           lastStreamingAnomalyDiagnosticTime > 0,
+           now - lastStreamingAnomalyDiagnosticTime < Self.streamingAnomalyLogCooldown {
+            return
+        }
+
+        lastStreamingAnomalyDiagnosticSignature = signature
+        lastStreamingAnomalyDiagnosticTime = now
+        MirageLogger.client(diagnostic.message)
     }
 
     func setTransportPathKind(_ kind: MirageNetworkPathKind) {
@@ -474,6 +518,14 @@ extension StreamController {
         if let diagnostic = Self.frameLossDiagnosticMessage(streamID: streamID, reason: reason) {
             MirageLogger.client(diagnostic)
         }
+        if reason == .severeForwardGap {
+            let metricsSnapshot = metricsTracker.snapshot(now: currentTime())
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "frame-loss-\(reason.rawValue)",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
+        }
         if !hasDecodedFirstFrame || !hasPresentedFirstFrame {
             if presentationTier == .activeLive, !awaitingFirstPresentedFrame {
                 await armFirstPresentedFrameAwaiter(reason: "frame-loss-bootstrap")
@@ -889,6 +941,12 @@ extension StreamController {
         case let .monitor(kind):
             let attempt = consecutiveFreezeRecoveries
             consecutiveFreezeRecoveries = 0
+            let metricsSnapshot = metricsTracker.snapshot(now: now)
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "freeze-recovery-\(kind.rawValue)",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
             MirageLogger.client(
                 "Presentation stall detected (attempt \(attempt)) for stream \(streamID); " +
                     "\(kind.rawValue), monitoring only"
@@ -897,6 +955,12 @@ extension StreamController {
         case let .hard(kind):
             let attempt = consecutiveFreezeRecoveries
             consecutiveFreezeRecoveries = 0
+            let metricsSnapshot = metricsTracker.snapshot(now: now)
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "freeze-recovery-\(kind.rawValue)",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
             MirageLogger.client(
                 "Presentation stall persisted (\(kind.rawValue), attempt \(attempt)) for stream \(streamID); " +
                     "escalating to hard recovery"
@@ -904,6 +968,12 @@ extension StreamController {
             await requestRecovery(reason: .freezeTimeout)
             return
         case let .soft(kind):
+            let metricsSnapshot = metricsTracker.snapshot(now: now)
+            await maybeLogStreamingAnomalyDiagnostic(
+                trigger: "freeze-recovery-\(kind.rawValue)",
+                decodedFPS: metricsSnapshot.decodedFPS,
+                receivedFPS: metricsSnapshot.receivedFPS
+            )
             MirageLogger.client(
                 "Presentation stall detected (\(kind.rawValue), attempt \(consecutiveFreezeRecoveries)) for stream \(streamID); " +
                     "requesting bounded recovery"

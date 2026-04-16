@@ -703,10 +703,9 @@ extension StreamContext {
         let elapsed = now - lastStreamStatsLogTime
         guard lastStreamStatsLogTime == 0 || elapsed > 2.0 else { return }
         let inFlight = inFlightCount
-        MirageLogger
-            .stream(
-                "Encode stats: encoded=\(encodedFrameCount), idleEncoded=\(idleEncodedCount), synthetic=\(syntheticFrameCount), idleSkipped=\(idleSkippedCount), inFlight=\(inFlight)"
-            )
+        MirageLogger.metrics(
+            "Encode stats: encoded=\(encodedFrameCount), idleEncoded=\(idleEncodedCount), synthetic=\(syntheticFrameCount), idleSkipped=\(idleSkippedCount), inFlight=\(inFlight)"
+        )
         if let metricsUpdateHandler, lastStreamStatsLogTime > 0 {
             let encodedFPS = Double(encodedFrameCount) / elapsed
             let idleEncodedFPS = Double(idleEncodedCount) / elapsed
@@ -741,21 +740,9 @@ extension StreamContext {
             } else {
                 nil
             }
-            let captureCopyAverageMs: Double? = if let copyTelemetry = captureTelemetry?.copyTelemetry,
-                copyTelemetry.copySuccesses > 0 {
-                copyTelemetry.durationTotalMs / Double(copyTelemetry.copySuccesses)
-            } else {
-                nil
-            }
             let captureCallbackMaxMs: Double? = if let captureTelemetry,
                 captureTelemetry.callbackSampleCount > 0 {
                 captureTelemetry.callbackDurationMaxMs
-            } else {
-                nil
-            }
-            let captureCopyMaxMs: Double? = if let copyTelemetry = captureTelemetry?.copyTelemetry,
-                copyTelemetry.copySuccesses > 0 {
-                copyTelemetry.durationMaxMs
             } else {
                 nil
             }
@@ -783,10 +770,6 @@ extension StreamContext {
                 preEncodeWaitMaxMs: preEncodeWaitCount > 0 ? preEncodeWaitMaxMs : nil,
                 captureCallbackAverageMs: captureCallbackAverageMs,
                 captureCallbackMaxMs: captureCallbackMaxMs,
-                captureCopyAverageMs: captureCopyAverageMs,
-                captureCopyMaxMs: captureCopyMaxMs,
-                captureCopyPoolDrops: captureTelemetry?.poolDropCount,
-                captureCopyInFlightDrops: captureTelemetry?.inFlightDropCount,
                 sendQueueBytes: packetTelemetry?.queuedBytes,
                 sendStartDelayAverageMs: packetTelemetry?.sendStartDelayAverageMs,
                 sendStartDelayMaxMs: packetTelemetry?.sendStartDelayMaxMs,

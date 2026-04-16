@@ -45,4 +45,12 @@ struct VideoDecoderSessionRecreationTests {
         #expect(VideoDecoder.shouldInvalidateSessionAfterCallbackFailure(status: -12911))
         #expect(VideoDecoder.shouldInvalidateSessionAfterCallbackFailure(status: -12909) == false)
     }
+
+    @Test("Stale decode callbacks are ignored after the decoder generation advances")
+    func staleDecodeCallbacksAreIgnoredAfterGenerationAdvance() {
+        #expect(VideoDecoder.shouldIgnoreDecodeCallback(callbackGeneration: 7, activeGeneration: 8))
+        #expect(
+            VideoDecoder.shouldIgnoreDecodeCallback(callbackGeneration: 8, activeGeneration: 8) == false
+        )
+    }
 }

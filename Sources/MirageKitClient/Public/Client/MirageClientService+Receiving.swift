@@ -194,7 +194,7 @@ extension MirageClientService {
         streamMetricsMessagesSinceLastSample = 0
         lastStreamMetricsSampleTime = now
         guard metricsCount > 0 else { return }
-        MirageLogger.client("Control sample (1s): streamMetricsUpdates=\(metricsCount)")
+        MirageLogger.network("Control sample (1s): streamMetricsUpdates=\(metricsCount)")
     }
 
     private func isExpectedReceiveTermination(_ error: Error) -> Bool {

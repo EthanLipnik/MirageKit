@@ -25,6 +25,7 @@ actor VideoDecoder {
     var maximizePowerEfficiencyEnabled = false
     var metalFXOutputOverrideEnabled = false
     var decompressionSessionGeneration: UInt64 = 0
+    let decodeCallbackGenerationFence = DecodeCallbackGenerationFence()
     var pendingOutputTelemetryGeneration: UInt64 = 0
     var usingHardwareDecoder: Bool?
     var decoderHardwareStatusRefreshAttempts: Int = 0

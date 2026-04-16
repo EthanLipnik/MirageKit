@@ -77,6 +77,7 @@ public struct MirageStreamContentView: View {
     @State private var appResizeAckTimeoutTask: Task<Void, Never>?
     @State private var latestContainerDisplaySize: CGSize = .zero
     @State private var latestDrawableViewSize: CGSize = .zero
+    @State private var localKeyboardOcclusionActive = false
 
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:
@@ -213,7 +214,8 @@ public struct MirageStreamContentView: View {
     }
 
     private var prefersLocalAspectFitPresentation: Bool {
-        softwareKeyboardVisible && keyboardAvoidanceEnabled
+        keyboardAvoidanceEnabled &&
+            (softwareKeyboardVisible || localKeyboardOcclusionActive)
     }
 
     private var activeDesktopSessionID: UUID? {
@@ -405,6 +407,10 @@ public struct MirageStreamContentView: View {
             guard isDesktopStream, hasPresentedFrame else { return }
             clientService.handleDesktopPresentationReady(streamID: session.streamID)
         }
+        .onChange(of: localKeyboardOcclusionActive) { _, isActive in
+            guard isActive else { return }
+            cancelPendingWindowDrivenResizeForLocalPresentation()
+        }
         .onAppear {
             sessionStore.setFocusedSession(session.id)
             clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
@@ -423,6 +429,7 @@ public struct MirageStreamContentView: View {
             appResizeBaselineAcknowledgement = nil
             latestContainerDisplaySize = .zero
             latestDrawableViewSize = .zero
+            localKeyboardOcclusionActive = false
             resizeLifecycleState = .active
             if isResizing { isResizing = false }
             clientService.clearDesktopResizeState(streamID: session.streamID)
@@ -433,6 +440,14 @@ public struct MirageStreamContentView: View {
             )
             #endif
         }
+        #if os(iOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) { notification in
+            handleLocalKeyboardFrameChange(notification)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            localKeyboardOcclusionActive = false
+        }
+        #endif
         #if os(iOS) || os(visionOS)
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             handleResizeLifecycleSuspension(event: .didEnterBackground)
@@ -671,6 +686,7 @@ public struct MirageStreamContentView: View {
         )
         switch decision {
         case .suppressForLocalPresentation:
+            cancelPendingWindowDrivenResizeForLocalPresentation()
             return
         case .ignoreInvalidMetrics:
             if !isDesktopStream {
@@ -822,6 +838,24 @@ public struct MirageStreamContentView: View {
         if isResizing { isResizing = false }
     }
 
+    private func cancelPendingWindowDrivenResizeForLocalPresentation() {
+        if isDesktopStream {
+            clientService.cancelQueuedDesktopResizeForLocalPresentation(streamID: session.streamID)
+            return
+        }
+
+        displayResolutionTask?.cancel()
+        displayResolutionTask = nil
+        pendingDisplayResolutionDispatchTarget = .zero
+        streamScaleTask?.cancel()
+        streamScaleTask = nil
+        if awaitingAppResizeAck {
+            finishAppResizeAwaitingAck()
+        } else if isResizing {
+            isResizing = false
+        }
+    }
+
     private func handleAppStreamStartAcknowledgement(
         _ acknowledgement: MirageClientService.StreamStartAcknowledgement?
     ) {
@@ -850,6 +884,33 @@ public struct MirageStreamContentView: View {
         guard decision == .recheckMinimumSize else { return }
         finishAppResizeAwaitingAck()
     }
+
+    #if os(iOS)
+    private func handleLocalKeyboardFrameChange(_ notification: Notification) {
+        guard keyboardAvoidanceEnabled else {
+            localKeyboardOcclusionActive = false
+            return
+        }
+
+        guard let keyboardEndFrame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+            return
+        }
+
+        let screenBounds: CGRect
+        if MirageClientService.lastKnownScreenPointSize.width > 0,
+           MirageClientService.lastKnownScreenPointSize.height > 0 {
+            screenBounds = CGRect(origin: .zero, size: MirageClientService.lastKnownScreenPointSize)
+        } else {
+            screenBounds = UIScreen.main.bounds
+        }
+
+        localKeyboardOcclusionActive = hasLocalKeyboardOcclusion(
+            keyboardEndFrame: keyboardEndFrame,
+            screenBounds: screenBounds,
+            minimumOcclusionHeight: 120
+        )
+    }
+    #endif
 
     #if os(iOS) || os(visionOS)
     private func handleResizeLifecycleSuspension(event: DesktopResizeLifecycleEvent) {
