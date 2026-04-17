@@ -348,6 +348,8 @@ extension MirageClientService {
         startupAttemptIDByStream.removeAll()
         registeredStreamIDs.removeAll()
         cancelDesktopStreamStopTimeout()
+        retiredDesktopSessionIDs.removeAll()
+        pendingApplicationActivationRecoveryStreamIDs.removeAll()
         desktopStreamRequestStartTime = 0
         streamStartupBaseTimes.removeAll()
         streamStartupFirstRegistrationSent.removeAll()
@@ -748,6 +750,13 @@ extension MirageClientService {
         guard let transport = host.advertisement.directTransports.first(where: { $0.transportKind == transportKind }),
               let port = NWEndpoint.Port(rawValue: transport.port) else {
             if transportKind == .tcp {
+                if case let .hostPort(_, port) = host.endpoint,
+                   let selectedHost = controlSessionUDPHost(
+                       for: host,
+                       endpointHost: endpointHost(for: host.endpoint)
+                   ) {
+                    return .hostPort(host: selectedHost, port: port)
+                }
                 return host.endpoint
             }
             return nil
@@ -783,13 +792,16 @@ extension MirageClientService {
         // ensures we don't accidentally route through VPN/overlay interfaces
         // when a local path exists.
         if !host.resolvedAddresses.isEmpty {
-            let localAddresses = host.resolvedAddresses.filter { !Self.isOverlayAddress($0) }
+            let usableResolvedAddresses = host.resolvedAddresses.filter {
+                !Self.isScopeLessLinkLocalIPv6Address($0)
+            }
+            let localAddresses = usableResolvedAddresses.filter { !Self.isOverlayAddress($0) }
             if let preferred = localAddresses.first {
                 return preferred
             }
             // All resolved addresses are overlay — use the first one anyway
             // since it's still better than an unresolvable hostname.
-            if let fallback = host.resolvedAddresses.first {
+            if let fallback = usableResolvedAddresses.first {
                 return fallback
             }
         }
@@ -846,15 +858,31 @@ extension MirageClientService {
 
     private func shouldPreferEndpointHostForDirectConnection(_ host: NWEndpoint.Host) -> Bool {
         switch host {
-        case .ipv4, .ipv6:
+        case .ipv4:
             return true
+        case .ipv6:
+            return !Self.isScopeLessLinkLocalIPv6Address(host)
         case .name(let value, _):
             let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !normalized.isEmpty else { return false }
+            guard !Self.isScopeLessLinkLocalIPv6Name(normalized) else { return false }
             return normalized.hasSuffix(".local") == false
         @unknown default:
             return false
         }
+    }
+
+    private static func isScopeLessLinkLocalIPv6Address(_ host: NWEndpoint.Host) -> Bool {
+        guard case .ipv6(let addr) = host else { return false }
+        let raw = addr.rawValue
+        guard raw.count >= 2 else { return false }
+        return raw[raw.startIndex] == 0xfe &&
+            (raw[raw.index(after: raw.startIndex)] & 0xc0) == 0x80
+    }
+
+    private static func isScopeLessLinkLocalIPv6Name(_ value: String) -> Bool {
+        let trimmed = value.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        return trimmed.hasPrefix("fe80:") && !trimmed.contains("%")
     }
 
     internal struct ControlSessionAttempt {

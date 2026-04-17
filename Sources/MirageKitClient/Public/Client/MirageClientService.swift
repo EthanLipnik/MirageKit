@@ -623,6 +623,8 @@ public final class MirageClientService {
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
     var pendingLocalDesktopStopStreamID: StreamID?
     var pendingLocalDesktopStopSessionID: UUID?
+    var retiredDesktopSessionIDs: Set<UUID> = []
+    var pendingApplicationActivationRecoveryStreamIDs: Set<StreamID> = []
     let desktopStreamStopTimeout: Duration = .seconds(2)
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupFirstRegistrationSent: Set<StreamID> = []

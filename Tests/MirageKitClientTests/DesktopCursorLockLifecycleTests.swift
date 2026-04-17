@@ -81,14 +81,15 @@ struct DesktopCursorLockLifecycleTests {
         )
     }
 
-    @Test("Leaving real Mac cursor mode re-evaluates system cursor visibility")
-    func leavingRealMacCursorModeReevaluatesSystemCursorVisibility() {
+    @Test("Unlocked real Mac cursor mode does not hide or warp the system cursor")
+    func unlockedRealMacCursorModeDoesNotHideOrWarpSystemCursor() {
         let streamID: StreamID = 12
         let cursorStore = MirageClientCursorStore()
         let cursorPositionStore = MirageClientCursorPositionStore()
         cursorStore.updateCursor(streamID: streamID, cursorType: .arrow, isVisible: false)
         cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.5, y: 0.5), isVisible: false)
 
+        var warps: [CGPoint] = []
         var hideCount = 0
         var unhideCount = 0
 
@@ -96,7 +97,7 @@ struct DesktopCursorLockLifecycleTests {
             .init(
                 mouseLocation: { .zero },
                 setAssociationEnabled: { _ in },
-                warpCursor: { _ in },
+                warpCursor: { warps.append($0) },
                 hideCursor: { hideCount += 1 },
                 unhideCursor: { unhideCount += 1 }
             )
@@ -108,18 +109,63 @@ struct DesktopCursorLockLifecycleTests {
                 view.cursorPositionStore = cursorPositionStore
 
                 view.syntheticCursorEnabled = false
-                #expect(hideCount == 1)
+                view.refreshCursorUpdates(force: true)
+                view.layoutSubtreeIfNeeded()
 
                 view.syntheticCursorEnabled = true
             }
         }
 
-        #expect(unhideCount == 1)
+        #expect(warps.isEmpty)
+        #expect(hideCount == 0)
+        #expect(unhideCount == 0)
+    }
+
+    @Test("Unlocked real Mac cursor mode applies host cursor type without warping")
+    func unlockedRealMacCursorModeAppliesHostCursorTypeWithoutWarping() {
+        let streamID: StreamID = 13
+        let cursorStore = MirageClientCursorStore()
+        let cursorPositionStore = MirageClientCursorPositionStore()
+        cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
+        cursorPositionStore.updatePosition(streamID: streamID, position: CGPoint(x: 0.2, y: 0.8), isVisible: true)
+
+        var appliedCursorTypes: [MirageCursorType] = []
+        var mouseLocation = CGPoint.zero
+        var warps: [CGPoint] = []
+
+        withCursorSystemHooks(
+            .init(
+                mouseLocation: { mouseLocation },
+                setAssociationEnabled: { _ in },
+                warpCursor: { warps.append($0) },
+                setCursor: { cursor in
+                    if let type = MirageCursorType(from: cursor) {
+                        appliedCursorTypes.append(type)
+                    }
+                },
+                hideCursor: {},
+                unhideCursor: {}
+            )
+        ) {
+            let (window, view) = makeMountedView()
+            withExtendedLifetime(window) {
+                mouseLocation = window.convertPoint(toScreen: CGPoint(x: 240, y: 180))
+                view.streamID = streamID
+                view.cursorStore = cursorStore
+                view.cursorPositionStore = cursorPositionStore
+                view.syntheticCursorEnabled = false
+                view.refreshCursorUpdates(force: true)
+                view.layoutSubtreeIfNeeded()
+            }
+        }
+
+        #expect(appliedCursorTypes.contains(.closedHand))
+        #expect(warps.isEmpty)
     }
 
     @Test("Mirage cursor mode applies host cursor type updates to the macOS cursor")
     func mirageCursorModeAppliesHostCursorTypeUpdates() {
-        let streamID: StreamID = 13
+        let streamID: StreamID = 14
         let cursorStore = MirageClientCursorStore()
         cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
 
@@ -155,7 +201,7 @@ struct DesktopCursorLockLifecycleTests {
 
     @Test("Mirage cursor mode shows the synthetic cursor when unlocked")
     func mirageCursorModeShowsSyntheticCursorWhenUnlocked() throws {
-        let streamID: StreamID = 14
+        let streamID: StreamID = 15
         let cursorStore = MirageClientCursorStore()
         cursorStore.updateCursor(streamID: streamID, cursorType: .arrow, isVisible: true)
 
@@ -223,7 +269,7 @@ struct DesktopCursorLockLifecycleTests {
 
     @Test("Real Mac cursor lock applies host cursor updates to the macOS cursor")
     func realMacCursorLockAppliesHostCursorUpdates() {
-        let streamID: StreamID = 15
+        let streamID: StreamID = 16
         let cursorStore = MirageClientCursorStore()
         cursorStore.updateCursor(streamID: streamID, cursorType: .closedHand, isVisible: true)
 

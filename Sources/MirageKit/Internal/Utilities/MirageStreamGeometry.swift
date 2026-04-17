@@ -73,11 +73,13 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         let normalizedBasePixelSize = alignedEncodedSize(basePixelSize)
         let clampedRequestedScale = clampStreamScale(requestedStreamScale)
         let resolvedScale: CGFloat
-        if disableResolutionCap {
+        let widthLimit = positiveEncoderLimit(encoderMaxWidth) ?? normalizedBasePixelSize.width
+        let heightLimit = positiveEncoderLimit(encoderMaxHeight) ?? normalizedBasePixelSize.height
+        let hasExplicitResolutionLimit = positiveEncoderLimit(encoderMaxWidth) != nil ||
+            positiveEncoderLimit(encoderMaxHeight) != nil
+        if disableResolutionCap && !hasExplicitResolutionLimit {
             resolvedScale = clampedRequestedScale
         } else {
-            let widthLimit = encoderMaxWidth.map(CGFloat.init) ?? normalizedBasePixelSize.width
-            let heightLimit = encoderMaxHeight.map(CGFloat.init) ?? normalizedBasePixelSize.height
             let widthScale = normalizedBasePixelSize.width > 0 ? widthLimit / normalizedBasePixelSize.width : 1.0
             let heightScale = normalizedBasePixelSize.height > 0 ? heightLimit / normalizedBasePixelSize.height : 1.0
             let maxScale = min(1.0, widthScale, heightScale)
@@ -128,6 +130,11 @@ package struct MirageStreamGeometry: Sendable, Equatable {
         let rounded = Int(value.rounded(.down))
         let even = rounded - (rounded % 2)
         return max(even, 2)
+    }
+
+    private static func positiveEncoderLimit(_ value: Int?) -> CGFloat? {
+        guard let value, value > 0 else { return nil }
+        return CGFloat(value)
     }
 
     private static func inferredDisplayScaleFactor(

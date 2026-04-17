@@ -202,10 +202,21 @@ public extension MirageClientService {
             streamID: streamID,
             desktopSessionID: desktopSessionID
         )
-        try await sendControlMessage(.stopDesktopStream, content: request)
-        scheduleDesktopStreamStopTimeout(for: streamID, desktopSessionID: desktopSessionID)
         pendingLocalDesktopStopStreamID = streamID
         pendingLocalDesktopStopSessionID = desktopSessionID
+        clearDesktopResizeState(streamID: streamID)
+
+        do {
+            try await sendControlMessage(.stopDesktopStream, content: request)
+        } catch {
+            if pendingLocalDesktopStopStreamID == streamID,
+               pendingLocalDesktopStopSessionID == desktopSessionID {
+                cancelDesktopStreamStopTimeout()
+            }
+            throw error
+        }
+
+        scheduleDesktopStreamStopTimeout(for: streamID, desktopSessionID: desktopSessionID)
 
         MirageLogger.client(
             "Requested stop desktop stream: stream=\(streamID), session=\(desktopSessionID.uuidString)"

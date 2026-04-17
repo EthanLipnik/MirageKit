@@ -66,7 +66,11 @@ extension MirageHostService {
                 MirageLogger.host(
                     "Client \(clientContext.client.name) liveness timeout (\(Int(elapsed))s idle) — disconnecting"
                 )
-                await disconnectClient(clientContext.client, sessionID: clientContext.sessionID)
+                await disconnectClient(
+                    clientContext.client,
+                    sessionID: clientContext.sessionID,
+                    notifyClient: false
+                )
                 delegate?.hostService(self, didDisconnectClient: clientContext.client)
             } else if elapsed >= Self.livenessPingThreshold {
                 clientContext.sendBestEffort(ControlMessage(type: .ping))

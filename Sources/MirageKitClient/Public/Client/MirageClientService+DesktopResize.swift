@@ -45,6 +45,11 @@ extension MirageClientService {
         )
     }
 
+    public var hasActivePostResizeTransition: Bool {
+        desktopResizeCoordinator.activeTransition != nil ||
+            !sessionStore.postResizeAwaitingFirstFrameStreamIDs.isEmpty
+    }
+
     func queueDesktopResize(
         streamID: StreamID,
         target: DesktopResizeCoordinator.RequestGeometry?,
@@ -52,6 +57,12 @@ extension MirageClientService {
         useHostResolution: Bool
     ) {
         let coordinator = desktopResizeCoordinator
+        guard pendingLocalDesktopStopStreamID != streamID else {
+            coordinator.clearAllState()
+            sessionStore.clearPostResizeTransition(for: streamID)
+            return
+        }
+
         if useHostResolution || target == nil {
             coordinator.cancelPendingTasks()
             coordinator.latestRequestedTarget = nil
@@ -102,6 +113,10 @@ extension MirageClientService {
         coordinator.displayResolutionTask = nil
 
         guard desktopStreamID == streamID else { return }
+        guard pendingLocalDesktopStopStreamID != streamID else {
+            clearDesktopResizeState(streamID: streamID)
+            return
+        }
         guard !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
         guard coordinator.activeTransition == nil else { return }
         guard let target = coordinator.queuedTarget ?? coordinator.latestRequestedTarget else { return }

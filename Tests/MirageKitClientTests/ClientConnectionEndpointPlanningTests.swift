@@ -538,6 +538,48 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Client does not prefer scope-less link-local IPv6 endpoints for direct control sessions")
+    func controlSessionAttemptsAvoidScopeLessLinkLocalIPv6Endpoints() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_023))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_024))
+        let linkLocalAddress = try #require(IPv6Address("fe80::1866:72ff:fe1a:1bf0"))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: .ipv6(linkLocalAddress), port: tcpPort),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ]
+            ),
+            resolvedAddresses: [.ipv6(linkLocalAddress)]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("altair.local"),
+            port: udpPort
+        )
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("altair.local"),
+            port: tcpPort
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(!attempts.contains { $0.endpoint.debugDescription.contains("fe80") })
+    }
+
+    @MainActor
     @Test("Client prefers local addresses over overlay addresses from Bonjour resolution")
     func controlSessionAttemptsPreferLocalOverOverlayResolvedAddresses() throws {
         let deviceID = UUID()

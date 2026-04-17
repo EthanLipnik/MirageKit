@@ -418,7 +418,11 @@ extension MirageHostService {
         } else {
             MirageLogger.host("Client \(client.name) disconnected")
         }
-        await disconnectClient(client, sessionID: clientContext.sessionID)
+        await disconnectClient(
+            client,
+            sessionID: clientContext.sessionID,
+            notifyClient: false
+        )
         delegate?.hostService(self, didDisconnectClient: client)
     }
 

@@ -21,23 +21,60 @@ import UIKit
 
 @MainActor
 extension MirageClientService {
+    /// Maximum encoded size Vision Pro clients should request from the host.
+    public nonisolated static let visionOSMaximumEncodedPixelSize = CGSize(width: 3840, height: 2160)
+
     /// Total pixel count equivalent to 4K (3840 x 2160).
-    private static let fixedVisionOSPixelCount: CGFloat = 8_294_400
+    private nonisolated static let fixedVisionOSPixelCount: CGFloat = 8_294_400
 
     /// Compute a display resolution that maintains a fixed 4K pixel budget
-    /// while adapting the aspect ratio to the given view size.
+    /// while adapting the aspect ratio to the given view size and staying within
+    /// the Vision Pro 4K encoded-size limit.
     /// Used on visionOS where resizing the window changes the aspect ratio
     /// rather than the resolution.
     public func visionOSFixedPixelCountResolution(for viewSize: CGSize) -> CGSize {
+        Self.fixedPixelBudgetLogicalResolution(
+            for: viewSize,
+            displayScaleFactor: platformDisplayScaleFactor(explicitScaleFactor: nil)
+        )
+    }
+
+    nonisolated static func fixedPixelBudgetLogicalResolution(
+        for viewSize: CGSize,
+        displayScaleFactor: CGFloat,
+        pixelCount: CGFloat = fixedVisionOSPixelCount,
+        maximumEncodedPixelSize: CGSize = visionOSMaximumEncodedPixelSize
+    )
+    -> CGSize {
+        let displayScaleFactor = MirageStreamGeometry.clampedDisplayScaleFactor(displayScaleFactor)
+        let fallbackPixelSize = CGSize(
+            width: max(2, maximumEncodedPixelSize.width),
+            height: max(2, maximumEncodedPixelSize.height)
+        )
         guard viewSize.width > 0, viewSize.height > 0 else {
-            return CGSize(width: 3840, height: 2160)
+            return MirageStreamGeometry.normalizedLogicalSize(
+                CGSize(
+                    width: fallbackPixelSize.width / displayScaleFactor,
+                    height: fallbackPixelSize.height / displayScaleFactor
+                )
+            )
         }
         let aspectRatio = viewSize.width / viewSize.height
-        let height = sqrt(Self.fixedVisionOSPixelCount / aspectRatio)
-        let width = height * aspectRatio
-        let alignedWidth = max(2, floor(width / 2) * 2)
-        let alignedHeight = max(2, floor(height / 2) * 2)
-        return CGSize(width: alignedWidth, height: alignedHeight)
+        let budgetHeight = sqrt(max(1, pixelCount) / aspectRatio)
+        let budgetWidth = budgetHeight * aspectRatio
+        let widthScale = maximumEncodedPixelSize.width > 0
+            ? maximumEncodedPixelSize.width / budgetWidth
+            : 1.0
+        let heightScale = maximumEncodedPixelSize.height > 0
+            ? maximumEncodedPixelSize.height / budgetHeight
+            : 1.0
+        let encodedScale = min(1.0, widthScale, heightScale)
+        return MirageStreamGeometry.normalizedLogicalSize(
+            CGSize(
+                width: (budgetWidth * encodedScale) / displayScaleFactor,
+                height: (budgetHeight * encodedScale) / displayScaleFactor
+            )
+        )
     }
 
     /// Get the display resolution for the client stream.

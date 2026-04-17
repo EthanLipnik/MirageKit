@@ -18,6 +18,19 @@ extension MirageHostService {
         sessionID expectedSessionID: UUID? = nil
     )
     async {
+        await disconnectClient(
+            client,
+            sessionID: expectedSessionID,
+            notifyClient: true
+        )
+    }
+
+    func disconnectClient(
+        _ client: MirageConnectedClient,
+        sessionID expectedSessionID: UUID?,
+        notifyClient: Bool
+    )
+    async {
         if let expectedSessionID,
            findClientContext(sessionID: expectedSessionID)?.client.id != client.id {
             MirageLogger.host(
@@ -36,6 +49,37 @@ extension MirageHostService {
 
         // Clear any stuck modifier state from this client's session
         inputController.clearAllModifiers()
+
+        // Fail closed before asynchronous teardown work so queued handlers no longer
+        // treat this client as active.
+        var removedSessionID: UUID?
+        var removedClientContext: ClientContext?
+        if let expectedSessionID,
+           let currentClientContext = clientsBySessionID[expectedSessionID],
+           currentClientContext.client.id == client.id {
+            removedClientContext = clientsBySessionID.removeValue(forKey: expectedSessionID)
+            removedSessionID = expectedSessionID
+            stopReceiveLoop(sessionID: expectedSessionID)
+        } else if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
+            removedClientContext = clientsBySessionID.removeValue(forKey: key)
+            removedSessionID = key
+            stopReceiveLoop(sessionID: key)
+        }
+        clientsByID.removeValue(forKey: client.id)
+        peerIdentityByClientID.removeValue(forKey: client.id)
+        mediaSecurityByClientID.removeValue(forKey: client.id)
+        mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
+        sharedClipboardStatusByClientID.removeValue(forKey: client.id)
+        clearClientActivityRecord(clientID: client.id)
+        if let removedSessionID, singleClientSessionID == removedSessionID { singleClientSessionID = nil }
+        connectedClients.removeAll { $0.id == client.id }
+
+        if let removedClientContext {
+            await closeClientControlSession(
+                removedClientContext,
+                notifyClient: notifyClient
+            )
+        }
 
         if pendingAppListRequest?.clientID == client.id {
             pendingAppListRequest = nil
@@ -60,32 +104,9 @@ extension MirageHostService {
         }
         clearPendingAppWindowCloseAlertTokens(forClientID: client.id)
 
-        // Fail closed before asynchronous teardown work so queued handlers no longer
-        // treat this client as active.
-        var removedSessionID: UUID?
-        var removedClientContext: ClientContext?
-        if let expectedSessionID,
-           let currentClientContext = clientsBySessionID[expectedSessionID],
-           currentClientContext.client.id == client.id {
-            removedClientContext = clientsBySessionID.removeValue(forKey: expectedSessionID)
-            removedSessionID = expectedSessionID
-            stopReceiveLoop(sessionID: expectedSessionID)
-        } else if let key = clientsBySessionID.first(where: { $0.value.client.id == client.id })?.key {
-            removedClientContext = clientsBySessionID.removeValue(forKey: key)
-            removedSessionID = key
-            stopReceiveLoop(sessionID: key)
-        }
-        clientsByID.removeValue(forKey: client.id)
-        peerIdentityByClientID.removeValue(forKey: client.id)
-        mediaSecurityByClientID.removeValue(forKey: client.id)
-        mediaEncryptionEnabledByClientID.removeValue(forKey: client.id)
-        sharedClipboardStatusByClientID.removeValue(forKey: client.id)
-        clearClientActivityRecord(clientID: client.id)
         await cancelQualityTest(for: client.id, reason: "client disconnected")
 
-        if let removedSessionID, singleClientSessionID == removedSessionID { singleClientSessionID = nil }
         removeControlWorker(clientID: client.id)
-        connectedClients.removeAll { $0.id == client.id }
 
         // End app sessions immediately so window-monitor callbacks cannot spawn new streams
         // while disconnect teardown is in progress.
@@ -118,12 +139,6 @@ extension MirageHostService {
             Task { try? await audioStream.close() }
         }
 
-        // Close the authenticated control session so the remote client observes
-        // the disconnect immediately instead of waiting for heartbeat expiry.
-        if let removedClientContext {
-            await removedClientContext.controlChannel.cancel()
-        }
-
         let hasConnectedClients = !connectedClients.isEmpty
         stopClientLivenessMonitorIfIdle()
         stopSessionRefreshLoopIfIdle()
@@ -141,6 +156,32 @@ extension MirageHostService {
 
         await restoreStageManagerAfterAppStreamingIfNeeded()
         syncSharedClipboardState(reason: "client_disconnected")
+    }
+
+    private func closeClientControlSession(
+        _ clientContext: ClientContext,
+        notifyClient: Bool
+    )
+    async {
+        if notifyClient {
+            let disconnect = DisconnectMessage(
+                reason: .userRequested,
+                message: "Disconnected by host"
+            )
+            do {
+                try await clientContext.send(.disconnect, content: disconnect)
+            } catch {
+                if !isExpectedLifecycleControlSendFailure(error) {
+                    MirageLogger.host(
+                        "Unable to send disconnect notice to \(clientContext.client.name): \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+
+        // Close the authenticated control session before stream teardown so the
+        // remote client exits its streaming scene without waiting for host cleanup.
+        await clientContext.controlChannel.cancel()
     }
 
     private func cleanupSharedVirtualDisplayIfIdle() async {

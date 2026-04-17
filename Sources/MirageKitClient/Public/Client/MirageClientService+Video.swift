@@ -12,7 +12,7 @@ import Loom
 import Network
 import MirageKit
 
-private enum MirageClientStreamRecoveryTrigger: Sendable {
+private enum MirageClientStreamRecoveryTrigger: Equatable, Sendable {
     case manual
     case applicationActivation
     case decoderCompatibilityFallback
@@ -477,6 +477,14 @@ extension MirageClientService {
         requestStreamRecovery(for: streamID, trigger: .applicationActivation)
     }
 
+    func replayPendingApplicationActivationRecoveryIfNeeded(for streamID: StreamID) {
+        guard pendingApplicationActivationRecoveryStreamIDs.remove(streamID) != nil else { return }
+        MirageLogger.client(
+            "Replaying deferred application activation recovery for stream \(streamID)"
+        )
+        requestStreamRecovery(for: streamID, trigger: .applicationActivation)
+    }
+
     private func requestStreamRecovery(
         for streamID: StreamID,
         trigger: MirageClientStreamRecoveryTrigger
@@ -486,6 +494,14 @@ extension MirageClientService {
             return
         }
         guard let controller = controllersByStream[streamID] else {
+            if trigger == .applicationActivation,
+               desktopStreamID == streamID || activeStreams.contains(where: { $0.id == streamID }) {
+                pendingApplicationActivationRecoveryStreamIDs.insert(streamID)
+                MirageLogger.client(
+                    "Stream recovery deferred (\(trigger.logLabel)) - controller missing for active stream \(streamID)"
+                )
+                return
+            }
             MirageLogger.client(
                 "Stream recovery skipped (\(trigger.logLabel)) - stream \(streamID) is no longer active"
             )

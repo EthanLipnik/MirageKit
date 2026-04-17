@@ -53,14 +53,6 @@ struct QualityTestWaiterTests {
         let sendCounter = PingSendCounter()
         let sendPing: @MainActor @Sendable () async throws -> Void = {
             sendCounter.value += 1
-            let requestID = service.pingRequestID
-            Task { @MainActor in
-                try? await Task.sleep(for: .milliseconds(20))
-                service.completePingRequest(
-                    expectedRequestID: requestID,
-                    result: .success(())
-                )
-            }
         }
 
         let heartbeatPing = Task {
@@ -72,7 +64,31 @@ struct QualityTestWaiterTests {
             try await service.measureRTT(sendPing: sendPing)
         }
 
+        try await waitForPingRequest(
+            on: service,
+            sendCounter: sendCounter,
+            expectedSendCount: 1,
+            minimumWaiterCount: 2
+        )
+        service.completePingRequest(
+            expectedRequestID: service.pingRequestID,
+            result: .success(())
+        )
         try await heartbeatPing.value
+
+        for expectedSendCount in 2 ... 3 {
+            try await waitForPingRequest(
+                on: service,
+                sendCounter: sendCounter,
+                expectedSendCount: expectedSendCount,
+                minimumWaiterCount: 1
+            )
+            service.completePingRequest(
+                expectedRequestID: service.pingRequestID,
+                result: .success(())
+            )
+        }
+
         let rttMs = try await rttTask.value
 
         #expect(sendCounter.value == 3)
@@ -298,12 +314,37 @@ private func waitForPingRequestToStart(
     sendCounter: PingSendCounter,
     timeout: Duration = .seconds(1)
 ) async throws {
+    try await waitForPingRequest(
+        on: service,
+        sendCounter: sendCounter,
+        expectedSendCount: 1,
+        minimumWaiterCount: 1,
+        timeout: timeout
+    )
+}
+
+@MainActor
+private func waitForPingRequest(
+    on service: MirageClientService,
+    sendCounter: PingSendCounter,
+    expectedSendCount: Int,
+    minimumWaiterCount: Int,
+    timeout: Duration = .seconds(1)
+) async throws {
     let deadline = ContinuousClock.now + timeout
     while ContinuousClock.now < deadline {
-        if !service.pingContinuations.isEmpty, sendCounter.value == 1 {
+        if service.pingContinuations.count >= minimumWaiterCount,
+           sendCounter.value == expectedSendCount {
             return
         }
         try await Task.sleep(for: .milliseconds(1))
     }
-    Issue.record("Timed out waiting for an in-flight ping request to start")
+    Issue.record(
+        """
+        Timed out waiting for ping request with sendCount=\(expectedSendCount), \
+        waiters>=\(minimumWaiterCount); observed sendCount=\(sendCounter.value), \
+        waiters=\(service.pingContinuations.count)
+        """
+    )
+    throw MirageError.timeout
 }

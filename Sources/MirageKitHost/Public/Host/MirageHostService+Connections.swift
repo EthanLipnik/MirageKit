@@ -213,7 +213,7 @@ extension MirageHostService {
         }
 
         guard clientsByID[client.id] != nil else { return }
-        await disconnectClient(client, sessionID: sessionID)
+        await disconnectClient(client, sessionID: sessionID, notifyClient: false)
     }
 
     func makeSessionHelloRequest() throws -> LoomSessionHelloRequest {

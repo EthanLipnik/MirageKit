@@ -429,13 +429,14 @@ extension MirageClientService {
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
             cancelRecoveryKeyframeRetry(for: streamID)
+            pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
             activeJitterHoldMs = 0
+            let controller = controllersByStream.removeValue(forKey: streamID)
 
             Task { [weak self] in
                 guard let self else { return }
-                if let controller = controllersByStream[streamID] {
+                if let controller {
                     await controller.stop()
-                    controllersByStream.removeValue(forKey: streamID)
                 }
                 await updateReassemblerSnapshot()
                 await refreshSharedClipboardBridgeState()

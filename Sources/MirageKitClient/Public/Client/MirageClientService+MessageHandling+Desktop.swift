@@ -74,14 +74,34 @@ extension MirageClientService {
     func handleDesktopStreamStarted(_ message: ControlMessage) async {
         do {
             let started = try message.decode(DesktopStreamStartedMessage.self)
+            let streamID = started.streamID
+            let receivedDesktopSessionID = started.desktopSessionID
+            let requestStartPending = desktopStreamRequestStartTime > 0
             MirageLogger
-                .client("Desktop stream started: stream=\(started.streamID), \(started.width)x\(started.height)")
+                .client("Desktop stream started: stream=\(streamID), \(started.width)x\(started.height)")
+            if pendingLocalDesktopStopStreamID == streamID,
+               pendingLocalDesktopStopSessionID == receivedDesktopSessionID {
+                MirageLogger.client(
+                    "Ignoring desktopStreamStarted for locally stopping stream \(streamID), session=\(receivedDesktopSessionID.uuidString)"
+                )
+                return
+            }
+            if retiredDesktopSessionIDs.contains(receivedDesktopSessionID) {
+                MirageLogger.client(
+                    "Ignoring desktopStreamStarted for retired desktop session \(receivedDesktopSessionID.uuidString), stream=\(streamID)"
+                )
+                return
+            }
+            if desktopStreamID == nil, desktopSessionID == nil, !requestStartPending {
+                MirageLogger.client(
+                    "Ignoring orphaned desktopStreamStarted for stream \(streamID), session=\(receivedDesktopSessionID.uuidString)"
+                )
+                return
+            }
             if started.transitionPhase == .resize || started.transitionID != nil {
                 _ = await handleDesktopResizeCommit(started)
                 return
             }
-            let streamID = started.streamID
-            let receivedDesktopSessionID = started.desktopSessionID
             let startupAttemptID = started.startupAttemptID
             guard shouldAcceptStartupAttempt(startupAttemptID, for: streamID) else {
                 MirageLogger.client(
@@ -89,7 +109,6 @@ extension MirageClientService {
                 )
                 return
             }
-            let requestStartPending = desktopStreamRequestStartTime > 0
             let previousStreamID = desktopStreamID
             let previousDesktopSessionID = desktopSessionID
             let hasController = controllersByStream[streamID] != nil
@@ -290,6 +309,7 @@ extension MirageClientService {
                 registeredStreamIDs.contains(streamID)
             MirageLogger.client("Desktop stream stopped: stream=\(streamID), reason=\(stopped.reason)")
 
+            retiredDesktopSessionIDs.insert(stopped.desktopSessionID)
             desktopStreamID = nil
             desktopSessionID = nil
             desktopStreamResolution = nil
@@ -312,15 +332,18 @@ extension MirageClientService {
             clearStartupPacketPending(streamID)
             cancelStartupRegistrationRetry(streamID: streamID)
             cancelRecoveryKeyframeRetry(for: streamID)
+            pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
             clearDecoderColorDepthState(for: streamID)
             inputEventSender.clearTemporaryPointerCoalescing(for: streamID)
             pendingDesktopRequestedColorDepth = nil
             activeJitterHoldMs = 0
+            mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
+            activeStreamCodecs.removeValue(forKey: streamID)
+            let controller = controllersByStream.removeValue(forKey: streamID)
 
             Task {
-                if let controller = self.controllersByStream[streamID] {
+                if let controller {
                     await controller.stop()
-                    self.controllersByStream.removeValue(forKey: streamID)
                 }
                 await self.updateReassemblerSnapshot()
             }

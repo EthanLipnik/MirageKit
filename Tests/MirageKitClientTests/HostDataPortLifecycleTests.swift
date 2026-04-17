@@ -46,5 +46,21 @@ struct HostDataPortLifecycleTests {
         try await Task.sleep(for: .milliseconds(50))
 
         #expect(service.controllersByStream.isEmpty)
+        #expect(service.pendingApplicationActivationRecoveryStreamIDs.isEmpty)
+    }
+
+    @MainActor
+    @Test("Application-activation recovery waits for active stream controller")
+    func applicationActivationRecoveryWaitsForActiveStreamController() {
+        let service = MirageClientService(deviceName: "Test Device")
+        let streamID: StreamID = 99
+        service.connectionState = .connected(host: "Altair")
+        service.desktopStreamID = streamID
+        service.desktopSessionID = UUID()
+
+        service.requestApplicationActivationRecovery(for: streamID)
+
+        #expect(service.pendingApplicationActivationRecoveryStreamIDs == Set([streamID]))
+        #expect(service.controllersByStream.isEmpty)
     }
 }

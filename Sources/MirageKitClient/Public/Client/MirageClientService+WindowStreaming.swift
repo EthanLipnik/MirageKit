@@ -178,6 +178,7 @@ public extension MirageClientService {
                 .client(
                     "Reset existing controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName))"
                 )
+            replayPendingApplicationActivationRecoveryIfNeeded(for: streamID)
             return
         }
 
@@ -276,6 +277,7 @@ public extension MirageClientService {
             .client(
                 "Created new controller for stream \(streamID) (decoder color depth \(preferredDecoderColorDepth.displayName), media packet \(acceptedMediaMaxPacketSize)B)"
             )
+        replayPendingApplicationActivationRecoveryIfNeeded(for: streamID)
     }
 
     internal func prepareControllerForDesktopResize(
@@ -491,7 +493,10 @@ public extension MirageClientService {
     }
 
     func scheduleDesktopStreamStopTimeout(for streamID: StreamID, desktopSessionID: UUID) {
-        cancelDesktopStreamStopTimeout()
+        desktopStreamStopTimeoutTask?.cancel()
+        desktopStreamStopTimeoutTask = nil
+        pendingLocalDesktopStopStreamID = streamID
+        pendingLocalDesktopStopSessionID = desktopSessionID
         desktopStreamStopTimeoutTask = Task { [weak self] in
             guard let self else { return }
             do {
@@ -532,6 +537,7 @@ public extension MirageClientService {
     private func forceStopWindowStreamLocally(streamID: StreamID) async {
         MirageRenderStreamStore.shared.clear(for: streamID)
         activeStreams.removeAll { $0.id == streamID }
+        pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
 
         metricsStore.clear(streamID: streamID)
         cursorStore.clear(streamID: streamID)
@@ -555,9 +561,8 @@ public extension MirageClientService {
         cancelRecoveryKeyframeRetry(for: streamID)
         activeJitterHoldMs = 0
 
-        if let controller = controllersByStream[streamID] {
+        if let controller = controllersByStream.removeValue(forKey: streamID) {
             await controller.stop()
-            controllersByStream.removeValue(forKey: streamID)
         }
 
         await updateReassemblerSnapshot()
@@ -577,12 +582,16 @@ public extension MirageClientService {
             )
             return
         }
+        if let sessionID = expectedDesktopSessionID ?? desktopSessionID {
+            retiredDesktopSessionIDs.insert(sessionID)
+        }
         cancelDesktopStreamStopTimeout()
         let hadLocalState = desktopStreamID == streamID ||
             controllersByStream[streamID] != nil ||
             registeredStreamIDs.contains(streamID)
 
         MirageRenderStreamStore.shared.clear(for: streamID)
+        pendingApplicationActivationRecoveryStreamIDs.remove(streamID)
         desktopStreamStartTimeoutTask?.cancel()
         desktopStreamStartTimeoutTask = nil
         desktopStreamRequestStartTime = 0
@@ -617,9 +626,8 @@ public extension MirageClientService {
         mediaMaxPacketSizeByStream.removeValue(forKey: streamID)
         activeStreamCodecs.removeValue(forKey: streamID)
 
-        if let controller = controllersByStream[streamID] {
+        if let controller = controllersByStream.removeValue(forKey: streamID) {
             await controller.stop()
-            controllersByStream.removeValue(forKey: streamID)
         }
 
         await updateReassemblerSnapshot()

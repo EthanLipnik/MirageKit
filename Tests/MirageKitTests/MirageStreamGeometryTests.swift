@@ -48,4 +48,31 @@ struct MirageStreamGeometryTests {
         #expect(abs(geometry.resolvedStreamScale - (2048.0 / 2752.0)) < 0.001)
         #expect(geometry.encodedPixelSize == CGSize(width: 2048, height: 1536))
     }
+
+    @Test("Geometry honors explicit encoder limits even when default caps are disabled")
+    func geometryHonorsExplicitEncoderLimitsWhenDefaultCapsAreDisabled() {
+        let geometry = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: CGSize(width: 8240, height: 4000),
+            requestedStreamScale: 1.0,
+            encoderMaxWidth: 3840,
+            encoderMaxHeight: 2160,
+            disableResolutionCap: true
+        )
+
+        #expect(geometry.encodedPixelSize.width <= 3840)
+        #expect(geometry.encodedPixelSize.height <= 2160)
+        #expect(geometry.resolvedStreamScale < 1.0)
+    }
+
+    @Test("Geometry keeps uncapped scale when no explicit encoder limit exists")
+    func geometryKeepsUncappedScaleWithoutExplicitEncoderLimit() {
+        let geometry = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: CGSize(width: 8240, height: 4000),
+            requestedStreamScale: 1.0,
+            disableResolutionCap: true
+        )
+
+        #expect(geometry.encodedPixelSize == CGSize(width: 8240, height: 4000))
+        #expect(geometry.resolvedStreamScale == 1.0)
+    }
 }

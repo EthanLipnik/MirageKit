@@ -158,7 +158,8 @@ extension MirageHostService {
 
                     await self.disconnectClient(
                         clientContext.client,
-                        sessionID: clientContext.sessionID
+                        sessionID: clientContext.sessionID,
+                        notifyClient: false
                     )
                 }
             },

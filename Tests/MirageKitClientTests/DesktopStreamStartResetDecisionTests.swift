@@ -241,6 +241,52 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
+    @Test("Desktop start for a stopped session is ignored")
+    func desktopStartForStoppedSessionIsIgnored() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 29
+        let desktopSessionID = UUID()
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamMode = .unified
+        service.desktopStreamResolution = CGSize(width: 2720, height: 2032)
+
+        let stopped = DesktopStreamStoppedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            reason: .clientRequested
+        )
+        let stoppedEnvelope = try ControlMessage(type: .desktopStreamStopped, content: stopped)
+        service.handleDesktopStreamStopped(stoppedEnvelope)
+
+        var callbackCount = 0
+        service.onDesktopStreamStarted = { _, _, _ in
+            callbackCount += 1
+        }
+
+        let staleStarted = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 2720,
+            height: 2032,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 6,
+            acceptedMediaMaxPacketSize: 1200,
+            transitionPhase: .startup
+        )
+        let staleEnvelope = try ControlMessage(type: .desktopStreamStarted, content: staleStarted)
+        await service.handleDesktopStreamStarted(staleEnvelope)
+
+        #expect(service.retiredDesktopSessionIDs.contains(desktopSessionID))
+        #expect(service.desktopStreamID == nil)
+        #expect(service.desktopSessionID == nil)
+        #expect(service.controllersByStream[streamID] == nil)
+        #expect(callbackCount == 0)
+    }
+
+    @MainActor
     @Test("Late desktop stop for an old session is ignored after a new session starts")
     func lateDesktopStopForOldSessionIsIgnoredAfterNewSessionStarts() async throws {
         let service = MirageClientService()
