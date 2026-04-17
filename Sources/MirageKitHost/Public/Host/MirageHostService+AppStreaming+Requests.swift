@@ -10,7 +10,6 @@
 import Foundation
 import Network
 import MirageKit
-import CryptoKit
 
 #if os(macOS)
 import ScreenCaptureKit
@@ -356,7 +355,7 @@ extension MirageHostService {
         do {
             let request = try message.decode(AppListRequestMessage.self)
             MirageLogger.host(
-                "Client \(clientContext.client.name) requested app list (requestID: \(request.requestID.uuidString), forceRefresh: \(request.forceRefresh), forceIconReset: \(request.forceIconReset), priorityCount: \(request.priorityBundleIdentifiers.count))"
+                "Client \(clientContext.client.name) requested app list (requestID: \(request.requestID.uuidString), forceRefresh: \(request.forceRefresh), forceIconReset: \(request.forceIconReset), priorityCount: \(request.priorityBundleIdentifiers.count), knownIconCount: \(request.knownIconSignaturesByBundleIdentifier.count))"
             )
 
             updatePendingAppListRequest(
@@ -364,7 +363,8 @@ extension MirageHostService {
                 requestID: request.requestID,
                 requestedForceRefresh: request.forceRefresh,
                 forceIconReset: request.forceIconReset,
-                priorityBundleIdentifiers: request.priorityBundleIdentifiers
+                priorityBundleIdentifiers: request.priorityBundleIdentifiers,
+                knownIconSignaturesByBundleIdentifier: request.knownIconSignaturesByBundleIdentifier
             )
 
             await syncAppListRequestDeferralForInteractiveWorkload()
@@ -1776,14 +1776,19 @@ extension MirageHostService {
         requestID: UUID,
         requestedForceRefresh: Bool,
         forceIconReset: Bool,
-        priorityBundleIdentifiers: [String]
+        priorityBundleIdentifiers: [String],
+        knownIconSignaturesByBundleIdentifier: [String: String]
     ) {
         let normalizedPriorityBundleIdentifiers = Self.normalizedBundleIdentifierList(priorityBundleIdentifiers)
+        let normalizedKnownIconSignatures = Self.normalizedIconSignaturesByBundleIdentifier(
+            knownIconSignaturesByBundleIdentifier
+        )
         if var pending = pendingAppListRequest, pending.clientID == clientID {
             pending.requestID = requestID
             pending.requestedForceRefresh = pending.requestedForceRefresh || requestedForceRefresh
             pending.forceIconReset = pending.forceIconReset || forceIconReset
             pending.priorityBundleIdentifiers = normalizedPriorityBundleIdentifiers
+            pending.knownIconSignaturesByBundleIdentifier = normalizedKnownIconSignatures
             pendingAppListRequest = pending
             return
         }
@@ -1792,7 +1797,8 @@ extension MirageHostService {
             requestID: requestID,
             requestedForceRefresh: requestedForceRefresh,
             forceIconReset: forceIconReset,
-            priorityBundleIdentifiers: normalizedPriorityBundleIdentifiers
+            priorityBundleIdentifiers: normalizedPriorityBundleIdentifiers,
+            knownIconSignaturesByBundleIdentifier: normalizedKnownIconSignatures
         )
     }
 
@@ -1817,6 +1823,7 @@ extension MirageHostService {
         let forceIconReset = pending.forceIconReset
         let requestID = pending.requestID
         let priorityBundleIdentifiers = pending.priorityBundleIdentifiers
+        let knownIconSignaturesByBundleIdentifier = pending.knownIconSignaturesByBundleIdentifier
         let clientID = pending.clientID
         let token = UUID()
         appListRequestToken = token
@@ -1851,10 +1858,10 @@ extension MirageHostService {
             await streamAppIconUpdates(
                 apps: apps,
                 requestID: requestID,
-                clientID: clientID,
                 clientContext: clientContext,
                 forceIconReset: forceIconReset,
-                priorityBundleIdentifiers: priorityBundleIdentifiers
+                priorityBundleIdentifiers: priorityBundleIdentifiers,
+                knownIconSignaturesByBundleIdentifier: knownIconSignaturesByBundleIdentifier
             )
 
             if Task.isCancelled { return }
@@ -1867,13 +1874,11 @@ extension MirageHostService {
     private func streamAppIconUpdates(
         apps: [MirageInstalledApp],
         requestID: UUID,
-        clientID: UUID,
         clientContext: ClientContext,
         forceIconReset: Bool,
-        priorityBundleIdentifiers: [String]
+        priorityBundleIdentifiers: [String],
+        knownIconSignaturesByBundleIdentifier: [String: String]
     ) async {
-        var persistedSignatures = await appIconSignatureStore.signatures(for: clientID)
-        var signatureUpdates: [String: String] = [:]
         var skippedBundleIdentifiers: [String] = []
         var sentIconCount = 0
 
@@ -1885,19 +1890,25 @@ extension MirageHostService {
         for app in orderedApps {
             if Task.isCancelled { return }
 
-            guard let iconData = await appStreamManager.iconDataForInstalledApp(
-                atPath: app.path,
+            guard let iconPayload = await appIconCatalogStore.payload(
+                for: app,
                 maxPixelSize: 128,
-                heifCompressionQuality: 0.72
+                heifCompressionQuality: 0.72,
+                loader: { [appStreamManager] in
+                    await appStreamManager.iconDataForInstalledApp(
+                        atPath: app.path,
+                        maxPixelSize: 128,
+                        heifCompressionQuality: 0.72
+                    )
+                }
             ) else {
                 continue
             }
 
             let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
-            let iconSignature = Self.sha256Hex(iconData)
 
             if !forceIconReset,
-               persistedSignatures[normalizedBundleIdentifier] == iconSignature {
+               knownIconSignaturesByBundleIdentifier[normalizedBundleIdentifier] == iconPayload.signature {
                 skippedBundleIdentifiers.append(app.bundleIdentifier)
                 continue
             }
@@ -1905,15 +1916,13 @@ extension MirageHostService {
             let update = AppIconUpdateMessage(
                 requestID: requestID,
                 bundleIdentifier: app.bundleIdentifier,
-                iconData: iconData,
-                iconSignature: iconSignature
+                iconData: iconPayload.data,
+                iconSignature: iconPayload.signature
             )
 
             do {
                 try await clientContext.send(.appIconUpdate, content: update)
                 sentIconCount += 1
-                signatureUpdates[normalizedBundleIdentifier] = iconSignature
-                persistedSignatures[normalizedBundleIdentifier] = iconSignature
             } catch {
                 await handleControlChannelSendFailure(
                     client: clientContext.client,
@@ -1923,12 +1932,6 @@ extension MirageHostService {
                 )
                 return
             }
-        }
-
-        if signatureUpdates.isEmpty {
-            await appIconSignatureStore.touch(clientID: clientID)
-        } else {
-            await appIconSignatureStore.mergeSignatures(signatureUpdates, for: clientID)
         }
 
         let completion = AppIconStreamCompleteMessage(
@@ -2013,8 +2016,27 @@ extension MirageHostService {
         return normalized
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
-        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    private static func normalizedIconSignaturesByBundleIdentifier(
+        _ signaturesByBundleIdentifier: [String: String]
+    ) -> [String: String] {
+        var normalizedSignatures: [String: String] = [:]
+        normalizedSignatures.reserveCapacity(signaturesByBundleIdentifier.count)
+
+        for (bundleIdentifier, signature) in signaturesByBundleIdentifier {
+            let normalizedBundleIdentifier = bundleIdentifier
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedBundleIdentifier.isEmpty else { continue }
+
+            let normalizedSignature = signature
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedSignature.isEmpty else { continue }
+
+            normalizedSignatures[normalizedBundleIdentifier] = normalizedSignature
+        }
+
+        return normalizedSignatures
     }
 
     private func pruneOrphanedAppSessions() async {

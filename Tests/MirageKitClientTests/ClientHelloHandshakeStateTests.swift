@@ -45,7 +45,7 @@ struct ClientHelloHandshakeStateTests {
         let service = MirageClientService(deviceName: "Test Device")
         service.connectedHost = provisionalHost
         service.connectionState = .handshaking(host: provisionalHost.name)
-        service.isAwaitingManualApproval = true
+        service.authorizationState = .awaitingManualApproval
 
         let response = MirageSessionBootstrapResponse(
             accepted: true,
@@ -64,6 +64,7 @@ struct ClientHelloHandshakeStateTests {
         #expect(service.connectionState == .connected(host: "Accepted Host"))
         #expect(service.connectedHostIdentityKeyID == "accepted-key")
         #expect(service.hasCompletedBootstrap == true)
+        #expect(service.authorizationState == .approved)
         #expect(service.isAwaitingManualApproval == false)
         #expect(acceptedHost.id == LoomPeerID(deviceID: acceptedHostID))
         #expect(service.connectedHost?.id == LoomPeerID(deviceID: acceptedHostID))
@@ -125,6 +126,16 @@ struct ClientHelloHandshakeStateTests {
         #expect(service.bootstrapResponseTimeout >= .seconds(30))
         #expect(service.bootstrapResponseTimeout > service.controlSessionConnectTimeout)
         #expect(service.trustPendingControlSessionConnectTimeout > service.controlSessionConnectTimeout)
+    }
+
+    @MainActor
+    @Test("Trust verification state is not manual approval")
+    func trustVerificationStateIsNotManualApproval() {
+        let service = MirageClientService(deviceName: "Test Device")
+
+        service.authorizationState = .verifyingTrust
+
+        #expect(service.isAwaitingManualApproval == false)
     }
 
     @MainActor

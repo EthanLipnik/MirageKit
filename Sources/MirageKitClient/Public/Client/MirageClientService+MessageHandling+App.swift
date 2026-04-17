@@ -23,14 +23,18 @@ extension MirageClientService {
             let appList = try message.decode(AppListMessage.self)
             MirageLogger.client("Received app list with \(appList.apps.count) apps requestID=\(appList.requestID.uuidString)")
 
-            let previousIconsByBundleID = availableIconsByBundleIdentifier(from: availableApps)
+            let previousIconsByBundleID = availableIconPayloadsByBundleIdentifier(from: availableApps)
             availableApps = appList.apps.map { app in
                 guard app.iconData == nil,
                       let previousIcon = previousIconsByBundleID[app.bundleIdentifier.lowercased()]
                 else {
                     return app
                 }
-                return appWithUpdatedIconData(app, iconData: previousIcon)
+                return appWithUpdatedIconData(
+                    app,
+                    iconData: previousIcon.iconData,
+                    iconSignature: previousIcon.iconSignature
+                )
             }
             hasReceivedAppList = true
             appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
@@ -75,7 +79,11 @@ extension MirageClientService {
                 return
             }
 
-            let updatedApp = appWithUpdatedIconData(availableApps[appIndex], iconData: update.iconData)
+            let updatedApp = appWithUpdatedIconData(
+                availableApps[appIndex],
+                iconData: update.iconData,
+                iconSignature: update.iconSignature
+            )
             availableApps[appIndex] = updatedApp
             appIconStreamStateByRequestID[update.requestID, default: AppIconStreamState()]
                 .receivedBundleIdentifiers
@@ -327,24 +335,38 @@ extension MirageClientService {
         }
     }
 
-    private func appWithUpdatedIconData(_ app: MirageInstalledApp, iconData: Data?) -> MirageInstalledApp {
+    private struct AppIconPayload {
+        let iconData: Data
+        let iconSignature: String
+    }
+
+    private func appWithUpdatedIconData(
+        _ app: MirageInstalledApp,
+        iconData: Data?,
+        iconSignature: String?
+    ) -> MirageInstalledApp {
         MirageInstalledApp(
             bundleIdentifier: app.bundleIdentifier,
             name: app.name,
             path: app.path,
             iconData: iconData,
+            iconSignature: iconSignature,
             version: app.version,
             isRunning: app.isRunning,
             isBeingStreamed: app.isBeingStreamed
         )
     }
 
-    private func availableIconsByBundleIdentifier(from apps: [MirageInstalledApp]) -> [String: Data] {
-        var iconsByBundleIdentifier: [String: Data] = [:]
+    private func availableIconPayloadsByBundleIdentifier(from apps: [MirageInstalledApp]) -> [String: AppIconPayload] {
+        var iconsByBundleIdentifier: [String: AppIconPayload] = [:]
         iconsByBundleIdentifier.reserveCapacity(apps.count)
         for app in apps {
             guard let iconData = app.iconData else { continue }
-            iconsByBundleIdentifier[app.bundleIdentifier.lowercased()] = iconData
+            let iconSignature = app.iconSignature ?? Self.sha256Hex(iconData)
+            iconsByBundleIdentifier[app.bundleIdentifier.lowercased()] = AppIconPayload(
+                iconData: iconData,
+                iconSignature: iconSignature
+            )
         }
         return iconsByBundleIdentifier
     }

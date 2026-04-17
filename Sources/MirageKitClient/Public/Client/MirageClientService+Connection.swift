@@ -85,7 +85,7 @@ extension MirageClientService {
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
-        isAwaitingManualApproval = false
+        authorizationState = .verifyingTrust
         hasCompletedBootstrap = false
         connectedHost = host
         resetControlPathHistory()
@@ -169,7 +169,7 @@ extension MirageClientService {
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
-        isAwaitingManualApproval = false
+        authorizationState = .verifyingTrust
         hasCompletedBootstrap = false
         connectedHost = host
         resetControlPathHistory()
@@ -379,7 +379,7 @@ extension MirageClientService {
 
         hostSessionState = nil
         currentSessionToken = nil
-        isAwaitingManualApproval = false
+        authorizationState = .idle
         pingTimeoutTask?.cancel()
         pingTimeoutTask = nil
         failActivePingRequests(with: MirageError.protocolError(reason))
@@ -552,7 +552,7 @@ extension MirageClientService {
                 hello: hello,
                 requiredInterfaceType: attempt.requiredInterfaceType,
                 onTrustPending: { @MainActor [weak self] in
-                    self?.isAwaitingManualApproval = true
+                    self?.authorizationState = .verifyingTrust
                 },
                 onBootstrapProgress: { [weak self] progress in
                     Task {
@@ -691,11 +691,16 @@ extension MirageClientService {
         }
 
         if let failureReason = progress.failureReason {
+            authorizationState = .idle
             MirageLogger.client(
                 "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed at " +
                     "\(progress.phase.rawValue) for \(attempt.hostName): \(failureReason)"
             )
             return
+        }
+
+        if progress.phase == .ready {
+            authorizationState = .approved
         }
 
         MirageLogger.client(

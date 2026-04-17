@@ -64,7 +64,9 @@ struct AppIconUpdateDispatchTests {
         #expect(callbackCount == 1)
         #expect(progressCallbackCount == 1)
         #expect(service.availableApps.first?.iconData == iconData)
+        #expect(service.availableApps.first?.iconSignature == iconSignature)
         #expect(latestProgressApps.first?.iconData == iconData)
+        #expect(latestProgressApps.first?.iconSignature == iconSignature)
 
         let completion = AppIconStreamCompleteMessage(
             requestID: requestID,
@@ -77,5 +79,6 @@ struct AppIconUpdateDispatchTests {
         #expect(callbackCount == 2)
         #expect(progressCallbackCount == 1)
         #expect(latestApps.first?.iconData == iconData)
+        #expect(latestApps.first?.iconSignature == iconSignature)
     }
 }

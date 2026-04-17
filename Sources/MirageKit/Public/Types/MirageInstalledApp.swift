@@ -18,8 +18,11 @@ public struct MirageInstalledApp: Identifiable, Hashable, Sendable, Codable {
     /// Path to the application bundle
     public let path: String
 
-    /// Application icon as PNG data (for transmission to clients)
+    /// Application icon payload data (for transmission to clients)
     public let iconData: Data?
+
+    /// SHA-256 digest of `iconData`, when the payload is known.
+    public let iconSignature: String?
 
     /// Version string (CFBundleShortVersionString)
     public let version: String?
@@ -37,6 +40,7 @@ public struct MirageInstalledApp: Identifiable, Hashable, Sendable, Codable {
         name: String,
         path: String,
         iconData: Data? = nil,
+        iconSignature: String? = nil,
         version: String? = nil,
         isRunning: Bool = false,
         isBeingStreamed: Bool = false
@@ -45,6 +49,7 @@ public struct MirageInstalledApp: Identifiable, Hashable, Sendable, Codable {
         self.name = name
         self.path = path
         self.iconData = iconData
+        self.iconSignature = iconSignature
         self.version = version
         self.isRunning = isRunning
         self.isBeingStreamed = isBeingStreamed

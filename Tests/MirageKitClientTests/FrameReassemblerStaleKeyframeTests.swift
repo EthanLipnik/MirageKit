@@ -643,6 +643,70 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(lossCounter.value == 0)
     }
 
+    @Test("Mismatched dimension-token keyframe is rejected")
+    func mismatchedDimensionTokenKeyframeIsRejected() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = LockedCounter()
+        let lossCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+        reassembler.setFrameLossHandler { _, _ in
+            lossCounter.increment()
+        }
+        reassembler.updateExpectedDimensionToken(2)
+
+        let staleKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            staleKeyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 10,
+                payload: staleKeyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 0)
+        #expect(reassembler.isAwaitingKeyframe() == true)
+
+        let stalePFrame = Data([0x00, 0x00, 0x00, 0x01, 0x02, 0x11])
+        reassembler.processPacket(
+            stalePFrame,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 11,
+                payload: stalePFrame,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 0)
+        #expect(lossCounter.value == 0)
+
+        let currentKeyframe = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x02])
+        reassembler.processPacket(
+            currentKeyframe,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 12,
+                payload: currentKeyframe,
+                fragmentIndex: 0,
+                fragmentCount: 1,
+                dimensionToken: 2
+            )
+        )
+
+        #expect(deliveredCounter.value == 1)
+        #expect(reassembler.isAwaitingKeyframe() == false)
+    }
+
     @Test("Keyframe FEC recovery infers startup block size from fragment layout")
     func keyframeFECRecoveryInfersStartupBlockSize() {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 4)
@@ -696,7 +760,8 @@ struct FrameReassemblerStaleKeyframeTests {
         fragmentIndex: UInt16,
         fragmentCount: UInt16,
         frameByteCount: UInt32? = nil,
-        fecBlockSize: UInt8 = 0
+        fecBlockSize: UInt8 = 0,
+        dimensionToken: UInt16 = 0
     )
     -> FrameHeader {
         FrameHeader(
@@ -712,7 +777,7 @@ struct FrameReassemblerStaleKeyframeTests {
             frameByteCount: frameByteCount ?? UInt32(payload.count),
             checksum: crc32(payload),
             contentRect: CGRect(x: 0, y: 0, width: 1, height: 1),
-            dimensionToken: 0,
+            dimensionToken: dimensionToken,
             epoch: 0
         )
     }

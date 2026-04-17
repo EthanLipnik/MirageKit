@@ -17,23 +17,29 @@ public extension MirageClientService {
     /// - Parameter forceRefresh: Whether host-side app-list caches should be bypassed.
     /// - Parameter forceIconReset: Whether host-side icon-diff caches should be bypassed.
     /// - Parameter priorityBundleIdentifiers: Client-preferred icon streaming order.
+    /// - Parameter knownIconSignaturesByBundleIdentifier: Icon payload signatures already cached by the client.
     func requestAppList(
         forceRefresh: Bool = false,
         forceIconReset: Bool = false,
-        priorityBundleIdentifiers: [String] = []
+        priorityBundleIdentifiers: [String] = [],
+        knownIconSignaturesByBundleIdentifier: [String: String] = [:]
     ) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
         let shouldForceIconReset = forceIconReset || pendingForceIconResetForNextAppListRequest
         let normalizedPriority = Self.normalizedPriorityBundleIdentifiers(priorityBundleIdentifiers)
+        let normalizedKnownIconSignatures = Self.normalizedKnownIconSignatures(
+            knownIconSignaturesByBundleIdentifier
+        )
         let requestID = UUID()
         MirageLogger.client(
-            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(shouldForceIconReset), priorityCount: \(normalizedPriority.count), requestID: \(requestID.uuidString))"
+            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(shouldForceIconReset), priorityCount: \(normalizedPriority.count), knownIconCount: \(normalizedKnownIconSignatures.count), requestID: \(requestID.uuidString))"
         )
         let request = AppListRequestMessage(
             forceRefresh: forceRefresh,
             forceIconReset: shouldForceIconReset,
             priorityBundleIdentifiers: normalizedPriority,
+            knownIconSignaturesByBundleIdentifier: normalizedKnownIconSignatures,
             requestID: requestID
         )
         try await sendControlMessage(.appListRequest, content: request)
@@ -46,6 +52,29 @@ public extension MirageClientService {
         appIconStreamStateByRequestID[requestID] = AppIconStreamState()
         pendingForceIconResetForNextAppListRequest = false
         MirageLogger.client("App list request sent")
+    }
+
+    private static func normalizedKnownIconSignatures(
+        _ signaturesByBundleIdentifier: [String: String]
+    ) -> [String: String] {
+        var normalizedSignatures: [String: String] = [:]
+        normalizedSignatures.reserveCapacity(signaturesByBundleIdentifier.count)
+
+        for (bundleIdentifier, signature) in signaturesByBundleIdentifier {
+            let normalizedBundleIdentifier = bundleIdentifier
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedBundleIdentifier.isEmpty else { continue }
+
+            let normalizedSignature = signature
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedSignature.isEmpty else { continue }
+
+            normalizedSignatures[normalizedBundleIdentifier] = normalizedSignature
+        }
+
+        return normalizedSignatures
     }
 
     /// Request the connected host's hardware icon payload.

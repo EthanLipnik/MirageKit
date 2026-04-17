@@ -55,6 +55,8 @@ package struct AppListRequestMessage: Codable {
     package let forceIconReset: Bool
     /// Preferred icon-priority ordering from the client (pinned/recent first).
     package let priorityBundleIdentifiers: [String]
+    /// Icon payload signatures the client has already persisted, keyed by bundle identifier.
+    package let knownIconSignaturesByBundleIdentifier: [String: String]
     /// Client-generated request identifier for correlating metadata + icon updates.
     package let requestID: UUID
 
@@ -62,12 +64,39 @@ package struct AppListRequestMessage: Codable {
         forceRefresh: Bool = false,
         forceIconReset: Bool = false,
         priorityBundleIdentifiers: [String] = [],
+        knownIconSignaturesByBundleIdentifier: [String: String] = [:],
         requestID: UUID = UUID()
     ) {
         self.forceRefresh = forceRefresh
         self.forceIconReset = forceIconReset
         self.priorityBundleIdentifiers = priorityBundleIdentifiers
+        self.knownIconSignaturesByBundleIdentifier = Self.normalizedIconSignaturesByBundleIdentifier(
+            knownIconSignaturesByBundleIdentifier
+        )
         self.requestID = requestID
+    }
+
+    private static func normalizedIconSignaturesByBundleIdentifier(
+        _ signaturesByBundleIdentifier: [String: String]
+    ) -> [String: String] {
+        var normalizedSignatures: [String: String] = [:]
+        normalizedSignatures.reserveCapacity(signaturesByBundleIdentifier.count)
+
+        for (bundleIdentifier, signature) in signaturesByBundleIdentifier {
+            let normalizedBundleIdentifier = bundleIdentifier
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedBundleIdentifier.isEmpty else { continue }
+
+            let normalizedSignature = signature
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+            guard !normalizedSignature.isEmpty else { continue }
+
+            normalizedSignatures[normalizedBundleIdentifier] = normalizedSignature
+        }
+
+        return normalizedSignatures
     }
 }
 

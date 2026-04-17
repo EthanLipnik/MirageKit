@@ -435,7 +435,7 @@ public final class MirageHostService {
     var pendingHostSoftwareUpdateStatusRequest: PendingHostSoftwareUpdateStatusRequest?
     var hostSoftwareUpdateStatusRequestTask: Task<Void, Never>?
     var hostSoftwareUpdateStatusRequestToken: UUID = .init()
-    let appIconSignatureStore = HostAppIconSignatureStore()
+    let appIconCatalogStore = HostAppIconCatalogStore()
     @ObservationIgnored var sharedClipboardBridge: MirageHostSharedClipboardBridge?
     @ObservationIgnored var sharedClipboardStatusByClientID: [UUID: Bool] = [:]
     @ObservationIgnored var clipboardChunkBuffer = MirageSharedClipboardChunkBuffer()
@@ -531,6 +531,7 @@ public final class MirageHostService {
         var requestedForceRefresh: Bool
         var forceIconReset: Bool
         var priorityBundleIdentifiers: [String]
+        var knownIconSignaturesByBundleIdentifier: [String: String]
     }
 
     public init(

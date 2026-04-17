@@ -235,10 +235,21 @@ public final class MirageClientService {
         }
     }
 
+    public enum AuthorizationState: String, Sendable, Codable, Equatable {
+        case idle
+        case verifyingTrust
+        case awaitingManualApproval
+        case approved
+    }
+
     /// Current connection state
     public internal(set) var connectionState: ConnectionState = .disconnected
-    /// Whether the host connection is awaiting manual approval
-    public internal(set) var isAwaitingManualApproval: Bool = false
+    /// Current host authorization/trust evaluation state.
+    public internal(set) var authorizationState: AuthorizationState = .idle
+    /// Whether the host connection is awaiting explicit manual approval.
+    public var isAwaitingManualApproval: Bool {
+        authorizationState == .awaitingManualApproval
+    }
 
     /// Available windows on the connected host
     public internal(set) var availableWindows: [MirageWindow] = []
@@ -865,6 +876,7 @@ public final class MirageClientService {
         let primarySnapshot = diagnosticsPrimaryStreamSnapshot()
         return [
             "client.connectionState": .string(Self.diagnosticsConnectionStateName(connectionState)),
+            "client.authorizationState": .string(authorizationState.rawValue),
             "client.awaitingManualApproval": .bool(isAwaitingManualApproval),
             "client.mediaPayloadEncryptionEnabled": .bool(mediaPayloadEncryptionEnabled),
             "client.availableWindowsCount": .int(availableWindows.count),

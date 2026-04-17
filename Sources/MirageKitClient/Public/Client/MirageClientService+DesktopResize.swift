@@ -39,7 +39,7 @@ extension MirageClientService {
         return DesktopResizeCoordinator.RequestGeometry(
             logicalResolution: logicalResolution,
             displayScaleFactor: displayScaleFactor,
-            requestedStreamScale: 1.0,
+            requestedStreamScale: clampedStreamScale(),
             encoderMaxWidth: encoderMaxWidth,
             encoderMaxHeight: encoderMaxHeight
         )

@@ -101,22 +101,19 @@ extension FrameReassembler {
             return
         }
 
-        // Validate dimension token to reject old-dimension frames after resize.
-        // Keyframes always update the expected token since they establish new dimensions.
-        // P-frames with mismatched tokens are silently discarded.
+        // Validate dimension tokens to reject packets from old resize generations.
+        // The expected token is controlled by resize/window-selection state; packets
+        // must not advance it because stale keyframes can arrive after a new geometry.
         if dimensionTokenValidationEnabled {
-            if isKeyframePacket {
-                // Keyframes update the expected token - they carry new VPS/SPS/PPS
-                if header.dimensionToken != expectedDimensionToken {
+            if header.dimensionToken != expectedDimensionToken {
+                packetsDiscardedToken += 1
+                if isKeyframePacket {
                     MirageLogger.log(
                         .frameAssembly,
-                        "Keyframe updated dimension token from \(expectedDimensionToken) to \(header.dimensionToken)"
+                        "Discarding keyframe with dimension token \(header.dimensionToken); expected \(expectedDimensionToken)"
                     )
-                    expectedDimensionToken = header.dimensionToken
+                    beginAwaitingKeyframe()
                 }
-            } else if header.dimensionToken != expectedDimensionToken {
-                // P-frame with wrong token - silently discard (old dimensions)
-                packetsDiscardedToken += 1
                 lock.unlock()
                 return
             }

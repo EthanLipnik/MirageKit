@@ -6,6 +6,7 @@
 //
 
 @testable import MirageKit
+import Loom
 import Testing
 
 @Suite("Mirage Logger Environment Parsing")
@@ -14,8 +15,20 @@ struct MirageLoggerEnvironmentParsingTests {
     func unsetEnvironmentEnablesOnlyEssentialCategories() {
         #expect(
             MirageLogger.parsedEnabledCategories(environmentValue: nil) ==
-                [.host, .client, .appState]
+                [.host, .client, .appState, .stream, .decoder, .renderer]
         )
+    }
+
+    @Test("Unset environment keeps client support log baseline categories emitted")
+    func unsetEnvironmentKeepsClientSupportLogBaselineCategoriesEmitted() {
+        let enabledCategories = Set(
+            MirageLogger
+                .parsedEnabledCategories(environmentValue: nil)
+                .map { LoomLogCategory(rawValue: $0.rawValue) }
+        )
+        #expect(MirageLogRecorder.Configuration.client.baselineCategories.allSatisfy { category in
+            enabledCategories.contains(category)
+        })
     }
 
     @Test("None disables all non-error categories")

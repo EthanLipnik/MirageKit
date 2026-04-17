@@ -420,7 +420,7 @@ public struct MirageLogger: Sendable {
     /// Parse MIRAGE_LOG environment variable
     static func parsedEnabledCategories(environmentValue: String?) -> Set<MirageLogCategory> {
         guard let environmentValue else {
-            return [.host, .client, .appState]
+            return [.host, .client, .appState, .stream, .decoder, .renderer]
         }
 
         let trimmed = environmentValue.trimmingCharacters(in: .whitespaces).lowercased()

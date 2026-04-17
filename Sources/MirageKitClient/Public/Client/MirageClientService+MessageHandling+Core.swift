@@ -20,7 +20,7 @@ extension MirageClientService {
     ) async -> LoomPeer {
         connectedHostIdentityKeyID = hostIdentityKeyID
         hasCompletedBootstrap = true
-        isAwaitingManualApproval = false
+        authorizationState = .approved
 
         let acceptedHost = await canonicalConnectedHost(
             hostID: response.hostID,

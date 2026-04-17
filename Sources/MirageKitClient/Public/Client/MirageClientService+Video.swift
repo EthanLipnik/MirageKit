@@ -637,6 +637,9 @@ extension MirageClientService {
             )
         }
         try await sendControlMessage(.streamEncoderSettingsChange, content: request)
+        if let clampedScale {
+            resolutionScale = clampedScale
+        }
     }
 
     // MARK: - Adaptive Fallback

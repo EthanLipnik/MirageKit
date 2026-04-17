@@ -464,6 +464,9 @@ struct MirageKitTests {
                 "com.apple.mail",
                 "com.apple.safari",
             ],
+            knownIconSignaturesByBundleIdentifier: [
+                "com.apple.mail": "mail-icon-signature",
+            ],
             requestID: UUID(uuidString: "00000000-0000-0000-0000-000000000123")!
         )
 
@@ -474,6 +477,7 @@ struct MirageKitTests {
         #expect(decoded.forceRefresh)
         #expect(decoded.forceIconReset)
         #expect(decoded.priorityBundleIdentifiers == ["com.apple.mail", "com.apple.safari"])
+        #expect(decoded.knownIconSignaturesByBundleIdentifier == ["com.apple.mail": "mail-icon-signature"])
         #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000123")
     }
 
