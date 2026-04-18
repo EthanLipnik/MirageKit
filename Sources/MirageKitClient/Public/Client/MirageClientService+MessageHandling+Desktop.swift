@@ -261,6 +261,14 @@ extension MirageClientService {
             await refreshSharedClipboardBridgeState()
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode desktop stream started: ")
+            if desktopStreamRequestStartTime > 0 {
+                cancelStreamSetup()
+                clearPendingDesktopStreamStartState()
+                delegate?.clientService(
+                    self,
+                    didEncounterError: MirageError.protocolError("Desktop stream failed: invalid start response from host.")
+                )
+            }
         }
     }
 

@@ -57,7 +57,9 @@ func pendingDisplaySpaceRestores(
 )
 -> [CGDirectDisplayID: CGSSpaceID] {
     snapshot.filter { displayID, expectedSpaceID in
-        currentSpaceProvider(displayID) != expectedSpaceID
+        let currentSpaceID = currentSpaceProvider(displayID)
+        guard currentSpaceID != 0 else { return false }
+        return currentSpaceID != expectedSpaceID
     }
 }
 
@@ -358,8 +360,12 @@ extension MirageHostService {
                 }
 
                 if mode == .unified {
-                    await setupDisplayMirroring(targetDisplayID: context.displayID)
-                    logDesktopStartStep("display mirroring configured")
+                    let mirroringConfigured = await setupDisplayMirroring(targetDisplayID: context.displayID)
+                    if mirroringConfigured {
+                        logDesktopStartStep("display mirroring configured")
+                    } else {
+                        logDesktopStartStep("display mirroring unavailable; continuing with virtual display capture")
+                    }
                 } else {
                     logDesktopStartStep("display mirroring skipped (secondary display)")
                 }
@@ -452,14 +458,37 @@ extension MirageHostService {
             attemptIndex += 1
         }
 
-        if let lastVirtualDisplayError, desktopVirtualDisplayID == nil {
-            throw MirageError.protocolError(
-                "Virtual display acquisition failed for desktop stream: \(lastVirtualDisplayError)"
+        if acquiredCaptureContext == nil {
+            if let lastVirtualDisplayError {
+                MirageLogger.host(
+                    "Desktop virtual display acquisition failed; falling back to main display capture: " +
+                        "\(lastVirtualDisplayError)"
+                )
+            } else {
+                MirageLogger.host("Desktop virtual display acquisition produced no capture context; falling back to main display")
+            }
+
+            let fallback = try await mainDisplayDesktopCaptureFallback(reason: "virtual_display_startup_failed")
+            await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+            desktopVirtualDisplayID = nil
+            desktopPrimaryPhysicalDisplayID = fallback.displayID
+            desktopPrimaryPhysicalBounds = fallback.bounds
+            desktopDisplayBounds = fallback.bounds
+            desktopMirroredVirtualResolution = fallback.resolution
+            sharedVirtualDisplayGeneration = 0
+            sharedVirtualDisplayScaleFactor = fallback.scaleFactor
+            desktopUsesHostResolution = true
+            acquiredCaptureContext = (
+                display: fallback.display,
+                resolution: fallback.resolution,
+                p3CoverageStatus: nil,
+                colorSpace: nil
             )
+            logDesktopStartStep("main display fallback acquired (\(fallback.displayID))")
         }
 
         guard let acquiredCaptureContext else {
-            throw MirageError.protocolError("Desktop stream virtual display acquisition completed without a capture context")
+            throw MirageError.protocolError("Desktop stream display acquisition completed without a capture context")
         }
         let captureDisplay = acquiredCaptureContext.display
         let captureResolution = acquiredCaptureContext.resolution
@@ -585,10 +614,9 @@ extension MirageHostService {
                     configuration: effectiveAudioConfiguration
                 )
             } catch {
-                MirageLogger.error(
-                    .host,
-                    error: error,
-                    message: "Desktop audio activation failed; retrying desktop stream without audio: "
+                MirageLogger.host(
+                    "Desktop audio activation failed; retrying desktop stream without audio: " +
+                        "\(error.localizedDescription)"
                 )
                 effectiveAudioConfiguration.enabled = false
                 audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
@@ -697,10 +725,9 @@ extension MirageHostService {
                 try await startDesktopDisplay()
             } catch {
                 guard effectiveAudioConfiguration.enabled else { throw error }
-                MirageLogger.error(
-                    .host,
-                    error: error,
-                    message: "Desktop display capture start failed with audio enabled; retrying without audio: "
+                MirageLogger.host(
+                    "Desktop display capture start failed with audio enabled; retrying without audio: " +
+                        "\(error.localizedDescription)"
                 )
                 effectiveAudioConfiguration.enabled = false
                 audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
@@ -1007,6 +1034,41 @@ extension MirageHostService {
         throw MirageError.protocolError("Failed to find main SCDisplay")
     }
 
+    func mainDisplayDesktopCaptureFallback(
+        reason: String,
+        maxAttempts: Int = 8,
+        delayMs: UInt64 = 80
+    )
+    async throws -> (
+        display: SCDisplayWrapper,
+        resolution: CGSize,
+        displayID: CGDirectDisplayID,
+        bounds: CGRect,
+        scaleFactor: CGFloat
+    ) {
+        let display = try await findMainSCDisplayWithRetry(maxAttempts: maxAttempts, delayMs: delayMs)
+        let displayID = display.display.displayID
+        let resolution = CGSize(
+            width: CGFloat(display.display.width),
+            height: CGFloat(display.display.height)
+        )
+        let bounds = CGDisplayBounds(displayID)
+        guard resolution.width > 0, resolution.height > 0 else {
+            throw MirageError.protocolError("Main display fallback has invalid capture resolution")
+        }
+
+        let scaleFactor: CGFloat = if bounds.width > 0, bounds.height > 0 {
+            max(1.0, max(resolution.width / bounds.width, resolution.height / bounds.height))
+        } else {
+            1.0
+        }
+        MirageLogger.host(
+            "Desktop capture fallback using main display \(displayID): " +
+                "\(Int(resolution.width))x\(Int(resolution.height)) px, reason=\(reason)"
+        )
+        return (display, resolution, displayID, bounds, scaleFactor)
+    }
+
     func resolvePrimaryPhysicalDisplayID() -> CGDirectDisplayID? {
         let mainDisplayID = CGMainDisplayID()
         if !CGVirtualDisplayBridge.isVirtualDisplay(mainDisplayID) { return mainDisplayID }
@@ -1137,7 +1199,12 @@ extension MirageHostService {
             return false
         }
 
-        await setupDisplayMirroring(targetDisplayID: targetDisplayID)
+        guard await setupDisplayMirroring(targetDisplayID: targetDisplayID) else {
+            MirageLogger.host(
+                "Desktop mirroring restore could not start; continuing with virtual display capture"
+            )
+            return false
+        }
 
         var retryDelayMs = 500
         for attempt in 1 ... maxAttempts {
@@ -1178,17 +1245,17 @@ extension MirageHostService {
                     .host(
                         "Desktop mirroring restore verification pending (attempt \(attempt)/\(maxAttempts), mirrored=\(mirroredCount)/\(displaysToMirror.count), target=\(targetDisplayID))"
                     )
+                _ = await setupDisplayMirroring(targetDisplayID: targetDisplayID)
                 retryDelayMs = min(2000, Int(Double(retryDelayMs) * 1.8))
             } else {
                 MirageLogger
-                    .error(
-                        .host,
+                    .host(
                         "Desktop mirroring restore verification failed (attempt \(attempt)/\(maxAttempts), mirrored=\(mirroredCount)/\(displaysToMirror.count), target=\(targetDisplayID))"
                     )
             }
         }
 
-        MirageLogger.error(.host, "Desktop mirroring restore failed after \(maxAttempts) attempts")
+        MirageLogger.host("Desktop mirroring restore failed after \(maxAttempts) attempts")
         return false
     }
 
@@ -1215,7 +1282,7 @@ extension MirageHostService {
 
         var configRef: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-            MirageLogger.error(.host, "Failed to begin display configuration to unmirror physical displays")
+            MirageLogger.host("Physical display unmirror unavailable: failed to begin display configuration")
             return
         }
 
@@ -1225,7 +1292,7 @@ extension MirageHostService {
             if result == .success {
                 unmirroredCount += 1
             } else {
-                MirageLogger.error(.host, "Failed to unmirror physical display \(displayID): \(result)")
+                MirageLogger.host("Physical display unmirror skipped display \(displayID): \(result)")
             }
         }
 
@@ -1238,18 +1305,19 @@ extension MirageHostService {
         if completion == .success {
             MirageLogger.host("Unmirrored \(unmirroredCount) physical displays from virtual displays")
         } else {
-            MirageLogger.error(.host, "Failed to complete physical display unmirror: \(completion)")
+            MirageLogger.host("Physical display unmirror unavailable: failed to complete configuration \(completion)")
         }
     }
 
     /// Set up display mirroring so every non-Mirage display mirrors the shared virtual display.
     /// This keeps the virtual display as the resolution source for streaming.
-    func setupDisplayMirroring(targetDisplayID: CGDirectDisplayID) async {
+    @discardableResult
+    func setupDisplayMirroring(targetDisplayID: CGDirectDisplayID) async -> Bool {
         let displaysToMirror = resolveDesktopDisplaysToMirror(excluding: targetDisplayID)
 
         guard !displaysToMirror.isEmpty else {
             MirageLogger.host("No displays found to mirror")
-            return
+            return true
         }
 
         captureDisplaySpaceSnapshot(for: displaysToMirror, overwriteExisting: false)
@@ -1263,7 +1331,7 @@ extension MirageHostService {
             mirroredDesktopDisplayIDs = Set(displaysToMirror)
             MirageLogger.host("Display mirroring already enabled for \(displaysToMirror.count) displays")
             await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup_noop")
-            return
+            return true
         }
 
         if desktopMirroringSnapshot.isEmpty {
@@ -1275,8 +1343,8 @@ extension MirageHostService {
 
         var configRef: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-            MirageLogger.error(.host, "Failed to begin display configuration for mirroring")
-            return
+            MirageLogger.host("Display mirroring setup unavailable: failed to begin display configuration")
+            return false
         }
 
         var successfullyMirrored: Set<CGDirectDisplayID> = []
@@ -1293,21 +1361,21 @@ extension MirageHostService {
                 successfullyMirrored.insert(displayID)
                 MirageLogger.host("Configured display \(displayID) to mirror virtual display")
             } else {
-                MirageLogger.error(.host, "Failed to configure display \(displayID) for mirroring: \(result)")
+                MirageLogger.host("Display mirroring setup skipped display \(displayID): \(result)")
             }
         }
 
         guard !successfullyMirrored.isEmpty else {
-            MirageLogger.error(.host, "No displays configured for mirroring")
+            MirageLogger.host("Display mirroring setup unavailable: no displays accepted mirroring configuration")
             CGCancelDisplayConfiguration(config)
-            return
+            return false
         }
 
         let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
         if completeResult != .success {
-            MirageLogger.error(.host, "Failed to complete mirroring configuration: \(completeResult)")
+            MirageLogger.host("Display mirroring setup unavailable: failed to complete configuration \(completeResult)")
             CGCancelDisplayConfiguration(config)
-            return
+            return false
         }
 
         mirroredDesktopDisplayIDs = successfullyMirrored
@@ -1316,6 +1384,7 @@ extension MirageHostService {
                 "Display mirroring enabled for \(successfullyMirrored.count) displays → virtual display \(targetDisplayID)"
             )
         await restoreDisplaySpaceSnapshotIfNeeded(reason: "mirroring_setup")
+        return successfullyMirrored.count == displaysToMirror.count
     }
 
     /// Temporarily suspend desktop mirroring before a virtual-display resize.
@@ -1336,7 +1405,7 @@ extension MirageHostService {
 
         var configRef: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-            MirageLogger.error(.host, "Failed to begin display configuration to suspend mirroring")
+            MirageLogger.host("Display mirroring suspend unavailable: failed to begin display configuration")
             return
         }
 
@@ -1346,7 +1415,7 @@ extension MirageHostService {
             if result == .success {
                 suspendedCount += 1
             } else {
-                MirageLogger.error(.host, "Failed to suspend mirroring for display \(displayID): \(result)")
+                MirageLogger.host("Display mirroring suspend skipped display \(displayID): \(result)")
             }
         }
 
@@ -1357,7 +1426,7 @@ extension MirageHostService {
 
         let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
         if completeResult != .success {
-            MirageLogger.error(.host, "Failed to complete mirroring suspend: \(completeResult)")
+            MirageLogger.host("Display mirroring suspend unavailable: failed to complete configuration \(completeResult)")
             return
         }
 
@@ -1384,7 +1453,7 @@ extension MirageHostService {
 
         var configRef: CGDisplayConfigRef?
         guard CGBeginDisplayConfiguration(&configRef) == .success, let config = configRef else {
-            MirageLogger.error(.host, "Failed to begin display configuration to disable mirroring")
+            MirageLogger.host("Display mirroring restore unavailable: failed to begin display configuration")
             return
         }
 
@@ -1421,7 +1490,7 @@ extension MirageHostService {
         if successfullyRestored > 0 {
             let completeResult = CGCompleteDisplayConfiguration(config, .forSession)
             if completeResult != .success {
-                MirageLogger.error(.host, "Failed to complete disable mirroring: \(completeResult)")
+                MirageLogger.host("Display mirroring restore unavailable: failed to complete configuration \(completeResult)")
                 CGCancelDisplayConfiguration(config)
             } else {
                 MirageLogger.host("Display mirroring disabled for \(successfullyRestored) displays")

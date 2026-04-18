@@ -135,15 +135,21 @@ extension MirageClientService {
             if let pendingChannel {
                 await pendingChannel.cancel()
             }
+            let isCurrentAttempt = isCurrentConnectAttempt(attemptID)
+            let isCancelledFailure = error is CancellationError || Task.isCancelled || !isCurrentAttempt
             cancelPendingConnectTask(attemptID: attemptID)
             finishConnectAttempt(attemptID)
-            if hasCompletedBootstrap {
+            if isCancelledFailure {
+                MirageLogger.client("Connection attempt cancelled before completion")
+            } else if hasCompletedBootstrap {
                 MirageLogger.error(.client, error: error, message: "Connection failed: ")
             } else {
                 MirageLogger.client("Connection failed before bootstrap completed: \(error.localizedDescription)")
             }
-            MirageInstrumentation.record(.clientConnectionFailed)
-            if requiresDisconnectCleanupAfterFailedConnect() {
+            if !isCancelledFailure {
+                MirageInstrumentation.record(.clientConnectionFailed)
+            }
+            if isCurrentAttempt, requiresDisconnectCleanupAfterFailedConnect() {
                 await handleDisconnect(
                     reason: error.localizedDescription,
                     state: .disconnected,

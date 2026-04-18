@@ -1094,9 +1094,10 @@ extension MirageHostService {
                         streamID: streamID,
                         targetDisplayID: activeDisplayID
                     )
-                    guard mirroringRestored else {
-                        throw MirageError.protocolError(
-                            "Failed to restore display mirroring after desktop resize"
+                    if !mirroringRestored {
+                        MirageLogger.host(
+                            "Desktop stream continuing without display mirroring after resize; " +
+                                "capturing virtual display \(activeDisplayID)"
                         )
                     }
                     shouldRestoreMirroring = false
@@ -1165,32 +1166,50 @@ extension MirageHostService {
             )
             return
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to resize desktop stream: ")
+            let resizeError = error
             if streamID == desktopStreamID,
-               let preResizeSnapshot,
                let latestDesktopContext = desktopStreamContext {
                 do {
-                    let restoredContext = try await rollbackDesktopResolutionChange(
+                    let fallbackContext = try await switchDesktopStreamToMainDisplayFallback(
                         streamID: streamID,
                         request: request,
-                        snapshot: preResizeSnapshot,
                         context: latestDesktopContext,
-                        requestedDisplayScaleFactor: previousRequestedDisplayScaleFactor,
-                        requestedStreamScale: previousRequestedStreamScale,
-                        encoderMaxWidth: previousEncoderMaxDimensions.width,
-                        encoderMaxHeight: previousEncoderMaxDimensions.height
+                        reason: "desktop_resize_failed"
                     )
-                    resizeCompletionContext = restoredContext
+                    resizeCompletionContext = fallbackContext
                     resizeOutcome = .rolledBack
+                    shouldRestoreMirroring = false
                 } catch {
-                    MirageLogger.error(
-                        .host,
-                        error: error,
-                        message: "Failed to roll back desktop resize to the last known good resolution: "
-                    )
-                    shouldStopDesktopStreamWithError = true
+                    MirageLogger.host("Main display fallback after desktop resize failure was unavailable: \(error)")
+                    MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
+                    if let preResizeSnapshot {
+                        do {
+                            let restoredContext = try await rollbackDesktopResolutionChange(
+                                streamID: streamID,
+                                request: request,
+                                snapshot: preResizeSnapshot,
+                                context: latestDesktopContext,
+                                requestedDisplayScaleFactor: previousRequestedDisplayScaleFactor,
+                                requestedStreamScale: previousRequestedStreamScale,
+                                encoderMaxWidth: previousEncoderMaxDimensions.width,
+                                encoderMaxHeight: previousEncoderMaxDimensions.height
+                            )
+                            resizeCompletionContext = restoredContext
+                            resizeOutcome = .rolledBack
+                        } catch {
+                            MirageLogger.error(
+                                .host,
+                                error: error,
+                                message: "Failed to roll back desktop resize to the last known good resolution: "
+                            )
+                            shouldStopDesktopStreamWithError = true
+                        }
+                    } else {
+                        shouldStopDesktopStreamWithError = true
+                    }
                 }
             } else {
+                MirageLogger.error(.host, error: resizeError, message: "Failed to resize desktop stream: ")
                 shouldStopDesktopStreamWithError = streamID == desktopStreamID
             }
         }
@@ -1347,6 +1366,49 @@ extension MirageHostService {
               activeDesktopResizeRequest == request else {
             throw DesktopResizeTransactionAbort.streamNoLongerActive
         }
+    }
+
+    private func switchDesktopStreamToMainDisplayFallback(
+        streamID: StreamID,
+        request: DesktopResizeRequestState,
+        context: StreamContext,
+        reason: String
+    )
+    async throws -> StreamContext {
+        try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
+        let fallback = try await mainDisplayDesktopCaptureFallback(reason: reason)
+
+        if let sharedDisplayID = await SharedVirtualDisplayManager.shared.getDisplayID() {
+            await disableDisplayMirroring(displayID: sharedDisplayID)
+        } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
+            await disableDisplayMirroring(displayID: fallback.displayID)
+        }
+        await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+
+        desktopVirtualDisplayID = nil
+        desktopPrimaryPhysicalDisplayID = fallback.displayID
+        desktopPrimaryPhysicalBounds = fallback.bounds
+        desktopDisplayBounds = fallback.bounds
+        desktopMirroredVirtualResolution = fallback.resolution
+        sharedVirtualDisplayGeneration = 0
+        sharedVirtualDisplayScaleFactor = fallback.scaleFactor
+        desktopUsesHostResolution = true
+
+        try await context.hardResetDesktopDisplayCapture(
+            displayWrapper: fallback.display,
+            resolution: fallback.resolution
+        )
+
+        let inputBounds = resolvedDesktopInputBounds(
+            physicalBounds: fallback.bounds,
+            virtualResolution: fallback.resolution
+        )
+        inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+        MirageLogger.host(
+            "Desktop stream switched to main display fallback for stream \(streamID): " +
+                "\(Int(fallback.resolution.width))x\(Int(fallback.resolution.height)) px"
+        )
+        return context
     }
 
     private func sendDesktopResizeCompletion(

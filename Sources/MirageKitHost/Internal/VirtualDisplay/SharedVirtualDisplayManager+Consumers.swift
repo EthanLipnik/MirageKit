@@ -333,10 +333,7 @@ extension SharedVirtualDisplayManager {
                 return true
             } catch {
                 clearDesktopVirtualDisplayResizeTarget(for: resizeRequest)
-                MirageLogger.error(
-                    .host,
-                    "Cached desktop resize target failed; cleared cache and falling back: \(error)"
-                )
+                MirageLogger.host("Cached desktop resize target failed; cleared cache and falling back: \(error)")
             }
         }
 
@@ -351,8 +348,7 @@ extension SharedVirtualDisplayManager {
                 )
             } catch {
                 MirageLogger
-                    .error(
-                        .host,
+                    .host(
                         "Desktop resize guarded recreate failed; retrying fast recreate path: \(error)"
                     )
                 sharedDisplay = try await recreateDisplay(

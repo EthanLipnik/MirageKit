@@ -73,6 +73,45 @@ struct MirageKitTests {
         #expect(decodedBootstrap.requestedFeatures == mirageSupportedFeatures)
     }
 
+    @Test("Desktop stream start ignores unknown optional preferences")
+    func desktopStreamStartIgnoresUnknownOptionalPreferences() throws {
+        let payload = Data(
+            """
+            {
+              "displayWidth": 1366,
+              "displayHeight": 1024,
+              "targetFrameRate": "future",
+              "mode": "future-mode",
+              "colorDepth": "future-depth",
+              "latencyMode": "future-latency",
+              "performanceMode": "game",
+              "audioConfiguration": {
+                "enabled": true,
+                "channelLayout": "future-layout",
+                "quality": "high"
+              },
+              "codec": "future-codec",
+              "upscalingMode": "future-upscaler",
+              "disableResolutionCap": true
+            }
+            """.utf8
+        )
+
+        let decoded = try JSONDecoder().decode(StartDesktopStreamMessage.self, from: payload)
+
+        #expect(decoded.displayWidth == 1366)
+        #expect(decoded.displayHeight == 1024)
+        #expect(decoded.targetFrameRate == 60)
+        #expect(decoded.mode == nil)
+        #expect(decoded.colorDepth == nil)
+        #expect(decoded.latencyMode == nil)
+        #expect(decoded.performanceMode == .game)
+        #expect(decoded.audioConfiguration == nil)
+        #expect(decoded.codec == nil)
+        #expect(decoded.upscalingMode == nil)
+        #expect(decoded.disableResolutionCap == true)
+    }
+
     @Test("Control parser rejects unknown control type")
     func controlParserRejectsUnknownControlType() {
         var data = Data([0x06])

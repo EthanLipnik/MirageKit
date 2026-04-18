@@ -18,15 +18,30 @@ extension MirageHostService {
         _ message: ControlMessage,
         from clientContext: ClientContext
     ) async {
+        let request: HostSupportLogArchiveRequestMessage
         do {
-            let request = try message.decode(HostSupportLogArchiveRequestMessage.self)
+            request = try message.decode(HostSupportLogArchiveRequestMessage.self)
+        } catch {
+            MirageLogger.error(.host, error: error, message: "Failed to decode host support log archive request: ")
+            return
+        }
 
+        do {
             guard let hostSupportLogArchiveProvider else {
                 let response = HostSupportLogArchiveMessage(
                     requestID: request.requestID,
                     errorMessage: "Host log export is unavailable."
                 )
-                try await clientContext.send(.hostSupportLogArchive, content: response)
+                do {
+                    try await clientContext.send(.hostSupportLogArchive, content: response)
+                } catch {
+                    await handleControlChannelSendFailure(
+                        client: clientContext.client,
+                        error: error,
+                        operation: "Host support log archive unavailable response",
+                        sessionID: clientContext.sessionID
+                    )
+                }
                 MirageLogger.host("Host support log archive request rejected: provider unavailable")
                 return
             }
@@ -36,7 +51,18 @@ extension MirageHostService {
                 requestID: request.requestID,
                 fileName: archiveURL.lastPathComponent
             )
-            try await clientContext.send(.hostSupportLogArchive, content: response)
+            do {
+                try await clientContext.send(.hostSupportLogArchive, content: response)
+            } catch {
+                try? FileManager.default.removeItem(at: archiveURL)
+                await handleControlChannelSendFailure(
+                    client: clientContext.client,
+                    error: error,
+                    operation: "Host support log archive response",
+                    sessionID: clientContext.sessionID
+                )
+                return
+            }
 
             Task { @MainActor [weak self] in
                 await self?.handleHostSupportLogTransfer(
@@ -52,14 +78,29 @@ extension MirageHostService {
                     "filename=\(archiveURL.lastPathComponent)"
             )
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to handle host support log archive request: ")
-            let requestID = (try? message.decode(HostSupportLogArchiveRequestMessage.self))?.requestID
+            if isExpectedLifecycleControlSendFailure(error) ||
+                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageLogger.host(
+                    "Host support log archive request did not complete: \(error.localizedDescription)"
+                )
+            } else {
+                MirageLogger.error(.host, error: error, message: "Failed to handle host support log archive request: ")
+            }
             let errorMessage = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
             let response = HostSupportLogArchiveMessage(
-                requestID: requestID,
+                requestID: request.requestID,
                 errorMessage: errorMessage.isEmpty ? "Failed to export host logs." : errorMessage
             )
-            try? await clientContext.send(.hostSupportLogArchive, content: response)
+            do {
+                try await clientContext.send(.hostSupportLogArchive, content: response)
+            } catch {
+                await handleControlChannelSendFailure(
+                    client: clientContext.client,
+                    error: error,
+                    operation: "Host support log archive failure response",
+                    sessionID: clientContext.sessionID
+                )
+            }
         }
     }
 
@@ -116,7 +157,14 @@ extension MirageHostService {
                     "bytes=\(byteLength)"
             )
         } catch {
-            MirageLogger.error(.host, error: error, message: "Failed host support log Loom transfer: ")
+            if isExpectedLifecycleControlSendFailure(error) ||
+                LoomDiagnosticsActionability.isLikelyUserDependent(error: error) {
+                MirageLogger.host(
+                    "Host support log Loom transfer ended without completion: \(error.localizedDescription)"
+                )
+            } else {
+                MirageLogger.error(.host, error: error, message: "Failed host support log Loom transfer: ")
+            }
         }
     }
 

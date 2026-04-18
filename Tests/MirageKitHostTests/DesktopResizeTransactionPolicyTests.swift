@@ -247,8 +247,8 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(snapshot == [1: 101, 3: 303])
     }
 
-    @Test("Pending display space restores only returns mismatched displays")
-    func pendingDisplaySpaceRestoresOnlyReturnsMismatches() {
+    @Test("Pending display space restores only returns actionable mismatched displays")
+    func pendingDisplaySpaceRestoresOnlyReturnsActionableMismatches() {
         let pending = pendingDisplaySpaceRestores(
             snapshot: [1: 101, 2: 202, 3: 303]
         ) { displayID in
@@ -262,7 +262,7 @@ struct DesktopResizeTransactionPolicyTests {
             }
         }
 
-        #expect(pending == [2: 202, 3: 303])
+        #expect(pending == [2: 202])
     }
 
     @Test("Window resize no-op skips exact visible resolution")
