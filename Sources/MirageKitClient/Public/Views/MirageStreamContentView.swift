@@ -56,6 +56,7 @@ public struct MirageStreamContentView: View {
     public let keyboardAvoidanceEnabled: Bool
     public let maxDrawableSize: CGSize?
     public let onWindowWillClose: (() -> Void)?
+    public let ignoresSafeArea: Bool
     private let appResizeAckTimeout: Duration = .seconds(3)
 
     /// Resize holdoff task used during foreground transitions (iOS).
@@ -93,7 +94,7 @@ public struct MirageStreamContentView: View {
     ///   - onDirectTouchActivity: Optional callback invoked when direct finger touch input occurs.
     ///   - onHardwareKeyboardPresenceChanged: Optional handler for hardware keyboard availability.
     ///   - onSoftwareKeyboardVisibilityChanged: Optional handler for software keyboard visibility.
-    ///   - directTouchInputMode: Direct-touch behavior mode for iPad and visionOS clients.
+    ///   - directTouchInputMode: Direct-touch behavior mode for touch clients.
     ///   - softwareKeyboardVisible: Whether the software keyboard should be visible.
     ///   - pencilGestureConfiguration: Apple Pencil hardware gesture mapping.
     ///   - dictationToggleRequestID: Increments to request a dictation toggle on iOS/visionOS.
@@ -122,7 +123,7 @@ public struct MirageStreamContentView: View {
         onDirectTouchActivity: (() -> Void)? = nil,
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
-        directTouchInputMode: MirageDirectTouchInputMode = .normal,
+        directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice,
         softwareKeyboardVisible: Bool = false,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         dictationToggleRequestID: UInt64 = 0,
@@ -139,7 +140,8 @@ public struct MirageStreamContentView: View {
         useHostResolution: Bool = false,
         keyboardAvoidanceEnabled: Bool = true,
         maxDrawableSize: CGSize? = nil,
-        onWindowWillClose: (() -> Void)? = nil
+        onWindowWillClose: (() -> Void)? = nil,
+        ignoresSafeArea: Bool = true
     ) {
         self.session = session
         self.sessionStore = sessionStore
@@ -176,6 +178,7 @@ public struct MirageStreamContentView: View {
         self.keyboardAvoidanceEnabled = keyboardAvoidanceEnabled
         self.maxDrawableSize = maxDrawableSize
         self.onWindowWillClose = onWindowWillClose
+        self.ignoresSafeArea = ignoresSafeArea
     }
 
     private var desktopCursorLockEnabled: Bool {
@@ -184,7 +187,9 @@ public struct MirageStreamContentView: View {
     }
 
     private var syntheticCursorEnabled: Bool {
-        !isDesktopStream || desktopCursorPresentation.rendersSyntheticClientCursor
+        !isDesktopStream ||
+            desktopCursorPresentation.rendersSyntheticClientCursor ||
+            (desktopCursorLockEnabled && !desktopCursorPresentation.capturesHostCursor)
     }
 
     private var desktopLocalCursorHidden: Bool {
@@ -227,7 +232,7 @@ public struct MirageStreamContentView: View {
         ZStack {
             Rectangle()
                 .fill(.black)
-                .ignoresSafeArea()
+                .mirageStreamIgnoresSafeArea(ignoresSafeArea)
 
             Group {
 #if os(iOS) || os(visionOS)
@@ -290,7 +295,8 @@ public struct MirageStreamContentView: View {
                     syntheticCursorEnabled: syntheticCursorEnabled,
                     presentationTier: streamPresentationTier,
                     maxDrawableSize: maxDrawableSize,
-                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
+                    prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+                    ignoresSafeArea: ignoresSafeArea
                 )
                 .blur(radius: resizeBlurRadius)
 #else
@@ -1016,4 +1022,23 @@ public struct MirageStreamContentView: View {
         clientService.requestApplicationActivationRecovery(for: session.streamID)
     }
     #endif
+}
+
+private struct MirageStreamIgnoresSafeAreaModifier: ViewModifier {
+    let ignoresSafeArea: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if ignoresSafeArea {
+            content.ignoresSafeArea()
+        } else {
+            content
+        }
+    }
+}
+
+private extension View {
+    func mirageStreamIgnoresSafeArea(_ ignoresSafeArea: Bool) -> some View {
+        modifier(MirageStreamIgnoresSafeAreaModifier(ignoresSafeArea: ignoresSafeArea))
+    }
 }

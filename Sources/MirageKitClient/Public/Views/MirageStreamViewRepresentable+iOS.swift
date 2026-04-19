@@ -126,6 +126,9 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
     /// Whether the stream should present locally using aspect fit.
     public var prefersLocalAspectFitPresentation: Bool
 
+    /// Whether the UIKit stream view should extend through platform safe areas.
+    public var ignoresSafeArea: Bool
+
     public init(
         streamID: StreamID,
         onInputEvent: ((MirageInputEvent) -> Void)? = nil,
@@ -140,7 +143,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         onHardwareKeyboardPresenceChanged: ((Bool) -> Void)? = nil,
         onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)? = nil,
         onDirectTouchActivity: (() -> Void)? = nil,
-        directTouchInputMode: MirageDirectTouchInputMode = .normal,
+        directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice,
         softwareKeyboardVisible: Bool = false,
         pencilGestureConfiguration: MiragePencilGestureConfiguration = .default,
         clientShortcuts: [MirageClientShortcut] = [],
@@ -164,7 +167,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         syntheticCursorEnabled: Bool = true,
         presentationTier: StreamPresentationTier = .activeLive,
         maxDrawableSize: CGSize? = nil,
-        prefersLocalAspectFitPresentation: Bool = false
+        prefersLocalAspectFitPresentation: Bool = false,
+        ignoresSafeArea: Bool = true
     ) {
         self.streamID = streamID
         self.onInputEvent = onInputEvent
@@ -204,6 +208,7 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
         self.presentationTier = presentationTier
         self.maxDrawableSize = maxDrawableSize
         self.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
+        self.ignoresSafeArea = ignoresSafeArea
     }
 
     public func makeCoordinator() -> MirageStreamViewCoordinator {
@@ -266,7 +271,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize,
-            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
+            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+            ignoresSafeArea: ignoresSafeArea
         )
         return controller
     }
@@ -329,7 +335,8 @@ public struct MirageStreamViewRepresentable: UIViewControllerRepresentable {
             syntheticCursorEnabled: syntheticCursorEnabled,
             presentationTier: presentationTier,
             maxDrawableSize: maxDrawableSize,
-            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation
+            prefersLocalAspectFitPresentation: prefersLocalAspectFitPresentation,
+            ignoresSafeArea: ignoresSafeArea
         )
     }
 
@@ -458,7 +465,8 @@ public final class MirageStreamViewController: UIViewController {
         syntheticCursorEnabled: Bool,
         presentationTier: StreamPresentationTier,
         maxDrawableSize: CGSize?,
-        prefersLocalAspectFitPresentation: Bool
+        prefersLocalAspectFitPresentation: Bool,
+        ignoresSafeArea: Bool
     ) {
         // Set stream ID first so cursor router registration is ready
         // before cursorStore/cursorPositionStore didSet triggers refreshCursorIfNeeded.
@@ -486,6 +494,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.presentationTier = presentationTier
         captureView.maxDrawableSize = maxDrawableSize
         captureView.prefersLocalAspectFitPresentation = prefersLocalAspectFitPresentation
+        captureView.ignoresSafeArea = ignoresSafeArea
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()

@@ -82,6 +82,7 @@ extension MirageClientService {
         connectionState = .connecting
         expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
+        connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
@@ -172,6 +173,7 @@ extension MirageClientService {
         connectionState = .connecting
         expectedHostIdentityKeyID = host.advertisement.identityKeyID
         connectedHostIdentityKeyID = nil
+        connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
         mediaPayloadEncryptionEnabled = true
         setMediaSecurityContext(nil)
@@ -317,6 +319,7 @@ extension MirageClientService {
         inputEventSender.updateSendHandler(nil)
         expectedHostIdentityKeyID = nil
         connectedHostIdentityKeyID = nil
+        connectedHostIdentity = nil
         connectedHostAllowsRemoteAccess = nil
         setMediaSecurityContext(nil)
         receiveBuffer = Data()

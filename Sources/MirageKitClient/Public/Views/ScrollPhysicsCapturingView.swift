@@ -15,8 +15,16 @@ import UIKit
 final class ScrollPhysicsCapturingView: UIView {
     // MARK: - Safe Area Override
 
-    /// Override safe area insets to ensure content fills entire screen
-    override var safeAreaInsets: UIEdgeInsets { .zero }
+    var ignoresSafeArea: Bool = true {
+        didSet {
+            guard ignoresSafeArea != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    override var safeAreaInsets: UIEdgeInsets {
+        ignoresSafeArea ? .zero : super.safeAreaInsets
+    }
 
     /// The invisible scroll view for indirect pointer / trackpad physics
     private let indirectScrollView: CallbackScrollView
@@ -138,7 +146,6 @@ final class ScrollPhysicsCapturingView: UIView {
     }
 
     private func setup() {
-        // Ensure this view doesn't respect safe area insets
         insetsLayoutMarginsFromSafeArea = false
 
         bindScrollCallbacks(for: indirectScrollView)

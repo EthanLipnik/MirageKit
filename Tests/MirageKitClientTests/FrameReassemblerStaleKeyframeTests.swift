@@ -52,6 +52,59 @@ struct FrameReassemblerStaleKeyframeTests {
         #expect(deliveredCounter.value == 2)
     }
 
+    @Test("Keyframe-only mode admits dependent P-frames after recovery keyframe")
+    func keyframeOnlyModeAdmitsDependentPFramesAfterRecoveryKeyframe() {
+        let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)
+        let deliveredCounter = LockedCounter()
+
+        reassembler.setFrameHandler { _, _, _, _, _, release in
+            deliveredCounter.increment()
+            release()
+        }
+
+        reassembler.enterKeyframeOnlyMode()
+
+        let stalePFramePayload = Data([0x00, 0x00, 0x00, 0x02, 0x02, 0x03])
+        reassembler.processPacket(
+            stalePFramePayload,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 10,
+                payload: stalePFramePayload,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 0)
+
+        let keyframePayload = Data([0x00, 0x00, 0x00, 0x01, 0x26, 0x01])
+        reassembler.processPacket(
+            keyframePayload,
+            header: makeHeader(
+                flags: [.keyframe, .endOfFrame],
+                frameNumber: 11,
+                payload: keyframePayload,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+        #expect(deliveredCounter.value == 1)
+
+        let dependentPFramePayload = Data([0x00, 0x00, 0x00, 0x03, 0x02, 0x04])
+        reassembler.processPacket(
+            dependentPFramePayload,
+            header: makeHeader(
+                flags: [.endOfFrame],
+                frameNumber: 12,
+                payload: dependentPFramePayload,
+                fragmentIndex: 0,
+                fragmentCount: 1
+            )
+        )
+
+        #expect(deliveredCounter.value == 2)
+    }
+
     @Test("Delivered keyframe duplicate is dropped without triggering loss")
     func deliveredKeyframeDuplicateDoesNotTriggerLossLoop() async throws {
         let reassembler = FrameReassembler(streamID: 1, maxPayloadSize: 1200)

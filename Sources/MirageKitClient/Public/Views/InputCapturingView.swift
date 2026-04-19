@@ -20,10 +20,18 @@ public class InputCapturingView: UIView {
 
     // MARK: - Safe Area Override
 
-    /// Override safe area insets to ensure the sample-buffer view fills the entire screen.
-    /// SwiftUI's .ignoresSafeArea() doesn't propagate through UIViewRepresentable boundaries,
-    /// so we must explicitly return zero insets at the UIKit layer.
-    override public var safeAreaInsets: UIEdgeInsets { .zero }
+    public var ignoresSafeArea: Bool = true {
+        didSet {
+            guard ignoresSafeArea != oldValue else { return }
+            sampleBufferView.ignoresSafeArea = ignoresSafeArea
+            scrollPhysicsView?.ignoresSafeArea = ignoresSafeArea
+            setNeedsLayout()
+        }
+    }
+
+    override public var safeAreaInsets: UIEdgeInsets {
+        ignoresSafeArea ? .zero : super.safeAreaInsets
+    }
 
     /// Callback for input events - set by the SwiftUI representable's coordinator
     public var onInputEvent: ((MirageInputEvent) -> Void)? {
@@ -121,6 +129,9 @@ public class InputCapturingView: UIView {
     public var hideSystemCursor: Bool = false {
         didSet {
             guard hideSystemCursor != oldValue else { return }
+            if syntheticCursorEnabled && hideSystemCursor {
+                cursorIsVisible = true
+            }
             pointerInteraction?.invalidate()
             updateLockedCursorViewVisibility()
             updateLockedCursorViewPosition()
@@ -159,6 +170,10 @@ public class InputCapturingView: UIView {
     public var syntheticCursorEnabled: Bool = true {
         didSet {
             guard syntheticCursorEnabled != oldValue else { return }
+            if syntheticCursorEnabled && (hideSystemCursor || cursorLockEnabled) {
+                cursorIsVisible = true
+                if cursorLockEnabled { lockedCursorVisible = true }
+            }
             updateVirtualTrackpadMode()
             updateLockedCursorViewVisibility()
             pointerInteraction?.invalidate()
@@ -191,8 +206,8 @@ public class InputCapturingView: UIView {
     /// Callback when software keyboard visibility changes.
     public var onSoftwareKeyboardVisibilityChanged: ((Bool) -> Void)?
 
-    /// Direct-touch behavior mode for iPad and visionOS clients.
-    public var directTouchInputMode: MirageDirectTouchInputMode = .normal {
+    /// Direct-touch behavior mode for touch clients.
+    public var directTouchInputMode: MirageDirectTouchInputMode = .defaultForCurrentDevice {
         didSet {
             guard directTouchInputMode != oldValue else { return }
             updateVirtualTrackpadMode()
@@ -970,7 +985,6 @@ public class InputCapturingView: UIView {
     }
 
     private func setup() {
-        // Ensure this view doesn't respect safe area insets
         insetsLayoutMarginsFromSafeArea = false
 
         // Create scroll physics view to wrap the sample-buffer view
@@ -980,6 +994,8 @@ public class InputCapturingView: UIView {
 
         // Add metal view to the scroll physics view's content view
         sampleBufferView.translatesAutoresizingMaskIntoConstraints = false
+        sampleBufferView.ignoresSafeArea = ignoresSafeArea
+        scrollPhysicsView!.ignoresSafeArea = ignoresSafeArea
         scrollPhysicsView!.contentView.addSubview(sampleBufferView)
 
         // Add scroll physics view to self
@@ -1321,6 +1337,11 @@ public class InputCapturingView: UIView {
             lockedPointerLastHoverLocation = nil
             startLockedCursorSmoothingIfNeeded()
             refreshLockedCursorIfNeeded(force: true)
+            if syntheticCursorEnabled {
+                lockedCursorVisible = effectiveCursorVisibility(
+                    hostVisibility: lockedCursorVisible || cursorIsVisible
+                )
+            }
             setLockedCursorVisible(lockedCursorVisible)
         } else {
             updateMouseInputHandler()
@@ -1548,9 +1569,16 @@ public class InputCapturingView: UIView {
     }
 
     func setLockedCursorVisible(_ isVisible: Bool) {
-        lockedCursorVisible = isVisible
+        lockedCursorVisible = effectiveCursorVisibility(hostVisibility: isVisible)
         updateLockedCursorViewVisibility()
         updateLockedCursorViewPosition()
+    }
+
+    func effectiveCursorVisibility(hostVisibility: Bool) -> Bool {
+        if syntheticCursorEnabled && (hideSystemCursor || cursorLockEnabled) {
+            return true
+        }
+        return hostVisibility
     }
 
     var unlockedSyntheticCursorPosition: CGPoint? {
@@ -1558,12 +1586,11 @@ public class InputCapturingView: UIView {
               hideSystemCursor,
               !cursorLockEnabled,
               !usesVisibleVirtualCursor,
-              cursorIsVisible,
-              let lastCursorPosition else {
+              cursorIsVisible else {
             return nil
         }
 
-        return lastCursorPosition
+        return lastCursorPosition ?? lockedCursorPosition
     }
 
     func updateLockedCursorViewVisibility() {
@@ -1634,11 +1661,12 @@ public class InputCapturingView: UIView {
     func applyLockedCursorHostUpdate(position: CGPoint, isVisible: Bool) {
         lockedCursorTargetPosition = resolvedLockedCursorEventPosition(position)
         lockedCursorConfirmedHostPosition = lockedCursorTargetPosition
-        lockedCursorTargetVisible = isVisible
+        let visible = effectiveCursorVisibility(hostVisibility: isVisible)
+        lockedCursorTargetVisible = visible
         guard cursorLockEnabled else { return }
         guard !isLockedCursorLocalInputActive() else { return }
-        setLockedCursorVisible(isVisible)
-        guard isVisible else { return }
+        setLockedCursorVisible(visible)
+        guard visible else { return }
         applyLockedCursorTargetStep()
     }
 

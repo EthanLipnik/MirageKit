@@ -63,6 +63,11 @@ struct ClientHelloHandshakeStateTests {
 
         #expect(service.connectionState == .connected(host: "Accepted Host"))
         #expect(service.connectedHostIdentityKeyID == "accepted-key")
+        #expect(service.connectedHostIdentity?.acceptedHostID == acceptedHostID)
+        #expect(service.connectedHostIdentity?.identityKeyID == "accepted-key")
+        #expect(service.connectedHostIdentity?.provisionalHostID == provisionalHostID)
+        #expect(service.connectedHostIdentity?.advertisedHostID == provisionalHostID)
+        #expect(service.connectedHostIdentity?.uuidAliases == [acceptedHostID, provisionalHostID])
         #expect(service.hasCompletedBootstrap == true)
         #expect(service.authorizationState == .approved)
         #expect(service.isAwaitingManualApproval == false)

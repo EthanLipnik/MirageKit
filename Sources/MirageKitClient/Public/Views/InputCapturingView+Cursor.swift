@@ -39,12 +39,13 @@ extension InputCapturingView {
     ///   - type: The cursor type from the host
     ///   - isVisible: Whether the cursor is within the host window bounds
     public func updateCursor(type: MirageCursorType, isVisible: Bool, force: Bool = false) {
+        let effectiveIsVisible = effectiveCursorVisibility(hostVisibility: isVisible)
         // Only update if something changed
         let typeChanged = type != currentCursorType
-        guard force || typeChanged || isVisible != cursorIsVisible else { return }
+        guard force || typeChanged || effectiveIsVisible != cursorIsVisible else { return }
 
         currentCursorType = type
-        cursorIsVisible = isVisible
+        cursorIsVisible = effectiveIsVisible
 
         if typeChanged { updateCursorImage() }
         updateVirtualCursorViewPosition()
@@ -111,7 +112,7 @@ extension InputCapturingView: MirageCursorUpdateHandling {
         if cursorLockEnabled, !updatedFromPosition,
            let cursorStore, let streamID,
            let snapshot = cursorStore.snapshot(for: streamID) {
-            setLockedCursorVisible(snapshot.isVisible)
+            setLockedCursorVisible(effectiveCursorVisibility(hostVisibility: snapshot.isVisible))
         }
     }
 }

@@ -151,6 +151,39 @@ struct ScrollPhysicsCapturingViewTests {
         )
     }
 
+    @Test("Hidden system cursor shows synthetic cursor before local position is seeded")
+    func hiddenSystemCursorShowsSyntheticFallbackBeforeLocalPositionIsSeeded() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.syntheticCursorEnabled = true
+        view.hideSystemCursor = true
+        view.lastCursorPosition = nil
+
+        view.updateLockedCursorViewVisibility()
+        view.updateLockedCursorViewPosition()
+
+        let lockedCursorView = try #require(view.subviews.last as? UIImageView)
+        let hotspot = view.currentCursorType.cursorHotspot
+
+        #expect(!lockedCursorView.isHidden)
+        #expect(
+            lockedCursorView.frame.origin ==
+                CGPoint(x: 160 - hotspot.x, y: 120 - hotspot.y)
+        )
+    }
+
+    @Test("Cursor lock seeds synthetic cursor visibility")
+    func cursorLockSeedsSyntheticCursorVisibility() throws {
+        let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))
+        view.syntheticCursorEnabled = true
+
+        view.cursorLockEnabled = true
+
+        let lockedCursorView = try #require(view.subviews.last as? UIImageView)
+
+        #expect(!lockedCursorView.isHidden)
+        #expect(view.lockedCursorVisible)
+    }
+
     @Test("Indirect secondary click reuses the tracked pointer location")
     func indirectSecondaryClickReusesTrackedPointerLocation() {
         let view = InputCapturingView(frame: CGRect(x: 0, y: 0, width: 320, height: 240))

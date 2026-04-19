@@ -507,6 +507,9 @@ public final class MirageClientService {
     /// Last host identity key ID validated by Loom session bootstrap.
     public internal(set) var connectedHostIdentityKeyID: String?
 
+    /// Canonical connected-host identity and aliases validated by bootstrap.
+    public internal(set) var connectedHostIdentity: MirageConnectedHostIdentity?
+
     /// Whether the connected host explicitly allows this client to use host-published off-LAN reachability.
     public internal(set) var connectedHostAllowsRemoteAccess: Bool?
 

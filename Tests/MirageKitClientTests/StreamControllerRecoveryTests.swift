@@ -54,26 +54,6 @@ struct StreamControllerRecoveryTests {
         await controller.stop()
     }
 
-    @Test("Post-resize decode admission stays keyframe-only until first presented frame")
-    func postResizeDecodeAdmissionStaysKeyframeOnlyUntilFirstPresentedFrame() {
-        let dropDecision = StreamController.postResizeDecodeAdmissionDecision(
-            awaitingFirstPresentedFrameAfterResize: true,
-            isKeyframe: false
-        )
-        let acceptKeyframeDecision = StreamController.postResizeDecodeAdmissionDecision(
-            awaitingFirstPresentedFrameAfterResize: true,
-            isKeyframe: true
-        )
-        let acceptNormalDecision = StreamController.postResizeDecodeAdmissionDecision(
-            awaitingFirstPresentedFrameAfterResize: false,
-            isKeyframe: false
-        )
-
-        #expect(dropDecision == .dropNonKeyframeWhileAwaitingFirstFrame)
-        #expect(acceptKeyframeDecision == .accept)
-        #expect(acceptNormalDecision == .accept)
-    }
-
     @Test("Decode failure telemetry waits for actionable recovery state")
     func decodeFailureTelemetryWaitsForActionableRecoveryState() {
         #expect(

@@ -27,6 +27,13 @@ extension MirageClientService {
             hostName: response.hostName,
             hostIdentityKeyID: hostIdentityKeyID
         )
+        let provisionalHost = connectedHost
+        connectedHostIdentity = MirageConnectedHostIdentity(
+            acceptedHostID: response.hostID,
+            identityKeyID: hostIdentityKeyID,
+            provisionalHostID: provisionalHost?.deviceID,
+            advertisedHostID: provisionalHost?.advertisement.deviceID
+        )
         connectedHost = acceptedHost
         connectionState = .connected(host: acceptedHost.name)
         return acceptedHost

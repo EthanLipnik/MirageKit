@@ -16,7 +16,16 @@ import UIKit
 public class MirageSampleBufferView: UIView {
     // MARK: - Safe Area Override
 
-    override public var safeAreaInsets: UIEdgeInsets { .zero }
+    public var ignoresSafeArea: Bool = true {
+        didSet {
+            guard ignoresSafeArea != oldValue else { return }
+            setNeedsLayout()
+        }
+    }
+
+    override public var safeAreaInsets: UIEdgeInsets {
+        ignoresSafeArea ? .zero : super.safeAreaInsets
+    }
 
     override public class var layerClass: AnyClass {
         AVSampleBufferDisplayLayer.self

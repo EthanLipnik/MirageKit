@@ -119,22 +119,6 @@ actor StreamController {
         case confirmed(finalSize: CGSize)
     }
 
-    enum PostResizeDecodeAdmissionDecision: Equatable, Sendable {
-        case accept
-        case dropNonKeyframeWhileAwaitingFirstFrame
-    }
-
-    nonisolated static func postResizeDecodeAdmissionDecision(
-        awaitingFirstPresentedFrameAfterResize: Bool,
-        isKeyframe: Bool
-    )
-    -> PostResizeDecodeAdmissionDecision {
-        if awaitingFirstPresentedFrameAfterResize, !isKeyframe {
-            return .dropNonKeyframeWhileAwaitingFirstFrame
-        }
-        return .accept
-    }
-
     /// Information needed to send a resize event
     struct ResizeEvent: Sendable {
         let aspectRatio: CGFloat
@@ -897,14 +881,6 @@ actor StreamController {
     }
 
     private func enqueueFrameInOrder(_ frame: FrameData) async {
-        if Self.postResizeDecodeAdmissionDecision(
-            awaitingFirstPresentedFrameAfterResize: awaitingFirstPresentedFrameAfterResize,
-            isKeyframe: frame.isKeyframe
-        ) == .dropNonKeyframeWhileAwaitingFirstFrame {
-            frame.releaseBuffer()
-            return
-        }
-
         if let continuation = dequeueContinuation {
             dequeueContinuation = nil
             continuation.resume(returning: frame)

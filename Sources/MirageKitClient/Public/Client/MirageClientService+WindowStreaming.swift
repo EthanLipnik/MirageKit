@@ -154,12 +154,7 @@ public extension MirageClientService {
                 )
             }
 
-            if beginPostResizeTransition {
-                await existingController.primeForIncomingResize(
-                    dimensionToken: dimensionToken,
-                    streamDimensions: streamDimensions
-                )
-            } else if let dimensionToken {
+            if !beginPostResizeTransition, let dimensionToken {
                 let reassembler = await existingController.getReassembler()
                 reassembler.updateExpectedDimensionToken(dimensionToken)
             }
@@ -168,6 +163,10 @@ public extension MirageClientService {
             await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
             await existingController.resetForNewSession()
             if beginPostResizeTransition {
+                await existingController.primeForIncomingResize(
+                    dimensionToken: dimensionToken,
+                    streamDimensions: streamDimensions
+                )
                 await existingController.beginPostResizeTransition()
             }
             let tier = sessionStore.presentationTier(for: streamID)
@@ -323,12 +322,12 @@ public extension MirageClientService {
         let preferredDecoderColorDepth = resolvedDecoderColorDepth(for: streamID)
         await existingController.setDecoderLowPowerEnabled(isDecoderLowPowerModeActive)
         await existingController.setPreferredDecoderColorDepth(preferredDecoderColorDepth)
-        await existingController.primeForIncomingResize(
-            dimensionToken: dimensionToken,
-            streamDimensions: streamDimensions
-        )
         await existingController.prepareForResize(
             codec: codec,
+            streamDimensions: streamDimensions
+        )
+        await existingController.primeForIncomingResize(
+            dimensionToken: dimensionToken,
             streamDimensions: streamDimensions
         )
         await existingController.beginPostResizeTransition()
