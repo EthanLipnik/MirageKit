@@ -33,6 +33,13 @@ struct DesktopResizeLifecycleDecisionTests {
         )
         #expect(ignoredWhileSuspended.nextState == .suspended)
         #expect(ignoredWhileSuspended.shouldProcessDrawableMetrics == false)
+
+        let inactive = desktopResizeLifecycleDecision(
+            state: .active,
+            event: .willResignActive
+        )
+        #expect(inactive.nextState == .suspended)
+        #expect(inactive.shouldProcessDrawableMetrics == false)
     }
 
     @Test("Foreground holdoff requires a fresh active metrics sample before dispatch resumes")

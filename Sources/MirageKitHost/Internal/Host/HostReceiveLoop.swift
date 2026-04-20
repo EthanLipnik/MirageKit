@@ -24,6 +24,7 @@ final class HostReceiveLoop: @unchecked Sendable {
     private enum QueueEntry {
         case direct(ControlMessage)
         case coalesced(ControlMessageType)
+        case input(ControlMessage)
     }
 
     private struct State {
@@ -31,6 +32,7 @@ final class HostReceiveLoop: @unchecked Sendable {
         var entries: [QueueEntry] = []
         var coalesced: [ControlMessageType: ControlMessage] = [:]
         var controlInFlight = false
+        var clipboardInputBarrierDepth = 0
         var stopped = false
         var firstErrorTime: CFAbsoluteTime?
     }
@@ -126,6 +128,7 @@ final class HostReceiveLoop: @unchecked Sendable {
             state.entries.removeAll(keepingCapacity: false)
             state.coalesced.removeAll(keepingCapacity: false)
             state.controlInFlight = false
+            state.clipboardInputBarrierDepth = 0
         }
     }
 
@@ -195,9 +198,8 @@ final class HostReceiveLoop: @unchecked Sendable {
     }
 
     private func parseBufferedMessages() {
-        var inputMessages: [ControlMessage] = []
+        var immediateInputMessages: [ControlMessage] = []
         var pingMessages: [ControlMessage] = []
-        var controlMessages: [ControlMessage] = []
         var violationReason: String?
 
         state.withLock { state in
@@ -207,13 +209,20 @@ final class HostReceiveLoop: @unchecked Sendable {
                 case let .success(message, consumed):
                     parseOffset += consumed
                     if message.type == .inputEvent {
-                        inputMessages.append(message)
+                        if state.clipboardInputBarrierDepth > 0 {
+                            enqueueInput(message, state: &state)
+                        } else {
+                            immediateInputMessages.append(message)
+                        }
                     } else if message.type == .ping {
                         pingMessages.append(message)
                     } else if message.type == .pong {
                         continue
                     } else {
-                        controlMessages.append(message)
+                        let enqueued = enqueueControl(message, state: &state)
+                        if message.type == .sharedClipboardUpdate, enqueued {
+                            state.clipboardInputBarrierDepth += 1
+                        }
                     }
                 case .needMoreData:
                     if parseOffset > 0 {
@@ -234,40 +243,47 @@ final class HostReceiveLoop: @unchecked Sendable {
             return
         }
 
-        for message in inputMessages {
+        for message in immediateInputMessages {
             onInputMessage(message)
         }
 
         for message in pingMessages {
             onPingMessage(message)
         }
-
-        if !controlMessages.isEmpty {
-            state.withLock { state in
-                for message in controlMessages {
-                    enqueueControl(message, state: &state)
-                }
-            }
-        }
     }
 
-    private func enqueueControl(_ message: ControlMessage, state: inout State) {
+    private func enqueueControl(_ message: ControlMessage, state: inout State) -> Bool {
         let type = message.type
         if Self.coalescedTypes.contains(type) {
             if state.coalesced[type] == nil {
                 state.entries.append(.coalesced(type))
             }
             state.coalesced[type] = message
+            trimCoalescedBacklog(state: &state)
+            return true
         } else {
             if state.entries.count >= maxControlBacklog {
                 MirageLogger.host(
                     "Client \(clientName) control backlog full; dropping newest non-coalesced message \(type)"
                 )
-                return
+                return false
             }
             state.entries.append(.direct(message))
+            return true
         }
+    }
 
+    private func enqueueInput(_ message: ControlMessage, state: inout State) {
+        if state.entries.count >= maxControlBacklog {
+            MirageLogger.host(
+                "Client \(clientName) control backlog full; dropping input queued behind clipboard update"
+            )
+            return
+        }
+        state.entries.append(.input(message))
+    }
+
+    private func trimCoalescedBacklog(state: inout State) {
         while state.entries.count > maxControlBacklog {
             if let index = state.entries.firstIndex(where: {
                 if case .coalesced = $0 {
@@ -286,7 +302,12 @@ final class HostReceiveLoop: @unchecked Sendable {
     }
 
     private func scheduleNextControlIfNeeded() {
-        let nextMessage: ControlMessage? = state.withLock { state in
+        enum ScheduledEntry {
+            case control(ControlMessage)
+            case input(ControlMessage)
+        }
+
+        let nextEntry: ScheduledEntry? = state.withLock { state in
             guard !state.stopped else { return nil }
             guard !state.controlInFlight else { return nil }
             guard !state.entries.isEmpty else { return nil }
@@ -295,21 +316,39 @@ final class HostReceiveLoop: @unchecked Sendable {
             let next = state.entries.removeFirst()
             switch next {
             case let .direct(message):
-                return message
+                return .control(message)
             case let .coalesced(type):
-                return state.coalesced.removeValue(forKey: type)
+                guard let message = state.coalesced.removeValue(forKey: type) else {
+                    state.controlInFlight = false
+                    return nil
+                }
+                return .control(message)
+            case let .input(message):
+                return .input(message)
             }
         }
 
-        guard let message = nextMessage else { return }
+        guard let nextEntry else { return }
 
-        dispatchControlMessage(message) { [weak self] in
-            guard let self else { return }
-            self.state.withLock { state in
-                state.controlInFlight = false
+        switch nextEntry {
+        case let .control(message):
+            dispatchControlMessage(message) { [weak self] in
+                self?.finishScheduledEntry(controlType: message.type)
             }
-            self.scheduleNextControlIfNeeded()
+        case let .input(message):
+            onInputMessage(message)
+            finishScheduledEntry(controlType: nil)
         }
+    }
+
+    private func finishScheduledEntry(controlType: ControlMessageType?) {
+        state.withLock { state in
+            state.controlInFlight = false
+            if controlType == .sharedClipboardUpdate, state.clipboardInputBarrierDepth > 0 {
+                state.clipboardInputBarrierDepth -= 1
+            }
+        }
+        scheduleNextControlIfNeeded()
     }
 }
 #endif

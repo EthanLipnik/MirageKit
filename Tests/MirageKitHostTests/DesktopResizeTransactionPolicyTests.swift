@@ -558,5 +558,58 @@ struct DesktopResizeTransactionPolicyTests {
 
         #expect(displaysToMirror == [display1, display2, display3])
     }
+
+    @Test("Display mirroring target stability accepts matching target without residual Mirage displays")
+    func displayMirroringTargetStabilityAcceptsStableTarget() {
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let decision = displayMirroringTargetStabilityDecision(
+            targetDisplayID: targetMirageDisplay24,
+            onlineDisplayIDs: [3, targetMirageDisplay24],
+            observedTargetPixelResolution: CGSize(width: 2720, height: 2032),
+            expectedTargetPixelResolution: CGSize(width: 2720, height: 2032),
+            isMirageDisplay: { $0 == targetMirageDisplay24 }
+        )
+
+        #expect(decision == .stable)
+    }
+
+    @Test("Display mirroring target stability waits for stale Mirage displays to disappear")
+    func displayMirroringTargetStabilityWaitsForResidualMirageDisplays() {
+        let staleMirageDisplay23: CGDirectDisplayID = 23
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+
+        let decision = displayMirroringTargetStabilityDecision(
+            targetDisplayID: targetMirageDisplay24,
+            onlineDisplayIDs: [3, staleMirageDisplay23, targetMirageDisplay24],
+            observedTargetPixelResolution: CGSize(width: 2720, height: 2032),
+            expectedTargetPixelResolution: CGSize(width: 2720, height: 2032),
+            isMirageDisplay: { $0 == staleMirageDisplay23 || $0 == targetMirageDisplay24 }
+        )
+
+        #expect(decision == .waitForResidualMirageDisplays([staleMirageDisplay23]))
+    }
+
+    @Test("Display mirroring target stability waits for expected target mode")
+    func displayMirroringTargetStabilityWaitsForExpectedTargetMode() {
+        let targetMirageDisplay24: CGDirectDisplayID = 24
+        let expectedResolution = CGSize(width: 2720, height: 2032)
+        let observedResolution = CGSize(width: 1360, height: 1016)
+
+        let decision = displayMirroringTargetStabilityDecision(
+            targetDisplayID: targetMirageDisplay24,
+            onlineDisplayIDs: [3, targetMirageDisplay24],
+            observedTargetPixelResolution: observedResolution,
+            expectedTargetPixelResolution: expectedResolution,
+            isMirageDisplay: { $0 == targetMirageDisplay24 }
+        )
+
+        #expect(
+            decision == .waitForExpectedMode(
+                observed: observedResolution,
+                expected: expectedResolution
+            )
+        )
+    }
 }
 #endif

@@ -597,7 +597,10 @@ public extension MirageHostService {
             refreshRate: refreshRate,
             colorSpace: colorSpace
         )
-        await setupDisplayMirroring(targetDisplayID: snapshot.displayID)
+        await setupDisplayMirroring(
+            targetDisplayID: snapshot.displayID,
+            expectedPixelResolution: snapshot.resolution
+        )
         if let token = virtualDisplaySetupGuardToken {
             await completeVirtualDisplaySetupGuard(
                 token,

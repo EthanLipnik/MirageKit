@@ -79,6 +79,7 @@ public struct MirageStreamContentView: View {
     @State private var latestContainerDisplaySize: CGSize = .zero
     @State private var latestDrawableViewSize: CGSize = .zero
     @State private var localKeyboardOcclusionActive = false
+    @State private var suppressNextOrderedPasteKeyUp = false
 
     /// Creates a streaming content view backed by a session store and client service.
     /// - Parameters:
@@ -458,6 +459,9 @@ public struct MirageStreamContentView: View {
         }
         #endif
         #if os(iOS) || os(visionOS)
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.willResignActiveNotification)) { _ in
+            handleResizeLifecycleSuspension(event: .willResignActive)
+        }
         .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
             handleResizeLifecycleSuspension(event: .didEnterBackground)
         }
@@ -550,11 +554,19 @@ public struct MirageStreamContentView: View {
 
             // Intercept Cmd+V on iOS to sync clipboard to host before the paste keypress arrives.
             #if canImport(UIKit)
-            if keyEvent.keyCode == 0x09, keyEvent.modifiers.contains(.command) {
-                Task { await clientService.syncLocalClipboardToHost() }
+            if isSharedClipboardPasteShortcut(keyEvent) {
+                suppressNextOrderedPasteKeyUp = true
+                sendOrderedSharedClipboardPaste(keyEvent)
+                return
             }
             #endif
         } else if case let .keyUp(keyEvent) = event {
+            #if canImport(UIKit)
+            if isSharedClipboardPasteShortcut(keyEvent), suppressNextOrderedPasteKeyUp {
+                suppressNextOrderedPasteKeyUp = false
+                return
+            }
+            #endif
             if escapeRemapShortcut.matches(keyEvent) {
                 guard !desktopCursorLockEnabled else { return }
                 forwardInputEventToHost(.keyUp(remappedEscapeKeyEvent()))
@@ -564,6 +576,30 @@ public struct MirageStreamContentView: View {
 
         forwardInputEventToHost(event)
     }
+
+    #if canImport(UIKit)
+    private func isSharedClipboardPasteShortcut(_ keyEvent: MirageKeyEvent) -> Bool {
+        keyEvent.keyCode == 0x09 && keyEvent.modifiers.contains(.command)
+    }
+
+    private func sendOrderedSharedClipboardPaste(_ keyEvent: MirageKeyEvent) {
+        let keyUpEvent = MirageKeyEvent(
+            keyCode: keyEvent.keyCode,
+            characters: keyEvent.characters,
+            charactersIgnoringModifiers: keyEvent.charactersIgnoringModifiers,
+            modifiers: keyEvent.modifiers,
+            isRepeat: false
+        )
+        Task { @MainActor in
+            let synced = await clientService.syncLocalClipboardToHost()
+            if synced {
+                MirageLogger.client("Forwarding paste shortcut after shared clipboard sync")
+            }
+            forwardInputEventToHost(.keyDown(keyEvent))
+            forwardInputEventToHost(.keyUp(keyUpEvent))
+        }
+    }
+    #endif
 
     private func forwardInputEventToHost(_ event: MirageInputEvent) {
         guard canSendInputToHost else { return }
@@ -778,6 +814,13 @@ public struct MirageStreamContentView: View {
                 for: preferredDisplaySize,
                 maxDrawableSize: maxDrawableSize
             )
+            if let target,
+               !desktopResizeCoordinator.shouldAcceptForegroundResizeTarget(target) {
+                MirageLogger.client(
+                    "Deferring desktop resize for stream \(session.streamID) until foreground metrics stabilize"
+                )
+                return
+            }
             clientService.queueDesktopResize(
                 streamID: session.streamID,
                 target: target,
@@ -959,7 +1002,10 @@ public struct MirageStreamContentView: View {
         latestContainerDisplaySize = .zero
         latestDrawableViewSize = .zero
         if isResizing { isResizing = false }
-        clientService.clearDesktopResizeState(streamID: session.streamID)
+        clientService.clearDesktopResizeState(
+            streamID: session.streamID,
+            preserveLifecycleState: isDesktopStream
+        )
     }
 
     private func scheduleResizeHoldoff() {
@@ -979,6 +1025,7 @@ public struct MirageStreamContentView: View {
 
         if isDesktopStream {
             desktopResizeCoordinator.resizeHoldoffTask?.cancel()
+            desktopResizeCoordinator.beginForegroundResizeStabilization()
         } else {
             resizeHoldoffTask?.cancel()
         }

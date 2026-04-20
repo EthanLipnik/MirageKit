@@ -21,6 +21,48 @@ func desktopMirroringDisplayIDs(
     displays.filter { $0 != targetDisplayID && !isMirageDisplay($0) }
 }
 
+enum DisplayMirroringTargetStabilityDecision: Equatable {
+    case stable
+    case waitForTargetOnline
+    case waitForExpectedMode(observed: CGSize?, expected: CGSize)
+    case waitForResidualMirageDisplays([CGDirectDisplayID])
+}
+
+func displayMirroringTargetStabilityDecision(
+    targetDisplayID: CGDirectDisplayID,
+    onlineDisplayIDs: [CGDirectDisplayID],
+    observedTargetPixelResolution: CGSize?,
+    expectedTargetPixelResolution: CGSize?,
+    pixelTolerance: CGFloat = 1.0,
+    isMirageDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isMirageDisplay($0) }
+)
+-> DisplayMirroringTargetStabilityDecision {
+    guard onlineDisplayIDs.contains(targetDisplayID) else { return .waitForTargetOnline }
+
+    if let expectedTargetPixelResolution {
+        guard let observedTargetPixelResolution else {
+            return .waitForExpectedMode(observed: nil, expected: expectedTargetPixelResolution)
+        }
+        let widthDelta = abs(observedTargetPixelResolution.width - expectedTargetPixelResolution.width)
+        let heightDelta = abs(observedTargetPixelResolution.height - expectedTargetPixelResolution.height)
+        if widthDelta > pixelTolerance || heightDelta > pixelTolerance {
+            return .waitForExpectedMode(
+                observed: observedTargetPixelResolution,
+                expected: expectedTargetPixelResolution
+            )
+        }
+    }
+
+    let residualMirageDisplayIDs = onlineDisplayIDs
+        .filter { $0 != targetDisplayID && isMirageDisplay($0) }
+        .sorted()
+    guard residualMirageDisplayIDs.isEmpty else {
+        return .waitForResidualMirageDisplays(residualMirageDisplayIDs)
+    }
+
+    return .stable
+}
+
 func displaySeparationAnchorDisplayID(
     displays: [CGDirectDisplayID],
     virtualDisplayID: CGDirectDisplayID,

@@ -75,6 +75,13 @@ extension MirageClientService {
 
         guard let target else { return }
         coordinator.latestRequestedTarget = target
+        guard coordinator.resizeLifecycleState == .active else {
+            coordinator.displayResolutionTask?.cancel()
+            coordinator.displayResolutionTask = nil
+            coordinator.queuedTarget = nil
+            coordinator.clearLocalPresentationState()
+            return
+        }
 
         if let activeTransition = coordinator.activeTransition {
             if activeTransition.streamID == streamID, activeTransition.target == target {
@@ -115,6 +122,11 @@ extension MirageClientService {
         guard desktopStreamID == streamID else { return }
         guard pendingLocalDesktopStopStreamID != streamID else {
             clearDesktopResizeState(streamID: streamID)
+            return
+        }
+        guard coordinator.resizeLifecycleState == .active else {
+            coordinator.queuedTarget = nil
+            coordinator.clearLocalPresentationState()
             return
         }
         guard !sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
@@ -162,8 +174,12 @@ extension MirageClientService {
         }
     }
 
-    func clearDesktopResizeState(streamID: StreamID, clearPostResizeState: Bool = true) {
-        desktopResizeCoordinator.clearAllState()
+    func clearDesktopResizeState(
+        streamID: StreamID,
+        clearPostResizeState: Bool = true,
+        preserveLifecycleState: Bool = false
+    ) {
+        desktopResizeCoordinator.clearAllState(preserveLifecycleState: preserveLifecycleState)
         if clearPostResizeState {
             sessionStore.clearPostResizeTransition(for: streamID)
         }

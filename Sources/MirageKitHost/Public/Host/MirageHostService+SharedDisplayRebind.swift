@@ -102,7 +102,10 @@ extension MirageHostService {
                 reason: "shared_display_generation_change"
             )
             if desktopStreamMode == .unified {
-                await setupDisplayMirroring(targetDisplayID: newContext.displayID)
+                await setupDisplayMirroring(
+                    targetDisplayID: newContext.displayID,
+                    expectedPixelResolution: newContext.resolution
+                )
             } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
                 await disableDisplayMirroring(displayID: newContext.displayID)
             }

@@ -114,8 +114,14 @@ final class MirageClientSharedClipboardBridge {
         orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
     ) async {
-        guard let text = MirageSharedClipboard.validatedText(text) else { return }
-        guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else { return }
+        guard let text = MirageSharedClipboard.validatedText(text) else {
+            MirageLogger.client("Ignoring invalid shared clipboard text from host")
+            return
+        }
+        guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else {
+            MirageLogger.client("Ignoring stale shared clipboard update from host")
+            return
+        }
 
         let changeCount = await ClientClipboardSnapshotReader.shared.applyText(text)
         clipboardState.recordRemoteWrite(
@@ -123,19 +129,29 @@ final class MirageClientSharedClipboardBridge {
             changeCount: changeCount,
             orderingToken: orderingToken
         )
+        MirageLogger.client(
+            "Applied shared clipboard update from host: bytes=\(text.utf8.count), sentAtMs=\(sentAtMs)"
+        )
     }
 
     func syncCurrentClipboardToRemote() async {
+        guard let (localSend, sentAtMs) = await prepareCurrentClipboardManualSend() else { return }
+        onLocalTextChanged(localSend, sentAtMs)
+    }
+
+    func prepareCurrentClipboardManualSend()
+        async -> (localSend: MirageSharedClipboardLocalSend, sentAtMs: Int64)? {
         let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
         guard let localSend = clipboardState.prepareManualLocalSend(
             currentText: snapshot.text,
             changeCount: snapshot.changeCount
         ) else {
-            return
+            MirageLogger.client("Shared clipboard manual sync skipped: no valid local text")
+            return nil
         }
 
         let sentAtMs = MirageSharedClipboard.currentTimestampMs()
-        onLocalTextChanged(localSend, sentAtMs)
+        return (localSend, sentAtMs)
     }
 
     private func activate() async {
@@ -161,18 +177,8 @@ final class MirageClientSharedClipboardBridge {
     }
 
     private func startObservation() {
-        #if os(macOS)
-        pollTask = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                try? await Task.sleep(for: pollInterval)
-                if Task.isCancelled { return }
-                let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
-                if Task.isCancelled { return }
-                consumePolledSnapshot(snapshot)
-            }
-        }
-        #elseif canImport(UIKit)
+        startPollingObservation()
+        #if canImport(UIKit)
         pasteboardObserver = NotificationCenter.default.addObserver(
             forName: UIPasteboard.changedNotification,
             object: UIPasteboard.general,
@@ -196,6 +202,19 @@ final class MirageClientSharedClipboardBridge {
         #endif
     }
 
+    private func startPollingObservation() {
+        pollTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                try? await Task.sleep(for: pollInterval)
+                if Task.isCancelled { return }
+                let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
+                if Task.isCancelled { return }
+                consumePolledSnapshot(snapshot)
+            }
+        }
+    }
+
     private func observeOrTrackClipboard() async {
         if autoSync {
             let snapshot = await ClientClipboardSnapshotReader.shared.snapshot()
@@ -209,7 +228,11 @@ final class MirageClientSharedClipboardBridge {
 
     private func consumePolledSnapshot(_ snapshot: ClientClipboardSnapshot) {
         guard snapshot.changeCount != clipboardState.lastObservedChangeCount else { return }
-        completeClipboardObservation(text: snapshot.text, changeCount: snapshot.changeCount)
+        if autoSync {
+            completeClipboardObservation(text: snapshot.text, changeCount: snapshot.changeCount)
+        } else {
+            clipboardState.recordObservedLocalChangeCount(snapshot.changeCount)
+        }
     }
 
     @MainActor
@@ -220,6 +243,9 @@ final class MirageClientSharedClipboardBridge {
         case .ignore:
             break
         case let .send(localSend):
+            MirageLogger.client(
+                "Observed local shared clipboard change: bytes=\(localSend.text.utf8.count)"
+            )
             onLocalTextChanged(localSend, sentAtMs)
         }
     }

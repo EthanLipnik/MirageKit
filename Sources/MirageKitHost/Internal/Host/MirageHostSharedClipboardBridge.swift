@@ -78,14 +78,23 @@ final class MirageHostSharedClipboardBridge {
         orderingToken: MirageSharedClipboardOrderingToken,
         sentAtMs: Int64
     ) async {
-        guard let text = MirageSharedClipboard.validatedText(text) else { return }
-        guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else { return }
+        guard let text = MirageSharedClipboard.validatedText(text) else {
+            MirageLogger.host("Ignoring invalid shared clipboard text from client")
+            return
+        }
+        guard clipboardState.shouldApplyRemoteText(orderingToken: orderingToken) else {
+            MirageLogger.host("Ignoring stale shared clipboard update from client")
+            return
+        }
 
         let changeCount = await HostClipboardSnapshotReader.shared.applyText(text)
         clipboardState.recordRemoteWrite(
             text: text,
             changeCount: changeCount,
             orderingToken: orderingToken
+        )
+        MirageLogger.host(
+            "Applied shared clipboard update from client: bytes=\(text.utf8.count), sentAtMs=\(sentAtMs)"
         )
     }
 
@@ -122,6 +131,9 @@ final class MirageHostSharedClipboardBridge {
         case .ignore:
             break
         case let .send(localSend):
+            MirageLogger.host(
+                "Observed host shared clipboard change: bytes=\(localSend.text.utf8.count)"
+            )
             onLocalTextChanged(localSend, sentAtMs)
         }
     }

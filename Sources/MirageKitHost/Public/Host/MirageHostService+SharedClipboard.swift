@@ -174,6 +174,9 @@ extension MirageHostService {
         }
 
         sharedClipboardStatusByClientID[clientID] = enabled
+        MirageLogger.host(
+            "Shared clipboard status sent to \(clientContext.client.name): enabled=\(enabled)"
+        )
     }
 
     private func broadcastSharedClipboardUpdate(
@@ -202,6 +205,9 @@ extension MirageHostService {
 
         let chunks = MirageSharedClipboard.chunkText(clipboardText)
         let chunkCount = chunks.count
+        MirageLogger.host(
+            "Broadcasting shared clipboard update: bytes=\(clipboardText.utf8.count), chunks=\(chunkCount), targets=\(targets.count)"
+        )
 
         Task.detached(priority: .utility) {
             for (secCtx, channel) in targets {
@@ -220,7 +226,7 @@ extension MirageHostService {
                             chunkCount: chunkCount
                         )
                         let message = try ControlMessage(type: .sharedClipboardUpdate, content: update)
-                        channel.sendBestEffort(message)
+                        try await channel.send(message)
                     } catch {
                         MirageLogger.error(.host, error: error, message: "Failed to encrypt shared clipboard update: ")
                     }

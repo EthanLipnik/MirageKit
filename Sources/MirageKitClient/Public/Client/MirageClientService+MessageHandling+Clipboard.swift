@@ -19,6 +19,7 @@ extension MirageClientService {
         do {
             let status = try message.decode(SharedClipboardStatusMessage.self)
             sharedClipboardEnabled = status.enabled
+            MirageLogger.client("Shared clipboard host status received: enabled=\(status.enabled)")
             Task { await refreshSharedClipboardBridgeState() }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode shared clipboard status: ")
@@ -37,6 +38,7 @@ extension MirageClientService {
             hasAppStreams: !activeStreams.isEmpty,
             hasDesktopStream: desktopStreamID != nil
         ) else {
+            MirageLogger.client("Ignoring shared clipboard update while bridge is disabled")
             return
         }
         guard let mediaSecurityContext else {

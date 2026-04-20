@@ -14,6 +14,7 @@ enum DesktopResizeLifecycleState: Equatable {
 }
 
 enum DesktopResizeLifecycleEvent: Equatable {
+    case willResignActive
     case didEnterBackground
     case foregroundHoldoffElapsed
     case drawableMetricsChanged
@@ -29,7 +30,8 @@ func desktopResizeLifecycleDecision(
     event: DesktopResizeLifecycleEvent
 ) -> DesktopResizeLifecycleDecision {
     switch (state, event) {
-    case (_, .didEnterBackground):
+    case (_, .willResignActive),
+         (_, .didEnterBackground):
         return DesktopResizeLifecycleDecision(
             nextState: .suspended,
             shouldProcessDrawableMetrics: false

@@ -91,6 +91,55 @@ struct HostReceiveLoopTests {
         }
     }
 
+    @Test("Clipboard updates are an ordering barrier for following input")
+    func clipboardUpdatesOrderBeforeFollowingInput() async throws {
+        let streamID: StreamID = 9
+        let clipboardUpdate = ControlMessage(type: .sharedClipboardUpdate)
+        let input = try ControlMessage(
+            type: .inputEvent,
+            content: InputEventMessage(streamID: streamID, event: .keyDown(MirageKeyEvent(keyCode: 0x09)))
+        )
+
+        var initialData = Data()
+        initialData.append(clipboardUpdate.serialize())
+        initialData.append(input.serialize())
+
+        let inputCount = Locked(0)
+        let dispatchedTypes = Locked<[ControlMessageType]>([])
+        let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "clipboard-order-test",
+            receiveChunk: { _ in },
+            onInputMessage: { _ in
+                inputCount.withLock { $0 += 1 }
+            },
+            onPingMessage: { _ in },
+            dispatchControlMessage: { message, completion in
+                dispatchedTypes.withLock { $0.append(message.type) }
+                controlCompletion.withLock { $0 = completion }
+            },
+            onTerminal: { _ in },
+            isFatalError: { _ in false }
+        )
+
+        loop.start(initialBuffer: initialData)
+
+        try await Task.sleep(for: .milliseconds(60))
+        #expect(dispatchedTypes.read { $0 } == [.sharedClipboardUpdate])
+        #expect(inputCount.read { $0 } == 0)
+
+        controlCompletion.read { $0 }?()
+
+        let inputDeadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while inputCount.read({ $0 }) == 0, CFAbsoluteTimeGetCurrent() < inputDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(inputCount.read { $0 } == 1)
+        loop.stop()
+    }
+
     @Test("Coalesced messages keep last payload and direct messages keep order")
     func coalescedMessagesKeepLastPayloadAndDirectMessagesKeepOrder() async throws {
         let streamID: StreamID = 11

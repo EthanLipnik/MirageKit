@@ -339,6 +339,7 @@ func requestedAspectRatioForWindowFit(
 
 private enum DesktopResizeTransactionAbort: Error {
     case streamNoLongerActive
+    case supersededByNewerRequest
 }
 
 extension MirageHostService {
@@ -1100,7 +1101,8 @@ extension MirageHostService {
                    desktopStreamMode == .unified {
                     let mirroringRestored = await restoreDisplayMirroringAfterResize(
                         streamID: streamID,
-                        targetDisplayID: activeDisplayID
+                        targetDisplayID: activeDisplayID,
+                        expectedPixelResolution: effectivePixelResolution
                     )
                     if !mirroringRestored {
                         MirageLogger.host(
@@ -1167,6 +1169,12 @@ extension MirageHostService {
                 resizeCompletionContext = latestDesktopContext
                 resizeOutcome = .resized
             }
+        } catch DesktopResizeTransactionAbort.supersededByNewerRequest {
+            MirageLogger.host(
+                "Desktop resize transaction superseded by a newer request " +
+                    "(transition=\(request.transitionID?.uuidString ?? "nil"))"
+            )
+            return
         } catch DesktopResizeTransactionAbort.streamNoLongerActive {
             MirageLogger.host(
                 "Desktop resize transaction aborted because stream is no longer active " +
@@ -1223,12 +1231,16 @@ extension MirageHostService {
         }
 
         if shouldRestoreMirroring {
-            let restoreDisplayID = await SharedVirtualDisplayManager.shared.getDisplayID() ?? suspendedMirroringDisplayID
+            let restoreSnapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot()
+            let restoreDisplayID = restoreSnapshot?.displayID ?? suspendedMirroringDisplayID
             if let restoreDisplayID {
                 if shouldStopDesktopStreamWithError {
                     await disableDisplayMirroring(displayID: restoreDisplayID)
                 } else if streamID == desktopStreamID, desktopStreamMode == .unified {
-                    await setupDisplayMirroring(targetDisplayID: restoreDisplayID)
+                    await setupDisplayMirroring(
+                        targetDisplayID: restoreDisplayID,
+                        expectedPixelResolution: restoreSnapshot?.resolution
+                    )
                 } else if !mirroredDesktopDisplayIDs.isEmpty || !desktopMirroringSnapshot.isEmpty {
                     await disableDisplayMirroring(displayID: restoreDisplayID)
                 }
@@ -1370,6 +1382,10 @@ extension MirageHostService {
             activeDesktopStreamID: desktopStreamID,
             hasDesktopContext: desktopStreamContext != nil
         )
+        if let queuedDesktopResizeRequest,
+           queuedDesktopResizeRequest != request {
+            throw DesktopResizeTransactionAbort.supersededByNewerRequest
+        }
         guard continuationDecision == .continueTransaction,
               activeDesktopResizeRequest == request else {
             throw DesktopResizeTransactionAbort.streamNoLongerActive
