@@ -417,9 +417,12 @@ public struct MirageStreamContentView: View {
             guard isActive else { return }
             cancelPendingWindowDrivenResizeForLocalPresentation()
         }
+        .onChange(of: isCurrentStreamActive) { _, isActive in
+            guard isActive else { return }
+            focusCurrentStreamForInputIfNeeded()
+        }
         .onAppear {
-            sessionStore.setFocusedSession(session.id)
-            clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
+            focusCurrentStreamForInputIfNeeded(force: true)
         }
         .onDisappear {
             resizeHoldoffTask?.cancel()
@@ -493,6 +496,12 @@ public struct MirageStreamContentView: View {
 
     private var clientReservedShortcuts: [MirageClientShortcut] {
         [desktopExitShortcut, escapeRemapShortcut, dictationShortcut]
+    }
+
+    private func focusCurrentStreamForInputIfNeeded(force: Bool = false) {
+        guard force || sessionStore.focusedSessionID != session.id else { return }
+        sessionStore.setFocusedSession(session.id)
+        clientService.sendInputFireAndForget(.windowFocus, forStream: session.streamID)
     }
 
     private var isReadyForInitialPresentation: Bool {

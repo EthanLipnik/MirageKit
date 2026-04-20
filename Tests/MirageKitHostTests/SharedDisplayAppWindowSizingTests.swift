@@ -76,14 +76,16 @@ struct SharedDisplayAppWindowSizingTests {
         #expect(decision == .apply)
     }
 
-    @Test("App resize preserves existing preset aspect ratio")
-    func appResizePreservesExistingPresetAspectRatio() {
+    @Test("App resize uses requested aspect ratio over startup preset")
+    func appResizeUsesRequestedAspectRatioOverStartupPreset() {
         let resolved = resolvedAppStreamResizeAspectRatio(
             existingAspectRatio: MirageDisplaySizePreset.standard.contentAspectRatio,
             requestedLogicalResolution: CGSize(width: 1600, height: 900)
         )
 
-        #expect(resolved == MirageDisplaySizePreset.standard.contentAspectRatio)
+        let resolvedAspectRatio = resolved
+        #expect(resolvedAspectRatio != nil)
+        #expect(abs((resolvedAspectRatio ?? 0) - (1600.0 / 900.0)) < 0.0001)
     }
 
     @Test("App resize falls back to requested aspect ratio when no preset exists")
@@ -96,6 +98,31 @@ struct SharedDisplayAppWindowSizingTests {
         let resolvedAspectRatio = resolved
         #expect(resolvedAspectRatio != nil)
         #expect(abs((resolvedAspectRatio ?? 0) - (1600.0 / 900.0)) < 0.0001)
+    }
+
+    @Test("Combined resize no-op applies when encoded resolution mismatches")
+    func combinedResizeNoOpAppliesWhenEncodedResolutionMismatches() {
+        let placementDecision = windowResizePlacementNoOpDecision(
+            currentBounds: CGRect(x: 69, y: 30, width: 1237, height: 928),
+            displayVisibleBounds: CGRect(x: 0, y: 30, width: 1376, height: 928),
+            requestedAspectRatio: MirageDisplaySizePreset.standard.contentAspectRatio
+        )
+        let resolutionDecision = windowResizeNoOpDecision(
+            currentVisibleResolution: CGSize(width: 2560, height: 1440),
+            currentDisplayResolution: CGSize(width: 2560, height: 1440),
+            currentEncodedResolution: CGSize(width: 1920, height: 1080),
+            requestedVisibleResolution: CGSize(width: 2560, height: 1440),
+            requestedEncodedResolution: CGSize(width: 2560, height: 1440)
+        )
+
+        #expect(placementDecision == .noOp)
+        #expect(resolutionDecision == .apply)
+        #expect(
+            windowResizeCombinedNoOpDecision(
+                placementDecision: placementDecision,
+                resolutionDecision: resolutionDecision
+            ) == .apply
+        )
     }
 }
 #endif

@@ -75,6 +75,38 @@ struct InputCapturingResponderRecoveryTests {
         #expect(decision == .recover)
     }
 
+    @Test("View appearance triggers recovery during foreground transitions")
+    func viewAppearanceAllowsRecoveryDuringTransition() {
+        let decision = InputCapturingResponderRecoveryPolicy.decision(
+            for: makeContext(sceneActivationState: .foregroundInactive),
+            trigger: .viewDidAppear
+        )
+
+        #expect(decision == .recover)
+    }
+
+    @Test("Rebinding triggers recover only once the scene is active")
+    func rebindingTriggersRequireActiveScene() {
+        for trigger in [
+            InputCapturingResponderRecoveryTrigger.callbacksConfigured,
+            .streamIdentityUpdated,
+            .hardwareKeyboardPresenceChanged,
+        ] {
+            #expect(
+                InputCapturingResponderRecoveryPolicy.decision(
+                    for: makeContext(sceneActivationState: .foregroundActive),
+                    trigger: trigger
+                ) == .recover
+            )
+            #expect(
+                InputCapturingResponderRecoveryPolicy.decision(
+                    for: makeContext(sceneActivationState: .foregroundInactive),
+                    trigger: trigger
+                ) == .skip(.sceneNotForegroundActive)
+            )
+        }
+    }
+
     @Test("Target selection prefers hardware capture when a hardware keyboard is present")
     func targetSelectionPrefersCaptureViewForHardwareKeyboard() {
         let target = InputCapturingResponderRecoveryPolicy.target(
@@ -93,6 +125,23 @@ struct InputCapturingResponderRecoveryTests {
         )
 
         #expect(target == .softwareKeyboardField)
+    }
+
+    @Test("Hardware keyboard presence change clears software state and requests capture recovery")
+    func hardwareKeyboardPresenceChangeClearsSoftwareStateAndRequestsCaptureRecovery() {
+        let view = InputCapturingView(frame: .zero)
+        var requestedTriggers: [InputCapturingResponderRecoveryTrigger] = []
+        var hardwarePresenceEvents: [Bool] = []
+        view.softwareKeyboardVisible = true
+        view.onResponderRecoveryRequestedForTesting = { requestedTriggers.append($0) }
+        view.onHardwareKeyboardPresenceChanged = { hardwarePresenceEvents.append($0) }
+
+        view.updateHardwareKeyboardPresence(true)
+
+        #expect(view.hardwareKeyboardPresent)
+        #expect(view.responderRecoveryTarget() == .captureView)
+        #expect(requestedTriggers == [.hardwareKeyboardPresenceChanged])
+        #expect(hardwarePresenceEvents == [true])
     }
 
     @Test("Controller retries once when the first recovery attempt lands before the window is key")

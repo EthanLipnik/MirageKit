@@ -19,6 +19,10 @@ enum InputCapturingResponderRecoveryTrigger: String {
     case sceneDidActivate = "scene_did_activate"
     case sceneWillEnterForeground = "scene_will_enter_foreground"
     case windowDidBecomeKey = "window_did_become_key"
+    case viewDidAppear = "view_did_appear"
+    case callbacksConfigured = "callbacks_configured"
+    case streamIdentityUpdated = "stream_identity_updated"
+    case hardwareKeyboardPresenceChanged = "hardware_keyboard_presence_changed"
     case interaction = "interaction"
 }
 
@@ -97,10 +101,14 @@ enum InputCapturingResponderRecoveryPolicy {
         switch trigger {
         case .applicationDidBecomeActive,
              .sceneDidActivate,
+             .viewDidAppear,
              .windowDidBecomeKey:
             return true
         case .didMoveToWindow,
              .sceneWillEnterForeground,
+             .callbacksConfigured,
+             .streamIdentityUpdated,
+             .hardwareKeyboardPresenceChanged,
              .interaction:
             return false
         }

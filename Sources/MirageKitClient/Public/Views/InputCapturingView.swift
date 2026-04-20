@@ -291,6 +291,7 @@ public class InputCapturingView: UIView {
     // nonisolated(unsafe) allows access from deinit for cleanup
     private nonisolated(unsafe) var registeredCursorStreamID: StreamID?
     private(set) var hardwareKeyboardPresent: Bool = false
+    var onResponderRecoveryRequestedForTesting: ((InputCapturingResponderRecoveryTrigger) -> Void)?
     private var didResignActiveSinceLastActivation = false
     private var didEnterBackgroundSinceLastActive = false
     private var pendingApplicationActivationDecision: InputCapturingActivationRecoveryDecision?
@@ -643,6 +644,7 @@ public class InputCapturingView: UIView {
         hardwareKeyboardPresent = isPresent
         onHardwareKeyboardPresenceChanged?(isPresent)
         if isPresent { clearSoftwareKeyboardState() }
+        requestResponderRecovery(.hardwareKeyboardPresenceChanged)
     }
 
     func nextPrimaryClickCount(at location: CGPoint, timestamp: TimeInterval) -> Int {
@@ -1114,6 +1116,7 @@ public class InputCapturingView: UIView {
     func requestResponderRecovery(
         _ trigger: InputCapturingResponderRecoveryTrigger
     ) {
+        onResponderRecoveryRequestedForTesting?(trigger)
         responderRecoveryController.requestRecovery(trigger)
     }
 

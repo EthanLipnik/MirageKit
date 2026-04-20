@@ -52,5 +52,17 @@ struct InputCapturingViewShortcutModifierResolutionTests {
 
         #expect(decision == .forwardKey)
     }
+
+    @Test("Unmodified GC keyboard character keys stay on UIKit responder path")
+    func unmodifiedGCKeyboardCharacterKeysStayOnUIKitResponderPath() {
+        let decision = InputCapturingView.gcKeyboardKeyRoutingDecision(
+            hasHeldModifiers: false,
+            hasAction: false,
+            hasClientShortcut: false,
+            hasPassthroughShortcut: false
+        )
+
+        #expect(decision == .ignore)
+    }
 }
 #endif

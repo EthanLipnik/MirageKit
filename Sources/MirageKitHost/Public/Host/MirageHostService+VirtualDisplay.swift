@@ -206,6 +206,13 @@ func windowResizePlacementNoOpDecision(
     return .apply
 }
 
+func windowResizeCombinedNoOpDecision(
+    placementDecision: WindowResizeNoOpDecision,
+    resolutionDecision: WindowResizeNoOpDecision
+) -> WindowResizeNoOpDecision {
+    placementDecision == .noOp && resolutionDecision == .noOp ? .noOp : .apply
+}
+
 func aspectFittedWindowBounds(
     _ bounds: CGRect,
     targetAspectRatio: CGFloat?
@@ -259,20 +266,21 @@ func resolvedAppStreamResizeAspectRatio(
     existingAspectRatio: CGFloat?,
     requestedLogicalResolution: CGSize
 ) -> CGFloat? {
+    if requestedLogicalResolution.width > 0,
+       requestedLogicalResolution.height > 0 {
+        let requestedAspectRatio = requestedLogicalResolution.width / requestedLogicalResolution.height
+        if requestedAspectRatio.isFinite, requestedAspectRatio > 0 {
+            return requestedAspectRatio
+        }
+    }
+
     if let existingAspectRatio,
        existingAspectRatio.isFinite,
        existingAspectRatio > 0 {
         return existingAspectRatio
     }
 
-    guard requestedLogicalResolution.width > 0,
-          requestedLogicalResolution.height > 0 else {
-        return nil
-    }
-
-    let requestedAspectRatio = requestedLogicalResolution.width / requestedLogicalResolution.height
-    guard requestedAspectRatio.isFinite, requestedAspectRatio > 0 else { return nil }
-    return requestedAspectRatio
+    return nil
 }
 
 func requestedAspectRatioForWindowFit(
@@ -1554,20 +1562,38 @@ extension MirageHostService {
         let currentState = getVirtualDisplayState(streamID: streamID)
         let currentVisibleResolution = currentState?.visiblePixelResolution
         let currentDisplayResolution = currentState?.pixelResolution
+        let currentEncodedDimensions = await context.getEncodedDimensions()
+        let currentEncodedResolution = CGSize(
+            width: CGFloat(currentEncodedDimensions.width),
+            height: CGFloat(currentEncodedDimensions.height)
+        )
+        let currentEncoderMaxDimensions = await context.getEncoderMaxDimensions()
+        let requestedEncodedResolution = MirageStreamGeometry.resolveEncodedPlan(
+            basePixelSize: pixelResolution,
+            requestedStreamScale: await context.getRequestedStreamScale(),
+            encoderMaxWidth: currentEncoderMaxDimensions.width ?? Int(StreamContext.maxEncodedWidth),
+            encoderMaxHeight: currentEncoderMaxDimensions.height ?? Int(StreamContext.maxEncodedHeight),
+            disableResolutionCap: await context.isResolutionCapDisabled()
+        ).encodedPixelSize
         let requestedAspectRatio = resolvedAppStreamResizeAspectRatio(
             existingAspectRatio: currentState?.targetContentAspectRatio,
             requestedLogicalResolution: logicalResolution
         )
-        if windowResizePlacementNoOpDecision(
+        let placementNoOpDecision = windowResizePlacementNoOpDecision(
             currentBounds: currentState?.bounds,
             displayVisibleBounds: currentState?.displayVisibleBounds,
             requestedAspectRatio: requestedAspectRatio
-        ) == .noOp || windowResizeNoOpDecision(
+        )
+        let resolutionNoOpDecision = windowResizeNoOpDecision(
             currentVisibleResolution: currentVisibleResolution,
             currentDisplayResolution: currentDisplayResolution,
-            currentEncodedResolution: nil,
+            currentEncodedResolution: currentEncodedResolution,
             requestedVisibleResolution: pixelResolution,
-            requestedEncodedResolution: nil
+            requestedEncodedResolution: requestedEncodedResolution
+        )
+        if windowResizeCombinedNoOpDecision(
+            placementDecision: placementNoOpDecision,
+            resolutionDecision: resolutionNoOpDecision
         ) == .noOp {
             await sendWindowResizeCompletion(
                 streamID: streamID,

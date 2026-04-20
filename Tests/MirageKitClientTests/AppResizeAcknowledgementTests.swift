@@ -84,4 +84,27 @@ struct AppResizeAcknowledgementTests {
 
         #expect(decision == .recheckMinimumSize)
     }
+
+    @MainActor
+    @Test("App resize stream-start handling rechecks minimum size after encoded dimensions change")
+    func rechecksMinimumSizeAfterEncodedDimensionsChange() {
+        let baseline = MirageClientService.StreamStartAcknowledgement(
+            width: 2416,
+            height: 1664,
+            dimensionToken: 7
+        )
+        let acknowledgement = MirageClientService.StreamStartAcknowledgement(
+            width: 2720,
+            height: 1530,
+            dimensionToken: 8
+        )
+
+        let decision = appStreamStartAcknowledgementHandlingDecision(
+            awaitingResizeAcknowledgement: true,
+            latest: acknowledgement,
+            baseline: baseline
+        )
+
+        #expect(decision == .recheckMinimumSize)
+    }
 }

@@ -477,38 +477,133 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 1,
-                newWindowRequestAttempts: 0
+                newWindowRequestAttempts: 0,
+                launchOutcome: .launched
             ) == false
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 2,
-                newWindowRequestAttempts: 0
+                newWindowRequestAttempts: 0,
+                launchOutcome: .launched
             ) == true
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 4,
-                newWindowRequestAttempts: 1
+                newWindowRequestAttempts: 1,
+                launchOutcome: .launched
             ) == false
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 5,
-                newWindowRequestAttempts: 1
+                newWindowRequestAttempts: 1,
+                launchOutcome: .launched
             ) == true
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 11,
-                newWindowRequestAttempts: 3
+                newWindowRequestAttempts: 3,
+                launchOutcome: .launched
             ) == true
         )
         #expect(
             MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
                 discoveryAttempt: 14,
-                newWindowRequestAttempts: 4
+                newWindowRequestAttempts: 4,
+                launchOutcome: .launched
             ) == false
+        )
+    }
+
+    @Test("Initial startup requests immediately for already-running apps without eligible windows")
+    func initialStartupRequestsImmediatelyForAlreadyRunningAppsWithoutEligibleWindows() {
+        #expect(
+            MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 1,
+                newWindowRequestAttempts: 0,
+                launchOutcome: .alreadyRunning,
+                hasLifecycleStartupCandidate: false
+            )
+        )
+        #expect(
+            !MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 1,
+                newWindowRequestAttempts: 0,
+                launchOutcome: .alreadyRunning,
+                hasLifecycleStartupCandidate: true
+            )
+        )
+        #expect(
+            !MirageHostService.shouldRequestNewAppWindowOnInitialDiscovery(
+                discoveryAttempt: 1,
+                newWindowRequestAttempts: 1,
+                launchOutcome: .alreadyRunning,
+                hasLifecycleStartupCandidate: false
+            )
+        )
+    }
+
+    @Test("Lifecycle startup eligibility rejects parented and claimed candidates")
+    func lifecycleStartupEligibilityRejectsParentedAndClaimedCandidates() {
+        let parentedAuxiliary = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(id: 9131, title: "Sheet", origin: CGPoint(x: 20, y: 20)),
+            classification: .auxiliary,
+            role: "AXSheet",
+            subrole: "AXDialog",
+            parentWindowID: 9129,
+            isFocused: true,
+            isMain: true
+        )
+        let claimedPrimary = makeCandidate(
+            windowID: 9132,
+            title: "Claimed",
+            origin: CGPoint(x: 40, y: 40)
+        )
+        let detachedAuxiliary = AppStreamWindowCandidate(
+            bundleIdentifier: "com.example.app",
+            window: makeWindow(id: 9133, title: "Detached Inspector", origin: CGPoint(x: 60, y: 60)),
+            classification: .auxiliary,
+            role: "AXWindow",
+            subrole: "AXFloatingWindow",
+            parentWindowID: nil,
+            isFocused: true,
+            isMain: false
+        )
+
+        let eligible = MirageHostService.lifecycleStartupEligibleCandidates(
+            from: [parentedAuxiliary, claimedPrimary, detachedAuxiliary],
+            visibleWindowIDs: [],
+            claimedWindowIDs: [claimedPrimary.window.id]
+        )
+
+        #expect(eligible.map(\.window.id) == [detachedAuxiliary.window.id])
+    }
+
+    @Test("Running app reopen plan prefers native reopen before workspace fallback")
+    func runningAppReopenPlanPrefersNativeReopenBeforeWorkspaceFallback() {
+        #expect(
+            AppStreamManager.reopenActions(hasRunningApplication: true, hasApplicationURL: true) == [
+                .activateRunningApplication,
+                .sendReopenAppleEvent,
+                .openApplication,
+                .openURLFallback,
+            ]
+        )
+        #expect(
+            AppStreamManager.reopenActions(hasRunningApplication: true, hasApplicationURL: false) == [
+                .activateRunningApplication,
+                .sendReopenAppleEvent,
+            ]
+        )
+        #expect(
+            AppStreamManager.reopenActions(hasRunningApplication: false, hasApplicationURL: true) == [
+                .openApplication,
+                .openURLFallback,
+            ]
         )
     }
 

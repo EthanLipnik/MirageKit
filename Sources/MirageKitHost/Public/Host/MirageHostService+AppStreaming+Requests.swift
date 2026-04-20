@@ -167,8 +167,16 @@ extension MirageHostService {
 
     nonisolated static func shouldRequestNewAppWindowOnInitialDiscovery(
         discoveryAttempt: Int,
-        newWindowRequestAttempts: Int
+        newWindowRequestAttempts: Int,
+        launchOutcome: AppStreamLaunchOutcome = .launched,
+        hasLifecycleStartupCandidate: Bool = false
     ) -> Bool {
+        guard !hasLifecycleStartupCandidate else { return false }
+        if launchOutcome == .alreadyRunning,
+           discoveryAttempt == 1,
+           newWindowRequestAttempts == 0 {
+            return true
+        }
         let requestSchedule = [2, 5, 8, 11]
         guard newWindowRequestAttempts < requestSchedule.count else { return false }
         return discoveryAttempt >= requestSchedule[newWindowRequestAttempts]
@@ -227,6 +235,22 @@ extension MirageHostService {
             claimedWindowIDs: unavailableWindowIDs
         )
         return bindingPlan.resolvedBindings.first
+    }
+
+    nonisolated static func lifecycleStartupEligibleCandidates(
+        from candidates: [AppStreamWindowCandidate],
+        visibleWindowIDs: Set<WindowID>,
+        claimedWindowIDs: Set<WindowID>,
+        excludedWindowIDs: Set<WindowID> = []
+    ) -> [AppStreamWindowCandidate] {
+        orderedLifecycleStartupCandidates(
+            from: candidates,
+            visibleWindowIDs: visibleWindowIDs,
+            claimedWindowIDs: claimedWindowIDs,
+            preferredWindowID: nil,
+            deprioritizedWindowIDs: [],
+            excludedWindowIDs: excludedWindowIDs
+        )
     }
 
     nonisolated private static func orderedLifecycleStartupCandidates(
@@ -553,8 +577,8 @@ extension MirageHostService {
             }
 
             // Launch the app if not running
-            let launched = await appStreamManager.launchAppIfNeeded(app.bundleIdentifier, path: app.path)
-            guard launched else {
+            let launchOutcome = await appStreamManager.launchAppIfNeeded(app.bundleIdentifier, path: app.path)
+            guard launchOutcome != .failed else {
                 MirageLogger.host("Failed to launch app \(app.name)")
                 await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
                 sendAppSelectionError(
@@ -574,7 +598,8 @@ extension MirageHostService {
                 selectRequest: request,
                 targetFrameRate: targetFrameRate,
                 requestedDisplayResolution: requestedDisplayResolution,
-                mediaMaxPacketSize: acceptedMediaMaxPacketSize
+                mediaMaxPacketSize: acceptedMediaMaxPacketSize,
+                launchOutcome: launchOutcome
             )
             if streamSetupCancelled {
                 MirageLogger.host("App stream setup cancelled by client; ending session for \(app.name)")
@@ -936,6 +961,59 @@ extension MirageHostService {
             return .failure("Failed to enumerate windows for \(app.name): \(error.localizedDescription)")
         }
 
+        let selectedCandidate = await selectExistingSessionExpansionCandidate(
+            app: app,
+            session: session,
+            catalog: catalog
+        )
+        guard let selectedCandidate else {
+            await appStreamManager.requestNewWindow(bundleIdentifier: app.bundleIdentifier, path: app.path)
+            MirageLogger.host(
+                "Existing app-stream expansion requested a new window for \(app.bundleIdentifier) because no unclaimed eligible windows were available"
+            )
+            try? await Task.sleep(for: Self.initialAppWindowDiscoveryRetryDelay(afterAttempt: 1))
+            let refreshedCatalog: [AppStreamWindowCandidate]
+            do {
+                refreshedCatalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])[normalizedBundleID] ?? []
+            } catch {
+                return .failure("Failed to enumerate windows for \(app.name): \(error.localizedDescription)")
+            }
+            guard let refreshedCandidate = await selectExistingSessionExpansionCandidate(
+                app: app,
+                session: session,
+                catalog: refreshedCatalog
+            ) else {
+                return .failure("No additional \(app.name) windows are available to stream.")
+            }
+            return await startAdditionalStreamForExistingAppSessionCandidate(
+                app: app,
+                session: session,
+                clientContext: clientContext,
+                selectRequest: selectRequest,
+                targetFrameRate: targetFrameRate,
+                requestedDisplayResolution: requestedDisplayResolution,
+                mediaMaxPacketSize: mediaMaxPacketSize,
+                selectedCandidate: refreshedCandidate
+            )
+        }
+
+        return await startAdditionalStreamForExistingAppSessionCandidate(
+            app: app,
+            session: session,
+            clientContext: clientContext,
+            selectRequest: selectRequest,
+            targetFrameRate: targetFrameRate,
+            requestedDisplayResolution: requestedDisplayResolution,
+            mediaMaxPacketSize: mediaMaxPacketSize,
+            selectedCandidate: selectedCandidate
+        )
+    }
+
+    private func selectExistingSessionExpansionCandidate(
+        app: MirageInstalledApp,
+        session: MirageAppStreamSession,
+        catalog: [AppStreamWindowCandidate]
+    ) async -> AppStreamWindowCandidate? {
         let visibleWindowIDs = Set(session.windowStreams.keys)
         let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
             activeStreamIDs: Set(activeSessionByStreamID.keys)
@@ -947,10 +1025,23 @@ extension MirageHostService {
                 "Best-effort app stream candidate fallback engaged for \(app.bundleIdentifier); no strict primary windows were available"
             )
         }
-        guard let selectedCandidate = candidateSelection.candidates.first(where: { !claimedWindowIDs.contains($0.window.id) }) else {
-            return .failure("No additional \(app.name) windows are available to stream.")
-        }
+        return Self.lifecycleStartupEligibleCandidates(
+            from: candidateSelection.candidates,
+            visibleWindowIDs: visibleWindowIDs,
+            claimedWindowIDs: claimedWindowIDs
+        ).first
+    }
 
+    private func startAdditionalStreamForExistingAppSessionCandidate(
+        app: MirageInstalledApp,
+        session: MirageAppStreamSession,
+        clientContext: ClientContext,
+        selectRequest: SelectAppMessage,
+        targetFrameRate: Int,
+        requestedDisplayResolution: CGSize,
+        mediaMaxPacketSize: Int,
+        selectedCandidate: AppStreamWindowCandidate
+    ) async -> ExistingSessionWindowStartResult {
         let selectedWindow = selectedCandidate.window
         let existingStreamID = session.windowStreams.values.map(\.streamID).max()
         let existingContext = existingStreamID.flatMap { streamsByID[$0] }
@@ -1147,7 +1238,8 @@ extension MirageHostService {
         selectRequest: SelectAppMessage,
         targetFrameRate: Int,
         requestedDisplayResolution: CGSize,
-        mediaMaxPacketSize: Int
+        mediaMaxPacketSize: Int,
+        launchOutcome: AppStreamLaunchOutcome
     ) async -> InitialAppWindowStartupResult {
         let maxDiscoveryAttempts = 14
         let maxConcurrentWindowStarts = 2
@@ -1180,12 +1272,27 @@ extension MirageHostService {
                     )
                 }
                 let selection = AppStreamWindowCatalog.startupCandidateSelection(from: allCandidates)
-                startupCandidates = selection.candidates
                 usedBestEffortStartupFallback = selection.usedFallback
+                guard let session = await appStreamManager.getSession(bundleIdentifier: app.bundleIdentifier) else {
+                    failureNotes.append("discovery \(discoveryAttempt): app session ended before window discovery completed")
+                    break
+                }
+                let activeOwnerClaimedWindowIDs = await WindowSpaceManager.shared.claimedWindowIDsForActiveOwners(
+                    activeStreamIDs: Set(activeSessionByStreamID.keys)
+                )
+                let claimedWindowIDs = Set(activeStreamIDByWindowID.keys).union(activeOwnerClaimedWindowIDs)
+                let lifecycleEligibleCandidates = Self.lifecycleStartupEligibleCandidates(
+                    from: selection.candidates,
+                    visibleWindowIDs: Set(session.windowStreams.keys),
+                    claimedWindowIDs: claimedWindowIDs
+                )
+                startupCandidates = lifecycleEligibleCandidates
                 if !startupCandidates.isEmpty { break }
                 if Self.shouldRequestNewAppWindowOnInitialDiscovery(
                     discoveryAttempt: discoveryAttempt,
-                    newWindowRequestAttempts: newWindowRequestAttempts
+                    newWindowRequestAttempts: newWindowRequestAttempts,
+                    launchOutcome: launchOutcome,
+                    hasLifecycleStartupCandidate: false
                 ) {
                     newWindowRequestAttempts += 1
                     await appStreamManager.requestNewWindow(

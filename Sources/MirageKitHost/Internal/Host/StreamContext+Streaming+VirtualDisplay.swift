@@ -674,11 +674,6 @@ extension StreamContext {
             )
             return
         }
-        if forceReconfigure {
-            MirageLogger.stream(
-                "Preserving fixed-canvas app capture during resize for stream \(streamID); ignoring encoder reconfigure request"
-            )
-        }
 
         isResizing = true
         defer { isResizing = false }
@@ -712,17 +707,47 @@ extension StreamContext {
         do {
             let captureTarget = streamTargetDimensions(windowFrame: windowFrame)
             baseCaptureSize = CGSize(width: captureTarget.width, height: captureTarget.height)
+            streamScale = resolvedStreamScale(
+                for: baseCaptureSize,
+                requestedScale: requestedStreamScale,
+                logLabel: "Resolution cap"
+            )
+            let outputSize = scaledOutputSize(for: baseCaptureSize)
+            let scaledWidth = Int(outputSize.width)
+            let scaledHeight = Int(outputSize.height)
+            guard scaledWidth > 0, scaledHeight > 0 else {
+                throw MirageError.protocolError("Invalid app/window resize output size")
+            }
+
+            currentContentRect = .zero
+            dimensionToken &+= 1
+            MirageLogger.stream("Dimension token incremented to \(dimensionToken)")
+            await packetSender?.bumpGeneration(reason: "app/window resize")
+            await packetSender?.resetQueue(reason: "app/window resize")
+            resetPipelineStateForReconfiguration(reason: "app/window resize")
+
             lastWindowFrame = windowFrame
-            currentCaptureSize = currentEncodedSize
+            currentCaptureSize = outputSize
+            currentEncodedSize = outputSize
+            captureMode = .display
             updateQueueLimits()
+            if let captureEngine {
+                try await captureEngine.updateResolution(width: scaledWidth, height: scaledHeight)
+            }
             try await refreshSharedDisplayAppCaptureLayout(
                 primaryWindowWrapper: resolvedWindowWrapper,
                 primaryWindowFrameOverride: windowFrame,
                 label: "window resize"
             )
-            await applyDerivedQuality(for: currentEncodedSize, logLabel: "Shared-display app resize fixed canvas")
+            if let encoder {
+                try await encoder.updateDimensions(width: scaledWidth, height: scaledHeight)
+            }
+            updateQueueLimits()
+            await applyDerivedQuality(for: outputSize, logLabel: "Shared-display app resize")
+            await encoder?.forceKeyframe()
             MirageLogger.stream(
-                "Window resize updated shared-display crop for stream \(streamID) without changing encoded canvas \(Int(currentEncodedSize.width))x\(Int(currentEncodedSize.height))"
+                "Window resize updated shared-display capture for stream \(streamID): " +
+                    "encoded \(scaledWidth)x\(scaledHeight), capture \(captureTarget.width)x\(captureTarget.height)"
             )
         } catch {
             var restoredWindowFrame = previousWindowFrame

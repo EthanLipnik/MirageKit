@@ -386,6 +386,7 @@ public final class MirageStreamViewController: UIViewController {
     override public func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         startPointerLockObserverIfNeeded()
+        captureView.requestResponderRecovery(.viewDidAppear)
     }
 
     override public func viewDidLayoutSubviews() {
@@ -440,6 +441,7 @@ public final class MirageStreamViewController: UIViewController {
         captureView.onDictationError = onDictationError
         captureView.onDictationInputLevelChanged = onDictationInputLevelChanged
         captureView.onResolvedPointerLockStateChanged = onResolvedPointerLockStateChanged
+        captureView.requestResponderRecovery(.callbacksConfigured)
     }
 
     func updateState(
@@ -498,6 +500,7 @@ public final class MirageStreamViewController: UIViewController {
 
         pointerLockRequested = cursorLockEnabled
         updatePointerLockState()
+        captureView.requestResponderRecovery(.streamIdentityUpdated)
     }
 
     deinit {
