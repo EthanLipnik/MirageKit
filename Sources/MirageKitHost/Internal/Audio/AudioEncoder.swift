@@ -30,16 +30,22 @@ struct HostAudioEncodingParameters: Sendable, Equatable {
     let bitrate: Int?
 }
 
-private struct AudioEncodeSettings: Sendable {
+private struct AudioEncodeSettings: Sendable, Equatable {
     let codec: MirageAudioCodec
     let sampleRate: Double
     let channelCount: AVAudioChannelCount
     let bitrate: Int?
+
+    var logDescription: String {
+        let bitrateText = bitrate.map { "\($0)bps" } ?? "lossless"
+        return "\(codec) \(Int(sampleRate.rounded()))Hz \(channelCount)ch \(bitrateText)"
+    }
 }
 
 actor AudioEncoder {
     private var audioConfiguration: MirageAudioConfiguration
-    private var loggedAACFallback = false
+    private var activeFallbackSettings: AudioEncodeSettings?
+    private var loggedFallbackDescription: String?
 
     init(audioConfiguration: MirageAudioConfiguration) {
         self.audioConfiguration = audioConfiguration
@@ -47,60 +53,73 @@ actor AudioEncoder {
 
     func updateConfiguration(_ configuration: MirageAudioConfiguration) {
         audioConfiguration = configuration
-        loggedAACFallback = false
+        activeFallbackSettings = nil
+        loggedFallbackDescription = nil
     }
 
     func encode(_ captured: CapturedAudioBuffer) -> EncodedAudioFrame? {
         guard audioConfiguration.enabled else { return nil }
         guard let inputBuffer = makeInputBuffer(captured) else { return nil }
 
-        let initialSettings = settings(for: audioConfiguration, fallbackChannelCount: nil)
-        if let encoded = encode(inputBuffer: inputBuffer, settings: initialSettings, timestamp: captured.presentationTime) {
+        if let activeFallbackSettings,
+           let encoded = encode(inputBuffer: inputBuffer, settings: activeFallbackSettings, timestamp: captured.presentationTime) {
             return encoded
         }
 
-        if initialSettings.codec == .aacLC,
-           let pcmFallback = encode(
-               inputBuffer: inputBuffer,
-               settings: pcmFallbackSettings(
-                   sampleRate: initialSettings.sampleRate,
-                   channelCount: initialSettings.channelCount
-               ),
-               timestamp: captured.presentationTime
-           ) {
-            if !loggedAACFallback {
-                loggedAACFallback = true
-                MirageLogger.host("AAC audio encode failed; falling back to PCM16")
+        activeFallbackSettings = nil
+        let candidates = encodingCandidates(for: audioConfiguration)
+        for (index, candidate) in candidates.enumerated() {
+            guard let encoded = encode(inputBuffer: inputBuffer, settings: candidate, timestamp: captured.presentationTime) else {
+                continue
             }
-            return pcmFallback
-        }
 
-        if audioConfiguration.channelLayout == .surround51 {
-            let fallbackSettings = settings(
-                for: audioConfiguration,
-                fallbackChannelCount: AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount)
-            )
-            if let encoded = encode(inputBuffer: inputBuffer, settings: fallbackSettings, timestamp: captured.presentationTime) {
-                return encoded
+            if index > 0 {
+                activeFallbackSettings = candidate
+                logFallbackIfNeeded(candidate)
             }
-            if fallbackSettings.codec == .aacLC,
-               let pcmFallback = encode(
-                   inputBuffer: inputBuffer,
-                   settings: pcmFallbackSettings(
-                       sampleRate: fallbackSettings.sampleRate,
-                       channelCount: fallbackSettings.channelCount
-                   ),
-                   timestamp: captured.presentationTime
-               ) {
-                if !loggedAACFallback {
-                    loggedAACFallback = true
-                    MirageLogger.host("AAC surround audio encode failed; falling back to PCM16 stereo")
-                }
-                return pcmFallback
-            }
+            return encoded
         }
 
         return nil
+    }
+
+    private func encodingCandidates(for configuration: MirageAudioConfiguration) -> [AudioEncodeSettings] {
+        let primary = settings(for: configuration, fallbackChannelCount: nil)
+        var candidates = [primary]
+
+        if configuration.channelLayout == .surround51, primary.codec == .aacLC {
+            let stereoAAC = settings(
+                for: configuration,
+                fallbackChannelCount: AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount)
+            )
+            if !candidates.contains(stereoAAC) {
+                candidates.append(stereoAAC)
+            }
+        }
+
+        if primary.codec == .aacLC {
+            let pcmChannelCount: AVAudioChannelCount = if configuration.channelLayout == .surround51 {
+                AVAudioChannelCount(MirageAudioChannelLayout.stereo.channelCount)
+            } else {
+                primary.channelCount
+            }
+            let pcm = pcmFallbackSettings(
+                sampleRate: primary.sampleRate,
+                channelCount: pcmChannelCount
+            )
+            if !candidates.contains(pcm) {
+                candidates.append(pcm)
+            }
+        }
+
+        return candidates
+    }
+
+    private func logFallbackIfNeeded(_ settings: AudioEncodeSettings) {
+        let description = settings.logDescription
+        guard loggedFallbackDescription != description else { return }
+        loggedFallbackDescription = description
+        MirageLogger.host("Audio encode fallback active: \(description)")
     }
 
     private func pcmFallbackSettings(

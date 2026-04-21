@@ -624,6 +624,7 @@ public final class MirageClientService {
     var desktopStreamRequestStartTime: CFAbsoluteTime = 0
     var desktopStreamStartTimeoutTask: Task<Void, any Error>?
     var desktopStreamStopTimeoutTask: Task<Void, Never>?
+    var postResizeTransitionTimeoutTasks: [StreamID: Task<Void, Never>] = [:]
     var pendingLocalDesktopStopStreamID: StreamID?
     var pendingLocalDesktopStopSessionID: UUID?
     var retiredDesktopSessionIDs: Set<UUID> = []

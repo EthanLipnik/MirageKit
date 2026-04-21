@@ -1001,6 +1001,7 @@ public struct MirageStreamContentView: View {
         appResizeBaselineAcknowledgement = nil
         latestContainerDisplaySize = .zero
         latestDrawableViewSize = .zero
+        MirageClientService.clearCachedDisplayMetrics()
         if isResizing { isResizing = false }
         clientService.clearDesktopResizeState(
             streamID: session.streamID,

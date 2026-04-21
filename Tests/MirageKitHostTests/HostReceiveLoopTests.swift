@@ -9,6 +9,7 @@
 
 #if os(macOS)
 @testable import MirageKitHost
+import CoreGraphics
 import MirageKit
 import Network
 import Testing
@@ -127,6 +128,66 @@ struct HostReceiveLoopTests {
 
         try await Task.sleep(for: .milliseconds(60))
         #expect(dispatchedTypes.read { $0 } == [.sharedClipboardUpdate])
+        #expect(inputCount.read { $0 } == 0)
+
+        controlCompletion.read { $0 }?()
+
+        let inputDeadline = CFAbsoluteTimeGetCurrent() + 2.0
+        while inputCount.read({ $0 }) == 0, CFAbsoluteTimeGetCurrent() < inputDeadline {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+
+        #expect(inputCount.read { $0 } == 1)
+        loop.stop()
+    }
+
+    @Test("Input queued behind clipboard is preserved when control backlog is full")
+    func clipboardBarrierInputSurvivesFullControlBacklog() async throws {
+        let streamID: StreamID = 10
+        let clipboardUpdate = ControlMessage(type: .sharedClipboardUpdate)
+        let input = try ControlMessage(
+            type: .inputEvent,
+            content: InputEventMessage(streamID: streamID, event: .mouseDown(
+                MirageMouseEvent(button: .left, location: CGPoint(x: 0.5, y: 0.5), clickCount: 1)
+            ))
+        )
+
+        var initialData = Data()
+        initialData.append(clipboardUpdate.serialize())
+        for index in 0 ..< 8 {
+            let control = try ControlMessage(
+                type: .keyframeRequest,
+                content: KeyframeRequestMessage(streamID: StreamID(index + 1))
+            )
+            initialData.append(control.serialize())
+        }
+        initialData.append(input.serialize())
+
+        let inputCount = Locked(0)
+        let controlCompletion = Locked<(@Sendable () -> Void)?>(nil)
+
+        let loop = HostReceiveLoop(
+            clientName: "clipboard-input-backlog-test",
+            maxControlBacklog: 8,
+            receiveChunk: { _ in },
+            onInputMessage: { _ in
+                inputCount.withLock { $0 += 1 }
+            },
+            onPingMessage: { _ in },
+            dispatchControlMessage: { message, completion in
+                if message.type == .sharedClipboardUpdate {
+                    controlCompletion.withLock { $0 = completion }
+                } else {
+                    completion()
+                }
+            },
+            onTerminal: { _ in },
+            isFatalError: { _ in false }
+        )
+
+        loop.start(initialBuffer: initialData)
+
+        try await Task.sleep(for: .milliseconds(60))
         #expect(inputCount.read { $0 } == 0)
 
         controlCompletion.read { $0 }?()

@@ -467,6 +467,15 @@ extension MirageClientService {
     }
 
     #if os(iOS) || os(visionOS)
+    public static func clearCachedDisplayMetrics() {
+        lastKnownViewSize = .zero
+        lastKnownDrawablePixelSize = .zero
+        lastKnownScreenPointSize = .zero
+        lastKnownScreenScale = 0
+        lastKnownScreenNativePixelSize = .zero
+        lastKnownScreenNativeScale = 0
+    }
+
     private struct ScreenMetrics {
         let pointSize: CGSize
         let scale: CGFloat

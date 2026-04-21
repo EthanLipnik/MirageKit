@@ -403,6 +403,8 @@ actor StreamController {
 
     /// Called when the first frame is decoded for a stream.
     private(set) var onFirstFrameDecoded: (@MainActor @Sendable () -> Void)?
+    /// Called when a decoded frame arrives during a post-resize transition.
+    private(set) var onPostResizeFrameDecoded: (@MainActor @Sendable () -> Void)?
     /// Called when the first frame is presented for a stream.
     private(set) var onFirstFramePresented: (@MainActor @Sendable () -> Void)?
 
@@ -425,6 +427,7 @@ actor StreamController {
         onResizeStateChanged: (@MainActor @Sendable (ResizeState) -> Void)? = nil,
         onFrameDecoded: (@MainActor @Sendable (ClientFrameMetrics) -> Void)? = nil,
         onFirstFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
+        onPostResizeFrameDecoded: (@MainActor @Sendable () -> Void)? = nil,
         onFirstFramePresented: (@MainActor @Sendable () -> Void)? = nil,
         onAdaptiveFallbackNeeded: (@MainActor @Sendable () -> Void)? = nil,
         onStallEvent: (@MainActor @Sendable () -> Void)? = nil,
@@ -436,6 +439,7 @@ actor StreamController {
         self.onResizeStateChanged = onResizeStateChanged
         self.onFrameDecoded = onFrameDecoded
         self.onFirstFrameDecoded = onFirstFrameDecoded
+        self.onPostResizeFrameDecoded = onPostResizeFrameDecoded
         self.onFirstFramePresented = onFirstFramePresented
         self.onAdaptiveFallbackNeeded = onAdaptiveFallbackNeeded
         self.onStallEvent = onStallEvent
@@ -992,6 +996,7 @@ actor StreamController {
         onResizeStateChanged = nil
         onFrameDecoded = nil
         onFirstFrameDecoded = nil
+        onPostResizeFrameDecoded = nil
         onFirstFramePresented = nil
         onAdaptiveFallbackNeeded = nil
         onStallEvent = nil

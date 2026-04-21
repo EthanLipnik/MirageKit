@@ -239,6 +239,8 @@ public final class MirageHostService {
     var audioConfigurationByClientID: [UUID: MirageAudioConfiguration] = [:]
     // Last audio streamStarted payload sent to each client.
     var audioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
+    // Last audio streamStarted payload acknowledged onto the control channel.
+    var sentAudioStartedMessageByClientID: [UUID: AudioStreamStartedMessage] = [:]
     var minimumSizesByWindowID: [WindowID: CGSize] = [:]
     var streamStartupBaseTimes: [StreamID: CFAbsoluteTime] = [:]
     var streamStartupRegistrationLogged: Set<StreamID> = []

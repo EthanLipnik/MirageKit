@@ -407,7 +407,7 @@ actor StreamContext {
         mediaSecurityContext: MirageMediaSecurityContext? = nil,
         additionalFrameFlags: FrameFlags = [],
         runtimeQualityAdjustmentEnabled: Bool = true,
-        lowLatencyHighResolutionCompressionBoostEnabled: Bool = true,
+        lowLatencyHighResolutionCompressionBoostEnabled: Bool = false,
         disableResolutionCap: Bool = false,
         encoderLowPowerEnabled: Bool = false,
         capturePressureProfile: WindowCaptureEngine.CapturePressureProfile = .baseline,

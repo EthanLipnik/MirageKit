@@ -53,13 +53,15 @@ extension MirageClientService {
 
         let outcome = started.transitionOutcome ?? .resized
         if outcome == .noChange {
+            postResizeTransitionTimeoutTasks[streamID]?.cancel()
+            postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
             sessionStore.clearPostResizeTransition(for: streamID)
             desktopResizeCoordinator.finishTransition(outcome: outcome)
             await dispatchQueuedDesktopResizeIfNeeded(streamID: streamID)
             return true
         }
 
-        sessionStore.beginPostResizeTransition(for: streamID)
+        beginPostResizeTransition(streamID: streamID)
         await prepareControllerForDesktopResize(
             streamID,
             codec: started.codec,
@@ -171,7 +173,7 @@ extension MirageClientService {
                 beginStreamStartupCriticalSection(streamID: streamID)
             }
             if isResizeTokenAdvance {
-                sessionStore.beginPostResizeTransition(for: streamID)
+                beginPostResizeTransition(streamID: streamID)
             }
             if previousDesktopSessionID != receivedDesktopSessionID {
                 desktopDimensionTokenByStream.removeValue(forKey: streamID)

@@ -275,12 +275,60 @@ final class HostReceiveLoop: @unchecked Sendable {
 
     private func enqueueInput(_ message: ControlMessage, state: inout State) {
         if state.entries.count >= maxControlBacklog {
+            discardQueuedMessageToPreserveInput(state: &state)
+        }
+        if state.entries.count >= maxControlBacklog {
             MirageLogger.host(
                 "Client \(clientName) control backlog full; dropping input queued behind clipboard update"
             )
             return
         }
         state.entries.append(.input(message))
+    }
+
+    private func discardQueuedMessageToPreserveInput(state: inout State) {
+        if let index = state.entries.firstIndex(where: {
+            if case .coalesced = $0 {
+                return true
+            }
+            return false
+        }) {
+            let entry = state.entries.remove(at: index)
+            if case let .coalesced(coalescedType) = entry {
+                state.coalesced.removeValue(forKey: coalescedType)
+                MirageLogger.host(
+                    "Client \(clientName) control backlog full; dropping stale \(coalescedType) to preserve input"
+                )
+            }
+            return
+        }
+
+        if let index = state.entries.firstIndex(where: {
+            if case let .direct(message) = $0 {
+                return message.type != .sharedClipboardUpdate
+            }
+            return false
+        }) {
+            let entry = state.entries.remove(at: index)
+            if case let .direct(message) = entry {
+                MirageLogger.host(
+                    "Client \(clientName) control backlog full; dropping queued \(message.type) to preserve input"
+                )
+            }
+            return
+        }
+
+        if let index = state.entries.firstIndex(where: {
+            if case .input = $0 {
+                return true
+            }
+            return false
+        }) {
+            state.entries.remove(at: index)
+            MirageLogger.host(
+                "Client \(clientName) control backlog full; dropping older queued input to preserve latest input"
+            )
+        }
     }
 
     private func trimCoalescedBacklog(state: inout State) {

@@ -380,6 +380,10 @@ extension MirageClientService {
             task.cancel()
         }
         startupRegistrationRetryTasks.removeAll()
+        for task in postResizeTransitionTimeoutTasks.values {
+            task.cancel()
+        }
+        postResizeTransitionTimeoutTasks.removeAll()
         activeStreams.removeAll()
         for session in storedSessions {
             sessionStore.removeSession(session.id)
@@ -426,6 +430,9 @@ extension MirageClientService {
         hasCompletedBootstrap = false
         negotiatedFeatures = []
         mediaPayloadEncryptionEnabled = true
+        #if os(iOS) || os(visionOS)
+        Self.clearCachedDisplayMetrics()
+        #endif
         if let desktopStreamID {
             clearDesktopResizeState(streamID: desktopStreamID)
         } else {

@@ -97,6 +97,9 @@ public class InputCapturingView: UIView {
     /// Forwards to the underlying sample-buffer view
     public var streamID: StreamID? {
         didSet {
+            if oldValue != streamID {
+                resetPointerSuppressionState(reason: "stream_rebound")
+            }
             sampleBufferView.streamID = streamID
             let previousID = registeredCursorStreamID
             if let previousID, previousID != streamID { MirageCursorUpdateRouter.shared.unregister(streamID: previousID) }
@@ -749,6 +752,25 @@ public class InputCapturingView: UIView {
         pencilButtonDown = false
         longPressCancelledForMultiTouch = false
         isDragging = false
+    }
+
+    func resetPointerSuppressionState(reason: String) {
+        let hadSuppressedGesture = swallowingLongPressForCursorRecapture ||
+            swallowingVirtualCursorLongPressForCursorRecapture ||
+            swallowingDirectLongPressForCursorRecapture ||
+            swallowingDirectTwoFingerDragForCursorRecapture ||
+            suppressEscapeKeyUpForCursorUnlock
+
+        swallowingLongPressForCursorRecapture = false
+        swallowingVirtualCursorLongPressForCursorRecapture = false
+        swallowingDirectLongPressForCursorRecapture = false
+        swallowingDirectTwoFingerDragForCursorRecapture = false
+        suppressEscapeKeyUpForCursorUnlock = false
+        lockedPointerDraggedSinceDown = false
+        lockedPointerLastHoverLocation = nil
+
+        guard hadSuppressedGesture else { return }
+        MirageLogger.client("Cleared suppressed pointer gesture state (\(reason))")
     }
 
     private func recordPendingApplicationActivationHandling(
@@ -1917,6 +1939,7 @@ public class InputCapturingView: UIView {
         didResignActiveSinceLastActivation = true
         cancelPendingResponderRecovery()
         releaseActivePointerButtonsIfNeeded(reason: "application_will_resign_active")
+        resetPointerSuppressionState(reason: "application_will_resign_active")
         // Clear all modifier and key repeat state when app loses focus
         stopAllKeyRepeats()
         resetAllModifiers()
@@ -1939,6 +1962,7 @@ public class InputCapturingView: UIView {
 
     @objc
     private func appDidBecomeActive() {
+        resetPointerSuppressionState(reason: "application_did_become_active")
         let resignedActive = didResignActiveSinceLastActivation
         let backgrounded = didEnterBackgroundSinceLastActive
         let displayLayerFailed = sampleBufferView.hasDisplayLayerFailure
@@ -2039,6 +2063,7 @@ public class InputCapturingView: UIView {
         super.didMoveToWindow()
         reportContainerSizeIfChanged(force: true)
         if window != nil {
+            resetPointerSuppressionState(reason: "did_move_to_window")
             requestResponderRecovery(.didMoveToWindow)
             applyPendingApplicationActivationHandlingIfPossible()
         } else {
@@ -2074,6 +2099,7 @@ public class InputCapturingView: UIView {
         resetPrimaryClickTracking()
         resetSecondaryClickTracking()
         resetPencilGestureState()
+        resetPointerSuppressionState(reason: "resign_first_responder")
         isDragging = false
         return super.resignFirstResponder()
     }

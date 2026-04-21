@@ -136,7 +136,7 @@ public extension MirageHostService {
         latencyMode: MirageStreamLatencyMode = .lowestLatency,
         performanceMode: MirageStreamPerformanceMode = .standard,
         allowRuntimeQualityAdjustment: Bool? = nil,
-        lowLatencyHighResolutionCompressionBoost: Bool = true,
+        lowLatencyHighResolutionCompressionBoost: Bool = false,
         disableResolutionCap: Bool = false,
         allowBestEffortRemap: Bool = true,
         audioConfiguration: MirageAudioConfiguration? = nil,

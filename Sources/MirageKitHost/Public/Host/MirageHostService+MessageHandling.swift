@@ -199,7 +199,7 @@ extension MirageHostService {
             let latencyMode = request.latencyMode ?? .lowestLatency
             let performanceMode = request.performanceMode ?? .standard
             let allowRuntimeQualityAdjustment = request.allowRuntimeQualityAdjustment
-            let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? true
+            let lowLatencyHighResolutionCompressionBoost = request.lowLatencyHighResolutionCompressionBoost ?? false
             let disableResolutionCap = request.disableResolutionCap ?? false
             let requestedScale = request.streamScale ?? 1.0
             let audioConfiguration = request.audioConfiguration ?? .default

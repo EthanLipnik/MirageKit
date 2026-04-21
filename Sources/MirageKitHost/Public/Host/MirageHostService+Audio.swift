@@ -81,6 +81,7 @@ extension MirageHostService {
                 )
                 loomAudioStreamsByClientID[clientID] = audioStream
                 transportRegistry.registerAudioStream(audioStream, clientID: clientID)
+                await sendPendingAudioStartedIfPossible(clientID: clientID)
                 MirageLogger.host("Opened Loom audio stream for client \(clientID)")
             } catch {
                 audioSourceStreamByClientID.removeValue(forKey: clientID)
@@ -188,6 +189,7 @@ extension MirageHostService {
         if streamID > 0, let context = streamsByID[streamID] {
             await context.setCapturedAudioHandler(nil)
         }
+        sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
         if audioStartedMessageByClientID.removeValue(forKey: clientID) != nil {
             await sendAudioStreamStopped(
                 AudioStreamStoppedMessage(streamID: streamID, reason: reason),
@@ -213,6 +215,7 @@ extension MirageHostService {
                 MirageLogger.debug(.host, "Failed to close Loom audio stream for client \(clientID): \(error)")
             }
         }
+        sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
         transportRegistry.unregisterAudioStream(clientID: clientID)
     }
 
@@ -258,9 +261,18 @@ extension MirageHostService {
         )
         let previousMessage = audioStartedMessageByClientID[clientID]
         audioStartedMessageByClientID[clientID] = message
-        guard previousMessage != message else { return }
+        if previousMessage != message {
+            sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
+        }
+        await sendPendingAudioStartedIfPossible(clientID: clientID)
+    }
+
+    private func sendPendingAudioStartedIfPossible(clientID: UUID) async {
+        guard let message = audioStartedMessageByClientID[clientID] else { return }
         guard transportRegistry.hasAudioConnection(clientID: clientID) else { return }
-        await sendAudioStreamStarted(message, toClientID: clientID)
+        guard sentAudioStartedMessageByClientID[clientID] != message else { return }
+        guard await sendAudioStreamStarted(message, toClientID: clientID) else { return }
+        sentAudioStartedMessageByClientID[clientID] = message
     }
 
     private func fallbackAudioSourceStreamID(for clientID: UUID, excluding streamID: StreamID) -> StreamID? {
@@ -273,12 +285,14 @@ extension MirageHostService {
         return activeStreams.first(where: { $0.client.id == clientID && $0.id != streamID })?.id
     }
 
-    private func sendAudioStreamStarted(_ message: AudioStreamStartedMessage, toClientID clientID: UUID) async {
-        guard let clientContext = findClientContext(clientID: clientID) else { return }
+    private func sendAudioStreamStarted(_ message: AudioStreamStartedMessage, toClientID clientID: UUID) async -> Bool {
+        guard let clientContext = findClientContext(clientID: clientID) else { return false }
         do {
             try await clientContext.send(.audioStreamStarted, content: message)
+            return true
         } catch {
             MirageLogger.error(.host, error: error, message: "Failed sending audioStreamStarted: ")
+            return false
         }
     }
 

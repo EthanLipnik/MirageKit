@@ -340,7 +340,7 @@ extension MirageClientService {
                         "App stream token advanced \(previousDimensionToken) -> \(dimensionToken); reset=\(shouldResetController)"
                     )
                 beginStreamStartupCriticalSection(streamID: streamID)
-                sessionStore.beginPostResizeTransition(for: streamID)
+                beginPostResizeTransition(streamID: streamID)
             }
             if let dimensionToken {
                 appDimensionTokenByStream[streamID] = dimensionToken

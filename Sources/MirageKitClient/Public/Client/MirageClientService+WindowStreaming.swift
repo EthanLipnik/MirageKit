@@ -237,8 +237,11 @@ public extension MirageClientService {
                 self?.sessionStore.markFirstFrameDecoded(for: capturedStreamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFrameDecoded", "stream=\(capturedStreamID)")
             },
+            onPostResizeFrameDecoded: { [weak self] in
+                self?.handlePostResizeFrameDecoded(streamID: capturedStreamID)
+            },
             onFirstFramePresented: { [weak self] in
-                self?.sessionStore.markFirstFramePresented(for: capturedStreamID)
+                self?.handleStreamFirstFramePresented(streamID: capturedStreamID)
                 self?.clearStartupAttempt(for: capturedStreamID)
                 MirageLogger.signpostEvent(.client, "Startup.FirstFramePresented", "stream=\(capturedStreamID)")
             },

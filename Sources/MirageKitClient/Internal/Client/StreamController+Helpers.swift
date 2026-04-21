@@ -469,6 +469,24 @@ extension StreamController {
         if !decodeRecoveryEscalationTimestamps.isEmpty {
             decodeRecoveryEscalationTimestamps.removeAll(keepingCapacity: false)
         }
+        if awaitingFirstFrameAfterResize {
+            let shouldNotify = postResizeDecodeRecoverySuccessCount == 0
+            postResizeDecodeRecoverySuccessCount = min(
+                Self.postResizeDecodeRecoverySuccessThreshold,
+                postResizeDecodeRecoverySuccessCount + 1
+            )
+            if shouldNotify {
+                MirageLogger.client("Post-resize decoded frame arrived for stream \(streamID)")
+                let handler = onPostResizeFrameDecoded
+                await MainActor.run {
+                    handler?()
+                }
+            }
+            if postResizeDecodeRecoverySuccessCount >= Self.postResizeDecodeRecoverySuccessThreshold {
+                awaitingFirstPresentedFrameAfterResize = false
+                await maybeCompletePostResizeRecovery()
+            }
+        }
         if presentationTier == .activeLive,
            !hasPresentedFirstFrame,
            !awaitingFirstPresentedFrame {

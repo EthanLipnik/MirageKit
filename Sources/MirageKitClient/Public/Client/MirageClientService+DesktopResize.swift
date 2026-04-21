@@ -12,6 +12,7 @@ import MirageKit
 @MainActor
 extension MirageClientService {
     private static let desktopResizeSendDebounce: Duration = .milliseconds(120)
+    private static let postResizeTransitionTimeout: Duration = .seconds(2)
 
     func desktopResizeTarget(
         for logicalResolution: CGSize,
@@ -186,6 +187,49 @@ extension MirageClientService {
         }
     }
 
+    func beginPostResizeTransition(streamID: StreamID) {
+        sessionStore.beginPostResizeTransition(for: streamID)
+        schedulePostResizeTransitionTimeout(streamID: streamID)
+    }
+
+    func handlePostResizeFrameDecoded(streamID: StreamID) {
+        guard sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
+        finishPostResizeTransitionWait(streamID: streamID, reason: "decoded-frame")
+    }
+
+    func handleStreamFirstFramePresented(streamID: StreamID) {
+        let wasAwaitingPostResizeFrame = sessionStore.isAwaitingPostResizeFirstFrame(for: streamID)
+        sessionStore.markFirstFramePresented(for: streamID)
+        guard wasAwaitingPostResizeFrame else { return }
+        finishPostResizeTransitionWait(streamID: streamID, reason: "presented-frame")
+    }
+
+    private func schedulePostResizeTransitionTimeout(streamID: StreamID) {
+        postResizeTransitionTimeoutTasks[streamID]?.cancel()
+        postResizeTransitionTimeoutTasks[streamID] = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(for: Self.postResizeTransitionTimeout)
+            } catch {
+                return
+            }
+            guard let self else { return }
+            guard self.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) else { return }
+            MirageLogger.client(
+                "Clearing stale post-resize wait for stream \(streamID) after client-side timeout"
+            )
+            self.finishPostResizeTransitionWait(streamID: streamID, reason: "timeout")
+        }
+    }
+
+    private func finishPostResizeTransitionWait(streamID: StreamID, reason: String) {
+        postResizeTransitionTimeoutTasks[streamID]?.cancel()
+        postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
+        sessionStore.clearPostResizeTransition(for: streamID)
+        desktopResizeCoordinator.clearLocalPresentationState()
+        MirageLogger.client("Post-resize transition cleared for stream \(streamID) (\(reason))")
+        handleDesktopPresentationReady(streamID: streamID)
+    }
+
     func clearDesktopResizeState(
         streamID: StreamID,
         clearPostResizeState: Bool = true,
@@ -195,6 +239,8 @@ extension MirageClientService {
         if clearPostResizeState {
             sessionStore.clearPostResizeTransition(for: streamID)
         }
+        postResizeTransitionTimeoutTasks[streamID]?.cancel()
+        postResizeTransitionTimeoutTasks.removeValue(forKey: streamID)
     }
 
     func cancelQueuedDesktopResizeForLocalPresentation(streamID: StreamID) {
