@@ -298,6 +298,80 @@ extension MirageClientService {
         try await sendControlMessage(.displayResolutionChange, content: request)
     }
 
+    @discardableResult
+    public func requestAutomaticDesktopWorkloadReconfiguration(
+        streamID: StreamID,
+        target: MirageAutomaticDesktopWorkloadTier
+    )
+    async throws -> Bool {
+        guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
+        guard desktopStreamID == streamID else { return false }
+        guard pendingLocalDesktopStopStreamID != streamID else { return false }
+        guard !startupCriticalSectionActive, !hasActivePostResizeTransition else { return false }
+        guard let session = sessionStore.sessionByStreamID(streamID),
+              session.hasPresentedFrame,
+              session.clientRecoveryStatus == .idle else {
+            return false
+        }
+
+        let snapshot = metricsStore.snapshot(for: streamID)
+        let currentFrameRate = snapshot?.hostTargetFrameRate ?? 0
+        let needsFrameRateChange = currentFrameRate > 0 && currentFrameRate != target.targetFrameRate
+        let currentEncodedSize = CGSize(
+            width: snapshot?.hostEncodedWidth ?? 0,
+            height: snapshot?.hostEncodedHeight ?? 0
+        )
+        let needsResize = !Self.approximatelyEqualEncodedSize(
+            currentEncodedSize,
+            target.encodedPixelSize
+        )
+
+        guard needsFrameRateChange || needsResize else { return false }
+
+        if needsFrameRateChange {
+            try await sendStreamRefreshRateChange(
+                streamID: streamID,
+                maxRefreshRate: target.targetFrameRate
+            )
+        }
+
+        if needsResize {
+            let logicalResolution = automaticDesktopLogicalResolution(
+                forEncodedPixelSize: target.encodedPixelSize
+            )
+            let resizeTarget = desktopResizeTarget(
+                for: logicalResolution,
+                maxDrawableSize: target.encodedPixelSize
+            )
+            queueDesktopResize(
+                streamID: streamID,
+                target: resizeTarget,
+                hasPresentedFrame: session.hasPresentedFrame,
+                useHostResolution: false
+            )
+        }
+
+        MirageLogger.client(
+            "Requested automatic desktop workload reconfiguration for stream \(streamID): \(target.logLabel)"
+        )
+        return true
+    }
+
+    private func automaticDesktopLogicalResolution(forEncodedPixelSize encodedPixelSize: CGSize) -> CGSize {
+        let displayScaleFactor = platformDisplayScaleFactor(explicitScaleFactor: nil)
+        return MirageStreamGeometry.normalizedLogicalSize(
+            CGSize(
+                width: encodedPixelSize.width / displayScaleFactor,
+                height: encodedPixelSize.height / displayScaleFactor
+            )
+        )
+    }
+
+    private nonisolated static func approximatelyEqualEncodedSize(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
+        guard lhs.width > 0, lhs.height > 0, rhs.width > 0, rhs.height > 0 else { return false }
+        return abs(lhs.width - rhs.width) <= 16 && abs(lhs.height - rhs.height) <= 16
+    }
+
     func sendDesktopResizeRequest(
         streamID: StreamID,
         newResolution: CGSize,

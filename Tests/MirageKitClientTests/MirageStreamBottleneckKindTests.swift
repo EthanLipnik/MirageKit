@@ -63,6 +63,17 @@ struct MirageStreamBottleneckKindTests {
         #expect(snapshot.bottleneckKind != .networkBound)
     }
 
+    @Test("Delivery cadence loss alone is not network-bound")
+    func deliveryCadenceLossAloneIsNotNetworkBound() {
+        var snapshot = baselineSnapshot()
+        snapshot.receivedFPS = 8
+        snapshot.decodedFPS = 8
+        snapshot.submittedFPS = 8
+        snapshot.uniqueSubmittedFPS = 8
+
+        #expect(snapshot.bottleneckKind != .networkBound)
+    }
+
     @Test("Packet pacer pressure alone is not network-bound")
     func packetPacerPressureAloneIsNotNetworkBound() {
         var snapshot = baselineSnapshot()

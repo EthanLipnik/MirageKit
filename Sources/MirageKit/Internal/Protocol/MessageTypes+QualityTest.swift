@@ -46,6 +46,7 @@ package struct QualityTestBenchmarkMessage: Codable {
     package let benchmarkFrameRate: Int
     package let encodeMs: Double?
     package let benchmarkVersion: Int
+    package let hostCaptureCapability: MirageHostCaptureCapability?
 
     package init(
         testID: UUID,
@@ -53,7 +54,8 @@ package struct QualityTestBenchmarkMessage: Codable {
         benchmarkHeight: Int,
         benchmarkFrameRate: Int,
         encodeMs: Double?,
-        benchmarkVersion: Int
+        benchmarkVersion: Int,
+        hostCaptureCapability: MirageHostCaptureCapability? = nil
     ) {
         self.testID = testID
         self.benchmarkWidth = benchmarkWidth
@@ -61,6 +63,7 @@ package struct QualityTestBenchmarkMessage: Codable {
         self.benchmarkFrameRate = benchmarkFrameRate
         self.encodeMs = encodeMs
         self.benchmarkVersion = benchmarkVersion
+        self.hostCaptureCapability = hostCaptureCapability
     }
 }
 

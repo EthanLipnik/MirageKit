@@ -83,11 +83,23 @@ extension MirageClientService {
             return
         }
 
+        if sessionStore.isAwaitingPostResizeFirstFrame(for: streamID) {
+            coordinator.queuedTarget = nil
+            coordinator.clearLocalPresentationState()
+            return
+        }
+
+        if let session = sessionStore.sessionByStreamID(streamID),
+           session.clientRecoveryStatus != .idle {
+            coordinator.queuedTarget = nil
+            coordinator.clearLocalPresentationState()
+            return
+        }
+
         if let activeTransition = coordinator.activeTransition {
             if activeTransition.streamID == streamID, activeTransition.target == target {
                 return
             }
-            coordinator.queueLatestTarget(target)
             return
         }
 

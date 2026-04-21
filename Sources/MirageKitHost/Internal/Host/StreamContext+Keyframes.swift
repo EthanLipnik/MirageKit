@@ -99,8 +99,6 @@ extension StreamContext {
     ) {
         keyframeSendDeadline = 0
         lastKeyframeRequestTime = 0
-        let reason = "Capture restart (streak \(restartStreak))"
-        noteLossEvent(reason: reason, enablePFrameFEC: true)
         let queued = queueKeyframe(
             reason: "Fallback keyframe",
             checkInFlight: false,

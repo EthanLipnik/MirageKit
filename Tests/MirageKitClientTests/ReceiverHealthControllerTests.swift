@@ -63,8 +63,8 @@ struct ReceiverHealthControllerTests {
         #expect(controller.state == .stable)
     }
 
-    @Test("Presentation-bound samples do not probe upward when transport is healthy")
-    func presentationBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+    @Test("Presentation-bound samples remain transport-clean")
+    func presentationBoundSamplesRemainTransportClean() {
         var controller = MirageReceiverHealthController()
         let snapshot = presentationBoundButTransportHealthySnapshot()
 
@@ -81,12 +81,12 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .none)
+        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
         #expect(controller.state == .stable)
     }
 
-    @Test("Decode-bound samples do not probe upward when transport is healthy")
-    func decodeBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+    @Test("Decode-bound samples remain transport-clean")
+    func decodeBoundSamplesRemainTransportClean() {
         var controller = MirageReceiverHealthController()
         let snapshot = decodeStalledButTransportHealthySnapshot()
 
@@ -103,7 +103,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(secondAction == .none)
+        #expect(secondAction == .probe(targetBitrateBps: 100_000_000))
     }
 
     @Test("Delay-only bursts do not trigger backoff or block probing")
@@ -223,8 +223,8 @@ struct ReceiverHealthControllerTests {
         #expect(probe == .probe(targetBitrateBps: 472_500_000))
     }
 
-    @Test("Encode-bound samples do not probe upward when transport is healthy")
-    func encodeBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+    @Test("Encode-bound samples remain transport-clean")
+    func encodeBoundSamplesRemainTransportClean() {
         var controller = MirageReceiverHealthController()
         let snapshot = encodeBoundButTransportHealthySnapshot()
 
@@ -241,11 +241,11 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .none)
+        #expect(action == .probe(targetBitrateBps: 300_000_000))
     }
 
-    @Test("Capture-bound samples do not probe upward when transport is healthy")
-    func captureBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+    @Test("Capture-bound samples remain transport-clean")
+    func captureBoundSamplesRemainTransportClean() {
         var controller = MirageReceiverHealthController()
         let snapshot = captureBoundButTransportHealthySnapshot()
 
@@ -262,11 +262,11 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .none)
+        #expect(action == .probe(targetBitrateBps: 128_000_000))
     }
 
-    @Test("Mixed-bound samples do not probe upward when transport is healthy")
-    func mixedBoundSamplesDoNotProbeUpwardWhenTransportIsHealthy() {
+    @Test("Mixed-bound samples remain transport-clean")
+    func mixedBoundSamplesRemainTransportClean() {
         var controller = MirageReceiverHealthController()
         let snapshot = mixedBoundButTransportHealthySnapshot()
 
@@ -283,7 +283,45 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
+        #expect(action == .probe(targetBitrateBps: 128_000_000))
+    }
+
+    @Test("Delivery cadence collapse without transport pressure does not back off")
+    func deliveryCadenceCollapseWithoutTransportPressureDoesNotBackOff() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.receivedFPS = 4
+        snapshot.decodedFPS = 4
+        snapshot.submittedFPS = 4
+        snapshot.uniqueSubmittedFPS = 4
+
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 10
+        )
+
         #expect(action == .none)
+        #expect(controller.state == .stable)
+    }
+
+    @Test("Local generation and keyframe hold drops do not trigger transport backoff")
+    func localGenerationAndKeyframeHoldDropsDoNotTriggerTransportBackoff() {
+        var controller = MirageReceiverHealthController()
+        var snapshot = healthySnapshot(activeQuality: 0.62)
+        snapshot.hostGenerationAbortDrops = 40
+        snapshot.hostNonKeyframeHoldDrops = 40
+
+        let action = controller.advance(
+            snapshots: [snapshot],
+            currentBitrateBps: 48_000_000,
+            ceilingBps: 136_000_000,
+            now: 10
+        )
+
+        #expect(action == .none)
+        #expect(controller.state == .stable)
     }
 
     @Test("Minor delivery drift still probes upward when transport is otherwise clean")

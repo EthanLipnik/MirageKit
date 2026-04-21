@@ -78,6 +78,10 @@ extension StreamController {
             MirageLogger.client(
                 "Skipping stream recovery (\(reason.logLabel)) for stopping stream \(streamID)"
             )
+            stopFirstPresentedFrameMonitor()
+            resetPostResizeRecoveryTracking(clearResizeRecovery: true)
+            await stopKeyframeRecoveryLoop()
+            await setClientRecoveryStatus(.idle)
             return
         }
         guard !hasTriggeredTerminalStartupFailure else { return }

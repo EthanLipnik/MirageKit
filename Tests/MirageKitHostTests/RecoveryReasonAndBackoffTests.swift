@@ -109,6 +109,8 @@ struct RecoveryReasonMappingTests {
         #expect(await nonEscalated.pendingKeyframeRequiresFlush)
         #expect(await nonEscalated.pendingKeyframeRequiresReset == false)
         #expect(nonEscalated.epoch == 0)
+        #expect(nonEscalated.lossModeDeadline == 0)
+        #expect(nonEscalated.lossModePFrameFECDeadline == 0)
 
         let escalated = makeContext()
         await escalated.forceKeyframeAfterCaptureRestart(
@@ -118,6 +120,18 @@ struct RecoveryReasonMappingTests {
         #expect(await escalated.pendingKeyframeRequiresFlush)
         #expect(await escalated.pendingKeyframeRequiresReset)
         #expect(escalated.epoch == 1)
+        #expect(escalated.lossModeDeadline == 0)
+        #expect(escalated.lossModePFrameFECDeadline == 0)
+    }
+
+    @Test("Transport loss still enables loss mode")
+    func transportLossStillEnablesLossMode() async {
+        let context = makeContext()
+
+        await context.noteLossEvent(reason: "transport test", enablePFrameFEC: true)
+
+        #expect(context.lossModeDeadline > CFAbsoluteTimeGetCurrent())
+        #expect(context.lossModePFrameFECDeadline > CFAbsoluteTimeGetCurrent())
     }
 
     @Test("Coalesced resize recovery keeps the first armed keyframe")

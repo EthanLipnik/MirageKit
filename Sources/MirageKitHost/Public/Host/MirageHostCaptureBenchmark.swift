@@ -520,6 +520,26 @@ public struct MirageHostCaptureBenchmarkReport: Codable, Hashable, Sendable {
             self.operatingSystemVersion == operatingSystemVersion &&
             self.configuration == configuration
     }
+
+    public var captureCapability: MirageHostCaptureCapability? {
+        guard let modeResult = modeResults.first(where: { !$0.lowPowerModeEnabled }) ?? modeResults.first else {
+            return nil
+        }
+        let highestValidStage = modeResult.stageResults.last { $0.meets60FPS }
+        let highestSustainedStage = modeResult.stageResults.last { $0.meets120FPS }
+        return MirageHostCaptureCapability(
+            targetFrameRate: modeResult.summary.targetFrameRate,
+            validThresholdFPS: modeResult.summary.validThresholdFPS,
+            sustainThresholdFPS: modeResult.summary.sustainThresholdFPS,
+            highestValidPixelWidth: highestValidStage?.stage.pixelWidth,
+            highestValidPixelHeight: highestValidStage?.stage.pixelHeight,
+            highestValidFrameRate: highestValidStage?.validatedCapabilityFPS,
+            highestSustainedPixelWidth: highestSustainedStage?.stage.pixelWidth,
+            highestSustainedPixelHeight: highestSustainedStage?.stage.pixelHeight,
+            highestSustainedFrameRate: highestSustainedStage?.validatedCapabilityFPS,
+            measuredAt: measuredAt
+        )
+    }
 }
 
 @_spi(HostApp)

@@ -102,6 +102,9 @@ public final class MirageHostService {
     /// Provider used for client-initiated host support log archive export.
     public var hostSupportLogArchiveProvider: (@MainActor @Sendable () async throws -> URL)?
 
+    /// Provider for the most recent cached host capture benchmark capability.
+    public var hostCaptureCapabilityProvider: (@MainActor @Sendable () -> MirageHostCaptureCapability?)?
+
     /// Authorizer used for client-initiated Mirage Host app relaunch requests.
     public var hostApplicationRestartAuthorizer: (@MainActor @Sendable (MirageConnectedClient) async -> Bool)?
 

@@ -200,6 +200,52 @@ struct CaptureBenchmarkTests {
         #expect(summary.highest120FPSResolution == "1920x1080")
     }
 
+    @Test("Report exposes capture capability for quality summaries")
+    func reportExposesCaptureCapability() throws {
+        let report = MirageHostCaptureBenchmarkReport(
+            machineID: UUID(),
+            hostName: "Host",
+            hardwareModelIdentifier: nil,
+            hardwareMachineFamily: nil,
+            appVersion: "1.0",
+            buildVersion: "1",
+            operatingSystemVersion: "macOS 15.4",
+            configuration: MirageHostCaptureBenchmarkConfiguration(modeSelections: [.lowPowerOff]),
+            measuredAt: Date(timeIntervalSince1970: 100),
+            modeResults: [
+                MirageHostCaptureBenchmarkModeResult(
+                    modeSelection: .lowPowerOff,
+                    lowPowerModeEnabled: false,
+                    stageResults: [
+                        MirageHostCaptureBenchmarkStageResult(
+                            stage: .benchmark1080p,
+                            status: .completed,
+                            validatedCapabilityFPS: 119
+                        ),
+                        MirageHostCaptureBenchmarkStageResult(
+                            stage: .benchmark2K,
+                            status: .completed,
+                            validatedCapabilityFPS: 76
+                        ),
+                        MirageHostCaptureBenchmarkStageResult(
+                            stage: .benchmark4K,
+                            status: .completed,
+                            validatedCapabilityFPS: 58
+                        ),
+                    ]
+                )
+            ],
+            didCancel: false
+        )
+
+        let capability = try #require(report.captureCapability)
+
+        #expect(capability.highestValidPixelWidth == 2560)
+        #expect(capability.highestValidPixelHeight == 1440)
+        #expect(capability.highestSustainedPixelWidth == 1920)
+        #expect(capability.highestSustainedPixelHeight == 1080)
+    }
+
     @Test("Stage continuation stops only after cancellation")
     func continuationStopsOnlyForCancelledStages() {
         #expect(captureBenchmarkShouldContinue(after: .completed))

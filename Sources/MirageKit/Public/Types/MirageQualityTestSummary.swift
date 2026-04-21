@@ -62,6 +62,7 @@ public struct MirageQualityTestSummary: Codable, Equatable, Sendable {
     public let benchmarkHeight: Int
     public let hostEncodeMs: Double?
     public let clientDecodeMs: Double?
+    public let hostCaptureCapability: MirageHostCaptureCapability?
     public let stageResults: [StageResult]
 
     public init(
@@ -75,6 +76,7 @@ public struct MirageQualityTestSummary: Codable, Equatable, Sendable {
         benchmarkHeight: Int,
         hostEncodeMs: Double?,
         clientDecodeMs: Double?,
+        hostCaptureCapability: MirageHostCaptureCapability? = nil,
         stageResults: [StageResult]
     ) {
         self.testID = testID
@@ -87,6 +89,7 @@ public struct MirageQualityTestSummary: Codable, Equatable, Sendable {
         self.benchmarkHeight = benchmarkHeight
         self.hostEncodeMs = hostEncodeMs
         self.clientDecodeMs = clientDecodeMs
+        self.hostCaptureCapability = hostCaptureCapability
         self.stageResults = stageResults
     }
 }

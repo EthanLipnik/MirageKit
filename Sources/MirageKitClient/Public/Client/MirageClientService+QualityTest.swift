@@ -209,6 +209,7 @@ extension MirageClientService {
                 benchmarkHeight: benchmarkRecord.benchmarkHeight,
                 hostEncodeMs: hostBenchmark?.encodeMs,
                 clientDecodeMs: benchmarkRecord.clientDecodeMs,
+                hostCaptureCapability: hostBenchmark?.hostCaptureCapability,
                 stageResults: stageResults
             )
         } onCancel: {

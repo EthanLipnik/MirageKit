@@ -141,5 +141,43 @@ struct RuntimeQualityAdjustmentPolicyTests {
         #expect(abs(decision.state.activeQuality - 0.75) < 0.0001)
         #expect(decision.state.qualityOverBudgetCount == 0)
     }
+
+    @Test("Delivery cadence pressure alone does not lower active quality")
+    func deliveryCadencePressureAloneDoesNotLowerActiveQuality() {
+        let assessment = MirageTransportPressure.assess(
+            sample: MirageTransportPressureSample(
+                encodedFPS: 60,
+                deliveredFPS: 8,
+                deliveryStressRatio: 0.92,
+                deliverySevereRatio: 0.75
+            )
+        )
+
+        let decision = MirageRuntimeQualityAdjustmentPolicy.decide(
+            state: MirageRuntimeQualityAdjustmentState(
+                activeQuality: 0.75,
+                qualityOverBudgetCount: 2,
+                qualityUnderBudgetCount: 0
+            ),
+            qualityFloor: 0.28,
+            qualityCeiling: 0.75,
+            encodeOverBudget: false,
+            packetWithinRaiseBudget: true,
+            transportAssessment: assessment,
+            allowEncodeDrivenQualityRelief: false,
+            bitrateConstrained: true,
+            adaptiveTransportRelief: true,
+            qualityDropThreshold: 3,
+            qualityRaiseThreshold: 4,
+            qualityDropStep: 0.02,
+            qualityDropStepHighPressure: 0.05,
+            qualityRaiseStep: 0.03
+        )
+
+        #expect(assessment.pipelineCadenceStress)
+        #expect(assessment.isStress == false)
+        #expect(decision.action == .hold)
+        #expect(decision.state.activeQuality == 0.75)
+    }
 }
 #endif

@@ -1235,9 +1235,7 @@ extension StreamContext {
         let sendStartDelayAverageMs = packetTelemetry?.sendStartDelayAverageMs ?? 0
         let sendCompletionAverageMs = packetTelemetry?.sendCompletionAverageMs ?? 0
         let packetPacerAverageSleepMs = packetTelemetry?.packetPacerSleepAverageMs ?? 0
-        let transportDropCount = (packetTelemetry?.stalePacketDrops ?? 0) +
-            (packetTelemetry?.generationAbortDrops ?? 0) +
-            (packetTelemetry?.nonKeyframeHoldDrops ?? 0)
+        let transportDropCount = packetTelemetry?.stalePacketDrops ?? 0
         let adaptiveTransportRelief = usesAppOwnedBitrateAdaptation && latencyMode == .lowestLatency
         let transportAssessment = MirageTransportPressure.assess(
             sample: MirageTransportPressureSample(

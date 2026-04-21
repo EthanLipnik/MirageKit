@@ -714,7 +714,6 @@ extension StreamContext {
         if keyframeStrategy == .scheduleDuringReset {
             await scheduleCoalescedRecoveryKeyframe(
                 reason: "Desktop resize reset",
-                noteLoss: true,
                 ignoreExistingInFlight: true
             )
         } else {

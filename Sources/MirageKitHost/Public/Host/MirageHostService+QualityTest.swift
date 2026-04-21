@@ -229,7 +229,10 @@ extension MirageHostService {
         }
         qualityTestStreamsByClientID[client.id] = qualityStream
 
-        let task = Task.detached(priority: .userInitiated) { [weak self, clientContext, request, qualityStream] in
+        let hostCaptureCapability = hostCaptureCapabilityProvider?()
+        let task = Task.detached(
+            priority: .userInitiated
+        ) { [weak self, clientContext, request, qualityStream, hostCaptureCapability] in
             defer {
                 Task { @MainActor [weak self] in
                     guard let self else { return }
@@ -245,7 +248,8 @@ extension MirageHostService {
                 request: request,
                 payloadBytes: payloadBytes,
                 via: qualityStream,
-                clientContext: clientContext
+                clientContext: clientContext,
+                hostCaptureCapability: hostCaptureCapability
             )
         }
         qualityTestTasksByClientID[client.id] = task
@@ -318,7 +322,8 @@ extension MirageHostService {
         request: QualityTestRequestMessage,
         payloadBytes: Int,
         via stream: LoomMultiplexedStream,
-        clientContext: ClientContext
+        clientContext: ClientContext,
+        hostCaptureCapability: MirageHostCaptureCapability?
     ) async {
         for stage in request.plan.stages {
             if Task.isCancelled { return }
@@ -363,7 +368,10 @@ extension MirageHostService {
         }
 
         if Task.isCancelled { return }
-        let benchmarkMessage = await makeQualityTestBenchmarkMessage(testID: request.testID)
+        let benchmarkMessage = await makeQualityTestBenchmarkMessage(
+            testID: request.testID,
+            hostCaptureCapability: hostCaptureCapability
+        )
         do {
             try await clientContext.send(.qualityTestResult, content: benchmarkMessage)
         } catch {
@@ -372,7 +380,8 @@ extension MirageHostService {
     }
 
     nonisolated private static func makeQualityTestBenchmarkMessage(
-        testID: UUID
+        testID: UUID,
+        hostCaptureCapability: MirageHostCaptureCapability?
     ) async -> QualityTestBenchmarkMessage {
         let store = MirageCodecBenchmarkStore()
         let encodeMs = try? await MirageCodecBenchmark.runEncodeBenchmark()
@@ -393,7 +402,8 @@ extension MirageHostService {
             benchmarkHeight: record.benchmarkHeight,
             benchmarkFrameRate: record.benchmarkFrameRate,
             encodeMs: record.hostEncodeMs,
-            benchmarkVersion: record.version
+            benchmarkVersion: record.version,
+            hostCaptureCapability: hostCaptureCapability
         )
     }
 
