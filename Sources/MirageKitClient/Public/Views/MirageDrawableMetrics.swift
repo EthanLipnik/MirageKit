@@ -36,4 +36,12 @@ public struct MirageDrawableMetrics: Sendable, Equatable {
         self.screenNativePixelSize = screenNativePixelSize
         self.screenNativeScale = screenNativeScale
     }
+
+    static func shouldReportChange(
+        from previous: MirageDrawableMetrics?,
+        to next: MirageDrawableMetrics
+    )
+    -> Bool {
+        previous != next
+    }
 }

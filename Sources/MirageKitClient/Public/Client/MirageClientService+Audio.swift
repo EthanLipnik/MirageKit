@@ -18,6 +18,7 @@ extension MirageClientService {
         audioStreamReceiveTask = nil
         audioRegisteredStreamID = nil
         activeAudioStreamMessage = nil
+        resetPendingDecodedAudioFrames()
         setActiveAudioStreamIDForFiltering(nil)
         setAudioDecodeTargetChannelCountForPipeline(2)
         if let audioPlaybackController = audioPlaybackControllerIfInitialized {
@@ -32,9 +33,27 @@ extension MirageClientService {
     }
 
     /// Start receiving audio packets from a Loom multiplexed stream.
-    func startAudioStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) {
+    func startAudioStreamReceiveLoop(stream: LoomMultiplexedStream, streamID: StreamID) async {
         audioStreamReceiveTask?.cancel()
+        audioStreamReceiveTask = nil
+        let streamChanged = audioRegisteredStreamID != streamID
         audioRegisteredStreamID = streamID
+
+        if streamChanged {
+            if activeAudioStreamMessage?.streamID != streamID {
+                activeAudioStreamMessage = nil
+            }
+            resetPendingDecodedAudioFrames()
+            setActiveAudioStreamIDForFiltering(nil)
+            setAudioDecodeTargetChannelCountForPipeline(2)
+            await audioPacketIngressQueue.reset()
+            if let audioPlaybackController = audioPlaybackControllerIfInitialized {
+                audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
+                await audioPlaybackController.reset()
+            }
+        }
+
+        setActiveAudioStreamIDForFiltering(streamID)
         let serviceBox = WeakSendableBox(self)
         audioStreamReceiveTask = Task.detached(priority: .userInitiated) { [stream, streamID, serviceBox] in
             for await data in stream.incomingBytes {
@@ -115,6 +134,7 @@ extension MirageClientService {
     private func finishAudioStreamReceiveLoop(streamID: StreamID) {
         if audioRegisteredStreamID == streamID {
             audioStreamReceiveTask = nil
+            audioRegisteredStreamID = nil
         }
         activeMediaStreams.removeValue(forKey: "audio/\(streamID)")
         MirageLogger.client("Audio stream receive loop ended for stream \(streamID)")
@@ -124,29 +144,61 @@ extension MirageClientService {
         do {
             let started = try message.decode(AudioStreamStartedMessage.self)
             let previous = activeAudioStreamMessage
-            activeAudioStreamMessage = started
-            setActiveAudioStreamIDForFiltering(started.streamID)
-            let preferredChannels = resolveAudioPlaybackController().preferredChannelCount(
-                for: Int(started.channelCount)
-            )
-            setAudioDecodeTargetChannelCountForPipeline(preferredChannels)
+            let isReplacingActiveAudioStream = previous != nil && previous != started
+            let audioPlaybackController = resolveAudioPlaybackController()
+            let preferredChannels = audioPlaybackController.preferredChannelCount(for: Int(started.channelCount))
 
             MirageLogger
                 .client(
                     "Audio stream started: stream=\(started.streamID), codec=\(started.codec), sampleRate=\(started.sampleRate), channels=\(started.channelCount)"
                 )
 
-            Task { [weak self] in
-                guard let self else { return }
-                if previous != started {
+            if isReplacingActiveAudioStream {
+                activeAudioStreamMessage = nil
+                setActiveAudioStreamIDForFiltering(nil)
+                resetPendingDecodedAudioFrames()
+                audioPacketIngressQueue.invalidatePendingPackets()
+                Task { @MainActor [weak self, audioPlaybackController] in
+                    guard let self else { return }
                     await self.audioPacketIngressQueue.reset()
-                    if let audioPlaybackController = self.audioPlaybackControllerIfInitialized {
-                        await audioPlaybackController.reset()
-                    }
+                    await audioPlaybackController.reset()
+                    self.publishAudioStreamStarted(
+                        started,
+                        preferredChannels: preferredChannels,
+                        audioPlaybackController: audioPlaybackController
+                    )
                 }
+            } else {
+                publishAudioStreamStarted(
+                    started,
+                    preferredChannels: preferredChannels,
+                    audioPlaybackController: audioPlaybackController
+                )
             }
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode audioStreamStarted: ")
+        }
+    }
+
+    private func publishAudioStreamStarted(
+        _ started: AudioStreamStartedMessage,
+        preferredChannels: Int,
+        audioPlaybackController: AudioPlaybackController
+    ) {
+        activeAudioStreamMessage = started
+        setActiveAudioStreamIDForFiltering(started.streamID)
+        setAudioDecodeTargetChannelCountForPipeline(preferredChannels)
+
+        Task { @MainActor [weak self, audioPlaybackController] in
+            guard let self else { return }
+            _ = await audioPlaybackController.prepareForIncomingFormat(
+                sampleRate: started.sampleRate,
+                channelCount: preferredChannels
+            )
+            self.flushPendingDecodedAudioFrames(
+                for: started.streamID,
+                into: audioPlaybackController
+            )
         }
     }
 
@@ -158,6 +210,10 @@ extension MirageClientService {
             guard shouldReset else { return }
 
             activeAudioStreamMessage = nil
+            resetPendingDecodedAudioFrames(for: stopped.streamID)
+            if audioRegisteredStreamID == stopped.streamID {
+                audioRegisteredStreamID = nil
+            }
             setActiveAudioStreamIDForFiltering(nil)
             setAudioDecodeTargetChannelCountForPipeline(2)
 
@@ -176,12 +232,63 @@ extension MirageClientService {
 
     func enqueueDecodedAudioFrames(_ decodedFrames: [DecodedPCMFrame], for streamID: StreamID) {
         guard audioConfiguration.enabled else { return }
-        guard activeAudioStreamMessage?.streamID == streamID else { return }
+        guard activeAudioStreamMessage?.streamID == streamID else {
+            if audioRegisteredStreamID == streamID {
+                bufferPendingDecodedAudioFrames(decodedFrames, for: streamID)
+            }
+            return
+        }
         guard !decodedFrames.isEmpty else { return }
         let audioPlaybackController = resolveAudioPlaybackController()
         updateAudioSyncDelay(for: streamID)
+        flushPendingDecodedAudioFrames(for: streamID, into: audioPlaybackController)
         for decodedFrame in decodedFrames {
             audioPlaybackController.enqueue(decodedFrame)
+        }
+    }
+
+    private func bufferPendingDecodedAudioFrames(_ decodedFrames: [DecodedPCMFrame], for streamID: StreamID) {
+        guard !decodedFrames.isEmpty else { return }
+        var frames = pendingDecodedAudioFramesByStreamID[streamID] ?? []
+        var duration = pendingDecodedAudioDurationByStreamID[streamID] ?? 0
+
+        for frame in decodedFrames {
+            frames.append(frame)
+            duration += frame.durationSeconds
+        }
+
+        while duration > maxPendingDecodedAudioDuration, !frames.isEmpty {
+            duration = max(0, duration - frames.removeFirst().durationSeconds)
+        }
+
+        pendingDecodedAudioFramesByStreamID[streamID] = frames
+        pendingDecodedAudioDurationByStreamID[streamID] = duration
+    }
+
+    private func flushPendingDecodedAudioFrames(
+        for streamID: StreamID,
+        into audioPlaybackController: AudioPlaybackController
+    ) {
+        guard let frames = pendingDecodedAudioFramesByStreamID.removeValue(forKey: streamID),
+              !frames.isEmpty else {
+            pendingDecodedAudioDurationByStreamID.removeValue(forKey: streamID)
+            return
+        }
+
+        pendingDecodedAudioDurationByStreamID.removeValue(forKey: streamID)
+        updateAudioSyncDelay(for: streamID)
+        for frame in frames {
+            audioPlaybackController.enqueue(frame)
+        }
+    }
+
+    private func resetPendingDecodedAudioFrames(for streamID: StreamID? = nil) {
+        if let streamID {
+            pendingDecodedAudioFramesByStreamID.removeValue(forKey: streamID)
+            pendingDecodedAudioDurationByStreamID.removeValue(forKey: streamID)
+        } else {
+            pendingDecodedAudioFramesByStreamID.removeAll()
+            pendingDecodedAudioDurationByStreamID.removeAll()
         }
     }
 

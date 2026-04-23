@@ -79,5 +79,35 @@ struct MirroredDesktopCursorBoundsParityTests {
         #expect(startPoint == CGPoint(x: inputBounds.midX, y: inputBounds.midY))
         #expect(startPoint == CGPoint(x: physicalBounds.midX, y: physicalBounds.midY))
     }
+
+    @Test("Mirrored desktop input bounds follow virtual resolution changes")
+    func mirroredDesktopInputBoundsFollowVirtualResolutionChanges() {
+        let physicalBounds = CGRect(x: 0, y: 0, width: 1920, height: 1080)
+        let oldVirtualResolution = CGSize(width: 2560, height: 1600)
+        let newVirtualResolution = CGSize(width: 2048, height: 1536)
+        let normalizedPoint = CGPoint(x: 0, y: 0.5)
+
+        let oldInputBounds = MirageHostService.resolvedMirroredDesktopInputBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: oldVirtualResolution
+        )
+        let newInputBounds = MirageHostService.resolvedMirroredDesktopInputBounds(
+            physicalBounds: physicalBounds,
+            virtualResolution: newVirtualResolution
+        )
+        let oldMappedPoint = CGPoint(
+            x: oldInputBounds.minX + normalizedPoint.x * oldInputBounds.width,
+            y: oldInputBounds.minY + normalizedPoint.y * oldInputBounds.height
+        )
+        let newMappedPoint = CGPoint(
+            x: newInputBounds.minX + normalizedPoint.x * newInputBounds.width,
+            y: newInputBounds.minY + normalizedPoint.y * newInputBounds.height
+        )
+
+        #expect(oldInputBounds != newInputBounds)
+        #expect(newInputBounds.minX > oldInputBounds.minX)
+        #expect(newMappedPoint.x > oldMappedPoint.x)
+        #expect(newMappedPoint.y == oldMappedPoint.y)
+    }
 }
 #endif

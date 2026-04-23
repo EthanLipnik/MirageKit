@@ -81,6 +81,7 @@ public class MirageSampleBufferView: UIView {
     var maxRenderFPS: Int = 60
     var appliedRefreshRateLock: Int = 0
     var lastReportedDrawableSize: CGSize = .zero
+    var lastReportedDrawableMetrics: MirageDrawableMetrics?
 
     static let maxDrawableWidth: CGFloat = 5120
     static let maxDrawableHeight: CGFloat = 2880

@@ -241,6 +241,45 @@ struct DesktopStreamStartResetDecisionTests {
     }
 
     @MainActor
+    @Test("Non-transition desktop start token advance updates resolution and begins post-resize gating")
+    func nonTransitionDesktopStartTokenAdvanceUpdatesResolutionAndBeginsPostResizeGating() async throws {
+        let service = MirageClientService()
+        let streamID: StreamID = 27
+        let desktopSessionID = UUID()
+        let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
+        service.desktopStreamID = streamID
+        service.desktopSessionID = desktopSessionID
+        service.desktopStreamResolution = CGSize(width: 1984, height: 2192)
+        service.controllersByStream[streamID] = controller
+        service.desktopDimensionTokenByStream[streamID] = 4
+
+        let started = DesktopStreamStartedMessage(
+            streamID: streamID,
+            desktopSessionID: desktopSessionID,
+            width: 3024,
+            height: 1964,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            dimensionToken: 5,
+            acceptedMediaMaxPacketSize: 1400
+        )
+        let envelope = try ControlMessage(type: .desktopStreamStarted, content: started)
+
+        await service.handleDesktopStreamStarted(envelope)
+
+        #expect(service.desktopStreamResolution == CGSize(width: 3024, height: 1964))
+        #expect(service.desktopDimensionTokenByStream[streamID] == 5)
+        #expect(service.sessionStore.isAwaitingPostResizeFirstFrame(for: streamID))
+
+        if let activeController = service.controllersByStream[streamID] {
+            await activeController.stop()
+        } else {
+            await controller.stop()
+        }
+    }
+
+    @MainActor
     @Test("Desktop start for a stopped session is ignored")
     func desktopStartForStoppedSessionIsIgnored() async throws {
         let service = MirageClientService()

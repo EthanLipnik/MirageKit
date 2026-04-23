@@ -311,7 +311,7 @@ extension MirageClientService {
         _ stream: LoomMultiplexedStream,
         label: String,
         sessionID: UUID
-    ) {
+    ) async {
         if fastPathState.markObservedMediaStreamLabel(label) {
             MirageLogger.client(
                 "Observed incoming Loom media stream label=\(label) session=\(sessionID.uuidString)"
@@ -327,7 +327,7 @@ extension MirageClientService {
         case .audio(let streamID):
             MirageLogger.client("Accepted incoming audio stream for stream \(streamID)")
             activeMediaStreams[label] = stream
-            startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
+            await startAudioStreamReceiveLoop(stream: stream, streamID: streamID)
 
         case .qualityTest(let testID):
             MirageLogger.client("Accepted incoming quality-test stream for test \(testID.uuidString)")

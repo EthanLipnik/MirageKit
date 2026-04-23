@@ -45,6 +45,49 @@ extension SharedVirtualDisplayManager {
         return snapshot(from: display)
     }
 
+    @discardableResult
+    func updateSharedDisplayObservedResolution(
+        displayID: CGDirectDisplayID,
+        resolution: CGSize
+    )
+    -> DisplaySnapshot? {
+        guard resolution.width > 0,
+              resolution.height > 0,
+              let display = sharedDisplay,
+              display.displayID == displayID else {
+            return nil
+        }
+
+        if let existingInfo = activeConsumers[.desktopStream] {
+            activeConsumers[.desktopStream] = ClientDisplayInfo(
+                resolution: resolution,
+                windowID: existingInfo.windowID,
+                colorSpace: existingInfo.colorSpace,
+                acquiredAt: existingInfo.acquiredAt
+            )
+        }
+
+        guard display.resolution != resolution else { return snapshot(from: display) }
+
+        let updatedDisplay = ManagedDisplayContext(
+            displayID: display.displayID,
+            spaceID: display.spaceID,
+            resolution: resolution,
+            scaleFactor: display.scaleFactor,
+            refreshRate: display.refreshRate,
+            colorSpace: display.colorSpace,
+            displayP3CoverageStatus: display.displayP3CoverageStatus,
+            generation: display.generation,
+            createdAt: display.createdAt,
+            displayRef: display.displayRef
+        )
+        sharedDisplay = updatedDisplay
+        MirageLogger.host(
+            "Shared display observed resolution refreshed to \(Int(resolution.width))x\(Int(resolution.height)) px"
+        )
+        return snapshot(from: updatedDisplay)
+    }
+
     /// Get the shared display generation.
     func getDisplayGeneration() -> UInt64 {
         sharedDisplay?.generation ?? 0

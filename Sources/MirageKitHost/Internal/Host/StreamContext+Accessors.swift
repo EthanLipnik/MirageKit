@@ -126,6 +126,27 @@ extension StreamContext {
         }
     }
 
+    func updateVirtualDisplaySnapshotResolution(_ resolution: CGSize) {
+        guard resolution.width > 0,
+              resolution.height > 0,
+              let snapshot = virtualDisplayContext,
+              snapshot.resolution != resolution else {
+            return
+        }
+
+        virtualDisplayContext = SharedVirtualDisplayManager.DisplaySnapshot(
+            displayID: snapshot.displayID,
+            spaceID: snapshot.spaceID,
+            resolution: resolution,
+            scaleFactor: snapshot.scaleFactor,
+            refreshRate: snapshot.refreshRate,
+            colorSpace: snapshot.colorSpace,
+            displayP3CoverageStatus: snapshot.displayP3CoverageStatus,
+            generation: snapshot.generation,
+            createdAt: snapshot.createdAt
+        )
+    }
+
     func getDimensionToken() -> UInt16 {
         dimensionToken
     }

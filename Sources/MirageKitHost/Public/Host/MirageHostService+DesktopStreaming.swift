@@ -602,7 +602,6 @@ extension MirageHostService {
         desktopStreamID = streamID
         desktopStreamClientContext = clientContext
         desktopRequestedScaleFactor = desktopBackingScale.scaleFactor
-        desktopMirroredVirtualResolution = captureResolution
         streamsByID[streamID] = streamContext
         registerTypingBurstRoute(streamID: streamID, context: streamContext)
         await registerStallWindowPointerRoute(streamID: streamID, context: streamContext)
@@ -644,7 +643,8 @@ extension MirageHostService {
         // For mirrored virtual displays, use the aspect-fit content bounds within the
         // physical display so input matches the mirrored content area.
         let mainDisplayBounds = refreshDesktopPrimaryPhysicalBounds()
-        let inputBounds = resolvedDesktopInputBounds(
+        let inputGeometry = updateDesktopInputGeometry(
+            streamID: streamID,
             physicalBounds: mainDisplayBounds,
             virtualResolution: captureResolution
         )
@@ -652,7 +652,7 @@ extension MirageHostService {
             id: 0,
             title: "Desktop",
             application: nil,
-            frame: inputBounds,
+            frame: inputGeometry.inputBounds,
             isOnScreen: true,
             windowLayer: 0
         )

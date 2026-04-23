@@ -15,7 +15,7 @@ import MirageKit
 actor HostAudioPipeline {
     private let encoder: AudioEncoder
     private let packetizer: AudioPacketizer
-    private let onPacketsReady: @Sendable ([Data], EncodedAudioFrame, StreamID) -> Void
+    private let onPacketsReady: @Sendable ([Data], EncodedAudioFrame, StreamID) async -> Void
     private var sourceStreamID: StreamID
     private var queue: [CapturedAudioBuffer] = []
     private var processingTask: Task<Void, Never>?
@@ -28,7 +28,7 @@ actor HostAudioPipeline {
         maxPayloadSize: Int,
         mediaSecurityContext: MirageMediaSecurityContext?,
         maxQueuedBuffers: Int = 48,
-        onPacketsReady: @escaping @Sendable ([Data], EncodedAudioFrame, StreamID) -> Void
+        onPacketsReady: @escaping @Sendable ([Data], EncodedAudioFrame, StreamID) async -> Void
     ) {
         self.sourceStreamID = sourceStreamID
         encoder = AudioEncoder(audioConfiguration: audioConfiguration)
@@ -82,7 +82,7 @@ actor HostAudioPipeline {
             let currentStreamID = sourceStreamID
             let packets = await packetizer.packetize(frame: encoded, streamID: currentStreamID)
             guard !packets.isEmpty else { continue }
-            onPacketsReady(packets, encoded, currentStreamID)
+            await onPacketsReady(packets, encoded, currentStreamID)
         }
     }
 }

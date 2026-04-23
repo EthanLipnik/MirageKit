@@ -360,15 +360,7 @@ extension MirageHostService {
     }
 
     func currentDesktopStartedResolution(fallback: CGSize? = nil) async -> CGSize {
-        if let snapshot = await SharedVirtualDisplayManager.shared.getDisplaySnapshot() {
-            return snapshot.resolution
-        }
-        if let fallback,
-           fallback.width > 0,
-           fallback.height > 0 {
-            return fallback
-        }
-        return .zero
+        await currentDesktopVirtualDisplayPixelResolution(fallback: fallback) ?? .zero
     }
 
     func virtualDisplayPixelResolution(
@@ -1032,13 +1024,12 @@ extension MirageHostService {
                 try ensureDesktopResizeTransactionCanContinue(streamID: streamID, request: request)
                 try await desktopContext.updateStreamScale(geometry.requestedStreamScale)
                 let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
-                desktopMirroredVirtualResolution = geometry.pixelResolution
-                let inputBounds = resolvedDesktopInputBounds(
+                let inputGeometry = updateDesktopInputGeometry(
+                    streamID: streamID,
                     physicalBounds: primaryBounds,
                     virtualResolution: geometry.pixelResolution
                 )
-                let inputBoundsText = String(describing: inputBounds)
-                inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+                let inputBoundsText = String(describing: inputGeometry.inputBounds)
                 if let token = virtualDisplaySetupGuardToken {
                     await completeVirtualDisplaySetupGuard(
                         token,
@@ -1095,6 +1086,7 @@ extension MirageHostService {
 
                 let effectivePixelResolution = postResizeSnapshot.resolution
                 let activeDisplayID = postResizeSnapshot.displayID
+                desktopVirtualDisplayID = activeDisplayID
 
                 if shouldRestoreMirroring,
                    streamID == desktopStreamID,
@@ -1135,15 +1127,14 @@ extension MirageHostService {
                 )
 
                 let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
-                desktopMirroredVirtualResolution = effectivePixelResolution
-                let inputBounds = resolvedDesktopInputBounds(
+                let inputGeometry = updateDesktopInputGeometry(
+                    streamID: streamID,
                     physicalBounds: primaryBounds,
                     virtualResolution: effectivePixelResolution
                 )
                 let effectivePixelResolutionText =
                     "\(Int(effectivePixelResolution.width))x\(Int(effectivePixelResolution.height)) px"
-                let inputBoundsText = String(describing: inputBounds)
-                inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
+                let inputBoundsText = String(describing: inputGeometry.inputBounds)
                 if let token = virtualDisplaySetupGuardToken {
                     await completeVirtualDisplaySetupGuard(
                         token,
@@ -1324,6 +1315,7 @@ extension MirageHostService {
 
         sharedVirtualDisplayScaleFactor = max(1.0, restoredSnapshot.scaleFactor)
         sharedVirtualDisplayGeneration = restoredSnapshot.generation
+        desktopVirtualDisplayID = restoredSnapshot.displayID
         desktopRequestedScaleFactor = max(1.0, requestedDisplayScaleFactor ?? restoredSnapshot.scaleFactor)
         await context.updateDesktopResizeGeometryRequest(
             requestedStreamScale: requestedStreamScale,
@@ -1344,12 +1336,11 @@ extension MirageHostService {
         }
 
         let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
-        desktopMirroredVirtualResolution = restoredSnapshot.resolution
-        let inputBounds = resolvedDesktopInputBounds(
+        let inputGeometry = updateDesktopInputGeometry(
+            streamID: streamID,
             physicalBounds: primaryBounds,
             virtualResolution: restoredSnapshot.resolution
         )
-        inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
         performVirtualDisplaySetupWakeAndCenter(reason: "desktop_resize_rollback")
 
         let outcomeLabel: String = switch updateResult.outcome {
@@ -1366,7 +1357,7 @@ extension MirageHostService {
             .host(
                 "Rolled back desktop resize transition \(request.transitionID?.uuidString ?? "nil") to " +
                     "\(Int(restoredSnapshot.resolution.width))x\(Int(restoredSnapshot.resolution.height)) px " +
-                    "(outcome: \(outcomeLabel), input bounds: \(inputBounds))"
+                    "(outcome: \(outcomeLabel), input bounds: \(inputGeometry.inputBounds))"
             )
 
         return context
@@ -1413,7 +1404,6 @@ extension MirageHostService {
         desktopPrimaryPhysicalDisplayID = fallback.displayID
         desktopPrimaryPhysicalBounds = fallback.bounds
         desktopDisplayBounds = fallback.bounds
-        desktopMirroredVirtualResolution = fallback.resolution
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = fallback.scaleFactor
         desktopUsesHostResolution = true
@@ -1423,14 +1413,15 @@ extension MirageHostService {
             resolution: fallback.resolution
         )
 
-        let inputBounds = resolvedDesktopInputBounds(
+        let inputGeometry = updateDesktopInputGeometry(
+            streamID: streamID,
             physicalBounds: fallback.bounds,
             virtualResolution: fallback.resolution
         )
-        inputStreamCacheActor.updateWindowFrame(streamID, newFrame: inputBounds)
         MirageLogger.host(
             "Desktop stream switched to main display fallback for stream \(streamID): " +
-                "\(Int(fallback.resolution.width))x\(Int(fallback.resolution.height)) px"
+                "\(Int(fallback.resolution.width))x\(Int(fallback.resolution.height)) px " +
+                "(input bounds: \(inputGeometry.inputBounds))"
         )
         return context
     }

@@ -6,6 +6,8 @@
 //
 
 @testable import MirageKitClient
+@testable import MirageKit
+import Foundation
 import Testing
 
 @Suite("Audio Playback Controller Initialization")
@@ -42,5 +44,81 @@ struct AudioPlaybackControllerInitializationTests {
         #expect(!controller.hasInitializedPlaybackGraphForTesting())
         #expect(await controller.prepareForIncomingFormat(sampleRate: 48_000, channelCount: 2))
         #expect(controller.hasInitializedPlaybackGraphForTesting())
+    }
+
+    @MainActor
+    @Test("Audio stream start prewarms playback graph for announced format")
+    func audioStreamStartedPrewarmsPlaybackGraph() async throws {
+        let service = MirageClientService(deviceName: "Audio Start Prewarm Test")
+        let message = try ControlMessage(
+            type: .audioStreamStarted,
+            content: AudioStreamStartedMessage(
+                streamID: 42,
+                codec: .pcm16LE,
+                sampleRate: 48_000,
+                channelCount: 2
+            )
+        )
+
+        #expect(service.audioPlaybackControllerIfInitialized == nil)
+
+        service.handleAudioStreamStarted(message)
+
+        let controller = try #require(service.audioPlaybackControllerIfInitialized)
+        try await waitUntil {
+            controller.hasInitializedPlaybackGraphForTesting()
+        }
+        #expect(controller.hasInitializedPlaybackGraphForTesting())
+        service.stopAudioConnection()
+    }
+
+    @MainActor
+    @Test("Decoded frames that beat audio stream start are buffered and flushed")
+    func earlyDecodedFramesAreBufferedUntilAudioStreamStarted() async throws {
+        let service = MirageClientService(deviceName: "Early Audio Buffer Test")
+        let streamID: StreamID = 77
+        service.audioRegisteredStreamID = streamID
+
+        service.enqueueDecodedAudioFrames([makeDecodedFrame()], for: streamID)
+
+        #expect(service.pendingDecodedAudioFramesByStreamID[streamID]?.count == 1)
+
+        let message = try ControlMessage(
+            type: .audioStreamStarted,
+            content: AudioStreamStartedMessage(
+                streamID: streamID,
+                codec: .pcm16LE,
+                sampleRate: 48_000,
+                channelCount: 2
+            )
+        )
+        service.handleAudioStreamStarted(message)
+
+        try await waitUntil {
+            service.pendingDecodedAudioFramesByStreamID[streamID] == nil
+        }
+        #expect(service.pendingDecodedAudioFramesByStreamID[streamID] == nil)
+        service.stopAudioConnection()
+    }
+
+    @MainActor
+    private func waitUntil(_ predicate: @MainActor () -> Bool) async throws {
+        for _ in 0 ..< 20 {
+            if predicate() { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+    }
+
+    private func makeDecodedFrame() -> DecodedPCMFrame {
+        let sampleRate = 48_000
+        let channelCount = 2
+        let frameCount = 4_800
+        return DecodedPCMFrame(
+            sampleRate: sampleRate,
+            channelCount: channelCount,
+            frameCount: frameCount,
+            timestampNs: 1,
+            pcmData: Data(count: frameCount * channelCount * MemoryLayout<Float>.size)
+        )
     }
 }

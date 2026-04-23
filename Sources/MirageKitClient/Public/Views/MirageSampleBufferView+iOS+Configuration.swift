@@ -25,10 +25,16 @@ extension MirageSampleBufferView {
         )
         let drawableSize = pixelSize
         guard drawableSize.width > 0, drawableSize.height > 0 else { return }
-        guard drawableSize != lastReportedDrawableSize else { return }
+        let metrics = currentDrawableMetrics(drawableSize: drawableSize)
+        guard MirageDrawableMetrics.shouldReportChange(
+            from: lastReportedDrawableMetrics,
+            to: metrics
+        ) else {
+            return
+        }
 
         lastReportedDrawableSize = drawableSize
-        let metrics = currentDrawableMetrics(drawableSize: drawableSize)
+        lastReportedDrawableMetrics = metrics
         onDrawableMetricsChanged?(metrics)
     }
 

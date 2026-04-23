@@ -101,13 +101,12 @@ extension MirageHostService {
                 mediaSecurityContext: nil
             ) { [weak self] packets, encoded, currentStreamID in
                 guard let self else { return }
-                dispatchControlWork(clientID: clientID) { [weak self] in
-                    guard let self else { return }
-                    await maybeSendAudioStarted(
-                        clientID: clientID,
-                        streamID: currentStreamID,
-                        encodedFrame: encoded
-                    )
+                guard await maybeSendAudioStarted(
+                    clientID: clientID,
+                    streamID: currentStreamID,
+                    encodedFrame: encoded
+                ) else {
+                    return
                 }
                 for packet in packets {
                     sendAudioPacketForClient(clientID, data: packet)
@@ -216,6 +215,7 @@ extension MirageHostService {
             }
         }
         sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
+        audioStartedMessageByClientID.removeValue(forKey: clientID)
         transportRegistry.unregisterAudioStream(clientID: clientID)
     }
 
@@ -247,12 +247,13 @@ extension MirageHostService {
 
     }
 
+    @discardableResult
     private func maybeSendAudioStarted(
         clientID: UUID,
         streamID: StreamID,
         encodedFrame: EncodedAudioFrame
     )
-    async {
+    async -> Bool {
         let message = AudioStreamStartedMessage(
             streamID: streamID,
             codec: encodedFrame.codec,
@@ -264,15 +265,17 @@ extension MirageHostService {
         if previousMessage != message {
             sentAudioStartedMessageByClientID.removeValue(forKey: clientID)
         }
-        await sendPendingAudioStartedIfPossible(clientID: clientID)
+        return await sendPendingAudioStartedIfPossible(clientID: clientID)
     }
 
-    private func sendPendingAudioStartedIfPossible(clientID: UUID) async {
-        guard let message = audioStartedMessageByClientID[clientID] else { return }
-        guard transportRegistry.hasAudioConnection(clientID: clientID) else { return }
-        guard sentAudioStartedMessageByClientID[clientID] != message else { return }
-        guard await sendAudioStreamStarted(message, toClientID: clientID) else { return }
+    @discardableResult
+    private func sendPendingAudioStartedIfPossible(clientID: UUID) async -> Bool {
+        guard let message = audioStartedMessageByClientID[clientID] else { return false }
+        guard transportRegistry.hasAudioConnection(clientID: clientID) else { return false }
+        guard sentAudioStartedMessageByClientID[clientID] != message else { return true }
+        guard await sendAudioStreamStarted(message, toClientID: clientID) else { return false }
         sentAudioStartedMessageByClientID[clientID] = message
+        return true
     }
 
     private func fallbackAudioSourceStreamID(for clientID: UUID, excluding streamID: StreamID) -> StreamID? {

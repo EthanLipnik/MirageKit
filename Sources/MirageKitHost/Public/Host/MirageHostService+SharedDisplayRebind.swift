@@ -81,6 +81,7 @@ extension MirageHostService {
 
         guard let desktopStreamID, let desktopContext = desktopStreamContext else { return }
 
+        desktopVirtualDisplayID = newContext.displayID
         desktopDisplayBounds = displayBounds
         sharedVirtualDisplayScaleFactor = max(1.0, newContext.scaleFactor)
         let rebindDecision = desktopGenerationChangeRebindDecision(
@@ -117,12 +118,11 @@ extension MirageHostService {
             )
 
             let primaryBounds = refreshDesktopPrimaryPhysicalBounds()
-            desktopMirroredVirtualResolution = newContext.resolution
-            let inputBounds = resolvedDesktopInputBounds(
+            let inputGeometry = updateDesktopInputGeometry(
+                streamID: desktopStreamID,
                 physicalBounds: primaryBounds,
                 virtualResolution: newContext.resolution
             )
-            inputStreamCacheActor.updateWindowFrame(desktopStreamID, newFrame: inputBounds)
             if let token = virtualDisplaySetupGuardToken {
                 await completeVirtualDisplaySetupGuard(
                     token,
@@ -133,7 +133,8 @@ extension MirageHostService {
             await sendStreamScaleUpdate(streamID: desktopStreamID)
             MirageLogger
                 .host(
-                    "Desktop stream rebound to shared display generation \(newContext.generation) (Virtual Display)"
+                    "Desktop stream rebound to shared display generation \(newContext.generation) " +
+                        "(Virtual Display, input bounds: \(inputGeometry.inputBounds))"
                 )
         } catch {
             MirageLogger.error(

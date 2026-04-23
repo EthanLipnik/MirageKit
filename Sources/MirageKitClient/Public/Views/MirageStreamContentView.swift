@@ -574,7 +574,22 @@ public struct MirageStreamContentView: View {
             }
         }
 
+        if shouldSuppressDesktopPointerEventDuringResize(event) {
+            return
+        }
+
         forwardInputEventToHost(event)
+    }
+
+    private func shouldSuppressDesktopPointerEventDuringResize(_ event: MirageInputEvent) -> Bool {
+        guard isDesktopStream,
+              event.isPointerGeometryInput,
+              awaitingPostResizeFirstFrame ||
+              desktopResizeCoordinator.isResizing ||
+              desktopResizeCoordinator.maskActive else {
+            return false
+        }
+        return true
     }
 
     #if canImport(UIKit)
@@ -1090,6 +1105,36 @@ private struct MirageStreamIgnoresSafeAreaModifier: ViewModifier {
             content.ignoresSafeArea()
         } else {
             content
+        }
+    }
+}
+
+private extension MirageInputEvent {
+    var isPointerGeometryInput: Bool {
+        switch self {
+        case .mouseDown,
+             .mouseUp,
+             .mouseMoved,
+             .mouseDragged,
+             .rightMouseDown,
+             .rightMouseUp,
+             .rightMouseDragged,
+             .otherMouseDown,
+             .otherMouseUp,
+             .otherMouseDragged,
+             .scrollWheel,
+             .magnify,
+             .rotate:
+            true
+        case .flagsChanged,
+             .hostSystemAction,
+             .keyDown,
+             .keyUp,
+             .pixelResize,
+             .relativeResize,
+             .windowFocus,
+             .windowResize:
+            false
         }
     }
 }

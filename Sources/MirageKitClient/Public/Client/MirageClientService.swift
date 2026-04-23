@@ -593,6 +593,9 @@ public final class MirageClientService {
     // Audio receiving state
     var audioRegisteredStreamID: StreamID?
     var activeAudioStreamMessage: AudioStreamStartedMessage?
+    var pendingDecodedAudioFramesByStreamID: [StreamID: [DecodedPCMFrame]] = [:]
+    var pendingDecodedAudioDurationByStreamID: [StreamID: Double] = [:]
+    let maxPendingDecodedAudioDuration: Double = 0.5
     nonisolated let audioDecodePipeline = ClientAudioDecodePipeline(startupBufferSeconds: 0.150)
     nonisolated let audioPacketIngressQueue: ClientAudioPacketIngressQueue
     @ObservationIgnored private var lazyAudioPlaybackController: AudioPlaybackController?
