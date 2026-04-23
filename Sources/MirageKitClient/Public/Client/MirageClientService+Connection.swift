@@ -726,12 +726,22 @@ extension MirageClientService {
         )
     }
 
-    func controlSessionAttempts(for host: LoomPeer) -> [ControlSessionAttempt] {
+    func controlSessionAttempts(
+        for host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics? = nil
+    ) -> [ControlSessionAttempt] {
         let requiredInterfaceType = preferredNetworkType.requiredInterfaceType
+        let resolvedLocalNetwork = localNetwork ?? ControlSessionNetworkDiagnostics(
+            snapshot: localNetworkMonitor.snapshot()
+        )
         var attempts: [ControlSessionAttempt] = []
 
         for transportKind in [LoomTransportKind.udp, .quic, .tcp] {
-            guard let endpoint = controlSessionEndpoint(for: host, transportKind: transportKind) else {
+            guard let endpoint = controlSessionEndpoint(
+                for: host,
+                transportKind: transportKind,
+                localNetwork: resolvedLocalNetwork
+            ) else {
                 continue
             }
 
@@ -761,7 +771,8 @@ extension MirageClientService {
 
     private func controlSessionEndpoint(
         for host: LoomPeer,
-        transportKind: LoomTransportKind
+        transportKind: LoomTransportKind,
+        localNetwork: ControlSessionNetworkDiagnostics
     ) -> NWEndpoint? {
         guard let transport = host.advertisement.directTransports.first(where: { $0.transportKind == transportKind }),
               let port = NWEndpoint.Port(rawValue: transport.port) else {
@@ -769,9 +780,26 @@ extension MirageClientService {
                 if case let .hostPort(_, port) = host.endpoint,
                    let selectedHost = controlSessionUDPHost(
                        for: host,
-                       endpointHost: endpointHost(for: host.endpoint)
+                       endpointHost: endpointHost(for: host.endpoint),
+                       localNetwork: localNetwork
                    ) {
+                    logControlSessionEndpointSelection(
+                        transportKind: transportKind,
+                        hostName: host.name,
+                        selectedHost: selectedHost,
+                        port: port,
+                        source: "udp-host-fallback"
+                    )
                     return .hostPort(host: selectedHost, port: port)
+                }
+                if case let .hostPort(endpointHost, port) = host.endpoint {
+                    logControlSessionEndpointSelection(
+                        transportKind: transportKind,
+                        hostName: host.name,
+                        selectedHost: endpointHost,
+                        port: port,
+                        source: "advertised-endpoint"
+                    )
                 }
                 return host.endpoint
             }
@@ -780,29 +808,69 @@ extension MirageClientService {
 
         let endpointHost = endpointHost(for: host.endpoint)
         let selectedHost: NWEndpoint.Host?
+        let selectionSource: String
         switch transportKind {
         case .udp:
-            selectedHost = controlSessionUDPHost(for: host, endpointHost: endpointHost)
+            let selection = controlSessionUDPHostSelection(
+                for: host,
+                endpointHost: endpointHost,
+                localNetwork: localNetwork
+            )
+            selectedHost = selection.host
+            selectionSource = selection.source
         case .quic, .tcp:
             if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
                 selectedHost = endpointHost
+                selectionSource = "endpoint-host"
             } else {
-                selectedHost = controlSessionUDPHost(for: host, endpointHost: endpointHost)
+                let selection = controlSessionUDPHostSelection(
+                    for: host,
+                    endpointHost: endpointHost,
+                    localNetwork: localNetwork
+                )
+                selectedHost = selection.host
+                selectionSource = selection.source
             }
         }
 
         guard let selectedHost else { return nil }
+        logControlSessionEndpointSelection(
+            transportKind: transportKind,
+            hostName: host.name,
+            selectedHost: selectedHost,
+            port: port,
+            source: selectionSource
+        )
         return .hostPort(host: selectedHost, port: port)
     }
 
     private func controlSessionUDPHost(for host: LoomPeer) -> NWEndpoint.Host? {
-        controlSessionUDPHost(for: host, endpointHost: endpointHost(for: host.endpoint))
+        controlSessionUDPHost(
+            for: host,
+            endpointHost: endpointHost(for: host.endpoint),
+            localNetwork: ControlSessionNetworkDiagnostics(snapshot: localNetworkMonitor.snapshot())
+        )
     }
 
     private func controlSessionUDPHost(
         for host: LoomPeer,
-        endpointHost: NWEndpoint.Host?
+        endpointHost: NWEndpoint.Host?,
+        localNetwork: ControlSessionNetworkDiagnostics
     ) -> NWEndpoint.Host? {
+        controlSessionUDPHostSelection(
+            for: host,
+            endpointHost: endpointHost,
+            localNetwork: localNetwork
+        ).host
+    }
+
+    private func controlSessionUDPHostSelection(
+        for host: LoomPeer,
+        endpointHost: NWEndpoint.Host?,
+        localNetwork: ControlSessionNetworkDiagnostics
+    ) -> (host: NWEndpoint.Host?, source: String) {
+        let preferredBonjourHost = preferredBonjourControlHost(for: host)
+
         // Prefer Bonjour-resolved IP addresses over hostname resolution.
         // This avoids platform-specific mDNS resolution failures (iOS) and
         // ensures we don't accidentally route through VPN/overlay interfaces
@@ -812,25 +880,43 @@ extension MirageClientService {
                 !Self.isScopeLessLinkLocalIPv6Address($0)
             }
             let localAddresses = usableResolvedAddresses.filter { !Self.isOverlayAddress($0) }
+            if shouldPreferBonjourHostForPeerToPeer(
+                host: host,
+                localNetwork: localNetwork,
+                preferredBonjourHost: preferredBonjourHost,
+                resolvedAddresses: usableResolvedAddresses
+            ), let preferredBonjourHost {
+                return (preferredBonjourHost, "bonjour-peer-to-peer")
+            }
             if let preferred = localAddresses.first {
-                return preferred
+                return (preferred, "resolved-local-address")
             }
             // All resolved addresses are overlay — use the first one anyway
             // since it's still better than an unresolvable hostname.
             if let fallback = usableResolvedAddresses.first {
-                return fallback
+                return (fallback, "resolved-fallback-address")
             }
         }
 
         if let endpointHost, shouldPreferEndpointHostForDirectConnection(endpointHost) {
-            return endpointHost
+            return (endpointHost, "endpoint-host")
         }
 
         if let rememberedHost = rememberedDirectEndpointHostByDeviceID[host.deviceID],
            shouldPreferEndpointHostForDirectConnection(rememberedHost) {
-            return rememberedHost
+            return (rememberedHost, "remembered-direct-host")
         }
 
+        if let preferredBonjourHost {
+            return (preferredBonjourHost, "bonjour-hostname")
+        }
+
+        let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !peerName.isEmpty else { return (nil, "none") }
+        return (Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first, "peer-name-bonjour")
+    }
+
+    private func preferredBonjourControlHost(for host: LoomPeer) -> NWEndpoint.Host? {
         let advertisedHostName = host.advertisement.hostName?.trimmingCharacters(in: .whitespacesAndNewlines)
         if let advertisedHostName, !advertisedHostName.isEmpty {
             let expandedHosts = Self.expandedBonjourHosts(for: NWEndpoint.Host(advertisedHostName))
@@ -838,10 +924,60 @@ extension MirageClientService {
                 return preferredHost
             }
         }
+        return nil
+    }
 
-        let peerName = host.name.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !peerName.isEmpty else { return nil }
-        return Self.expandedBonjourHosts(for: NWEndpoint.Host(peerName)).first
+    private func shouldPreferBonjourHostForPeerToPeer(
+        host: LoomPeer,
+        localNetwork: ControlSessionNetworkDiagnostics,
+        preferredBonjourHost: NWEndpoint.Host?,
+        resolvedAddresses: [NWEndpoint.Host]
+    ) -> Bool {
+        guard networkConfig.enablePeerToPeer,
+              preferredBonjourHost != nil,
+              !resolvedAddresses.isEmpty,
+              isBonjourDiscoveredHost(host) else {
+            return false
+        }
+
+        let hostNetwork = MiragePeerAdvertisementMetadata.advertisedLocalNetworkContext(
+            from: host.advertisement
+        )
+        guard !localNetwork.allSubnetSignatures.isEmpty,
+              !hostNetwork.allSubnetSignatures.isEmpty else {
+            return false
+        }
+
+        return localNetwork.allSubnetSignatures
+            .intersection(hostNetwork.allSubnetSignatures)
+            .isEmpty
+    }
+
+    private func isBonjourDiscoveredHost(_ host: LoomPeer) -> Bool {
+        if case .service = host.endpoint {
+            return true
+        }
+        guard let endpointHost = endpointHost(for: host.endpoint) else { return false }
+        switch endpointHost {
+        case .name(let value, _):
+            let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            return normalized.hasSuffix(".local") || !normalized.contains(".")
+        default:
+            return false
+        }
+    }
+
+    private func logControlSessionEndpointSelection(
+        transportKind: LoomTransportKind,
+        hostName: String,
+        selectedHost: NWEndpoint.Host,
+        port: NWEndpoint.Port,
+        source: String
+    ) {
+        MirageLogger.client(
+            "Selected \(transportKind.rawValue) control endpoint for \(hostName): " +
+                "\(selectedHost):\(port.rawValue) source=\(source)"
+        )
     }
 
     /// Returns `true` when the host is an overlay/VPN address (e.g. Tailscale CGNAT).
@@ -916,6 +1052,24 @@ extension MirageClientService {
         let currentPathKind: MirageNetworkPathKind
         let wifiSubnetSignatures: [String]
         let wiredSubnetSignatures: [String]
+
+        init(
+            currentPathKind: MirageNetworkPathKind,
+            wifiSubnetSignatures: [String],
+            wiredSubnetSignatures: [String]
+        ) {
+            self.currentPathKind = currentPathKind
+            self.wifiSubnetSignatures = wifiSubnetSignatures
+            self.wiredSubnetSignatures = wiredSubnetSignatures
+        }
+
+        init(snapshot: MirageLocalNetworkSnapshot) {
+            self.init(
+                currentPathKind: snapshot.currentPathKind,
+                wifiSubnetSignatures: snapshot.wifiSubnetSignatures,
+                wiredSubnetSignatures: snapshot.wiredSubnetSignatures
+            )
+        }
 
         var allSubnetSignatures: Set<String> {
             Set(wifiSubnetSignatures).union(wiredSubnetSignatures)

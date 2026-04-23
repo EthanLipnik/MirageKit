@@ -614,6 +614,152 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Client keeps same-subnet Bonjour resolved addresses when peer-to-peer is enabled")
+    func controlSessionAttemptsPreferResolvedAddressOnSameSubnet() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_025))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:sharedwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(IPv4Address("192.168.1.50")!),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:sharedwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+        let expectedEndpoint: NWEndpoint = .hostPort(
+            host: .ipv4(IPv4Address("192.168.1.50")!),
+            port: udpPort
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Client prefers Bonjour hostname over off-subnet resolved addresses for peer-to-peer")
+    func controlSessionAttemptsPreferBonjourHostnameForPeerToPeerAcrossSubnets() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_026))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_027))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:hostwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(IPv4Address("192.168.1.50")!),
+            ]
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:clientwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+        let expectedUDPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("altair.local"),
+            port: udpPort
+        )
+        let expectedTCPEndpoint: NWEndpoint = .hostPort(
+            host: NWEndpoint.Host("altair.local"),
+            port: tcpPort
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[1].transportKind == .tcp)
+        #expect(attempts[1].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+    }
+
+    @MainActor
+    @Test("Client keeps off-subnet resolved addresses when peer-to-peer is disabled")
+    func controlSessionAttemptsKeepResolvedAddressAcrossSubnetsWhenPeerToPeerDisabled() throws {
+        let deviceID = UUID()
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_028))
+        let host = LoomPeer(
+            id: deviceID,
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .service(name: "Altair", type: "_mirage._tcp", domain: "local", interface: nil),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: deviceID,
+                hostName: "altair.local",
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.net.wifi": "24:hostwifi",
+                ]
+            ),
+            resolvedAddresses: [
+                .ipv4(IPv4Address("192.168.1.50")!),
+            ]
+        )
+
+        let service = MirageClientService(
+            deviceName: "Test Device",
+            loomConfiguration: LoomNetworkConfiguration(enablePeerToPeer: false)
+        )
+        let attempts = service.controlSessionAttempts(
+            for: host,
+            localNetwork: .init(
+                currentPathKind: .wifi,
+                wifiSubnetSignatures: ["24:clientwifi"],
+                wiredSubnetSignatures: []
+            )
+        )
+        let expectedEndpoint: NWEndpoint = .hostPort(
+            host: .ipv4(IPv4Address("192.168.1.50")!),
+            port: udpPort
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].transportKind == .udp)
+        #expect(attempts[0].endpoint.debugDescription == expectedEndpoint.debugDescription)
+    }
+
+    @MainActor
     @Test("Client falls back to overlay resolved address when no local addresses exist")
     func controlSessionAttemptsFallBackToOverlayResolvedAddress() throws {
         let deviceID = UUID()
