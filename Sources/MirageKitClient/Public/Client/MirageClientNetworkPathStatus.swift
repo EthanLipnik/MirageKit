@@ -74,6 +74,8 @@ public struct MirageClientNetworkPathStatus: Sendable, Equatable {
             "Wired"
         case .cellular:
             "Cellular"
+        case .vpn:
+            "VPN / Overlay"
         case .loopback:
             "Loopback"
         case .other:

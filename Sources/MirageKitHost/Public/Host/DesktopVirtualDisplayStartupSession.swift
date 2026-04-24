@@ -10,6 +10,43 @@ import Foundation
 import MirageKit
 
 #if os(macOS)
+
+struct DesktopVirtualDisplayStartupBudgetExceeded: Error, Equatable {}
+
+struct DesktopVirtualDisplayStartupBudget: Equatable {
+    let startedAt: Date
+    let maxDuration: TimeInterval
+
+    init(startedAt: Date = Date(), maxDuration: TimeInterval = 10.0) {
+        self.startedAt = startedAt
+        self.maxDuration = maxDuration
+    }
+
+    var elapsedMilliseconds: Int {
+        max(0, Int(Date().timeIntervalSince(startedAt) * 1000.0))
+    }
+
+    var remainingTimeInterval: TimeInterval {
+        max(0, maxDuration - Date().timeIntervalSince(startedAt))
+    }
+
+    var isExpired: Bool {
+        remainingTimeInterval <= 0
+    }
+
+    func checkAvailable() throws {
+        if isExpired { throw DesktopVirtualDisplayStartupBudgetExceeded() }
+    }
+
+    func boundedTimeout(_ timeout: TimeInterval) -> TimeInterval {
+        min(timeout, max(0.01, remainingTimeInterval))
+    }
+
+    func boundedDelayMilliseconds(_ milliseconds: Int) -> Int {
+        min(milliseconds, max(1, Int(remainingTimeInterval * 1000.0)))
+    }
+}
+
 enum DesktopVirtualDisplayStartupPhase: Equatable {
     case planning
     case acquiring(String)

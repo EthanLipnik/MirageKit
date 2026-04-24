@@ -55,9 +55,11 @@ extension SharedVirtualDisplayManager {
         refreshRate: Int = 60,
         colorSpace: MirageColorSpace = .displayP3,
         allowActiveUpdate: Bool = false,
-        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async throws -> DisplaySnapshot {
+        try startupBudget?.checkAvailable()
         // Force-destroy any orphaned displays from previous sessions before
         // acquiring.  Orphans block virtual display creation until the OS
         // reclaims them, which can take minutes after an unclean teardown.
@@ -77,7 +79,9 @@ extension SharedVirtualDisplayManager {
                 MirageLogger.host(
                     "Virtual display orphan cleanup left \(survivingOrphans.count) display(s) online; keeping them tracked: \(survivingOrphans)"
                 )
-                try? await Task.sleep(for: .milliseconds(500))
+                let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(500) ?? 500
+                try? await Task.sleep(for: .milliseconds(boundedDelayMs))
+                try startupBudget?.checkAvailable()
             }
         }
 
@@ -112,7 +116,8 @@ extension SharedVirtualDisplayManager {
                     newResolution: targetResolution,
                     refreshRate: refreshRate,
                     colorSpace: colorSpace,
-                    creationPolicy: creationPolicy
+                    creationPolicy: creationPolicy,
+                    startupBudget: startupBudget
                 )
             } else {
                 let needsRefresh = display.refreshRate != Double(refreshRate)
@@ -142,7 +147,8 @@ extension SharedVirtualDisplayManager {
                             newResolution: targetResolution,
                             refreshRate: refreshRate,
                             colorSpace: colorSpace,
-                            creationPolicy: creationPolicy
+                            creationPolicy: creationPolicy,
+                            startupBudget: startupBudget
                         )
                     }
                 }
@@ -158,7 +164,8 @@ extension SharedVirtualDisplayManager {
                     resolution: targetResolution,
                     refreshRate: refreshRate,
                     colorSpace: colorSpace,
-                    creationPolicy: creationPolicy
+                    creationPolicy: creationPolicy,
+                    startupBudget: startupBudget
                 )
             }
 
@@ -193,7 +200,8 @@ extension SharedVirtualDisplayManager {
                     resolution: targetResolution,
                     refreshRate: refreshRate,
                     colorSpace: colorSpace,
-                    creationPolicy: creationPolicy
+                    creationPolicy: creationPolicy,
+                    startupBudget: startupBudget
                 )
             } else if sharedDisplay?.colorSpace != colorSpace {
                 MirageLogger
@@ -204,7 +212,8 @@ extension SharedVirtualDisplayManager {
                     newResolution: targetResolution,
                     refreshRate: refreshRate,
                     colorSpace: colorSpace,
-                    creationPolicy: creationPolicy
+                    creationPolicy: creationPolicy,
+                    startupBudget: startupBudget
                 )
             } else {
                 let currentResolution = sharedDisplay!.resolution
@@ -235,7 +244,8 @@ extension SharedVirtualDisplayManager {
                             newResolution: targetResolution,
                             refreshRate: refreshRate,
                             colorSpace: colorSpace,
-                            creationPolicy: creationPolicy
+                            creationPolicy: creationPolicy,
+                            startupBudget: startupBudget
                         )
                     }
                 }
@@ -262,7 +272,8 @@ extension SharedVirtualDisplayManager {
                 resolution: targetResolution,
                 refreshRate: refreshRate,
                 colorSpace: colorSpace,
-                creationPolicy: creationPolicy
+                creationPolicy: creationPolicy,
+                startupBudget: startupBudget
             )
         }
 

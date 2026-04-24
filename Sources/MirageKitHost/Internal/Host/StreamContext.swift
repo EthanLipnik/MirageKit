@@ -149,6 +149,8 @@ actor StreamContext {
     var pendingKeyframeRequiresFlush: Bool = false
     var pendingKeyframeUrgent: Bool = false
     var pendingKeyframeRequiresReset: Bool = false
+    var idleRecoveryFrameAdmissionPending = false
+    var idleRecoveryFrameQueued = false
     var lastQualityAdjustmentTime: CFAbsoluteTime = 0
     let qualityAdjustmentCooldown: CFAbsoluteTime = 0.35
     var qualityOverBudgetCount: Int = 0

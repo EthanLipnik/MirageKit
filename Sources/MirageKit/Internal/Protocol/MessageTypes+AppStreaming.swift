@@ -114,6 +114,19 @@ package struct AppListMessage: Codable {
     }
 }
 
+/// Incremental metadata app-list progress (Host -> Client)
+package struct AppListProgressMessage: Codable {
+    /// Correlates this progress snapshot with the active app-list request.
+    package let requestID: UUID
+    /// Newly discovered metadata-only apps.
+    package let apps: [MirageInstalledApp]
+
+    package init(requestID: UUID, apps: [MirageInstalledApp]) {
+        self.requestID = requestID
+        self.apps = apps
+    }
+}
+
 /// Incremental app icon payload update (Host → Client)
 package struct AppIconUpdateMessage: Codable {
     /// Request identifier that this update belongs to.
@@ -160,6 +173,10 @@ package struct AppIconStreamCompleteMessage: Codable {
 
 /// Request to stream an app (Client → Host)
 package struct SelectAppMessage: Codable {
+    /// Request-scoped identifier used to cancel or reject stale startup work.
+    package let startupRequestID: UUID
+    /// Host/client app-session identifier for this app-stream startup.
+    package let appSessionID: UUID
     /// Bundle identifier of the app to stream
     package let bundleIdentifier: String
     /// Client's data port for video
@@ -213,6 +230,8 @@ package struct SelectAppMessage: Codable {
     package var sizePreset: MirageDisplaySizePreset?
 
     enum CodingKeys: String, CodingKey {
+        case startupRequestID
+        case appSessionID
         case bundleIdentifier
         case dataPort
         case targetFrameRate
@@ -242,6 +261,8 @@ package struct SelectAppMessage: Codable {
     }
 
     package init(
+        startupRequestID: UUID = UUID(),
+        appSessionID: UUID = UUID(),
         bundleIdentifier: String,
         dataPort: UInt16? = nil,
         targetFrameRate: Int,
@@ -264,6 +285,8 @@ package struct SelectAppMessage: Codable {
         sizePreset: MirageDisplaySizePreset? = nil,
         mediaMaxPacketSize: Int? = nil
     ) {
+        self.startupRequestID = startupRequestID
+        self.appSessionID = appSessionID
         self.bundleIdentifier = bundleIdentifier
         self.dataPort = dataPort
         self.targetFrameRate = targetFrameRate
@@ -290,6 +313,10 @@ package struct SelectAppMessage: Codable {
 
 /// Confirmation that app streaming has started (Host → Client)
 public struct AppStreamStartedMessage: Codable {
+    /// Stable app-session identifier for this app stream.
+    public let appSessionID: UUID
+    /// Startup request that produced this app session.
+    public let startupRequestID: UUID?
     /// Bundle identifier of the app being streamed
     public let bundleIdentifier: String
     /// App display name
@@ -324,7 +351,15 @@ public struct AppStreamStartedMessage: Codable {
         }
     }
 
-    package init(bundleIdentifier: String, appName: String, windows: [AppStreamWindow]) {
+    package init(
+        appSessionID: UUID,
+        startupRequestID: UUID?,
+        bundleIdentifier: String,
+        appName: String,
+        windows: [AppStreamWindow]
+    ) {
+        self.appSessionID = appSessionID
+        self.startupRequestID = startupRequestID
         self.bundleIdentifier = bundleIdentifier
         self.appName = appName
         self.windows = windows
@@ -367,17 +402,20 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
     }
 
     public let bundleIdentifier: String
+    public let appSessionID: UUID?
     public let maxVisibleSlots: Int
     public let slots: [Slot]
     public let hiddenWindows: [WindowMetadata]
 
     package init(
         bundleIdentifier: String,
+        appSessionID: UUID? = nil,
         maxVisibleSlots: Int,
         slots: [Slot],
         hiddenWindows: [WindowMetadata]
     ) {
         self.bundleIdentifier = bundleIdentifier
+        self.appSessionID = appSessionID
         self.maxVisibleSlots = max(1, maxVisibleSlots)
         self.slots = slots
         self.hiddenWindows = hiddenWindows
@@ -393,6 +431,7 @@ public struct AppWindowInventoryMessage: Codable, Sendable {
 
         return AppWindowInventoryMessage(
             bundleIdentifier: bundleIdentifier,
+            appSessionID: appSessionID,
             maxVisibleSlots: maxVisibleSlots,
             slots: remainingSlots,
             hiddenWindows: remainingHiddenWindows
@@ -517,6 +556,8 @@ public struct AppWindowCloseAlertActionResultMessage: Codable, Sendable, Equatab
 public struct WindowAddedToStreamMessage: Codable, Sendable {
     /// Bundle identifier of the app
     public let bundleIdentifier: String
+    /// App-session identifier for the stream being expanded.
+    public let appSessionID: UUID?
     /// Details of the new window
     public let streamID: StreamID
     public let windowID: WindowID
@@ -527,6 +568,7 @@ public struct WindowAddedToStreamMessage: Codable, Sendable {
 
     package init(
         bundleIdentifier: String,
+        appSessionID: UUID? = nil,
         streamID: StreamID,
         windowID: WindowID,
         title: String?,
@@ -535,6 +577,7 @@ public struct WindowAddedToStreamMessage: Codable, Sendable {
         isResizable: Bool
     ) {
         self.bundleIdentifier = bundleIdentifier
+        self.appSessionID = appSessionID
         self.streamID = streamID
         self.windowID = windowID
         self.title = title
@@ -548,6 +591,8 @@ public struct WindowAddedToStreamMessage: Codable, Sendable {
 public struct WindowRemovedFromStreamMessage: Codable, Sendable {
     /// Bundle identifier of the app
     public let bundleIdentifier: String
+    /// App-session identifier for the removed window, when known.
+    public let appSessionID: UUID?
     /// The stream that was removed.
     public let streamID: StreamID?
     /// The window that was removed
@@ -566,11 +611,13 @@ public struct WindowRemovedFromStreamMessage: Codable, Sendable {
 
     package init(
         bundleIdentifier: String,
+        appSessionID: UUID? = nil,
         streamID: StreamID? = nil,
         windowID: WindowID,
         reason: RemovalReason
     ) {
         self.bundleIdentifier = bundleIdentifier
+        self.appSessionID = appSessionID
         self.streamID = streamID
         self.windowID = windowID
         self.reason = reason

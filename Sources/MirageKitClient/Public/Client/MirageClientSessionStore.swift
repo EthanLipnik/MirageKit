@@ -87,6 +87,7 @@ public final class MirageClientSessionStore {
         streamID: StreamID,
         window: MirageWindow,
         hostName: String,
+        appSessionID: UUID? = nil,
         minSize: CGSize?
     ) -> StreamSessionID {
         let sessionID = StreamSessionID()
@@ -96,6 +97,7 @@ public final class MirageClientSessionStore {
             streamID: streamID,
             window: window,
             hostName: hostName,
+            appSessionID: appSessionID,
             clientRecoveryStatus: pendingClientRecoveryStatusByStreamID[streamID] ?? .idle,
             hasDecodedFrame: pendingFirstDecodedFrameStreamIDs.contains(streamID),
             hasPresentedFrame: pendingFirstPresentedFrameStreamIDs.contains(streamID)
@@ -276,6 +278,7 @@ public final class MirageStreamSessionState: Identifiable {
     public let streamID: StreamID
     public var window: MirageWindow
     public let hostName: String
+    public let appSessionID: UUID?
     public var statistics: MirageStreamStatistics?
     public var clientRecoveryStatus: MirageStreamClientRecoveryStatus
     public var hasDecodedFrame: Bool
@@ -289,6 +292,7 @@ public final class MirageStreamSessionState: Identifiable {
         streamID: StreamID,
         window: MirageWindow,
         hostName: String,
+        appSessionID: UUID? = nil,
         statistics: MirageStreamStatistics? = nil,
         clientRecoveryStatus: MirageStreamClientRecoveryStatus = .idle,
         hasDecodedFrame: Bool = false,
@@ -300,6 +304,7 @@ public final class MirageStreamSessionState: Identifiable {
         self.streamID = streamID
         self.window = window
         self.hostName = hostName
+        self.appSessionID = appSessionID
         self.statistics = statistics
         self.clientRecoveryStatus = clientRecoveryStatus
         self.hasDecodedFrame = hasDecodedFrame

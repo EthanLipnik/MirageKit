@@ -471,8 +471,10 @@ extension MirageHostService {
         windowID: WindowID,
         reason: WindowRemovedFromStreamMessage.RemovalReason
     ) async {
+        let appSessionID = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier)?.id
         let response = WindowRemovedFromStreamMessage(
             bundleIdentifier: bundleIdentifier,
+            appSessionID: appSessionID,
             streamID: streamID,
             windowID: windowID,
             reason: reason

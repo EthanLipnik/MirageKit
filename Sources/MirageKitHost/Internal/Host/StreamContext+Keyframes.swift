@@ -77,6 +77,8 @@ extension StreamContext {
             pendingKeyframeRequiresFlush = true
         }
         if requiresFlush { pendingKeyframeRequiresFlush = true }
+        idleRecoveryFrameAdmissionPending = true
+        idleRecoveryFrameQueued = false
         return true
     }
 
@@ -228,6 +230,8 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
+        idleRecoveryFrameAdmissionPending = false
+        idleRecoveryFrameQueued = false
         if dynamicFrameFlags.contains(.discontinuity) { dynamicFrameFlags.remove(.discontinuity) }
     }
 

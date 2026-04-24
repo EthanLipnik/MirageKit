@@ -14,6 +14,51 @@ import MirageKit
 
 @MainActor
 extension MirageClientService {
+    func handleAppListProgress(_ message: ControlMessage) {
+        guard controlUpdatePolicy != .interactiveStreaming else {
+            deferredControlRefreshRequirements.needsAppListRefresh = true
+            return
+        }
+        do {
+            let progress = try message.decode(AppListProgressMessage.self)
+            guard activeAppListRequestID == progress.requestID else {
+                MirageLogger.client(
+                    "Ignoring app-list progress for stale requestID=\(progress.requestID.uuidString)"
+                )
+                return
+            }
+            guard !progress.apps.isEmpty else { return }
+
+            let previousIconsByBundleID = availableIconPayloadsByBundleIdentifier(from: availableApps)
+            var appByBundleID: [String: MirageInstalledApp] = [:]
+            appByBundleID.reserveCapacity(availableApps.count + progress.apps.count)
+            for app in availableApps {
+                appByBundleID[app.bundleIdentifier.lowercased()] = app
+            }
+
+            for app in progress.apps {
+                let normalizedBundleID = app.bundleIdentifier.lowercased()
+                if app.iconData == nil,
+                   let previousIcon = previousIconsByBundleID[normalizedBundleID] {
+                    appByBundleID[normalizedBundleID] = appWithUpdatedIconData(
+                        app,
+                        iconData: previousIcon.iconData,
+                        iconSignature: previousIcon.iconSignature
+                    )
+                } else {
+                    appByBundleID[normalizedBundleID] = app
+                }
+            }
+
+            availableApps = appByBundleID.values.sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+            onAppListProgress?(availableApps)
+        } catch {
+            MirageLogger.error(.client, error: error, message: "Failed to decode app-list progress: ")
+        }
+    }
+
     func handleAppList(_ message: ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsAppListRefresh = true
@@ -225,7 +270,8 @@ extension MirageClientService {
             MirageLogger.client("App stream started: \(started.appName) with \(started.windows.count) windows")
             streamingAppBundleID = started.bundleIdentifier
             appWindowInventory = nil
-            onAppStreamStarted?(started.bundleIdentifier, started.appName, started.windows)
+            clearPendingStreamSetup(kind: .app, appSessionID: started.appSessionID)
+            onAppStreamStarted?(started)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app stream started: ")
         }
@@ -254,6 +300,7 @@ extension MirageClientService {
         do {
             let added = try message.decode(WindowAddedToStreamMessage.self)
             MirageLogger.client("Window added to stream: \(added.windowID)")
+            clearPendingStreamSetup(kind: .app)
             onWindowAddedToStream?(added)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode window added: ")

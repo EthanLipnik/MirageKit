@@ -66,6 +66,7 @@ public final class MirageHostInputController: @unchecked Sendable {
     var lastActivatedWindowID: WindowID?
     var inputWindowFrameCacheByWindowID: [WindowID: CachedInputWindowFrame] = [:]
     var activeRelativeResizeTaskByWindowID: [WindowID: Task<Void, any Error>] = [:]
+    var systemActionInFlightUntilByAction: [MirageHostSystemAction: CFAbsoluteTime] = [:]
 
     let inputWindowFrameRefreshInterval: CFAbsoluteTime = 0.05
     let inputWindowFrameCacheTTL: CFAbsoluteTime = 2.0

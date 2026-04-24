@@ -232,7 +232,8 @@ extension SharedVirtualDisplayManager {
         displayID: CGDirectDisplayID,
         expectedLogicalResolution: CGSize,
         expectedPixelResolution: CGSize,
-        expectedRefreshRate: Double? = nil
+        expectedRefreshRate: Double? = nil,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async -> DisplayValidationOutcome {
         guard expectedLogicalResolution.width > 0,
@@ -245,12 +246,19 @@ extension SharedVirtualDisplayManager {
         var sawScreenCaptureKitDelay = false
 
         for attempt in 1 ... maxAttempts {
+            if startupBudget?.isExpired == true {
+                return sawScreenCaptureKitDelay ? .screenCaptureKitVisibilityDelayed(displayID) : .modeMismatch
+            }
             let bounds = CGDisplayBounds(displayID)
             let boundsReady = bounds.width > 0 && bounds.height > 0
             let observedMode = observedDisplayMode(displayID: displayID)
 
             do {
-                let scDisplay = try await findSCDisplay(displayID: displayID, maxAttempts: 1)
+                let scDisplay = try await findSCDisplay(
+                    displayID: displayID,
+                    maxAttempts: 1,
+                    startupBudget: startupBudget
+                )
                 let scSize = CGSize(width: CGFloat(scDisplay.display.width), height: CGFloat(scDisplay.display.height))
                 let modeLogicalSize = observedMode?.logicalResolution ?? .zero
                 let modePixelSize = observedMode?.pixelResolution ?? .zero
@@ -322,7 +330,8 @@ extension SharedVirtualDisplayManager {
             }
 
             if attempt < maxAttempts {
-                try? await Task.sleep(for: .milliseconds(delayMs))
+                let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(delayMs) ?? delayMs
+                try? await Task.sleep(for: .milliseconds(boundedDelayMs))
                 delayMs = min(1000, Int(Double(delayMs) * 1.6))
             }
         }
@@ -344,16 +353,19 @@ extension SharedVirtualDisplayManager {
 
     func waitForSpaceAssignment(
         displayID: CGDirectDisplayID,
-        timeoutMs: Int = 1500
+        timeoutMs: Int = 1500,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async -> CGSSpaceID? {
-        let clampedTimeoutMs = max(0, timeoutMs)
+        let clampedTimeoutMs = startupBudget?.boundedDelayMilliseconds(max(0, timeoutMs)) ?? max(0, timeoutMs)
         let deadline = Date().addingTimeInterval(Double(clampedTimeoutMs) / 1000.0)
         while Date() < deadline {
+            if startupBudget?.isExpired == true { return nil }
             let spaceID = CGVirtualDisplayBridge.getSpaceForDisplay(displayID)
             if spaceID != 0 { return spaceID }
             if !CGVirtualDisplayBridge.isDisplayOnline(displayID) { return nil }
-            try? await Task.sleep(for: .milliseconds(50))
+            let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(50) ?? 50
+            try? await Task.sleep(for: .milliseconds(boundedDelayMs))
         }
         return nil
     }
@@ -480,7 +492,8 @@ extension SharedVirtualDisplayManager {
         refreshRate: Int,
         colorSpace: MirageColorSpace,
         displayNameOverride: String? = nil,
-        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async throws -> ManagedDisplayContext {
         if displayCounter == 0 {
@@ -499,6 +512,7 @@ extension SharedVirtualDisplayManager {
         )
 
         for attempt in dedupedAttempts {
+            try startupBudget?.checkAvailable()
             let requestedResolution = attempt.resolution
 
             guard let displayContext = CGVirtualDisplayBridge.createVirtualDisplay(
@@ -531,7 +545,8 @@ extension SharedVirtualDisplayManager {
             guard await CGVirtualDisplayBridge.waitForDisplayReady(
                 displayContext.displayID,
                 expectedResolution: effectiveLogical,
-                alternateExpectedResolution: effectivePixel
+                alternateExpectedResolution: effectivePixel,
+                startupBudget: startupBudget
             ) != nil else {
                 await destroyAttemptDisplay(displayContext)
                 continue
@@ -552,7 +567,10 @@ extension SharedVirtualDisplayManager {
                 continue
             }
 
-            guard let spaceID = await waitForSpaceAssignment(displayID: displayContext.displayID) else {
+            guard let spaceID = await waitForSpaceAssignment(
+                displayID: displayContext.displayID,
+                startupBudget: startupBudget
+            ) else {
                 await destroyAttemptDisplay(displayContext)
                 throw SharedDisplayError.spaceNotFound(displayContext.displayID)
             }
@@ -574,7 +592,8 @@ extension SharedVirtualDisplayManager {
                 displayID: displayContext.displayID,
                 expectedLogicalResolution: validatedLogicalResolution,
                 expectedPixelResolution: validatedPixelResolution,
-                expectedRefreshRate: Double(refreshRate)
+                expectedRefreshRate: Double(refreshRate),
+                startupBudget: startupBudget
             )
             guard validationOutcome == .ready else {
                 lastValidationOutcome = validationOutcome
@@ -668,16 +687,20 @@ extension SharedVirtualDisplayManager {
         refreshRate: Int,
         colorSpace: MirageColorSpace,
         preferFastRecreate: Bool = false,
-        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async throws -> ManagedDisplayContext {
         await destroyDisplay(removalWaitMs: preferFastRecreate ? 250 : 1500)
-        try await Task.sleep(for: .milliseconds(50))
+        try startupBudget?.checkAvailable()
+        let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(50) ?? 50
+        try await Task.sleep(for: .milliseconds(boundedDelayMs))
         return try await createDisplay(
             resolution: newResolution,
             refreshRate: refreshRate,
             colorSpace: colorSpace,
-            creationPolicy: creationPolicy
+            creationPolicy: creationPolicy,
+            startupBudget: startupBudget
         )
     }
 
@@ -689,17 +712,21 @@ extension SharedVirtualDisplayManager {
         colorSpace: MirageColorSpace,
         displayNameOverride: String? = nil,
         preferFastRecreate: Bool = false,
-        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor
+        creationPolicy: DisplayCreationPolicy = .adaptiveRetinaThenFallback1xAndColor,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async throws -> ManagedDisplayContext {
         await destroyDisplay(display, removalWaitMs: preferFastRecreate ? 250 : 1500)
-        try await Task.sleep(for: .milliseconds(50))
+        try startupBudget?.checkAvailable()
+        let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(50) ?? 50
+        try await Task.sleep(for: .milliseconds(boundedDelayMs))
         return try await createDisplay(
             resolution: newResolution,
             refreshRate: refreshRate,
             colorSpace: colorSpace,
             displayNameOverride: displayNameOverride,
-            creationPolicy: creationPolicy
+            creationPolicy: creationPolicy,
+            startupBudget: startupBudget
         )
     }
 

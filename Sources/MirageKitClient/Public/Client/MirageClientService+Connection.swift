@@ -441,6 +441,9 @@ extension MirageClientService {
         desktopStreamID = nil
         desktopSessionID = nil
         desktopStreamResolution = nil
+        desktopStreamPresentationResolution = nil
+        desktopCaptureSource = .virtualDisplay
+        desktopStreamAllowsClientResize = true
         desktopStreamMode = nil
         desktopCursorPresentation = nil
         connectionState = state
@@ -559,7 +562,8 @@ extension MirageClientService {
         try throwIfConnectAttemptIsStale(attemptID)
         MirageLogger.client(
             "Starting \(attempt.transportKind) control session to \(attempt.hostName) " +
-                "endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription)"
+                "candidate=\(attempt.candidateKind.rawValue) endpoint=\(attempt.endpoint) " +
+                "interface=\(attempt.interfaceDescription)"
         )
         let node = loomNode
         let bootstrapProgressTracker = ConnectSessionBootstrapProgressTracker()
@@ -730,13 +734,15 @@ extension MirageClientService {
         for host: LoomPeer,
         localNetwork: ControlSessionNetworkDiagnostics? = nil
     ) -> [ControlSessionAttempt] {
-        let requiredInterfaceType = preferredNetworkType.requiredInterfaceType
         let resolvedLocalNetwork = localNetwork ?? ControlSessionNetworkDiagnostics(
             snapshot: localNetworkMonitor.snapshot()
         )
         var attempts: [ControlSessionAttempt] = []
+        let transportOrder: [LoomTransportKind] = isOverlayControlHost(host)
+            ? [.tcp, .quic, .udp]
+            : [.udp, .quic, .tcp]
 
-        for transportKind in [LoomTransportKind.udp, .quic, .tcp] {
+        for transportKind in transportOrder {
             guard let endpoint = controlSessionEndpoint(
                 for: host,
                 transportKind: transportKind,
@@ -745,12 +751,14 @@ extension MirageClientService {
                 continue
             }
 
+            let candidateKind = controlSessionCandidateKind(for: endpoint, host: host)
             attempts.append(
                 ControlSessionAttempt(
                     hostName: host.name,
                     endpoint: endpoint,
                     transportKind: transportKind,
-                    requiredInterfaceType: requiredInterfaceType
+                    candidateKind: candidateKind,
+                    requiredInterfaceType: candidateKind == .overlay ? nil : preferredNetworkType.requiredInterfaceType
                 )
             )
         }
@@ -761,7 +769,8 @@ extension MirageClientService {
                     hostName: host.name,
                     endpoint: host.endpoint,
                     transportKind: .tcp,
-                    requiredInterfaceType: requiredInterfaceType
+                    candidateKind: controlSessionCandidateKind(for: host.endpoint, host: host),
+                    requiredInterfaceType: isOverlayControlHost(host) ? nil : preferredNetworkType.requiredInterfaceType
                 )
             )
         }
@@ -980,6 +989,50 @@ extension MirageClientService {
         )
     }
 
+    private func isOverlayControlHost(_ host: LoomPeer) -> Bool {
+        if host.advertisement.mirageVPNAccessEnabled {
+            return true
+        }
+        if let endpointHost = endpointHost(for: host.endpoint),
+           Self.isOverlayCandidateHost(endpointHost) {
+            return true
+        }
+        return false
+    }
+
+    private func controlSessionCandidateKind(
+        for endpoint: NWEndpoint,
+        host: LoomPeer
+    ) -> ControlSessionCandidateKind {
+        guard case let .hostPort(endpointHost, _) = endpoint else {
+            return .local
+        }
+        if host.advertisement.mirageVPNAccessEnabled || Self.isOverlayCandidateHost(endpointHost) {
+            return .overlay
+        }
+        if Self.isPublicIPv6Candidate(endpointHost) {
+            return .publicIPv6
+        }
+        if shouldPreferEndpointHostForDirectConnection(endpointHost) {
+            return .local
+        }
+        return .stun
+    }
+
+    private static func isOverlayCandidateHost(_ host: NWEndpoint.Host) -> Bool {
+        if isOverlayAddress(host) {
+            return true
+        }
+        guard case .name(let value, _) = host else { return false }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return normalized.hasSuffix(".ts.net") || normalized.contains(".ts.")
+    }
+
+    private static func isPublicIPv6Candidate(_ host: NWEndpoint.Host) -> Bool {
+        guard case .ipv6 = host else { return false }
+        return !isScopeLessLinkLocalIPv6Address(host) && !isOverlayAddress(host)
+    }
+
     /// Returns `true` when the host is an overlay/VPN address (e.g. Tailscale CGNAT).
     private static func isOverlayAddress(_ host: NWEndpoint.Host) -> Bool {
         switch host {
@@ -1041,11 +1094,20 @@ extension MirageClientService {
         let hostName: String
         let endpoint: NWEndpoint
         let transportKind: LoomTransportKind
+        let candidateKind: ControlSessionCandidateKind
         let requiredInterfaceType: NWInterface.InterfaceType?
 
         var interfaceDescription: String {
             requiredInterfaceType.map(String.init(describing:)) ?? "any"
         }
+    }
+
+    internal enum ControlSessionCandidateKind: String, Sendable {
+        case local
+        case overlay
+        case publicIPv6
+        case portMapped
+        case stun
     }
 
     internal struct ControlSessionNetworkDiagnostics: Sendable, Equatable {
@@ -1237,7 +1299,8 @@ extension MirageClientService {
         underlyingError: Error
     ) -> String {
         "Pre-bootstrap \(attempt.transportKind.rawValue) control session failed for " +
-            "\(attempt.hostName) endpoint=\(attempt.endpoint) interface=\(attempt.interfaceDescription) " +
+            "\(attempt.hostName) candidate=\(attempt.candidateKind.rawValue) endpoint=\(attempt.endpoint) " +
+            "interface=\(attempt.interfaceDescription) " +
             "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
     }
 
@@ -1247,7 +1310,8 @@ extension MirageClientService {
         underlyingError: Error
     ) -> String {
         "Mirage bootstrap failed for \(attempt.hostName) endpoint=\(attempt.endpoint) " +
-            "transport=\(attempt.transportKind.rawValue) interface=\(attempt.interfaceDescription) " +
+            "transport=\(attempt.transportKind.rawValue) candidate=\(attempt.candidateKind.rawValue) " +
+            "interface=\(attempt.interfaceDescription) " +
             "classification=\(classification.rawValue) error=\(underlyingError.localizedDescription)"
     }
 
@@ -1308,7 +1372,7 @@ extension MirageClientService {
                localWired.intersection(hostNetwork.allSubnetSignatures).isEmpty {
                 return "The host and client do not appear to be on the same wired network. Check that both devices are on the same subnet or VLAN."
             }
-        case .cellular, .loopback, .other, .unknown, .awdl:
+        case .cellular, .vpn, .loopback, .other, .unknown, .awdl:
             break
         }
 

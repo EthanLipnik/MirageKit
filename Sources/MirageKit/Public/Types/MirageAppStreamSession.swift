@@ -14,6 +14,9 @@ public struct MirageAppStreamSession: Identifiable, Sendable {
     /// Unique identifier for this session
     public let id: UUID
 
+    /// Stable app-session identifier mirrored on the wire.
+    public var appSessionID: UUID { id }
+
     /// Bundle identifier of the app being streamed
     public let bundleIdentifier: String
 

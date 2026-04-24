@@ -220,8 +220,8 @@ public struct MirageStreamContentView: View {
     }
 
     private var prefersLocalAspectFitPresentation: Bool {
-        keyboardAvoidanceEnabled &&
-            (softwareKeyboardVisible || localKeyboardOcclusionActive)
+        (isDesktopStream && clientService.desktopCaptureSource == .mainDisplayFallback) ||
+            (keyboardAvoidanceEnabled && (softwareKeyboardVisible || localKeyboardOcclusionActive))
     }
 
     private var activeDesktopSessionID: UUID? {

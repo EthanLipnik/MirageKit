@@ -34,6 +34,7 @@ func displayMirroringTargetStabilityDecision(
     observedTargetPixelResolution: CGSize?,
     expectedTargetPixelResolution: CGSize?,
     pixelTolerance: CGFloat = 1.0,
+    requiresResidualMirageDisplaysClear: Bool = true,
     isMirageDisplay: (CGDirectDisplayID) -> Bool = { CGVirtualDisplayBridge.isMirageDisplay($0) }
 )
 -> DisplayMirroringTargetStabilityDecision {
@@ -53,11 +54,13 @@ func displayMirroringTargetStabilityDecision(
         }
     }
 
-    let residualMirageDisplayIDs = onlineDisplayIDs
-        .filter { $0 != targetDisplayID && isMirageDisplay($0) }
-        .sorted()
-    guard residualMirageDisplayIDs.isEmpty else {
-        return .waitForResidualMirageDisplays(residualMirageDisplayIDs)
+    if requiresResidualMirageDisplaysClear {
+        let residualMirageDisplayIDs = onlineDisplayIDs
+            .filter { $0 != targetDisplayID && isMirageDisplay($0) }
+            .sorted()
+        guard residualMirageDisplayIDs.isEmpty else {
+            return .waitForResidualMirageDisplays(residualMirageDisplayIDs)
+        }
     }
 
     return .stable

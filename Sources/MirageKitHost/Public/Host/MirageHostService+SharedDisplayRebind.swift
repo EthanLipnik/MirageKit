@@ -82,6 +82,7 @@ extension MirageHostService {
         guard let desktopStreamID, let desktopContext = desktopStreamContext else { return }
 
         desktopVirtualDisplayID = newContext.displayID
+        desktopCaptureSource = .virtualDisplay
         desktopDisplayBounds = displayBounds
         sharedVirtualDisplayScaleFactor = max(1.0, newContext.scaleFactor)
         let rebindDecision = desktopGenerationChangeRebindDecision(

@@ -176,7 +176,14 @@ public extension MirageClientService {
             throw MirageError.protocolError("Display size unavailable for app streaming")
         }
         let targetFrameRate = getScreenMaxRefreshRate()
+        let startupRequestID = UUID()
+        let appSessionID = UUID()
+        pendingStreamSetupRequestID = startupRequestID
+        pendingStreamSetupKind = .app
+        pendingStreamSetupAppSessionID = appSessionID
         var encoderRequest = SelectAppMessage(
+            startupRequestID: startupRequestID,
+            appSessionID: appSessionID,
             bundleIdentifier: bundleIdentifier,
             dataPort: nil,
             targetFrameRate: targetFrameRate,
@@ -223,6 +230,8 @@ public extension MirageClientService {
             scaledBitrate = nil
         }
         var request = SelectAppMessage(
+            startupRequestID: encoderRequest.startupRequestID,
+            appSessionID: encoderRequest.appSessionID,
             bundleIdentifier: encoderRequest.bundleIdentifier,
             dataPort: encoderRequest.dataPort,
             targetFrameRate: encoderRequest.targetFrameRate,

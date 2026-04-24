@@ -810,11 +810,12 @@ extension StreamContext {
         encodingSuspendedForResize = false
         lastKeyframeTime = 0
         smoothedDirtyPercentage = 0
+        shouldEncodeFrames = true
         await scheduleCoalescedRecoveryKeyframe(
             reason: "Desktop resize resume",
-            resetFrameNumber: true
+            resetFrameNumber: true,
+            ignoreExistingInFlight: true
         )
-        shouldEncodeFrames = true
         MirageLogger.stream("Desktop resize completion: encoding resumed")
     }
 

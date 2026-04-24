@@ -41,12 +41,16 @@ extension MirageClientService {
 
         desktopStreamID = streamID
         desktopStreamResolution = CGSize(width: started.width, height: started.height)
+        let presentationSize = started.presentationSize
+        desktopStreamPresentationResolution = presentationSize
+        desktopCaptureSource = started.captureSource
+        desktopStreamAllowsClientResize = started.allowsClientResize
         activeStreamCodecs[streamID] = started.codec
         if let dimensionToken = started.dimensionToken {
             desktopDimensionTokenByStream[streamID] = dimensionToken
         }
 
-        let desktopMinSize = CGSize(width: started.width, height: started.height)
+        let desktopMinSize = presentationSize
         sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
         onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
         onDesktopStreamStarted?(streamID, desktopMinSize, started.displayCount)
@@ -61,7 +65,11 @@ extension MirageClientService {
             return true
         }
 
-        beginPostResizeTransition(streamID: streamID)
+        if started.allowsClientResize {
+            beginPostResizeTransition(streamID: streamID)
+        } else {
+            sessionStore.clearPostResizeTransition(for: streamID)
+        }
         await prepareControllerForDesktopResize(
             streamID,
             codec: started.codec,
@@ -70,6 +78,10 @@ extension MirageClientService {
             dimensionToken: started.dimensionToken
         )
         desktopResizeCoordinator.finishTransition(outcome: outcome)
+        if !started.allowsClientResize {
+            desktopResizeCoordinator.clearAllState()
+            sessionStore.clearPostResizeTransition(for: streamID)
+        }
         return true
     }
 
@@ -188,6 +200,14 @@ extension MirageClientService {
             desktopStreamID = streamID
             desktopSessionID = receivedDesktopSessionID
             desktopStreamResolution = CGSize(width: started.width, height: started.height)
+            let presentationSize = started.presentationSize
+            desktopStreamPresentationResolution = presentationSize
+            desktopCaptureSource = started.captureSource
+            desktopStreamAllowsClientResize = started.allowsClientResize
+            if !started.allowsClientResize {
+                desktopResizeCoordinator.clearAllState()
+                sessionStore.clearPostResizeTransition(for: streamID)
+            }
             activeStreamCodecs[streamID] = started.codec
             if let dimensionToken {
                 desktopDimensionTokenByStream[streamID] = dimensionToken
@@ -253,11 +273,12 @@ extension MirageClientService {
 
             onDesktopStreamStarted?(
                 streamID,
-                CGSize(width: started.width, height: started.height),
+                presentationSize,
                 started.displayCount
             )
+            clearPendingStreamSetup(kind: .desktop)
 
-            let desktopMinSize = CGSize(width: started.width, height: started.height)
+            let desktopMinSize = presentationSize
             sessionStore.updateMinimumSize(for: streamID, minSize: desktopMinSize)
             onStreamMinimumSizeUpdate?(streamID, desktopMinSize)
             await refreshSharedClipboardBridgeState()
@@ -323,6 +344,9 @@ extension MirageClientService {
             desktopStreamID = nil
             desktopSessionID = nil
             desktopStreamResolution = nil
+            desktopStreamPresentationResolution = nil
+            desktopCaptureSource = .virtualDisplay
+            desktopStreamAllowsClientResize = true
             desktopStreamMode = nil
             desktopCursorPresentation = nil
             desktopDimensionTokenByStream.removeValue(forKey: streamID)

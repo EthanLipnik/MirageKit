@@ -85,6 +85,36 @@ struct DesktopVirtualDisplayStartupAttemptTests {
         #expect(!attempts[0].isCachedTarget)
     }
 
+    @Test("Startup attempts prefer Retina equivalent for 1x 4K requests")
+    func startupAttemptsPreferRetinaEquivalentForOneXFourKRequests() {
+        let plan = desktopVirtualDisplayStartupPlan(
+            logicalResolution: CGSize(width: 3840, height: 2160),
+            requestedScaleFactor: 1.0,
+            requestedRefreshRate: 60,
+            requestedColorDepth: .standard,
+            requestedColorSpace: .sRGB
+        )
+        clearDesktopVirtualDisplayStartupTarget(for: plan.request)
+        defer { clearDesktopVirtualDisplayStartupTarget(for: plan.request) }
+
+        let attempts = desktopVirtualDisplayStartupAttempts(
+            logicalResolution: CGSize(width: 3840, height: 2160),
+            requestedScaleFactor: 1.0,
+            requestedRefreshRate: 60,
+            requestedColorDepth: .standard,
+            requestedColorSpace: .sRGB
+        )
+
+        #expect(attempts.count == 2)
+        #expect(attempts[0].label == "retina-equivalent")
+        #expect(attempts[0].backingScale.scaleFactor == 2.0)
+        #expect(attempts[0].backingScale.pixelResolution == CGSize(width: 3840, height: 2160))
+        #expect(attempts[0].targetTier == .degraded)
+        #expect(attempts[1].label == "primary")
+        #expect(attempts[1].backingScale.scaleFactor == 1.0)
+        #expect(attempts[1].backingScale.pixelResolution == CGSize(width: 3840, height: 2160))
+    }
+
     @Test("Degraded startup targets are not persisted as preferred cache entries")
     func degradedStartupTargetsAreNotPersistedAsPreferredCacheEntries() {
         let initialPlan = desktopVirtualDisplayStartupPlan(

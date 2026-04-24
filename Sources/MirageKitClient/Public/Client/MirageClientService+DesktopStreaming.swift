@@ -53,7 +53,13 @@ public extension MirageClientService {
         let resolvedAudioConfiguration = (audioConfiguration ?? self.audioConfiguration)
             .resolvedForDesktopStreamMode(mode)
 
+        let startupRequestID = UUID()
+        pendingStreamSetupRequestID = startupRequestID
+        pendingStreamSetupKind = .desktop
+        pendingStreamSetupAppSessionID = nil
+
         var encoderRequest = StartDesktopStreamMessage(
+            startupRequestID: startupRequestID,
             scaleFactor: nil,
             displayWidth: Int(effectiveDisplayResolution.width),
             displayHeight: Int(effectiveDisplayResolution.height),
@@ -88,6 +94,7 @@ public extension MirageClientService {
             displayResolution: effectiveDisplayResolution
         )
         var request = StartDesktopStreamMessage(
+            startupRequestID: startupRequestID,
             scaleFactor: geometry.displayScaleFactor,
             displayWidth: encoderRequest.displayWidth,
             displayHeight: encoderRequest.displayHeight,
@@ -227,7 +234,17 @@ public extension MirageClientService {
     /// Used when the user cancels during loading before a stream ID is established.
     func cancelStreamSetup() {
         guard case .connected = connectionState else { return }
-        _ = sendControlMessageBestEffort(.cancelStreamSetup, content: CancelStreamSetupMessage())
+        _ = sendControlMessageBestEffort(
+            .cancelStreamSetup,
+            content: CancelStreamSetupMessage(
+                startupRequestID: pendingStreamSetupRequestID,
+                kind: pendingStreamSetupKind,
+                appSessionID: pendingStreamSetupAppSessionID
+            )
+        )
+        pendingStreamSetupRequestID = nil
+        pendingStreamSetupKind = nil
+        pendingStreamSetupAppSessionID = nil
         MirageLogger.client("Sent cancel stream setup")
     }
 }

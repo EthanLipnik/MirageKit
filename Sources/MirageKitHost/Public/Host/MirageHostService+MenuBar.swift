@@ -145,7 +145,10 @@ extension MirageHostService {
                 )
             }
 
-            streamSetupCancelled = false
+            beginStreamSetup(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: request.startupRequestID
+            )
             desktopStreamMode = request.mode ?? .unified
             desktopUsesHostResolution = request.useHostResolution == true
             desktopCursorPresentation = request.cursorPresentation ?? .simulatedCursor
@@ -175,12 +178,17 @@ extension MirageHostService {
                 encoderMaxHeight: request.encoderMaxHeight,
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,
                 upscalingMode: request.upscalingMode,
-                codec: request.codec
+                codec: request.codec,
+                startupRequestID: request.startupRequestID
             )
             if pendingLightsOutSetup {
                 pendingLightsOutSetup = false
                 await endPendingDesktopStreamLightsOutSetup()
             }
+            finishStreamSetup(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: request.startupRequestID
+            )
         } catch {
             if pendingLightsOutSetup {
                 pendingLightsOutSetup = false
@@ -234,13 +242,27 @@ extension MirageHostService {
     }
 
     /// Handle a client request to cancel in-progress stream setup.
-    func handleCancelStreamSetup() async {
-        MirageLogger.host("Client cancelled stream setup")
-        streamSetupCancelled = true
+    func handleCancelStreamSetup(_ message: ControlMessage, from clientContext: ClientContext) async {
+        let request = (try? message.decode(CancelStreamSetupMessage.self)) ?? CancelStreamSetupMessage()
+        MirageLogger.host(
+            "Client cancelled stream setup request=\(request.startupRequestID?.uuidString ?? "unscoped") kind=\(request.kind?.rawValue ?? "any")"
+        )
+
+        if let startupRequestID = request.startupRequestID {
+            cancelStreamSetup(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: startupRequestID
+            )
+        }
 
         // If desktop stream is already fully set up, stop it directly
-        if desktopStreamID != nil {
+        if request.kind != .app, desktopStreamID != nil {
             await stopDesktopStream(reason: .clientRequested)
+        }
+
+        if request.kind != .desktop,
+           let appSessionID = request.appSessionID {
+            await cancelStartingAppSession(appSessionID: appSessionID)
         }
     }
 

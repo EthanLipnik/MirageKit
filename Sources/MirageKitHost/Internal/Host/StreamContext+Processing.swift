@@ -70,10 +70,30 @@ extension StreamContext {
             Task(priority: .userInitiated) { await self.handleCapturedFrameWhileStartupGated(frame) }
             return
         }
+        if frame.info.isIdleFrame {
+            Task(priority: .userInitiated) { await self.enqueueIdleRecoveryFrameIfNeeded(frame) }
+            return
+        }
         Task(priority: .userInitiated) { await self.recordCaptureIngress(frame) }
-        if frame.info.isIdleFrame { return }
         if frameInbox.enqueue(frame) {
             Task(priority: .userInitiated) { await self.processPendingFrames() }
+        }
+    }
+
+    func enqueueIdleRecoveryFrameIfNeeded(_ frame: CapturedFrame) {
+        recordCaptureIngress(frame)
+        guard shouldEncodeFrames,
+              idleRecoveryFrameAdmissionPending,
+              !idleRecoveryFrameQueued,
+              pendingKeyframeReason != nil else {
+            return
+        }
+
+        idleRecoveryFrameQueued = true
+        if frameInbox.enqueue(frame) {
+            Task(priority: .userInitiated) { await self.processPendingFrames() }
+        } else {
+            idleRecoveryFrameQueued = false
         }
     }
 
@@ -147,6 +167,10 @@ extension StreamContext {
         pendingKeyframeRequiresFlush = false
         pendingKeyframeUrgent = false
         pendingKeyframeRequiresReset = false
+        keyframeSendDeadline = 0
+        lastKeyframeRequestTime = 0
+        idleRecoveryFrameAdmissionPending = false
+        idleRecoveryFrameQueued = false
         lastCaptureStarvationRestartTime = 0
         backpressureActive = false
         backpressureActiveSnapshot = false
@@ -412,13 +436,15 @@ extension StreamContext {
 
             let isIdleFrame = frame.info.isIdleFrame
             if isIdleFrame {
-                if captureMode == .window {
+                let admitsRecoveryIdleFrame = forceKeyframe && idleRecoveryFrameQueued
+                if !admitsRecoveryIdleFrame {
+                    if idleRecoveryFrameQueued { idleRecoveryFrameQueued = false }
                     idleSkippedCount += 1
                     await logStreamStatsIfNeeded()
                     continue
                 }
-                // Display capture can report sustained idle status during fullscreen/menu transitions.
-                // Keep encoding these frames so the client does not enter visible motion freezes.
+                idleRecoveryFrameQueued = false
+                idleRecoveryFrameAdmissionPending = false
                 syntheticFrameCount += 1
                 syntheticIntervalCount += 1
             }

@@ -822,6 +822,7 @@ extension MirageHostService {
                 let displayResolution = await currentDesktopStartedResolution(
                     fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
                 )
+                let presentationResolution = displayResolution
                 let message = await DesktopStreamStartedMessage(
                     streamID: streamID,
                     desktopSessionID: desktopSessionID,
@@ -831,7 +832,11 @@ extension MirageHostService {
                     codec: context.getCodec(),
                     displayCount: 1,
                     dimensionToken: dimensionToken,
-                    acceptedMediaMaxPacketSize: context.getMediaMaxPacketSize()
+                    acceptedMediaMaxPacketSize: context.getMediaMaxPacketSize(),
+                    captureSource: desktopCaptureSource,
+                    allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+                    presentationWidth: Int(presentationResolution.width.rounded()),
+                    presentationHeight: Int(presentationResolution.height.rounded())
                 )
                 if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
                     MirageLogger.error(.host, "Failed to encode desktopStreamStarted update for stream \(streamID)")
@@ -1407,6 +1412,20 @@ extension MirageHostService {
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = fallback.scaleFactor
         desktopUsesHostResolution = true
+        desktopCaptureSource = .mainDisplayFallback
+
+        if desktopStreamMode == .unified {
+            let mirroringConfigured = await setupDisplayMirroring(
+                targetDisplayID: fallback.displayID,
+                expectedPixelResolution: fallback.resolution,
+                requiresResidualMirageDisplaysClear: false
+            )
+            if !mirroringConfigured {
+                MirageLogger.host(
+                    "Desktop stream main display fallback continuing with incomplete display mirroring"
+                )
+            }
+        }
 
         try await context.hardResetDesktopDisplayCapture(
             displayWrapper: fallback.display,
@@ -1444,6 +1463,18 @@ extension MirageHostService {
         let displayResolution = await currentDesktopStartedResolution(
             fallback: CGSize(width: encodedDimensions.width, height: encodedDimensions.height)
         )
+        let presentationResolution: CGSize = if desktopCaptureSource == .mainDisplayFallback {
+            aspectFitPixelSize(
+                contentSize: displayResolution,
+                containerSize: virtualDisplayPixelResolution(
+                    for: request.logicalResolution,
+                    client: desktopStreamClientContext?.client,
+                    scaleFactorOverride: desktopRequestedScaleFactor
+                )
+            )
+        } else {
+            displayResolution
+        }
         let updatedTargetFrameRate = await context.getTargetFrameRate()
         let codec = await context.getCodec()
         let acceptedMediaMaxPacketSize = await context.getMediaMaxPacketSize()
@@ -1459,7 +1490,11 @@ extension MirageHostService {
             acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize,
             transitionID: request.transitionID,
             transitionPhase: .resize,
-            transitionOutcome: outcome
+            transitionOutcome: outcome,
+            captureSource: desktopCaptureSource,
+            allowsClientResize: desktopCaptureSource != .mainDisplayFallback,
+            presentationWidth: Int(presentationResolution.width.rounded()),
+            presentationHeight: Int(presentationResolution.height.rounded())
         )
         if !clientContext.sendBestEffort(.desktopStreamStarted, content: message) {
             MirageLogger.error(.host, "Failed to encode desktop resize completion for stream \(streamID)")

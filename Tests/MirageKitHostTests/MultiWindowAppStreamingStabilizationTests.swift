@@ -807,6 +807,44 @@ struct MultiWindowAppStreamingStabilizationTests {
         #expect(session?.hiddenWindows[newWindowID] != nil)
     }
 
+    @MainActor
+    @Test("Existing app session slot cap can rise after entitlement restore")
+    func existingAppSessionSlotCapCanRiseAfterEntitlementRestore() async {
+        let host = MirageHostService(hostName: "LifecycleHost")
+        let clientID = UUID()
+        let bundleID = "com.example.app"
+
+        _ = await host.appStreamManager.startAppSession(
+            bundleIdentifier: bundleID,
+            appName: "Example App",
+            appPath: "/Applications/Example.app",
+            clientID: clientID,
+            clientName: "Client",
+            requestedDisplayResolution: CGSize(width: 1280, height: 720),
+            requestedClientScaleFactor: nil,
+            maxVisibleSlots: 1,
+            bitrateBudgetBps: nil
+        )
+        _ = await host.appStreamManager.addWindowToSession(
+            bundleIdentifier: bundleID,
+            windowID: 7001,
+            streamID: 77,
+            title: "Current Project",
+            width: 1280,
+            height: 720,
+            isResizable: true,
+            slotIndex: 0
+        )
+
+        #expect(!(await host.appStreamManager.hasVisibleSlotCapacity(bundleIdentifier: bundleID)))
+
+        await host.appStreamManager.raiseMaxVisibleSlots(bundleIdentifier: bundleID, to: 8)
+
+        #expect(await host.appStreamManager.hasVisibleSlotCapacity(bundleIdentifier: bundleID))
+        #expect(await host.appStreamManager.maxVisibleSlots(bundleIdentifier: bundleID) == 8)
+        #expect(await host.appStreamManager.inventoryMessage(bundleIdentifier: bundleID)?.maxVisibleSlots == 8)
+    }
+
     private func makeCandidate(
         windowID: WindowID,
         title: String,

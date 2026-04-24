@@ -18,6 +18,7 @@ import ScreenCaptureKit
 extension MirageHostService {
     private enum ExistingSessionWindowStartResult {
         case success(WindowAddedToStreamMessage)
+        case cancelled
         case failure(String)
     }
 
@@ -415,7 +416,16 @@ extension MirageHostService {
         do {
             let request = try message.decode(SelectAppMessage.self)
             let client = clientContext.client
-            streamSetupCancelled = false
+            beginStreamSetup(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: request.startupRequestID
+            )
+            defer {
+                finishStreamSetup(
+                    clientSessionID: clientContext.sessionID,
+                    startupRequestID: request.startupRequestID
+                )
+            }
             guard !disconnectingClientIDs.contains(client.id),
                   clientsByID[client.id] != nil else {
                 MirageLogger.host("Ignoring selectApp from disconnected client \(client.name)")
@@ -470,6 +480,12 @@ extension MirageHostService {
 
             if let existingSession = await appStreamManager.getSession(bundleIdentifier: app.bundleIdentifier),
                !existingSession.reservationExpired {
+                if existingSession.clientID == client.id {
+                    await appStreamManager.raiseMaxVisibleSlots(
+                        bundleIdentifier: app.bundleIdentifier,
+                        to: maxVisibleSlots
+                    )
+                }
                 let hasVisibleSlotCapacity = await appStreamManager.hasVisibleSlotCapacity(
                     bundleIdentifier: app.bundleIdentifier
                 )
@@ -537,6 +553,11 @@ extension MirageHostService {
                         "Expanded existing app stream \(app.bundleIdentifier) with window \(added.windowID) stream \(added.streamID)"
                     )
                     return
+                case .cancelled:
+                    MirageLogger.host(
+                        "Cancelled existing app-stream expansion for \(app.bundleIdentifier) request=\(request.startupRequestID.uuidString)"
+                    )
+                    return
                 case let .failure(reason):
                     sendAppSelectionError(
                         to: clientContext,
@@ -553,6 +574,7 @@ extension MirageHostService {
 
             // Start the app session
             guard await appStreamManager.startAppSession(
+                id: request.appSessionID,
                 bundleIdentifier: app.bundleIdentifier,
                 appName: app.name,
                 appPath: app.path,
@@ -576,8 +598,25 @@ extension MirageHostService {
                 return
             }
 
+            if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: request.startupRequestID) {
+                MirageLogger.host("App stream setup cancelled by client before launch for \(app.name)")
+                await appStreamManager.endSession(appSessionID: request.appSessionID)
+                await restoreStageManagerAfterAppStreamingIfNeeded()
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
+                return
+            }
+
             // Launch the app if not running
             let launchOutcome = await appStreamManager.launchAppIfNeeded(app.bundleIdentifier, path: app.path)
+            if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: request.startupRequestID) {
+                MirageLogger.host("App stream setup cancelled by client after launch for \(app.name)")
+                await appStreamManager.endSession(appSessionID: request.appSessionID)
+                await restoreStageManagerAfterAppStreamingIfNeeded()
+                pendingLightsOutSetup = false
+                await endPendingAppStreamLightsOutSetup()
+                return
+            }
             guard launchOutcome != .failed else {
                 MirageLogger.host("Failed to launch app \(app.name)")
                 await appStreamManager.endSession(bundleIdentifier: app.bundleIdentifier)
@@ -601,7 +640,7 @@ extension MirageHostService {
                 mediaMaxPacketSize: acceptedMediaMaxPacketSize,
                 launchOutcome: launchOutcome
             )
-            if streamSetupCancelled {
+            if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: request.startupRequestID) {
                 MirageLogger.host("App stream setup cancelled by client; ending session for \(app.name)")
                 for window in startupResult.windows {
                     if let session = activeStreams.first(where: { $0.id == window.streamID }) {
@@ -637,6 +676,8 @@ extension MirageHostService {
             await appStreamManager.markSessionStreaming(app.bundleIdentifier)
 
             let response = AppStreamStartedMessage(
+                appSessionID: request.appSessionID,
+                startupRequestID: request.startupRequestID,
                 bundleIdentifier: app.bundleIdentifier,
                 appName: app.name,
                 windows: startupResult.windows.sorted { $0.streamID < $1.streamID }
@@ -657,6 +698,20 @@ extension MirageHostService {
             }
             MirageLogger.error(.host, error: error, message: "Failed to handle select app: ")
         }
+    }
+
+    func cancelStartingAppSession(appSessionID: UUID) async {
+        guard let session = await appStreamManager.getSession(appSessionID: appSessionID) else { return }
+        guard session.state == .starting || session.state == .streaming else { return }
+        MirageLogger.host("Cancelling starting app session \(appSessionID.uuidString) for \(session.appName)")
+        for info in session.windowStreams.values {
+            if let streamSession = activeStreams.first(where: { $0.id == info.streamID }) {
+                await stopStream(streamSession, updateAppSession: false)
+            }
+        }
+        await appStreamManager.endSession(appSessionID: appSessionID)
+        await restoreStageManagerAfterAppStreamingIfNeeded()
+        await endPendingAppStreamLightsOutSetup()
     }
 
     func handleAppWindowSwapRequest(
@@ -954,6 +1009,12 @@ extension MirageHostService {
         mediaMaxPacketSize: Int
     ) async -> ExistingSessionWindowStartResult {
         let normalizedBundleID = app.bundleIdentifier.lowercased()
+        guard !isStreamSetupCancelled(
+            clientSessionID: clientContext.sessionID,
+            startupRequestID: selectRequest.startupRequestID
+        ) else {
+            return .cancelled
+        }
         let catalog: [AppStreamWindowCandidate]
         do {
             catalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])[normalizedBundleID] ?? []
@@ -967,11 +1028,23 @@ extension MirageHostService {
             catalog: catalog
         )
         guard let selectedCandidate else {
+            guard !isStreamSetupCancelled(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: selectRequest.startupRequestID
+            ) else {
+                return .cancelled
+            }
             await appStreamManager.requestNewWindow(bundleIdentifier: app.bundleIdentifier, path: app.path)
             MirageLogger.host(
                 "Existing app-stream expansion requested a new window for \(app.bundleIdentifier) because no unclaimed eligible windows were available"
             )
             try? await Task.sleep(for: Self.initialAppWindowDiscoveryRetryDelay(afterAttempt: 1))
+            guard !isStreamSetupCancelled(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: selectRequest.startupRequestID
+            ) else {
+                return .cancelled
+            }
             let refreshedCatalog: [AppStreamWindowCandidate]
             do {
                 refreshedCatalog = try await AppStreamWindowCatalog.catalog(for: [app.bundleIdentifier])[normalizedBundleID] ?? []
@@ -1064,10 +1137,22 @@ extension MirageHostService {
         let preferredSlotIndex = await appStreamManager.availableVisibleSlotIndex(bundleIdentifier: app.bundleIdentifier)
 
         do {
+            guard !isStreamSetupCancelled(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: selectRequest.startupRequestID
+            ) else {
+                return .cancelled
+            }
             await prepareWindowForStreamingIfNeeded(
                 selectedWindow,
                 reason: "existing-session expansion"
             )
+            guard !isStreamSetupCancelled(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: selectRequest.startupRequestID
+            ) else {
+                return .cancelled
+            }
             let streamSession = try await startStream(
                 for: selectedWindow,
                 to: clientContext.client,
@@ -1099,6 +1184,13 @@ extension MirageHostService {
                 codec: selectRequest.codec,
                 sizePreset: selectRequest.sizePreset ?? .standard
             )
+            guard !isStreamSetupCancelled(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: selectRequest.startupRequestID
+            ) else {
+                await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+                return .cancelled
+            }
             let resolvedWindowEvent = Self.resolvedWindowAddedEvent(from: streamSession)
             let resolvedWindowID = resolvedWindowEvent.windowID
 
@@ -1124,6 +1216,17 @@ extension MirageHostService {
                 isResizable: isResizable,
                 slotIndex: preferredSlotIndex
             )
+            guard !isStreamSetupCancelled(
+                clientSessionID: clientContext.sessionID,
+                startupRequestID: selectRequest.startupRequestID
+            ) else {
+                await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+                await appStreamManager.removeWindowFromSession(
+                    bundleIdentifier: app.bundleIdentifier,
+                    windowID: resolvedWindowID
+                )
+                return .cancelled
+            }
             guard assignedSlot != nil else {
                 await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
                 return .failure("No visible slot is available for another \(app.name) window.")
@@ -1147,6 +1250,7 @@ extension MirageHostService {
             return .success(
                 WindowAddedToStreamMessage(
                     bundleIdentifier: app.bundleIdentifier,
+                    appSessionID: session.id,
                     streamID: streamSession.id,
                     windowID: resolvedWindowID,
                     title: resolvedWindowEvent.title,
@@ -1257,7 +1361,7 @@ extension MirageHostService {
         var newWindowRequestAttempts = 0
 
         for discoveryAttempt in 1 ... maxDiscoveryAttempts {
-            if streamSetupCancelled {
+            if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: selectRequest.startupRequestID) {
                 MirageLogger.host("App stream window discovery cancelled by client")
                 break
             }
@@ -1941,7 +2045,15 @@ extension MirageHostService {
 
             let apps = await appStreamManager.getInstalledApps(
                 includeIcons: false,
-                forceRefresh: forceRefresh
+                forceRefresh: forceRefresh,
+                onAppDiscovered: { [weak self] app in
+                    await self?.sendAppListProgress(
+                        app: app,
+                        requestID: requestID,
+                        clientID: clientID,
+                        token: token
+                    )
+                }
             )
             if Task.isCancelled { return }
 
@@ -1975,6 +2087,34 @@ extension MirageHostService {
             if appListRequestToken == token, pendingAppListRequest?.clientID == clientID {
                 pendingAppListRequest = nil
             }
+        }
+    }
+
+    private func sendAppListProgress(
+        app: MirageInstalledApp,
+        requestID: UUID,
+        clientID: UUID,
+        token: UUID
+    ) async {
+        guard appListRequestToken == token,
+              pendingAppListRequest?.clientID == clientID,
+              let clientContext = findClientContext(clientID: clientID) else {
+            return
+        }
+
+        do {
+            let progress = AppListProgressMessage(
+                requestID: requestID,
+                apps: Self.metadataOnlyApps([app])
+            )
+            try await clientContext.send(.appListProgress, content: progress)
+        } catch {
+            await handleControlChannelSendFailure(
+                client: clientContext.client,
+                error: error,
+                operation: "App list progress for \(app.bundleIdentifier)",
+                sessionID: clientContext.sessionID
+            )
         }
     }
 

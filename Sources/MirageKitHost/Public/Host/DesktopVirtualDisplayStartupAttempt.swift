@@ -203,6 +203,22 @@ func desktopVirtualDisplayStartupPlan(
         isCachedTarget: false,
         targetTier: .degraded
     )
+    let retinaEquivalent = DesktopVirtualDisplayStartupAttempt(
+        backingScale: DesktopBackingScaleResolution(
+            scaleFactor: 2.0,
+            pixelResolution: primary.backingScale.pixelResolution
+        ),
+        refreshRate: primary.refreshRate,
+        colorSpace: primary.colorSpace,
+        label: "retina-equivalent",
+        fallbackKind: .primary,
+        isConservativeRetry: false,
+        isCachedTarget: false,
+        targetTier: .degraded
+    )
+    let shouldPreferRetinaEquivalent = primary.backingScale.scaleFactor <= 1.5 &&
+        primary.backingScale.pixelResolution.width >= 3840 &&
+        primary.backingScale.pixelResolution.height >= 2160
 
     var attempts: [DesktopVirtualDisplayStartupAttempt] = []
     var seenAttemptKeys = Set<String>()
@@ -216,6 +232,9 @@ func desktopVirtualDisplayStartupPlan(
 
     if let cachedTarget = cachedDesktopVirtualDisplayStartupTarget(for: request) {
         appendAttempt(cachedDesktopVirtualDisplayStartupAttempt(from: cachedTarget))
+    }
+    if shouldPreferRetinaEquivalent {
+        appendAttempt(retinaEquivalent)
     }
     appendAttempt(primary)
     if requestedColorSpace != .sRGB {

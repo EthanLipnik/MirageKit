@@ -18,17 +18,31 @@ extension SharedVirtualDisplayManager {
     // MARK: - ScreenCaptureKit Integration
 
     /// Find the SCDisplay corresponding to the shared virtual display
-    func findSCDisplay(maxAttempts: Int = 8) async throws -> SCDisplayWrapper {
+    func findSCDisplay(
+        maxAttempts: Int = 8,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
+    )
+    async throws -> SCDisplayWrapper {
         guard let displayID = sharedDisplay?.displayID else { throw SharedDisplayError.noActiveDisplay }
-        return try await findSCDisplay(displayID: displayID, maxAttempts: maxAttempts)
+        return try await findSCDisplay(
+            displayID: displayID,
+            maxAttempts: maxAttempts,
+            startupBudget: startupBudget
+        )
     }
 
     /// Find the SCDisplay for a specific displayID.
-    func findSCDisplay(displayID: CGDirectDisplayID, maxAttempts: Int = 8) async throws -> SCDisplayWrapper {
+    func findSCDisplay(
+        displayID: CGDirectDisplayID,
+        maxAttempts: Int = 8,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
+    )
+    async throws -> SCDisplayWrapper {
         var attempt = 0
         var delayMs = 120
 
         while attempt < maxAttempts {
+            try startupBudget?.checkAvailable()
             attempt += 1
 
             do {
@@ -49,7 +63,8 @@ extension SharedVirtualDisplayManager {
                             "SCDisplay not yet available for displayID \(displayID) (attempt \(attempt)/\(maxAttempts)); " +
                             "available: \(available); retrying in \(delayMs)ms"
                         )
-                    try? await Task.sleep(for: .milliseconds(delayMs))
+                    let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(delayMs) ?? delayMs
+                    try? await Task.sleep(for: .milliseconds(boundedDelayMs))
                     delayMs = min(1000, Int(Double(delayMs) * 1.6))
                 } else {
                     MirageLogger.host(
@@ -63,7 +78,8 @@ extension SharedVirtualDisplayManager {
                     MirageLogger.host(
                         "Failed to query SCShareableContent for displayID \(displayID) (attempt \(attempt)/\(maxAttempts)): \(error)"
                     )
-                    try? await Task.sleep(for: .milliseconds(delayMs))
+                    let boundedDelayMs = startupBudget?.boundedDelayMilliseconds(delayMs) ?? delayMs
+                    try? await Task.sleep(for: .milliseconds(boundedDelayMs))
                     delayMs = min(1000, Int(Double(delayMs) * 1.6))
                     continue
                 }

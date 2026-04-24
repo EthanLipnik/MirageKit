@@ -81,4 +81,57 @@ struct AppIconUpdateDispatchTests {
         #expect(latestApps.first?.iconData == iconData)
         #expect(latestApps.first?.iconSignature == iconSignature)
     }
+
+    @MainActor
+    @Test("App list progress grows available apps before the final snapshot")
+    func appListProgressGrowsAvailableAppsBeforeFinalSnapshot() throws {
+        let service = MirageClientService()
+        var progressCallbackCount = 0
+        var latestProgressApps: [MirageInstalledApp] = []
+        service.onAppListProgress = { apps in
+            progressCallbackCount += 1
+            latestProgressApps = apps
+        }
+
+        let requestID = UUID()
+        service.activeAppListRequestID = requestID
+
+        let progress = AppListProgressMessage(
+            requestID: requestID,
+            apps: [
+                MirageInstalledApp(
+                    bundleIdentifier: "com.example.Editor",
+                    name: "Editor",
+                    path: "/Applications/Editor.app",
+                    iconData: nil
+                ),
+            ]
+        )
+        let progressEnvelope = try ControlMessage(type: .appListProgress, content: progress)
+        service.handleAppListProgress(progressEnvelope)
+
+        #expect(progressCallbackCount == 1)
+        #expect(service.availableApps.count == 1)
+        #expect(latestProgressApps.first?.bundleIdentifier == "com.example.Editor")
+
+        let secondProgress = AppListProgressMessage(
+            requestID: requestID,
+            apps: [
+                MirageInstalledApp(
+                    bundleIdentifier: "com.example.Terminal",
+                    name: "Terminal",
+                    path: "/Applications/Utilities/Terminal.app",
+                    iconData: nil
+                ),
+            ]
+        )
+        let secondEnvelope = try ControlMessage(type: .appListProgress, content: secondProgress)
+        service.handleAppListProgress(secondEnvelope)
+
+        #expect(progressCallbackCount == 2)
+        #expect(service.availableApps.map(\.bundleIdentifier) == [
+            "com.example.Editor",
+            "com.example.Terminal",
+        ])
+    }
 }

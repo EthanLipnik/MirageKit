@@ -14,15 +14,26 @@ import AppKit
 extension MirageHostInputController {
     private static let systemActionKeyReleaseDelay: DispatchTimeInterval = .milliseconds(50)
     private static let systemActionInjectionDomain: HostKeyboardInjectionDomain = .session
+    private static let systemActionCooldown: CFAbsoluteTime = 0.45
     static let missionControlApplicationURL = URL(filePath: "/System/Applications/Mission Control.app")
 
     func executeHostSystemAction(_ request: MirageHostSystemActionRequest) {
-        if let launchArguments = Self.missionControlLaunchArguments(for: request.action) {
-            launchMissionControl(arguments: launchArguments, fallbackRequest: request)
+        guard beginSystemActionIfAllowed(request.action) else {
+            MirageLogger.host("Skipping host system action \(request.action.diagnosticLabel) during cooldown")
             return
         }
 
-        executeResolvedHostSystemAction(request)
+        executeResolvedHostSystemAction(request, allowApplicationFallback: true)
+    }
+
+    private func beginSystemActionIfAllowed(_ action: MirageHostSystemAction) -> Bool {
+        let now = CFAbsoluteTimeGetCurrent()
+        if let inFlightUntil = systemActionInFlightUntilByAction[action],
+           now < inFlightUntil {
+            return false
+        }
+        systemActionInFlightUntilByAction[action] = now + Self.systemActionCooldown
+        return true
     }
 
     static func missionControlLaunchArguments(for action: MirageHostSystemAction) -> [String]? {
@@ -57,13 +68,16 @@ extension MirageHostInputController {
                     message: "Failed to launch Mission Control app for \(fallbackRequest.action.diagnosticLabel): "
                 )
                 self?.accessibilityQueue.async { [weak self] in
-                    self?.executeResolvedHostSystemAction(fallbackRequest)
+                    self?.executeResolvedHostSystemAction(fallbackRequest, allowApplicationFallback: false)
                 }
             }
         }
     }
 
-    private func executeResolvedHostSystemAction(_ request: MirageHostSystemActionRequest) {
+    private func executeResolvedHostSystemAction(
+        _ request: MirageHostSystemActionRequest,
+        allowApplicationFallback: Bool
+    ) {
         switch HostSymbolicHotKeyResolver.resolve(request.action) {
         case let .shortcut(resolvedShortcut):
             injectHostShortcut(resolvedShortcut)
@@ -71,6 +85,15 @@ extension MirageHostInputController {
             MirageLogger.host(
                 "Skipping host system action \(request.action.diagnosticLabel) because the host shortcut is disabled"
             )
+        case .unavailable where allowApplicationFallback && request.fallbackKeyEvent == nil:
+            if let launchArguments = Self.missionControlLaunchArguments(for: request.action) {
+                MirageLogger.host("Falling back to Mission Control app launch for \(request.action.diagnosticLabel)")
+                launchMissionControl(arguments: launchArguments, fallbackRequest: request)
+            } else {
+                MirageLogger.host(
+                    "Skipping host system action \(request.action.diagnosticLabel) because no host action fallback exists"
+                )
+            }
         case .unavailable:
             guard let fallbackKeyEvent = request.fallbackKeyEvent else {
                 MirageLogger.host(

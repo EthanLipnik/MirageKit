@@ -590,6 +590,34 @@ struct DesktopResizeTransactionPolicyTests {
         #expect(decision == .waitForResidualMirageDisplays([staleMirageDisplay23]))
     }
 
+    @Test("Physical fallback mirroring ignores residual Mirage displays")
+    func physicalFallbackMirroringIgnoresResidualMirageDisplays() {
+        let staleMirageDisplay23: CGDirectDisplayID = 23
+        let mainDisplay3: CGDirectDisplayID = 3
+
+        let decision = displayMirroringTargetStabilityDecision(
+            targetDisplayID: mainDisplay3,
+            onlineDisplayIDs: [mainDisplay3, staleMirageDisplay23],
+            observedTargetPixelResolution: CGSize(width: 5120, height: 2880),
+            expectedTargetPixelResolution: CGSize(width: 5120, height: 2880),
+            requiresResidualMirageDisplaysClear: false,
+            isMirageDisplay: { $0 == staleMirageDisplay23 }
+        )
+
+        #expect(decision == .stable)
+    }
+
+    @Test("Fallback presentation size aspect fits host capture into client target")
+    func fallbackPresentationSizeAspectFitsHostCaptureIntoClientTarget() {
+        let fitted = aspectFitPixelSize(
+            contentSize: CGSize(width: 5120, height: 2880),
+            containerSize: CGSize(width: 2732, height: 2048)
+        )
+
+        #expect(abs(fitted.width - 2732) < 0.5)
+        #expect(abs(fitted.height - 1536.75) < 0.5)
+    }
+
     @Test("Display mirroring target stability waits for expected target mode")
     func displayMirroringTargetStabilityWaitsForExpectedTargetMode() {
         let targetMirageDisplay24: CGDirectDisplayID = 24

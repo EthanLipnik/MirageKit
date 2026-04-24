@@ -30,6 +30,7 @@ public extension AppStreamManager {
     /// - Returns: The created session, or nil if app is not available.
     @discardableResult
     func startAppSession(
+        id: UUID = UUID(),
         bundleIdentifier: String,
         appName: String,
         appPath: String,
@@ -49,6 +50,7 @@ public extension AppStreamManager {
         }
 
         let session = MirageAppStreamSession(
+            id: id,
             bundleIdentifier: bundleIdentifier,
             appName: appName,
             appPath: appPath,
@@ -79,9 +81,32 @@ public extension AppStreamManager {
         sessions[key] = session
     }
 
+    @discardableResult
+    func raiseMaxVisibleSlots(bundleIdentifier: String, to requestedSlots: Int) -> Bool {
+        let key = bundleIdentifier.lowercased()
+        guard var session = sessions[key] else { return false }
+        let resolvedSlots = max(1, requestedSlots)
+        guard resolvedSlots > session.maxVisibleSlots else { return false }
+        session.maxVisibleSlots = resolvedSlots
+        sessions[key] = session
+        logger.info("Raised app session slot cap for \(bundleIdentifier) to \(resolvedSlots)")
+        return true
+    }
+
     func markSessionStreaming(_ bundleIdentifier: String) {
         let key = bundleIdentifier.lowercased()
         sessions[key]?.state = .streaming
+    }
+
+    func getSession(appSessionID: UUID) -> MirageAppStreamSession? {
+        sessions.values.first { $0.id == appSessionID }
+    }
+
+    func endSession(appSessionID: UUID) {
+        guard let entry = sessions.first(where: { $0.value.id == appSessionID }) else { return }
+        sessions.removeValue(forKey: entry.key)
+        startupFailureStateByBundleID.removeValue(forKey: entry.key)
+        logger.info("Ended app session: \(entry.value.appName)")
     }
 
     /// Add or update a visible window stream in an app session.
@@ -397,6 +422,7 @@ public extension AppStreamManager {
 
         return AppWindowInventoryMessage(
             bundleIdentifier: session.bundleIdentifier,
+            appSessionID: session.id,
             maxVisibleSlots: session.maxVisibleSlots,
             slots: slots,
             hiddenWindows: hiddenWindows

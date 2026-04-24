@@ -30,9 +30,13 @@ actor CursorMonitor {
 
     /// Last known visibility state per stream
     private var lastVisibility: [StreamID: Bool] = [:]
+    private var lastCursorPositions: [StreamID: CGPoint] = [:]
+    private var lastCursorPositionSentAt: [StreamID: CFAbsoluteTime] = [:]
 
     /// Expand visibility checks slightly so edge cursors remain visible at window bounds
     private let visibilityPadding: CGFloat = 1.0
+    private let positionMovementThreshold: CGFloat = 0.002
+    private let positionHeartbeatInterval: CFAbsoluteTime = 0.5
 
     /// Callback invoked when cursor changes for a stream.
     private var onCursorChange: ((StreamID, MirageCursorType, Bool) async -> Void)?
@@ -93,6 +97,8 @@ actor CursorMonitor {
         pollingTask = nil
         lastCursorTypes.removeAll()
         lastVisibility.removeAll()
+        lastCursorPositions.removeAll()
+        lastCursorPositionSentAt.removeAll()
         cachedStreams.removeAll()
         lastWindowFrameRefreshTime = 0
         onCursorChange = nil
@@ -140,9 +146,10 @@ actor CursorMonitor {
             // Note: windowFrame is in screen coordinates with bottom-left origin
             let visibilityFrame = windowFrame.insetBy(dx: -visibilityPadding, dy: -visibilityPadding)
             let isInWindow = visibilityFrame.contains(mouseLocation)
+            let normalized = normalizedPosition(mouseLocation, in: windowFrame)
 
-            if let onCursorPosition {
-                let normalized = normalizedPosition(mouseLocation, in: windowFrame)
+            if let onCursorPosition,
+               shouldSendCursorPosition(streamID: streamID, position: normalized, now: CFAbsoluteTimeGetCurrent()) {
                 await onCursorPosition(streamID, normalized, isInWindow)
             }
 
@@ -177,7 +184,23 @@ actor CursorMonitor {
         for streamID in lastCursorTypes.keys where !activeStreamIDs.contains(streamID) {
             lastCursorTypes.removeValue(forKey: streamID)
             lastVisibility.removeValue(forKey: streamID)
+            lastCursorPositions.removeValue(forKey: streamID)
+            lastCursorPositionSentAt.removeValue(forKey: streamID)
         }
+    }
+
+    private func shouldSendCursorPosition(streamID: StreamID, position: CGPoint, now: CFAbsoluteTime) -> Bool {
+        defer {
+            lastCursorPositions[streamID] = position
+            lastCursorPositionSentAt[streamID] = now
+        }
+        guard let previous = lastCursorPositions[streamID],
+              let lastSentAt = lastCursorPositionSentAt[streamID] else {
+            return true
+        }
+        let moved = abs(previous.x - position.x) >= positionMovementThreshold ||
+            abs(previous.y - position.y) >= positionMovementThreshold
+        return moved || now - lastSentAt >= positionHeartbeatInterval
     }
 
     private func normalizedPosition(_ location: CGPoint, in frame: CGRect) -> CGPoint {

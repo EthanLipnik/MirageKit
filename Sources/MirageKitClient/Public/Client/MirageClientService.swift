@@ -284,6 +284,12 @@ public final class MirageClientService {
 
     /// Desktop stream resolution
     public internal(set) var desktopStreamResolution: CGSize?
+    /// Desktop stream presentation/window sizing resolution.
+    public internal(set) var desktopStreamPresentationResolution: CGSize?
+    /// Effective host capture source for the current desktop stream.
+    package internal(set) var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
+    /// Whether the host currently accepts client-driven desktop resize requests.
+    public internal(set) var desktopStreamAllowsClientResize: Bool = true
 
     /// Active codec per stream (for guarding ProRes against adaptive fallback)
     var activeStreamCodecs: [StreamID: MirageVideoCodec] = [:]
@@ -355,6 +361,10 @@ public final class MirageClientService {
 
     /// Request identifier for the latest app list snapshot received from the host.
     var activeAppListRequestID: UUID?
+    /// Active stream setup request used for scoped cancellation before a stream ID exists.
+    var pendingStreamSetupRequestID: UUID?
+    var pendingStreamSetupKind: StreamSetupKind?
+    var pendingStreamSetupAppSessionID: UUID?
     /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
     var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
@@ -401,6 +411,9 @@ public final class MirageClientService {
     /// Callback when app list is received
     public var onAppListReceived: (([MirageInstalledApp]) -> Void)?
 
+    /// Callback when metadata-only app-list progress advances the in-memory app snapshot.
+    public var onAppListProgress: (([MirageInstalledApp]) -> Void)?
+
     /// Callback when app-icon packets advance the in-memory app snapshot.
     public var onAppIconStreamProgress: (([MirageInstalledApp]) -> Void)?
 
@@ -423,7 +436,7 @@ public final class MirageClientService {
     public var onProtocolMismatch: ((ProtocolMismatchInfo) -> Void)?
 
     /// Callback when app streaming starts
-    public var onAppStreamStarted: ((String, String, [AppStreamStartedMessage.AppStreamWindow]) -> Void)?
+    public var onAppStreamStarted: ((AppStreamStartedMessage) -> Void)?
 
     /// Callback when host publishes app-window slot inventory updates.
     public var onAppWindowInventoryUpdate: ((AppWindowInventoryMessage) -> Void)?

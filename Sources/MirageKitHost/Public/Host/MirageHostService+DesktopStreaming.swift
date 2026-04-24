@@ -63,6 +63,21 @@ func pendingDisplaySpaceRestores(
     }
 }
 
+func aspectFitPixelSize(contentSize: CGSize, containerSize: CGSize) -> CGSize {
+    guard contentSize.width > 0, contentSize.height > 0,
+          containerSize.width > 0, containerSize.height > 0 else {
+        return contentSize
+    }
+    let contentAspect = contentSize.width / contentSize.height
+    let containerAspect = containerSize.width / containerSize.height
+    if containerAspect > contentAspect {
+        let height = containerSize.height
+        return CGSize(width: height * contentAspect, height: height)
+    }
+    let width = containerSize.width
+    return CGSize(width: width, height: width / contentAspect)
+}
+
 private let desktopStartupCaptureReadinessWindow: Duration = .milliseconds(750)
 
 extension MirageHostService {
@@ -93,7 +108,8 @@ extension MirageHostService {
         encoderMaxHeight: Int? = nil,
         mediaMaxPacketSize: Int = mirageDefaultMaxPacketSize,
         upscalingMode: MirageUpscalingMode? = nil,
-        codec: MirageVideoCodec? = nil
+        codec: MirageVideoCodec? = nil,
+        startupRequestID: UUID
     )
     async throws {
         var virtualDisplaySetupGuardToken: UUID?
@@ -207,6 +223,7 @@ extension MirageHostService {
         let desktopSessionID = UUID()
         desktopStreamMode = mode
         desktopCursorPresentation = cursorPresentation
+        desktopCaptureSource = .virtualDisplay
         self.desktopSessionID = desktopSessionID
         resetDesktopResizeTransactionState()
 
@@ -268,23 +285,28 @@ extension MirageHostService {
             display: SCDisplayWrapper,
             resolution: CGSize,
             p3CoverageStatus: MirageDisplayP3CoverageStatus?,
-            colorSpace: MirageColorSpace?
+            colorSpace: MirageColorSpace?,
+            captureSource: MirageDesktopCaptureSource,
+            allowsClientResize: Bool,
+            presentationResolution: CGSize
         )?
         var lastVirtualDisplayError: Error?
-        let acquisitionDeadline = ContinuousClock.now + .seconds(75)
+        let startupBudget = DesktopVirtualDisplayStartupBudget(maxDuration: 10.0)
+        let requestedDesktopUsesHostResolution = desktopUsesHostResolution
 
         var attemptIndex = 0
         acquisitionLoop: while attemptIndex < virtualDisplayStartupAttempts.count {
             let attempt = virtualDisplayStartupAttempts[attemptIndex]
             virtualDisplayStartupSession.begin(attempt)
-            if ContinuousClock.now >= acquisitionDeadline {
-                MirageLogger.error(.host, "Desktop virtual display acquisition deadline exceeded (75s)")
+            if startupBudget.isExpired {
+                MirageLogger.error(.host, "Desktop virtual display acquisition budget exceeded (10s)")
+                lastVirtualDisplayError = DesktopVirtualDisplayStartupBudgetExceeded()
                 break acquisitionLoop
             }
 
             // Abort early if the client disconnected during acquisition to avoid
             // creating virtual displays that will be immediately destroyed.
-            if streamSetupCancelled {
+            if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: startupRequestID) {
                 MirageLogger.host("Desktop stream setup cancelled by client during acquisition loop")
                 await cleanupFailedDesktopStreamStartup(mode: mode)
                 throw MirageError.protocolError("Desktop stream setup cancelled by client")
@@ -325,13 +347,18 @@ extension MirageHostService {
                     resolution: attemptResolution,
                     refreshRate: attempt.refreshRate,
                     colorSpace: attempt.colorSpace,
-                    creationPolicy: .singleAttempt(hiDPI: attempt.backingScale.scaleFactor > 1.5)
+                    creationPolicy: .singleAttempt(hiDPI: attempt.backingScale.scaleFactor > 1.5),
+                    startupBudget: startupBudget
                 )
                 config = attemptConfig
                 logDesktopStartStep("virtual display acquired (\(context.displayID), \(attempt.label))")
                 virtualDisplayStartupSession.awaitingCaptureDisplay(displayID: context.displayID)
 
-                let captureDisplay = try await findSCDisplayWithRetry(maxAttempts: 5, delayMs: 40)
+                let captureDisplay = try await findSCDisplayWithRetry(
+                    maxAttempts: 5,
+                    delayMs: 40,
+                    startupBudget: startupBudget
+                )
                 logDesktopStartStep("SCDisplay resolved (\(captureDisplay.display.displayID))")
                 virtualDisplayStartupSession.ready(displayID: context.displayID)
                 let captureResolution = context.resolution
@@ -339,6 +366,7 @@ extension MirageHostService {
                 let captureDisplayColorSpace = context.colorSpace
 
                 desktopVirtualDisplayID = context.displayID
+                desktopCaptureSource = .virtualDisplay
                 var resolvedBounds = await SharedVirtualDisplayManager.shared.getDisplayBounds()
                 if resolvedBounds == nil { resolvedBounds = resolveDesktopDisplayBounds() }
                 guard let bounds = resolvedBounds else {
@@ -401,11 +429,26 @@ extension MirageHostService {
                     display: captureDisplay,
                     resolution: captureResolution,
                     p3CoverageStatus: captureDisplayP3CoverageStatus,
-                    colorSpace: captureDisplayColorSpace
+                    colorSpace: captureDisplayColorSpace,
+                    captureSource: .virtualDisplay,
+                    allowsClientResize: true,
+                    presentationResolution: captureResolution
                 )
                 virtualDisplayStartupSession.persistIfPreferred(
                     from: context,
                     attemptedRefreshRate: attempt.refreshRate
+                )
+                break acquisitionLoop
+            } catch is DesktopVirtualDisplayStartupBudgetExceeded {
+                lastVirtualDisplayError = DesktopVirtualDisplayStartupBudgetExceeded()
+                await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+                desktopVirtualDisplayID = nil
+                sharedVirtualDisplayGeneration = 0
+                sharedVirtualDisplayScaleFactor = 1.0
+                desktopDisplayBounds = nil
+                desktopUsesHostResolution = requestedDesktopUsesHostResolution
+                MirageLogger.host(
+                    "Desktop virtual display startup exceeded 10s budget after \(startupBudget.elapsedMilliseconds)ms"
                 )
                 break acquisitionLoop
             } catch {
@@ -415,7 +458,7 @@ extension MirageHostService {
                 sharedVirtualDisplayGeneration = 0
                 sharedVirtualDisplayScaleFactor = 1.0
                 desktopDisplayBounds = nil
-                desktopUsesHostResolution = false
+                desktopUsesHostResolution = requestedDesktopUsesHostResolution
                 lastVirtualDisplayError = error
 
                 if attempt.isCachedTarget {
@@ -481,11 +524,31 @@ extension MirageHostService {
             sharedVirtualDisplayGeneration = 0
             sharedVirtualDisplayScaleFactor = fallback.scaleFactor
             desktopUsesHostResolution = true
+            desktopCaptureSource = .mainDisplayFallback
+            let fallbackPresentationResolution = aspectFitPixelSize(
+                contentSize: fallback.resolution,
+                containerSize: virtualDisplayResolution
+            )
+            if mode == .unified {
+                let mirroringConfigured = await setupDisplayMirroring(
+                    targetDisplayID: fallback.displayID,
+                    expectedPixelResolution: fallback.resolution,
+                    requiresResidualMirageDisplaysClear: false
+                )
+                if mirroringConfigured {
+                    logDesktopStartStep("main display fallback mirroring configured")
+                } else {
+                    logDesktopStartStep("main display fallback mirroring incomplete; continuing")
+                }
+            }
             acquiredCaptureContext = (
                 display: fallback.display,
                 resolution: fallback.resolution,
                 p3CoverageStatus: nil,
-                colorSpace: nil
+                colorSpace: nil,
+                captureSource: .mainDisplayFallback,
+                allowsClientResize: false,
+                presentationResolution: fallbackPresentationResolution
             )
             logDesktopStartStep("main display fallback acquired (\(fallback.displayID))")
         }
@@ -497,8 +560,12 @@ extension MirageHostService {
         let captureResolution = acquiredCaptureContext.resolution
         let captureDisplayP3CoverageStatus = acquiredCaptureContext.p3CoverageStatus
         let captureDisplayColorSpace = acquiredCaptureContext.colorSpace
+        let captureSource = acquiredCaptureContext.captureSource
+        let allowsClientResize = acquiredCaptureContext.allowsClientResize
+        let presentationResolution = acquiredCaptureContext.presentationResolution
+        desktopCaptureSource = captureSource
 
-        if streamSetupCancelled {
+        if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: startupRequestID) {
             MirageLogger.host("Desktop stream setup cancelled by client after acquisition")
             await cleanupFailedDesktopStreamStartup(mode: mode)
             throw MirageError.protocolError("Desktop stream setup cancelled by client")
@@ -586,7 +653,7 @@ extension MirageHostService {
             }
         }
 
-        if streamSetupCancelled {
+        if isStreamSetupCancelled(clientSessionID: clientContext.sessionID, startupRequestID: startupRequestID) {
             MirageLogger.host("Desktop stream setup cancelled by client before activation")
             await cleanupFailedDesktopStreamStartup(mode: mode)
             throw MirageError.protocolError("Desktop stream setup cancelled by client")
@@ -740,7 +807,7 @@ extension MirageHostService {
                 try await startDesktopDisplay()
             }
 
-        if mode == .unified {
+        if mode == .unified || mode == .secondary {
             var recoveryAttempted = false
             while true {
                 var readiness = await streamContext.waitForDisplayStartupReadiness(
@@ -789,7 +856,7 @@ extension MirageHostService {
                     continue
                 case .fail:
                     throw MirageError.protocolError(
-                        "Unified desktop startup failed waiting for first display sample (\(readiness.rawValue))"
+                        "\(mode.displayName) desktop startup failed waiting for first display sample (\(readiness.rawValue))"
                     )
                 }
                 break
@@ -826,7 +893,11 @@ extension MirageHostService {
             displayCount: 1,
             dimensionToken: dimensionToken,
             acceptedMediaMaxPacketSize: acceptedMediaMaxPacketSize,
-            transitionPhase: .startup
+            transitionPhase: .startup,
+            captureSource: captureSource,
+            allowsClientResize: allowsClientResize,
+            presentationWidth: Int(presentationResolution.width.rounded()),
+            presentationHeight: Int(presentationResolution.height.rounded())
         )
         do {
             registerPendingStartupAttempt(
@@ -875,6 +946,8 @@ extension MirageHostService {
                 await disableDisplayMirroring(displayID: vdID)
             }
             await SharedVirtualDisplayManager.shared.releaseDisplayForConsumer(.desktopStream)
+        } else if !desktopMirroringSnapshot.isEmpty {
+            await disableDisplayMirroring(displayID: desktopPrimaryPhysicalDisplayID ?? CGMainDisplayID())
         }
         desktopVirtualDisplayID = nil
         desktopDisplayBounds = nil
@@ -884,6 +957,7 @@ extension MirageHostService {
         sharedVirtualDisplayGeneration = 0
         sharedVirtualDisplayScaleFactor = 1.0
         desktopUsesHostResolution = false
+        desktopCaptureSource = .virtualDisplay
         mirroredDesktopDisplayIDs.removeAll()
         desktopMirroringSnapshot.removeAll()
         desktopDisplaySpaceSnapshot.removeAll()
@@ -920,8 +994,12 @@ extension MirageHostService {
 
         if let context = desktopStreamContext { await context.stop() }
 
-        if desktopStreamMode == .unified, let sharedDisplayID {
-            await disableDisplayMirroring(displayID: sharedDisplayID)
+        if desktopStreamMode == .unified {
+            if let sharedDisplayID {
+                await disableDisplayMirroring(displayID: sharedDisplayID)
+            } else if !desktopMirroringSnapshot.isEmpty {
+                await disableDisplayMirroring(displayID: desktopPrimaryPhysicalDisplayID ?? CGMainDisplayID())
+            }
         }
 
         if let clientContext = stoppedClientContext,
@@ -946,6 +1024,7 @@ extension MirageHostService {
         desktopMirroredVirtualResolution = nil
         desktopRequestedScaleFactor = nil
         desktopUsesHostResolution = false
+        desktopCaptureSource = .virtualDisplay
         sharedVirtualDisplayScaleFactor = 2.0
         desktopStreamMode = .unified
         desktopCursorPresentation = .simulatedCursor
@@ -1007,11 +1086,19 @@ extension MirageHostService {
     }
 
     /// Find SCDisplay with retry - faster than fixed sleep
-    func findSCDisplayWithRetry(maxAttempts: Int, delayMs: UInt64) async throws -> SCDisplayWrapper {
+    func findSCDisplayWithRetry(
+        maxAttempts: Int,
+        delayMs: UInt64,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
+    )
+    async throws -> SCDisplayWrapper {
         _ = delayMs
         let resolvedAttempts = max(maxAttempts, 12)
         do {
-            let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(maxAttempts: resolvedAttempts)
+            let scDisplay = try await SharedVirtualDisplayManager.shared.findSCDisplay(
+                maxAttempts: resolvedAttempts,
+                startupBudget: startupBudget
+            )
             MirageLogger.host("Found SCDisplay using shared startup policy (attempt budget \(resolvedAttempts))")
             return scDisplay
         } catch {
@@ -1324,15 +1411,17 @@ extension MirageHostService {
     @discardableResult
     func setupDisplayMirroring(
         targetDisplayID: CGDirectDisplayID,
-        expectedPixelResolution: CGSize? = nil
+        expectedPixelResolution: CGSize? = nil,
+        requiresResidualMirageDisplaysClear: Bool = true
     )
     async -> Bool {
         guard await waitForDisplayMirroringTargetStability(
             targetDisplayID: targetDisplayID,
-            expectedPixelResolution: expectedPixelResolution
+            expectedPixelResolution: expectedPixelResolution,
+            requiresResidualMirageDisplaysClear: requiresResidualMirageDisplaysClear
         ) else {
             MirageLogger.host(
-                "Display mirroring setup deferred because virtual display \(targetDisplayID) did not stabilize"
+                "Display mirroring setup deferred because target display \(targetDisplayID) did not stabilize"
             )
             return false
         }
@@ -1414,6 +1503,7 @@ extension MirageHostService {
     private func waitForDisplayMirroringTargetStability(
         targetDisplayID: CGDirectDisplayID,
         expectedPixelResolution: CGSize?,
+        requiresResidualMirageDisplaysClear: Bool = true,
         stableSampleCount: Int = 2,
         maxWaitMs: Int = 2500,
         pollIntervalMs: Int = 120
@@ -1430,7 +1520,8 @@ extension MirageHostService {
                 targetDisplayID: targetDisplayID,
                 onlineDisplayIDs: onlineDisplayIDs,
                 observedTargetPixelResolution: observedResolution,
-                expectedTargetPixelResolution: expectedPixelResolution
+                expectedTargetPixelResolution: expectedPixelResolution,
+                requiresResidualMirageDisplaysClear: requiresResidualMirageDisplaysClear
             )
             lastDecision = decision
 

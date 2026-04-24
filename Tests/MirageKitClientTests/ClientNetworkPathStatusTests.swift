@@ -56,7 +56,7 @@ struct ClientNetworkPathStatusTests {
 
     @Test("Tunnel interfaces surface as overlay paths")
     func overlayDisplayName() {
-        let status = makeStatus(kind: .other, interfaceNames: ["utun4"], usesOther: true)
+        let status = makeStatus(kind: .vpn, interfaceNames: ["utun4"], usesOther: true)
 
         #expect(status.displayName == "VPN / Overlay")
     }
@@ -77,7 +77,7 @@ struct ClientNetworkPathStatusTests {
             supportsIPv6: true
         )
 
-        #expect(snapshot.kind == .other)
+        #expect(snapshot.kind == .vpn)
         #expect(MirageClientNetworkPathStatus(snapshot: snapshot).displayName == "VPN / Overlay")
     }
 

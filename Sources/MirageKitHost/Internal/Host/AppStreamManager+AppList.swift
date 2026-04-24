@@ -18,7 +18,8 @@ extension AppStreamManager {
     /// Get list of installed apps with streaming status
     public func getInstalledApps(
         includeIcons: Bool = true,
-        forceRefresh: Bool = false
+        forceRefresh: Bool = false,
+        onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)? = nil
     )
     async -> [MirageInstalledApp] {
         if Task.isCancelled {
@@ -33,7 +34,8 @@ extension AppStreamManager {
             let scanned = await applicationScanner.scanInstalledApps(
                 includeIcons: includeIcons,
                 runningApps: statusSnapshot.runningApps,
-                streamingApps: statusSnapshot.streamingApps
+                streamingApps: statusSnapshot.streamingApps,
+                onAppDiscovered: onAppDiscovered
             )
             if Task.isCancelled {
                 let cached = includeIcons ? cachedAppsWithIcons : cachedAppsWithoutIcons
@@ -73,7 +75,8 @@ extension AppStreamManager {
                 await applicationScanner.scanInstalledApps(
                     includeIcons: true,
                     runningApps: statusSnapshot.runningApps,
-                    streamingApps: statusSnapshot.streamingApps
+                    streamingApps: statusSnapshot.streamingApps,
+                    onAppDiscovered: onAppDiscovered
                 )
             }
             appScanTaskWithIcons = task
@@ -111,7 +114,8 @@ extension AppStreamManager {
             await applicationScanner.scanInstalledApps(
                 includeIcons: false,
                 runningApps: statusSnapshot.runningApps,
-                streamingApps: statusSnapshot.streamingApps
+                streamingApps: statusSnapshot.streamingApps,
+                onAppDiscovered: onAppDiscovered
             )
         }
         appScanTaskWithoutIcons = task

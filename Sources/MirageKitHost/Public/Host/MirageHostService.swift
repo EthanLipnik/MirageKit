@@ -329,14 +329,14 @@ public final class MirageHostService {
     var desktopVirtualDisplayID: CGDirectDisplayID?
     var desktopRequestedScaleFactor: CGFloat?
     var desktopUsesHostResolution: Bool = false
+    var desktopCaptureSource: MirageDesktopCaptureSource = .virtualDisplay
     var desktopStreamMode: MirageDesktopStreamMode = .unified
     var activeDesktopResizeRequest: DesktopResizeRequestState?
     var queuedDesktopResizeRequest: DesktopResizeRequestState?
     var desktopSharedDisplayTransitionDepth: Int = 0
 
-    /// Set when the client cancels stream setup before a stream ID is established.
-    /// Checked at suspension points in desktop and app stream setup flows.
-    var streamSetupCancelled = false
+    /// Request-scoped stream setups cancelled before a stream ID is established.
+    var cancelledStreamSetupRequestIDs: Set<StreamSetupCancellationKey> = []
 
     /// Displays mirrored during desktop streaming (for restoration).
     var mirroredDesktopDisplayIDs: Set<CGDirectDisplayID> = []

@@ -25,9 +25,16 @@ package func legacyDesktopSessionID(for streamID: StreamID) -> UUID {
     )
 }
 
+package enum StreamSetupKind: String, Codable, Sendable {
+    case app
+    case desktop
+}
+
 /// Request to start streaming the desktop (Client → Host)
 /// This can stream the unified desktop or run as a secondary display
 package struct StartDesktopStreamMessage: Codable {
+    /// Request-scoped identifier used to cancel or reject stale startup work.
+    package let startupRequestID: UUID
     /// Client's display scale factor
     package let scaleFactor: CGFloat?
     /// Client's display width in points (logical view bounds)
@@ -82,6 +89,7 @@ package struct StartDesktopStreamMessage: Codable {
     package var useHostResolution: Bool?
 
     enum CodingKeys: String, CodingKey {
+        case startupRequestID
         case scaleFactor
         case displayWidth
         case displayHeight
@@ -111,6 +119,7 @@ package struct StartDesktopStreamMessage: Codable {
     }
 
     package init(
+        startupRequestID: UUID = UUID(),
         scaleFactor: CGFloat?,
         displayWidth: Int,
         displayHeight: Int,
@@ -133,6 +142,7 @@ package struct StartDesktopStreamMessage: Codable {
         useHostResolution: Bool? = nil,
         mediaMaxPacketSize: Int? = nil
     ) {
+        self.startupRequestID = startupRequestID
         self.scaleFactor = scaleFactor
         self.displayWidth = displayWidth
         self.displayHeight = displayHeight
@@ -158,6 +168,7 @@ package struct StartDesktopStreamMessage: Codable {
 
     package init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        startupRequestID = (try? container.decodeIfPresent(UUID.self, forKey: .startupRequestID)) ?? UUID()
         scaleFactor = container.decodeLossyIfPresent(CGFloat.self, forKey: .scaleFactor)
         displayWidth = try container.decode(Int.self, forKey: .displayWidth)
         displayHeight = try container.decode(Int.self, forKey: .displayHeight)
@@ -248,7 +259,19 @@ package struct StopDesktopStreamMessage: Codable {
 /// Client → Host: Cancel any in-progress stream setup (desktop or app).
 /// Sent when the user cancels during the loading phase before a stream ID is established.
 package struct CancelStreamSetupMessage: Codable {
-    package init() {}
+    package let startupRequestID: UUID?
+    package let kind: StreamSetupKind?
+    package let appSessionID: UUID?
+
+    package init(
+        startupRequestID: UUID? = nil,
+        kind: StreamSetupKind? = nil,
+        appSessionID: UUID? = nil
+    ) {
+        self.startupRequestID = startupRequestID
+        self.kind = kind
+        self.appSessionID = appSessionID
+    }
 }
 
 package enum MirageDesktopTransitionPhase: String, Codable, Sendable {
@@ -260,6 +283,11 @@ package enum MirageDesktopTransitionOutcome: String, Codable, Sendable {
     case noChange
     case resized
     case rolledBack
+}
+
+package enum MirageDesktopCaptureSource: String, Codable, Sendable {
+    case virtualDisplay
+    case mainDisplayFallback
 }
 
 /// Confirmation that desktop streaming has started (Host → Client)
@@ -290,6 +318,21 @@ package struct DesktopStreamStartedMessage: Codable {
     package var transitionPhase: MirageDesktopTransitionPhase?
     /// Optional resize outcome metadata.
     package var transitionOutcome: MirageDesktopTransitionOutcome?
+    /// Effective host capture source for this desktop stream.
+    package var captureSource: MirageDesktopCaptureSource
+    /// Whether the client may request virtual-display resize transactions.
+    package var allowsClientResize: Bool
+    /// Client presentation/window sizing width, separate from capture pixels.
+    package var presentationWidth: Int?
+    /// Client presentation/window sizing height, separate from capture pixels.
+    package var presentationHeight: Int?
+
+    package var presentationSize: CGSize {
+        CGSize(
+            width: presentationWidth ?? width,
+            height: presentationHeight ?? height
+        )
+    }
 
     enum CodingKeys: String, CodingKey {
         case streamID
@@ -305,6 +348,10 @@ package struct DesktopStreamStartedMessage: Codable {
         case transitionID
         case transitionPhase
         case transitionOutcome
+        case captureSource
+        case allowsClientResize
+        case presentationWidth
+        case presentationHeight
     }
 
     package init(
@@ -320,7 +367,11 @@ package struct DesktopStreamStartedMessage: Codable {
         acceptedMediaMaxPacketSize: Int? = nil,
         transitionID: UUID? = nil,
         transitionPhase: MirageDesktopTransitionPhase? = nil,
-        transitionOutcome: MirageDesktopTransitionOutcome? = nil
+        transitionOutcome: MirageDesktopTransitionOutcome? = nil,
+        captureSource: MirageDesktopCaptureSource = .virtualDisplay,
+        allowsClientResize: Bool = true,
+        presentationWidth: Int? = nil,
+        presentationHeight: Int? = nil
     ) {
         self.streamID = streamID
         self.desktopSessionID = desktopSessionID
@@ -335,6 +386,10 @@ package struct DesktopStreamStartedMessage: Codable {
         self.transitionID = transitionID
         self.transitionPhase = transitionPhase
         self.transitionOutcome = transitionOutcome
+        self.captureSource = captureSource
+        self.allowsClientResize = allowsClientResize
+        self.presentationWidth = presentationWidth
+        self.presentationHeight = presentationHeight
     }
 
     package init(from decoder: Decoder) throws {
@@ -357,6 +412,13 @@ package struct DesktopStreamStartedMessage: Codable {
             MirageDesktopTransitionOutcome.self,
             forKey: .transitionOutcome
         )
+        captureSource = try container.decodeIfPresent(
+            MirageDesktopCaptureSource.self,
+            forKey: .captureSource
+        ) ?? .virtualDisplay
+        allowsClientResize = try container.decodeIfPresent(Bool.self, forKey: .allowsClientResize) ?? true
+        presentationWidth = try container.decodeIfPresent(Int.self, forKey: .presentationWidth)
+        presentationHeight = try container.decodeIfPresent(Int.self, forKey: .presentationHeight)
     }
 }
 

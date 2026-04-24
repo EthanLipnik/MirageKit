@@ -28,6 +28,7 @@ extension MirageClientService {
             .desktopStreamStarted: { [weak self] in await self?.handleDesktopStreamStarted($0) },
             .desktopStreamStopped: { [weak self] in self?.handleDesktopStreamStopped($0) },
             .desktopStreamFailed: { [weak self] in self?.handleDesktopStreamFailed($0) },
+            .appListProgress: { [weak self] in self?.handleAppListProgress($0) },
             .appList: { [weak self] in self?.handleAppList($0) },
             .appStreamStarted: { [weak self] in self?.handleAppStreamStarted($0) },
             .appWindowInventory: { [weak self] in self?.handleAppWindowInventory($0) },

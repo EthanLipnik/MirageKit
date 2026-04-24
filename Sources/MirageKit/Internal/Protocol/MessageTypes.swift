@@ -87,6 +87,7 @@ package enum ControlMessageType: UInt8, Codable {
     case hostWallpaper = 0x9B // Host -> Client: Host wallpaper payload
     case remoteClientStreamOptionsState = 0x9C // Client -> Host: Sync client stream-option state
     case remoteClientStreamOptionsCommand = 0x9D // Host -> Client: Execute a client stream-option action
+    case appListProgress = 0x9E // Host -> Client: Incremental metadata app-list progress
 
     // Desktop streaming (full virtual display mirroring)
     case startDesktopStream = 0xA0 // Client → Host: Start full desktop stream
@@ -203,7 +204,7 @@ package struct ControlMessage: Codable {
 
     private static func maxPayloadBytes(for type: ControlMessageType) -> Int {
         switch type {
-        case .appList:
+        case .appList, .appListProgress:
             LoomMessageLimits.maxLargeMetadataPayloadBytes
         case .hostHardwareIcon, .appIconUpdate, .hostWallpaper:
             LoomMessageLimits.maxInlineAssetPayloadBytes

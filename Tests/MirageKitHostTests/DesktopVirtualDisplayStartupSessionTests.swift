@@ -7,6 +7,7 @@
 
 @testable import MirageKitHost
 import CoreGraphics
+import Foundation
 import Testing
 
 #if os(macOS)
@@ -79,6 +80,19 @@ struct DesktopVirtualDisplayStartupSessionTests {
 
         #expect(failureClass == .nonRetryable)
         #expect(nextIndex == nil)
+    }
+
+    @Test("Startup budget expires after configured duration")
+    func startupBudgetExpiresAfterConfiguredDuration() {
+        let budget = DesktopVirtualDisplayStartupBudget(
+            startedAt: Date(timeIntervalSinceNow: -10.5),
+            maxDuration: 10.0
+        )
+
+        #expect(budget.isExpired)
+        #expect(throws: DesktopVirtualDisplayStartupBudgetExceeded.self) {
+            try budget.checkAvailable()
+        }
     }
 }
 #endif

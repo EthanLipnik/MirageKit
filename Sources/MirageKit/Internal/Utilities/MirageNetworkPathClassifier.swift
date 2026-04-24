@@ -16,6 +16,7 @@ public enum MirageNetworkPathKind: String, Sendable, Equatable {
     case wifi
     case wired
     case cellular
+    case vpn
     case loopback
     case other
     case unknown
@@ -105,7 +106,7 @@ package enum MirageNetworkPathClassifier {
         if hasAWDLInterface {
             kind = .awdl
         } else if hasOverlayInterface {
-            kind = .other
+            kind = .vpn
         } else if usesWiFi {
             kind = .wifi
         } else if usesWired {

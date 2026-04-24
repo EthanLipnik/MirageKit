@@ -29,6 +29,22 @@ struct ClientDisplayGeometryTests {
     }
 
     @MainActor
+    @Test("Vision Pro fixed pixel budget uses Retina logical size when scale is unavailable")
+    func visionOSFixedPixelBudgetUsesRetinaLogicalSizeWhenScaleIsUnavailable() {
+        let logicalResolution = MirageClientService.fixedPixelBudgetLogicalResolution(
+            for: CGSize(width: 3840, height: 2160),
+            displayScaleFactor: 1.0
+        )
+        let geometry = MirageStreamGeometry.resolve(
+            logicalSize: logicalResolution,
+            displayScaleFactor: MirageClientService.visionOSPreferredVirtualDisplayScaleFactor
+        )
+
+        #expect(logicalResolution == CGSize(width: 1920, height: 1080))
+        #expect(geometry.displayPixelSize == CGSize(width: 3840, height: 2160))
+    }
+
+    @MainActor
     @Test("Client reports active post-resize transitions until presentation settles")
     func clientReportsActivePostResizeTransitions() {
         let service = MirageClientService(deviceName: "Test Device")

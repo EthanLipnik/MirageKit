@@ -87,6 +87,39 @@ struct ClientConnectionEndpointPlanningTests {
     }
 
     @MainActor
+    @Test("Overlay control sessions prefer direct overlay transports before UDP")
+    func overlayControlSessionAttemptsPreferOverlayTransports() throws {
+        let udpPort = try #require(NWEndpoint.Port(rawValue: 61_011))
+        let quicPort = try #require(NWEndpoint.Port(rawValue: 61_012))
+        let tcpPort = try #require(NWEndpoint.Port(rawValue: 61_013))
+        let host = LoomPeer(
+            id: UUID(),
+            name: "Altair",
+            deviceType: .mac,
+            endpoint: .hostPort(host: NWEndpoint.Host("altair.tail0000.ts.net"), port: tcpPort),
+            advertisement: LoomPeerAdvertisement(
+                protocolVersion: Int(Loom.protocolVersion),
+                deviceID: UUID(),
+                directTransports: [
+                    LoomDirectTransportAdvertisement(transportKind: .udp, port: udpPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .quic, port: quicPort.rawValue),
+                    LoomDirectTransportAdvertisement(transportKind: .tcp, port: tcpPort.rawValue),
+                ],
+                metadata: [
+                    "mirage.vpn-access": "1",
+                ]
+            )
+        )
+
+        let service = MirageClientService(deviceName: "Test Device")
+        let attempts = service.controlSessionAttempts(for: host)
+
+        #expect(attempts.map(\.transportKind) == [.tcp, .quic, .udp])
+        #expect(attempts.allSatisfy { $0.candidateKind == .overlay })
+        #expect(attempts.allSatisfy { $0.requiredInterfaceType == nil })
+    }
+
+    @MainActor
     @Test("Client qualifies short Bonjour names for UDP control attempts")
     func controlSessionAttemptsQualifyShortBonjourNames() throws {
         let udpPort = try #require(NWEndpoint.Port(rawValue: 61_004))
@@ -229,12 +262,18 @@ struct ClientConnectionEndpointPlanningTests {
         )
 
         #expect(attempts.count == 3)
-        #expect(attempts[0].transportKind == .udp)
-        #expect(attempts[0].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[0].transportKind == .tcp)
+        #expect(attempts[0].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[0].candidateKind == .overlay)
+        #expect(attempts[0].requiredInterfaceType == nil)
         #expect(attempts[1].transportKind == .quic)
         #expect(attempts[1].endpoint.debugDescription == expectedQUICEndpoint.debugDescription)
-        #expect(attempts[2].transportKind == .tcp)
-        #expect(attempts[2].endpoint.debugDescription == expectedTCPEndpoint.debugDescription)
+        #expect(attempts[1].candidateKind == .overlay)
+        #expect(attempts[1].requiredInterfaceType == nil)
+        #expect(attempts[2].transportKind == .udp)
+        #expect(attempts[2].endpoint.debugDescription == expectedUDPEndpoint.debugDescription)
+        #expect(attempts[2].candidateKind == .overlay)
+        #expect(attempts[2].requiredInterfaceType == nil)
     }
 
     @MainActor
@@ -315,18 +354,21 @@ struct ClientConnectionEndpointPlanningTests {
                 hostName: "Altair",
                 endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: udpPort),
                 transportKind: .udp,
+                candidateKind: .local,
                 requiredInterfaceType: nil
             ),
             MirageClientService.ControlSessionAttempt(
                 hostName: "Altair",
                 endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: quicPort),
                 transportKind: .quic,
+                candidateKind: .local,
                 requiredInterfaceType: nil
             ),
             MirageClientService.ControlSessionAttempt(
                 hostName: "Altair",
                 endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: tcpPort),
                 transportKind: .tcp,
+                candidateKind: .local,
                 requiredInterfaceType: nil
             ),
         ]
@@ -428,6 +470,7 @@ struct ClientConnectionEndpointPlanningTests {
             hostName: "Altair",
             endpoint: .hostPort(host: NWEndpoint.Host("altair.local"), port: port),
             transportKind: .udp,
+            candidateKind: .local,
             requiredInterfaceType: .wifi
         )
 

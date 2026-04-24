@@ -215,6 +215,62 @@ struct MirageKitTests {
         #expect(decodedPayload.transitionOutcome == .rolledBack)
     }
 
+    @Test("Desktop-stream started serializes fallback capture policy")
+    func desktopStreamStartedSerializesFallbackCapturePolicy() throws {
+        let payload = DesktopStreamStartedMessage(
+            streamID: 72,
+            desktopSessionID: UUID(),
+            width: 5120,
+            height: 2880,
+            frameRate: 60,
+            codec: .hevc,
+            displayCount: 1,
+            captureSource: .mainDisplayFallback,
+            allowsClientResize: false,
+            presentationWidth: 2732,
+            presentationHeight: 1537
+        )
+        let envelope = try ControlMessage(type: .desktopStreamStarted, content: payload)
+
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+
+        #expect(decodedPayload.captureSource == .mainDisplayFallback)
+        #expect(decodedPayload.allowsClientResize == false)
+        #expect(decodedPayload.presentationSize == CGSize(width: 2732, height: 1537))
+    }
+
+    @Test("Legacy desktop-stream started defaults to virtual display resize policy")
+    func legacyDesktopStreamStartedDefaultsToVirtualDisplayResizePolicy() throws {
+        struct LegacyDesktopStreamStartedMessage: Encodable {
+            let streamID: StreamID
+            let width: Int
+            let height: Int
+            let frameRate: Int
+            let codec: MirageVideoCodec
+            let displayCount: Int
+        }
+
+        let envelope = try ControlMessage(
+            type: .desktopStreamStarted,
+            content: LegacyDesktopStreamStartedMessage(
+                streamID: 73,
+                width: 3024,
+                height: 1964,
+                frameRate: 60,
+                codec: .hevc,
+                displayCount: 1
+            )
+        )
+
+        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
+        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
+
+        #expect(decodedPayload.captureSource == .virtualDisplay)
+        #expect(decodedPayload.allowsClientResize)
+        #expect(decodedPayload.presentationSize == CGSize(width: 3024, height: 1964))
+    }
+
     @Test("Desktop stream stop messages serialize desktop session identifiers")
     func desktopStreamStopMessagesSerializeDesktopSessionIdentifiers() throws {
         let desktopSessionID = UUID()
@@ -541,6 +597,15 @@ struct MirageKitTests {
         #expect(decodedAppList.requestID == requestID)
         #expect(decodedAppList.apps.count == 1)
         #expect(decodedAppList.apps[0].iconData == nil)
+
+        let progress = AppListProgressMessage(requestID: requestID, apps: metadataApps)
+        let progressEnvelope = try ControlMessage(type: .appListProgress, content: progress)
+        let (decodedProgressEnvelope, _) = try requireParsedControlMessage(from: progressEnvelope.serialize())
+        let decodedProgress = try decodedProgressEnvelope.decode(AppListProgressMessage.self)
+        #expect(decodedProgress.requestID == requestID)
+        #expect(decodedProgress.apps.count == 1)
+        #expect(decodedProgress.apps[0].bundleIdentifier == "com.apple.mail")
+        #expect(decodedProgress.apps[0].iconData == nil)
 
         let iconUpdate = AppIconUpdateMessage(
             requestID: requestID,

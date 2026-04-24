@@ -24,6 +24,10 @@ extension MirageClientService {
     /// Maximum encoded size Vision Pro clients should request from the host.
     public nonisolated static let visionOSMaximumEncodedPixelSize = CGSize(width: 3840, height: 2160)
 
+    /// Vision Pro desktop streams should request a Retina-style virtual display
+    /// even when UIKit has not yet reported a native window scale.
+    public nonisolated static let visionOSPreferredVirtualDisplayScaleFactor: CGFloat = 2.0
+
     /// Total pixel count equivalent to 4K (3840 x 2160).
     private nonisolated static let fixedVisionOSPixelCount: CGFloat = 8_294_400
 
@@ -35,7 +39,10 @@ extension MirageClientService {
     public func visionOSFixedPixelCountResolution(for viewSize: CGSize) -> CGSize {
         Self.fixedPixelBudgetLogicalResolution(
             for: viewSize,
-            displayScaleFactor: platformDisplayScaleFactor(explicitScaleFactor: nil)
+            displayScaleFactor: max(
+                Self.visionOSPreferredVirtualDisplayScaleFactor,
+                platformDisplayScaleFactor(explicitScaleFactor: nil)
+            )
         )
     }
 
@@ -46,7 +53,10 @@ extension MirageClientService {
         maximumEncodedPixelSize: CGSize = visionOSMaximumEncodedPixelSize
     )
     -> CGSize {
-        let displayScaleFactor = MirageStreamGeometry.clampedDisplayScaleFactor(displayScaleFactor)
+        let displayScaleFactor = max(
+            visionOSPreferredVirtualDisplayScaleFactor,
+            MirageStreamGeometry.clampedDisplayScaleFactor(displayScaleFactor)
+        )
         let fallbackPixelSize = CGSize(
             width: max(2, maximumEncodedPixelSize.width),
             height: max(2, maximumEncodedPixelSize.height)

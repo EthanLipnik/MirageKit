@@ -116,7 +116,8 @@ public actor ApplicationScanner {
     public func scanInstalledApps(
         includeIcons: Bool = true,
         runningApps: Set<String> = [],
-        streamingApps: Set<String> = []
+        streamingApps: Set<String> = [],
+        onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)? = nil
     )
     async -> [MirageInstalledApp] {
         logger.debug("Starting application scan")
@@ -143,6 +144,7 @@ public actor ApplicationScanner {
                 isBeingStreamed: streamingApps.contains(bundleIdentifier.lowercased())
             )
             apps.append(app)
+            await onAppDiscovered?(app)
         }
 
         // Sort by name

@@ -85,15 +85,18 @@ extension CGVirtualDisplayBridge {
         expectedResolution: CGSize,
         alternateExpectedResolution: CGSize = .zero,
         timeout: TimeInterval = 4.0,
-        pollInterval: TimeInterval = 0.05
+        pollInterval: TimeInterval = 0.05,
+        startupBudget: DesktopVirtualDisplayStartupBudget? = nil
     )
     async -> CGRect? {
-        let deadline = Date().addingTimeInterval(timeout)
-        let earlyExitDeadline = Date().addingTimeInterval(min(1.0, timeout))
+        let resolvedTimeout = startupBudget?.boundedTimeout(timeout) ?? timeout
+        let deadline = Date().addingTimeInterval(resolvedTimeout)
+        let earlyExitDeadline = Date().addingTimeInterval(min(1.0, resolvedTimeout))
         var lastBounds = CGRect.zero
         var everOnline = false
 
         while Date() < deadline {
+            if startupBudget?.isExpired == true { break }
             let online = isDisplayOnline(displayID)
             let bounds = CGDisplayBounds(displayID)
             lastBounds = bounds
@@ -131,7 +134,8 @@ extension CGVirtualDisplayBridge {
             }
 
             let sleepMs = Int(max(10.0, pollInterval * 1000.0))
-            try? await Task.sleep(for: .milliseconds(sleepMs))
+            let boundedSleepMs = startupBudget?.boundedDelayMilliseconds(sleepMs) ?? sleepMs
+            try? await Task.sleep(for: .milliseconds(boundedSleepMs))
         }
 
         let online = isDisplayOnline(displayID)
