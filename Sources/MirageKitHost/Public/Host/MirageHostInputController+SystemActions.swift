@@ -82,30 +82,38 @@ extension MirageHostInputController {
         case let .shortcut(resolvedShortcut):
             injectHostShortcut(resolvedShortcut)
         case .disabled:
-            MirageLogger.host(
-                "Skipping host system action \(request.action.diagnosticLabel) because the host shortcut is disabled"
-            )
-        case .unavailable where allowApplicationFallback && request.fallbackKeyEvent == nil:
-            if let launchArguments = Self.missionControlLaunchArguments(for: request.action) {
+            if allowApplicationFallback,
+               let launchArguments = Self.missionControlLaunchArguments(for: request.action) {
                 MirageLogger.host("Falling back to Mission Control app launch for \(request.action.diagnosticLabel)")
                 launchMissionControl(arguments: launchArguments, fallbackRequest: request)
             } else {
-                MirageLogger.host(
-                    "Skipping host system action \(request.action.diagnosticLabel) because no host action fallback exists"
-                )
+                fallbackToBuiltInHostSystemShortcut(request, reason: "host shortcut is disabled")
             }
         case .unavailable:
-            guard let fallbackKeyEvent = request.fallbackKeyEvent else {
-                MirageLogger.host(
-                    "Skipping host system action \(request.action.diagnosticLabel) because no shortcut could be resolved"
-                )
-                return
+            if allowApplicationFallback,
+               let launchArguments = Self.missionControlLaunchArguments(for: request.action) {
+                MirageLogger.host("Falling back to Mission Control app launch for \(request.action.diagnosticLabel)")
+                launchMissionControl(arguments: launchArguments, fallbackRequest: request)
+            } else {
+                fallbackToBuiltInHostSystemShortcut(request, reason: "no shortcut could be resolved")
             }
-            MirageLogger.host(
-                "Falling back to built-in shortcut for host system action \(request.action.diagnosticLabel)"
-            )
-            injectHostShortcut(fallbackKeyEvent)
         }
+    }
+
+    private func fallbackToBuiltInHostSystemShortcut(
+        _ request: MirageHostSystemActionRequest,
+        reason: String
+    ) {
+        guard let fallbackKeyEvent = request.fallbackKeyEvent else {
+            MirageLogger.host(
+                "Skipping host system action \(request.action.diagnosticLabel) because \(reason)"
+            )
+            return
+        }
+        MirageLogger.host(
+            "Falling back to built-in shortcut for host system action \(request.action.diagnosticLabel) because \(reason)"
+        )
+        injectHostShortcut(fallbackKeyEvent)
     }
 
     private func injectHostShortcut(_ keyEvent: MirageKeyEvent) {

@@ -1455,8 +1455,7 @@ public class InputCapturingView: UIView {
         }
 
         if usesVisibleVirtualCursor {
-            setVirtualCursorVisible(false)
-            updateVirtualCursorPosition(location, updateVisibility: false)
+            updateVirtualCursorPosition(location, updateVisibility: true)
         }
 
         lastCursorPosition = cursorLockEnabled ? lockedCursorPosition : location
@@ -1651,6 +1650,8 @@ public class InputCapturingView: UIView {
     func updateLockedCursorViewPosition() {
         guard bounds.width > 0, bounds.height > 0 else { return }
         guard !lockedCursorView.isHidden else { return }
+        let contentRect = resolvedPresentationContentRect()
+        guard contentRect.width > 0, contentRect.height > 0 else { return }
         let position = if cursorLockEnabled {
             lockedCursorPosition
         } else if let unlockedSyntheticCursorPosition {
@@ -1658,23 +1659,28 @@ public class InputCapturingView: UIView {
         } else {
             lockedCursorPosition
         }
-        let clamped = CGPoint(
-            x: min(max(position.x, 0), 1),
-            y: min(max(position.y, 0), 1)
+        let point = Self.localPoint(
+            forNormalizedPosition: position,
+            in: bounds,
+            contentRect: contentRect
         )
         let hotspot = currentCursorType.cursorHotspot
         lockedCursorView.frame.origin = CGPoint(
-            x: clamped.x * bounds.width - hotspot.x,
-            y: clamped.y * bounds.height - hotspot.y
+            x: point.x - hotspot.x,
+            y: point.y - hotspot.y
         )
     }
 
     func applyLockedCursorDelta(_ translation: CGPoint) {
+        let contentRect = resolvedPresentationContentRect()
+        let normalizationSize = contentRect.width > 0 && contentRect.height > 0
+            ? contentRect.size
+            : bounds.size
         lockedCursorPosition = LockedCursorPositionResolver.applyRelativeDelta(
             currentPosition: lockedCursorPosition,
             deltaX: translation.x,
             deltaY: translation.y,
-            normalizationSize: bounds.size,
+            normalizationSize: normalizationSize,
             allowsExtendedBounds: allowsExtendedCursorBounds,
             confirmedHostPosition: lockedCursorConfirmedHostPosition
         )
@@ -2366,8 +2372,7 @@ public class InputCapturingView: UIView {
                 updateLockedCursorViewPosition()
             }
             if usesVisibleVirtualCursor {
-                setVirtualCursorVisible(false)
-                updateVirtualCursorPosition(location, updateVisibility: false)
+                updateVirtualCursorPosition(location, updateVisibility: true)
             }
             lastCursorPosition = location
             return location

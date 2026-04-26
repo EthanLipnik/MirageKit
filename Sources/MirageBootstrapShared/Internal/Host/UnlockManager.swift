@@ -5,14 +5,12 @@
 //  Created by Ethan Lipnik on 3/10/26.
 //
 
-import AppKit
 import Carbon.HIToolbox
 import CoreGraphics
 import Darwin
 import Foundation
 import MirageKit
 import Loom
-import Security
 
 #if os(macOS)
 import IOKit.pwr_mgt
@@ -229,7 +227,7 @@ package actor UnlockManager {
 
     private enum CredentialVerificationResult: Equatable {
         case valid
-        case invalid(message: String?)
+        case invalid
         case timedOut
         case failedToRun(String)
     }
@@ -273,7 +271,7 @@ package actor UnlockManager {
         } else {
             MirageLogger.error(.host, "dscl auth failed with status \(result.status)")
         }
-        return .invalid(message: errorOutput)
+        return .invalid
     }
 
     private func waitForProcessExitOrTimeout(

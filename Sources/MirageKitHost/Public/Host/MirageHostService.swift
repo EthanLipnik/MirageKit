@@ -250,7 +250,6 @@ public final class MirageHostService {
     let awdlExperimentEnabled: Bool = ProcessInfo.processInfo.environment["MIRAGE_AWDL_EXPERIMENT"] == "1"
     nonisolated static let lightsOutDisableEnvironmentKey = "MIRAGE_DISABLE_LIGHTS_OUT"
     let lightsOutDisabledByEnvironment: Bool = MirageHostService.isLightsOutDisabledByEnvironment()
-    var mediaPathSnapshotByStreamID: [StreamID: MirageNetworkPathSnapshot] = [:]
     var sendErrorBursts: UInt64 = 0
     var transportRefreshRequests: UInt64 = 0
     var transportSendErrorReported: Set<StreamID> = []

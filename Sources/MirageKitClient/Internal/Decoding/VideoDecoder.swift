@@ -46,7 +46,7 @@ actor VideoDecoder {
 
     /// Thread-safe error tracker for decode callbacks
     var errorTracker: DecodeErrorTracker?
-    /// Reduced from 15 to 5 for faster recovery from decode errors
+    /// Consecutive decode errors allowed before requesting recovery.
     let maxConsecutiveErrors = 5
     /// Thread-safe decode performance tracker (updated from decode callback)
     let performanceTracker = DecodePerformanceTracker()
@@ -77,46 +77,6 @@ actor VideoDecoder {
     /// Expected dimensions after resize (optional, for validation)
     var expectedDimensions: (width: Int, height: Int)?
 
-    // Set handler called when decode errors exceed threshold, indicating need for keyframe
-
-    // Set handler called when video dimensions change
-    // Used to reset the reassembler and discard pending old-dimension fragments
-
-    // Get the current average decode time (ms) from recent samples.
-
-    // Get the total decode error count (lifetime).
-
-    // Called when client initiates a resize request.
-    // Puts decoder in "awaiting dimension change" mode where P-frames are discarded
-    // until a keyframe with new VPS/SPS/PPS arrives.
-
-    // Clear any stuck state that prevents frame processing.
-    // Called when recovering from app backgrounding to ensure decoder accepts new frames.
-
-    // Start decoding with a frame handler
-
-    // Stop decoding
-
-    // Reset the decoder state for a new stream session (e.g., after resize or reconnection).
-    // Clears cached VPS/SPS/PPS so the next keyframe will be used to configure the decoder.
-    // Unlike stopDecoding(), this keeps the decoder running and ready to receive new frames.
-
-    // Decode an encoded frame
-
-    // Extract format description from parameter sets and return data with parameter sets stripped
-
-    // Strip leading SEI NAL units from AVCC data
-    // SEI NAL types: 39 (PREFIX_SEI_NUT), 40 (SUFFIX_SEI_NUT)
-    // Note: SEI can contain color metadata; VideoToolbox may not decode properly if SEI precedes IDR
-
-    // Find where AVCC data begins after the last Annex B NAL unit (PPS)
-    // AVCC uses 4-byte big-endian length prefixes instead of start codes
-
-    // Parse NAL units from Annex B data and return with end positions
-
-    // Parse NAL units from Annex B or length-prefixed data
-
-    // Flush pending frames
 }
 
 extension VideoDecoder {

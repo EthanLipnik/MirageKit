@@ -21,7 +21,6 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
     public var userEndpointPort: Int
     public var sshPort: Int
     public var controlPort: Int
-    public var sshHostKeyFingerprint: String
     public var controlAuthSecret: String
     public var autoEndpoints: [LoomBootstrapEndpoint]
     public var wakeOnLANMACAddress: String
@@ -35,7 +34,6 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         userEndpointPort: Int = 22,
         sshPort: Int = 22,
         controlPort: Int = 9851,
-        sshHostKeyFingerprint: String = "",
         controlAuthSecret: String = Self.makeDefaultControlAuthSecret(),
         autoEndpoints: [LoomBootstrapEndpoint] = [],
         wakeOnLANMACAddress: String = "",
@@ -48,7 +46,6 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         self.userEndpointPort = userEndpointPort
         self.sshPort = sshPort
         self.controlPort = controlPort
-        self.sshHostKeyFingerprint = sshHostKeyFingerprint
         self.controlAuthSecret = controlAuthSecret
         self.autoEndpoints = autoEndpoints
         self.wakeOnLANMACAddress = wakeOnLANMACAddress
@@ -63,7 +60,6 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         case userEndpointPort
         case sshPort
         case controlPort
-        case sshHostKeyFingerprint
         case controlAuthSecret
         case autoEndpoints
         case wakeOnLANMACAddress
@@ -79,7 +75,6 @@ public struct MirageHostBootstrapConfiguration: Codable, Equatable, Sendable {
         userEndpointPort = try container.decodeIfPresent(Int.self, forKey: .userEndpointPort) ?? 22
         sshPort = try container.decodeIfPresent(Int.self, forKey: .sshPort) ?? 22
         controlPort = try container.decodeIfPresent(Int.self, forKey: .controlPort) ?? 9851
-        sshHostKeyFingerprint = try container.decodeIfPresent(String.self, forKey: .sshHostKeyFingerprint) ?? ""
         controlAuthSecret = try container.decodeIfPresent(String.self, forKey: .controlAuthSecret) ??
             Self.makeDefaultControlAuthSecret()
         autoEndpoints = try container.decodeIfPresent([LoomBootstrapEndpoint].self, forKey: .autoEndpoints) ?? []

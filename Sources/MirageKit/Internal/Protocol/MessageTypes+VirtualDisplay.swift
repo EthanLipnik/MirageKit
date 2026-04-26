@@ -12,28 +12,6 @@ import Foundation
 
 // MARK: - Virtual Display Messages
 
-/// Content bounds update sent from host to client when content area changes
-/// This happens when menus, sheets, or panels appear on the virtual display
-package struct ContentBoundsUpdateMessage: Codable {
-    /// The stream this update applies to
-    package let streamID: StreamID
-    /// New content bounds in pixels (origin + size)
-    package let boundsX: CGFloat
-    package let boundsY: CGFloat
-    package let boundsWidth: CGFloat
-    package let boundsHeight: CGFloat
-
-    package init(streamID: StreamID, bounds: CGRect) {
-        self.streamID = streamID
-        boundsX = bounds.origin.x
-        boundsY = bounds.origin.y
-        boundsWidth = bounds.width
-        boundsHeight = bounds.height
-    }
-
-    package var bounds: CGRect { CGRect(x: boundsX, y: boundsY, width: boundsWidth, height: boundsHeight) }
-}
-
 /// Display resolution change request sent from client to host
 /// Used when client window moves to a different physical display
 package struct DisplayResolutionChangeMessage: Codable {

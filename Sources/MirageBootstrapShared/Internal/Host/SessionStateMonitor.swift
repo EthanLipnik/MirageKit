@@ -181,10 +181,6 @@ package actor SessionStateMonitor {
             }
 
             if !onConsole {
-                if isLocked {
-                    MirageLogger.log(.host, "User session not on console and lock detected - treating as screenLocked")
-                    return .credentialsRequired
-                }
                 MirageLogger.log(
                     .host,
                     "User session not on console but not locked - treating as active (headless console session)"

@@ -348,9 +348,6 @@ public final class MirageClientService {
     /// Thread-safe cursor position store for desktop cursor sync
     public let cursorPositionStore = MirageClientCursorPositionStore()
 
-    /// Callback for content bounds updates (when menus, sheets appear on virtual display)
-    public var onContentBoundsUpdate: ((StreamID, CGRect) -> Void)?
-
     // MARK: - App-Centric Streaming Properties
 
     /// Available apps on the connected host

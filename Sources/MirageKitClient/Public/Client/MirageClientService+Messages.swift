@@ -23,7 +23,6 @@ extension MirageClientService {
             .disconnect: { [weak self] in await self?.handleDisconnectMessage($0) },
             .cursorUpdate: { [weak self] in self?.handleCursorUpdate($0) },
             .cursorPositionUpdate: { [weak self] in self?.handleCursorPositionUpdate($0) },
-            .contentBoundsUpdate: { [weak self] in self?.handleContentBoundsUpdate($0) },
             .sessionStateUpdate: { [weak self] in self?.handleSessionStateUpdate($0) },
             .desktopStreamStarted: { [weak self] in await self?.handleDesktopStreamStarted($0) },
             .desktopStreamStopped: { [weak self] in self?.handleDesktopStreamStopped($0) },

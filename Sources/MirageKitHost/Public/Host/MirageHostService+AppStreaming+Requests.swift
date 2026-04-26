@@ -1499,15 +1499,19 @@ extension MirageHostService {
             }
         }
 
+        let initialVisibleSlotCap = await appStreamManager.getSession(
+            bundleIdentifier: app.bundleIdentifier
+        )?.maxVisibleSlots ?? 1
+        let visibleSlotLimit = max(1, initialVisibleSlotCap)
         let visibleBindings: [(slotIndex: Int, binding: ResolvedAppWindowBinding)] = Array(
             bindingPlan.resolvedBindings
-                .prefix(1)
+                .prefix(visibleSlotLimit)
                 .enumerated()
                 .map { index, binding in
                     (slotIndex: index, binding: binding)
                 }
         )
-        let overflowBindings = Array(bindingPlan.resolvedBindings.dropFirst(1))
+        let overflowBindings = Array(bindingPlan.resolvedBindings.dropFirst(visibleSlotLimit))
         var startupBitratePerVisibleWindow: Int?
         if !visibleBindings.isEmpty {
             let visibleCount = max(1, visibleBindings.count)
@@ -1720,6 +1724,9 @@ extension MirageHostService {
                     ),
                     failureNotes: failureNotes
                 )
+            } catch is CancellationError {
+                failureNotes.append("slot \(preferredSlotIndex) cancelled by client")
+                return InitialAppWindowStartAttemptResult(startedWindow: nil, failureNotes: failureNotes)
             } catch {
                 let detail = error.localizedDescription.trimmingCharacters(in: .whitespacesAndNewlines)
                 let renderedDetail = detail.isEmpty ? String(describing: error) : detail
@@ -1842,6 +1849,13 @@ extension MirageHostService {
             codec: selectRequest.codec,
             sizePreset: selectRequest.sizePreset ?? .standard
         )
+        guard !isStreamSetupCancelled(
+            clientSessionID: clientContext.sessionID,
+            startupRequestID: selectRequest.startupRequestID
+        ) else {
+            await stopStream(streamSession, minimizeWindow: false, updateAppSession: false)
+            throw CancellationError()
+        }
 
         let resolvedWindow = streamSession.window
         let processID = resolvedWindow.application?.id ?? preferredWindow.application?.id ?? startupCandidate.window.application?.id ?? 0
@@ -1967,15 +1981,6 @@ extension MirageHostService {
         }
     }
 
-    private func cancelPendingNonEssentialMetadataRequestTasks() {
-        hostHardwareIconRequestTask?.cancel()
-        hostHardwareIconRequestTask = nil
-        hostWallpaperRequestTask?.cancel()
-        hostWallpaperRequestTask = nil
-        hostSoftwareUpdateStatusRequestTask?.cancel()
-        hostSoftwareUpdateStatusRequestTask = nil
-    }
-
     private func sendPendingNonEssentialMetadataRequestsIfPossible() {
         sendPendingHostHardwareIconRequestIfPossible()
         sendPendingHostWallpaperRequestIfPossible()
@@ -2028,6 +2033,9 @@ extension MirageHostService {
         appListRequestTask?.cancel()
         if sessionState != .ready {
             MirageLogger.host("Session is \(sessionState); deferring app list request until ready")
+            Task { @MainActor [weak self] in
+                await self?.sendSessionState(to: clientContext)
+            }
             return
         }
         let forceRefresh = pending.requestedForceRefresh

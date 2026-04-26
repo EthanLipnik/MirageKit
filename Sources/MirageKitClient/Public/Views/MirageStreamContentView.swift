@@ -414,6 +414,14 @@ public struct MirageStreamContentView: View {
             guard isDesktopStream, hasPresentedFrame else { return }
             clientService.handleDesktopPresentationReady(streamID: session.streamID)
         }
+        .onChange(of: maxDrawableSize) { _, _ in
+            guard isDesktopStream else { return }
+            scheduleDesktopResizeForCurrentMetricsIfNeeded()
+        }
+        .onChange(of: useHostResolution) { _, _ in
+            guard isDesktopStream else { return }
+            scheduleDesktopResizeForCurrentMetricsIfNeeded()
+        }
         .onChange(of: localKeyboardOcclusionActive) { _, isActive in
             guard isActive else { return }
             cancelPendingWindowDrivenResizeForLocalPresentation()
@@ -685,6 +693,14 @@ public struct MirageStreamContentView: View {
             await Task.yield()
             handleContainerSizeChanged(containerSize)
         }
+    }
+
+    private func scheduleDesktopResizeForCurrentMetricsIfNeeded() {
+        let containerSize = latestContainerDisplaySize.width > 0 && latestContainerDisplaySize.height > 0
+            ? latestContainerDisplaySize
+            : latestDrawableViewSize
+        guard containerSize.width > 0, containerSize.height > 0 else { return }
+        scheduleContainerSizeChanged(containerSize)
     }
 
     private func handleDrawableMetricsChanged(_ metrics: MirageDrawableMetrics) {

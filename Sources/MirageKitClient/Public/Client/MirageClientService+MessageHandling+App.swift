@@ -270,7 +270,6 @@ extension MirageClientService {
             MirageLogger.client("App stream started: \(started.appName) with \(started.windows.count) windows")
             streamingAppBundleID = started.bundleIdentifier
             appWindowInventory = nil
-            clearPendingStreamSetup(kind: .app, appSessionID: started.appSessionID)
             onAppStreamStarted?(started)
         } catch {
             MirageLogger.error(.client, error: error, message: "Failed to decode app stream started: ")

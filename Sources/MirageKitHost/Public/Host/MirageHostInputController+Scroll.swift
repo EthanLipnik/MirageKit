@@ -58,10 +58,6 @@ extension MirageHostInputController {
         postEvent(cgEvent)
     }
 
-    func resetDirectScrollRemainders() {
-        directScrollRemainderX = 0
-        directScrollRemainderY = 0
-    }
 }
 
 #endif

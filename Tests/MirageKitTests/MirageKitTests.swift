@@ -240,37 +240,6 @@ struct MirageKitTests {
         #expect(decodedPayload.presentationSize == CGSize(width: 2732, height: 1537))
     }
 
-    @Test("Legacy desktop-stream started defaults to virtual display resize policy")
-    func legacyDesktopStreamStartedDefaultsToVirtualDisplayResizePolicy() throws {
-        struct LegacyDesktopStreamStartedMessage: Encodable {
-            let streamID: StreamID
-            let width: Int
-            let height: Int
-            let frameRate: Int
-            let codec: MirageVideoCodec
-            let displayCount: Int
-        }
-
-        let envelope = try ControlMessage(
-            type: .desktopStreamStarted,
-            content: LegacyDesktopStreamStartedMessage(
-                streamID: 73,
-                width: 3024,
-                height: 1964,
-                frameRate: 60,
-                codec: .hevc,
-                displayCount: 1
-            )
-        )
-
-        let (decodedEnvelope, _) = try requireParsedControlMessage(from: envelope.serialize())
-        let decodedPayload = try decodedEnvelope.decode(DesktopStreamStartedMessage.self)
-
-        #expect(decodedPayload.captureSource == .virtualDisplay)
-        #expect(decodedPayload.allowsClientResize)
-        #expect(decodedPayload.presentationSize == CGSize(width: 3024, height: 1964))
-    }
-
     @Test("Desktop stream stop messages serialize desktop session identifiers")
     func desktopStreamStopMessagesSerializeDesktopSessionIdentifiers() throws {
         let desktopSessionID = UUID()
@@ -296,63 +265,6 @@ struct MirageKitTests {
         #expect(decodedStopped.streamID == 33)
         #expect(decodedStopped.desktopSessionID == desktopSessionID)
         #expect(decodedStopped.reason == .clientRequested)
-    }
-
-    @Test("Legacy desktop stream messages derive a stable desktop session identifier")
-    func legacyDesktopStreamMessagesDeriveStableDesktopSessionIdentifier() throws {
-        struct LegacyDesktopStreamStartedMessage: Encodable {
-            let streamID: StreamID
-            let width: Int
-            let height: Int
-            let frameRate: Int
-            let codec: MirageVideoCodec
-            let displayCount: Int
-        }
-
-        struct LegacyStopDesktopStreamMessage: Encodable {
-            let streamID: StreamID
-        }
-
-        struct LegacyDesktopStreamStoppedMessage: Encodable {
-            let streamID: StreamID
-            let reason: DesktopStreamStopReason
-        }
-
-        let legacySessionID = legacyDesktopSessionID(for: 33)
-
-        let startedEnvelope = try ControlMessage(
-            type: .desktopStreamStarted,
-            content: LegacyDesktopStreamStartedMessage(
-                streamID: 33,
-                width: 3024,
-                height: 1964,
-                frameRate: 60,
-                codec: .hevc,
-                displayCount: 1
-            )
-        )
-        let (decodedStartedEnvelope, _) = try requireParsedControlMessage(from: startedEnvelope.serialize())
-        let decodedStarted = try decodedStartedEnvelope.decode(DesktopStreamStartedMessage.self)
-        #expect(decodedStarted.desktopSessionID == legacySessionID)
-        #expect(decodedStarted.streamID == 33)
-
-        let stopRequestEnvelope = try ControlMessage(
-            type: .stopDesktopStream,
-            content: LegacyStopDesktopStreamMessage(streamID: 33)
-        )
-        let (decodedStopRequestEnvelope, _) = try requireParsedControlMessage(from: stopRequestEnvelope.serialize())
-        let decodedStopRequest = try decodedStopRequestEnvelope.decode(StopDesktopStreamMessage.self)
-        #expect(decodedStopRequest.desktopSessionID == legacySessionID)
-        #expect(decodedStopRequest.streamID == 33)
-
-        let stoppedEnvelope = try ControlMessage(
-            type: .desktopStreamStopped,
-            content: LegacyDesktopStreamStoppedMessage(streamID: 33, reason: .error)
-        )
-        let (decodedStoppedEnvelope, _) = try requireParsedControlMessage(from: stoppedEnvelope.serialize())
-        let decodedStopped = try decodedStoppedEnvelope.decode(DesktopStreamStoppedMessage.self)
-        #expect(decodedStopped.desktopSessionID == legacySessionID)
-        #expect(decodedStopped.reason == .error)
     }
 
     @Test("Control parser returns needMoreData for truncated payload")

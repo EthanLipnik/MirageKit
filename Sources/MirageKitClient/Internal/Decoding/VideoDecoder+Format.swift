@@ -430,11 +430,6 @@ extension VideoDecoder {
         }
     }
 
-    private func preferredOutputPixelFormat(for formatDescription: CMFormatDescription) -> OSType {
-        _ = formatDescription
-        return preferredOutputPixelFormat(for: preferredOutputColorDepth)
-    }
-
     private func stripSEINALUnits(from data: Data) -> Data {
         var result = data
 

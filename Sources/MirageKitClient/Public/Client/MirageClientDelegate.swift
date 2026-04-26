@@ -31,14 +31,6 @@ public protocol MirageClientDelegate: AnyObject, Sendable {
     @MainActor
     func clientService(_ service: MirageClientService, didEncounterError error: Error)
 
-    /// Called when content bounds change (menus, sheets appear on virtual display)
-    @MainActor
-    func clientService(
-        _ service: MirageClientService,
-        didReceiveContentBoundsUpdate bounds: CGRect,
-        forStream streamID: StreamID
-    )
-
     /// Called when the host's session state changes (locked, unlocked, sleeping, etc.)
     /// Use this to show unlock UI when the host is locked
     @MainActor
@@ -56,6 +48,5 @@ public extension MirageClientDelegate {
     func clientService(_: MirageClientService, didReceiveVideoPacket _: Data, forStream _: StreamID) {}
     func clientService(_: MirageClientService, didDisconnectFromHost _: String) {}
     func clientService(_: MirageClientService, didEncounterError _: Error) {}
-    func clientService(_: MirageClientService, didReceiveContentBoundsUpdate _: CGRect, forStream _: StreamID) {}
     func clientService(_: MirageClientService, hostSessionStateChanged _: LoomSessionAvailability, requiresUserIdentifier _: Bool) {}
 }

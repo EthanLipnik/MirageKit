@@ -36,19 +36,14 @@ public enum MirageDirectTouchInputMode: String, CaseIterable, Codable, Sendable 
         #endif
     }
 
-    /// Resolves persisted mode values while preserving legacy virtual trackpad preferences.
+    /// Resolves persisted mode values.
     public static func fromPersistedRawValue(
         _ rawValue: String,
         enableVirtualTrackpad: Bool,
-        hasStoredLegacyVirtualTrackpadPreference: Bool = false,
         defaultMode: MirageDirectTouchInputMode = .defaultForCurrentDevice
     ) -> MirageDirectTouchInputMode {
         if let mode = MirageDirectTouchInputMode(rawValue: rawValue) {
             return mode
-        }
-
-        if hasStoredLegacyVirtualTrackpadPreference {
-            return enableVirtualTrackpad ? .dragCursor : .normal
         }
 
         return defaultMode

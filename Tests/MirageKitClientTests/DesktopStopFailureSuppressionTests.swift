@@ -68,13 +68,6 @@ private final class DelegateSpy: MirageClientDelegate, @unchecked Sendable {
     @MainActor
     func clientService(
         _: MirageClientService,
-        didReceiveContentBoundsUpdate _: CGRect,
-        forStream _: StreamID
-    ) {}
-
-    @MainActor
-    func clientService(
-        _: MirageClientService,
         hostSessionStateChanged _: LoomSessionAvailability,
         requiresUserIdentifier _: Bool
     ) {}

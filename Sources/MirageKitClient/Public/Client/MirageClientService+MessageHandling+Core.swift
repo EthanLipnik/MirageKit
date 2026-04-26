@@ -576,12 +576,7 @@ extension MirageClientService {
 
     func handleErrorMessage(_ message: ControlMessage) {
         if let errorMessage = try? message.decode(ErrorMessage.self) {
-            let disposition = desktopStreamStartFailureDisposition(
-                errorCode: errorMessage.code,
-                desktopStartPending: desktopStreamMode != nil || desktopStreamRequestStartTime > 0,
-                hasActiveDesktopStream: desktopStreamID != nil
-            )
-            if disposition == .clearPendingStart {
+            if (desktopStreamMode != nil || desktopStreamRequestStartTime > 0) && desktopStreamID == nil {
                 clearPendingDesktopStreamStartState()
             }
             if let runtimeCondition = errorMessage.code.runtimeConditionError {
@@ -649,14 +644,6 @@ extension MirageClientService {
         MirageLogger.network(
             "Cursor control sample (1s): cursorUpdates=\(updateCount), cursorPositions=\(positionCount)"
         )
-    }
-
-    func handleContentBoundsUpdate(_ message: ControlMessage) {
-        if let update = try? message.decode(ContentBoundsUpdateMessage.self) {
-            MirageLogger.client("Content bounds update for stream \(update.streamID): \(update.bounds)")
-            onContentBoundsUpdate?(update.streamID, update.bounds)
-            delegate?.clientService(self, didReceiveContentBoundsUpdate: update.bounds, forStream: update.streamID)
-        }
     }
 
     func handleSessionStateUpdate(_ message: ControlMessage) {

@@ -24,8 +24,7 @@ func shouldAcceptStopDesktopStreamRequest(
         return false
     }
 
-    return requestedDesktopSessionID == activeDesktopSessionID ||
-        requestedDesktopSessionID == legacyDesktopSessionID(for: requestedStreamID)
+    return requestedDesktopSessionID == activeDesktopSessionID
 }
 
 extension MirageHostService {

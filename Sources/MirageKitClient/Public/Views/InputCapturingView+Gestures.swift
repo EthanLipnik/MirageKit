@@ -643,8 +643,7 @@ extension InputCapturingView {
              .changed:
             if pointerMoved, hoverStylus == nil { revealCursorAfterPointerMovement() }
             if usesVirtualTrackpad {
-                setVirtualCursorVisible(false)
-                updateVirtualCursorPosition(normalized, updateVisibility: false)
+                updateVirtualCursorPosition(normalized, updateVisibility: usesVisibleVirtualCursor)
             }
 
             // Track cursor position for scroll events

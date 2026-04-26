@@ -387,6 +387,7 @@ extension MirageHostService {
             mediaEncryptionEnabledByClientID[client.id] = responseResult.response.mediaEncryptionEnabled
             singleClientSessionID = sessionID
 
+            await sendSessionState(to: clientContext)
             await activateDeferredAudioIfNeeded(clientID: client.id)
             startReceivingFromClient(clientContext: clientContext)
             startClientLivenessMonitorIfNeeded()

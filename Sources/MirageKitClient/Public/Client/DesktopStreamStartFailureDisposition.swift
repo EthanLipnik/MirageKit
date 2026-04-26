@@ -8,22 +8,6 @@
 import Foundation
 import MirageKit
 
-enum DesktopStreamStartFailureDisposition: Equatable {
-    case noChange
-    case clearPendingStart
-}
-
-func desktopStreamStartFailureDisposition(
-    errorCode: ErrorMessage.ErrorCode,
-    desktopStartPending: Bool,
-    hasActiveDesktopStream: Bool
-) -> DesktopStreamStartFailureDisposition {
-    guard desktopStartPending else { return .noChange }
-    guard !hasActiveDesktopStream else { return .noChange }
-    _ = errorCode
-    return .clearPendingStart
-}
-
 @MainActor
 extension MirageClientService {
     func clearPendingStreamSetup(kind: StreamSetupKind? = nil, appSessionID: UUID? = nil) {

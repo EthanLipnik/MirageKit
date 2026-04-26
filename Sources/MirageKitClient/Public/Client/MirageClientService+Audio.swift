@@ -294,24 +294,11 @@ extension MirageClientService {
 
     private func updateAudioSyncDelay(for streamID: StreamID) {
         guard let audioPlaybackController = audioPlaybackControllerIfInitialized else { return }
-        guard let snapshot = metricsStore.snapshot(for: streamID) else {
+        guard metricsStore.snapshot(for: streamID) != nil else {
             audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
             return
         }
 
-        let delaySeconds = Self.resolveAudioSyncDelaySeconds(
-            snapshot: snapshot,
-            fallbackTargetFPS: getScreenMaxRefreshRate()
-        )
-        audioPlaybackController.setRuntimeExtraDelay(seconds: delaySeconds)
-    }
-
-    nonisolated static func resolveAudioSyncDelaySeconds(
-        snapshot: MirageClientMetricsSnapshot,
-        fallbackTargetFPS: Int
-    ) -> Double {
-        _ = snapshot
-        _ = fallbackTargetFPS
-        return 0
+        audioPlaybackController.setRuntimeExtraDelay(seconds: 0)
     }
 }

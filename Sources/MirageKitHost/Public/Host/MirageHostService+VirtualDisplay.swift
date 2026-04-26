@@ -283,60 +283,6 @@ func resolvedAppStreamResizeAspectRatio(
     return nil
 }
 
-func requestedAspectRatioForWindowFit(
-    requestedPixelResolution: CGSize,
-    visiblePixelResolution: CGSize,
-    displayPixelResolution: CGSize? = nil,
-    mismatchTolerance: CGFloat = 0.002
-) -> CGFloat? {
-    func hasMatchingPixelArea(_ lhs: CGSize, _ rhs: CGSize) -> Bool {
-        let lhsWidth = Int64(lhs.width.rounded())
-        let lhsHeight = Int64(lhs.height.rounded())
-        let rhsWidth = Int64(rhs.width.rounded())
-        let rhsHeight = Int64(rhs.height.rounded())
-        guard lhsWidth > 0, lhsHeight > 0, rhsWidth > 0, rhsHeight > 0 else {
-            return false
-        }
-        return lhsWidth * lhsHeight == rhsWidth * rhsHeight
-    }
-
-    func isCloseToRequested(_ requested: CGSize, _ candidate: CGSize, relativeTolerance: CGFloat = 0.12) -> Bool {
-        guard requested.width > 0, requested.height > 0 else { return false }
-        let widthDelta = abs(candidate.width - requested.width) / requested.width
-        let heightDelta = abs(candidate.height - requested.height) / requested.height
-        return widthDelta <= relativeTolerance && heightDelta <= relativeTolerance
-    }
-
-    guard requestedPixelResolution.width > 0,
-          requestedPixelResolution.height > 0,
-          visiblePixelResolution.width > 0,
-          visiblePixelResolution.height > 0 else {
-        return nil
-    }
-
-    let requestedAspect = requestedPixelResolution.width / requestedPixelResolution.height
-    let visibleAspect = visiblePixelResolution.width / visiblePixelResolution.height
-    guard requestedAspect.isFinite, visibleAspect.isFinite, requestedAspect > 0, visibleAspect > 0 else {
-        return nil
-    }
-
-    let relativeDelta = abs(requestedAspect - visibleAspect) / requestedAspect
-    guard relativeDelta > mismatchTolerance else { return nil }
-
-    if let displayPixelResolution,
-       displayPixelResolution.width > 0,
-       displayPixelResolution.height > 0 {
-        // Only apply aspect-fit when we intentionally accepted a near-by Retina
-        // mode with matching pixel area but different aspect ratio.
-        // If the display mode diverges in total area, prefer full visible-frame fill.
-        guard hasMatchingPixelArea(requestedPixelResolution, displayPixelResolution),
-              isCloseToRequested(requestedPixelResolution, displayPixelResolution) else {
-            return nil
-        }
-    }
-    return requestedAspect
-}
-
 private enum DesktopResizeTransactionAbort: Error {
     case streamNoLongerActive
     case supersededByNewerRequest
@@ -449,78 +395,6 @@ extension MirageHostService {
             encoderMaxHeight: encoderMaxHeight,
             refreshRate: refreshRate
         )
-    }
-
-    /// Send content bounds update to client
-    func sendContentBoundsUpdate(streamID: StreamID, bounds: CGRect, to client: MirageConnectedClient) async {
-        guard let clientContext = clientsBySessionID.values.first(where: { $0.client.id == client.id }) else { return }
-
-        let message = ContentBoundsUpdateMessage(streamID: streamID, bounds: bounds)
-        do {
-            try await clientContext.send(.contentBoundsUpdate, content: message)
-            MirageLogger.host("Sent content bounds update for stream \(streamID): \(bounds)")
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to send content bounds update: ")
-        }
-    }
-
-    /// Handle detection of new independent window (auto-stream to client)
-    func handleNewIndependentWindow(
-        _ window: MirageWindow,
-        originalStreamID: StreamID,
-        client: MirageConnectedClient
-    )
-    async {
-        MirageLogger.host("New independent window detected: \(window.id) '\(window.displayName)'")
-
-        // Verify the original stream exists
-        guard let originalContext = streamsByID[originalStreamID] else { return }
-
-        let inheritedClientScaleFactor = clientVirtualDisplayScaleFactor(streamID: originalStreamID)
-        var displayResolution = window.frame.size
-        if let cachedState = getVirtualDisplayState(streamID: originalStreamID),
-           cachedState.bounds.width > 0,
-           cachedState.bounds.height > 0 {
-            displayResolution = cachedState.bounds.size
-        } else if let inheritedSnapshot = await originalContext.getVirtualDisplaySnapshot() {
-            displayResolution = SharedVirtualDisplayManager.logicalResolution(
-                for: inheritedSnapshot.resolution,
-                scaleFactor: max(1.0, inheritedSnapshot.scaleFactor)
-            )
-        }
-        let streamScale = await originalContext.getStreamScale()
-        let disableResolutionCap = await originalContext.isResolutionCapDisabled()
-        let encoderSettings = await originalContext.getEncoderSettings()
-        let targetFrameRate = await originalContext.getTargetFrameRate()
-        let mediaMaxPacketSize = await originalContext.getMediaMaxPacketSize()
-        let audioConfiguration = audioConfigurationByClientID[client.id] ?? .default
-
-        // Auto-start a new stream for this window
-        do {
-            try await startStream(
-                for: window,
-                to: client,
-                expectedSessionID: findClientContext(clientID: client.id)?.sessionID,
-                clientDisplayResolution: displayResolution,
-                clientScaleFactor: inheritedClientScaleFactor,
-                keyFrameInterval: encoderSettings.keyFrameInterval,
-                streamScale: streamScale,
-                targetFrameRate: targetFrameRate,
-                colorDepth: encoderSettings.colorDepth,
-                captureQueueDepth: encoderSettings.captureQueueDepth,
-                bitrate: encoderSettings.bitrate,
-                latencyMode: encoderSettings.latencyMode,
-                performanceMode: encoderSettings.performanceMode,
-                lowLatencyHighResolutionCompressionBoost: encoderSettings
-                    .lowLatencyHighResolutionCompressionBoostEnabled,
-                disableResolutionCap: disableResolutionCap,
-                audioConfiguration: audioConfiguration,
-                mediaMaxPacketSize: mediaMaxPacketSize
-            )
-            MirageLogger.host("Auto-started stream for new independent window \(window.id)")
-        } catch {
-            MirageLogger.error(.host, error: error, message: "Failed to auto-start stream for new window: ")
-        }
     }
 
     func handleStreamScaleChange(streamID: StreamID, streamScale: CGFloat) async {

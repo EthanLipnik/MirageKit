@@ -36,7 +36,6 @@ struct MirageHostBootstrapConfigurationTests {
             userEndpointPort: 2200,
             sshPort: 2222,
             controlPort: 9852,
-            sshHostKeyFingerprint: "SHA256:test",
             controlAuthSecret: "control-secret",
             autoEndpoints: [
                 LoomBootstrapEndpoint(host: "10.0.0.2", port: 22, source: .auto),
@@ -61,7 +60,6 @@ struct MirageHostBootstrapConfigurationTests {
             userEndpointPort: 2200,
             sshPort: 2222,
             controlPort: 9852,
-            sshHostKeyFingerprint: " SHA256:test ",
             controlAuthSecret: " control-secret ",
             autoEndpoints: [
                 LoomBootstrapEndpoint(host: "10.0.0.2", port: 22, source: .auto),

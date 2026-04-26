@@ -38,16 +38,5 @@ struct DesktopStopSessionScopeTests {
         )
     }
 
-    @Test("Legacy desktop stop requests remain accepted for the active stream")
-    func legacyDesktopStopRequestsRemainAcceptedForTheActiveStream() {
-        #expect(
-            shouldAcceptStopDesktopStreamRequest(
-                requestedStreamID: 21,
-                requestedDesktopSessionID: legacyDesktopSessionID(for: 21),
-                activeDesktopStreamID: 21,
-                activeDesktopSessionID: UUID()
-            )
-        )
-    }
 }
 #endif

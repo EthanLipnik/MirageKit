@@ -170,52 +170,6 @@ public extension MirageHostService {
         setRemoteControlPort(nil)
     }
 
-    func endAppStream(bundleIdentifier: String) async {
-        guard let session = await appStreamManager.getSession(bundleIdentifier: bundleIdentifier) else { return }
-
-        let windowIDs = Array(session.windowStreams.keys)
-
-        // Stop all window streams for this app
-        for windowID in windowIDs {
-            if let stream = activeStreams.first(where: { $0.window.id == windowID }) {
-                await stopStream(stream, updateAppSession: false)
-            }
-        }
-
-        // Notify client that the app stream has ended
-        var clientContext: ClientContext?
-        for context in clientsBySessionID.values {
-            if context.client.id == session.clientID {
-                clientContext = context
-                break
-            }
-        }
-
-        if let clientContext {
-            // Check if client has other active sessions
-            let allSessions = await appStreamManager.getAllSessions()
-            let hasRemaining = allSessions.contains { sess in
-                sess.clientID == session.clientID && sess.bundleIdentifier != bundleIdentifier
-            }
-
-            let message = AppTerminatedMessage(
-                bundleIdentifier: bundleIdentifier,
-                closedWindowIDs: windowIDs,
-                hasRemainingWindows: hasRemaining
-            )
-            if let controlMessage = try? ControlMessage(type: .appTerminated, content: message) {
-                clientContext.controlChannel.sendBestEffort(controlMessage)
-            }
-        }
-
-        // End the session
-        await appStreamManager.endSession(bundleIdentifier: bundleIdentifier)
-        await stopAppStreamGovernorsIfIdle()
-        await restoreStageManagerAfterAppStreamingIfNeeded()
-
-        MirageLogger.host("Ended app stream for \(bundleIdentifier)")
-    }
-
     func refreshWindows() async throws {
         let content = try await SCShareableContent.excludingDesktopWindows(
             false,

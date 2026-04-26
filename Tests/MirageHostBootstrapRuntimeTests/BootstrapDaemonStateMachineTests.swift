@@ -20,17 +20,8 @@ struct BootstrapDaemonStateMachineTests {
         try machine.markListening()
         #expect(machine.state == .listening)
 
-        try machine.markUnlocking()
-        #expect(machine.state == .unlocking)
-
-        try machine.markListening()
-        #expect(machine.state == .listening)
-
         try machine.markActive()
         #expect(machine.state == .active)
-
-        try machine.markStopped()
-        #expect(machine.state == .stopped)
     }
 
     @Test("Invalid transition from idle to active is rejected")
@@ -48,12 +39,5 @@ struct BootstrapDaemonStateMachineTests {
         } catch {
             Issue.record("Unexpected error type: \(error.localizedDescription)")
         }
-    }
-
-    @Test("Stopped daemon can re-enter listening state")
-    func stoppedCanRestartListening() throws {
-        var machine = MirageHostBootstrapDaemonStateMachine(initialState: .stopped)
-        try machine.markListening()
-        #expect(machine.state == .listening)
     }
 }

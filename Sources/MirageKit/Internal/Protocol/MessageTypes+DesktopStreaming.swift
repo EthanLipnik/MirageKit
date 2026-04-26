@@ -12,19 +12,6 @@ import Foundation
 
 // MARK: - Desktop Streaming Messages
 
-package func legacyDesktopSessionID(for streamID: StreamID) -> UUID {
-    UUID(
-        uuid: (
-            0x4D, 0x49, 0x52, 0x41,
-            0x47, 0x45, 0x44, 0x54,
-            0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00,
-            UInt8((streamID >> 8) & 0xFF),
-            UInt8(streamID & 0xFF)
-        )
-    )
-}
-
 package enum StreamSetupKind: String, Codable, Sendable {
     case app
     case desktop
@@ -251,8 +238,7 @@ package struct StopDesktopStreamMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let streamID = try container.decode(StreamID.self, forKey: .streamID)
         self.streamID = streamID
-        desktopSessionID = try container.decodeIfPresent(UUID.self, forKey: .desktopSessionID) ??
-            legacyDesktopSessionID(for: streamID)
+        desktopSessionID = try container.decode(UUID.self, forKey: .desktopSessionID)
     }
 }
 
@@ -396,8 +382,7 @@ package struct DesktopStreamStartedMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let streamID = try container.decode(StreamID.self, forKey: .streamID)
         self.streamID = streamID
-        desktopSessionID = try container.decodeIfPresent(UUID.self, forKey: .desktopSessionID) ??
-            legacyDesktopSessionID(for: streamID)
+        desktopSessionID = try container.decode(UUID.self, forKey: .desktopSessionID)
         width = try container.decode(Int.self, forKey: .width)
         height = try container.decode(Int.self, forKey: .height)
         frameRate = try container.decode(Int.self, forKey: .frameRate)
@@ -451,8 +436,7 @@ package struct DesktopStreamStoppedMessage: Codable {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let streamID = try container.decode(StreamID.self, forKey: .streamID)
         self.streamID = streamID
-        desktopSessionID = try container.decodeIfPresent(UUID.self, forKey: .desktopSessionID) ??
-            legacyDesktopSessionID(for: streamID)
+        desktopSessionID = try container.decode(UUID.self, forKey: .desktopSessionID)
         reason = try container.decode(DesktopStreamStopReason.self, forKey: .reason)
     }
 }

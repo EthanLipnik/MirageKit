@@ -12,9 +12,7 @@ import Foundation
 public enum MirageHostBootstrapDaemonState: String, Sendable {
     case idle
     case listening
-    case unlocking
     case active
-    case stopped
 }
 
 public enum MirageHostBootstrapDaemonStateMachineError: LocalizedError, Sendable {
@@ -47,24 +45,13 @@ public struct MirageHostBootstrapDaemonStateMachine: Sendable, Equatable {
         try transition(to: .listening)
     }
 
-    public mutating func markUnlocking() throws {
-        try transition(to: .unlocking)
-    }
-
     public mutating func markActive() throws {
         try transition(to: .active)
     }
 
-    public mutating func markStopped() throws {
-        try transition(to: .stopped)
-    }
-
     private static let allowedTransitions: [MirageHostBootstrapDaemonState: Set<MirageHostBootstrapDaemonState>] = [
-        .idle: [.listening, .stopped],
-        .listening: [.unlocking, .active, .stopped],
-        .unlocking: [.listening, .active, .stopped],
-        .active: [.stopped],
-        .stopped: [.listening],
+        .idle: [.listening],
+        .listening: [.active],
     ]
 }
 
