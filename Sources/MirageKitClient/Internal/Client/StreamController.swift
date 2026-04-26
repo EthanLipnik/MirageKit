@@ -80,6 +80,11 @@ actor StreamController {
         case recovery
     }
 
+    enum BootstrapFirstFrameRecoveryAction: Sendable, Equatable {
+        case requestKeyframe
+        case hardRecovery
+    }
+
     struct TerminalStartupFailure: Sendable, Equatable {
         let reason: RecoveryReason
         let hardRecoveryAttempts: Int
@@ -238,6 +243,17 @@ actor StreamController {
         case .recovery:
             recoveryFirstPresentedFrameBootstrapRecoveryGrace
         }
+    }
+
+    nonisolated static func bootstrapFirstFrameRecoveryAction(
+        hasPackets: Bool,
+        awaitingKeyframe: Bool,
+        latestSequence: UInt64,
+        baselineSequence: UInt64
+    ) -> BootstrapFirstFrameRecoveryAction {
+        guard hasPackets else { return .hardRecovery }
+        guard latestSequence > baselineSequence || awaitingKeyframe else { return .hardRecovery }
+        return awaitingKeyframe ? .requestKeyframe : .hardRecovery
     }
 
     /// Minimum interval between decode backpressure drop logs.

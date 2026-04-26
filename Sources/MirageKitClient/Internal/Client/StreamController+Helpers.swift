@@ -443,7 +443,15 @@ extension StreamController {
         firstPresentedFrameLastRecoveryRequestTime = now
         firstPresentedFrameRecoveryAttemptCount &+= 1
 
-        if firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold {
+        let recoveryAction = Self.bootstrapFirstFrameRecoveryAction(
+            hasPackets: hasPackets,
+            awaitingKeyframe: awaitingKeyframe,
+            latestSequence: latestSequence,
+            baselineSequence: firstPresentedFrameBaselineSequence
+        )
+
+        if firstPresentedFrameRecoveryAttemptCount >= Self.firstPresentedFrameHardRecoveryThreshold ||
+            recoveryAction == .hardRecovery {
             MirageLogger.client(
                 "Bootstrap first frame recovery escalating to hard reset for stream \(streamID) "
                     + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"
@@ -459,7 +467,7 @@ extension StreamController {
 
         MirageLogger.client(
             "Bootstrap first frame recovery: requesting keyframe for stream \(streamID) "
-                + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind))"
+                + "(waited \(Int(elapsed * 1000))ms, \(startupStallKind), transport=healthy-packet-flow)"
         )
         await requestKeyframeRecovery(reason: .startupKeyframeTimeout)
     }

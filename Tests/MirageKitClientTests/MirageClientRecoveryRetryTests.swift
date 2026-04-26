@@ -35,4 +35,17 @@ struct MirageClientRecoveryRetryTests {
 
         #expect(disposition == .recovered)
     }
+
+    @Test("Recovery retry waits when packet flow has not resumed")
+    func recoveryRetryWaitsWhenPacketFlowHasNotResumed() {
+        let disposition = MirageClientService.recoveryKeyframeRetryDisposition(
+            baselineSubmittedSequence: 12,
+            latestSubmittedSequence: 12,
+            previousPacketTime: 100,
+            latestPacketTime: 100,
+            awaitingKeyframe: true
+        )
+
+        #expect(disposition == .waitForTransport(awaitingKeyframe: true))
+    }
 }

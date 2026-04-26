@@ -77,7 +77,10 @@ let package = Package(
         ),
         .testTarget(
             name: "MirageKitTests",
-            dependencies: ["MirageKit"]
+            dependencies: [
+                "MirageKit",
+                .product(name: "Loom", package: "Loom"),
+            ]
         ),
         .testTarget(
             name: "MirageKitHostTests",

@@ -53,6 +53,7 @@ private enum MirageClientStreamRecoveryTrigger: Equatable, Sendable {
 enum RecoveryKeyframeRetryDisposition: Equatable {
     case recovered
     case retry(packetFlowResumed: Bool, awaitingKeyframe: Bool)
+    case waitForTransport(awaitingKeyframe: Bool)
 }
 
 enum IncomingMediaStreamKind: Equatable {
@@ -574,6 +575,14 @@ extension MirageClientService {
                     )
                     return
 
+                case let .waitForTransport(awaitingKeyframe):
+                    let keyframeText = awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
+                    MirageLogger.client(
+                        "Recovery not yet presented for stream \(streamID); waiting for packet flow before retrying keyframe " +
+                            "(attempt \(attempt)/\(self.recoveryKeyframeRetryLimit), state=\(keyframeText)) " +
+                            "trigger=\(trigger.logLabel)"
+                    )
+
                 case let .retry(packetFlowResumed, awaitingKeyframe):
                     let packetFlowText = packetFlowResumed ? "flowing" : "stalled"
                     let keyframeText = awaitingKeyframe ? "awaiting-keyframe" : "awaiting-presentation"
@@ -582,9 +591,9 @@ extension MirageClientService {
                             "(\(attempt)/\(self.recoveryKeyframeRetryLimit), packets=\(packetFlowText), state=\(keyframeText)) " +
                             "trigger=\(trigger.logLabel)"
                     )
-                }
 
-                self.sendKeyframeRequest(for: streamID)
+                    self.sendKeyframeRequest(for: streamID)
+                }
                 lastPacketTime = latestPacketTime
             }
         }
@@ -602,8 +611,11 @@ extension MirageClientService {
         if latestSubmittedSequence > baselineSubmittedSequence {
             return .recovered
         }
+        guard latestPacketTime > previousPacketTime else {
+            return .waitForTransport(awaitingKeyframe: awaitingKeyframe)
+        }
         return .retry(
-            packetFlowResumed: latestPacketTime > previousPacketTime,
+            packetFlowResumed: true,
             awaitingKeyframe: awaitingKeyframe
         )
     }

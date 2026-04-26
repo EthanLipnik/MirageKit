@@ -814,8 +814,8 @@ struct StreamControllerRecoveryTests {
         MirageRenderStreamStore.shared.clear(for: streamID)
     }
 
-    @Test("First-frame watchdog requests bootstrap recovery when startup stalls")
-    func firstFrameWatchdogRequestsBootstrapRecoveryWhenStartupStalls() async throws {
+    @Test("First-frame watchdog uses hard recovery when startup is packet-starved")
+    func firstFrameWatchdogUsesHardRecoveryWhenStartupIsPacketStarved() async throws {
         let clock = ManualTimeProvider(start: 1_000)
         let controller = StreamController(
             streamID: 140,
@@ -826,18 +826,46 @@ struct StreamControllerRecoveryTests {
         await controller.armFirstPresentedFrameAwaiter(reason: "test-startup-stall")
         clock.advance(by: StreamController.firstPresentedFrameBootstrapRecoveryGrace(for: .startup) + 0.1)
 
-        var watchdogTriggered = false
+        var hardRecoveryTriggered = false
         let timeoutAt = ContinuousClock.now + .seconds(2)
         while ContinuousClock.now < timeoutAt {
-            if await controller.firstPresentedFrameLastRecoveryRequestTime > 0 {
-                watchdogTriggered = true
+            if await controller.lastHardRecoveryStartTime > 0 {
+                hardRecoveryTriggered = true
                 break
             }
             try await Task.sleep(for: .milliseconds(20))
         }
-        #expect(watchdogTriggered)
+        #expect(hardRecoveryTriggered)
 
         await controller.stop()
+    }
+
+    @Test("Bootstrap first-frame recovery avoids keyframes when packet-starved")
+    func bootstrapFirstFrameRecoveryAvoidsKeyframesWhenPacketStarved() {
+        #expect(
+            StreamController.bootstrapFirstFrameRecoveryAction(
+                hasPackets: false,
+                awaitingKeyframe: true,
+                latestSequence: 1,
+                baselineSequence: 1
+            ) == .hardRecovery
+        )
+        #expect(
+            StreamController.bootstrapFirstFrameRecoveryAction(
+                hasPackets: true,
+                awaitingKeyframe: true,
+                latestSequence: 1,
+                baselineSequence: 1
+            ) == .requestKeyframe
+        )
+        #expect(
+            StreamController.bootstrapFirstFrameRecoveryAction(
+                hasPackets: true,
+                awaitingKeyframe: false,
+                latestSequence: 1,
+                baselineSequence: 1
+            ) == .hardRecovery
+        )
     }
 
     @Test("Manual recovery re-arms first-frame watchdog after prior presentation")
@@ -1083,8 +1111,8 @@ struct StreamControllerRecoveryTests {
         )
     }
 
-    @Test("Present-stall while keyframe-starved escalates from soft request to hard recovery")
-    func presentStallWhileKeyframeStarvedEscalatesRecovery() async throws {
+    @Test("Present-stall while keyframe-starved does not burst keyframe requests")
+    func presentStallWhileKeyframeStarvedDoesNotBurstKeyframeRequests() async throws {
         let streamID: StreamID = 5
         let keyframeCounter = LockedCounter()
         let controller = StreamController(streamID: streamID, maxPayloadSize: 1200)
@@ -1115,7 +1143,7 @@ struct StreamControllerRecoveryTests {
         reassembler.enterKeyframeOnlyMode()
 
         try await Task.sleep(for: .seconds(11))
-        #expect(keyframeCounter.value >= 2)
+        #expect(keyframeCounter.value == 1)
         #expect(MirageRenderStreamStore.shared.pendingFrameCount(for: streamID) == 0)
 
         await controller.stop()

@@ -809,6 +809,7 @@ extension MirageHostService {
 
         if mode == .unified || mode == .secondary {
             var recoveryAttempted = false
+            var audioReadinessFallbackAttempted = false
             while true {
                 var readiness = await streamContext.waitForDisplayStartupReadiness(
                     timeout: desktopStartupCaptureReadinessWindow
@@ -855,6 +856,22 @@ extension MirageHostService {
                     )
                     continue
                 case .fail:
+                    if effectiveAudioConfiguration.enabled, !audioReadinessFallbackAttempted {
+                        audioReadinessFallbackAttempted = true
+                        effectiveAudioConfiguration.enabled = false
+                        audioConfigurationByClientID[clientContext.client.id] = effectiveAudioConfiguration
+                        MirageLogger.host(
+                            "Desktop start: capture readiness \(readiness.rawValue); retrying startup readiness without audio"
+                        )
+                        await stopAudioPipeline(for: clientContext.client.id, reason: .error)
+                        await closeAudioTransportIfNeeded(for: clientContext.client.id)
+                        await streamContext.setCapturedAudioHandler(nil)
+                        await streamContext.restartDisplayCaptureForStartupRecovery(
+                            reason: "startup_capture_readiness_audio_fallback_\(readiness.rawValue)"
+                        )
+                        recoveryAttempted = false
+                        continue
+                    }
                     throw MirageError.protocolError(
                         "\(mode.displayName) desktop startup failed waiting for first display sample (\(readiness.rawValue))"
                     )
@@ -1238,10 +1255,17 @@ extension MirageHostService {
             }
         }
 
-        let unresolved = pendingDisplaySpaceRestores(
+        var unresolved = pendingDisplaySpaceRestores(
             snapshot: desktopDisplaySpaceSnapshot,
             currentSpaceProvider: { CGSWindowSpaceBridge.getCurrentSpaceForDisplay($0) }
         )
+        if !unresolved.isEmpty {
+            try? await Task.sleep(for: .milliseconds(500))
+            unresolved = pendingDisplaySpaceRestores(
+                snapshot: desktopDisplaySpaceSnapshot,
+                currentSpaceProvider: { CGSWindowSpaceBridge.getCurrentSpaceForDisplay($0) }
+            )
+        }
         if !unresolved.isEmpty {
             let unresolvedSummary = unresolved
                 .keys
@@ -1252,11 +1276,13 @@ extension MirageHostService {
                     return "\(displayID): expected=\(expectedSpaceID), actual=\(actualSpaceID)"
                 }
                 .joined(separator: "; ")
-            MirageLogger.error(
-                .host,
-                "Display current Space restore remained incomplete after \(maxAttempts) attempts " +
-                    "(reason=\(reason)): \(unresolvedSummary)"
-            )
+            let message = "Display current Space restore remained incomplete after delayed verification " +
+                "(reason=\(reason), attempts=\(maxAttempts)): \(unresolvedSummary)"
+            if reason.hasPrefix("mirroring_disable") {
+                MirageLogger.host(message)
+            } else {
+                MirageLogger.error(.host, message)
+            }
         }
     }
 
