@@ -15,6 +15,7 @@ package enum MirageSessionBootstrapRejectionReason: String, Codable, Sendable {
     case protocolVersionMismatch
     case protocolFeaturesMismatch
     case hostBusy
+    case hostUpdateInProgress
     case rejected
     case unauthorized
 }
@@ -97,6 +98,7 @@ package struct DisconnectMessage: Codable {
         case timeout
         case error
         case hostShutdown
+        case hostUpdateInProgress
         case authFailed
     }
 

@@ -118,6 +118,8 @@ extension MirageClientService {
             return .protocolFeaturesMismatch
         case .hostBusy:
             return .hostBusy
+        case .hostUpdateInProgress:
+            return .hostUpdateInProgress
         case .rejected:
             return .rejected
         case .unauthorized:
@@ -142,6 +144,8 @@ extension MirageClientService {
             return "Protocol feature mismatch."
         case .hostBusy:
             return "Host is already connected to another client."
+        case .hostUpdateInProgress:
+            return "Host update is in progress."
         case .unauthorized:
             return "Connection rejected by host authorization policy."
         case .rejected:
@@ -730,6 +734,8 @@ extension MirageClientService {
             return .protocolFeaturesMismatch
         case .hostBusy:
             return .hostBusy
+        case .hostUpdateInProgress:
+            return .hostUpdateInProgress
         case .rejected:
             return .rejected
         case .unauthorized:

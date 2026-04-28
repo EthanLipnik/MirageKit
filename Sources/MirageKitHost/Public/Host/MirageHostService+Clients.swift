@@ -21,14 +21,32 @@ extension MirageHostService {
         await disconnectClient(
             client,
             sessionID: expectedSessionID,
-            notifyClient: true
+            notifyClient: true,
+            reason: .userRequested,
+            message: "Disconnected by host"
+        )
+    }
+
+    public func disconnectClientForHostSoftwareUpdate(
+        _ client: MirageConnectedClient,
+        sessionID expectedSessionID: UUID? = nil
+    )
+    async {
+        await disconnectClient(
+            client,
+            sessionID: expectedSessionID,
+            notifyClient: true,
+            reason: .hostUpdateInProgress,
+            message: "Host update is in progress."
         )
     }
 
     func disconnectClient(
         _ client: MirageConnectedClient,
         sessionID expectedSessionID: UUID?,
-        notifyClient: Bool
+        notifyClient: Bool,
+        reason: DisconnectMessage.DisconnectReason = .userRequested,
+        message: String? = nil
     )
     async {
         if let expectedSessionID,
@@ -77,7 +95,9 @@ extension MirageHostService {
         if let removedClientContext {
             await closeClientControlSession(
                 removedClientContext,
-                notifyClient: notifyClient
+                notifyClient: notifyClient,
+                reason: reason,
+                message: message
             )
         }
 
@@ -160,13 +180,15 @@ extension MirageHostService {
 
     private func closeClientControlSession(
         _ clientContext: ClientContext,
-        notifyClient: Bool
+        notifyClient: Bool,
+        reason: DisconnectMessage.DisconnectReason,
+        message: String?
     )
     async {
         if notifyClient {
             let disconnect = DisconnectMessage(
-                reason: .userRequested,
-                message: "Disconnected by host"
+                reason: reason,
+                message: message
             )
             do {
                 try await clientContext.send(.disconnect, content: disconnect)

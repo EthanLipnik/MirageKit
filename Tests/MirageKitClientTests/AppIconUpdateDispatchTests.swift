@@ -181,6 +181,65 @@ struct AppIconUpdateDispatchTests {
         #expect(service.pendingForceIconResetForNextAppListRequest)
     }
 
+    @MainActor
+    @Test("Skipped icon desync triggers immediate reset callback")
+    func skippedIconDesyncTriggersImmediateResetCallback() throws {
+        let service = MirageClientService()
+        var desyncCallbackCount = 0
+        service.onAppIconStreamDesynchronized = {
+            desyncCallbackCount += 1
+        }
+
+        let requestID = UUID()
+        service.activeAppListRequestID = requestID
+        service.appListMetadataBundleIdentifiersByRequestID[requestID] = []
+        service.appIconStreamStateByRequestID[requestID] = MirageClientService.AppIconStreamState()
+
+        let progress = AppListProgressMessage(
+            requestID: requestID,
+            apps: [
+                MirageInstalledApp(
+                    bundleIdentifier: "com.example.Editor",
+                    name: "Editor",
+                    path: "/Applications/Editor.app"
+                ),
+            ]
+        )
+        service.handleAppListProgress(try ControlMessage(type: .appListProgress, content: progress))
+        service.handleAppListComplete(
+            try ControlMessage(
+                type: .appListComplete,
+                content: AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+            )
+        )
+
+        let completion = AppIconStreamCompleteMessage(
+            requestID: requestID,
+            sentIconCount: 0,
+            skippedBundleIdentifiers: ["com.example.Editor"]
+        )
+        service.handleAppIconStreamComplete(
+            try ControlMessage(type: .appIconStreamComplete, content: completion)
+        )
+
+        #expect(service.pendingForceIconResetForNextAppListRequest)
+        #expect(desyncCallbackCount == 1)
+    }
+
+    @MainActor
+    @Test("Foreground health snapshot reports missing controller and media stream")
+    func foregroundHealthSnapshotReportsMissingPipeline() async {
+        let service = MirageClientService()
+        let snapshot = await service.foregroundStreamHealthSnapshot(for: 42)
+
+        #expect(snapshot.streamID == 42)
+        #expect(!snapshot.hasController)
+        #expect(!snapshot.hasVideoMediaStream)
+        #expect(snapshot.latestPacketTime == 0)
+        #expect(snapshot.submittedSequence == 0)
+        #expect(snapshot.isAwaitingKeyframe)
+    }
+
     private static let validPNGData = Data(base64Encoded:
         "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
     )!

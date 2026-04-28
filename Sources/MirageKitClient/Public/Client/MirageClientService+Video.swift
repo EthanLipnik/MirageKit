@@ -486,6 +486,23 @@ extension MirageClientService {
         requestStreamRecovery(for: streamID, trigger: .applicationActivation)
     }
 
+    public func foregroundStreamHealthSnapshot(
+        for streamID: StreamID
+    ) async -> ForegroundStreamHealthSnapshot {
+        let controller = controllersByStream[streamID]
+        let reassembler = await controller?.getReassembler()
+        let submissionSnapshot = MirageRenderStreamStore.shared.submissionSnapshot(for: streamID)
+
+        return ForegroundStreamHealthSnapshot(
+            streamID: streamID,
+            hasController: controller != nil,
+            hasVideoMediaStream: activeMediaStreams["video/\(streamID)"] != nil,
+            latestPacketTime: reassembler?.latestPacketReceivedTime() ?? 0,
+            submittedSequence: submissionSnapshot.sequence,
+            isAwaitingKeyframe: reassembler?.isAwaitingKeyframe() ?? true
+        )
+    }
+
     private func requestStreamRecovery(
         for streamID: StreamID,
         trigger: MirageClientStreamRecoveryTrigger

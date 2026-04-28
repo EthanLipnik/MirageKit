@@ -2056,6 +2056,8 @@ extension MirageHostService {
                 await self?.streamAppIconUpdates(
                     apps: iconStream,
                     requestID: requestID,
+                    clientID: clientID,
+                    token: token,
                     clientContext: clientContext,
                     forceIconReset: forceIconReset,
                     priorityBundleIdentifiers: priorityBundleIdentifiers,
@@ -2149,6 +2151,8 @@ extension MirageHostService {
     private func streamAppIconUpdates(
         apps: AsyncStream<MirageInstalledApp>,
         requestID: UUID,
+        clientID: UUID,
+        token: UUID,
         clientContext: ClientContext,
         forceIconReset: Bool,
         priorityBundleIdentifiers: [String],
@@ -2161,7 +2165,7 @@ extension MirageHostService {
         var deferredApps: [MirageInstalledApp] = []
 
         for await app in apps {
-            if Task.isCancelled { return }
+            guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
 
             let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
             guard completedBundleIdentifiers.insert(normalizedBundleIdentifier).inserted else {
@@ -2203,6 +2207,7 @@ extension MirageHostService {
             )
 
             do {
+                guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
                 try await clientContext.send(.appIconUpdate, content: update)
                 sentIconCount += 1
             } catch {
@@ -2216,8 +2221,10 @@ extension MirageHostService {
             }
         }
 
+        guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
+
         for app in deferredApps {
-            if Task.isCancelled { return }
+            guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
 
             guard let iconPayload = await appIconCatalogStore.payload(
                 for: app,
@@ -2250,6 +2257,7 @@ extension MirageHostService {
             )
 
             do {
+                guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
                 try await clientContext.send(.appIconUpdate, content: update)
                 sentIconCount += 1
             } catch {
@@ -2262,6 +2270,8 @@ extension MirageHostService {
                 return
             }
         }
+
+        guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
 
         let completion = AppIconStreamCompleteMessage(
             requestID: requestID,
@@ -2282,6 +2292,13 @@ extension MirageHostService {
                 sessionID: clientContext.sessionID
             )
         }
+    }
+
+    private func isActiveAppIconStreamRequest(clientID: UUID, token: UUID) -> Bool {
+        !Task.isCancelled &&
+            appListRequestToken == token &&
+            pendingAppListRequest?.clientID == clientID &&
+            findClientContext(clientID: clientID) != nil
     }
 
     private static func metadataOnlyApps(_ apps: [MirageInstalledApp]) -> [MirageInstalledApp] {

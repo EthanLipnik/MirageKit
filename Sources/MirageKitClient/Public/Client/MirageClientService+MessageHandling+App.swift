@@ -188,6 +188,7 @@ extension MirageClientService {
 
             if requiresForceReset {
                 pendingForceIconResetForNextAppListRequest = true
+                onAppIconStreamDesynchronized?()
                 MirageLogger.client(
                     "Queued force icon reset for next app-list request (desync detected for requestID=\(complete.requestID.uuidString))"
                 )

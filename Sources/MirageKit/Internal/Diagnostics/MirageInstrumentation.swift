@@ -12,6 +12,7 @@ package enum MirageHelloRejectionStepReason: String, Sendable, Equatable {
     case protocolVersionMismatch = "protocol_version_mismatch"
     case protocolFeaturesMismatch = "protocol_features_mismatch"
     case hostBusy = "host_busy"
+    case hostUpdateInProgress = "host_update_in_progress"
     case rejected
     case unauthorized
     case unknown

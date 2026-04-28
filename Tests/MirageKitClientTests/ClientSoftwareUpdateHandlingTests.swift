@@ -40,6 +40,27 @@ struct ClientSoftwareUpdateHandlingTests {
     }
 
     @MainActor
+    @Test("Host update bootstrap rejection maps to update-in-progress message")
+    func hostUpdateBootstrapRejectionMapsToUpdateInProgressMessage() {
+        let service = MirageClientService()
+        let response = MirageSessionBootstrapResponse(
+            accepted: false,
+            hostID: UUID(),
+            hostName: "Host",
+            selectedFeatures: [],
+            mediaEncryptionEnabled: false,
+            udpRegistrationToken: Data(),
+            rejectionReason: .hostUpdateInProgress
+        )
+
+        #expect(service.mapProtocolMismatchReason(response.rejectionReason) == .hostUpdateInProgress)
+        #expect(
+            service.bootstrapRejectionDescription(for: response, mismatchInfo: nil) ==
+                "Host update is in progress."
+        )
+    }
+
+    @MainActor
     @Test("Host software update status message updates client callback state")
     func hostSoftwareUpdateStatusCallbackReceivesMappedPayload() throws {
         let service = MirageClientService()

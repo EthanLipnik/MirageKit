@@ -252,7 +252,7 @@ extension MirageHostService {
 
         if await hostSoftwareUpdateInstallInProgress(for: peerIdentity) {
             MirageLogger.host("Connection rejected while host software update install is in progress")
-            await rejectIncomingSession(session, reason: .hostBusy)
+            await rejectIncomingSession(session, reason: .hostUpdateInProgress)
             return
         }
 

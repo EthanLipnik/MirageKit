@@ -35,6 +35,31 @@ public final class MirageClientService {
         case interactiveStreaming
     }
 
+    public struct ForegroundStreamHealthSnapshot: Sendable, Equatable {
+        public let streamID: StreamID
+        public let hasController: Bool
+        public let hasVideoMediaStream: Bool
+        public let latestPacketTime: CFAbsoluteTime
+        public let submittedSequence: UInt64
+        public let isAwaitingKeyframe: Bool
+
+        public init(
+            streamID: StreamID,
+            hasController: Bool,
+            hasVideoMediaStream: Bool,
+            latestPacketTime: CFAbsoluteTime,
+            submittedSequence: UInt64,
+            isAwaitingKeyframe: Bool
+        ) {
+            self.streamID = streamID
+            self.hasController = hasController
+            self.hasVideoMediaStream = hasVideoMediaStream
+            self.latestPacketTime = latestPacketTime
+            self.submittedSequence = submittedSequence
+            self.isAwaitingKeyframe = isAwaitingKeyframe
+        }
+    }
+
     public struct DeferredControlRefreshRequirements: Sendable {
         public var needsAppListRefresh: Bool
         public var needsWindowListRefresh: Bool
@@ -209,6 +234,7 @@ public final class MirageClientService {
             case protocolVersionMismatch
             case protocolFeaturesMismatch
             case hostBusy
+            case hostUpdateInProgress
             case rejected
             case unauthorized
             case unknown
@@ -416,6 +442,9 @@ public final class MirageClientService {
 
     /// Callback when app-icon packets advance the in-memory app snapshot.
     public var onAppIconStreamProgress: (([MirageInstalledApp]) -> Void)?
+
+    /// Callback when skipped icon metadata does not match valid client icon payloads.
+    public var onAppIconStreamDesynchronized: (() -> Void)?
 
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
