@@ -163,10 +163,10 @@ private func resolvedAnomalyBottleneckKind(
     if let hostCadencePressure {
         switch hostCadencePressure.kind {
         case .captureAdmissionPressure,
-             .captureCadenceDeficit:
-            return .captureBound
-        case .encodeAttemptDeficit,
-             .encodeOverBudget:
+             .captureCadenceDeficit,
+             .encodeAttemptDeficit:
+            return .hostCadenceLimited
+        case .encodeOverBudget:
             return .encodeBound
         }
     }
@@ -202,7 +202,8 @@ private func anomalyLabel(
 ) -> String {
     switch bottleneckKind {
     case .captureBound,
-         .encodeBound:
+         .encodeBound,
+         .hostCadenceLimited:
         if let hostCadencePressure {
             return "host-side \(hostCadencePressure.kind.logLabel)"
         }

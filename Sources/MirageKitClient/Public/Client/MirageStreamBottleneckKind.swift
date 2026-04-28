@@ -10,6 +10,7 @@ import Foundation
 public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
     case captureBound
     case encodeBound
+    case hostCadenceLimited
     case networkBound
     case decodeBound
     case presentationBound
@@ -22,6 +23,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             "Capture-bound"
         case .encodeBound:
             "Encode-bound"
+        case .hostCadenceLimited:
+            "Host cadence limited"
         case .networkBound:
             "Network-bound"
         case .decodeBound:
@@ -41,6 +44,8 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             "Host capture cadence is already below target."
         case .encodeBound:
             "Capture is healthy, but host encode throughput is behind target."
+        case .hostCadenceLimited:
+            "The host is capturing or encoding below the requested frame rate while transport pressure is clean."
         case .networkBound:
             "Transport pressure is dropping cadence before frames reach the client."
         case .decodeBound:
@@ -117,8 +122,16 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
             snapshot.clientPendingFrameAgeMs >= presentationPendingAgeMsThreshold
         let presentationBound = decodeKeepsUp && submissionLaggingDecode && presentationBackpressure
 
-        let captureBound = (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
+        let hostCadenceLimited = !networkBound && (
+                (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
+                (captureFPS > 0 && captureFPS < targetFPS * 0.90) ||
+                (encodeAttemptFPS > 0 && encodeAttemptFPS < targetFPS * 0.90)
+        )
+
+        let captureBound = !hostCadenceLimited && (
+            (captureIngressFPS > 0 && captureIngressFPS < targetFPS * 0.90) ||
             (captureFPS > 0 && captureFPS < targetFPS * 0.90 && encodeAttemptFPS <= captureFPS + 3.0)
+        )
 
         let encodeHasWork = (encodeAttemptFPS > 0 && encodeAttemptFPS >= targetFPS * 0.90) ||
             (captureFPS > 0 && captureFPS >= targetFPS * 0.90)
@@ -128,6 +141,7 @@ public enum MirageStreamBottleneckKind: String, Sendable, Equatable {
         let activeKinds = [
             captureBound ? MirageStreamBottleneckKind.captureBound : nil,
             encodeBound ? .encodeBound : nil,
+            hostCadenceLimited ? .hostCadenceLimited : nil,
             networkBound ? .networkBound : nil,
             decodeBound ? .decodeBound : nil,
             presentationBound ? .presentationBound : nil,

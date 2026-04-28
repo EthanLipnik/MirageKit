@@ -73,7 +73,7 @@ public struct MirageStreamPipelineHealth: Sendable, Equatable {
 
     public var isPipelineBound: Bool {
         switch bottleneckKind {
-        case .captureBound, .encodeBound, .decodeBound, .presentationBound, .mixed:
+        case .captureBound, .encodeBound, .hostCadenceLimited, .decodeBound, .presentationBound, .mixed:
             true
         case .networkBound, .unknown:
             false
@@ -160,16 +160,19 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
     }
 
     private static let requiredPipelinePressureSamples = 3
+    private static let requiredPromotionSamples = 12
     private static let reconfigurationCooldownSeconds: CFAbsoluteTime = 20
     private static let observedPixelRateSafetyFactor = 0.85
 
     private var pipelinePressureSampleCount = 0
+    private var promotionSampleCount = 0
     private var lastReconfigurationAt: CFAbsoluteTime?
 
     public init() {}
 
     public mutating func reset() {
         pipelinePressureSampleCount = 0
+        promotionSampleCount = 0
         lastReconfigurationAt = nil
     }
 
@@ -185,19 +188,37 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
 
         let health = MirageStreamPipelineHealth.evaluate(snapshot: snapshot)
         guard health.transportIsClean,
-              health.isPipelineBound,
-              let observedPixelRate = health.observedPixelRate,
               let currentTier = health.currentTier else {
             pipelinePressureSampleCount = 0
+            promotionSampleCount = 0
             return .none
         }
 
+        if !health.isPipelineBound {
+            pipelinePressureSampleCount = 0
+            promotionSampleCount += 1
+            guard promotionSampleCount >= Self.requiredPromotionSamples,
+                  cooldownElapsed(now: now),
+                  let targetTier = Self.nextHigherTier(after: currentTier) else {
+                return .none
+            }
+            promotionSampleCount = 0
+            lastReconfigurationAt = now
+            return .reconfigure(target: targetTier, reason: "sustained clean transport and host cadence")
+        }
+
+        guard let observedPixelRate = health.observedPixelRate else {
+            pipelinePressureSampleCount = 0
+            promotionSampleCount = 0
+            return .none
+        }
+
+        promotionSampleCount = 0
         pipelinePressureSampleCount += 1
         guard pipelinePressureSampleCount >= Self.requiredPipelinePressureSamples else {
             return .none
         }
-        if let lastReconfigurationAt,
-           now - lastReconfigurationAt < Self.reconfigurationCooldownSeconds {
+        guard cooldownElapsed(now: now) else {
             return .none
         }
         guard let targetTier = Self.targetTier(
@@ -213,6 +234,11 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         return .reconfigure(target: targetTier, reason: reason)
     }
 
+    private func cooldownElapsed(now: CFAbsoluteTime) -> Bool {
+        guard let lastReconfigurationAt else { return true }
+        return now - lastReconfigurationAt >= Self.reconfigurationCooldownSeconds
+    }
+
     private static func targetTier(
         currentTier: MirageAutomaticDesktopWorkloadTier,
         observedPixelRate: Double
@@ -225,5 +251,14 @@ public struct MirageAutomaticDesktopWorkloadController: Sendable {
         guard let eligibleTier else { return nil }
         guard eligibleTier.pixelRate < currentTier.pixelRate else { return nil }
         return eligibleTier
+    }
+
+    private static func nextHigherTier(after currentTier: MirageAutomaticDesktopWorkloadTier) -> MirageAutomaticDesktopWorkloadTier? {
+        let tiers = MirageAutomaticDesktopWorkloadTier.defaultDescendingTiers
+        guard let currentIndex = tiers.firstIndex(where: { $0 == currentTier }),
+              currentIndex > tiers.startIndex else {
+            return nil
+        }
+        return tiers[tiers.index(before: currentIndex)]
     }
 }

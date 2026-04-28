@@ -15,7 +15,8 @@ enum MirageLogArchiver {
         from logData: Data,
         filename: String,
         maximumCompressedBytes: Int,
-        truncationLabel: String
+        truncationLabel: String,
+        diagnosticsSummary: String? = nil
     ) throws -> URL {
         let archiveURL = FileManager.default.temporaryDirectory.appending(path: "\(filename).zip")
         let fitted = try fittedLogData(
@@ -29,7 +30,11 @@ enum MirageLogArchiver {
             try FileManager.default.removeItem(at: archiveURL)
         }
 
-        let archiveData = try zipArchiveData(for: fitted, entryName: "\(filename).log")
+        var entries = [(name: "\(filename).log", data: fitted)]
+        if let diagnosticsSummary = MirageSupportInfo.trimmedValue(diagnosticsSummary) {
+            entries.append((name: "DiagnosticsSummary.txt", data: Data("\(diagnosticsSummary)\n".utf8)))
+        }
+        let archiveData = try zipArchiveData(entries: entries)
         try archiveData.write(to: archiveURL, options: .atomic)
         return archiveURL
     }
@@ -147,62 +152,108 @@ enum MirageLogArchiver {
     // MARK: - ZIP Archive
 
     static func zipArchiveData(for logData: Data, entryName: String) throws -> Data {
+        try zipArchiveData(entries: [(name: entryName, data: logData)])
+    }
+
+    static func zipArchiveData(entries: [(name: String, data: Data)]) throws -> Data {
+        var archiveData = Data()
+        var centralDirectoryRecords = Data()
+
+        for entry in entries {
+            let localHeaderOffset = try checkedZIPSize(archiveData.count)
+            let record = try zipLocalFileRecord(for: entry.data, entryName: entry.name)
+            archiveData.append(record.localFile)
+            centralDirectoryRecords.append(
+                try zipCentralDirectoryRecord(
+                    for: record,
+                    localHeaderOffset: localHeaderOffset
+                )
+            )
+        }
+
+        let centralDirectoryOffset = try checkedZIPSize(archiveData.count)
+        archiveData.append(centralDirectoryRecords)
+        let centralDirectorySize = try checkedZIPSize(centralDirectoryRecords.count)
+        let entryCount = try checkedZIPEntryCount(entries.count)
+
+        archiveData.appendLittleEndian(UInt32(0x06054b50))
+        archiveData.appendLittleEndian(UInt16(0))
+        archiveData.appendLittleEndian(UInt16(0))
+        archiveData.appendLittleEndian(entryCount)
+        archiveData.appendLittleEndian(entryCount)
+        archiveData.appendLittleEndian(centralDirectorySize)
+        archiveData.appendLittleEndian(centralDirectoryOffset)
+        archiveData.appendLittleEndian(UInt16(0))
+
+        return archiveData
+    }
+
+    private struct ZIPLocalFileRecord {
+        let localFile: Data
+        let entryNameData: Data
+        let checksum: UInt32
+        let compressedSize: UInt32
+        let uncompressedSize: UInt32
+        let timestamp: (time: UInt16, date: UInt16)
+    }
+
+    private static func zipLocalFileRecord(for logData: Data, entryName: String) throws -> ZIPLocalFileRecord {
         let compressedData = try deflated(logData)
         let checksum = crc32Value(for: logData)
         let timestamp = dosDateTime(for: Date())
         let entryNameData = Data(entryName.utf8)
         let compressedSize = try checkedZIPSize(compressedData.count)
         let uncompressedSize = try checkedZIPSize(logData.count)
-        let localHeaderOffset: UInt32 = 0
 
-        var archiveData = Data()
-        archiveData.appendLittleEndian(UInt32(0x04034b50))
-        archiveData.appendLittleEndian(UInt16(20))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(8))
-        archiveData.appendLittleEndian(timestamp.time)
-        archiveData.appendLittleEndian(timestamp.date)
-        archiveData.appendLittleEndian(checksum)
-        archiveData.appendLittleEndian(compressedSize)
-        archiveData.appendLittleEndian(uncompressedSize)
-        archiveData.appendLittleEndian(try checkedZIPNameLength(entryNameData.count))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.append(entryNameData)
-        archiveData.append(compressedData)
+        var localFile = Data()
+        localFile.appendLittleEndian(UInt32(0x04034b50))
+        localFile.appendLittleEndian(UInt16(20))
+        localFile.appendLittleEndian(UInt16(0))
+        localFile.appendLittleEndian(UInt16(8))
+        localFile.appendLittleEndian(timestamp.time)
+        localFile.appendLittleEndian(timestamp.date)
+        localFile.appendLittleEndian(checksum)
+        localFile.appendLittleEndian(compressedSize)
+        localFile.appendLittleEndian(uncompressedSize)
+        localFile.appendLittleEndian(try checkedZIPNameLength(entryNameData.count))
+        localFile.appendLittleEndian(UInt16(0))
+        localFile.append(entryNameData)
+        localFile.append(compressedData)
 
-        let centralDirectoryOffset = try checkedZIPSize(archiveData.count)
+        return ZIPLocalFileRecord(
+            localFile: localFile,
+            entryNameData: entryNameData,
+            checksum: checksum,
+            compressedSize: compressedSize,
+            uncompressedSize: uncompressedSize,
+            timestamp: timestamp
+        )
+    }
 
-        archiveData.appendLittleEndian(UInt32(0x02014b50))
-        archiveData.appendLittleEndian(UInt16(20))
-        archiveData.appendLittleEndian(UInt16(20))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(8))
-        archiveData.appendLittleEndian(timestamp.time)
-        archiveData.appendLittleEndian(timestamp.date)
-        archiveData.appendLittleEndian(checksum)
-        archiveData.appendLittleEndian(compressedSize)
-        archiveData.appendLittleEndian(uncompressedSize)
-        archiveData.appendLittleEndian(try checkedZIPNameLength(entryNameData.count))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt32(0))
-        archiveData.appendLittleEndian(localHeaderOffset)
-        archiveData.append(entryNameData)
-
-        let centralDirectorySize = try checkedZIPSize(Int(archiveData.count) - Int(centralDirectoryOffset))
-
-        archiveData.appendLittleEndian(UInt32(0x06054b50))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(0))
-        archiveData.appendLittleEndian(UInt16(1))
-        archiveData.appendLittleEndian(UInt16(1))
-        archiveData.appendLittleEndian(centralDirectorySize)
-        archiveData.appendLittleEndian(centralDirectoryOffset)
-        archiveData.appendLittleEndian(UInt16(0))
-
-        return archiveData
+    private static func zipCentralDirectoryRecord(
+        for record: ZIPLocalFileRecord,
+        localHeaderOffset: UInt32
+    ) throws -> Data {
+        var centralDirectory = Data()
+        centralDirectory.appendLittleEndian(UInt32(0x02014b50))
+        centralDirectory.appendLittleEndian(UInt16(20))
+        centralDirectory.appendLittleEndian(UInt16(20))
+        centralDirectory.appendLittleEndian(UInt16(0))
+        centralDirectory.appendLittleEndian(UInt16(8))
+        centralDirectory.appendLittleEndian(record.timestamp.time)
+        centralDirectory.appendLittleEndian(record.timestamp.date)
+        centralDirectory.appendLittleEndian(record.checksum)
+        centralDirectory.appendLittleEndian(record.compressedSize)
+        centralDirectory.appendLittleEndian(record.uncompressedSize)
+        centralDirectory.appendLittleEndian(try checkedZIPNameLength(record.entryNameData.count))
+        centralDirectory.appendLittleEndian(UInt16(0))
+        centralDirectory.appendLittleEndian(UInt16(0))
+        centralDirectory.appendLittleEndian(UInt16(0))
+        centralDirectory.appendLittleEndian(UInt16(0))
+        centralDirectory.appendLittleEndian(UInt32(0))
+        centralDirectory.appendLittleEndian(localHeaderOffset)
+        centralDirectory.append(record.entryNameData)
+        return centralDirectory
     }
 
     // MARK: - Compression
@@ -289,6 +340,13 @@ enum MirageLogArchiver {
     }
 
     private static func checkedZIPNameLength(_ value: Int) throws -> UInt16 {
+        guard value <= Int(UInt16.max) else {
+            throw LogArchiveError.sizeOverflow
+        }
+        return UInt16(value)
+    }
+
+    private static func checkedZIPEntryCount(_ value: Int) throws -> UInt16 {
         guard value <= Int(UInt16.max) else {
             throw LogArchiveError.sizeOverflow
         }

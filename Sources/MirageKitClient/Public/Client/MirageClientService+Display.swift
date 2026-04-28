@@ -339,9 +339,9 @@ extension MirageClientService {
         guard needsFrameRateChange || needsResize else { return false }
 
         if needsFrameRateChange {
-            try await sendStreamRefreshRateChange(
+            try await sendStreamEncoderSettingsChange(
                 streamID: streamID,
-                maxRefreshRate: target.targetFrameRate
+                targetFrameRate: target.targetFrameRate
             )
         }
 

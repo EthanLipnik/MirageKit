@@ -285,7 +285,9 @@ public struct MirageReceiverHealthController: Sendable {
             isSevere: severe,
             isStress: severe || sustainedLoss,
             isHealthy: healthy,
-            allowsProbePromotion: snapshot.hasHostMetrics && targetFPS > 0
+            allowsProbePromotion: snapshot.hasHostMetrics &&
+                targetFPS > 0 &&
+                snapshot.bottleneckKind != .hostCadenceLimited
         )
     }
 

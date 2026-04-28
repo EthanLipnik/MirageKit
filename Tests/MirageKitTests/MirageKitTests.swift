@@ -716,7 +716,8 @@ struct MirageKitTests {
             streamID: 7,
             colorDepth: .pro,
             bitrate: 120_000_000,
-            streamScale: 0.75
+            streamScale: 0.75,
+            targetFrameRate: 30
         )
 
         let message = try ControlMessage(type: .streamEncoderSettingsChange, content: request)
@@ -729,6 +730,7 @@ struct MirageKitTests {
         #expect(decodedRequest.streamID == 7)
         #expect(decodedRequest.colorDepth == .pro)
         #expect(decodedRequest.bitrate == 120_000_000)
+        #expect(decodedRequest.targetFrameRate == 30)
         let scale = try #require(decodedRequest.streamScale)
         #expect(abs(Double(scale) - 0.75) < 0.0001)
     }

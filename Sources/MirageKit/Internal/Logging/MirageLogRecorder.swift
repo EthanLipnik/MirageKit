@@ -171,7 +171,8 @@ public final class MirageLogRecorder: @unchecked Sendable {
     public func exportLogArchive(
         filename: String,
         maximumCompressedBytes: Int,
-        emptyStateMessage: String
+        emptyStateMessage: String,
+        diagnosticsSummary: String? = nil
     ) async throws -> URL {
         try await withCheckedThrowingContinuation { continuation in
             queue.async { [weak self] in
@@ -186,7 +187,8 @@ public final class MirageLogRecorder: @unchecked Sendable {
                         from: filteredLogData,
                         filename: filename,
                         maximumCompressedBytes: maximumCompressedBytes,
-                        truncationLabel: configuration.truncationLabel
+                        truncationLabel: configuration.truncationLabel,
+                        diagnosticsSummary: diagnosticsSummary
                     )
                     continuation.resume(returning: archiveURL)
                 } catch {

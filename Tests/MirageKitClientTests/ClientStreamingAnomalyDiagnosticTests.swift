@@ -79,7 +79,7 @@ struct ClientStreamingAnomalyDiagnosticTests {
             )
         )
 
-        #expect(diagnostic.bottleneckKind == .captureBound)
+        #expect(diagnostic.bottleneckKind == .hostCadenceLimited)
         #expect(diagnostic.label == "host-side capture-admission pressure")
         #expect(diagnostic.message.contains("captureAdmissionDrops=31"))
     }

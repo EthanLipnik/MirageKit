@@ -36,6 +36,14 @@ struct EncoderSettingsUpdateModeTests {
         #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: bitDepthChange) == .fullReconfiguration)
     }
 
+    @Test("Frame rate change uses full reconfiguration mode")
+    func frameRateChangeRequiresFullReconfiguration() {
+        let current = makeConfiguration()
+        let updated = current.withTargetFrameRate(30)
+
+        #expect(StreamContext.encoderSettingsUpdateMode(current: current, updated: updated) == .fullReconfiguration)
+    }
+
     private func makeConfiguration() -> MirageEncoderConfiguration {
         MirageEncoderConfiguration(
             targetFrameRate: 60,

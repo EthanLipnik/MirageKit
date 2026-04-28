@@ -500,7 +500,8 @@ extension MirageHostService {
         let hasColorDepthChange = request.colorDepth != nil
         let hasBitrateChange = request.bitrate != nil
         let hasScaleChange = request.streamScale != nil && !isHostResolutionDesktopStream
-        let shouldBroadcastStreamUpdate = hasColorDepthChange || hasScaleChange
+        let hasFrameRateChange = request.targetFrameRate != nil
+        let shouldBroadcastStreamUpdate = hasColorDepthChange || hasScaleChange || hasFrameRateChange
 
         let normalizedBitrate = MirageBitrateQualityMapper.normalizedTargetBitrate(bitrate: request.bitrate)
         do {
@@ -519,6 +520,9 @@ extension MirageHostService {
                 } else {
                     try await context.updateStreamScale(StreamContext.clampStreamScale(streamScale))
                 }
+            }
+            if let targetFrameRate = request.targetFrameRate {
+                try await context.updateFrameRate(targetFrameRate)
             }
             if shouldBroadcastStreamUpdate {
                 await sendStreamScaleUpdate(streamID: request.streamID)

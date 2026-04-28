@@ -70,6 +70,19 @@ public enum MirageSupportInfo {
             ?? "Unknown"
     }
 
+    public static func deviceModelIdentifier() -> String {
+        hardwareModel()
+    }
+
+    public static func chipName() -> String {
+#if os(macOS)
+        if let cpuBrand = trimmedValue(readSysctlString("machdep.cpu.brand_string")) {
+            return cpuBrand
+        }
+#endif
+        return chipName(for: hardwareModel())
+    }
+
     public static func displayValue(_ value: String?) -> String {
         trimmedValue(value) ?? "Unknown"
     }
@@ -113,6 +126,31 @@ public enum MirageSupportInfo {
         case let identifier where identifier.hasPrefix("virtualmac"),
              let identifier where identifier.hasPrefix("mac"):
             return "Mac"
+        default:
+            return "Unknown"
+        }
+    }
+
+    static func chipName(for hardwareIdentifier: String) -> String {
+        guard let normalizedIdentifier = trimmedValue(hardwareIdentifier)?.lowercased() else {
+            return "Unknown"
+        }
+
+        switch normalizedIdentifier {
+        case "ipad13,4", "ipad13,5", "ipad13,6", "ipad13,7", "ipad13,8", "ipad13,9", "ipad13,10", "ipad13,11":
+            return "Apple M1"
+        case "ipad14,3", "ipad14,4", "ipad14,5", "ipad14,6":
+            return "Apple M2"
+        case "ipad16,3", "ipad16,4", "ipad16,5", "ipad16,6":
+            return "Apple M4"
+        case let identifier where identifier.hasPrefix("mac14,"):
+            return "Apple M2"
+        case let identifier where identifier.hasPrefix("mac15,"):
+            return "Apple M3"
+        case let identifier where identifier.hasPrefix("mac16,"):
+            return "Apple M4"
+        case let identifier where identifier.hasPrefix("virtualmac"):
+            return "Apple Silicon"
         default:
             return "Unknown"
         }

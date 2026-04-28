@@ -43,6 +43,25 @@ struct DesktopVirtualDisplayStartupSessionTests {
         #expect(plan.attempts[nextIndex ?? 0].fallbackKind == .descriptorFallback)
     }
 
+    @Test("Activation failures can still reach conservative retry")
+    func activationFailuresCanReachConservativeRetry() {
+        let plan = makePlan()
+        var session = DesktopVirtualDisplayStartupSession(plan: plan)
+
+        let failureClass = session.recordFailure(
+            SharedVirtualDisplayManager.SharedDisplayError.creationFailed("mode activation failed")
+        )
+
+        let nextIndex = session.nextRetryIndex(
+            after: failureClass,
+            attempts: plan.attempts,
+            currentIndex: 1
+        )
+
+        #expect(nextIndex == 2)
+        #expect(plan.attempts[nextIndex ?? 0].fallbackKind == .conservative)
+    }
+
     @Test("Space failures skip descriptor fallback and go straight to conservative retry")
     func spaceFailuresSkipDescriptorFallback() {
         let plan = makePlan()

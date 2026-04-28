@@ -126,7 +126,7 @@ struct DesktopVirtualDisplayStartupSession {
         case .descriptorFallback:
             failureClass == .activation
         case .conservative:
-            readinessFailureCount > 0 || spaceAssignmentFailureCount > 0
+            activationFailureCount > 0 || readinessFailureCount > 0 || spaceAssignmentFailureCount > 0
         }
     }
 

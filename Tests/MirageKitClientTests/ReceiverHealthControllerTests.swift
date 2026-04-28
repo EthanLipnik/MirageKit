@@ -244,8 +244,8 @@ struct ReceiverHealthControllerTests {
         #expect(action == .probe(targetBitrateBps: 300_000_000))
     }
 
-    @Test("Capture-bound samples remain transport-clean")
-    func captureBoundSamplesRemainTransportClean() {
+    @Test("Host-cadence-limited samples remain transport-clean but do not probe upward")
+    func hostCadenceLimitedSamplesRemainTransportCleanWithoutProbing() {
         var controller = MirageReceiverHealthController()
         let snapshot = captureBoundButTransportHealthySnapshot()
 
@@ -262,7 +262,7 @@ struct ReceiverHealthControllerTests {
             now: 2
         )
 
-        #expect(action == .probe(targetBitrateBps: 128_000_000))
+        #expect(action == .none)
     }
 
     @Test("Mixed-bound samples remain transport-clean")

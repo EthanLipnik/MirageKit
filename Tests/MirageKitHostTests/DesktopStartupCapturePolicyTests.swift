@@ -55,14 +55,14 @@ struct DesktopStartupCapturePolicyTests {
         )
     }
 
-    @Test("Missing startup samples require an observed live sample")
-    func missingSamplesRequireObservedStartupSample() {
+    @Test("Cached startup frame can satisfy missing startup samples")
+    func cachedStartupFrameCanSatisfyMissingStartupSamples() {
         #expect(
             desktopStartupCaptureRecoveryDecision(
                 readiness: .noScreenSamples,
                 recoveryAttempted: false,
                 hasCachedStartupFrame: true
-            ) == .restartCapture
+            ) == .proceed
         )
         #expect(
             desktopStartupCaptureRecoveryDecision(

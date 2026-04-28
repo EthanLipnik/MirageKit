@@ -319,7 +319,8 @@ extension MirageHostService {
                     "Client requested encoder settings change for stream \(request.streamID): " +
                         "colorDepth=\(request.colorDepth?.displayName ?? "unchanged"), " +
                         "bitrate=\(request.bitrate.map(String.init) ?? "unchanged"), " +
-                        "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged")"
+                        "scale=\(request.streamScale.map(String.init(describing:)) ?? "unchanged"), " +
+                        "fps=\(request.targetFrameRate.map(String.init) ?? "unchanged")"
                 )
             await handleStreamEncoderSettingsChange(request)
         } catch {

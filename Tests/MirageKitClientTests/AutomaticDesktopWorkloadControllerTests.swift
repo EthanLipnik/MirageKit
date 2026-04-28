@@ -113,6 +113,32 @@ struct AutomaticDesktopWorkloadControllerTests {
         #expect(afterCooldownAction != .none)
     }
 
+    @Test("Sustained clean cadence promotes one tier after cooldown")
+    func sustainedCleanCadencePromotesOneTierAfterCooldown() {
+        var controller = MirageAutomaticDesktopWorkloadController()
+        let snapshot = pipelineBoundSnapshot(
+            width: 2560,
+            height: 1440,
+            targetFrameRate: 30,
+            cadenceFPS: 30
+        )
+
+        var action: MirageAutomaticDesktopWorkloadController.Action = .none
+        for sample in 0..<12 {
+            action = controller.advance(
+                snapshot: snapshot,
+                resizeCriticalSectionActive: false,
+                now: CFAbsoluteTime(sample)
+            )
+        }
+
+        guard case .reconfigure(let target, _) = action else {
+            Issue.record("Expected workload promotion")
+            return
+        }
+        #expect(target == .qhd60)
+    }
+
     private func pipelineBoundSnapshot(
         width: Int,
         height: Int,

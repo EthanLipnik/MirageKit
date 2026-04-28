@@ -20,4 +20,12 @@ struct MirageSupportInfoTests {
         #expect(MirageSupportInfo.deviceDisplayName(for: "VirtualMac2,1") == "Mac")
         #expect(MirageSupportInfo.deviceDisplayName(for: "UnknownBoard") == "Unknown")
     }
+
+    @Test("Chip names map reported iPad hardware identifiers")
+    func chipNamesMapReportedIPadHardwareIdentifiers() {
+        #expect(MirageSupportInfo.chipName(for: "iPad13,8") == "Apple M1")
+        #expect(MirageSupportInfo.chipName(for: "iPad14,5") == "Apple M2")
+        #expect(MirageSupportInfo.chipName(for: "iPad16,6") == "Apple M4")
+        #expect(MirageSupportInfo.chipName(for: "UnknownBoard") == "Unknown")
+    }
 }

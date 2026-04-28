@@ -644,24 +644,32 @@ extension MirageClientService {
         streamID: StreamID,
         colorDepth: MirageStreamColorDepth? = nil,
         bitrate: Int? = nil,
-        streamScale: CGFloat? = nil
+        streamScale: CGFloat? = nil,
+        targetFrameRate: Int? = nil
     )
     async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
-        guard colorDepth != nil || bitrate != nil || streamScale != nil else { return }
+        guard colorDepth != nil || bitrate != nil || streamScale != nil || targetFrameRate != nil else { return }
 
         let clampedScale = streamScale.map(clampStreamScale)
+        let clampedFrameRate = targetFrameRate.map { MirageRenderModePolicy.normalizedTargetFPS($0) }
         let request = StreamEncoderSettingsChangeMessage(
             streamID: streamID,
             colorDepth: colorDepth,
             bitrate: bitrate,
-            streamScale: clampedScale
+            streamScale: clampedScale,
+            targetFrameRate: clampedFrameRate
         )
         if let bitrate {
             let bitrateText = (Double(bitrate) / 1_000_000.0)
                 .formatted(.number.precision(.fractionLength(1)))
             MirageLogger.client(
                 "Requesting encoder bitrate update for stream \(streamID): \(bitrateText) Mbps"
+            )
+        }
+        if let clampedFrameRate {
+            MirageLogger.client(
+                "Requesting encoder frame-rate update for stream \(streamID): \(clampedFrameRate)fps"
             )
         }
         try await sendControlMessage(.streamEncoderSettingsChange, content: request)

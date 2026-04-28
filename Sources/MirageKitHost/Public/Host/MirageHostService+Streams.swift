@@ -307,12 +307,21 @@ public extension MirageHostService {
             }
         }
 
-        try await activateAudioForClient(
-            clientID: client.id,
-            expectedSessionID: startupSessionID,
-            sourceStreamID: streamID,
-            configuration: resolvedAudioConfiguration
-        )
+        do {
+            try await activateAudioForClient(
+                clientID: client.id,
+                expectedSessionID: startupSessionID,
+                sourceStreamID: streamID,
+                configuration: resolvedAudioConfiguration
+            )
+        } catch {
+            await cleanupFailedStreamStart(
+                streamID: streamID,
+                context: context,
+                windowID: updatedWindow.id
+            )
+            throw error
+        }
 
         // Enable power assertion to prevent display sleep during streaming
         await PowerAssertionManager.shared.enable()
@@ -339,6 +348,11 @@ public extension MirageHostService {
                 .host,
                 error: error,
                 message: "Failed to open Loom video stream for stream \(streamID): "
+            )
+            await cleanupFailedStreamStart(
+                streamID: streamID,
+                context: context,
+                windowID: updatedWindow.id
             )
             throw error
         }
@@ -450,6 +464,11 @@ public extension MirageHostService {
                 MirageLogger.signpostEvent(.host, "Startup.StreamStartedSent", "stream=\(streamID) kind=window")
             } catch {
                 cancelPendingStartupAttempt(streamID: streamID)
+                await cleanupFailedStreamStart(
+                    streamID: streamID,
+                    context: context,
+                    windowID: updatedWindow.id
+                )
                 throw error
             }
         }
@@ -987,7 +1006,6 @@ public extension MirageHostService {
     async {
         clearPendingAppWindowReplacement(streamID: session.id)
         cancelPendingStartupAttempt(streamID: session.id)
-        guard let context = streamsByID[session.id] else { return }
 
         // Clear any stuck modifier state when stream ends
         inputController.clearAllModifiers()
@@ -997,7 +1015,8 @@ public extension MirageHostService {
 
         // Capture window ID before cleanup for minimize
         let windowID = session.window.id
-        let mirroredDisplayID = await context.getVirtualDisplayID()
+        let context = streamsByID[session.id]
+        let mirroredDisplayID = await context?.getVirtualDisplayID()
         let appSessionForStoppedWindow: MirageAppStreamSession? = if updateAppSession {
             await appStreamManager.getSessionForWindow(windowID)
         } else {
@@ -1017,7 +1036,7 @@ public extension MirageHostService {
         if shouldDisableSharedMirroringBeforeStop, let mirroredDisplayID {
             await disableDisplayMirroring(displayID: mirroredDisplayID)
         }
-        await context.stop()
+        await context?.stop()
         await WindowSpaceManager.shared.restoreAllWindowsOwned(by: session.id)
         inputController.endTrafficLightProtection(windowID: windowID)
         streamsByID.removeValue(forKey: session.id)

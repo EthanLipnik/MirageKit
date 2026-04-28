@@ -27,11 +27,12 @@ extension StreamContext {
     -> EncoderSettingsUpdateMode {
         let colorDepthChanged = updated.colorDepth != current.colorDepth
         let bitrateChanged = updated.bitrate != current.bitrate
+        let frameRateChanged = updated.targetFrameRate != current.targetFrameRate
 
-        guard colorDepthChanged || bitrateChanged else {
+        guard colorDepthChanged || bitrateChanged || frameRateChanged else {
             return .noChange
         }
-        if bitrateChanged, !colorDepthChanged {
+        if bitrateChanged, !colorDepthChanged, !frameRateChanged {
             return .bitrateOnly
         }
         return .fullReconfiguration

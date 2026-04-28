@@ -11,15 +11,15 @@ import Testing
 #if os(macOS)
 @Suite("Mirage Stream Bottleneck Kind")
 struct MirageStreamBottleneckKindTests {
-    @Test("Capture-bound classification prefers missing host capture cadence")
-    func captureBoundClassificationPrefersMissingHostCaptureCadence() {
+    @Test("Host cadence classification prefers missing host capture cadence")
+    func hostCadenceClassificationPrefersMissingHostCaptureCadence() {
         var snapshot = baselineSnapshot()
         snapshot.hostCaptureIngressFPS = 42
         snapshot.hostCaptureFPS = 42
         snapshot.hostEncodeAttemptFPS = 42
         snapshot.hostEncodedFPS = 42
 
-        #expect(snapshot.bottleneckKind == .captureBound)
+        #expect(snapshot.bottleneckKind == .hostCadenceLimited)
     }
 
     @Test("Encode-bound classification prefers encode throughput behind healthy source cadence")
