@@ -123,28 +123,29 @@ public actor ApplicationScanner {
         logger.debug("Starting application scan")
         let startTime = Date()
 
-        let candidates = await scanAllDirectories()
+        let candidates = await scanAllDirectories { candidate in
+            guard let app = await self.installedApp(
+                from: candidate,
+                includeIcons: includeIcons,
+                runningApps: runningApps,
+                streamingApps: streamingApps
+            ) else {
+                return
+            }
+            await onAppDiscovered?(app)
+        }
         if Task.isCancelled { return [] }
 
         var apps: [MirageInstalledApp] = []
         for candidate in candidates {
             if Task.isCancelled { return [] }
-            guard let bundleIdentifier = candidate.bundleIdentifier else { continue }
-
-            let iconData: Data? = includeIcons ? await generateIconPNG(for: candidate.url) : nil
-            if Task.isCancelled { return [] }
-
-            let app = MirageInstalledApp(
-                bundleIdentifier: bundleIdentifier,
-                name: candidate.name,
-                path: candidate.path,
-                iconData: iconData,
-                version: candidate.version,
-                isRunning: runningApps.contains(bundleIdentifier.lowercased()),
-                isBeingStreamed: streamingApps.contains(bundleIdentifier.lowercased())
-            )
+            guard let app = await installedApp(
+                from: candidate,
+                includeIcons: includeIcons,
+                runningApps: runningApps,
+                streamingApps: streamingApps
+            ) else { continue }
             apps.append(app)
-            await onAppDiscovered?(app)
         }
 
         // Sort by name
@@ -154,6 +155,28 @@ public actor ApplicationScanner {
         logger.debug("Scan complete: \(apps.count) apps in \(elapsed, privacy: .public)s")
 
         return apps
+    }
+
+    private func installedApp(
+        from candidate: AppCandidate,
+        includeIcons: Bool,
+        runningApps: Set<String>,
+        streamingApps: Set<String>
+    ) async -> MirageInstalledApp? {
+        guard let bundleIdentifier = candidate.bundleIdentifier else { return nil }
+
+        let iconData: Data? = includeIcons ? await generateIconPNG(for: candidate.url) : nil
+        if Task.isCancelled { return nil }
+
+        return MirageInstalledApp(
+            bundleIdentifier: bundleIdentifier,
+            name: candidate.name,
+            path: candidate.path,
+            iconData: iconData,
+            version: candidate.version,
+            isRunning: runningApps.contains(bundleIdentifier.lowercased()),
+            isBeingStreamed: streamingApps.contains(bundleIdentifier.lowercased())
+        )
     }
 
     /// Updates running/streaming status without rescanning

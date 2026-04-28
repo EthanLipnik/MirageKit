@@ -17,7 +17,7 @@ import Testing
 struct ControlUpdatePolicySuppressionTests {
     @Test("Interactive policy drop-set matches non-essential control messages")
     func interactivePolicyDropSet() {
-        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appList))
+        #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appListComplete))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appIconUpdate))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.appIconStreamComplete))
         #expect(MirageClientService.shouldDropNonEssentialControlMessageWhileInteractive(.hostHardwareIcon))
@@ -41,8 +41,8 @@ struct ControlUpdatePolicySuppressionTests {
     func deferredRefreshRequirementsConsumeOnce() async throws {
         let service = await MainActor.run { MirageClientService(deviceName: "Test Device") }
         let appListMessage = try ControlMessage(
-            type: .appList,
-            content: AppListMessage(requestID: UUID(), apps: [])
+            type: .appListComplete,
+            content: AppListCompleteMessage(requestID: UUID(), totalAppCount: 0)
         )
         let appIconUpdateMessage = try ControlMessage(
             type: .appIconUpdate,
@@ -68,7 +68,7 @@ struct ControlUpdatePolicySuppressionTests {
 
         await MainActor.run {
             service.setControlUpdatePolicy(.interactiveStreaming)
-            service.handleAppList(appListMessage)
+            service.handleAppListComplete(appListMessage)
             service.handleAppIconUpdate(appIconUpdateMessage)
             service.handleWindowList(windowListMessage)
             service.handleWindowUpdate(windowUpdateMessage)

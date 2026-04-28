@@ -38,6 +38,7 @@ extension MirageClientService {
 
             for app in progress.apps {
                 let normalizedBundleID = app.bundleIdentifier.lowercased()
+                appListMetadataBundleIdentifiersByRequestID[progress.requestID, default: []].insert(normalizedBundleID)
                 if app.iconData == nil,
                    let previousIcon = previousIconsByBundleID[normalizedBundleID] {
                     appByBundleID[normalizedBundleID] = appWithUpdatedIconData(
@@ -59,35 +60,42 @@ extension MirageClientService {
         }
     }
 
-    func handleAppList(_ message: ControlMessage) {
+    func handleAppListComplete(_ message: ControlMessage) {
         guard controlUpdatePolicy != .interactiveStreaming else {
             deferredControlRefreshRequirements.needsAppListRefresh = true
             return
         }
         do {
-            let appList = try message.decode(AppListMessage.self)
-            MirageLogger.client("Received app list with \(appList.apps.count) apps requestID=\(appList.requestID.uuidString)")
+            let complete = try message.decode(AppListCompleteMessage.self)
+            guard activeAppListRequestID == complete.requestID else {
+                MirageLogger.client(
+                    "Ignoring app-list completion for stale requestID=\(complete.requestID.uuidString)"
+                )
+                return
+            }
 
-            let previousIconsByBundleID = availableIconPayloadsByBundleIdentifier(from: availableApps)
-            availableApps = appList.apps.map { app in
-                guard app.iconData == nil,
-                      let previousIcon = previousIconsByBundleID[app.bundleIdentifier.lowercased()]
-                else {
-                    return app
+            let receivedBundleIdentifiers = appListMetadataBundleIdentifiersByRequestID[complete.requestID] ?? []
+            availableApps = availableApps
+                .filter { receivedBundleIdentifiers.contains($0.bundleIdentifier.lowercased()) }
+                .sorted {
+                    $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
                 }
-                return appWithUpdatedIconData(
-                    app,
-                    iconData: previousIcon.iconData,
-                    iconSignature: previousIcon.iconSignature
+            hasReceivedAppList = true
+            appListMetadataBundleIdentifiersByRequestID.removeValue(forKey: complete.requestID)
+            if appIconStreamStateByRequestID[complete.requestID] == nil {
+                appIconStreamStateByRequestID[complete.requestID] = AppIconStreamState()
+            }
+            if receivedBundleIdentifiers.count != complete.totalAppCount {
+                MirageLogger.client(
+                    "App-list completion count mismatch requestID=\(complete.requestID.uuidString) received=\(receivedBundleIdentifiers.count) total=\(complete.totalAppCount)"
                 )
             }
-            hasReceivedAppList = true
-            appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
-            activeAppListRequestID = appList.requestID
-            appIconStreamStateByRequestID[appList.requestID] = AppIconStreamState()
+            MirageLogger.client(
+                "Received app-list completion with \(complete.totalAppCount) apps requestID=\(complete.requestID.uuidString)"
+            )
             onAppListReceived?(availableApps)
         } catch {
-            MirageLogger.error(.client, error: error, message: "Failed to decode app list: ")
+            MirageLogger.error(.client, error: error, message: "Failed to decode app-list completion: ")
         }
     }
 
@@ -110,6 +118,13 @@ extension MirageClientService {
                 pendingForceIconResetForNextAppListRequest = true
                 MirageLogger.client(
                     "Rejected app icon update due to signature mismatch for bundleID=\(update.bundleIdentifier)"
+                )
+                return
+            }
+            guard Self.isValidImagePayload(update.iconData) else {
+                pendingForceIconResetForNextAppListRequest = true
+                MirageLogger.client(
+                    "Rejected app icon update due to invalid image payload for bundleID=\(update.bundleIdentifier)"
                 )
                 return
             }
@@ -408,6 +423,7 @@ extension MirageClientService {
         iconsByBundleIdentifier.reserveCapacity(apps.count)
         for app in apps {
             guard let iconData = app.iconData else { continue }
+            guard Self.isValidImagePayload(iconData) else { continue }
             let iconSignature = app.iconSignature ?? Self.sha256Hex(iconData)
             iconsByBundleIdentifier[app.bundleIdentifier.lowercased()] = AppIconPayload(
                 iconData: iconData,

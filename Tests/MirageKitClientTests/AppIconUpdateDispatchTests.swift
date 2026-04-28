@@ -31,7 +31,11 @@ struct AppIconUpdateDispatchTests {
         }
 
         let requestID = UUID()
-        let metadataList = AppListMessage(
+        service.activeAppListRequestID = requestID
+        service.appListMetadataBundleIdentifiersByRequestID[requestID] = []
+        service.appIconStreamStateByRequestID[requestID] = MirageClientService.AppIconStreamState()
+
+        let metadataProgress = AppListProgressMessage(
             requestID: requestID,
             apps: [
                 MirageInstalledApp(
@@ -42,14 +46,17 @@ struct AppIconUpdateDispatchTests {
                 ),
             ]
         )
-        let metadataEnvelope = try ControlMessage(type: .appList, content: metadataList)
-        service.handleAppList(metadataEnvelope)
+        let metadataEnvelope = try ControlMessage(type: .appListProgress, content: metadataProgress)
+        service.handleAppListProgress(metadataEnvelope)
+        let metadataComplete = AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+        let metadataCompleteEnvelope = try ControlMessage(type: .appListComplete, content: metadataComplete)
+        service.handleAppListComplete(metadataCompleteEnvelope)
 
         #expect(callbackCount == 1)
         #expect(latestApps.count == 1)
         #expect(latestApps.first?.iconData == nil)
 
-        let iconData = Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02, 0x03])
+        let iconData = Self.validPNGData
         let iconSignature = SHA256.hash(data: iconData).map { String(format: "%02x", $0) }.joined()
         let iconUpdate = AppIconUpdateMessage(
             requestID: requestID,
@@ -95,6 +102,7 @@ struct AppIconUpdateDispatchTests {
 
         let requestID = UUID()
         service.activeAppListRequestID = requestID
+        service.appListMetadataBundleIdentifiersByRequestID[requestID] = []
 
         let progress = AppListProgressMessage(
             requestID: requestID,
@@ -134,4 +142,46 @@ struct AppIconUpdateDispatchTests {
             "com.example.Terminal",
         ])
     }
+
+    @MainActor
+    @Test("Invalid icon payloads are rejected even with matching signatures")
+    func invalidIconPayloadsAreRejected() throws {
+        let service = MirageClientService()
+        let requestID = UUID()
+        service.activeAppListRequestID = requestID
+        service.appListMetadataBundleIdentifiersByRequestID[requestID] = []
+        service.appIconStreamStateByRequestID[requestID] = MirageClientService.AppIconStreamState()
+
+        let progress = AppListProgressMessage(
+            requestID: requestID,
+            apps: [
+                MirageInstalledApp(
+                    bundleIdentifier: "com.example.Editor",
+                    name: "Editor",
+                    path: "/Applications/Editor.app"
+                ),
+            ]
+        )
+        service.handleAppListProgress(try ControlMessage(type: .appListProgress, content: progress))
+        let completion = AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+        service.handleAppListComplete(try ControlMessage(type: .appListComplete, content: completion))
+
+        let invalidIconData = Data([0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02, 0x03])
+        let invalidSignature = SHA256.hash(data: invalidIconData).map { String(format: "%02x", $0) }.joined()
+        let update = AppIconUpdateMessage(
+            requestID: requestID,
+            bundleIdentifier: "com.example.Editor",
+            iconData: invalidIconData,
+            iconSignature: invalidSignature
+        )
+
+        service.handleAppIconUpdate(try ControlMessage(type: .appIconUpdate, content: update))
+
+        #expect(service.availableApps.first?.iconData == nil)
+        #expect(service.pendingForceIconResetForNextAppListRequest)
+    }
+
+    private static let validPNGData = Data(base64Encoded:
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
+    )!
 }

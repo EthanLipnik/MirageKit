@@ -100,17 +100,16 @@ package struct AppListRequestMessage: Codable {
     }
 }
 
-/// List of installed apps available for streaming (Host → Client)
-package struct AppListMessage: Codable {
-    /// Correlates this metadata snapshot with icon update/control messages.
+/// Completion marker for an app-list metadata stream (Host -> Client)
+package struct AppListCompleteMessage: Codable {
+    /// Correlates this completion marker with progress and icon update messages.
     package let requestID: UUID
-    /// Available apps (filtered by host's allow/blocklist, excludes apps already streaming)
-    /// Metadata only: icon payloads are sent via incremental `.appIconUpdate` messages.
-    package let apps: [MirageInstalledApp]
+    /// Total available apps emitted through progress messages for this request.
+    package let totalAppCount: Int
 
-    package init(requestID: UUID, apps: [MirageInstalledApp]) {
+    package init(requestID: UUID, totalAppCount: Int) {
         self.requestID = requestID
-        self.apps = apps
+        self.totalAppCount = max(0, totalAppCount)
     }
 }
 

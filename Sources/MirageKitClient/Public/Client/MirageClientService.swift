@@ -368,6 +368,9 @@ public final class MirageClientService {
     /// App-icon stream state keyed by app-list request identifier.
     var appIconStreamStateByRequestID: [UUID: AppIconStreamState] = [:]
 
+    /// Bundle identifiers emitted by the active app-list metadata stream.
+    var appListMetadataBundleIdentifiersByRequestID: [UUID: Set<String>] = [:]
+
     /// Whether the host is currently streaming or diffing app icons for the active app list.
     public var isAppIconStreamInProgress: Bool {
         !appIconStreamStateByRequestID.isEmpty

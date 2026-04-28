@@ -281,9 +281,9 @@ struct MirageKitTests {
         }
     }
 
-    @Test("Control parser rejects oversized app list payload")
-    func controlParserRejectsOversizedAppListPayload() {
-        var data = Data([ControlMessageType.appList.rawValue])
+    @Test("Control parser rejects oversized app-list progress payload")
+    func controlParserRejectsOversizedAppListProgressPayload() {
+        var data = Data([ControlMessageType.appListProgress.rawValue])
         let oversizedLength = UInt32(LoomMessageLimits.maxLargeMetadataPayloadBytes + 1)
         withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
 
@@ -291,7 +291,7 @@ struct MirageKitTests {
         case .invalidFrame:
             break
         default:
-            Issue.record("Expected invalidFrame for oversized appList payload.")
+            Issue.record("Expected invalidFrame for oversized app-list progress payload.")
         }
     }
 
@@ -502,13 +502,14 @@ struct MirageKitTests {
             ),
         ]
         let requestID = UUID(uuidString: "00000000-0000-0000-0000-000000000321")!
-        let appList = AppListMessage(requestID: requestID, apps: metadataApps)
-        let appListEnvelope = try ControlMessage(type: .appList, content: appList)
-        let (decodedAppListEnvelope, _) = try requireParsedControlMessage(from: appListEnvelope.serialize())
-        let decodedAppList = try decodedAppListEnvelope.decode(AppListMessage.self)
-        #expect(decodedAppList.requestID == requestID)
-        #expect(decodedAppList.apps.count == 1)
-        #expect(decodedAppList.apps[0].iconData == nil)
+        let appListCompletion = AppListCompleteMessage(requestID: requestID, totalAppCount: 1)
+        let appListCompletionEnvelope = try ControlMessage(type: .appListComplete, content: appListCompletion)
+        let (decodedAppListCompletionEnvelope, _) = try requireParsedControlMessage(
+            from: appListCompletionEnvelope.serialize()
+        )
+        let decodedAppListCompletion = try decodedAppListCompletionEnvelope.decode(AppListCompleteMessage.self)
+        #expect(decodedAppListCompletion.requestID == requestID)
+        #expect(decodedAppListCompletion.totalAppCount == 1)
 
         let progress = AppListProgressMessage(requestID: requestID, apps: metadataApps)
         let progressEnvelope = try ControlMessage(type: .appListProgress, content: progress)

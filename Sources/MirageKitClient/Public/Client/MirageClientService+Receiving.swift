@@ -134,7 +134,7 @@ extension MirageClientService {
 
     nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
         switch type {
-        case .appList,
+        case .appListComplete,
              .appIconUpdate,
              .appIconStreamComplete,
              .hostHardwareIcon,
@@ -149,7 +149,7 @@ extension MirageClientService {
 
     private func recordSuppressedControlMessage(_ type: ControlMessageType) {
         switch type {
-        case .appList, .appIconUpdate, .appIconStreamComplete:
+        case .appListComplete, .appIconUpdate, .appIconStreamComplete:
             deferredControlRefreshRequirements.needsAppListRefresh = true
         case .windowList, .windowUpdate:
             deferredControlRefreshRequirements.needsWindowListRefresh = true
@@ -168,7 +168,7 @@ extension MirageClientService {
                     "Suppressed app icon updates while prioritizing stream input (dropped=\(droppedAppIconUpdateMessagesWhileSuppressed))"
                 )
             }
-        case .appList, .appIconStreamComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
+        case .appListComplete, .appIconStreamComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
             break
         default:
             break

@@ -55,7 +55,7 @@ package enum ControlMessageType: UInt8, Codable {
 
     // App-centric streaming (new)
     case appListRequest = 0x80
-    case appList = 0x81
+    case appListComplete = 0x81
     case selectApp = 0x82
     case appStreamStarted = 0x83
     case windowAddedToStream = 0x84
@@ -203,7 +203,7 @@ package struct ControlMessage: Codable {
 
     private static func maxPayloadBytes(for type: ControlMessageType) -> Int {
         switch type {
-        case .appList, .appListProgress:
+        case .appListProgress:
             LoomMessageLimits.maxLargeMetadataPayloadBytes
         case .hostHardwareIcon, .appIconUpdate, .hostWallpaper:
             LoomMessageLimits.maxInlineAssetPayloadBytes

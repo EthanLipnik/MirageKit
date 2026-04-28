@@ -61,6 +61,7 @@ extension AppStreamManager {
                     return await refreshStatuses(for: cachedAppsWithIcons)
                 }
                 let refreshed = await refreshStatuses(for: apps)
+                await replayInstalledApps(refreshed, onAppDiscovered: onAppDiscovered)
                 cachedAppsWithIcons = refreshed
                 lastAppsScanWithIconsAt = now
                 return refreshed
@@ -68,7 +69,9 @@ extension AppStreamManager {
 
             if isCacheValid(lastAppsScanWithIconsAt, ttl: appScanWithIconsTTL, now: now),
                !cachedAppsWithIcons.isEmpty {
-                return await refreshStatuses(for: cachedAppsWithIcons)
+                let refreshed = await refreshStatuses(for: cachedAppsWithIcons)
+                await replayInstalledApps(refreshed, onAppDiscovered: onAppDiscovered)
+                return refreshed
             }
 
             let task = Task(priority: .utility) { [applicationScanner] in
@@ -100,6 +103,7 @@ extension AppStreamManager {
                 return await refreshStatuses(for: cachedAppsWithoutIcons)
             }
             let refreshed = await refreshStatuses(for: apps)
+            await replayInstalledApps(refreshed, onAppDiscovered: onAppDiscovered)
             cachedAppsWithoutIcons = refreshed
             lastAppsScanWithoutIconsAt = now
             return refreshed
@@ -107,7 +111,9 @@ extension AppStreamManager {
 
         if isCacheValid(lastAppsScanWithoutIconsAt, ttl: appScanWithoutIconsTTL, now: now),
            !cachedAppsWithoutIcons.isEmpty {
-            return await refreshStatuses(for: cachedAppsWithoutIcons)
+            let refreshed = await refreshStatuses(for: cachedAppsWithoutIcons)
+            await replayInstalledApps(refreshed, onAppDiscovered: onAppDiscovered)
+            return refreshed
         }
 
         let task = Task(priority: .utility) { [applicationScanner] in
@@ -130,6 +136,17 @@ extension AppStreamManager {
         cachedAppsWithoutIcons = refreshed
         lastAppsScanWithoutIconsAt = now
         return refreshed
+    }
+
+    func replayInstalledApps(
+        _ apps: [MirageInstalledApp],
+        onAppDiscovered: (@Sendable (MirageInstalledApp) async -> Void)?
+    ) async {
+        guard let onAppDiscovered else { return }
+        for app in apps {
+            if Task.isCancelled { return }
+            await onAppDiscovered(app)
+        }
     }
 
     func invalidateAppListCache() {

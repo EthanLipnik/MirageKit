@@ -15,7 +15,7 @@ import Foundation
 // MARK: - Directory Scanning
 
 extension ApplicationScanner {
-    struct AppCandidate: Hashable {
+    struct AppCandidate: Hashable, Sendable {
         let name: String
         let bundleIdentifier: String?
         let version: String?
@@ -40,12 +40,21 @@ extension ApplicationScanner {
         }
     }
 
-    func scanAllDirectories() async -> [AppCandidate] {
-        if Task.isCancelled { return [] }
-        return performDirectoryScan()
+    struct ProcessCandidateResult {
+        let canonicalURL: URL
+        let preferredCandidate: AppCandidate?
     }
 
-    func performDirectoryScan() -> [AppCandidate] {
+    func scanAllDirectories(
+        onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)? = nil
+    ) async -> [AppCandidate] {
+        if Task.isCancelled { return [] }
+        return await performDirectoryScan(onPreferredCandidate: onPreferredCandidate)
+    }
+
+    func performDirectoryScan(
+        onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
+    ) async -> [AppCandidate] {
         var byBundle: [String: AppCandidate] = [:]
         var byPath: [String: AppCandidate] = [:]
         var seenPaths = Set<String>()
@@ -69,9 +78,9 @@ extension ApplicationScanner {
                 continue
             }
 
-            for case let url as URL in enumerator {
+            for url in Self.urls(from: enumerator) {
                 if Task.isCancelled { return Array(byBundle.values) + Array(byPath.values) }
-                guard let canonicalURL = processCandidate(
+                guard let result = processCandidate(
                     at: url,
                     allowBundleContents: false,
                     seenPaths: &seenPaths,
@@ -83,11 +92,14 @@ extension ApplicationScanner {
                 ) else {
                     continue
                 }
+                if let preferredCandidate = result.preferredCandidate {
+                    await onPreferredCandidate?(preferredCandidate)
+                }
 
                 // Check if we should scan inside this app bundle (e.g., Xcode)
-                if allowsScanningBundleContents(at: canonicalURL) {
-                    scanNestedApps(
-                        inside: canonicalURL,
+                if allowsScanningBundleContents(at: result.canonicalURL) {
+                    await scanNestedApps(
+                        inside: result.canonicalURL,
                         currentDepth: 0,
                         maxDepth: nestedBundleScanDepth,
                         seenPaths: &seenPaths,
@@ -95,13 +107,22 @@ extension ApplicationScanner {
                         defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                         missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                         byBundle: &byBundle,
-                        byPath: &byPath
+                        byPath: &byPath,
+                        onPreferredCandidate: onPreferredCandidate
                     )
                 }
             }
         }
 
         return Array(byBundle.values) + Array(byPath.values)
+    }
+
+    nonisolated private static func urls(from enumerator: FileManager.DirectoryEnumerator) -> [URL] {
+        var urls: [URL] = []
+        for case let url as URL in enumerator {
+            urls.append(url)
+        }
+        return urls
     }
 
     @discardableResult
@@ -115,18 +136,23 @@ extension ApplicationScanner {
         byBundle: inout [String: AppCandidate],
         byPath _: inout [String: AppCandidate]
     )
-    -> URL? {
+    -> ProcessCandidateResult? {
         guard shouldConsiderApp(at: url, allowBundleContents: allowBundleContents) else { return nil }
 
         let canonicalURL = canonicalURL(forPath: url.path)
         guard seenPaths.insert(canonicalURL.path).inserted else { return nil }
 
-        guard let candidate = candidateFromBundle(at: canonicalURL) else { return canonicalURL }
+        guard let candidate = candidateFromBundle(at: canonicalURL) else {
+            return ProcessCandidateResult(canonicalURL: canonicalURL, preferredCandidate: nil)
+        }
 
         // Skip apps without bundle identifiers (can't stream them reliably)
-        guard let identifier = candidate.bundleIdentifier?.lowercased(), !identifier.isEmpty else { return canonicalURL }
+        guard let identifier = candidate.bundleIdentifier?.lowercased(), !identifier.isEmpty else {
+            return ProcessCandidateResult(canonicalURL: canonicalURL, preferredCandidate: nil)
+        }
 
         // Deduplicate by bundle identifier
+        var preferredCandidate: AppCandidate?
         if let existing = byBundle[identifier] {
             if shouldPrefer(
                 candidate,
@@ -137,12 +163,14 @@ extension ApplicationScanner {
                 missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers
             ) {
                 byBundle[identifier] = candidate
+                preferredCandidate = candidate
             }
         } else {
             byBundle[identifier] = candidate
+            preferredCandidate = candidate
         }
 
-        return canonicalURL
+        return ProcessCandidateResult(canonicalURL: canonicalURL, preferredCandidate: preferredCandidate)
     }
 
     func scanNestedApps(
@@ -154,8 +182,9 @@ extension ApplicationScanner {
         defaultAppPathByBundleIdentifier: inout [String: String],
         missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
-        byPath: inout [String: AppCandidate]
-    ) {
+        byPath: inout [String: AppCandidate],
+        onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
+    ) async {
         if Task.isCancelled { return }
         guard currentDepth < maxDepth else { return }
 
@@ -187,7 +216,7 @@ extension ApplicationScanner {
                     continue
                 }
 
-                if let canonicalURL = processCandidate(
+                if let result = processCandidate(
                     at: entry,
                     allowBundleContents: true,
                     seenPaths: &seenPaths,
@@ -196,18 +225,24 @@ extension ApplicationScanner {
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
-                ), nextDepth < maxDepth {
-                    scanNestedApps(
-                        inside: canonicalURL,
-                        currentDepth: nextDepth,
-                        maxDepth: maxDepth,
-                        seenPaths: &seenPaths,
-                        runningAppPathsByBundle: runningAppPathsByBundle,
-                        defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
-                        missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
-                        byBundle: &byBundle,
-                        byPath: &byPath
-                    )
+                ) {
+                    if let preferredCandidate = result.preferredCandidate {
+                        await onPreferredCandidate?(preferredCandidate)
+                    }
+                    if nextDepth < maxDepth {
+                        await scanNestedApps(
+                            inside: result.canonicalURL,
+                            currentDepth: nextDepth,
+                            maxDepth: maxDepth,
+                            seenPaths: &seenPaths,
+                            runningAppPathsByBundle: runningAppPathsByBundle,
+                            defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                            missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
+                            byBundle: &byBundle,
+                            byPath: &byPath,
+                            onPreferredCandidate: onPreferredCandidate
+                        )
+                    }
                 }
                 continue
             }
@@ -220,7 +255,7 @@ extension ApplicationScanner {
 
             // Check for Applications/Utilities subdirectories
             if lowercasedName.contains("applications") || lowercasedName.contains("utilities") {
-                collectApplications(
+                await collectApplications(
                     inside: entry,
                     currentDepth: nextDepth,
                     maxDepth: maxDepth,
@@ -229,14 +264,15 @@ extension ApplicationScanner {
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
-                    byPath: &byPath
+                    byPath: &byPath,
+                    onPreferredCandidate: onPreferredCandidate
                 )
                 continue
             }
 
             // Descend through transit directories
             if shouldDescendThroughTransitDirectory(named: lowercasedName) {
-                scanNestedApps(
+                await scanNestedApps(
                     inside: entry,
                     currentDepth: nextDepth,
                     maxDepth: maxDepth,
@@ -245,7 +281,8 @@ extension ApplicationScanner {
                     defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
-                    byPath: &byPath
+                    byPath: &byPath,
+                    onPreferredCandidate: onPreferredCandidate
                 )
             }
         }
@@ -260,8 +297,9 @@ extension ApplicationScanner {
         defaultAppPathByBundleIdentifier: inout [String: String],
         missingDefaultAppPathBundleIdentifiers: inout Set<String>,
         byBundle: inout [String: AppCandidate],
-        byPath: inout [String: AppCandidate]
-    ) {
+        byPath: inout [String: AppCandidate],
+        onPreferredCandidate: (@Sendable (AppCandidate) async -> Void)?
+    ) async {
         if Task.isCancelled { return }
         guard currentDepth < maxDepth else { return }
 
@@ -292,7 +330,7 @@ extension ApplicationScanner {
                     continue
                 }
 
-                if let canonicalURL = processCandidate(
+                if let result = processCandidate(
                     at: entry,
                     allowBundleContents: true,
                     seenPaths: &seenPaths,
@@ -301,18 +339,24 @@ extension ApplicationScanner {
                     missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                     byBundle: &byBundle,
                     byPath: &byPath
-                ), nextDepth < maxDepth {
-                    scanNestedApps(
-                        inside: canonicalURL,
-                        currentDepth: nextDepth,
-                        maxDepth: maxDepth,
-                        seenPaths: &seenPaths,
-                        runningAppPathsByBundle: runningAppPathsByBundle,
-                        defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
-                        missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
-                        byBundle: &byBundle,
-                        byPath: &byPath
-                    )
+                ) {
+                    if let preferredCandidate = result.preferredCandidate {
+                        await onPreferredCandidate?(preferredCandidate)
+                    }
+                    if nextDepth < maxDepth {
+                        await scanNestedApps(
+                            inside: result.canonicalURL,
+                            currentDepth: nextDepth,
+                            maxDepth: maxDepth,
+                            seenPaths: &seenPaths,
+                            runningAppPathsByBundle: runningAppPathsByBundle,
+                            defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
+                            missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
+                            byBundle: &byBundle,
+                            byPath: &byPath,
+                            onPreferredCandidate: onPreferredCandidate
+                        )
+                    }
                 }
                 continue
             }
@@ -324,7 +368,7 @@ extension ApplicationScanner {
             if shouldIgnoreNestedDirectory(named: entry.lastPathComponent) { continue }
 
             // Continue collecting in subdirectories
-            collectApplications(
+            await collectApplications(
                 inside: entry,
                 currentDepth: nextDepth,
                 maxDepth: maxDepth,
@@ -333,7 +377,8 @@ extension ApplicationScanner {
                 defaultAppPathByBundleIdentifier: &defaultAppPathByBundleIdentifier,
                 missingDefaultAppPathBundleIdentifiers: &missingDefaultAppPathBundleIdentifiers,
                 byBundle: &byBundle,
-                byPath: &byPath
+                byPath: &byPath,
+                onPreferredCandidate: onPreferredCandidate
             )
         }
     }

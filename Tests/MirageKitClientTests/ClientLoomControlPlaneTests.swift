@@ -83,7 +83,7 @@ struct ClientLoomControlPlaneTests {
                 return receivedAppListRequest.requestID
             }()
 
-            let appListResponse = AppListMessage(
+            let appListProgress = AppListProgressMessage(
                 requestID: appListRequestID,
                 apps: [
                     MirageInstalledApp(
@@ -93,15 +93,26 @@ struct ClientLoomControlPlaneTests {
                     ),
                 ]
             )
-            try await serverControl.send(.appList, content: appListResponse)
+            try await serverControl.send(.appListProgress, content: appListProgress)
+            let appListComplete = AppListCompleteMessage(
+                requestID: appListRequestID,
+                totalAppCount: 1
+            )
+            try await serverControl.send(.appListComplete, content: appListComplete)
 
             try await {
-                let receivedAppListEnvelope = try await clientReceiver.next()
-                #expect(receivedAppListEnvelope.type == .appList)
-                let receivedAppList = try receivedAppListEnvelope.decode(AppListMessage.self)
-                #expect(receivedAppList.requestID == appListResponse.requestID)
-                #expect(receivedAppList.apps.count == 1)
-                #expect(receivedAppList.apps.first?.bundleIdentifier == "com.apple.Safari")
+                let receivedProgressEnvelope = try await clientReceiver.next()
+                #expect(receivedProgressEnvelope.type == .appListProgress)
+                let receivedProgress = try receivedProgressEnvelope.decode(AppListProgressMessage.self)
+                #expect(receivedProgress.requestID == appListRequestID)
+                #expect(receivedProgress.apps.count == 1)
+                #expect(receivedProgress.apps.first?.bundleIdentifier == "com.apple.Safari")
+
+                let receivedCompleteEnvelope = try await clientReceiver.next()
+                #expect(receivedCompleteEnvelope.type == .appListComplete)
+                let receivedComplete = try receivedCompleteEnvelope.decode(AppListCompleteMessage.self)
+                #expect(receivedComplete.requestID == appListRequestID)
+                #expect(receivedComplete.totalAppCount == 1)
             }()
 
             try await clientControl.send(ControlMessage(type: .ping))

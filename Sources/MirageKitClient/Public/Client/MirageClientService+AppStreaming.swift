@@ -42,15 +42,17 @@ public extension MirageClientService {
             knownIconSignaturesByBundleIdentifier: normalizedKnownIconSignatures,
             requestID: requestID
         )
+        activeAppListRequestID = requestID
+        appListMetadataBundleIdentifiersByRequestID.removeAll(keepingCapacity: false)
+        appListMetadataBundleIdentifiersByRequestID[requestID] = []
+        appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
+        appIconStreamStateByRequestID[requestID] = AppIconStreamState()
+        pendingForceIconResetForNextAppListRequest = false
         try await sendControlMessage(.appListRequest, content: request)
         // App-list snapshots and follow-up icon diffs can temporarily monopolize
         // the control channel. Give the heartbeat room so it does not declare a
         // false disconnect while the host is still servicing metadata work.
         heartbeatGraceDeadline = ContinuousClock.now + .seconds(20)
-        activeAppListRequestID = requestID
-        appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
-        appIconStreamStateByRequestID[requestID] = AppIconStreamState()
-        pendingForceIconResetForNextAppListRequest = false
         MirageLogger.client("App list request sent")
     }
 
