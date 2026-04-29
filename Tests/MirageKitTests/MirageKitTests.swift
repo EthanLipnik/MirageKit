@@ -295,20 +295,6 @@ struct MirageKitTests {
         }
     }
 
-    @Test("Control parser rejects oversized app icon payload")
-    func controlParserRejectsOversizedAppIconPayload() {
-        var data = Data([ControlMessageType.appIconUpdate.rawValue])
-        let oversizedLength = UInt32(LoomMessageLimits.maxInlineAssetPayloadBytes + 1)
-        withUnsafeBytes(of: oversizedLength.littleEndian) { data.append(contentsOf: $0) }
-
-        switch ControlMessage.deserialize(from: data) {
-        case .invalidFrame:
-            break
-        default:
-            Issue.record("Expected invalidFrame for oversized appIconUpdate payload.")
-        }
-    }
-
     @Test("Control parser rejects oversized host wallpaper payload")
     func controlParserRejectsOversizedHostWallpaperPayload() {
         var data = Data([ControlMessageType.hostWallpaper.rawValue])
@@ -488,14 +474,15 @@ struct MirageKitTests {
         #expect(decoded.requestID.uuidString.lowercased() == "00000000-0000-0000-0000-000000000123")
     }
 
-    @Test("Metadata app list and icon stream messages serialize")
-    func appListAndIconStreamSerialization() throws {
-        let metadataApps = [
+    @Test("App list progress with inline icons serializes")
+    func appListProgressWithInlineIconsSerialization() throws {
+        let progressApps = [
             MirageInstalledApp(
                 bundleIdentifier: "com.apple.mail",
                 name: "Mail",
                 path: "/Applications/Mail.app",
-                iconData: nil,
+                iconData: Data([0x01, 0x02, 0x03]),
+                iconSignature: "abc123",
                 version: "1.0",
                 isRunning: true,
                 isBeingStreamed: false
@@ -511,40 +498,15 @@ struct MirageKitTests {
         #expect(decodedAppListCompletion.requestID == requestID)
         #expect(decodedAppListCompletion.totalAppCount == 1)
 
-        let progress = AppListProgressMessage(requestID: requestID, apps: metadataApps)
+        let progress = AppListProgressMessage(requestID: requestID, apps: progressApps)
         let progressEnvelope = try ControlMessage(type: .appListProgress, content: progress)
         let (decodedProgressEnvelope, _) = try requireParsedControlMessage(from: progressEnvelope.serialize())
         let decodedProgress = try decodedProgressEnvelope.decode(AppListProgressMessage.self)
         #expect(decodedProgress.requestID == requestID)
         #expect(decodedProgress.apps.count == 1)
         #expect(decodedProgress.apps[0].bundleIdentifier == "com.apple.mail")
-        #expect(decodedProgress.apps[0].iconData == nil)
-
-        let iconUpdate = AppIconUpdateMessage(
-            requestID: requestID,
-            bundleIdentifier: "com.apple.mail",
-            iconData: Data([0x01, 0x02, 0x03]),
-            iconSignature: "abc123"
-        )
-        let iconEnvelope = try ControlMessage(type: .appIconUpdate, content: iconUpdate)
-        let (decodedIconEnvelope, _) = try requireParsedControlMessage(from: iconEnvelope.serialize())
-        let decodedIcon = try decodedIconEnvelope.decode(AppIconUpdateMessage.self)
-        #expect(decodedIcon.requestID == requestID)
-        #expect(decodedIcon.bundleIdentifier == "com.apple.mail")
-        #expect(decodedIcon.iconData == Data([0x01, 0x02, 0x03]))
-        #expect(decodedIcon.iconSignature == "abc123")
-
-        let completion = AppIconStreamCompleteMessage(
-            requestID: requestID,
-            sentIconCount: 12,
-            skippedBundleIdentifiers: ["com.apple.finder"]
-        )
-        let completionEnvelope = try ControlMessage(type: .appIconStreamComplete, content: completion)
-        let (decodedCompletionEnvelope, _) = try requireParsedControlMessage(from: completionEnvelope.serialize())
-        let decodedCompletion = try decodedCompletionEnvelope.decode(AppIconStreamCompleteMessage.self)
-        #expect(decodedCompletion.requestID == requestID)
-        #expect(decodedCompletion.sentIconCount == 12)
-        #expect(decodedCompletion.skippedBundleIdentifiers == ["com.apple.finder"])
+        #expect(decodedProgress.apps[0].iconData == Data([0x01, 0x02, 0x03]))
+        #expect(decodedProgress.apps[0].iconSignature == "abc123")
     }
 
     @Test("App window inventory and swap messages serialize")
@@ -1021,8 +983,8 @@ struct MirageKitTests {
         #expect(ControlMessageType(rawValue: 0x8A) == .appWindowCloseAlertActionRequest)
         #expect(ControlMessageType(rawValue: 0x8B) == .appWindowCloseAlertActionResult)
         #expect(ControlMessageType(rawValue: 0x8C) == .appWindowSwapResult)
-        #expect(ControlMessageType(rawValue: 0x95) == .appIconUpdate)
-        #expect(ControlMessageType(rawValue: 0x96) == .appIconStreamComplete)
+        #expect(ControlMessageType(rawValue: 0x95) == nil)
+        #expect(ControlMessageType(rawValue: 0x96) == nil)
     }
 
     @Test("App window close-blocked alert payload serialization")

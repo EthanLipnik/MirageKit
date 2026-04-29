@@ -2051,46 +2051,31 @@ extension MirageHostService {
             guard let self else { return }
             await pruneOrphanedAppSessions()
 
-            let (iconStream, iconContinuation) = AsyncStream.makeStream(of: MirageInstalledApp.self)
-            let iconTask = Task { @MainActor [weak self] in
-                await self?.streamAppIconUpdates(
-                    apps: iconStream,
-                    requestID: requestID,
-                    clientID: clientID,
-                    token: token,
-                    clientContext: clientContext,
-                    forceIconReset: forceIconReset,
-                    priorityBundleIdentifiers: priorityBundleIdentifiers,
-                    knownIconSignaturesByBundleIdentifier: knownIconSignaturesByBundleIdentifier
-                )
-            }
-            defer {
-                iconContinuation.finish()
-                iconTask.cancel()
-            }
-
             let apps = await appStreamManager.getInstalledApps(
                 includeIcons: false,
-                forceRefresh: forceRefresh,
-                onAppDiscovered: { [weak self] app in
-                    await self?.sendAppListProgress(
-                        app: app,
-                        requestID: requestID,
-                        clientID: clientID,
-                        token: token
-                    )
-                    iconContinuation.yield(app)
-                }
+                forceRefresh: forceRefresh
+            )
+            if Task.isCancelled { return }
+
+            let orderedApps = orderedAppsForAppListProgress(
+                apps,
+                priorityBundleIdentifiers: priorityBundleIdentifiers
+            )
+            await sendAppListProgress(
+                apps: orderedApps,
+                requestID: requestID,
+                clientID: clientID,
+                token: token,
+                forceIconReset: forceIconReset,
+                knownIconSignaturesByBundleIdentifier: knownIconSignaturesByBundleIdentifier
             )
             if Task.isCancelled { return }
 
             await sendAppListComplete(
                 requestID: requestID,
-                appCount: apps.count,
+                appCount: orderedApps.count,
                 clientContext: clientContext
             )
-            iconContinuation.finish()
-            await iconTask.value
             if Task.isCancelled { return }
             if appListRequestToken == token, pendingAppListRequest?.clientID == clientID {
                 pendingAppListRequest = nil
@@ -2121,7 +2106,53 @@ extension MirageHostService {
     }
 
     private func sendAppListProgress(
-        app: MirageInstalledApp,
+        apps: [MirageInstalledApp],
+        requestID: UUID,
+        clientID: UUID,
+        token: UUID,
+        forceIconReset: Bool,
+        knownIconSignaturesByBundleIdentifier: [String: String]
+    ) async {
+        var batch: [MirageInstalledApp] = []
+        batch.reserveCapacity(8)
+
+        for (index, app) in apps.enumerated() {
+            guard appListRequestToken == token,
+                  pendingAppListRequest?.clientID == clientID,
+                  findClientContext(clientID: clientID) != nil else {
+                return
+            }
+
+            let appWithOptionalIcon = await appListProgressApp(
+                app,
+                forceIconReset: forceIconReset,
+                knownIconSignaturesByBundleIdentifier: knownIconSignaturesByBundleIdentifier
+            )
+            batch.append(appWithOptionalIcon)
+
+            let batchLimit = index < 24 ? 1 : 8
+            if batch.count >= batchLimit {
+                await sendAppListProgressBatch(
+                    batch,
+                    requestID: requestID,
+                    clientID: clientID,
+                    token: token
+                )
+                batch.removeAll(keepingCapacity: true)
+            }
+        }
+
+        guard !batch.isEmpty else { return }
+        await sendAppListProgressBatch(
+            batch,
+            requestID: requestID,
+            clientID: clientID,
+            token: token
+        )
+    }
+
+    private func sendAppListProgressBatch(
+        _ apps: [MirageInstalledApp],
         requestID: UUID,
         clientID: UUID,
         token: UUID
@@ -2131,188 +2162,102 @@ extension MirageHostService {
               let clientContext = findClientContext(clientID: clientID) else {
             return
         }
-
         do {
             let progress = AppListProgressMessage(
                 requestID: requestID,
-                apps: Self.metadataOnlyApps([app])
+                apps: apps
             )
             try await clientContext.send(.appListProgress, content: progress)
         } catch {
             await handleControlChannelSendFailure(
                 client: clientContext.client,
                 error: error,
-                operation: "App list progress for \(app.bundleIdentifier)",
+                operation: "App list progress batch",
                 sessionID: clientContext.sessionID
             )
         }
     }
 
-    private func streamAppIconUpdates(
-        apps: AsyncStream<MirageInstalledApp>,
-        requestID: UUID,
-        clientID: UUID,
-        token: UUID,
-        clientContext: ClientContext,
+    private func appListProgressApp(
+        _ app: MirageInstalledApp,
         forceIconReset: Bool,
-        priorityBundleIdentifiers: [String],
         knownIconSignaturesByBundleIdentifier: [String: String]
-    ) async {
-        var skippedBundleIdentifiers: [String] = []
-        var sentIconCount = 0
-        var completedBundleIdentifiers: Set<String> = []
-        let prioritizedBundleIdentifiers = Set(priorityBundleIdentifiers)
-        var deferredApps: [MirageInstalledApp] = []
-
-        for await app in apps {
-            guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
-
-            let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
-            guard completedBundleIdentifiers.insert(normalizedBundleIdentifier).inserted else {
-                continue
-            }
-            if !prioritizedBundleIdentifiers.isEmpty,
-               !prioritizedBundleIdentifiers.contains(normalizedBundleIdentifier) {
-                deferredApps.append(app)
-                continue
-            }
-
-            guard let iconPayload = await appIconCatalogStore.payload(
-                for: app,
-                maxPixelSize: 128,
-                heifCompressionQuality: 0.72,
-                loader: { [appStreamManager] in
-                    await appStreamManager.iconDataForInstalledApp(
-                        atPath: app.path,
-                        maxPixelSize: 128,
-                        heifCompressionQuality: 0.72
-                    )
-                }
-            ) else {
-                completedBundleIdentifiers.remove(normalizedBundleIdentifier)
-                continue
-            }
-
-            if !forceIconReset,
-               knownIconSignaturesByBundleIdentifier[normalizedBundleIdentifier] == iconPayload.signature {
-                skippedBundleIdentifiers.append(app.bundleIdentifier)
-                continue
-            }
-
-            let update = AppIconUpdateMessage(
-                requestID: requestID,
-                bundleIdentifier: app.bundleIdentifier,
-                iconData: iconPayload.data,
-                iconSignature: iconPayload.signature
-            )
-
-            do {
-                guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
-                try await clientContext.send(.appIconUpdate, content: update)
-                sentIconCount += 1
-            } catch {
-                await handleControlChannelSendFailure(
-                    client: clientContext.client,
-                    error: error,
-                    operation: "App icon update for \(app.bundleIdentifier)",
-                    sessionID: clientContext.sessionID
+    ) async -> MirageInstalledApp {
+        let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
+        guard let iconPayload = await appIconCatalogStore.payload(
+            for: app,
+            maxPixelSize: 128,
+            heifCompressionQuality: 0.72,
+            loader: { [appStreamManager] in
+                await appStreamManager.iconDataForInstalledApp(
+                    atPath: app.path,
+                    maxPixelSize: 128,
+                    heifCompressionQuality: 0.72
                 )
-                return
             }
+        ) else {
+            return Self.metadataOnlyApp(app)
         }
 
-        guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
-
-        for app in deferredApps {
-            guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
-
-            guard let iconPayload = await appIconCatalogStore.payload(
-                for: app,
-                maxPixelSize: 128,
-                heifCompressionQuality: 0.72,
-                loader: { [appStreamManager] in
-                    await appStreamManager.iconDataForInstalledApp(
-                        atPath: app.path,
-                        maxPixelSize: 128,
-                        heifCompressionQuality: 0.72
-                    )
-                }
-            ) else {
-                continue
-            }
-
-            let normalizedBundleIdentifier = app.bundleIdentifier.lowercased()
-
-            if !forceIconReset,
-               knownIconSignaturesByBundleIdentifier[normalizedBundleIdentifier] == iconPayload.signature {
-                skippedBundleIdentifiers.append(app.bundleIdentifier)
-                continue
-            }
-
-            let update = AppIconUpdateMessage(
-                requestID: requestID,
-                bundleIdentifier: app.bundleIdentifier,
-                iconData: iconPayload.data,
-                iconSignature: iconPayload.signature
-            )
-
-            do {
-                guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
-                try await clientContext.send(.appIconUpdate, content: update)
-                sentIconCount += 1
-            } catch {
-                await handleControlChannelSendFailure(
-                    client: clientContext.client,
-                    error: error,
-                    operation: "App icon update for \(app.bundleIdentifier)",
-                    sessionID: clientContext.sessionID
-                )
-                return
-            }
+        if !forceIconReset,
+           knownIconSignaturesByBundleIdentifier[normalizedBundleIdentifier] == iconPayload.signature {
+            return Self.metadataOnlyApp(app)
         }
 
-        guard isActiveAppIconStreamRequest(clientID: clientID, token: token) else { return }
-
-        let completion = AppIconStreamCompleteMessage(
-            requestID: requestID,
-            sentIconCount: sentIconCount,
-            skippedBundleIdentifiers: skippedBundleIdentifiers
+        return MirageInstalledApp(
+            bundleIdentifier: app.bundleIdentifier,
+            name: app.name,
+            path: app.path,
+            iconData: iconPayload.data,
+            iconSignature: iconPayload.signature,
+            version: app.version,
+            isRunning: app.isRunning,
+            isBeingStreamed: app.isBeingStreamed
         )
-
-        do {
-            try await clientContext.send(.appIconStreamComplete, content: completion)
-            MirageLogger.host(
-                "App icon stream complete for \(clientContext.client.name) requestID=\(requestID.uuidString) sent=\(sentIconCount) skipped=\(skippedBundleIdentifiers.count)"
-            )
-        } catch {
-            await handleControlChannelSendFailure(
-                client: clientContext.client,
-                error: error,
-                operation: "App icon stream completion",
-                sessionID: clientContext.sessionID
-            )
-        }
     }
 
-    private func isActiveAppIconStreamRequest(clientID: UUID, token: UUID) -> Bool {
-        !Task.isCancelled &&
-            appListRequestToken == token &&
-            pendingAppListRequest?.clientID == clientID &&
-            findClientContext(clientID: clientID) != nil
+    func orderedAppsForAppListProgress(
+        _ apps: [MirageInstalledApp],
+        priorityBundleIdentifiers: [String]
+    ) -> [MirageInstalledApp] {
+        guard !apps.isEmpty else { return [] }
+
+        var appsByBundleIdentifier: [String: MirageInstalledApp] = [:]
+        appsByBundleIdentifier.reserveCapacity(apps.count)
+        for app in apps {
+            appsByBundleIdentifier[app.bundleIdentifier.lowercased()] = app
+        }
+
+        var emittedBundleIdentifiers: Set<String> = []
+        var orderedApps: [MirageInstalledApp] = []
+        orderedApps.reserveCapacity(apps.count)
+
+        for bundleIdentifier in priorityBundleIdentifiers {
+            guard let app = appsByBundleIdentifier[bundleIdentifier] else { continue }
+            guard emittedBundleIdentifiers.insert(bundleIdentifier).inserted else { continue }
+            orderedApps.append(app)
+        }
+
+        let remainingApps = apps
+            .filter { !emittedBundleIdentifiers.contains($0.bundleIdentifier.lowercased()) }
+            .sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        orderedApps.append(contentsOf: remainingApps)
+        return orderedApps
     }
 
-    private static func metadataOnlyApps(_ apps: [MirageInstalledApp]) -> [MirageInstalledApp] {
-        apps.map { app in
-            MirageInstalledApp(
-                bundleIdentifier: app.bundleIdentifier,
-                name: app.name,
-                path: app.path,
-                iconData: nil,
-                version: app.version,
-                isRunning: app.isRunning,
-                isBeingStreamed: app.isBeingStreamed
-            )
-        }
+    private static func metadataOnlyApp(_ app: MirageInstalledApp) -> MirageInstalledApp {
+        MirageInstalledApp(
+            bundleIdentifier: app.bundleIdentifier,
+            name: app.name,
+            path: app.path,
+            iconData: nil,
+            iconSignature: nil,
+            version: app.version,
+            isRunning: app.isRunning,
+            isBeingStreamed: app.isBeingStreamed
+        )
     }
 
     private static func normalizedBundleIdentifierList(_ bundleIdentifiers: [String]) -> [String] {

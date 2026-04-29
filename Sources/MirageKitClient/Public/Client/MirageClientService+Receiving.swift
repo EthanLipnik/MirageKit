@@ -135,8 +135,6 @@ extension MirageClientService {
     nonisolated static func shouldDropNonEssentialControlMessageWhileInteractive(_ type: ControlMessageType) -> Bool {
         switch type {
         case .appListComplete,
-             .appIconUpdate,
-             .appIconStreamComplete,
              .hostHardwareIcon,
              .windowList,
              .windowUpdate,
@@ -149,7 +147,7 @@ extension MirageClientService {
 
     private func recordSuppressedControlMessage(_ type: ControlMessageType) {
         switch type {
-        case .appListComplete, .appIconUpdate, .appIconStreamComplete:
+        case .appListComplete:
             deferredControlRefreshRequirements.needsAppListRefresh = true
         case .windowList, .windowUpdate:
             deferredControlRefreshRequirements.needsWindowListRefresh = true
@@ -160,15 +158,7 @@ extension MirageClientService {
         }
 
         switch type {
-        case .appIconUpdate:
-            droppedAppIconUpdateMessagesWhileSuppressed &+= 1
-            if droppedAppIconUpdateMessagesWhileSuppressed == 1 ||
-                droppedAppIconUpdateMessagesWhileSuppressed % 200 == 0 {
-                MirageLogger.client(
-                    "Suppressed app icon updates while prioritizing stream input (dropped=\(droppedAppIconUpdateMessagesWhileSuppressed))"
-                )
-            }
-        case .appListComplete, .appIconStreamComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
+        case .appListComplete, .windowList, .windowUpdate, .hostSoftwareUpdateStatus:
             break
         default:
             break
@@ -256,7 +246,7 @@ extension MirageClientService {
 
     nonisolated static func shouldLogControlMessage(_ type: ControlMessageType) -> Bool {
         switch type {
-        case .appIconUpdate, .cursorUpdate, .cursorPositionUpdate, .streamMetricsUpdate:
+        case .cursorUpdate, .cursorPositionUpdate, .streamMetricsUpdate:
             return false
         default:
             return true

@@ -26,28 +26,24 @@ public extension MirageClientService {
     ) async throws {
         guard case .connected = connectionState else { throw MirageError.protocolError("Not connected") }
 
-        let shouldForceIconReset = forceIconReset || pendingForceIconResetForNextAppListRequest
         let normalizedPriority = Self.normalizedPriorityBundleIdentifiers(priorityBundleIdentifiers)
         let normalizedKnownIconSignatures = Self.normalizedKnownIconSignatures(
             knownIconSignaturesByBundleIdentifier
         )
         let requestID = UUID()
         MirageLogger.client(
-            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(shouldForceIconReset), priorityCount: \(normalizedPriority.count), knownIconCount: \(normalizedKnownIconSignatures.count), requestID: \(requestID.uuidString))"
+            "Requesting app list from host (forceRefresh: \(forceRefresh), forceIconReset: \(forceIconReset), priorityCount: \(normalizedPriority.count), knownIconCount: \(normalizedKnownIconSignatures.count), requestID: \(requestID.uuidString))"
         )
         let request = AppListRequestMessage(
             forceRefresh: forceRefresh,
-            forceIconReset: shouldForceIconReset,
+            forceIconReset: forceIconReset,
             priorityBundleIdentifiers: normalizedPriority,
             knownIconSignaturesByBundleIdentifier: normalizedKnownIconSignatures,
             requestID: requestID
         )
         activeAppListRequestID = requestID
-        appListMetadataBundleIdentifiersByRequestID.removeAll(keepingCapacity: false)
-        appListMetadataBundleIdentifiersByRequestID[requestID] = []
-        appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
-        appIconStreamStateByRequestID[requestID] = AppIconStreamState()
-        pendingForceIconResetForNextAppListRequest = false
+        availableAppsByBundleIdentifier.removeAll(keepingCapacity: true)
+        orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: true)
         try await sendControlMessage(.appListRequest, content: request)
         // App-list snapshots and follow-up icon diffs can temporarily monopolize
         // the control channel. Give the heartbeat room so it does not declare a
@@ -323,6 +319,7 @@ public extension MirageClientService {
                 isBeingStreamed: app.isBeingStreamed
             )
         }
+        rebuildAvailableAppAccumulator(from: availableApps)
     }
 
     private static func normalizedPriorityBundleIdentifiers(_ bundleIdentifiers: [String]) -> [String] {

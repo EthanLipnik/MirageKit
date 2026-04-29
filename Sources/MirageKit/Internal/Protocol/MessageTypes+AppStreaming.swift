@@ -113,60 +113,16 @@ package struct AppListCompleteMessage: Codable {
     }
 }
 
-/// Incremental metadata app-list progress (Host -> Client)
+/// Incremental app-list progress (Host -> Client)
 package struct AppListProgressMessage: Codable {
     /// Correlates this progress snapshot with the active app-list request.
     package let requestID: UUID
-    /// Newly discovered metadata-only apps.
+    /// Newly discovered app details. Icon payloads are included when the client does not already have them.
     package let apps: [MirageInstalledApp]
 
     package init(requestID: UUID, apps: [MirageInstalledApp]) {
         self.requestID = requestID
         self.apps = apps
-    }
-}
-
-/// Incremental app icon payload update (Host → Client)
-package struct AppIconUpdateMessage: Codable {
-    /// Request identifier that this update belongs to.
-    package let requestID: UUID
-    /// Bundle identifier of the updated app icon.
-    package let bundleIdentifier: String
-    /// Encoded icon payload (HEIF preferred, PNG fallback).
-    package let iconData: Data
-    /// SHA-256 digest (hex) of `iconData`.
-    package let iconSignature: String
-
-    package init(
-        requestID: UUID,
-        bundleIdentifier: String,
-        iconData: Data,
-        iconSignature: String
-    ) {
-        self.requestID = requestID
-        self.bundleIdentifier = bundleIdentifier
-        self.iconData = iconData
-        self.iconSignature = iconSignature
-    }
-}
-
-/// End-of-stream marker for app icon updates (Host → Client)
-package struct AppIconStreamCompleteMessage: Codable {
-    /// Request identifier that this completion belongs to.
-    package let requestID: UUID
-    /// Number of icon updates emitted for this request.
-    package let sentIconCount: Int
-    /// Bundle identifiers skipped by host-side icon diffing.
-    package let skippedBundleIdentifiers: [String]
-
-    package init(
-        requestID: UUID,
-        sentIconCount: Int,
-        skippedBundleIdentifiers: [String]
-    ) {
-        self.requestID = requestID
-        self.sentIconCount = max(0, sentIconCount)
-        self.skippedBundleIdentifiers = skippedBundleIdentifiers
     }
 }
 

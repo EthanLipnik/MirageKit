@@ -332,11 +332,9 @@ extension MirageClientService {
         availableApps = []
         hasReceivedAppList = false
         activeAppListRequestID = nil
-        appListMetadataBundleIdentifiersByRequestID.removeAll(keepingCapacity: false)
-        appIconStreamStateByRequestID.removeAll(keepingCapacity: false)
-        pendingForceIconResetForNextAppListRequest = false
+        availableAppsByBundleIdentifier.removeAll(keepingCapacity: false)
+        orderedAvailableAppBundleIdentifiers.removeAll(keepingCapacity: false)
         deferredControlRefreshRequirements = .none
-        droppedAppIconUpdateMessagesWhileSuppressed = 0
         setControlUpdatePolicy(.normal)
         streamingAppBundleID = nil
         for session in sessions {

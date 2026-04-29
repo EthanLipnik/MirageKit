@@ -384,6 +384,10 @@ public final class MirageClientService {
 
     /// Request identifier for the latest app list snapshot received from the host.
     var activeAppListRequestID: UUID?
+    /// Incremental app-list state keyed by normalized bundle identifier.
+    var availableAppsByBundleIdentifier: [String: MirageInstalledApp] = [:]
+    /// Stable app-list order for the active app-list request.
+    var orderedAvailableAppBundleIdentifiers: [String] = []
     /// Active stream setup request used for scoped cancellation before a stream ID exists.
     var pendingStreamSetupRequestID: UUID?
     var pendingStreamSetupKind: StreamSetupKind?
@@ -391,24 +395,8 @@ public final class MirageClientService {
     /// Startup-attempt identifiers keyed by stream for explicit ready-ack gating.
     var startupAttemptIDByStream: [StreamID: UUID] = [:]
 
-    /// App-icon stream state keyed by app-list request identifier.
-    var appIconStreamStateByRequestID: [UUID: AppIconStreamState] = [:]
-
-    /// Bundle identifiers emitted by the active app-list metadata stream.
-    var appListMetadataBundleIdentifiersByRequestID: [UUID: Set<String>] = [:]
-
-    /// Whether the host is currently streaming or diffing app icons for the active app list.
-    public var isAppIconStreamInProgress: Bool {
-        !appIconStreamStateByRequestID.isEmpty
-    }
-
-    /// Whether the next app-list request should force a full icon reset on host.
-    var pendingForceIconResetForNextAppListRequest: Bool = false
-
     /// Policy controlling whether non-essential control updates should be processed.
     public private(set) var controlUpdatePolicy: ControlUpdatePolicy = .normal
-    /// Number of app-icon updates dropped while interactive-stream policy is active.
-    var droppedAppIconUpdateMessagesWhileSuppressed: Int = 0
     /// Deferred refresh requirements gathered while non-essential updates are suppressed.
     var deferredControlRefreshRequirements: DeferredControlRefreshRequirements = .none
     /// Whether a connection or first-frame startup critical section is active.
@@ -439,12 +427,6 @@ public final class MirageClientService {
 
     /// Callback when metadata-only app-list progress advances the in-memory app snapshot.
     public var onAppListProgress: (([MirageInstalledApp]) -> Void)?
-
-    /// Callback when app-icon packets advance the in-memory app snapshot.
-    public var onAppIconStreamProgress: (([MirageInstalledApp]) -> Void)?
-
-    /// Callback when skipped icon metadata does not match valid client icon payloads.
-    public var onAppIconStreamDesynchronized: (() -> Void)?
 
     /// Callback when host hardware icon payload is received.
     public var onHostHardwareIconReceived: ((UUID, Data, String?, String?, String?) -> Void)?
@@ -490,11 +472,6 @@ public final class MirageClientService {
 
     /// Callback when app terminates
     public var onAppTerminated: ((AppTerminatedMessage) -> Void)?
-
-    struct AppIconStreamState {
-        var receivedBundleIdentifiers: Set<String> = []
-        var skippedBundleIdentifiers: Set<String> = []
-    }
 
     // MARK: - Menu Bar Passthrough Properties
 
@@ -1019,14 +996,6 @@ public final class MirageClientService {
     public func setControlUpdatePolicy(_ policy: ControlUpdatePolicy) {
         guard controlUpdatePolicy != policy else { return }
         controlUpdatePolicy = policy
-
-        guard policy == .normal else { return }
-        if droppedAppIconUpdateMessagesWhileSuppressed > 0 {
-            MirageLogger.client(
-                "Resumed normal control updates after dropping \(droppedAppIconUpdateMessagesWhileSuppressed) app icon updates"
-            )
-            droppedAppIconUpdateMessagesWhileSuppressed = 0
-        }
     }
 
     /// Consumes and clears deferred control refresh requirements accumulated while policy was suppressed.
